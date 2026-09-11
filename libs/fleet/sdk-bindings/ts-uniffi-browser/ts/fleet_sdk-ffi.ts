@@ -6,10 +6,7 @@
 // @ts-nocheck
 
 // Structs and function types for calling back into Typescript from Rust.
-export type UniffiRustFutureContinuationCallback = (
-  data: bigint,
-  pollResult: number,
-) => void;
+export type UniffiRustFutureContinuationCallback = (data: bigint, pollResult: number) => void;
 export type UniffiForeignFutureDroppedCallback = (handle: bigint) => void;
 export type UniffiForeignFutureDroppedCallbackStruct = {
   handle: bigint;
@@ -19,36 +16,17 @@ export type UniffiForeignFutureResultRustBuffer = {
   return_value: Uint8Array;
   call_status: UniffiRustCallStatus;
 };
-export type UniffiForeignFutureCompleterustBuffer = (
-  callbackData: bigint,
-  result: UniffiForeignFutureResultRustBuffer,
-) => void;
-type UniffiCallbackInterfaceFleetSdkAccessTokenProviderMethod0 = (
-  uniffiHandle: bigint,
-  forceRefresh: number,
-  uniffiFutureCallback: UniffiForeignFutureCompleterustBuffer,
-  uniffiCallbackData: bigint,
-) => UniffiForeignFutureDroppedCallbackStruct;
-type UniffiCallbackInterfaceCloneFleetSdkAccessTokenProvider = (
-  handle: bigint,
-) => UniffiResult<void>;
-type UniffiCallbackInterfaceFreeFleetSdkAccessTokenProvider = (
-  handle: bigint,
-) => void;
+export type UniffiForeignFutureCompleterustBuffer = (callbackData: bigint, result: UniffiForeignFutureResultRustBuffer) => void;
+type UniffiCallbackInterfaceFleetSdkAccessTokenProviderMethod0 = (uniffiHandle: bigint, forceRefresh: number, uniffiFutureCallback: UniffiForeignFutureCompleterustBuffer, uniffiCallbackData: bigint) => UniffiForeignFutureDroppedCallbackStruct;
+type UniffiCallbackInterfaceCloneFleetSdkAccessTokenProvider = (handle: bigint) => UniffiResult<void>;
+type UniffiCallbackInterfaceFreeFleetSdkAccessTokenProvider = (handle: bigint) => void;
 export type UniffiVTableCallbackInterfaceFleetSdkAccessTokenProvider = {
   uniffi_free: UniffiCallbackInterfaceFreeFleetSdkAccessTokenProvider;
   uniffi_clone: UniffiCallbackInterfaceCloneFleetSdkAccessTokenProvider;
   get_access_token: UniffiCallbackInterfaceFleetSdkAccessTokenProviderMethod0;
 };
-type UniffiCallbackInterfaceFleetSdkHttpClientMethod0 = (
-  uniffiHandle: bigint,
-  request: Uint8Array,
-  uniffiFutureCallback: UniffiForeignFutureCompleterustBuffer,
-  uniffiCallbackData: bigint,
-) => UniffiForeignFutureDroppedCallbackStruct;
-type UniffiCallbackInterfaceCloneFleetSdkHttpClient = (
-  handle: bigint,
-) => UniffiResult<void>;
+type UniffiCallbackInterfaceFleetSdkHttpClientMethod0 = (uniffiHandle: bigint, request: Uint8Array, uniffiFutureCallback: UniffiForeignFutureCompleterustBuffer, uniffiCallbackData: bigint) => UniffiForeignFutureDroppedCallbackStruct;
+type UniffiCallbackInterfaceCloneFleetSdkHttpClient = (handle: bigint) => UniffiResult<void>;
 type UniffiCallbackInterfaceFreeFleetSdkHttpClient = (handle: bigint) => void;
 export type UniffiVTableCallbackInterfaceFleetSdkHttpClient = {
   uniffi_free: UniffiCallbackInterfaceFreeFleetSdkHttpClient;

@@ -33,6 +33,9 @@ import (
 	"syscall"
 	"time"
 
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+
 	"github.com/spf13/cobra"
 
 	"cyclops-cs-backend/accountlookup"
@@ -190,6 +193,9 @@ func setupRouter(c handlers.Handlers) http.Handler {
 	r.Handle("PUT /api/admin/feature-flags/{key}", withAuthenticatedMiddlewares("/api/admin/feature-flags/{key}", c.UpdateFeatureFlag))
 	r.Handle("DELETE /api/admin/feature-flags/{key}", withAuthenticatedMiddlewares("/api/admin/feature-flags/{key}", c.DeleteFeatureFlag))
 
+	r.Handle("POST /api/image-uploads/presign",
+		withAuthenticatedMiddlewares("/api/image-uploads/presign", c.PresignImageUploads))
+
 	// Stripe-hosted billing. Browser routes require the normal SPA JWT; the
 	// webhook uses Stripe signature verification as its authentication boundary.
 	r.Handle("GET /api/billing/summary",
@@ -335,6 +341,17 @@ func initializeFeatureFlags(ctx context.Context, environment string, credentials
 	return nil
 }
 
+func newImageObjectStore(ctx context.Context, cfg config.ImageUploadConfiguration) (handlers.ImageObjectStore, error) {
+	if strings.TrimSpace(cfg.Bucket) == "" {
+		return nil, nil
+	}
+	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(cfg.Region))
+	if err != nil {
+		return nil, fmt.Errorf("load image upload AWS config: %w", err)
+	}
+	return handlers.NewS3ImageObjectStore(s3.NewFromConfig(awsCfg), cfg.Bucket), nil
+}
+
 func run() error {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -478,6 +495,15 @@ func run() error {
 		leaseConfig := featureFlagLeaseConfigFromEnv(os.Getenv)
 		lease := featureflagadmin.NewKubernetesLeaseLock(leaseConfig.apiBaseURL, leaseConfig.namespace, leaseConfig.name, leaseConfig.holderIdentity, 30*time.Second, 5*time.Second, time.Now)
 		h.FeatureFlags = newFeatureFlagAdminService(managementStore, lease)
+	}
+	h.ImageObjects, err = newImageObjectStore(ctx, cfg.ImageUploads)
+	if err != nil {
+		return err
+	}
+	if h.ImageObjects != nil {
+		slog.Info("image uploads: presigning enabled", "region", cfg.ImageUploads.Region)
+	} else {
+		slog.Info("image uploads: disabled (IMAGE_UPLOAD_BUCKET unset)")
 	}
 	if cfg.Stripe.SecretKey != "" {
 		h.Billing = billing.NewService(billing.NewStripeGateway(cfg.Stripe.SecretKey))

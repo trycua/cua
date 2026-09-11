@@ -40,6 +40,7 @@ type Configuration struct {
 	Usage            UsageConfiguration
 	ProductAnalytics ProductAnalyticsConfiguration
 	SignedServiceURL SignedServiceURLConfiguration
+	ImageUploads     ImageUploadConfiguration
 }
 
 type WebServerConfiguration struct {
@@ -164,6 +165,14 @@ type ProductAnalyticsConfiguration struct {
 	ExcludedSubjects []string
 }
 
+type ImageUploadConfiguration struct {
+	Bucket             string
+	Region             string
+	URLLifetime        time.Duration
+	MaxFileBytes       int64
+	MaxFilesPerRequest int
+}
+
 type TelemetryConfiguration struct {
 	Endpoint         string // OTEL_EXPORTER_OTLP_ENDPOINT
 	Protocol         string // OTEL_EXPORTER_OTLP_PROTOCOL
@@ -231,6 +240,11 @@ var specs = []flagSpec{
 	{"product-analytics.project-token", "posthog-project-token", "POSTHOG_PROJECT_TOKEN", "", "PostHog project token"},
 	{"product-analytics.identity-key", "posthog-identity-key", "POSTHOG_IDENTITY_KEY", "", "Key for pseudonymous product analytics identity"},
 	{"product-analytics.excluded-subjects", "fleet-analytics-excluded-subs", "FLEET_ANALYTICS_EXCLUDED_SUBS", "", "Comma-separated Keycloak subjects excluded from analytics"},
+	{"image-uploads.bucket", "image-upload-bucket", "IMAGE_UPLOAD_BUCKET", "", "S3 bucket for presigned image uploads"},
+	{"image-uploads.region", "image-upload-region", "IMAGE_UPLOAD_REGION", "us-east-1", "AWS region for presigned image uploads"},
+	{"image-uploads.url-lifetime", "image-upload-url-lifetime", "IMAGE_UPLOAD_URL_LIFETIME", "15m", "Lifetime for presigned image upload URLs"},
+	{"image-uploads.max-file-bytes", "image-upload-max-file-bytes", "IMAGE_UPLOAD_MAX_FILE_BYTES", "5368709120", "Maximum bytes in one image upload file"},
+	{"image-uploads.max-files-per-request", "image-upload-max-files-per-request", "IMAGE_UPLOAD_MAX_FILES_PER_REQUEST", "32", "Maximum image files in one signing request"},
 	{"telemetry.endpoint", "otel-endpoint", "OTEL_EXPORTER_OTLP_ENDPOINT", "https://otel.cua.ai", "OTLP HTTP traces endpoint"},
 	{"telemetry.protocol", "otel-protocol", "OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf", "OTLP exporter protocol"},
 	{"telemetry.service-name", "otel-service-name", "OTEL_SERVICE_NAME", "cyclops-cs-backend", "OTEL service.name"},
@@ -274,6 +288,10 @@ func LoadConfig() (*Configuration, error) {
 	usageMaxResponseBytes, err := parseUsageMaxResponseBytes(viper.GetString("usage.max-response-bytes"))
 	if err != nil {
 		return nil, err
+	}
+	imageUploadURLLifetime, err := time.ParseDuration(viper.GetString("image-uploads.url-lifetime"))
+	if err != nil {
+		return nil, fmt.Errorf("parse IMAGE_UPLOAD_URL_LIFETIME: %w", err)
 	}
 
 	base := strings.TrimRight(viper.GetString("kc.base-url"), "/")
@@ -366,6 +384,13 @@ func LoadConfig() (*Configuration, error) {
 			Environment:      strings.TrimSpace(viper.GetString("telemetry.environment")),
 			ExcludedSubjects: splitCommaSeparated(viper.GetString("product-analytics.excluded-subjects")),
 		},
+		ImageUploads: ImageUploadConfiguration{
+			Bucket:             strings.TrimSpace(viper.GetString("image-uploads.bucket")),
+			Region:             viper.GetString("image-uploads.region"),
+			URLLifetime:        imageUploadURLLifetime,
+			MaxFileBytes:       viper.GetInt64("image-uploads.max-file-bytes"),
+			MaxFilesPerRequest: viper.GetInt("image-uploads.max-files-per-request"),
+		},
 		Telemetry: TelemetryConfiguration{
 			Endpoint:         viper.GetString("telemetry.endpoint"),
 			Protocol:         viper.GetString("telemetry.protocol"),
@@ -386,6 +411,9 @@ func LoadConfig() (*Configuration, error) {
 	}
 	if err := validateUsageConfiguration(cfg.Usage); err != nil {
 		return nil, err
+	}
+	if cfg.ImageUploads.URLLifetime <= 0 || cfg.ImageUploads.MaxFileBytes <= 0 || cfg.ImageUploads.MaxFilesPerRequest <= 0 {
+		return nil, fmt.Errorf("image upload bounds must be positive")
 	}
 	return cfg, nil
 }

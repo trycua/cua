@@ -95,6 +95,7 @@ var surfacePolicySources = map[string]struct {
 	"authz-state-query":         {"authz_state_query.rego", authzStateQueryPolicy},
 	"authz-feature-flags":       {"authz_feature_flags.rego", authzFeatureFlagsPolicy},
 	"authz-account-lookup":      {"authz_account_lookup.rego", authzAccountLookupPolicy},
+	"authz-image-uploads":       {"authz_image_uploads.rego", authzImageUploadsPolicy},
 }
 
 //go:embed authz_account_lookup.rego
@@ -120,6 +121,9 @@ var authzUsagePolicy string
 
 //go:embed authz_namespaces.rego
 var authzNamespacesPolicy string
+
+//go:embed authz_image_uploads.rego
+var authzImageUploadsPolicy string
 
 //go:embed authz_github_trust.rego
 var authzGitHubTrustPolicy string

@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-workspace_dir="$repo_root/cyclops-cs"
+workspace_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 generator="$workspace_dir/scripts/generate-sdk-bindings.sh"
 compat_generator="$workspace_dir/scripts/generate-compat-sdk-bindings.sh"
 compat_normalizer="$workspace_dir/scripts/normalize-compat-sdk-bindings.py"
@@ -331,6 +330,9 @@ if [ "$handwritten_directory_created" = true ]; then
 fi
 assert_tree_unchanged "$initial_hash" "handwritten fixture cleanup"
 "$generator" --check
+for compatibility_root in go-uniffi ts-uniffi ts-uniffi-browser; do
+  [ -f "$bindings_dir/$compatibility_root/.cyclops-sdk-generated-files" ] ||     fail "canonical generator omits $compatibility_root manifest"
+done
 
 runtime_library="$(find_cyclops_sdk_library)" || fail "could not read a cyclops-sdk cdylib from Cargo compiler-artifact output"
 [ -f "$runtime_library" ] || fail "Cargo reported a missing cyclops-sdk cdylib: $runtime_library"
@@ -909,6 +911,18 @@ grep -Fq -- "TtlSecondsAfterCreated *uint32" "$go_schema_source" || fail "Go bin
 grep -Fq -- "FfiConverterOptionalUint32INSTANCE.Write(writer, value.TtlSecondsAfterCreated)" "$go_schema_source" || fail "Go bindings do not write TtlSecondsAfterCreated"
 
 for typescript_binding in "$node_sdk_source" "$browser_sdk_source"; do
+  for upload_type in ImageUploadFileRequest ImageUploadInstruction ImageUploadRequest ImageUploadResponse PresignedPut; do
+    grep -Fq -- "export type $upload_type =" "$typescript_binding" || fail "TypeScript bindings omit $upload_type: $typescript_binding"
+  done
+  grep -Fq -- "presignImageUploads(" "$typescript_binding" || fail "TypeScript bindings omit presignImageUploads: $typescript_binding"
+done
+for upload_type in ImageUploadFileRequest ImageUploadInstruction ImageUploadRequest ImageUploadResponse PresignedPut; do
+  grep -Fq -- "type $upload_type struct" "$go_sdk_source" || fail "Go bindings omit $upload_type"
+done
+grep -Fq -- "PresignImageUploads(" "$go_sdk_source" || fail "Go bindings omit PresignImageUploads"
+grep -Fq -- "func GetPoolDisplayStatus(pool Pool) PoolDisplayStatus" "$go_sdk_source" || fail "Go display-status function collides with its record type"
+
+for typescript_binding in "$node_sdk_source" "$browser_sdk_source"; do
   grep -Fq -- "timeoutSecs?: bigint" "$typescript_binding" || fail "TypeScript bindings omit HttpRequest.timeoutSecs: $typescript_binding"
   grep -Fq -- "timeoutSecs: FfiConverterOptionalUInt64.read(from)" "$typescript_binding" || fail "TypeScript bindings do not read HttpRequest.timeoutSecs: $typescript_binding"
   grep -Fq -- "FfiConverterOptionalUInt64.write(value.timeoutSecs, into)" "$typescript_binding" || fail "TypeScript bindings do not write HttpRequest.timeoutSecs: $typescript_binding"
@@ -1009,6 +1023,17 @@ printf '\n# task10 content drift\n' >> "$content_file"
 expect_check_failure content
 mv "$temporary_directory/content-file" "$content_file"
 chmod "$content_file_mode" "$content_file"
+"$generator" --check
+
+compatibility_content_file="$bindings_dir/ts-uniffi/fleet_sdk.ts"
+compatibility_content_mode="$(mode_for "$compatibility_content_file")"
+cp "$compatibility_content_file" "$temporary_directory/compatibility-content-file"
+printf '
+// compatibility content drift
+' >> "$compatibility_content_file"
+expect_check_failure compatibility-content
+mv "$temporary_directory/compatibility-content-file" "$compatibility_content_file"
+chmod "$compatibility_content_mode" "$compatibility_content_file"
 "$generator" --check
 
 mode_file="$bindings_dir/ruby/cyclops_sdk.rb"

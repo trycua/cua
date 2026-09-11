@@ -185,6 +185,12 @@ func AccountLookupRoutePolicy() Node {
 	return All(BasePolicy(), surfaceLeaf("authz-account-lookup", "data.authz_account_lookup.allow"))
 }
 
+// ImageUploadsRoutePolicy guards bounded image upload signing. Namespace ownership
+// is evaluated by the handler because the namespace is carried in the JSON body.
+func ImageUploadsRoutePolicy() Node {
+	return All(BasePolicy(), surfaceLeaf("authz-image-uploads", "data.authz_image_uploads.allow"))
+}
+
 // K8sRoutePolicy guards /api/k8s/{path...}. It is the same base + surface shape
 // as every other route, with Image namespace ownership and four admission conjuncts: card-or-admin admission
 // for custom-resource creation, pool admission over the request body, and
@@ -311,6 +317,7 @@ var surfacePolicies = map[string]surfacePolicy{
 	"signed-service-urls": {tree: SignedServiceURLsRoutePolicy},
 	"state-query":         {tree: StateQueryRoutePolicy},
 	"feature-flags":       {tree: FeatureFlagsRoutePolicy, options: []MiddlewareOption{WithDeniedAudit("feature_flag_admin", featureFlagAuditBodyLimit), WithAdminAPIErrorResponses(), WithFreshAdminAuthorization()}},
+	"image-uploads":       {tree: ImageUploadsRoutePolicy},
 	"k8s": {
 		tree:    K8sRoutePolicy,
 		options: []MiddlewareOption{WithDeniedMessage("k8s request is not allowed")},
@@ -333,6 +340,7 @@ var routeSurfaces = map[string]string{
 	"/api/usage/overview":         "usage",
 	"/api/usage/pool":             "usage",
 	"/api/usage/browser-timings":  "usage",
+	"/api/image-uploads/presign":  "image-uploads",
 
 	"/api/chat/conversations":            "chat",
 	"/api/chat/conversations/{id}":       "chat",

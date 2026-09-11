@@ -64,10 +64,18 @@ fn generated_bindings_hide_raw_credentials_and_claim_update() {
     assert!(python.contains("async def list_user_api_keys"));
     assert!(python.contains("async def create_user_api_key"));
     assert!(python.contains("async def delete_user_api_key"));
+    assert!(python.contains("async def get_image"));
+    assert!(python.contains("async def create_image"));
+    assert!(python.contains("async def delete_image"));
+    assert!(python.contains("async def list_images"));
     assert!(kotlin.contains("suspend fun `listNamespaces`"));
     assert!(kotlin.contains("suspend fun `listUserApiKeys`"));
     assert!(kotlin.contains("suspend fun `createUserApiKey`"));
     assert!(kotlin.contains("suspend fun `deleteUserApiKey`"));
+    assert!(kotlin.contains("suspend fun `getImage`"));
+    assert!(kotlin.contains("suspend fun `createImage`"));
+    assert!(kotlin.contains("suspend fun `deleteImage`"));
+    assert!(kotlin.contains("suspend fun `listImages`"));
     assert!(python.contains("creation_timestamp:typing.Optional[str]"));
     assert!(kotlin.contains("var `creationTimestamp`: kotlin.String?"));
 

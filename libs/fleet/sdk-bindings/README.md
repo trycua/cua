@@ -2,32 +2,23 @@
 
 This directory contains the checked-in generated sources for several Cyclops
 SDK targets. Rust is the native `cyclops-sdk` API and owns the canonical
-implementation. The authoritative deterministic generation and drift pipeline
-in `generate-sdk-bindings.sh` owns **Python, Kotlin, Swift, and Ruby**.
-The OpenAPI JavaScript client and native-library packaging are outside that
-four-language binding surface; separate UniFFI snapshots are described below.
+implementation. The deterministic generation and drift pipeline in
+`generate-sdk-bindings.sh` owns Python, Kotlin, Swift, Ruby, Go, Node.js
+TypeScript, and Browser/WASM TypeScript source roots.
 
-### Separately generated targets
+### Compatibility targets
 
-`go-uniffi` and `ts-uniffi` (Node.js) are checked-in compatibility snapshots
-produced by `uniffi-bindgen-go` and `uniffi-bindgen-react-native`, not outputs
-of `generate-sdk-bindings.sh`. `generate-compat-sdk-bindings.sh` owns their
-narrow repository compatibility normalization: every snapshot is derived from
-fresh raw generator output, then deterministic removal excludes only generated
-builder ABI. It retains all non-builder generated content, including record
-fields and serialization such as TTL fields, so these snapshots continue to
-expose direct record constructors only. The normalizer never uses a checked-in
-snapshot as transformation input.
+The pinned Go and TypeScript generators run from the same Rust metadata as
+UniFFI. Go and Node.js retain their existing direct-record API: the canonical
+generator reuses `normalize-compat-sdk-bindings.py` to exclude generated builder
+ABI, without deleting non-builder records or methods. Go exposes the status helper
+as `GetPoolDisplayStatus` to avoid colliding with its `PoolDisplayStatus` record. The normalizer never uses
+checked-in snapshots as transformation input. The schema-only
+`generate-compat-sdk-bindings.sh --check` remains an independent compatibility
+check. Browser/WASM retains its advertised generated builder surface.
 
-`ts-uniffi-browser` (Browser/WASM) regenerates from Rust metadata during its
-build, commits its TypeScript record modules, and verifies that generated
-surface with an executable WASM builder artifact contract. Browser/WASM is an
-advertised generated builder target alongside Python, Kotlin, Swift, and Ruby.
-
-Go and Node.js remain separate compatibility snapshots. Adding builders to
-their public contracts requires separately regenerating and validating each
-third-party generator, cross-component converter layer, packaging path,
-checked-in scope, and runtime API.
+Native-library and browser/WASM packaging still use their existing separate
+build commands; generating source does not prove runtime packaging works.
 
 ## Source of truth and compatibility
 
@@ -85,8 +76,9 @@ cargo run --locked --manifest-path "$REPO_ROOT/cyclops-cs/Cargo.toml" \
   --output "$REPO_ROOT/clusters/base/osgym/crd.yaml"
 ```
 
-Generate or check all four UniFFI language roots with the pinned workspace
-wrapper around UniFFI `0.31.0`:
+Generate or check every binding root with UniFFI `0.31.0`,
+`uniffi-bindgen-go 0.7.1+v0.31.0`, `uniffi-bindgen-react-native@0.31.0-3`,
+and Go (`gofmt`) on PATH:
 
 ```sh
 "$REPO_ROOT/cyclops-cs/scripts/generate-sdk-bindings.sh"

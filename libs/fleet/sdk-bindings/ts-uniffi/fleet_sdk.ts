@@ -6,12 +6,12 @@
 import nativeModule from "./fleet_sdk-ffi";
 import { type UniffiRustFutureContinuationCallback, type UniffiForeignFutureDroppedCallback, type UniffiForeignFutureDroppedCallbackStruct, type UniffiForeignFutureResultRustBuffer, type UniffiForeignFutureCompleterustBuffer, type UniffiVTableCallbackInterfaceFleetSdkAccessTokenProvider, type UniffiVTableCallbackInterfaceFleetSdkHttpClient,
 } from "./fleet_sdk-ffi";
-import { type ClaimSpec, type OsGymSandboxClaimStatus, type OsGymSandboxTemplateSpec, type OsGymSandboxWarmPoolSpec, type OsGymSandboxWarmPoolStatus,
+import { type ClaimSpec, type OsGymSandboxClaimStatus, type OsGymSandboxTemplateSpec, type OsGymSandboxWarmPoolSpec, type OsGymSandboxWarmPoolStatus, type PreservedJsonLike,
 } from "./cyclops_sdk_schema";
 import { type FfiConverter, type UniffiByteArray, type UniffiGcObject, type UniffiHandle, type UniffiObjectFactory, type UniffiReferenceHolder, type UniffiRustCallStatus, AbstractFfiConverterByteArray, FfiConverterArray, FfiConverterArrayBuffer, FfiConverterBool, FfiConverterInt32, FfiConverterMap, FfiConverterObject, FfiConverterObjectWithCallbacks, FfiConverterOptional, FfiConverterUInt16, FfiConverterUInt32, FfiConverterUInt64, FfiConverterUInt8, RustBuffer, UniffiAbstractObject, UniffiEnum, UniffiError, UniffiInternalError, UniffiResult, UniffiRustCaller, destructorGuardSymbol, pointerLiteralSymbol, uniffiCreateFfiConverterString, uniffiCreateRecord, uniffiRustCallAsync, uniffiTraitInterfaceCallAsyncWithError, uniffiTypeNameSymbol, variantOrdinalSymbol,
 } from "@ubjs/core";
 import uniffiCyclopsSdkSchemaModule from "./cyclops_sdk_schema";
-const { FfiConverterTypeClaimSpec, FfiConverterTypeOSGymSandboxClaimStatus, FfiConverterTypeOSGymSandboxTemplateSpec, FfiConverterTypeOSGymSandboxWarmPoolSpec, FfiConverterTypeOSGymSandboxWarmPoolStatus } = uniffiCyclopsSdkSchemaModule.converters;
+const { FfiConverterTypeClaimSpec, FfiConverterTypeOSGymSandboxClaimStatus, FfiConverterTypeOSGymSandboxTemplateSpec, FfiConverterTypeOSGymSandboxWarmPoolSpec, FfiConverterTypeOSGymSandboxWarmPoolStatus, FfiConverterTypePreservedJson } = uniffiCyclopsSdkSchemaModule.converters;
 const uniffiCaller = new UniffiRustCaller(() => ({ code: 0 }));
 
 const uniffiIsDebug =
@@ -968,6 +968,233 @@ const FfiConverterTypeHttpResponse = (() => {
             return FfiConverterUInt16.allocationSize(value.status) +
              FfiConverterSequenceTypeHttpHeader.allocationSize(value.headers) +
              FfiConverterArrayBuffer.allocationSize(value.body);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type ImageUploadFileRequest = {
+    digest: string,
+    sizeBytes: bigint,
+    name: string
+}
+
+/**
+ * Generated factory for {@link ImageUploadFileRequest} record objects.
+ */
+export const ImageUploadFileRequest = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ImageUploadFileRequest, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ImageUploadFileRequest>,
+    });
+})();
+
+const FfiConverterTypeImageUploadFileRequest = (() => {
+    type TypeName = ImageUploadFileRequest;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                digest: FfiConverterString.read(from),
+                sizeBytes: FfiConverterUInt64.read(from),
+                name: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.digest, into);
+            FfiConverterUInt64.write(value.sizeBytes, into);
+            FfiConverterString.write(value.name, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.digest) +
+             FfiConverterUInt64.allocationSize(value.sizeBytes) +
+             FfiConverterString.allocationSize(value.name);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type PresignedPut = {
+    method: string,
+    url: string,
+    headers: Map<string, string>
+}
+
+/**
+ * Generated factory for {@link PresignedPut} record objects.
+ */
+export const PresignedPut = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<PresignedPut, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<PresignedPut>,
+    });
+})();
+
+const FfiConverterTypePresignedPut = (() => {
+    type TypeName = PresignedPut;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                method: FfiConverterString.read(from),
+                url: FfiConverterString.read(from),
+                headers: FfiConverterMapStringString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.method, into);
+            FfiConverterString.write(value.url, into);
+            FfiConverterMapStringString.write(value.headers, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.method) +
+             FfiConverterString.allocationSize(value.url) +
+             FfiConverterMapStringString.allocationSize(value.headers);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type ImageUploadInstruction = {
+    digest: string,
+    sizeBytes: bigint,
+    reference: string,
+    upload?: PresignedPut
+}
+
+/**
+ * Generated factory for {@link ImageUploadInstruction} record objects.
+ */
+export const ImageUploadInstruction = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ImageUploadInstruction, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ImageUploadInstruction>,
+    });
+})();
+
+const FfiConverterTypeImageUploadInstruction = (() => {
+    type TypeName = ImageUploadInstruction;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                digest: FfiConverterString.read(from),
+                sizeBytes: FfiConverterUInt64.read(from),
+                reference: FfiConverterString.read(from),
+                upload: FfiConverterOptionalTypePresignedPut.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.digest, into);
+            FfiConverterUInt64.write(value.sizeBytes, into);
+            FfiConverterString.write(value.reference, into);
+            FfiConverterOptionalTypePresignedPut.write(value.upload, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.digest) +
+             FfiConverterUInt64.allocationSize(value.sizeBytes) +
+             FfiConverterString.allocationSize(value.reference) +
+             FfiConverterOptionalTypePresignedPut.allocationSize(value.upload);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type ImageUploadRequest = {
+    namespace: string,
+    files: Array<ImageUploadFileRequest>
+}
+
+/**
+ * Generated factory for {@link ImageUploadRequest} record objects.
+ */
+export const ImageUploadRequest = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ImageUploadRequest, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ImageUploadRequest>,
+    });
+})();
+
+const FfiConverterTypeImageUploadRequest = (() => {
+    type TypeName = ImageUploadRequest;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                namespace: FfiConverterString.read(from),
+                files: FfiConverterSequenceTypeImageUploadFileRequest.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.namespace, into);
+            FfiConverterSequenceTypeImageUploadFileRequest.write(value.files, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.namespace) +
+             FfiConverterSequenceTypeImageUploadFileRequest.allocationSize(value.files);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type ImageUploadResponse = {
+    files: Array<ImageUploadInstruction>
+}
+
+/**
+ * Generated factory for {@link ImageUploadResponse} record objects.
+ */
+export const ImageUploadResponse = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ImageUploadResponse, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ImageUploadResponse>,
+    });
+})();
+
+const FfiConverterTypeImageUploadResponse = (() => {
+    type TypeName = ImageUploadResponse;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                files: FfiConverterSequenceTypeImageUploadInstruction.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterSequenceTypeImageUploadInstruction.write(value.files, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterSequenceTypeImageUploadInstruction.allocationSize(value.files);
 
         }
     };
@@ -2524,26 +2751,31 @@ const uniffiCallbackInterfaceAccessTokenProvider: { vtable: any; register: () =>
 export interface CyclopsClientLike {
 
     createClaim(request: CreateClaimRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Claim>;
+    createImage(namespace: string, manifest: PreservedJsonLike, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<PreservedJsonLike>;
     createNamespace(name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Namespace>;
     createPool(request: CreatePoolRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Pool>;
     createSignedServiceUrl(request: CreateSignedServiceUrlRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SignedServiceUrl>;
     createTemplate(request: CreateTemplateRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Template>;
     createUserApiKey(request: CreateUserApiKeyRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<NewUserApiKey>;
     deleteClaim(claim: Claim, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
+    deleteImage(namespace: string, name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
     deleteNamespace(name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
     deletePool(pool: Pool, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
     deleteTemplate(template: Template, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
     deleteUserApiKey(id: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
     getClaim(claim: Claim, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Claim>;
+    getImage(namespace: string, name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<PreservedJsonLike>;
     getNamespace(name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Namespace>;
     getPool(name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Pool>;
     getTemplate(namespace: string, name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Template>;
     listClaims(namespace: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<Claim>>;
+    listImages(namespace: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<PreservedJsonLike>>;
     listNamespaces(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<Namespace>>;
     listPools(namespace: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<Pool>>;
     listSignedServiceUrls(sandbox: Sandbox, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<SignedServiceUrl>>;
     listTemplates(namespace: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<Template>>;
     listUserApiKeys(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<UserApiKey>>;
+    presignImageUploads(request: ImageUploadRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ImageUploadResponse>;
     reconcilePool(request: CreatePoolRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Pool>;
     reconcileTemplate(request: CreateTemplateRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Template>;
 /**
@@ -2694,6 +2926,38 @@ private constructor(pointer: UniffiHandle) {
             // export. The bytes the runtime hands back must be deserialized
             // here using the per-callable return-type converter.
             /*liftFunc:*/ FfiConverterTypeClaim.lift.bind(FfiConverterTypeClaim),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+    async createImage(namespace: string, manifest: PreservedJsonLike, asyncOpts_?: { signal: AbortSignal }): Promise<PreservedJsonLike> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cyclops_sdk_fn_method_cyclopsclient_create_image(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterString.lower(namespace, nativeModule().rustbuffer_alloc),FfiConverterTypePreservedJson.lower(manifest, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_poll_u64,
+            /*cancelFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_cancel_u64,
+            /*completeFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_complete_u64,
+            /*freeFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_free_u64,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypePreservedJson.lift.bind(FfiConverterTypePreservedJson),
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
             /*asyncOpts:*/ asyncOpts_,
             /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
@@ -2893,6 +3157,33 @@ private constructor(pointer: UniffiHandle) {
     }
     }
 
+    async deleteImage(namespace: string, name: string, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_image(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterString.lower(namespace, nativeModule().rustbuffer_alloc),FfiConverterString.lower(name, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_poll_void,
+            /*cancelFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_cancel_void,
+            /*completeFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_complete_void,
+            /*freeFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_free_void,
+            /*liftFunc:*/ (_v) => {},
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
     async deleteNamespace(name: string, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
     try {
@@ -3033,6 +3324,38 @@ private constructor(pointer: UniffiHandle) {
     }
     }
 
+    async getImage(namespace: string, name: string, asyncOpts_?: { signal: AbortSignal }): Promise<PreservedJsonLike> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cyclops_sdk_fn_method_cyclopsclient_get_image(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterString.lower(namespace, nativeModule().rustbuffer_alloc),FfiConverterString.lower(name, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_poll_u64,
+            /*cancelFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_cancel_u64,
+            /*completeFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_complete_u64,
+            /*freeFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_free_u64,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypePreservedJson.lift.bind(FfiConverterTypePreservedJson),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
     async getNamespace(name: string, asyncOpts_?: { signal: AbortSignal }): Promise<Namespace> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
     try {
@@ -3149,6 +3472,38 @@ private constructor(pointer: UniffiHandle) {
             // export. The bytes the runtime hands back must be deserialized
             // here using the per-callable return-type converter.
             /*liftFunc:*/ FfiConverterSequenceTypeClaim.lift.bind(FfiConverterSequenceTypeClaim),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+    async listImages(namespace: string, asyncOpts_?: { signal: AbortSignal }): Promise<Array<PreservedJsonLike>> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cyclops_sdk_fn_method_cyclopsclient_list_images(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterString.lower(namespace, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterSequenceTypePreservedJson.lift.bind(FfiConverterSequenceTypePreservedJson),
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
             /*asyncOpts:*/ asyncOpts_,
             /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
@@ -3309,6 +3664,38 @@ private constructor(pointer: UniffiHandle) {
             // export. The bytes the runtime hands back must be deserialized
             // here using the per-callable return-type converter.
             /*liftFunc:*/ FfiConverterSequenceTypeUserApiKey.lift.bind(FfiConverterSequenceTypeUserApiKey),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+    async presignImageUploads(request: ImageUploadRequest, asyncOpts_?: { signal: AbortSignal }): Promise<ImageUploadResponse> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cyclops_sdk_fn_method_cyclopsclient_presign_image_uploads(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterTypeImageUploadRequest.lower(request, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeImageUploadResponse.lift.bind(FfiConverterTypeImageUploadResponse),
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
             /*asyncOpts:*/ asyncOpts_,
             /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
@@ -3662,6 +4049,10 @@ const FfiConverterTypeCyclopsClient = new FfiConverterObject(uniffiTypeCyclopsCl
 
 export interface HttpClient {
 
+/**
+ * Executes an HTTP request. Foreign implementations must enforce
+ * `request.max_response_bytes` while streaming the response body.
+ */
     execute(request: HttpRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<HttpResponse>;
 }
 
@@ -3681,6 +4072,10 @@ private constructor(pointer: UniffiHandle) {
 
 
 
+/**
+ * Executes an HTTP request. Foreign implementations must enforce
+ * `request.max_response_bytes` while streaming the response body.
+ */
     async execute(request: HttpRequest, asyncOpts_?: { signal: AbortSignal }): Promise<HttpResponse> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
     try {
@@ -3888,8 +4283,20 @@ const FfiConverterOptionalBytes = new FfiConverterOptional(FfiConverterArrayBuff
 // FfiConverter for bigint | undefined
 const FfiConverterOptionalUInt64 = new FfiConverterOptional(FfiConverterUInt64);
 
+// FfiConverter for PresignedPut | undefined
+const FfiConverterOptionalTypePresignedPut = new FfiConverterOptional(FfiConverterTypePresignedPut);
+
+// FfiConverter for Array<ImageUploadFileRequest>
+const FfiConverterSequenceTypeImageUploadFileRequest = new FfiConverterArray(FfiConverterTypeImageUploadFileRequest);
+
+// FfiConverter for Array<ImageUploadInstruction>
+const FfiConverterSequenceTypeImageUploadInstruction = new FfiConverterArray(FfiConverterTypeImageUploadInstruction);
+
 // FfiConverter for Array<Claim>
 const FfiConverterSequenceTypeClaim = new FfiConverterArray(FfiConverterTypeClaim);
+
+// FfiConverter for Array<PreservedJsonLike>
+const FfiConverterSequenceTypePreservedJson = new FfiConverterArray(FfiConverterTypePreservedJson);
 
 // FfiConverter for Array<Namespace>
 const FfiConverterSequenceTypeNamespace = new FfiConverterArray(FfiConverterTypeNamespace);
@@ -3967,6 +4374,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim() !== 23330) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim");
     }
+    if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_image() !== 51053) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_image");
+    }
     if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace() !== 38049) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace");
     }
@@ -3985,6 +4395,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim() !== 20460) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim");
     }
+    if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_image() !== 24680) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_image");
+    }
     if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_namespace() !== 4545) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_namespace");
     }
@@ -4000,6 +4413,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim() !== 17760) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim");
     }
+    if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_image() !== 56969) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_image");
+    }
     if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_namespace() !== 184) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_namespace");
     }
@@ -4011,6 +4427,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_claims() !== 7802) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_claims");
+    }
+    if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_images() !== 31215) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_images");
     }
     if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_namespaces() !== 65288) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_namespaces");
@@ -4026,6 +4445,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_user_api_keys() !== 5949) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_user_api_keys");
+    }
+    if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_presign_image_uploads() !== 53280) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_presign_image_uploads");
     }
     if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_pool() !== 53919) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_pool");
@@ -4082,11 +4504,16 @@ export default Object.freeze({
     FfiConverterTypeHttpHeader,
     FfiConverterTypeHttpRequest,
     FfiConverterTypeHttpResponse,
+    FfiConverterTypeImageUploadFileRequest,
+    FfiConverterTypeImageUploadInstruction,
+    FfiConverterTypeImageUploadRequest,
+    FfiConverterTypeImageUploadResponse,
     FfiConverterTypeNamespace,
     FfiConverterTypeNewUserApiKey,
     FfiConverterTypePool,
     FfiConverterTypePoolDisplayStatus,
     FfiConverterTypePoolDisplayStatusKind,
+    FfiConverterTypePresignedPut,
     FfiConverterTypeResourceMetadata,
     FfiConverterTypeSandbox,
     FfiConverterTypeSdkBuildError,

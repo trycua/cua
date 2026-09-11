@@ -7,6 +7,7 @@ const CLAIM_COLLECTION_SUFFIX: &str = "/osgymsandboxclaims";
 const POOL_COLLECTION_SUFFIX: &str = "/osgymsandboxwarmpools";
 const TEMPLATE_COLLECTION_SUFFIX: &str = "/osgymsandboxtemplates";
 const NAMESPACE_COLLECTION: &str = "api/namespaces";
+const IMAGE_UPLOADS_PRESIGN: &str = "api/image-uploads/presign";
 const NAMESPACE_PREFIX: &str = "api/namespaces/";
 const SERVICE_COLLECTION_PREFIX: &str = "api/svc/";
 const SIGNED_SERVICE_URL_COLLECTION_PREFIX: &str = "api/signed-service-urls/";
@@ -52,6 +53,27 @@ pub fn template_item(base: &Url, namespace: &str, name: &str) -> Result<Url, Sdk
         base,
         format!("{POOL_COLLECTION_PREFIX}{namespace}{TEMPLATE_COLLECTION_SUFFIX}/{name}"),
     )
+}
+
+pub fn image_collection(base: &Url, namespace: &str) -> Result<Url, SdkError> {
+    validate_dns_label_for("namespace", namespace)?;
+    route(
+        base,
+        format!("api/k8s/apis/images.cua.ai/v1alpha1/namespaces/{namespace}/images"),
+    )
+}
+
+pub fn image_item(base: &Url, namespace: &str, name: &str) -> Result<Url, SdkError> {
+    validate_dns_label_for("namespace", namespace)?;
+    validate_dns_label_for("name", name)?;
+    route(
+        base,
+        format!("api/k8s/apis/images.cua.ai/v1alpha1/namespaces/{namespace}/images/{name}"),
+    )
+}
+
+pub fn image_uploads_presign(base: &Url) -> Result<Url, SdkError> {
+    route(base, IMAGE_UPLOADS_PRESIGN.into())
 }
 
 pub fn namespace_collection(base: &Url) -> Result<Url, SdkError> {
@@ -317,8 +339,9 @@ fn hex_value(byte: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::{
-        claim_collection, claim_item, namespace_collection, namespace_item, pool_collection,
-        pool_item, signed_service_url_collection, signed_service_url_item, signed_service_url_list,
+        claim_collection, claim_item, image_collection, image_item, image_uploads_presign,
+        namespace_collection, namespace_item, pool_collection, pool_item,
+        signed_service_url_collection, signed_service_url_item, signed_service_url_list,
         template_collection, template_item,
     };
     use url::Url;
@@ -370,6 +393,10 @@ mod tests {
             "https://cyclops.example:8443/api/namespaces"
         );
         assert_eq!(
+            image_uploads_presign(&base).unwrap().as_str(),
+            "https://cyclops.example:8443/api/image-uploads/presign"
+        );
+        assert_eq!(
             namespace_item(&base, "example-pool").unwrap().as_str(),
             "https://cyclops.example:8443/api/namespaces/example-pool"
         );
@@ -393,6 +420,16 @@ mod tests {
                 .as_str(),
             "https://cyclops.example:8443/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/example-pool/osgymsandboxtemplates/example-template"
         );
+        assert_eq!(
+            image_collection(&base, "example-pool").unwrap().as_str(),
+            "https://cyclops.example:8443/api/k8s/apis/images.cua.ai/v1alpha1/namespaces/example-pool/images"
+        );
+        assert_eq!(
+            image_item(&base, "example-pool", "example-image")
+                .unwrap()
+                .as_str(),
+            "https://cyclops.example:8443/api/k8s/apis/images.cua.ai/v1alpha1/namespaces/example-pool/images/example-image"
+        );
     }
 
     #[test]
@@ -412,6 +449,10 @@ mod tests {
         assert_eq!(
             namespace_collection(&base).unwrap().as_str(),
             "https://gateway.example/cyclops/api/namespaces"
+        );
+        assert_eq!(
+            image_uploads_presign(&base).unwrap().as_str(),
+            "https://gateway.example/cyclops/api/image-uploads/presign"
         );
         assert_eq!(
             namespace_item(&base, "example-pool").unwrap().as_str(),

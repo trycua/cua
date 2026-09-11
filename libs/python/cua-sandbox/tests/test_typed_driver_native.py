@@ -43,10 +43,26 @@ class NativeTransport(Transport):
         )
 
     async def request_service(
-        self, name, *, method, path, json_body=None, headers=None, timeout=None
+        self,
+        name,
+        *,
+        method,
+        path,
+        json_body=None,
+        body=None,
+        headers=None,
+        timeout=None,
+        max_response_bytes=None,
     ):
         response = await super().request_service(
-            name, method=method, path=path, json_body=json_body, headers=headers, timeout=timeout
+            name,
+            method=method,
+            path=path,
+            json_body=json_body,
+            body=body,
+            headers=headers,
+            timeout=timeout,
+            max_response_bytes=max_response_bytes,
         )
         if path.endswith("/exchange"):
             self.exchange_timeouts.append(timeout)

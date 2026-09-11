@@ -116,3 +116,87 @@ async def test_actual_native_future_cancellation_reaches_mcp_receiver(sdk):
     finally:
         transport.exchange_wait.set()
         await sb.disconnect()
+
+
+@pytest.mark.parametrize("finish", ["cancel", "close"])
+async def test_shared_native_teardown_drains_pending_response_before_session_close(sdk, finish):
+    transport = McpTransport()
+    transport.exchange_wait = asyncio.Event()
+    transport.cancel_releases_exchange = False
+    sb = await sandbox(transport)
+    try:
+        async with sb.driver.connect(service="mcp", transport="mcp") as driver:
+            task = asyncio.create_task(driver.get_screen_size(sdk.GetScreenSizeInput(session=None)))
+            await asyncio.wait_for(transport.exchange_started.wait(), 2)
+            if finish == "cancel":
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+                closing = asyncio.create_task(sb.driver.close())
+            else:
+                closing = asyncio.create_task(sb.driver.close())
+            await asyncio.wait_for(transport.cancel_received.wait(), 2)
+            assert not transport.exchange_aborted
+            assert transport.sessions
+            assert not any(
+                (event[3] or {}).get("method") == "cua/driver/v1/close"
+                for event in transport.events
+            )
+            transport.exchange_wait.set()
+            await asyncio.wait_for(closing, 5)
+            if finish == "close":
+                with pytest.raises(sdk.DriverError.ActionInterrupted) as error:
+                    await task
+                assert error.value.completion == sdk.ActionCompletion.UNKNOWN
+            assert transport.exchange_finished.is_set()
+            assert not transport.exchange_aborted
+            assert not transport.sessions
+    finally:
+        transport.exchange_wait.set()
+        await sb.disconnect()
+
+
+async def test_shared_native_sandbox_rejects_use_from_another_event_loop(sdk):
+    transport = McpTransport()
+    sb = await sandbox(transport)
+    try:
+        async with sb.driver.connect(service="mcp", transport="mcp") as driver:
+
+            def other_loop():
+                async def get_session():
+                    return sb.driver.session_name(driver)
+
+                return asyncio.run(get_session())
+
+            from cua_sandbox.interfaces.driver import DriverConnectionError
+
+            with pytest.raises(DriverConnectionError, match="different event loop"):
+                await asyncio.to_thread(other_loop)
+    finally:
+        await sb.disconnect()
+
+
+async def test_shared_native_drain_timeout_is_bounded_and_does_not_abort(sdk, caplog):
+    transport = McpTransport()
+    transport.exchange_wait = asyncio.Event()
+    transport.cancel_releases_exchange = False
+    sb = await sandbox(transport)
+    try:
+        async with sb.driver.connect(service="mcp", transport="mcp") as driver:
+            task = asyncio.create_task(driver.get_screen_size(sdk.GetScreenSizeInput(session=None)))
+            await asyncio.wait_for(transport.exchange_started.wait(), 2)
+            await asyncio.wait_for(sb.driver.close(), 5)
+            assert not transport.exchange_aborted
+            assert transport.sessions
+            assert "cleanup is unconfirmed" in caplog.text
+            assert not any(
+                (event[3] or {}).get("method") == "cua/driver/v1/close"
+                for event in transport.events
+            )
+            transport.exchange_wait.set()
+            with pytest.raises(sdk.DriverError.ActionInterrupted) as error:
+                await task
+            assert error.value.completion == sdk.ActionCompletion.UNKNOWN
+    finally:
+        transport.exchange_wait.set()
+        await sb.disconnect()

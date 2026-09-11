@@ -2409,11 +2409,15 @@ fn unavailable_chromium_background(
     pid: u32,
     delivery: crate::input::delivery::DeliveryMode,
 ) -> Option<ToolResult> {
-    if chromium_background_must_refuse(
-        delivery.is_foreground(),
-        crate::wayland::is_inject_mode(),
-        is_chromium_embedder(pid),
-    ) {
+    if delivery.is_foreground() || !is_chromium_embedder(pid) {
+        return None;
+    }
+    // Chromium is an XInput2 client: real (non-synthetic) events from the MPX
+    // virtual master pointer/keyboard reach its renderer like the private
+    // compositor's do, so only the synthetic-XSendEvent-only host must refuse.
+    let focus_free_real_input =
+        crate::wayland::is_inject_mode() || crate::input::real_pointer_input_available();
+    if chromium_background_must_refuse(delivery.is_foreground(), focus_free_real_input, true) {
         Some(crate::input::delivery::background_unavailable_error(
             crate::input::delivery::BackgroundUnavailable::ChromiumInput,
         ))

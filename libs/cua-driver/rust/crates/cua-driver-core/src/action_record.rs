@@ -83,6 +83,10 @@ pub enum ActionTransport {
     LinuxPty,
     LinuxXSendEvent,
     LinuxXTest,
+    /// X11 XInput2 MPX virtual master pointer/keyboard fed by a uinput slave:
+    /// real (non-synthetic) events aimed at one window without touching the
+    /// user's core focus or pointer.
+    LinuxX11MpxUinput,
     LinuxLibei,
     LinuxWaylandVirtualPointer,
     LinuxCuaCompositorInject,
@@ -121,6 +125,7 @@ impl ActionTransport {
         Self::LinuxPty,
         Self::LinuxXSendEvent,
         Self::LinuxXTest,
+        Self::LinuxX11MpxUinput,
         Self::LinuxLibei,
         Self::LinuxWaylandVirtualPointer,
         Self::LinuxCuaCompositorInject,
@@ -159,6 +164,7 @@ impl ActionTransport {
             | Self::WindowsSetCursorPos
             | Self::WindowsShellExecute
             | Self::LinuxXTest
+            | Self::LinuxX11MpxUinput
             | Self::LinuxLibei
             | Self::LinuxWaylandVirtualPointer
             | Self::LinuxHyprlandForegroundInput
@@ -686,6 +692,7 @@ fn transport_from_legacy(
         "SetCursorPos" => ActionTransport::WindowsSetCursorPos,
         "atspi" | "wayland_atspi" | "x11_atspi" => ActionTransport::LinuxAtSpiAction,
         "pty" => ActionTransport::LinuxPty,
+        "mpx_uinput" => ActionTransport::LinuxX11MpxUinput,
         "x11_pixel" | "x11_pixel_fg" | "x11_xtest_fg" | "xtest" | "xtest_desktop" => {
             ActionTransport::LinuxXTest
         }
@@ -1029,6 +1036,7 @@ fn transport_name(transport: ActionTransport) -> &'static str {
         ActionTransport::LinuxPty => "linux_pty",
         ActionTransport::LinuxXSendEvent => "linux_x_send_event",
         ActionTransport::LinuxXTest => "linux_x_test",
+        ActionTransport::LinuxX11MpxUinput => "linux_x11_mpx_uinput",
         ActionTransport::LinuxLibei => "linux_libei",
         ActionTransport::LinuxWaylandVirtualPointer => "linux_wayland_virtual_pointer",
         ActionTransport::LinuxCuaCompositorInject => "linux_cua_compositor_inject",

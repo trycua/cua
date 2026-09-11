@@ -134,12 +134,26 @@ Lume seed, installs the exact committed source, and then delegates to the thin
 the optional installed Chrome/Edge browser matrix after the canonical repo-local
 harness matrix.
 
-The manual `.github/workflows/e2e-rust-macos.yml` workflow probes a fresh
-GitHub-hosted macOS 26 runner before hosted matrix support is enabled. It records
-the image, SIP state, desktop session, display geometry, and OCR-verified
-TextEdit window and display captures for one exact source SHA. Permission checks
-describe only the temporary probe process; a green probe process does not
-establish `CuaDriverLocal.app` TCC authorization or replace the Lume gate.
+The manual `.github/workflows/e2e-rust-macos.yml` workflow first probes a fresh
+GitHub-hosted macOS 26 runner. It records the image, SIP state, desktop session,
+display geometry, and OCR-verified TextEdit window and display captures for one
+exact source SHA. Probe permission checks describe only the temporary probe
+process. Dispatch only a reviewed commit SHA; the selected source is executable
+test code and the bootstrap uses the hosted runner's passwordless sudo policy.
+
+After that prerequisite passes, three fresh hosted runners execute the shared,
+native, and capture partitions through `macos/run-hosted-rust-e2e.sh`. Each
+runner refuses unexpected hosts or pre-existing app state, creates a temporary
+certificate-backed identity and Keychain, installs the exact source as
+`CuaDriverLocal.app`, seeds only its Accessibility and Screen Capture TCC rows,
+verifies the daemon-attributed permission result, and delegates to
+`macos/run-rust-e2e.sh`. The lane uploads bootstrap, structured result, log, and
+video evidence even on failure. The certificate is trusted only on that
+ephemeral runner and removed during cleanup. The lane is supplemental while the
+hosted image and temporary identity differ from the release-parity Lume seed; it
+does not replace the Lume gate. Hosted jobs omit the Lume-only encrypted history
+gate and `--experimental-history`; the desktop behavior matrix does not depend
+on them.
 
 Run the Wayland wrapper through `nix develop .#cua-driver-wayland-e2e`. It
 creates a pure Wayland session with Xwayland disabled and delegates every

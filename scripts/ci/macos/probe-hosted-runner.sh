@@ -14,7 +14,7 @@ PROBE_MESSAGE="probe did not complete"
 SWIFT_RESULT="${ARTIFACT_DIR}/window-capture.json"
 SYSTEM_LOG="${ARTIFACT_DIR}/system.txt"
 WINDOW_METADATA="${ARTIFACT_DIR}/window.json"
-PROBE_BINARY="${ARTIFACT_DIR}/verify-hosted-window"
+PROBE_BINARY="${RUNNER_TEMP:?RUNNER_TEMP is required}/verify-hosted-window"
 
 write_environment() {
   PROBE_STATUS="${PROBE_STATUS}" \

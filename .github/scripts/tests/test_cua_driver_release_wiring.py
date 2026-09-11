@@ -822,6 +822,9 @@ fi
         ci_workflow = self.read(
             ".github/workflows/ci-cua-driver-contract-clients.yml"
         )
+        compatibility_probe = self.read(
+            ".github/scripts/cua-driver-mcp-compat/verify.mjs"
+        )
         package = json.loads(
             self.read(
                 ".github/scripts/cua-driver-mcp-compat/package.json"
@@ -841,6 +844,15 @@ fi
         self.assertIn("npm run verify", workflow)
         self.assertIn("MCP discovery in pinned clients", ci_workflow)
         self.assertIn("Verify discovery without model or account calls", ci_workflow)
+        self.assertNotIn("codex.cmd", compatibility_probe)
+        self.assertIn(
+            'run(process.execPath, [CODEX_SCRIPT, "--version"]',
+            compatibility_probe,
+        )
+        self.assertIn(
+            "const child = spawn(\n    process.execPath,\n    [\n      CODEX_SCRIPT,",
+            compatibility_probe,
+        )
         self.assertEqual(
             package["dependencies"],
             {

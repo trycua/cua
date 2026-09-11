@@ -897,6 +897,66 @@ fn warp_master_pointer(
     Ok(())
 }
 
+/// Direct child of the root window under screen point `(x, y)`: the WM frame
+/// of a managed toplevel, or an override-redirect popup (menu, tooltip).
+fn root_child_under_point(
+    display: *mut x11::xlib::Display,
+    x: i32,
+    y: i32,
+) -> Option<x11::xlib::Window> {
+    let root = unsafe { x11::xlib::XDefaultRootWindow(display) };
+    let mut child: x11::xlib::Window = 0;
+    let mut dx = 0;
+    let mut dy = 0;
+    let rc = unsafe {
+        x11::xlib::XTranslateCoordinates(display, root, root, x, y, &mut dx, &mut dy, &mut child)
+    };
+    (rc != 0 && child != 0).then_some(child)
+}
+
+/// The root child (WM frame or the window itself) that contains `window`.
+fn root_child_of(
+    display: *mut x11::xlib::Display,
+    window: x11::xlib::Window,
+) -> Option<x11::xlib::Window> {
+    let root = unsafe { x11::xlib::XDefaultRootWindow(display) };
+    let previous_handler = unsafe { x11::xlib::XSetErrorHandler(Some(ignore_x_error)) };
+    let mut current = window;
+    let mut result = None;
+    for _ in 0..64 {
+        let mut root_ret: x11::xlib::Window = 0;
+        let mut parent: x11::xlib::Window = 0;
+        let mut children: *mut x11::xlib::Window = ptr::null_mut();
+        let mut count: std::os::raw::c_uint = 0;
+        let rc = unsafe {
+            x11::xlib::XQueryTree(
+                display,
+                current,
+                &mut root_ret,
+                &mut parent,
+                &mut children,
+                &mut count,
+            )
+        };
+        if !children.is_null() {
+            unsafe { x11::xlib::XFree(children as *mut _) };
+        }
+        if rc == 0 || parent == 0 {
+            break;
+        }
+        if parent == root {
+            result = Some(current);
+            break;
+        }
+        current = parent;
+    }
+    unsafe {
+        x11::xlib::XSync(display, 0);
+        x11::xlib::XSetErrorHandler(previous_handler);
+    }
+    result
+}
+
 /// XIAnyModifier (1u32 << 31). The x11 crate doesn't export it.
 const XI_ANY_MODIFIER: std::os::raw::c_int = 0x8000_0000u32 as std::os::raw::c_int;
 
@@ -1493,7 +1553,25 @@ pub fn send_virtual_pointer_click(cursor_id: &str, click: &VirtualPointerClick) 
             .ok_or_else(|| anyhow!("no-focus-steal click requires XInput/XI2 shield grabs"))?;
 
         let window = click.target_window as x11::xlib::Window;
-        install_shield_grab(display, ids.pointer_id, window, click.button)
+        // The shield grab must sit on the toplevel that will actually receive
+        // the press. With a menu open, the point is over an override-redirect
+        // popup, not the target window; a grab on the wrong window never
+        // freezes the press, the replay times out, and the click is lost.
+        let shield_window = match (
+            root_child_under_point(display, click.x, click.y),
+            root_child_of(display, window),
+        ) {
+            (Some(under), Some(frame)) if under != frame => {
+                tracing::debug!(
+                    target = window,
+                    under,
+                    "MPX click: shielding the popup under the point instead of the target"
+                );
+                under
+            }
+            _ => window,
+        };
+        install_shield_grab(display, ids.pointer_id, shield_window, click.button)
             .with_context(|| format!("shield grab failed for '{cursor_id}'"))?;
         // Run the press train under a guard so the shield is always removed,
         // even on an early error mid-train.
@@ -1528,7 +1606,7 @@ pub fn send_virtual_pointer_click(cursor_id: &str, click: &VirtualPointerClick) 
             }
             Ok(())
         })();
-        remove_shield_grab(display, ids.pointer_id, window, click.button);
+        remove_shield_grab(display, ids.pointer_id, shield_window, click.button);
         click_result
     })();
 

@@ -2014,14 +2014,10 @@ fn type_text_structured(path: &str, characters: usize, verified: bool) -> Value 
         "verified": verified,
         "effect": if verified { "confirmed" } else { "unverifiable" },
     });
-    if !verified && path != "key_events_fg" {
-        s["escalation"] = json!({
-            "recommended": "foreground",
-            "reason": "background insert could not be confirmed — re-call with \
-                       delivery_mode:\"foreground\" if a screenshot shows the text \
-                       didn't land."
-        });
-    }
+    // No escalation on a successful-but-unverified delivery: the public
+    // projection renders a foreground escalation as `delivery_failed`, which
+    // made models re-type text that had already landed. Refusals carry their own.
+    let _ = verified;
     s
 }
 
@@ -2510,6 +2506,45 @@ fn hyprland_foreground(delivery: crate::input::delivery::DeliveryMode) -> bool {
     delivery.is_foreground()
         && crate::wayland::wayland_input_enabled()
         && crate::wayland::hyprland::is_session()
+}
+
+/// AT-SPI roles whose `activate`/`press` action does not move the widget
+/// focus into them, so a following keystroke would land elsewhere; a real
+/// pointer click at their centre is what a user does.
+fn element_needs_real_click(role: &str) -> bool {
+    matches!(
+        role.trim().to_ascii_lowercase().as_str(),
+        "spin button"
+            | "text"
+            | "entry"
+            | "password text"
+            | "slider"
+            | "combo box"
+            | "editbar"
+            | "search box"
+            | "textbox"
+    )
+}
+
+/// `press_key` accepts `"alt+F4"` / `"ctrl+shift+t"` style keys: everything
+/// before the last `+` is a modifier. A bare `"+"` stays the plus key.
+fn split_key_combo(key: &str) -> (Vec<String>, String) {
+    if key.len() <= 1 || !key.contains('+') {
+        return (Vec::new(), key.to_owned());
+    }
+    let mut parts: Vec<&str> = key.split('+').collect();
+    let last = parts.pop().unwrap_or("");
+    let last = if last.is_empty() { "+" } else { last };
+    let modifiers: Vec<String> = parts
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .map(str::to_owned)
+        .collect();
+    if !modifiers.is_empty() && modifiers.iter().all(|m| is_modifier(m)) {
+        (modifiers, last.to_owned())
+    } else {
+        (Vec::new(), key.to_owned())
+    }
 }
 
 fn element_click_prefers_ax(
@@ -3969,7 +4004,18 @@ impl Tool for ClickTool {
                     "an exact window_id or window-bound element token is required",
                 );
             }
-            if element_click_prefers_ax(foreground_hyprland, button, count, !modifiers.is_empty()) {
+            // An AT-SPI action can open a menu or press a button, but it cannot
+            // give an entry / spin button / slider the widget focus a following
+            // type_text needs (GIMP spin scales, VS Code settings inputs). With
+            // the MPX real pointer available, click those like a user would.
+            let real_click_role = !delivery.is_foreground()
+                && !crate::wayland::wayland_input_enabled()
+                && crate::atspi::cache::cached_element(pid, xid_hint, idx)
+                    .is_some_and(|element| element_needs_real_click(&element.role))
+                && crate::input::real_pointer_input_available();
+            if !real_click_role
+                && element_click_prefers_ax(foreground_hyprland, button, count, !modifiers.is_empty())
+            {
                 let ax_xid = window_id_resolved;
                 let ax_result = match tokio::time::timeout(
                     ELEMENT_AX_BUDGET,
@@ -4084,8 +4130,10 @@ impl Tool for ClickTool {
                 return refusal;
             }
 
-            // The AX route was unavailable. Fall back to a target-addressed
+            // The AX route was unavailable. Fall back to a real MPX pointer
+            // click at the element (no focus steal), then to a target-addressed
             // X11 event for toolkits that accept it.
+            let cursor_id_for_fallback = cursor_id.clone();
             let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
                 let (xid2, lx, ly) = resolve_element_local_coords(pid, idx, xid_hint)?;
                 let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
@@ -4112,6 +4160,17 @@ impl Tool for ClickTool {
                             &modifier_refs,
                         )
                     })
+                } else if modifier_refs.is_empty()
+                    && !crate::wayland::wayland_input_enabled()
+                {
+                    x11_pixel_click_no_focus_steal(
+                        &cursor_id_for_fallback,
+                        xid2,
+                        lx as i32,
+                        ly as i32,
+                        button,
+                        count,
+                    )
                 } else {
                     crate::input::send_click_with_modifiers(
                         xid2,
@@ -4605,7 +4664,7 @@ impl Tool for TypeTextTool {
                 Err(error) => ToolResult::error(format!("Task error: {error}")),
             };
         }
-        let pid = args.u64_or("pid", 0) as u32;
+        let mut pid = args.u64_or("pid", 0) as u32;
         let text_raw = match args.require_str("text") {
             Ok(v) => v,
             Err(e) => return e,
@@ -4642,12 +4701,29 @@ impl Tool for TypeTextTool {
         let xid = match xid_opt {
             Some(x) => x,
             None => {
-                let windows =
-                    tokio::task::spawn_blocking(move || crate::x11::list_windows(Some(pid)))
-                        .await
-                        .unwrap_or_default();
-                match windows.first() {
-                    Some(w) => w.xid,
+                let windows = tokio::task::spawn_blocking(move || {
+                    crate::x11::list_windows(if pid == 0 { None } else { Some(pid) })
+                })
+                .await
+                .unwrap_or_default();
+                // pid omitted: the keys go to the active window, like a
+                // physical keyboard would, and the action adopts its pid.
+                let chosen = if pid == 0 {
+                    let active = crate::x11::active_window();
+                    windows
+                        .iter()
+                        .find(|w| Some(w.xid) == active && w.pid.is_some())
+                        .or_else(|| windows.iter().find(|w| w.is_on_screen && w.pid.is_some()))
+                } else {
+                    windows.first()
+                };
+                match chosen {
+                    Some(w) => {
+                        if pid == 0 {
+                            pid = w.pid.unwrap_or(0);
+                        }
+                        w.xid
+                    }
                     None => {
                         return ToolResult::error(format!(
                             "No windows found for pid {pid}. Provide window_id."
@@ -5396,12 +5472,14 @@ impl Tool for PressKeyTool {
                 Err(error) => ToolResult::error(format!("Task error: {error}")),
             };
         }
-        let pid = args.u64_or("pid", 0) as u32;
+        let mut pid = args.u64_or("pid", 0) as u32;
         let key = match args.require_str("key") {
             Ok(v) => v,
             Err(e) => return e,
         };
-        let mods: Vec<String> = args.str_array("modifiers");
+        let mut mods: Vec<String> = args.str_array("modifiers");
+        let (combo_mods, key) = split_key_combo(&key);
+        mods.extend(combo_mods);
 
         // Surface 6: resolve the element token/index into both its owning
         // window and exact child. Foreground delivery establishes child focus
@@ -5436,12 +5514,29 @@ impl Tool for PressKeyTool {
         let xid = match xid_opt {
             Some(x) => x,
             None => {
-                let windows =
-                    tokio::task::spawn_blocking(move || crate::x11::list_windows(Some(pid)))
-                        .await
-                        .unwrap_or_default();
-                match windows.first() {
-                    Some(w) => w.xid,
+                let windows = tokio::task::spawn_blocking(move || {
+                    crate::x11::list_windows(if pid == 0 { None } else { Some(pid) })
+                })
+                .await
+                .unwrap_or_default();
+                // pid omitted: the keys go to the active window, like a
+                // physical keyboard would, and the action adopts its pid.
+                let chosen = if pid == 0 {
+                    let active = crate::x11::active_window();
+                    windows
+                        .iter()
+                        .find(|w| Some(w.xid) == active && w.pid.is_some())
+                        .or_else(|| windows.iter().find(|w| w.is_on_screen && w.pid.is_some()))
+                } else {
+                    windows.first()
+                };
+                match chosen {
+                    Some(w) => {
+                        if pid == 0 {
+                            pid = w.pid.unwrap_or(0);
+                        }
+                        w.xid
+                    }
                     None => {
                         return ToolResult::error(format!(
                             "No windows found for pid {pid}. Provide window_id."
@@ -5786,7 +5881,7 @@ impl Tool for HotkeyTool {
                 Err(error) => ToolResult::error(format!("Task error: {error}")),
             };
         }
-        let pid = args.u64_or("pid", 0) as u32;
+        let mut pid = args.u64_or("pid", 0) as u32;
         let window_id_arg = args.opt_u64("window_id");
         let element_index_arg = args.opt_u64("element_index").map(|value| value as usize);
         let resolved = match cua_driver_core::element_token::resolve_element_args_wide(
@@ -5817,12 +5912,29 @@ impl Tool for HotkeyTool {
         let xid = match xid_opt {
             Some(x) => x,
             None => {
-                let windows =
-                    tokio::task::spawn_blocking(move || crate::x11::list_windows(Some(pid)))
-                        .await
-                        .unwrap_or_default();
-                match windows.first() {
-                    Some(w) => w.xid,
+                let windows = tokio::task::spawn_blocking(move || {
+                    crate::x11::list_windows(if pid == 0 { None } else { Some(pid) })
+                })
+                .await
+                .unwrap_or_default();
+                // pid omitted: the keys go to the active window, like a
+                // physical keyboard would, and the action adopts its pid.
+                let chosen = if pid == 0 {
+                    let active = crate::x11::active_window();
+                    windows
+                        .iter()
+                        .find(|w| Some(w.xid) == active && w.pid.is_some())
+                        .or_else(|| windows.iter().find(|w| w.is_on_screen && w.pid.is_some()))
+                } else {
+                    windows.first()
+                };
+                match chosen {
+                    Some(w) => {
+                        if pid == 0 {
+                            pid = w.pid.unwrap_or(0);
+                        }
+                        w.xid
+                    }
                     None => {
                         return ToolResult::error(format!(
                             "No windows found for pid {pid}. Provide window_id."
@@ -6346,7 +6458,7 @@ impl Tool for ScrollTool {
                 Err(error) => ToolResult::error(format!("Task error: {error}")),
             };
         }
-        let pid = match args.require_u32("pid") {
+        let mut pid = match args.require_u32("pid") {
             Ok(v) => v,
             Err(e) => return e,
         };
@@ -6388,12 +6500,29 @@ impl Tool for ScrollTool {
         let xid = match xid_opt {
             Some(x) => x,
             None => {
-                let windows =
-                    tokio::task::spawn_blocking(move || crate::x11::list_windows(Some(pid)))
-                        .await
-                        .unwrap_or_default();
-                match windows.first() {
-                    Some(w) => w.xid,
+                let windows = tokio::task::spawn_blocking(move || {
+                    crate::x11::list_windows(if pid == 0 { None } else { Some(pid) })
+                })
+                .await
+                .unwrap_or_default();
+                // pid omitted: the keys go to the active window, like a
+                // physical keyboard would, and the action adopts its pid.
+                let chosen = if pid == 0 {
+                    let active = crate::x11::active_window();
+                    windows
+                        .iter()
+                        .find(|w| Some(w.xid) == active && w.pid.is_some())
+                        .or_else(|| windows.iter().find(|w| w.is_on_screen && w.pid.is_some()))
+                } else {
+                    windows.first()
+                };
+                match chosen {
+                    Some(w) => {
+                        if pid == 0 {
+                            pid = w.pid.unwrap_or(0);
+                        }
+                        w.xid
+                    }
                     None => {
                         return ToolResult::error(format!(
                             "No windows found for pid {pid}. Provide window_id."
@@ -9925,7 +10054,7 @@ impl Tool for TypeTextCharsTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        let pid = args.u64_or("pid", 0) as u32;
+        let mut pid = args.u64_or("pid", 0) as u32;
         let text_raw = match args.require_str("text") {
             Ok(v) => v,
             Err(e) => return e,
@@ -9939,12 +10068,29 @@ impl Tool for TypeTextCharsTool {
         let xid = match xid_opt {
             Some(x) => x,
             None => {
-                let windows =
-                    tokio::task::spawn_blocking(move || crate::x11::list_windows(Some(pid)))
-                        .await
-                        .unwrap_or_default();
-                match windows.first() {
-                    Some(w) => w.xid,
+                let windows = tokio::task::spawn_blocking(move || {
+                    crate::x11::list_windows(if pid == 0 { None } else { Some(pid) })
+                })
+                .await
+                .unwrap_or_default();
+                // pid omitted: the keys go to the active window, like a
+                // physical keyboard would, and the action adopts its pid.
+                let chosen = if pid == 0 {
+                    let active = crate::x11::active_window();
+                    windows
+                        .iter()
+                        .find(|w| Some(w.xid) == active && w.pid.is_some())
+                        .or_else(|| windows.iter().find(|w| w.is_on_screen && w.pid.is_some()))
+                } else {
+                    windows.first()
+                };
+                match chosen {
+                    Some(w) => {
+                        if pid == 0 {
+                            pid = w.pid.unwrap_or(0);
+                        }
+                        w.xid
+                    }
                     None => {
                         return ToolResult::error(format!(
                             "No windows found for pid {pid}. Provide window_id."
@@ -11032,5 +11178,37 @@ mod background_budget_tests {
         let state = ToolState::new();
         *state.desktop_scale.lock().unwrap() = 1.5;
         assert_eq!(state.desktop_to_screen(281.0, 57.0), (421.5, 85.5));
+    }
+}
+
+#[cfg(test)]
+mod background_keyboard_route_tests {
+    use super::{element_needs_real_click, split_key_combo};
+
+    #[test]
+    fn key_combos_split_into_modifiers_and_key() {
+        assert_eq!(
+            split_key_combo("alt+F4"),
+            (vec!["alt".to_owned()], "F4".to_owned())
+        );
+        assert_eq!(
+            split_key_combo("ctrl+shift+t"),
+            (vec!["ctrl".to_owned(), "shift".to_owned()], "t".to_owned())
+        );
+        assert_eq!(split_key_combo("+"), (vec![], "+".to_owned()));
+        assert_eq!(split_key_combo("ctrl++"), (vec!["ctrl".to_owned()], "+".to_owned()));
+        assert_eq!(split_key_combo("Return"), (vec![], "Return".to_owned()));
+        // Not a modifier prefix: left untouched for the keysym resolver.
+        assert_eq!(split_key_combo("a+b"), (vec![], "a+b".to_owned()));
+    }
+
+    #[test]
+    fn focus_taking_roles_need_a_real_click() {
+        for role in ["spin button", "Text", "entry", "slider", "combo box"] {
+            assert!(element_needs_real_click(role), "{role}");
+        }
+        for role in ["menu item", "push button", "menu", "check box", "page tab"] {
+            assert!(!element_needs_real_click(role), "{role}");
+        }
     }
 }

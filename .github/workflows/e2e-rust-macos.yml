@@ -22,15 +22,16 @@ jobs:
     timeout-minutes: 20
     env:
       CUA_E2E_SOURCE_SHA: ${{ inputs.source_sha }}
-      CUA_MACOS_HOSTED_PROBE_DIR: ${{ runner.temp }}/cua-macos-hosted-probe
 
     steps:
       - name: Initialize evidence directory
         shell: bash
         run: |
-          mkdir -p "${CUA_MACOS_HOSTED_PROBE_DIR}"
+          artifact_dir="${RUNNER_TEMP}/cua-macos-hosted-probe"
+          echo "CUA_MACOS_HOSTED_PROBE_DIR=${artifact_dir}" >> "${GITHUB_ENV}"
+          mkdir -p "${artifact_dir}"
           printf 'requested_source_sha=%s\n' "${CUA_E2E_SOURCE_SHA}" \
-            > "${CUA_MACOS_HOSTED_PROBE_DIR}/request.txt"
+            > "${artifact_dir}/request.txt"
 
       - name: Validate requested source SHA
         shell: bash

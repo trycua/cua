@@ -114,9 +114,10 @@ export async function readResponseBody(response, maxResponseBytes) {
 }
 
 export async function executeFetchRequest(request, callerSignal, fetchImplementation = fetch) {
-  const timeout = request.timeoutSecs !== undefined && request.timeoutSecs !== null
-    ? createTimeoutSignal(Number(request.timeoutSecs) * 1_000)
-    : undefined;
+  const timeout =
+    request.timeoutSecs !== undefined && request.timeoutSecs !== null
+      ? createTimeoutSignal(Number(request.timeoutSecs) * 1_000)
+      : undefined;
   const combinedSignal = composeAbortSignals([callerSignal, timeout?.signal]);
   try {
     const response = await fetchImplementation(request.url, {

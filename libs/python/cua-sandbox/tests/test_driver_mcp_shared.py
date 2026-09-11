@@ -100,6 +100,7 @@ async def test_callback_preserves_bytes_headers_and_timeout(shared):
                 body=b"\xff\x00",
                 headers=[("x-test", "v")],
                 timeout=1.234,
+                max_response_bytes=16 * 1024 * 1024,
             ),
         )
     ]
@@ -109,6 +110,43 @@ async def test_callback_preserves_bytes_headers_and_timeout(shared):
         ("x-one", "b"),
     ]
     await connection.close()
+
+
+async def test_callback_accepts_response_exactly_at_limit(shared):
+    sdk, channels = shared
+    body = bytes(16 * 1024 * 1024)
+
+    async def request_service(service, **request):
+        assert service == "mcp"
+        assert request["max_response_bytes"] == len(body)
+        return httpx.Response(200, content=body)
+
+    transport = SimpleNamespace(_connected=True, request_service=request_service)
+    shared_channel(sdk, transport, "mcp", "principal")
+    request = SimpleNamespace(method="POST", path="/mcp", body=b"", headers=[], timeout_ms=1)
+
+    response = await channels[0].transport.send(request)
+
+    assert response.body == body
+
+
+async def test_callback_sanitizes_oversized_response(shared):
+    sdk, channels = shared
+    secret = b"private-response-fragment"
+
+    async def request_service(service, **request):
+        assert service == "mcp"
+        limit = request["max_response_bytes"]
+        return httpx.Response(200, content=secret + bytes(limit + 1 - len(secret)))
+
+    transport = SimpleNamespace(_connected=True, request_service=request_service)
+    shared_channel(sdk, transport, "mcp", "principal")
+    request = SimpleNamespace(method="POST", path="/mcp", body=b"", headers=[], timeout_ms=1)
+
+    with pytest.raises(RuntimeError, match="completion is unknown") as error:
+        await channels[0].transport.send(request)
+
+    assert secret.decode() not in str(error.value)
 
 
 async def test_callback_sanitizes_failure_and_preserves_cancellation(shared):

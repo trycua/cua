@@ -8,6 +8,8 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+_FLEET_DRIVER_MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+
 
 def shared_channel(sdk: Any, transport: Any, service: str, principal: str) -> Any:
     from cua_sandbox.interfaces.driver import DriverConnectionError
@@ -37,7 +39,10 @@ def shared_channel(sdk: Any, transport: Any, service: str, principal: str) -> An
                     body=request.body,
                     headers=[(header.name, header.value) for header in request.headers],
                     timeout=request.timeout_ms / 1000,
+                    max_response_bytes=_FLEET_DRIVER_MAX_RESPONSE_BYTES,
                 )
+                if len(response.content) > _FLEET_DRIVER_MAX_RESPONSE_BYTES:
+                    raise RuntimeError("Fleet Driver response exceeds the configured size limit")
                 return sdk.DriverServiceResponse(
                     status=response.status_code,
                     headers=[

@@ -1,7 +1,9 @@
 import base64
 import json
+from types import SimpleNamespace
 
 import pytest
+import cua_sandbox.transport.fleet as fleet_transport
 from cua_sandbox.transport.fleet import FleetTransport, build_http_request
 from fleet_sdk import HttpHeader, HttpRequest, HttpResponse, Sandbox
 
@@ -67,15 +69,53 @@ async def test_connect_rejects_missing_service():
 
 
 def test_build_http_request_constructs_the_record_through_the_builder():
-    bounded = build_http_request(
-        method="GET", url="https://service.invalid/status", timeout_secs=30
-    )
     unbounded = build_http_request(method="GET", url="https://service.invalid/status")
 
-    assert isinstance(bounded, HttpRequest)
+    assert isinstance(unbounded, HttpRequest)
+    assert (unbounded.method, unbounded.headers, unbounded.body) == ("GET", [], None)
+    assert unbounded.timeout_secs is None
+
+
+def test_build_http_request_forwards_response_limit_to_the_builder(monkeypatch):
+    class Builder:
+        def __init__(self):
+            self.request = SimpleNamespace(body=None, timeout_secs=None, max_response_bytes=None)
+
+        def method(self, value):
+            self.request.method = value
+            return self
+
+        def url(self, value):
+            self.request.url = value
+            return self
+
+        def headers(self, value):
+            self.request.headers = value
+            return self
+
+        def timeout_secs(self, value):
+            self.request.timeout_secs = value
+            return self
+
+        def max_response_bytes(self, value):
+            self.request.max_response_bytes = value
+            return self
+
+        def build(self):
+            return self.request
+
+    monkeypatch.setattr(fleet_transport, "HttpRequestBuilder", Builder)
+
+    bounded = build_http_request(
+        method="GET",
+        url="https://service.invalid/status",
+        timeout_secs=30,
+        max_response_bytes=4096,
+    )
+
     assert (bounded.method, bounded.headers, bounded.body) == ("GET", [], None)
     assert bounded.timeout_secs == 30
-    assert unbounded.timeout_secs is None
+    assert bounded.max_response_bytes == 4096
 
 
 @pytest.mark.asyncio
@@ -91,6 +131,45 @@ async def test_requests_are_bounded_by_the_transport_timeout():
 
     assert sdk.calls[0][3].timeout_secs == 30
     assert sdk.calls[1][3].timeout_secs == 1
+
+
+@pytest.mark.asyncio
+async def test_service_response_limit_is_forwarded_and_exact_limit_is_accepted(monkeypatch):
+    seen = []
+
+    def build_request(**request):
+        seen.append(request)
+        return SimpleNamespace(**request)
+
+    monkeypatch.setattr(fleet_transport, "build_http_request", build_request)
+    sdk = FakeSDK([response(body=b"four")])
+    transport = FleetTransport(sdk=sdk, bound=sandbox())
+    await transport.connect()
+
+    result = await transport.request_service(
+        "api", method="GET", path="/status", max_response_bytes=4
+    )
+
+    assert seen[0]["max_response_bytes"] == 4
+    assert result.content == b"four"
+
+
+@pytest.mark.asyncio
+async def test_service_response_over_limit_is_rejected_without_exposing_contents(monkeypatch):
+    monkeypatch.setattr(
+        fleet_transport, "build_http_request", lambda **request: SimpleNamespace(**request)
+    )
+    secret = b"private-response-fragment"
+    sdk = FakeSDK([response(body=secret)])
+    transport = FleetTransport(sdk=sdk, bound=sandbox())
+    await transport.connect()
+
+    with pytest.raises(RuntimeError, match="configured size limit") as error:
+        await transport.request_service(
+            "api", method="GET", path="/status", max_response_bytes=len(secret) - 1
+        )
+
+    assert secret.decode() not in str(error.value)
 
 
 @pytest.mark.asyncio

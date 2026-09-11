@@ -27,6 +27,7 @@ def build_http_request(
     headers: Optional[List[Any]] = None,
     body: Optional[bytes] = None,
     timeout_secs: Optional[int] = None,
+    max_response_bytes: Optional[int] = None,
 ) -> HttpRequest:
     """Construct ``fleet_sdk.HttpRequest`` through the builder API.
 
@@ -39,6 +40,8 @@ def build_http_request(
         builder = builder.body(body)
     if timeout_secs is not None:
         builder = builder.timeout_secs(timeout_secs)
+    if max_response_bytes is not None:
+        builder = builder.max_response_bytes(max_response_bytes)
     return builder.build()
 
 
@@ -93,6 +96,7 @@ class FleetTransport(Transport):
         body: bytes | None = None,
         headers: dict[str, str] | list[tuple[str, str]] | None = None,
         timeout: float | None = None,
+        max_response_bytes: int | None = None,
     ) -> httpx.Response:
         if name not in self._bound.services:
             raise ValueError(f"Fleet sandbox does not expose service {name!r}")
@@ -104,6 +108,7 @@ class FleetTransport(Transport):
             service_name=name,
             extra_headers=headers,
             timeout=timeout,
+            max_response_bytes=max_response_bytes,
         )
 
     async def create_signed_service_url(
@@ -139,6 +144,7 @@ class FleetTransport(Transport):
         service_name: str | None = None,
         extra_headers: dict[str, str] | list[tuple[str, str]] | None = None,
         timeout: float | None = None,
+        max_response_bytes: int | None = None,
     ) -> httpx.Response:
         assert self._connected, "Transport not connected"
         if body is not None and json_body is not None:
@@ -163,8 +169,11 @@ class FleetTransport(Transport):
                 headers=headers,
                 body=body,
                 timeout_secs=_whole_seconds(self._timeout if timeout is None else timeout),
+                max_response_bytes=max_response_bytes,
             ),
         )
+        if max_response_bytes is not None and len(result.body) > max_response_bytes:
+            raise RuntimeError("Fleet service response exceeds the configured size limit")
         request = httpx.Request(method, f"https://service.invalid{path}")
         return httpx.Response(
             result.status,

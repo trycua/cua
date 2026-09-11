@@ -94,5 +94,6 @@ def test_controller_registers_cua_driver_as_required_stdio_mcp() -> None:
 def test_guide_links_the_download_and_navigation_entry() -> None:
     guide = GUIDE.read_text()
     meta = META.read_text()
-    assert "https://cua.ai/scripts/openai-agents-fleet/run_openai_agents_fleet.py" in guide
+    assert "https://cua.ai/docs-assets/scripts/openai-agents-fleet/run_openai_agents_fleet.py" in guide
+    assert "https://cua.ai/scripts/openai-agents-fleet/" not in guide
     assert '"run-openai-agents-api-on-cloud-fleet"' in meta

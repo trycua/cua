@@ -514,3 +514,27 @@ Write-Host "    [Environment]::SetEnvironmentVariable('Path', `$new, 'User')"
 Write-Host ""
 Write-Host "  Then open a new PowerShell window for the change to take effect."
 Write-Host ""
+
+$LocalHome = if ($env:CUA_DRIVER_LOCAL_HOME) { $env:CUA_DRIVER_LOCAL_HOME } else { Join-Path $env:USERPROFILE ".cua-driver-local" }
+$LocalBinDir = if ($env:CUA_DRIVER_LOCAL_INSTALL_DIR) { $env:CUA_DRIVER_LOCAL_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA "Programs\Cua\cua-driver-local\bin" }
+$LocalCli = Join-Path $LocalBinDir "cua-driver-local.exe"
+$LocalMarker = Join-Path $LocalHome "packages\current\cua-driver-local.exe"
+$LocalCommand = Get-Command "cua-driver-local.exe" -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+$LocalSurvivor = if (Test-Path -LiteralPath $LocalCli) {
+    $LocalCli
+} elseif (Test-Path -LiteralPath $LocalMarker) {
+    $LocalMarker
+} elseif ($LocalCommand) {
+    $LocalCommand.Source
+} else {
+    $null
+}
+
+if ($LocalSurvivor) {
+    Write-Host "Note: a separate source-built cua-driver-local installation remains at $LocalSurvivor." -ForegroundColor Yellow
+    Write-Host "The cua-driver uninstaller intentionally leaves this local product untouched."
+    Write-Host "To remove it, run from your Cua checkout:"
+    Write-Host ""
+    Write-Host "  .\libs\cua-driver\scripts\uninstall-local.ps1"
+    Write-Host ""
+}

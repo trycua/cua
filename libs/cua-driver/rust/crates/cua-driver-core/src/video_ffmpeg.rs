@@ -15,7 +15,7 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use crate::video::{VideoBackend, VideoBackendFactory, VideoMetadata};
@@ -135,82 +135,51 @@ impl FfmpegVideoBackend {
     }
 }
 
-enum ShutdownOutcome {
-    Exited(ExitStatus),
-    TimedOut,
-}
-
 impl VideoBackend for FfmpegVideoBackend {
     fn stop(mut self: Box<Self>) -> anyhow::Result<VideoMetadata> {
         let elapsed = self.started_at.elapsed();
-        let shutdown_started = Instant::now();
-        let status_before_stop = self.child.try_wait();
-        let mut stdin_write_result = None;
-        let mut stdin_flush_result = None;
         if let Some(mut stdin) = self.child.stdin.take() {
-            stdin_write_result = Some(stdin.write_all(b"q\n"));
-            stdin_flush_result = Some(stdin.flush());
+            let _ = stdin.write_all(b"q\n");
+            let _ = stdin.flush();
         }
 
         let shutdown_timeout = Duration::from_millis(3000);
         let deadline = Instant::now() + shutdown_timeout;
-        let outcome = loop {
+        let result = loop {
             match self.child.try_wait()? {
-                Some(status) => break ShutdownOutcome::Exited(status),
+                Some(status) if status.success() => break Ok(()),
+                Some(status) => {
+                    let cause = status
+                        .code()
+                        .map_or_else(|| status.to_string(), |code| format!("code {code}"));
+                    break Err(anyhow::anyhow!("ffmpeg exited with {cause}"));
+                }
                 None if Instant::now() > deadline => {
-                    let kill_result = self.child.kill();
-                    let wait_result = self.child.wait();
-                    tracing::warn!(target: "recording",
-                        child_pid = self.child.id(),
-                        ?kill_result,
-                        ?wait_result,
-                        "ffmpeg cleanup after shutdown timeout");
-                    break ShutdownOutcome::TimedOut;
+                    let _ = self.child.kill();
+                    let _ = self.child.wait();
+                    break Err(anyhow::anyhow!(
+                        "ffmpeg shutdown timed out after {} ms",
+                        shutdown_timeout.as_millis()
+                    ));
                 }
                 None => std::thread::sleep(Duration::from_millis(80)),
             }
         };
-        let shutdown_elapsed = shutdown_started.elapsed();
-        let result = match outcome {
-            ShutdownOutcome::Exited(status) if status.success() => Ok(VideoMetadata {
-                path: self.output_path,
-                duration_ms: elapsed.as_millis() as u64,
-                finalized: true,
-            }),
-            ShutdownOutcome::Exited(status) => {
-                let cause = status
-                    .code()
-                    .map_or_else(|| status.to_string(), |code| format!("code {code}"));
-                Err(anyhow::anyhow!("ffmpeg exited with {cause}"))
+        if let Some(handle) = self.stderr_thread.take() {
+            let stderr = handle.join().unwrap_or_default();
+            if let Err(error) = &result {
+                tracing::warn!(target: "recording",
+                    %error,
+                    stderr_tail = %String::from_utf8_lossy(&stderr),
+                    "ffmpeg shutdown failed");
             }
-            ShutdownOutcome::TimedOut => Err(anyhow::anyhow!(
-                "ffmpeg shutdown timed out after {} ms",
-                shutdown_timeout.as_millis()
-            )),
-        };
-        if let Err(error) = &result {
-            tracing::warn!(target: "recording",
-                child_pid = self.child.id(),
-                %error,
-                ?status_before_stop,
-                ?stdin_write_result,
-                ?stdin_flush_result,
-                shutdown_ms = shutdown_elapsed.as_millis() as u64,
-                recording_ms = elapsed.as_millis() as u64,
-                "ffmpeg shutdown failed");
         }
-        let stderr = self
-            .stderr_thread
-            .take()
-            .and_then(|handle| handle.join().ok())
-            .unwrap_or_default();
-        if result.is_err() {
-            tracing::warn!(target: "recording",
-                child_pid = self.child.id(),
-                stderr_tail = %String::from_utf8_lossy(&stderr),
-                "ffmpeg shutdown stderr");
-        }
-        result
+        result?;
+        Ok(VideoMetadata {
+            path: self.output_path,
+            duration_ms: elapsed.as_millis() as u64,
+            finalized: true,
+        })
     }
 }
 

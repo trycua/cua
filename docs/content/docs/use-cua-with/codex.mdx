@@ -24,6 +24,16 @@ cua-driver skills install
 cua-driver skills status
 ```
 
+Cua Driver 0.28.0 serves the same release-matched skill through its stdio MCP
+endpoint. As of Codex 0.154.0, it can list and read those resources in a fresh
+session. Install the filesystem skill for older Codex versions or when you want
+an explicit local skill entry.
+
+Codex applies its own approval policy to MCP calls. Registration and remote
+skill discovery do not approve mutating actions; allow the requested Driver
+action in Codex when prompted or configure an appropriate Codex policy for the
+test environment.
+
 Continue with [Connect your agent to Cua Driver](/how-to-guides/driver/connect-your-agent#codex) and [Install the Cua Driver agent skill](/how-to-guides/driver/install-agent-skill).
 
 Then try a complete workflow: [build a map](/how-to-guides/recipes/build-and-inspect-a-map),

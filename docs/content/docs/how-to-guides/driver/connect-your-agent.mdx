@@ -73,6 +73,21 @@ cua-driver mcp-config --client <client>
 
 The generated reference is the source of truth for the complete roster and exact command shapes: [`cua-driver mcp-config`](/reference/cua-driver/cli-reference#cua-driver-mcp-config).
 
+## Protocol and embedded skill compatibility
+
+Cua Driver 0.28.0 and later supports the MCP `2026-07-28` revision over stdio.
+MCP protocol revisions use dates, so `2026-07-28` is the revision name.
+
+Modern clients can discover Cua Driver without `initialize` and can list and
+read its embedded `skill://cua-driver/` resources. Legacy clients continue to
+negotiate `2025-06-18` through `initialize` and receive the same Driver tools.
+The embedded skill does not grant desktop permissions or approve actions.
+
+Client support for MCP resources also does not guarantee native skill
+activation. Use the client notes below and [Install the Cua Driver agent
+skill](/how-to-guides/driver/install-agent-skill) when a filesystem skill is
+required.
+
 ## Claude Code
 
 Register the plain stdio server:
@@ -89,6 +104,11 @@ cua-driver mcp-config --client claude
 ```
 
 That profile exposes the same driver tools under the compatibility server name. It still runs Cua Driver over MCP; Anthropic's native computer-use API is separate.
+
+As of Claude Code 2.1.268, it can list and read the embedded Cua Driver resources
+when asked, but it does not add the remote skill to its native startup skill catalog.
+Install the filesystem skill when you want Claude Code to activate it as a
+skill.
 
 <Callout type="info" title="Using a local model">
   Claude Code can also act as the harness for a model served on the same machine. Follow [Run a
@@ -119,6 +139,10 @@ cua-driver skills status
 ```
 
 See [Install the Cua Driver agent skill](/how-to-guides/driver/install-agent-skill) for the ClawHub and direct-install paths.
+
+As of Codex 0.154.0, it can list and read Cua Driver's embedded skill through
+the MCP resource APIs. The filesystem install remains useful for older clients
+and for explicit local skill discovery.
 
 ## Prime Agent
 

@@ -4,8 +4,10 @@ The Rust `cua-driver mcp` endpoint supports modern MCP `2026-07-28` over stdio
 and retains the legacy `initialize` flow with version `2025-06-18`. Direct and
 daemon-backed stdio use the same protocol and skill catalog.
 
-This document describes the implementation in PR #3609. It is not a claim
-that an existing installed release contains these changes.
+This implementation shipped in Cua Driver 0.28.0 through PR #3609. MCP uses
+date-based protocol revisions: `2026-07-28` is the modern revision implemented
+here. The JSON-RPC `2.0` envelope and MCP SDK 2.x package versions are separate
+version numbers, so “MCP 2.0” is not a precise protocol revision name.
 
 ## Connect
 
@@ -86,6 +88,22 @@ Clients verify each resource's raw UTF-8 bytes against the manifest before
 using it. Reading a resource does not activate a skill. The host owns skill
 selection, content-bound consent, and any execution approval. A base MCP client
 may support tools and resource reads without supporting native skill loading.
+
+## Verified client behavior
+
+A clean macOS VM test with the released Cua Driver 0.28.0 established these
+client boundaries:
+
+- Codex 0.154.0 discovered and read the embedded skill through its MCP resource
+  APIs with the filesystem skill link absent, then used the Driver tools.
+- Claude Code 2.1.268 listed and read the embedded resources explicitly with
+  the filesystem skill link absent. It did not include the remote skill in its
+  native startup skill catalog, so filesystem installation remains the native
+  activation path for that client version.
+
+Both clients completed a background Calculator action while another app stayed
+active. Those runs verify client interoperability and resource access. They do
+not change the host-owned activation, consent, or action-approval boundaries.
 
 The Skills extension follows accepted SEP-2640 at
 `d6b31a03504c15677d49b922b6b6ace0ef65728d`; its upstream publication is still

@@ -139,6 +139,12 @@ jobs:
         run: |
           cargo test -p cua-driver --test e2e_environment_preflight_test --locked -- \
             --ignored --exact last_frame_extraction_handles_long_final_duration_and_invalid_input --nocapture
+      - name: Run X11 click delivery and timing regressions
+        working-directory: libs/cua-driver/rust
+        run: |
+          xvfb-run -a --server-args="-screen 0 640x480x24 -noreset" \
+            cargo test -p platform-linux --test click_input_x11 --locked -- \
+              --ignored --nocapture --test-threads=1
       - name: Run X11 overlay click-through regression
         working-directory: libs/cua-driver/rust
         run: |

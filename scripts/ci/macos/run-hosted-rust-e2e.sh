@@ -256,7 +256,6 @@ defaults write "${SCREEN_CAPTURE_APPROVALS}" "${SCREEN_CAPTURE_CLIENT}" -dict \
   kScreenCaptureApprovalLastAlerted -date "3024-01-01 00:00:00 +0000" \
   kScreenCaptureApprovalLastUsed -date "3024-01-01 00:00:00 +0000"
 killall -HUP replayd >/dev/null 2>&1 || true
-killall -u "${CURRENT_USER}" cfprefsd >/dev/null 2>&1 || true
 defaults read "${SCREEN_CAPTURE_APPROVALS}" "${SCREEN_CAPTURE_CLIENT}" \
   > "${BOOTSTRAP_DIR}/screen-capture-approval.txt"
 grep -Fq "kScreenCaptureApprovalLastAlerted" \
@@ -283,7 +282,7 @@ open -n -g "${LOCAL_APP}" --args \
 DAEMON_STARTED=1
 
 PERMISSIONS_READY=0
-for _ in {1..20}; do
+for _ in {1..60}; do
   if "${INSTALLED_BIN}" --socket "${DAEMON_SOCKET}" permissions status --json \
       > "${BOOTSTRAP_DIR}/permissions.json" 2> "${BOOTSTRAP_DIR}/permissions.err" \
       && jq -e '

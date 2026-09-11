@@ -580,8 +580,9 @@ fn apply_page_occlusion(nodes: &mut [SemanticNode], dom: &DomIndex, layout: &Lay
             continue;
         };
         let covered = layout.nodes.iter().any(|(&backend, overlay)| {
+            // Most layout nodes cannot cover this control. Reject them before
+            // walking either DOM ancestry chain on large documents.
             if backend == target_backend
-                || dom.shares_dom_branch(backend, target_backend)
                 || overlay
                     .paint_order
                     .is_none_or(|paint| paint <= target_paint)
@@ -600,6 +601,7 @@ fn apply_page_occlusion(nodes: &mut [SemanticNode], dom: &DomIndex, layout: &Lay
             overlay
                 .bounds
                 .is_some_and(|bounds| bounds.has_area() && bounds.covers(target_bounds))
+                && !dom.shares_dom_branch(backend, target_backend)
         });
         if covered {
             node.visibility = BrowserVisibility::PageOccluded;
@@ -1359,6 +1361,55 @@ mod tests {
         let page = document.page(0, 1, None, None);
         assert_eq!(page.selected[0].name.as_deref(), Some("Reply"));
         assert_eq!(page.next_offset, Some(1));
+    }
+
+    #[test]
+    fn large_static_layout_does_not_occlude_visible_controls() {
+        let mut dom = DomIndex::default();
+        let mut layout = LayoutIndex::default();
+        for backend in 1..=4096 {
+            dom.nodes.insert(
+                backend,
+                DomMeta {
+                    parent_backend_node_id: (backend % 32 != 1).then_some(backend - 1),
+                    ..Default::default()
+                },
+            );
+            layout.nodes.insert(
+                backend,
+                LayoutMeta {
+                    bounds: Some(Rect {
+                        x: 0.0,
+                        y: 0.0,
+                        width: 800.0,
+                        height: 600.0,
+                    }),
+                    paint_order: Some(if backend <= 64 { 1 } else { 2 }),
+                    styles: HashMap::from([("position".to_owned(), "static".to_owned())]),
+                    ..Default::default()
+                },
+            );
+        }
+        let mut nodes = (1..=64)
+            .map(|backend| SemanticNode {
+                ax_id: backend.to_string(),
+                parent_ax_id: None,
+                child_ax_ids: Vec::new(),
+                backend_node_id: Some(backend),
+                role: "button".to_owned(),
+                name: Some(format!("Control {backend}")),
+                value: None,
+                states: BTreeMap::new(),
+                frame: frame(),
+                visibility: BrowserVisibility::InViewport,
+                actions: vec![BrowserActionKind::Click],
+                document_order: backend as usize,
+            })
+            .collect::<Vec<_>>();
+        apply_page_occlusion(&mut nodes, &dom, &layout);
+        assert!(nodes
+            .iter()
+            .all(|node| node.visibility == BrowserVisibility::InViewport));
     }
 
     #[test]

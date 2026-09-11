@@ -163,6 +163,7 @@ pub(crate) struct SemanticPage {
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct SemanticDocument {
+    pub(crate) title: Option<String>,
     pub(crate) nodes: Vec<SemanticNode>,
     pub(crate) css_hidden_dom_count: usize,
     pub(crate) unprovable_frame_count: usize,
@@ -454,6 +455,35 @@ pub(crate) fn build_layout_index(snapshot: &Value) -> LayoutIndex {
     out
 }
 
+pub(crate) fn snapshot_document_title(snapshot: &Value, root: &Value) -> Option<String> {
+    let strings = snapshot.get("strings")?.as_array()?;
+    let document = snapshot.get("documents")?.as_array()?.first()?;
+    let string_at = |field: &str| {
+        let index = usize::try_from(document.get(field)?.as_u64()?).ok()?;
+        strings.get(index)?.as_str()
+    };
+    // The tab's cached title can belong to the page that was bound before
+    // navigation. Use the collected document, never a child frame or a label
+    // from accessibility, and omit the title if its identity cannot be matched.
+    if document
+        .get("nodes")?
+        .get("backendNodeId")?
+        .as_array()?
+        .first()?
+        .as_i64()?
+        != root.get("backendNodeId")?.as_i64()?
+        || string_at("documentURL")? != root.get("documentURL")?.as_str()?
+    {
+        return None;
+    }
+    if let Some(frame_id) = root.get("frameId").and_then(Value::as_str) {
+        if string_at("frameId")? != frame_id {
+            return None;
+        }
+    }
+    string_at("title").map(str::to_owned)
+}
+
 pub(crate) fn parse_viewport(metrics: &Value) -> Viewport {
     let viewport = metrics
         .get("cssVisualViewport")
@@ -558,6 +588,7 @@ pub(crate) fn compose_accessibility_tree(
     apply_page_occlusion(&mut nodes, dom, layout);
     remove_redundant_static_text(&mut nodes);
     SemanticDocument {
+        title: None,
         nodes,
         css_hidden_dom_count: dom.css_hidden_count,
         unprovable_frame_count: 0,
@@ -1160,6 +1191,62 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn document_title_requires_matching_root_metadata() {
+        let root =
+            json!({"backendNodeId": 7, "documentURL": "https://fixture.test/", "frameId": "MAIN"});
+        let snapshot = json!({
+            "strings": ["https://fixture.test/", "MAIN", "Current title", "CHILD"],
+            "documents": [{"documentURL": 0, "frameId": 1, "title": 2,
+                "nodes": {"backendNodeId": [7]}}]
+        });
+        assert_eq!(
+            snapshot_document_title(&snapshot, &root).as_deref(),
+            Some("Current title")
+        );
+        for (field, value) in [
+            ("title", json!(-1)),
+            ("title", json!(999)),
+            ("title", json!("unindexed title")),
+            ("documentURL", json!(3)),
+            ("frameId", json!(3)),
+            ("nodes", json!({"backendNodeId": [8]})),
+        ] {
+            let mut changed = snapshot.clone();
+            changed["documents"][0][field] = value;
+            assert_eq!(snapshot_document_title(&changed, &root), None, "{field}");
+        }
+        let mut missing = snapshot.clone();
+        missing["documents"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("title");
+        assert_eq!(snapshot_document_title(&missing, &root), None);
+        let mut empty = snapshot;
+        empty["strings"][2] = json!("");
+        assert_eq!(snapshot_document_title(&empty, &root).as_deref(), Some(""));
+    }
+
+    #[test]
+    fn document_title_does_not_select_an_embedded_document() {
+        let root =
+            json!({"backendNodeId": 7, "documentURL": "https://fixture.test/", "frameId": "MAIN"});
+        let snapshot = json!({
+            "strings": ["https://fixture.test/", "MAIN", "Main title", "CHILD", "Child title"],
+            "documents": [
+                {"documentURL": 0, "frameId": 1, "title": 2, "nodes": {"backendNodeId": [7]}},
+                {"documentURL": 0, "frameId": 3, "title": 4, "nodes": {"backendNodeId": [8]}}
+            ]
+        });
+        assert_eq!(
+            snapshot_document_title(&snapshot, &root).as_deref(),
+            Some("Main title")
+        );
+        let mut reordered = snapshot;
+        reordered["documents"].as_array_mut().unwrap().reverse();
+        assert_eq!(snapshot_document_title(&reordered, &root), None);
+    }
 
     #[test]
     fn file_inputs_expose_upload_instead_of_text_typing() {

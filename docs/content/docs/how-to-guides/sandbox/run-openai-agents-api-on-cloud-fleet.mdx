@@ -1,0 +1,239 @@
+---
+title: Run OpenAI Agents API on Cua Cloud Fleet
+description: Connect an OpenAI Agents API self-hosted environment to a claimed Cua Cloud Fleet Linux desktop.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Use this guide to run an OpenAI Agents API `self_hosted` environment inside a
+Cua Cloud Fleet VM. A Python controller creates a session, claims a Linux
+desktop, starts `codex exec-server` in the VM, and gives the agent access to
+Cua Driver through a local stdio MCP server.
+
+```text
+OpenAI Agents API control plane
+          |
+          | outbound executor connection
+          v
+codex exec-server in a claimed Cua Fleet VM
+          |
+          +-- shell and workspace files
+          +-- Cua Driver stdio MCP
+          +-- XFCE/X11 desktop and browser
+```
+
+<Callout type="warn">
+  This is an application-managed integration, not a built-in OpenAI sandbox provider. Your
+  controller owns the mapping between each OpenAI session and Fleet claim, and it must clean up
+  both resources. Deleting an OpenAI session does not release Fleet compute.
+</Callout>
+
+## Prerequisites
+
+You need:
+
+- Python `>=3.11,<3.14` and [`uv`](https://docs.astral.sh/uv/);
+- Cua Fleet credentials that can create pools and claims;
+- an OpenAI application API key with `api.agents.read`, `api.agents.write`, and
+  `api.responses.write` permissions; and
+- a separate OpenAI environment key with only
+  `api.agents.environments.connect` permission.
+
+Create the restricted key in the OpenAI Platform
+[`Agents` environment-key view](https://platform.openai.com/agents?tab=environments&environment_view=keys).
+OpenAI requires the application and environment keys to belong to the same
+organization, project, and user or service account.
+
+The controller uses this immutable public Linux desktop image:
+
+```text
+public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04@sha256:80fff8a40f217a460cef7a60161adb3899eabd02c3451f18926b84d1f81b8da2
+```
+
+It boots Ubuntu 24.04 with XFCE on X11 and exposes the Cua computer server as
+the Fleet `server` service on port `8000`.
+
+## Configure credentials
+
+Authenticate to Cua Fleet with a workload token:
+
+```bash
+export FLEETS_TOKEN="<your-cua-access-token>"
+```
+
+Or use Cua OAuth client credentials:
+
+```bash
+export CUA_CLIENT_ID="<your-cua-client-id>"
+export CUA_CLIENT_SECRET="<your-cua-client-secret>"
+```
+
+Export the two OpenAI keys separately:
+
+```bash
+export OPENAI_API_KEY="<your-application-api-key>"
+export CODEX_API_KEY="<your-restricted-environment-key>"
+```
+
+The controller keeps `OPENAI_API_KEY` outside the VM. It transfers only
+`CODEX_API_KEY` through the Fleet file API to a mode-`600` temporary file,
+starts the executor, and removes the file immediately. Agent-generated code
+can still read the executor process environment. The restricted key limits the
+impact of that access because it cannot create sessions or make model calls.
+
+Keep all credentials in environment variables or a secret manager. Do not
+store them in the image or commit them to source control.
+
+## Run the controller
+
+Download the verified controller:
+
+```bash
+curl -fsSLO https://cua.ai/scripts/openai-agents-fleet/run_openai_agents_fleet.py
+```
+
+Run the controller. It generates a unique disposable pool name for each run:
+
+```bash
+uv run run_openai_agents_fleet.py
+```
+
+The script performs a complete validation sequence:
+
+1. It creates a Fleet pool and claim with two-hour and one-hour TTL fallbacks.
+2. It installs pinned Cua Driver and Codex CLI versions in the disposable VM.
+3. It creates an OpenAI `self_hosted` session and starts a detached executor.
+4. In the first turn, it creates and reads back the artifact, then uses Cua
+   Driver MCP to launch an XFCE terminal, take two exact window snapshots, and
+   click **File** and **Close Window** with fresh snapshot-bound targets.
+5. It stops the executor, observes the disconnect, submits a second turn, and
+   observes OpenAI request the original environment connection.
+6. It reconnects the same environment ID and reads the same artifact again.
+7. It retrieves `/workspace/outputs/openai-cua-fleet-e2e.txt` through the Fleet
+   file API before deleting the OpenAI session, claim, and pool.
+
+A passing run ends with output similar to this:
+
+```text
+Executor connection: PASS
+Cua Driver MCP evidence: PASS
+Executor disconnect observation: PASS
+Same-environment reconnect: PASS
+Artifact retrieval: PASS (.../openai-cua-fleet-e2e.txt)
+OpenAI session, Fleet claim, and Fleet pool cleanup: PASS
+```
+
+Open the downloaded artifact and confirm that it contains:
+
+```text
+OPENAI AGENTS API ON CUA CLOUD FLEET PASSED
+```
+
+## Understand the lifecycle
+
+The controller uses one Fleet claim for one OpenAI environment ID. Reconnecting
+starts a new executor process with the original `session.environment.id` and
+`session.environment.remote_url`; it does not create a second claim.
+
+```text
+OpenAI session/environment ID
+          |
+          | stored application mapping
+          v
+Cua Fleet pool + claim
+          |
+          +-- detached executor PID and logs
+          +-- workspace files
+          +-- output files retrieved before release
+```
+
+An Agents API event stream reports connection changes and turn outcomes. The
+controller waits for `agent.session.environment.connected` before submitting
+the first turn and checks each root turn for `completed`, `failed`, or
+`cancelled`. After the intentional disconnect, it submits the second turn and
+waits for `agent.session.requires_action` with an `environment_connection`
+action before restarting the executor. It does not treat an idle event as
+success.
+
+The example deletes its pool after every run. For a service, keep a reusable
+pool and create one claim per active session. Persist the session-to-claim
+mapping in a transactional store, make environment startup idempotent, and
+reconcile orphaned resources after controller restarts.
+
+## Retrieve files before cleanup
+
+The OpenAI Artifacts API does not publish files from `self_hosted`
+environments. Ask the agent to write outputs to known paths, then use
+`sandbox.files.read_bytes()` or `sandbox.files.download()` while the Fleet
+claim is still active.
+
+Retrieve every required output before either of these actions:
+
+- releasing the Fleet claim, which returns the VM to its pool and resets its
+  disposable disk overlay; or
+- deleting the pool, which removes its warm capacity and namespace.
+
+## Production hardening
+
+Before using this integration for production workloads:
+
+- publish a private, pinned image with Cua Driver and Codex CLI preinstalled;
+- run the executor as a dedicated non-root user;
+- store the environment key in a workload secret service and inject it only
+  for executor startup;
+- restrict egress to `api.openai.com`,
+  `codex-cloud-environments.chatgpt.com`, and workload-specific destinations;
+- keep exactly one controller responsible for each session-to-claim mapping;
+- supervise executor health separately from the OpenAI event stream;
+- coordinate shutdown with incoming turns and recheck session state before
+  releasing compute;
+- retrieve required files before release and define retention for logs and
+  screenshots; and
+- test cancellation, process crashes, controller restarts, connection expiry,
+  and cleanup failures.
+
+OpenAI can send agent-required content through its control plane, including
+prompts, file contents, shell output, MCP tool results, and screenshots.
+Running the executor on Fleet keeps the execution environment in the claimed
+VM; it does not make the OpenAI agent harness or model inference self-hosted.
+
+## Scale from zero
+
+The example provisions before it submits work. A demand-driven integration can
+instead subscribe to `agent.session.action_required` webhooks whose required
+action is `environment_connection`.
+
+A production webhook controller must:
+
+1. Verify the OpenAI webhook signature and durably queue the event.
+2. Retrieve the session and confirm that it still needs an environment.
+3. Atomically resolve or create the session-to-claim mapping.
+4. Claim Fleet capacity and start or reconnect the executor.
+5. Release compute for sessions that remain failed.
+
+Return a successful webhook response only after the event is durably queued.
+Do not start a second claim for duplicate deliveries. OpenAI waits up to five
+minutes for an input-time environment connection, so size Fleet warm capacity
+and controller timeouts accordingly.
+
+## Troubleshooting
+
+| Symptom | Check |
+| --- | --- |
+| Executor exits with `missing required scope api.agents.environments.connect` | Use a separate environment key from the OpenAI Agents environment-key view, not the application key |
+| Session remains pending | Check the executor log in `/run/cua-agents/executor.log`, both allowed OpenAI hosts, and the environment ID and remote URL mapping |
+| Required MCP initialization fails | Confirm `/root/.local/bin/cua-driver` exists, `DISPLAY` points to the XFCE X11 session and appears in `transport.env_vars`, and the stdio MCP `cwd` is `/workspace` |
+| Fleet claim never becomes ready | Verify Cua credentials, pool-name uniqueness, image access, and the `server` service on port `8000` |
+| Reconnect creates an empty workspace | Reconnect the original claim; a replacement VM does not restore files unless you use provider storage or snapshots |
+| Output is missing after cleanup | Self-hosted files must be retrieved through Fleet before the claim is released |
+| Compute remains after deleting the OpenAI session | Expected: OpenAI session deletion and Fleet claim release are separate operations |
+
+## Related documentation
+
+- [Create a sandbox pool with Python](/how-to-guides/sandbox/create-pool-with-python)
+- [Pass secrets into a sandbox](/how-to-guides/sandbox/secrets)
+- [Run sandboxes in parallel](/how-to-guides/sandbox/scale-out)
+- [OpenAI self-hosted sandboxes](https://developers.openai.com/api/docs/guides/agents-api/environments/self-hosted)
+- [OpenAI sandbox lifecycle](https://developers.openai.com/api/docs/guides/agents-api/environments/lifecycle)
+- [OpenAI MCP connections](https://developers.openai.com/api/docs/guides/agents-api/tools/mcp)
+- [OpenAI files and artifacts](https://developers.openai.com/api/docs/guides/agents-api/environments/files)

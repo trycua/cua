@@ -1252,6 +1252,7 @@ dependencies = [
  "cua-driver-contract",
  "cua-driver-core",
  "cursor-overlay",
+ "oo7",
  "platform-linux",
  "platform-macos",
  "platform-windows",
@@ -1293,14 +1294,6 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "cua-embedded-async-io-fixture"
-version = "0.26.1"
-dependencies = [
- "cua-driver-sdk",
- "oo7",
 ]
 
 [[package]]

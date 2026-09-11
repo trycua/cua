@@ -3,7 +3,7 @@ name: "CI: Rust Linux unit"
 on:
   pull_request:
     paths:
-      - "libs/cua-driver/rust/crates/cua-driver-sdk/tests/fixtures/async-io/**"
+      - "libs/cua-driver/rust/crates/cua-driver-sdk/**"
       - "libs/cua-driver/rust/.cargo/**"
       - "libs/cua-driver/rust/Cargo.toml"
       - "libs/cua-driver/rust/Cargo.lock"
@@ -24,7 +24,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "libs/cua-driver/rust/crates/cua-driver-sdk/tests/fixtures/async-io/**"
+      - "libs/cua-driver/rust/crates/cua-driver-sdk/**"
       - "libs/cua-driver/rust/.cargo/**"
       - "libs/cua-driver/rust/Cargo.toml"
       - "libs/cua-driver/rust/Cargo.lock"
@@ -133,7 +133,7 @@ jobs:
         run: cargo test -p cua-driver -p cua-driver-contract -p cua-driver-core -p cua-driver-testkit -p cursor-overlay -p cursor-theme-cli -p platform-linux --all-targets --locked
       - name: Compile and link an async-io embedded host
         working-directory: libs/cua-driver/rust
-        run: cargo run -p cua-embedded-async-io-fixture --locked
+        run: cargo test -p cua-driver-sdk --test async_io_embedding --locked
       - name: Verify final-frame extraction without a desktop
         working-directory: libs/cua-driver/rust
         run: |

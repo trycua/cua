@@ -1,9 +1,0 @@
-[package]
-name = "cua-embedded-async-io-fixture"
-version.workspace = true
-edition = "2021"
-publish = false
-
-[target.'cfg(target_os = "linux")'.dependencies]
-cua-driver-sdk = { path = "../../.." }
-oo7 = { version = "=0.6.0", default-features = false, features = ["async-std", "native_crypto"] }

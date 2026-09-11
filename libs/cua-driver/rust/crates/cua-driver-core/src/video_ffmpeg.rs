@@ -138,51 +138,47 @@ impl FfmpegVideoBackend {
 impl VideoBackend for FfmpegVideoBackend {
     fn stop(mut self: Box<Self>) -> anyhow::Result<VideoMetadata> {
         let elapsed = self.started_at.elapsed();
-        let finalized;
-
         if let Some(mut stdin) = self.child.stdin.take() {
             let _ = stdin.write_all(b"q\n");
             let _ = stdin.flush();
         }
 
-        let deadline = Instant::now() + Duration::from_millis(3000);
-        loop {
+        let shutdown_timeout = Duration::from_millis(3000);
+        let deadline = Instant::now() + shutdown_timeout;
+        let result = loop {
             match self.child.try_wait()? {
+                Some(status) if status.success() => break Ok(()),
                 Some(status) => {
-                    finalized = status.success();
-                    break;
+                    let cause = status
+                        .code()
+                        .map_or_else(|| status.to_string(), |code| format!("code {code}"));
+                    break Err(anyhow::anyhow!("ffmpeg exited with {cause}"));
                 }
-                None => {
-                    if Instant::now() > deadline {
-                        // Polite shutdown stalled — force kill. mp4 will lack
-                        // a moov atom and won't be playable; `finalized:
-                        // false` tells the caller.
-                        let _ = self.child.kill();
-                        let _ = self.child.wait();
-                        finalized = false;
-                        break;
-                    }
-                    std::thread::sleep(Duration::from_millis(80));
+                None if Instant::now() > deadline => {
+                    let _ = self.child.kill();
+                    let _ = self.child.wait();
+                    break Err(anyhow::anyhow!(
+                        "ffmpeg shutdown timed out after {} ms",
+                        shutdown_timeout.as_millis()
+                    ));
                 }
+                None => std::thread::sleep(Duration::from_millis(80)),
+            }
+        };
+        if let Some(handle) = self.stderr_thread.take() {
+            let stderr = handle.join().unwrap_or_default();
+            if let Err(error) = &result {
+                tracing::warn!(target: "recording",
+                    %error,
+                    stderr_tail = %String::from_utf8_lossy(&stderr),
+                    "ffmpeg shutdown failed");
             }
         }
-
-        if !finalized {
-            if let Some(handle) = self.stderr_thread.take() {
-                if let Ok(buf) = handle.join() {
-                    let tail = String::from_utf8_lossy(&buf);
-                    tracing::warn!(target: "recording",
-                        "ffmpeg did not finalize cleanly. Last stderr tail:\n{tail}");
-                }
-            }
-        } else if let Some(handle) = self.stderr_thread.take() {
-            let _ = handle.join();
-        }
-
+        result?;
         Ok(VideoMetadata {
             path: self.output_path,
             duration_ms: elapsed.as_millis() as u64,
-            finalized,
+            finalized: true,
         })
     }
 }

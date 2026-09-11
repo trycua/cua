@@ -868,7 +868,8 @@ fi
                     "mouse_button_up",
                     "mouse_drag",
                     "parallel_mouse_drag",
-                ]
+                ],
+                "win32": ["debug_window_info"],
             },
         )
 

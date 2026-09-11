@@ -11,9 +11,11 @@ the snapshot invariant, MCP-vs-CLI choice, agent cursor overlay, and
 recording flow are identical. The launch, click, and accessibility-
 tree mechanics in this file replace the macOS ones.
 
-## The no-foreground contract — read this first
+## Background window delivery
 
-**The user's frontmost app MUST NOT change.** Users pay for the right
+**Background window actions must preserve the user's frontmost app.**
+Foreground and desktop actions follow the authorization boundary in
+[RUNTIME.md](RUNTIME.md#foreground-boundary). Users pay for the right
 to keep typing in their editor while an agent drives another app in
 the background. Violate this rule and every other nice property the
 driver gives you (no cursor warp, no taskbar flash, no window
@@ -31,7 +33,7 @@ strict no-foreground:
 | `delivery_mode`          | Behavior on Windows                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `"background"` (DEFAULT) | Never fronts and **never raises/restacks** the target — macOS-aligned (mirrors CGEvent-to-pid). **Pixel clicks**: a UIA hit-test at the point first (accessibility-channel Invoke — works on UWP / WinUI3 / Win11 packaged apps, no flash); if that misses, coordinate-injected pen/touch, **but only when the target is the _visible_ window at that point**; PostMessage for plain Win32. It returns a structured `background_unavailable` error — rather than raising or fronting — when the target is **occluded** at the point, or the event kind is known-dropped (Chromium DOM mouse + key-combos, GTK buttons, VCL/LibreOffice accelerators, terminal / WPF text with no `element_index`). **No foreground swap and no z-order raise, ever.** |
-| `"foreground"`           | SendInput with brief `SetForegroundWindow(target)` → restore. The explicit, agent-chosen rung where fronting IS allowed — required to reach occluded targets, Chromium DOM content, GTK buttons, VCL accelerators, WPF drag, terminals, and canvas / custom-drawn surfaces with no UIA peer. Implemented for **every** input tool — `type_text` (SendInput Unicode via `send_text_synthesized`) and `scroll` (SendInput wheel via `send_wheel_synthesized`) included. The activation and restoration are scoped to that action.                                                                                                                                                                                                            |
+| `"foreground"`           | SendInput with brief `SetForegroundWindow(target)` → restore. The explicit, agent-chosen rung where fronting IS allowed — required to reach occluded targets, Chromium DOM content, GTK buttons, VCL accelerators, WPF drag, terminals, and canvas / custom-drawn surfaces with no UIA peer. Implemented for **every** input tool — `type_text` (SendInput Unicode via `send_text_synthesized`) and `scroll` (SendInput wheel via `send_wheel_synthesized`) included. The activation and restoration are scoped to that action.                                                                                                                                                                                                                       |
 
 > **macOS is the source of truth — `background` never alters the screen.**
 > Earlier Windows builds "cheated" in background with three tricks that this
@@ -97,7 +99,7 @@ macOS / X11, where a background pixel click can still land in the background.)
 
 The normal flow when an agent gets that error:
 
-1. Reissue only the refused action with `delivery_mode:"foreground"`.
+1. Confirm the user authorized visible control, then reissue only the refused action with `delivery_mode:"foreground"`.
 2. cua-driver activates the target, delivers through SendInput, and restores
    the previous foreground.
 3. Continue with `delivery_mode:"background"` for later actions unless they
@@ -175,7 +177,7 @@ frontmost state:
   any handler in the topmost window at those coordinates fires, and
   for most apps the receiving window activates because input arrived
   from the OS-trusted pipeline. Use `click({pid, x, y})` or
-  `click({pid, element_index})` instead — both route per-pid and
+  `click({pid, element_token})` instead — both route per-pid and
   never touch the OS cursor.
 - **`SendInput(KEYBDINPUT)` with no target HWND** — same idea: goes
   to the focused window, not your target. Use `hotkey({pid, keys:
@@ -307,52 +309,28 @@ Windows-relevant notes:
 **Chromium pixel-click foreground polling restore.** `click({pid, x, y})`
 on a Chromium target falls through to `send_click_synthesized`
 (SendInput + brief foreground swap) because Chromium's input thread filters by
-  queue-origin and PostMessage-delivered clicks don't fire DOM events. The
-  synchronous restore inside `send_click_synthesized` covers the
-  immediate swap; an additional polling guard (same shape as `launch_app`'s
-  `FocusRestoreGuard`) catches the **asynchronous** Chromium re-activation
-  that can happen as the renderer's input handler processes the click
-  (focus().activate() / WebContents::Activate() — 100-500 ms later). The
-  guard is gated on `GetWindowThreadProcessId(fg_now) == pid` so user
-  Alt-Tabs are respected. The polling guard is asynchronous and best-effort,
-  so the tool response is not proof that the previous foreground has already
-  been restored.
+queue-origin and PostMessage-delivered clicks don't fire DOM events. The
+synchronous restore inside `send_click_synthesized` covers the
+immediate swap; an additional polling guard (same shape as `launch_app`'s
+`FocusRestoreGuard`) catches the **asynchronous** Chromium re-activation
+that can happen as the renderer's input handler processes the click
+(focus().activate() / WebContents::Activate() — 100-500 ms later). The
+guard is gated on `GetWindowThreadProcessId(fg_now) == pid` so user
+Alt-Tabs are respected. The polling guard is asynchronous and best-effort,
+so the tool response is not proof that the previous foreground has already
+been restored.
 
-## Defaults — always prefer cua-driver over shell shims
+## Transport
 
-**Default transport is the `cua-driver` CLI** — `Bash` shelling out
-to `cua-driver <tool-name>` with JSON piped via stdin (avoids
-PowerShell 5.1's argv quoting quirks for strings containing both
-quotes and spaces). MCP tools (prefix `mcp__cua-driver__*`) only when
-the user explicitly asks for them. CLI wins because it picks up
-rebuilds instantly, failures are easier to diagnose, and there's no
-per-tool schema-load overhead.
+Follow [RUNTIME.md](RUNTIME.md) for CLI and MCP lifecycle ownership.
+On PowerShell, prefer piping JSON to the CLI to avoid argument-quoting errors:
 
-Every reference to `click(...)`, `get_window_state(...)` etc. in this
-doc means `cua-driver <name>` with JSON piped via stdin — translate
-to MCP form only when MCP is requested.
+```powershell
+'{"pid":6004,"session":"run-1"}' | cua-driver list_windows
+```
 
-### CLI argument plumbing on Windows
-
-Three equivalent shapes for passing JSON to `cua-driver <tool>`:
-
-1. **Stdin pipe (recommended)** — avoids PS quoting bugs entirely:
-   ```powershell
-   '{"pid":1234,"text":"hello world"}' | & cua-driver call type_text
-   ```
-2. **Positional with escaped quotes** — works for JSON without spaces
-   in string values:
-   ```powershell
-   & cua-driver call list_windows '{\"app_name\":\"Calculator\"}'
-   ```
-   (Windows PowerShell 5.1 mangles `{"x":"with space"}` when both `"`
-   and ` ` appear unquoted in argv. Use stdin for those.)
-3. **`--%` stop-parser directive** (PowerShell 5.1 specific):
-   ```powershell
-   & cua-driver call type_text --% {"pid":1234,"text":"hello world"}
-   ```
-
-Stdin is the only path immune to all PS quoting edge cases. Prefer it.
+Reuse the same explicit label for a multi-call CLI run and end it afterward.
+For recording or browser preparation, use one persistent MCP connection.
 
 ### Intent → tool mapping
 
@@ -366,10 +344,10 @@ gone wrong — re-read "The no-foreground contract" above.
 | Open a URL in the default browser  | `launch_app({urls: ["https://example.com"]})`                                                   | `Start-Process "https://…"`, `explorer.exe ms-edge:…`, `cmd /c start "" "https://…"` |
 | Find a pid                         | `list_apps` or `launch_app`'s return                                                            | `Get-Process`, `tasklist`, Win+S typing                                              |
 | Enumerate an app's windows         | `list_windows({pid})` — or read the `windows` array `launch_app` already returns                | `Get-Process \| Where-Object { $_.MainWindowHandle }`                                |
-| Move or resize one exact window    | `set_window_frame({pid, window_id, x, y, width, height})`                                       | PowerShell Add-Type wrappers, Win+Arrow, or title-bar dragging                      |
+| Move or resize one exact window    | `set_window_frame({pid, window_id, x, y, width, height})`                                       | PowerShell Add-Type wrappers, Win+Arrow, or title-bar dragging                       |
 | Click / type / scroll / keys       | `click`, `type_text`, `scroll`, `press_key`, `hotkey`                                           | `SendInput`, `cliclick`-style C# add-types, AutoHotkey scripts                       |
 | Drag / drag-and-drop               | `drag({pid, from_x, from_y, to_x, to_y})`                                                       | `SendInput` with `MOUSEEVENTF_MOVE`, mouse_event                                     |
-| Screenshot                         | `screenshot` or the PNG in `get_window_state`                                                   | `[System.Windows.Forms.Screen]::CopyFromScreen`, `nircmd savescreenshot`             |
+| Screenshot                         | `get_window_state` (window) or authorized `get_desktop_state` (desktop)                         | `[System.Windows.Forms.Screen]::CopyFromScreen`, `nircmd savescreenshot`             |
 | Quit an app                        | ask the user first, then `hotkey({pid, keys:["alt","f4"]})`                                     | `taskkill /F`, `Stop-Process -Force`, `Get-Process \| Stop-Process`                  |
 | Hand a file/URL to an app          | `launch_app({urls:[<path>]})` (default app) or `{path: "...exe", args:[<file>]}` (specific app) | `& "app.exe" "file"`, `Invoke-Item`, shell associations                              |
 
@@ -381,7 +359,7 @@ asked for frontmost state ("bring Edge to the front", "make
 Calculator visible", "I want to see it"). Reaching for it because a
 tool call returned something confusing is wrong — diagnose first.
 
-When a cua-driver call surprises you, diagnose cua-driver first:
+When a cua-driver surprises you, diagnose cua-driver first:
 
 - **`Posted click to pid X` instead of `Performed UIA Invoke ...`?**
   The (x,y) UIA hit-test didn't find an `InvokePattern`-bearing
@@ -502,7 +480,7 @@ your prior tool calls earned.
 ## Using cua-driver from the shell
 
 Tool names are `snake_case`, management subcommands are
-`kebab-case` — no ambiguity. Tools invoked as `cua-driver call
+`kebab-case` — no ambiguity. Tools invoked as `cua-driver
 <tool-name>` with JSON via stdin or positional arg. Management
 subcommands:
 
@@ -528,26 +506,9 @@ subcommands:
 Over SSH, never use bare `cua-driver mcp`: the direct runtime rejects Session 0. Start the daemon in the interactive user session and run `cua-driver mcp
 --socket \\.\pipe\cua-driver` from SSH.
 
-Canonical multi-step workflow:
-
-```powershell
-# Daemon is already running via Scheduled Task.
-# Launch UWP Calculator without focus-stealing.
-'{"aumid":"Microsoft.WindowsCalculator_8wekyb3d8bbwe!App"}' | & cua-driver call launch_app
-# → {pid: 6004, windows: [{window_id: 459672, ...}]}
-
-# Snapshot the UIA tree.
-'{"pid":6004,"window_id":459672}' | & cua-driver call get_window_state
-# Returns: tree_markdown with [N] indices plus structured element_token values,
-# snapshot_id, screenshot, and dimensions.
-
-# Click the "Equals" row with its opaque token from that response.
-'{"pid":6004,"element_token":"s0000002a:22"}' | & cua-driver call click
-# → "✅ Performed UIA Invoke on [22] ..."
-
-# Re-snapshot to verify the action landed.
-'{"pid":6004,"window_id":459672}' | & cua-driver call get_window_state
-```
+For an ordered action loop, use the named CLI or persistent MCP examples in
+[WORKFLOW.md](WORKFLOW.md), with an observed AUMID, PID, HWND, and fresh token.
+Do not assume the window array is populated immediately on a cold launch.
 
 ## The core invariant — snapshot before AND after every action
 

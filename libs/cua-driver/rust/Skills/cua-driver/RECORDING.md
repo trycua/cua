@@ -1,67 +1,52 @@
-# Recording & replaying trajectories
+# Recording and replay
 
-> **Cross-platform.** Recording is available on macOS (native
-> ScreenCaptureKit), Windows (ffmpeg + `gdigrab`), and Linux (ffmpeg +
-> `x11grab`). Replay is cross-platform as long as the recorded artifacts
-> are present.
+Record only when the user requests it. Keep the recording controls and actions
+on one persistent MCP connection; see [RUNTIME.md](RUNTIME.md). The recording
+tools do not advertise a public `session` parameter. Do not add one.
 
-Session-scoped capture of action sequences + pre/post state, suitable
-for demos, regression diffs, and training data. Invoked only when the
-user explicitly asks to record — the skill does not auto-enable this.
+## Start, observe, stop
 
-`start_recording` turns on a session-scoped trajectory recorder. While
-enabled, every action-tool call (`click`, `right_click`, `scroll`,
-`type_text`, `press_key`, `hotkey`, `set_value`) writes a numbered
-turn folder under a caller-chosen output directory. Read-only tools
-(`get_window_state`, `list_windows`, `screenshot`, `list_apps`,
-permission probes, agent-cursor getters / setters, and the recording
-controls themselves) are not recorded.
+These are tool calls on that connection, not separate CLI invocations:
 
-**Video on by default.** `start_recording` also captures the main
-display to `<output_dir>/recording.mp4` (H.264 / 30 fps) for the
-lifetime of the session. The mp4 is finalized on `stop_recording`. Opt
-out with `record_video: false` when you don't want video.
-
-**macOS — native ScreenCaptureKit, zero-config.** On macOS the daemon's
-recorder uses `SCStream` + `SCRecordingOutput`, so it inherits the daemon's
-Screen Recording grant — no separate
-subprocess prompt, no fast-fail, no second TCC dance. Requires macOS
-15.0+ (SCRecordingOutput introduced in macOS 15). No ffmpeg needed.
-
-**Windows / Linux — ffmpeg subprocess.** Outside macOS the recorder
-shells to ffmpeg with `gdigrab` (Windows) or `x11grab` (Linux). The
-binary needs to be on PATH (`winget install Gyan.FFmpeg` /
-`apt install ffmpeg`); when missing, the per-turn capture continues
-without video and `last_error` carries the install hint. ffmpeg
-startup failures fast-fail with a stderr tail in the error.
-
-## Start / stop
-
-Two equivalent surfaces: the `start_recording` / `stop_recording` MCP
-tools, or the friendlier `cua-driver recording` subcommand group
-(wraps both with human-readable output).
-
-```
-cua-driver recording start ~/cua-trajectories/run-1
-# … run the workflow …
-cua-driver recording status    # -> enabled / disabled, next_turn, output_dir
-cua-driver recording stop      # -> "Recording stopped. (video → recording.mp4)"
+```text
+get_recording_state({})
+start_recording({"output_dir":"/absolute/run-dir/trajectory","record_video":true})
+get_recording_state({})
+# Run the authorized workflow and verify every action.
+stop_recording({})
+get_recording_state({})
 ```
 
-Raw-tool equivalent:
+Choose an unused output directory: turn numbering restarts at 1. Video is
+off by default; explicitly set `record_video:true` when requested. Inspect
+`video_active` and `last_error`, not just the successful tool status. Per-turn
+capture may continue even when video initialization failed.
 
-```
-cua-driver start_recording '{"output_dir":"~/cua-trajectories/run-1"}'
-cua-driver get_recording_state
-cua-driver stop_recording '{}'
-```
+The current recorder is shared within its runtime. Manual `stop_recording`
+stops whichever recording is active, regardless of its starting session.
+Do not start over or stop another run's recording. Session-owned teardown
+does not establish concurrent recording isolation. If a recorder is already
+active, coordinate with its owner rather than taking it over.
 
-The `recording` subcommands require a running daemon (`cua-driver
-serve &`) because recording state is per-process. `output_dir` expands
-`~` and is created (with intermediates) if missing. Turn numbering
-starts at `1` every time recording is (re-)enabled, regardless of any
-existing contents in the directory. State lives in memory only — a
-daemon restart resets to disabled.
+Stop and inspect `last_video_path` before ending the connection. A disconnect
+can tear down owned recording; a runtime restart loses in-memory state.
+Confirm the expected files exist, inspect images, and decode the finalized
+video before claiming success. A file path alone does not prove a playable
+or correctly scoped recording.
+
+CLI `recording start|status|stop` commands also exist, but do not form a
+session-preserving action loop by themselves. Inspect their help rather than
+assuming the convenience command supports every raw-tool argument.
+
+## Platform boundaries
+
+- macOS video uses ScreenCaptureKit/SCRecordingOutput (macOS 15+), under the
+  responsible runtime's grant. Permission status is not proof of live capture.
+- Windows video uses ffmpeg `gdigrab`; the runtime must be in the interactive
+  desktop session.
+- Linux X11 video uses ffmpeg `x11grab`. Native Wayland needs a supported
+  compositor-specific recorder and any portal grant; see [LINUX.md](LINUX.md).
+  A successful desktop PNG does not establish video availability.
 
 ## What each turn folder contains
 
@@ -108,54 +93,21 @@ Each action writes to `turn-NNNNN/` (five-digit zero-padded counter):
   Out-of-image points are rejected, never moved to an image edge. Other dispatched clicks whose markers
   cannot be resolved or rendered remain evidence failures.
 
-## When to use it
+## Replay is a new action sequence
 
-- Demos and screen recordings — play the turn folder back to show
-  exactly what the agent saw and what it did.
-- Replay for regression — re-run the same sequence against a future
-  build and diff the new trajectory against the saved one.
-- Training data collection — each turn is a
-  `(state, action, next_state)` triple ready for offline learning.
+`replay_trajectory` invokes recorded arguments in turn order; it is not a
+semantic task planner. It accepts `dir`, `delay_ms`, and `stop_on_error`.
+Read its live schema before use, and obtain authorization for the actions
+being replayed.
 
-## When to invoke it
+Recorded PIDs, window IDs, element tokens, browser refs, and geometry can all
+be stale. Read-only snapshots are not part of the action sequence, so replay
+does not automatically refresh element handles. Pixel/key actions also need
+the original target identity, layout, and focus; they are not portable merely
+because they lack an element token.
 
-This skill does **not** auto-enable recording. The client invokes
-`start_recording` explicitly when the user asks to capture a session.
-If the user says "record this session" or similar, call
-`start_recording({output_dir:…})` before the first action (video on
-by default; pass `record_video: false` to opt out), and
-`stop_recording({})` when done.
-
-## Replaying a recorded trajectory
-
-`replay_trajectory({dir})` walks `<dir>/turn-NNNNN/` folders in
-lexical order, reads each `action.json`, and re-invokes the recorded
-tool with its recorded `arguments`. Optional knobs: `delay_ms`
-(pacing between turns, default 500) and `stop_on_error` (halt on
-first failure, default true).
-
-```
-cua-driver recording start ~/cua-trajectories/demo1
-# … run the workflow …
-cua-driver recording stop
-# Later: replay against a new build.
-cua-driver replay_trajectory '{"dir":"~/cua-trajectories/demo1","delay_ms":500}'
-```
-
-Important caveat: **element_index doesn't survive across sessions**.
-Indices are assigned fresh on every `get_window_state` snapshot,
-keyed on `(pid, window_id)`, so a recorded
-`click({pid, window_id, element_index: 14})` from yesterday won't
-resolve today — the pid is usually different, the window_id always
-is. The call returns `Invalid element_index` or `No cached AX
-state`. Pixel clicks (`click({pid, x, y})`) and keyboard tools
-(`press_key`, `hotkey`, `type_text` without element_index) replay cleanly; element-indexed actions require a
-live snapshot that replay doesn't currently re-emit (read-only tools
-like `get_window_state` aren't recorded). For a reliable replay, either
-compose the trajectory from pixel + keyboard primitives, or capture
-it as a regression artifact (compare the failure/success pattern
-across builds) rather than a re-driving script.
-
-If recording is still enabled while replay runs, the replay is
-itself recorded into the current output directory — that's the
-intended regression-diff workflow.
+Use trajectories as evidence unless current targets and preconditions are
+independently established. Never replay canceled, partial, or unknown actions
+to discover whether they originally landed. If recording remains enabled
+during replay, the replay itself may produce new turns; keep source and output
+directories distinct.

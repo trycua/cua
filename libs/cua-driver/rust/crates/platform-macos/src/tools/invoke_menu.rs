@@ -193,6 +193,44 @@ unsafe fn invoke_path(pid: i32, path: &[String]) -> Result<(), String> {
     result
 }
 
+/// Live WindowServer front-process attribution for one exact window.
+///
+/// `NSWorkspace.frontmostApplication` (`crate::apps::frontmost_pid`) is an
+/// AppKit cached property that only refreshes when the reading process services
+/// a run loop. The blocking menu path never does, so it cannot observe the
+/// activation it just requested and would poll a stale value until the
+/// deadline. `front_process_matches` asks WindowServer directly, exactly as
+/// `bring_to_front` does; the workspace value stays the fallback for targets
+/// whose process serial number cannot be resolved.
+fn live_frontmost_pid(pid: i32, window_id: u32) -> Option<i32> {
+    match crate::input::skylight::front_process_matches(pid, window_id) {
+        Some(true) => Some(pid),
+        Some(false) => None,
+        None => crate::apps::frontmost_pid(),
+    }
+}
+
+/// The application WindowServer currently fronts, identified through its
+/// topmost on-screen ordinary window.
+///
+/// Same reason as [`live_frontmost_pid`]: the workspace value this process
+/// caches may name whichever application was frontmost when it last serviced a
+/// run loop, and restoring against that would re-front the wrong application.
+/// Z-order alone is not enough either — a helper process can own the topmost
+/// on-screen window (completion popups, overlay panels) without being the front
+/// process — so each candidate is confirmed against WindowServer.
+fn live_frontmost_app() -> Option<i32> {
+    let mut windows = crate::windows::visible_windows();
+    windows.sort_by_key(|window| std::cmp::Reverse(window.z_index));
+    windows
+        .into_iter()
+        .find(|window| {
+            crate::input::skylight::front_process_matches(window.pid, window.window_id)
+                == Some(true)
+        })
+        .map(|window| window.pid)
+}
+
 /// Make one exact application window key before resolving focus-sensitive
 /// native menu state.
 ///
@@ -307,7 +345,7 @@ fn focus_ax_window_with_thread_affinity(pid: i32, window_id: u32) -> Result<(), 
 fn focus_exact_window(pid: i32, window_id: u32) -> Result<(), String> {
     let native_key_requested = crate::input::skylight::make_exact_window_key(pid, window_id);
     if !native_key_requested
-        && crate::apps::frontmost_pid() != Some(pid)
+        && live_frontmost_pid(pid, window_id) != Some(pid)
         && !crate::apps::activate_pid(pid)
     {
         return Err("invoke_menu: target application could not be activated".into());
@@ -327,7 +365,7 @@ fn focus_exact_window(pid: i32, window_id: u32) -> Result<(), String> {
     loop {
         let now = std::time::Instant::now();
         if exact_window_is_ready(
-            crate::apps::frontmost_pid(),
+            live_frontmost_pid(pid, window_id),
             pid,
             crate::ax::bindings::focused_window_id_of_pid(pid),
             window_id,
@@ -396,7 +434,7 @@ impl Tool for InvokeMenuTool {
         }
 
         let outcome = tokio::task::spawn_blocking(move || {
-            let prior_frontmost = crate::apps::frontmost_pid();
+            let prior_frontmost = live_frontmost_app().or_else(crate::apps::frontmost_pid);
             let prior_frontmost_window =
                 prior_frontmost.and_then(crate::ax::bindings::focused_window_id_of_pid);
             let needs_activation = prior_frontmost != Some(pid);

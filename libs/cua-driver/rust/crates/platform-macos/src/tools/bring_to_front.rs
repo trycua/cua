@@ -2,9 +2,12 @@
 //!
 //! This is the explicit persistent-foreground escape hatch for focus-proxy
 //! applications.  A successful native request is only a request receipt: when
-//! an exact `window_id` is supplied, the tool independently verifies the
-//! process, semantic key window, and WindowServer layer-0 order before it says
-//! `activated: true`.
+//! an exact `window_id` is supplied, the tool independently verifies that the
+//! process is frontmost, that the requested window is its focused window, and
+//! that the window is the front one among its application's visible layer-0
+//! windows before it says `activated: true`. Whether some other application
+//! holds first place in the global layer-0 order is reported, not required —
+//! it is not the requesting application's to win.
 
 use std::time::{Duration, Instant};
 
@@ -36,9 +39,14 @@ fn def() -> &'static ToolDef {
         description: "Persistently activate an app and leave it in the foreground. Most input \
              does not need this; use it only for a focus-proxy surface that must remain \
              foreground across interactions. With window_id, success means the exact ordinary \
-             macOS window was independently verified as the focused window and first in \
-             WindowServer layer-0 order. Request acceptance alone is reported as a partial \
-             result, never as activation. This DOES steal foreground."
+             macOS window was independently verified as the frontmost process's focused window \
+             and the front window of that process. `exact_window_effect.frontmost_ordinary` \
+             additionally reports whether it is first in the global WindowServer layer-0 order; \
+             another application (an always-raised utility window, another display's front \
+             window) can hold that spot without the requested window losing keyboard focus, so \
+             it is reported and not required. Request acceptance alone is reported as a partial \
+             result, never as activation. This DOES steal foreground and does NOT restore the \
+             previously frontmost application."
             .into(),
         input_schema: json!({
             "type": "object",
@@ -62,6 +70,7 @@ struct ExactWindowObservation {
     front_process_matches_target: Option<bool>,
     focused_window_id: Option<u32>,
     frontmost_ordinary_window_id: Option<u32>,
+    process_frontmost_ordinary_window_id: Option<u32>,
     target_visible_ordinary: bool,
 }
 
@@ -82,6 +91,19 @@ impl ExactWindowObservation {
         self.focused_window_id == Some(window_id)
     }
 
+    /// The requested window is the front one among its own application's
+    /// visible layer-0 windows. This is the exact-window half of the
+    /// postcondition: it is what separates "the app is up front, with the
+    /// window you asked for" from "the app is up front, showing a sibling".
+    fn exact_window_front_in_process(self, window_id: u32) -> bool {
+        self.target_visible_ordinary && self.process_frontmost_ordinary_window_id == Some(window_id)
+    }
+
+    /// The requested window is first in the WindowServer layer-0 order across
+    /// every application. Reported, never required: another application may
+    /// legitimately hold that spot (an always-raised utility window, a second
+    /// display's front window) while the requested window is the key window
+    /// of the frontmost process and receives input.
     fn exact_window_frontmost_ordinary(self, window_id: u32) -> bool {
         self.target_visible_ordinary && self.frontmost_ordinary_window_id == Some(window_id)
     }
@@ -89,7 +111,7 @@ impl ExactWindowObservation {
     fn exact_postcondition(self, pid: i32, window_id: u32) -> bool {
         self.process_activated(pid)
             && self.exact_window_focused(window_id)
-            && self.exact_window_frontmost_ordinary(window_id)
+            && self.exact_window_front_in_process(window_id)
     }
 }
 
@@ -111,7 +133,7 @@ fn classify_exact_outcome(
     } else if request_accepted
         || observation.process_activated(pid)
         || observation.exact_window_focused(window_id)
-        || observation.exact_window_frontmost_ordinary(window_id)
+        || observation.exact_window_front_in_process(window_id)
     {
         ExactOutcome::Partial
     } else {
@@ -129,11 +151,17 @@ fn observe_exact_window(pid: i32, window_id: u32) -> ExactWindowObservation {
         .iter()
         .max_by_key(|window| window.z_index)
         .map(|window| window.window_id);
+    let process_frontmost_ordinary_window_id = windows
+        .iter()
+        .filter(|window| window.pid == pid)
+        .max_by_key(|window| window.z_index)
+        .map(|window| window.window_id);
     ExactWindowObservation {
         workspace_frontmost_pid: crate::apps::frontmost_pid(),
         front_process_matches_target: crate::input::skylight::front_process_matches(pid, window_id),
         focused_window_id: crate::ax::bindings::focused_window_id_of_pid(pid),
         frontmost_ordinary_window_id,
+        process_frontmost_ordinary_window_id,
         target_visible_ordinary,
     }
 }
@@ -200,6 +228,7 @@ fn exact_result(
     let process_activated = observation.process_activated(pid);
     let frontmost_pid = observation.frontmost_pid(pid);
     let exact_window_focused = observation.exact_window_focused(window_id);
+    let exact_window_front_in_process = observation.exact_window_front_in_process(window_id);
     let exact_window_frontmost_ordinary = observation.exact_window_frontmost_ordinary(window_id);
     let status = match outcome {
         ExactOutcome::Activated => "activated",
@@ -218,6 +247,7 @@ fn exact_result(
         "exact_window_effect": {
             "verified": activated,
             "focused": exact_window_focused,
+            "front_in_process": exact_window_front_in_process,
             "frontmost_ordinary": exact_window_frontmost_ordinary,
             "target_visible_ordinary": observation.target_visible_ordinary,
         },
@@ -227,6 +257,7 @@ fn exact_result(
             "front_process_matches_target": observation.front_process_matches_target,
             "focused_window_id": observation.focused_window_id,
             "frontmost_ordinary_window_id": observation.frontmost_ordinary_window_id,
+            "process_frontmost_ordinary_window_id": observation.process_frontmost_ordinary_window_id,
         }
     });
     if activated {
@@ -237,9 +268,10 @@ fn exact_result(
     } else {
         ToolResult::error(format!(
             "bring_to_front: exact window {window_id} for pid {pid} was not verified \
-             as frontmost and focused (request_accepted={request_accepted}, \
-             process_activated={process_activated}, focused={exact_window_focused}, \
-             frontmost_ordinary={exact_window_frontmost_ordinary})."
+             as the frontmost process's focused, front window (request_accepted=\
+             {request_accepted}, process_activated={process_activated}, \
+             focused={exact_window_focused}, \
+             front_in_process={exact_window_front_in_process})."
         ))
         .with_structured(structured)
     }
@@ -425,6 +457,8 @@ impl Tool for BringToFrontTool {
 mod tests {
     use super::*;
 
+    /// The common shape: nothing else is competing, so the window in front of
+    /// the target's own application is also first in the global layer-0 order.
     fn observation(
         workspace_frontmost_pid: Option<i32>,
         front_process_matches_target: Option<bool>,
@@ -437,8 +471,69 @@ mod tests {
             front_process_matches_target,
             focused_window_id,
             frontmost_ordinary_window_id,
+            process_frontmost_ordinary_window_id: frontmost_ordinary_window_id,
             target_visible_ordinary,
         }
+    }
+
+    /// Another application holds first place in the global layer-0 order while
+    /// the target is the front window of its own application.
+    fn contested_observation(
+        focused_window_id: Option<u32>,
+        global_front_window_id: Option<u32>,
+        process_front_window_id: Option<u32>,
+    ) -> ExactWindowObservation {
+        ExactWindowObservation {
+            workspace_frontmost_pid: Some(42),
+            front_process_matches_target: Some(true),
+            focused_window_id,
+            frontmost_ordinary_window_id: global_front_window_id,
+            process_frontmost_ordinary_window_id: process_front_window_id,
+            target_visible_ordinary: true,
+        }
+    }
+
+    /// A window the frontmost process reports as focused, and that is the
+    /// front window of that process, is revealed — the global layer-0 order
+    /// belongs to every application at once, and losing it to some other app's
+    /// always-raised window says nothing about where keyboard input goes.
+    #[test]
+    fn another_applications_window_on_top_does_not_unverify_the_reveal() {
+        let contested = contested_observation(Some(7), Some(900), Some(7));
+        assert_eq!(
+            classify_exact_outcome(true, 42, 7, contested),
+            ExactOutcome::Activated
+        );
+        let structured = exact_result(42, 7, "skylight_process_exact_cocoa_ax", true, contested)
+            .structured_content
+            .expect("structured result");
+        assert_eq!(structured["activated"], true);
+        assert_eq!(structured["exact_window_effect"]["front_in_process"], true);
+        // Still reported, so a caller can see the window is not first overall.
+        assert_eq!(
+            structured["exact_window_effect"]["frontmost_ordinary"],
+            false
+        );
+        assert_eq!(
+            structured["observed"]["process_frontmost_ordinary_window_id"],
+            7
+        );
+        assert_eq!(structured["observed"]["frontmost_ordinary_window_id"], 900);
+    }
+
+    /// The exact-window guarantee that does still bind: a sibling window of the
+    /// same application in front of the requested one is not a reveal.
+    #[test]
+    fn a_sibling_window_of_the_same_application_in_front_is_only_partial() {
+        assert_eq!(
+            classify_exact_outcome(
+                true,
+                42,
+                7,
+                contested_observation(Some(7), Some(8), Some(8))
+            ),
+            ExactOutcome::Partial
+        );
     }
 
     #[test]

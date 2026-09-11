@@ -26,9 +26,9 @@ const workloadOIDCSecretName = "cua-workload-oidc"
 // (WorkloadAdmin nil). All failures are logged, never surfaced: the
 // namespace was created either way, and the OSGym Sandbox controller retries
 // until the Secret appears.
-func (h Handlers) provisionWorkloadOIDC(ctx context.Context, userSub, namespace string) {
+func (h Handlers) provisionWorkloadOIDC(ctx context.Context, userSub, namespace string) (string, error) {
 	if h.WorkloadAdmin == nil {
-		return
+		return "disabled", nil
 	}
 	tenant := identity.PersonalGroup(ctx, userSub)
 	clientID, clientSecret, err := h.WorkloadAdmin.EnsureTenantWorkloadClient(
@@ -37,17 +37,18 @@ func (h Handlers) provisionWorkloadOIDC(ctx context.Context, userSub, namespace 
 	if err != nil {
 		slog.Warn("workload-oidc: ensure tenant client failed",
 			"err", err, "namespace", namespace, "tenant", tenant)
-		return
+		return "keycloak_error", err
 	}
 	if err := h.writeWorkloadOIDCSecret(
 		ctx, userSub, namespace, clientID, clientSecret, tenant,
 	); err != nil {
 		slog.Warn("workload-oidc: write credentials Secret failed",
 			"err", err, "namespace", namespace)
-		return
+		return "secret_error", err
 	}
 	slog.Info("workload-oidc: provisioned tenant credentials",
 		"namespace", namespace, "tenant", tenant, "client_id", clientID)
+	return "success", nil
 }
 
 // writeWorkloadOIDCSecret creates the credentials Secret in the namespace via

@@ -9,6 +9,7 @@
 //	cyclops_cs_upstream_proxy_requests_total - counter, labels: target, status_code
 //	cyclops_cs_upstream_proxy_duration_seconds - histogram, labels: target, status_code
 //	cyclops_cs_active_requests              - gauge
+//	cyclops_cs_namespace_create_phase_duration_seconds - histogram, labels: phase, result
 //
 // The metrics server is started separately on METRICS_ADDR (default :9091)
 // so that the main HTTP server on :8080 stays free of /metrics traffic.
@@ -46,6 +47,12 @@ var (
 		Name: "cyclops_cs_active_requests",
 		Help: "Number of HTTP requests currently being processed by the cyclops-cs backend.",
 	})
+
+	NamespaceCreatePhaseDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "cyclops_cs_namespace_create_phase_duration_seconds",
+		Help:    "Latency of bounded phases in POST /api/namespaces.",
+		Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},
+	}, []string{"phase", "result"})
 
 	// Keycloak admin API SLIs
 	KeycloakRequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
@@ -248,6 +255,11 @@ func normalizePath(p string) string {
 	default:
 		return p
 	}
+}
+
+// RecordNamespaceCreatePhase observes a bounded namespace creation phase and result.
+func RecordNamespaceCreatePhase(phase, result string, duration time.Duration) {
+	NamespaceCreatePhaseDuration.WithLabelValues(phase, result).Observe(duration.Seconds())
 }
 
 // RecordKeycloakRequest records a Keycloak admin API operation result.

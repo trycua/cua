@@ -266,7 +266,7 @@ unsafe extern "C" fn focus_ax_window_on_main(context: *mut c_void) {
 
 fn focus_ax_window_with_thread_affinity(pid: i32, window_id: u32) -> Result<(), String> {
     let is_main_thread = objc2_foundation::MainThreadMarker::new().is_some();
-    if !self_process_focus_needs_main_queue(pid, std::process::id(), is_main_thread) {
+    if pid != std::process::id() as i32 || is_main_thread {
         return focus_ax_window(pid, window_id);
     }
 
@@ -302,14 +302,6 @@ fn focus_ax_window_with_thread_affinity(pid: i32, window_id: u32) -> Result<(), 
             ))
         }
     }
-}
-
-fn self_process_focus_needs_main_queue(
-    target_pid: i32,
-    current_pid: u32,
-    is_main_thread: bool,
-) -> bool {
-    target_pid == current_pid as i32 && !is_main_thread
 }
 
 fn focus_exact_window(pid: i32, window_id: u32) -> Result<(), String> {
@@ -482,12 +474,5 @@ mod tests {
         assert!(!exact_window_is_ready(Some(8), 7, Some(42), 42));
         assert!(!exact_window_is_ready(Some(7), 7, Some(41), 42));
         assert!(!exact_window_is_ready(Some(7), 7, None, 42));
-    }
-
-    #[test]
-    fn only_background_self_process_focus_uses_the_main_queue() {
-        assert!(self_process_focus_needs_main_queue(7, 7, false));
-        assert!(!self_process_focus_needs_main_queue(7, 7, true));
-        assert!(!self_process_focus_needs_main_queue(8, 7, false));
     }
 }

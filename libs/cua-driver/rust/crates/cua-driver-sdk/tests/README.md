@@ -23,8 +23,3 @@ dependency or run this test.
 Restoring only platform-linux's former `ashpd/tokio` selection makes compilation
 fail with `You can't enable both async-io & tokio features at once`. Restoring
 the candidate's `async-io` selection makes it build again.
-
-Keeping the test within the existing SDK package avoids introducing a separately
-versioned workspace member whose lock entry can drift when a pull request is
-merged with a new component release. The root workspace lockfile pins oo7 and
-its transitive dependencies.

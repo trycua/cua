@@ -26,6 +26,8 @@ def test_hosted_macos_probe_is_manual_exact_sha_and_least_privilege() -> None:
     assert "^[0-9a-fA-F]{40}$" in workflow
     assert "persist-credentials: false" in workflow
     assert "github.run_id }}-${{ github.run_attempt" in workflow
+    assert "CUA_MACOS_HOSTED_PROBE_DIR: ${{ runner.temp" not in workflow
+    assert 'echo "CUA_MACOS_HOSTED_PROBE_DIR=${artifact_dir}" >> "${GITHUB_ENV}"' in workflow
 
     for action in ("actions/checkout", "actions/upload-artifact"):
         line = next(line for line in workflow.splitlines() if f"uses: {action}@" in line)

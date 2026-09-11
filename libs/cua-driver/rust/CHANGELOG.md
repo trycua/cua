@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.27.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.26.1...cua-driver-rs-v0.27.0) (2026-09-11)
+
+
+### Features
+
+* **cua-driver:** share typed MCP connection across language bindings ([#3715](https://github.com/trycua/cua/issues/3715)) ([481f3ec](https://github.com/trycua/cua/commit/481f3ece21b89398e26d96fd87dee520b0118602))
+
+
+### Bug Fixes
+
+* **cua-driver:** eliminate duplicate Swift bridge symbols ([#3680](https://github.com/trycua/cua/issues/3680)) ([2ec5858](https://github.com/trycua/cua/commit/2ec5858d1142f2b8f0528053fe03bd191333e4f6))
+* **cua-driver:** normalize repeated macOS consent labels ([#3706](https://github.com/trycua/cua/issues/3706)) ([4c96f24](https://github.com/trycua/cua/commit/4c96f24968ec3c7acc031af07651dbf7187636b7))
+* **cua-driver:** retry safe Hyprland stale geometry refusals ([#3732](https://github.com/trycua/cua/issues/3732)) ([27078d8](https://github.com/trycua/cua/commit/27078d896498c87e6f662a75df07ed78250bb542))
+
 ## [0.26.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.26.0...cua-driver-rs-v0.26.1) (2026-09-10)
 
 

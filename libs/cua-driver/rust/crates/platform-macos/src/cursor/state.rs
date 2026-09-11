@@ -151,6 +151,15 @@ impl CursorRegistry {
                 position: None,
             });
         state.position = Some(CursorPosition { x, y });
+        drop(inner);
+        // Notify any embedder of the cursor move so it can render this cursor as
+        // an overlay without driving the overlay itself.
+        cua_driver_core::cursor_hook::push_cursor_event(cua_driver_core::cursor_hook::CursorHookEvent {
+            cursor_id: cursor_id.to_owned(),
+            x,
+            y,
+            pressed: false,
+        });
     }
 
     pub fn set_enabled(&self, cursor_id: &str, enabled: bool) {

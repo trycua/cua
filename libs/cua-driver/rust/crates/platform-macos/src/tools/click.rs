@@ -223,6 +223,16 @@ impl Tool for ClickTool {
             self.state
                 .cursor_registry
                 .update_position(&cursor_key, sx, sy);
+            // Press edge for the agent-cursor overlay (renders a click pulse on
+            // viewers via the cursor hook).
+            cua_driver_core::cursor_hook::push_cursor_event(
+                cua_driver_core::cursor_hook::CursorHookEvent {
+                    cursor_id: cursor_key.clone(),
+                    x: sx,
+                    y: sy,
+                    pressed: true,
+                },
+            );
 
             let btn = button.clone();
             let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
@@ -375,6 +385,14 @@ impl Tool for ClickTool {
                 self.state
                     .cursor_registry
                     .update_position(&cursor_key, cx, cy);
+                cua_driver_core::cursor_hook::push_cursor_event(
+                    cua_driver_core::cursor_hook::CursorHookEvent {
+                        cursor_id: cursor_key.clone(),
+                        x: cx,
+                        y: cy,
+                        pressed: true,
+                    },
+                );
 
                 let mods_owned = modifiers.clone();
                 let result = tokio::task::spawn_blocking(move || {
@@ -406,6 +424,14 @@ impl Tool for ClickTool {
                 self.state
                     .cursor_registry
                     .update_position(&cursor_key, cx, cy);
+                cua_driver_core::cursor_hook::push_cursor_event(
+                    cua_driver_core::cursor_hook::CursorHookEvent {
+                        cursor_id: cursor_key.clone(),
+                        x: cx,
+                        y: cy,
+                        pressed: true,
+                    },
+                );
             }
 
             // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
@@ -699,6 +725,14 @@ impl Tool for ClickTool {
             self.state
                 .cursor_registry
                 .update_position(&cursor_key, screen_x, screen_y);
+            cua_driver_core::cursor_hook::push_cursor_event(
+                cua_driver_core::cursor_hook::CursorHookEvent {
+                    cursor_id: cursor_key.clone(),
+                    x: screen_x,
+                    y: screen_y,
+                    pressed: true,
+                },
+            );
             // Show click-pulse on the agent cursor overlay.
             crate::cursor::overlay::send_command(
                 cursor_key.clone(),

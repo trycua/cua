@@ -1,43 +1,27 @@
-name: "CI: Check Docs"
+name: "CI: Native Docs Check"
 
 on:
-  pull_request:
-    paths:
-      - "libs/cua-driver/rust/crates/**"
-      - "libs/cua-driver/rust/Cargo.toml"
-      - "libs/cua-driver/rust/Cargo.lock"
-      - "libs/lume/src/**"
-      - "docs/content/docs/reference/cua-driver/**"
-      - "docs/content/docs/reference/lume/**"
-      - "docs/package.json"
-      - "docs/pnpm-lock.yaml"
-      - "scripts/docs-generators/**"
-      - ".github/workflows/ci-check-docs.yml"
-      - ".gitattributes"
+  workflow_call:
+    inputs:
+      library:
+        required: true
+        type: string
+      platform:
+        required: true
+        type: string
+      runner:
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 jobs:
   native-reference:
-    name: Reference / ${{ matrix.library }} / ${{ matrix.platform }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - library: cua-driver
-            platform: linux
-            os: ubuntu-latest
-          - library: cua-driver
-            platform: macos
-            os: macos-latest
-          - library: cua-driver
-            platform: windows
-            os: windows-latest
-          - library: lume
-            platform: macos
-            os: macos-latest
-    runs-on: ${{ matrix.os }}
+    name: Reference / ${{ inputs.library }} / ${{ inputs.platform }}
+    runs-on: ${{ inputs.runner }}
+    env:
+      LIBRARY: ${{ inputs.library }}
     defaults:
       run:
         shell: bash
@@ -56,42 +40,20 @@ jobs:
         run: |
           node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --test-routing
           node docs/node_modules/tsx/dist/cli.mjs --test scripts/docs-generators/cua-driver.test.ts scripts/docs-generators/cua-driver-platform.test.ts
-      - name: Select affected generator
-        id: scope
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          LIBRARY: ${{ matrix.library }}
-        run: |
-          git diff --name-only "$BASE_SHA" HEAD > "$RUNNER_TEMP/docs-changed-files.txt"
-          GENERATORS=$(node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --changed-files-file "$RUNNER_TEMP/docs-changed-files.txt")
-          if [[ " $GENERATORS " == *" $LIBRARY "* ]]; then
-            echo "selected=true" >> "$GITHUB_OUTPUT"
-          fi
       - name: Install Linux build dependencies
-        if: steps.scope.outputs.selected == 'true' && matrix.platform == 'linux'
+        if: inputs.platform == 'linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
             libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
       - name: Check generated reference
-        if: steps.scope.outputs.selected == 'true' && matrix.platform != 'windows'
-        run: node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --library ${{ matrix.library }} --check
+        if: inputs.platform != 'windows'
+        run: node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --library "$LIBRARY" --check
       - name: Check generated reference in PowerShell
-        if: steps.scope.outputs.selected == 'true' && matrix.platform == 'windows'
+        if: inputs.platform == 'windows'
         shell: pwsh
         run: node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --library cua-driver --check
       - name: Verify docs extraction preserves policy-filtered discovery
-        if: steps.scope.outputs.selected == 'true' && matrix.library == 'cua-driver'
+        if: inputs.library == 'cua-driver'
         run: node docs/node_modules/tsx/dist/cli.mjs --test scripts/docs-generators/cua-driver-policy.test.ts
-
-  check-docs-sync:
-    name: Check Documentation Sync
-    if: always()
-    needs: native-reference
-    runs-on: ubuntu-latest
-    steps:
-      - name: Require native checks to pass
-        env:
-          RESULT: ${{ needs.native-reference.result }}
-        run: test "$RESULT" = success

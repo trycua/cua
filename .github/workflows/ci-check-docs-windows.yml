@@ -1,0 +1,37 @@
+name: "CI: Driver Docs / Windows"
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua-driver/rust/crates/**"
+      - "!libs/cua-driver/rust/crates/platform-linux/**"
+      - "!libs/cua-driver/rust/crates/platform-macos/**"
+      - "libs/cua-driver/rust/Cargo.toml"
+      - "libs/cua-driver/rust/Cargo.lock"
+      - "libs/cua-driver/rust/.cargo/**"
+      - "libs/cua-driver/rust/rust-toolchain*"
+      - ".cargo/**"
+      - "rust-toolchain*"
+      - "scripts/docs-generators/cua-driver*.ts"
+      - "scripts/docs-generators/runner.ts"
+      - "scripts/docs-generators/config.json"
+      - "docs/content/docs/reference/cua-driver/cli-reference.mdx"
+      - "docs/content/docs/reference/cua-driver/mcp-tools-windows.mdx"
+      - "docs/package.json"
+      - "docs/pnpm-lock.yaml"
+      - "package.json"
+      - "pnpm-workspace.yaml"
+      - ".gitattributes"
+      - ".github/workflows/ci-check-docs.yml"
+      - ".github/workflows/ci-check-docs-windows.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  reference:
+    uses: ./.github/workflows/ci-check-docs.yml
+    with:
+      library: cua-driver
+      platform: windows
+      runner: windows-latest

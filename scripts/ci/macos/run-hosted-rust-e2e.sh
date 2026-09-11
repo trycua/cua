@@ -32,8 +32,21 @@ mark_phase() {
     | tee "${BOOTSTRAP_DIR}/phase.txt"
 }
 
+# shellcheck disable=SC2329 # Invoked through the EXIT trap below.
 capture_diagnostics() {
   local command_status=$?
+  local cleanup_failed=0
+  record_cleanup() {
+    local label="$1"
+    shift
+    "$@"
+    local cleanup_status=$?
+    printf '%s=%s\n' "${label}" "${cleanup_status}" \
+      >> "${BOOTSTRAP_DIR}/cleanup-status.txt"
+    if [[ "${cleanup_status}" != 0 ]]; then
+      cleanup_failed=1
+    fi
+  }
   trap - EXIT
   set +e
   mkdir -p "${BOOTSTRAP_DIR}"
@@ -68,17 +81,24 @@ capture_diagnostics() {
       > "${BOOTSTRAP_DIR}/unified-log.txt" 2>&1
   fi
   if [[ "${TRUSTED_IDENTITY}" =~ ^[0-9A-Fa-f]{40}$ ]]; then
-    run_bounded 20 sudo -n security remove-trusted-cert -d "${CERTIFICATE_PEM}" \
+    record_cleanup remove_trust run_bounded 20 \
+      sudo -n security remove-trusted-cert -d "${CERTIFICATE_PEM}" \
       >/dev/null 2>&1
-    run_bounded 20 sudo -n security delete-certificate -Z "${TRUSTED_IDENTITY}" \
+    record_cleanup delete_system_certificate run_bounded 20 \
+      sudo -n security delete-certificate -Z "${TRUSTED_IDENTITY}" \
       /Library/Keychains/System.keychain >/dev/null 2>&1
   fi
   if ((${#ORIGINAL_KEYCHAINS[@]})); then
-    run_bounded 20 security list-keychains -d user -s \
+    record_cleanup restore_keychain_search_list run_bounded 20 \
+      security list-keychains -d user -s \
       "${ORIGINAL_KEYCHAINS[@]}" >/dev/null 2>&1
   fi
   if [[ -n "${KEYCHAIN}" && -f "${KEYCHAIN}" ]]; then
-    run_bounded 20 security delete-keychain "${KEYCHAIN}" >/dev/null 2>&1
+    record_cleanup delete_temporary_keychain run_bounded 20 \
+      security delete-keychain "${KEYCHAIN}" >/dev/null 2>&1
+  fi
+  if [[ "${cleanup_failed}" == 1 && "${command_status}" == 0 ]]; then
+    command_status=1
   fi
   exit "${command_status}"
 }
@@ -213,9 +233,9 @@ IDENTITY="$(ensure_local_signing_identity)"
 CERTIFICATE_PEM="${RUNNER_TEMP}/cua-driver-hosted-signing.pem"
 security find-certificate -c "${CUA_LOCAL_SIGN_CN}" -p "${KEYCHAIN}" \
   > "${CERTIFICATE_PEM}"
+TRUSTED_IDENTITY="${IDENTITY}"
 run_bounded 30 sudo -n security add-trusted-cert -d -r trustRoot \
   -p codeSign -k /Library/Keychains/System.keychain "${CERTIFICATE_PEM}"
-TRUSTED_IDENTITY="${IDENTITY}"
 run_bounded 30 security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
   -k "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}" >/dev/null
 security find-identity -v -p codesigning "${KEYCHAIN}" \
@@ -313,7 +333,18 @@ watch_daemon() {
   while sleep 3; do
     daemon_status="$("${INSTALLED_BIN}" --socket "${DAEMON_SOCKET}" status 2>&1 || true)"
     if [[ "${daemon_status}" != *"permission mode: unrestricted"* ]]; then
-      printf '%s daemon unavailable or not unrestricted; restarting\n' \
+      printf '%s daemon status probe failed; confirming before restart\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      printf '%s\n' "${daemon_status}"
+      for _ in {1..3}; do
+        sleep 1
+        daemon_status="$("${INSTALLED_BIN}" --socket "${DAEMON_SOCKET}" status 2>&1 || true)"
+        [[ "${daemon_status}" == *"permission mode: unrestricted"* ]] && break
+      done
+      if [[ "${daemon_status}" == *"permission mode: unrestricted"* ]]; then
+        continue
+      fi
+      printf '%s daemon remained unavailable or not unrestricted; restarting\n' \
         "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
       printf '%s\n' "${daemon_status}"
       "${INSTALLED_BIN}" --socket "${DAEMON_SOCKET}" stop >/dev/null 2>&1 || true
@@ -322,7 +353,7 @@ watch_daemon() {
         serve \
         --permission-mode unrestricted \
         --dangerously-bypass-approvals
-      for _ in {1..15}; do
+      for _ in {1..60}; do
         sleep 1
         daemon_status="$("${INSTALLED_BIN}" --socket "${DAEMON_SOCKET}" status 2>&1 || true)"
         [[ "${daemon_status}" == *"permission mode: unrestricted"* ]] && break
@@ -338,4 +369,13 @@ export CUA_E2E_MACOS_DAEMON_SOCKET="${DAEMON_SOCKET}"
 export CUA_E2E_FRESH_FIXTURE_STATE=1
 mark_phase "matrix-${LANE}"
 echo "[E2E] Running hosted macOS ${LANE} lane"
-bash "${SCRIPT_DIR}/run-rust-e2e.sh"
+MATRIX_STATUS=0
+bash "${SCRIPT_DIR}/run-rust-e2e.sh" || MATRIX_STATUS=$?
+kill "${WATCHDOG_PID}" >/dev/null 2>&1 || true
+wait "${WATCHDOG_PID}" 2>/dev/null || true
+WATCHDOG_PID=""
+if grep -Fq "restarting" "${BOOTSTRAP_DIR}/daemon-watchdog.log"; then
+  echo "The hosted daemon required a watchdog restart during the matrix" >&2
+  MATRIX_STATUS=1
+fi
+exit "${MATRIX_STATUS}"

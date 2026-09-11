@@ -221,6 +221,12 @@ if not all(required):
     raise SystemExit(f"hosted GUI probe failed: {result}")
 PY
 
+if ! run_with_deadline 30 osascript \
+  -e 'tell application "TextEdit" to close every window saving no' \
+  -e 'tell application "TextEdit" to quit'; then
+  fail "TextEdit probe cleanup failed or timed out"
+fi
+
 PROBE_STATUS=passed
 PROBE_MESSAGE="hosted macOS GUI environment and TextEdit window capture passed"
 echo "${PROBE_MESSAGE}"

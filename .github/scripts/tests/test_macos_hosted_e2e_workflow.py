@@ -23,6 +23,8 @@ def test_hosted_macos_probe_is_manual_exact_sha_and_least_privilege() -> None:
     assert "secrets." not in workflow
     assert "runs-on: macos-26" in workflow
     assert "ref: ${{ inputs.source_sha }}" in workflow
+    assert "CUA_E2E_WORKFLOW_SHA: ${{ github.sha }}" in workflow
+    assert "source_sha must match the selected workflow ref tip" in workflow
     assert "^[0-9a-fA-F]{40}$" in workflow
     assert "persist-credentials: false" in workflow
     assert "github.run_id }}-${{ github.run_attempt" in workflow
@@ -35,6 +37,8 @@ def test_hosted_macos_probe_is_manual_exact_sha_and_least_privilege() -> None:
     assert "path: artifacts/cua-driver" in workflow
     assert "needs: [probe, matrix]" in workflow
     assert "cua-driver/macos-hosted-certification@v1" in workflow
+    assert "workflow_ref: $workflow_ref" in workflow
+    assert "workflow_sha: $workflow_sha" in workflow
 
     for action in ("actions/checkout", "actions/upload-artifact"):
         line = next(line for line in workflow.splitlines() if f"uses: {action}@" in line)
@@ -85,6 +89,8 @@ def test_hosted_macos_probe_proves_textedit_window_content() -> None:
     assert 'result.get("window", {}).get("name") == "probe.txt"' in probe
     assert "textedit-window.png" in probe
     assert "display.png" in probe
+    assert 'tell application "TextEdit" to close every window saving no' in probe
+    assert 'tell application "TextEdit" to quit' in probe
 
 
 def test_script_ci_runs_when_hosted_macos_contract_changes() -> None:
@@ -119,6 +125,9 @@ def test_hosted_macos_runner_is_strict_and_uses_the_canonical_matrix() -> None:
     assert "security create-keychain" in runner
     assert "ensure_local_signing_identity" in runner
     assert "security add-trusted-cert" in runner
+    assert runner.index('TRUSTED_IDENTITY="${IDENTITY}"') < runner.index(
+        "security add-trusted-cert"
+    )
     assert "-p codeSign" in runner
     assert "security remove-trusted-cert" in runner
     assert "security delete-certificate" in runner
@@ -148,5 +157,8 @@ def test_hosted_macos_runner_is_strict_and_uses_the_canonical_matrix() -> None:
     assert 'trap \'exit 143\' TERM' in runner
     assert 'bash "${SCRIPT_DIR}/probe-hosted-runner.sh"' in runner
     assert "watch_daemon" in runner
+    assert "daemon status probe failed; confirming before restart" in runner
+    assert "The hosted daemon required a watchdog restart during the matrix" in runner
+    assert "cleanup-status.txt" in runner
     assert "permissions grant" not in runner
     assert "cleanup-targets.txt" in runner

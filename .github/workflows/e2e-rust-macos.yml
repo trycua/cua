@@ -22,6 +22,7 @@ jobs:
     timeout-minutes: 20
     env:
       CUA_E2E_SOURCE_SHA: ${{ inputs.source_sha }}
+      CUA_E2E_WORKFLOW_SHA: ${{ github.sha }}
 
     steps:
       - name: Initialize evidence directory
@@ -39,6 +40,12 @@ jobs:
           set -euo pipefail
           if [[ ! "${CUA_E2E_SOURCE_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]; then
             echo "source_sha must be a full 40-character commit SHA" >&2
+            exit 2
+          fi
+          source_sha_lower="$(printf '%s' "${CUA_E2E_SOURCE_SHA}" | tr '[:upper:]' '[:lower:]')"
+          workflow_sha_lower="$(printf '%s' "${CUA_E2E_WORKFLOW_SHA}" | tr '[:upper:]' '[:lower:]')"
+          if [[ "${source_sha_lower}" != "${workflow_sha_lower}" ]]; then
+            echo "source_sha must match the selected workflow ref tip (${CUA_E2E_WORKFLOW_SHA})" >&2
             exit 2
           fi
 
@@ -88,6 +95,7 @@ jobs:
         lane: [shared, native, capture]
     env:
       CUA_E2E_SOURCE_SHA: ${{ inputs.source_sha }}
+      CUA_E2E_WORKFLOW_SHA: ${{ github.sha }}
       CUA_E2E_INTERNAL_LANE: ${{ matrix.lane }}
 
     steps:
@@ -97,6 +105,12 @@ jobs:
           set -euo pipefail
           if [[ ! "${CUA_E2E_SOURCE_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]; then
             echo "source_sha must be a full 40-character commit SHA" >&2
+            exit 2
+          fi
+          source_sha_lower="$(printf '%s' "${CUA_E2E_SOURCE_SHA}" | tr '[:upper:]' '[:lower:]')"
+          workflow_sha_lower="$(printf '%s' "${CUA_E2E_WORKFLOW_SHA}" | tr '[:upper:]' '[:lower:]')"
+          if [[ "${source_sha_lower}" != "${workflow_sha_lower}" ]]; then
+            echo "source_sha must match the selected workflow ref tip (${CUA_E2E_WORKFLOW_SHA})" >&2
             exit 2
           fi
 
@@ -159,6 +173,8 @@ jobs:
       SOURCE_SHA: ${{ inputs.source_sha }}
       PROBE_RESULT: ${{ needs.probe.result }}
       MATRIX_RESULT: ${{ needs.matrix.result }}
+      WORKFLOW_REF: ${{ github.workflow_ref }}
+      WORKFLOW_SHA: ${{ github.sha }}
     steps:
       - name: Record complete hosted result
         shell: bash
@@ -169,10 +185,13 @@ jobs:
             --arg source_sha "${SOURCE_SHA}" \
             --arg run_id "${GITHUB_RUN_ID}" \
             --arg run_attempt "${GITHUB_RUN_ATTEMPT}" \
+            --arg workflow_ref "${WORKFLOW_REF}" \
+            --arg workflow_sha "${WORKFLOW_SHA}" \
             --arg probe "${PROBE_RESULT}" \
             --arg matrix "${MATRIX_RESULT}" \
             '{schema: $schema, source_sha: $source_sha,
-              github: {run_id: $run_id, run_attempt: $run_attempt},
+              github: {run_id: $run_id, run_attempt: $run_attempt,
+                workflow_ref: $workflow_ref, workflow_sha: $workflow_sha},
               jobs: {probe: $probe, matrix: $matrix},
               passed: ($probe == "success" and $matrix == "success")}' \
             | tee certification.json

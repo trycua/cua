@@ -1,10 +1,10 @@
-name: "E2E: Rust macOS hosted probe"
+name: "E2E: Rust macOS hosted"
 
 on:
   workflow_dispatch:
     inputs:
       source_sha:
-        description: "Full 40-character commit SHA to probe"
+        description: "Full 40-character commit SHA to certify"
         required: true
         type: string
 
@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: e2e-rust-macos-probe-${{ inputs.source_sha }}
+  group: e2e-rust-macos-hosted-${{ inputs.source_sha }}
   cancel-in-progress: false
 
 jobs:
@@ -22,6 +22,7 @@ jobs:
     timeout-minutes: 20
     env:
       CUA_E2E_SOURCE_SHA: ${{ inputs.source_sha }}
+      CUA_E2E_WORKFLOW_SHA: ${{ github.sha }}
 
     steps:
       - name: Initialize evidence directory
@@ -39,6 +40,12 @@ jobs:
           set -euo pipefail
           if [[ ! "${CUA_E2E_SOURCE_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]; then
             echo "source_sha must be a full 40-character commit SHA" >&2
+            exit 2
+          fi
+          source_sha_lower="$(printf '%s' "${CUA_E2E_SOURCE_SHA}" | tr '[:upper:]' '[:lower:]')"
+          workflow_sha_lower="$(printf '%s' "${CUA_E2E_WORKFLOW_SHA}" | tr '[:upper:]' '[:lower:]')"
+          if [[ "${source_sha_lower}" != "${workflow_sha_lower}" ]]; then
+            echo "source_sha must match the selected workflow ref tip (${CUA_E2E_WORKFLOW_SHA})" >&2
             exit 2
           fi
 
@@ -74,5 +81,127 @@ jobs:
         with:
           name: cua-driver-macos-hosted-probe-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/cua-macos-hosted-probe
+          if-no-files-found: error
+          retention-days: 14
+
+  matrix:
+    needs: probe
+    name: hosted ${{ matrix.lane }} lane
+    runs-on: macos-26
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [shared, native, capture]
+    env:
+      CUA_E2E_SOURCE_SHA: ${{ inputs.source_sha }}
+      CUA_E2E_WORKFLOW_SHA: ${{ github.sha }}
+      CUA_E2E_INTERNAL_LANE: ${{ matrix.lane }}
+
+    steps:
+      - name: Validate requested source SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "${CUA_E2E_SOURCE_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "source_sha must be a full 40-character commit SHA" >&2
+            exit 2
+          fi
+          source_sha_lower="$(printf '%s' "${CUA_E2E_SOURCE_SHA}" | tr '[:upper:]' '[:lower:]')"
+          workflow_sha_lower="$(printf '%s' "${CUA_E2E_WORKFLOW_SHA}" | tr '[:upper:]' '[:lower:]')"
+          if [[ "${source_sha_lower}" != "${workflow_sha_lower}" ]]; then
+            echo "source_sha must match the selected workflow ref tip (${CUA_E2E_WORKFLOW_SHA})" >&2
+            exit 2
+          fi
+
+      - name: Check out exact source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact checkout and initialize build namespace
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual_sha="$(git rev-parse HEAD)"
+          expected_sha="$(printf '%s' "${CUA_E2E_SOURCE_SHA}" | tr '[:upper:]' '[:lower:]')"
+          if [[ "${actual_sha}" != "${expected_sha}" ]]; then
+            echo "checked out ${actual_sha}, expected ${CUA_E2E_SOURCE_SHA}" >&2
+            exit 2
+          fi
+          if [[ -n "$(git status --porcelain --untracked-files=normal)" ]]; then
+            echo "hosted macOS E2E requires a clean checkout" >&2
+            exit 2
+          fi
+          target_dir="${RUNNER_TEMP}/cua-driver-target-${CUA_E2E_INTERNAL_LANE}"
+          echo "CARGO_TARGET_DIR=${target_dir}" >> "${GITHUB_ENV}"
+
+      - name: Install missing test dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=()
+          command -v ffmpeg >/dev/null 2>&1 || missing+=(ffmpeg)
+          command -v jq >/dev/null 2>&1 || missing+=(jq)
+          if ((${#missing[@]})); then
+            brew install "${missing[@]}"
+          fi
+
+      - name: Run hosted macOS lane
+        shell: bash
+        run: scripts/ci/macos/run-hosted-rust-e2e.sh
+
+      - name: Upload hosted macOS lane evidence
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
+        with:
+          name: rust-macos-hosted-${{ matrix.lane }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/cua-driver
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  certify:
+    if: always()
+    needs: [probe, matrix]
+    name: hosted certification result
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      PROBE_RESULT: ${{ needs.probe.result }}
+      MATRIX_RESULT: ${{ needs.matrix.result }}
+      WORKFLOW_REF: ${{ github.workflow_ref }}
+      WORKFLOW_SHA: ${{ github.sha }}
+    steps:
+      - name: Record complete hosted result
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg schema "cua-driver/macos-hosted-certification@v1" \
+            --arg source_sha "${SOURCE_SHA}" \
+            --arg run_id "${GITHUB_RUN_ID}" \
+            --arg run_attempt "${GITHUB_RUN_ATTEMPT}" \
+            --arg workflow_ref "${WORKFLOW_REF}" \
+            --arg workflow_sha "${WORKFLOW_SHA}" \
+            --arg probe "${PROBE_RESULT}" \
+            --arg matrix "${MATRIX_RESULT}" \
+            '{schema: $schema, source_sha: $source_sha,
+              github: {run_id: $run_id, run_attempt: $run_attempt,
+                workflow_ref: $workflow_ref, workflow_sha: $workflow_sha},
+              jobs: {probe: $probe, matrix: $matrix},
+              passed: ($probe == "success" and $matrix == "success")}' \
+            | tee certification.json
+          jq -e '.passed == true' certification.json >/dev/null
+
+      - name: Upload certification result
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
+        with:
+          name: rust-macos-hosted-certification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: certification.json
           if-no-files-found: error
           retention-days: 14

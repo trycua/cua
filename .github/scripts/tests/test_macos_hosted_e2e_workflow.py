@@ -1,4 +1,4 @@
-"""Contract tests for the manually dispatched GitHub-hosted macOS probe."""
+"""Contract tests for the manually dispatched GitHub-hosted macOS E2E lane."""
 
 from pathlib import Path
 
@@ -23,11 +23,22 @@ def test_hosted_macos_probe_is_manual_exact_sha_and_least_privilege() -> None:
     assert "secrets." not in workflow
     assert "runs-on: macos-26" in workflow
     assert "ref: ${{ inputs.source_sha }}" in workflow
+    assert "CUA_E2E_WORKFLOW_SHA: ${{ github.sha }}" in workflow
+    assert "source_sha must match the selected workflow ref tip" in workflow
     assert "^[0-9a-fA-F]{40}$" in workflow
     assert "persist-credentials: false" in workflow
     assert "github.run_id }}-${{ github.run_attempt" in workflow
     assert "CUA_MACOS_HOSTED_PROBE_DIR: ${{ runner.temp" not in workflow
     assert 'echo "CUA_MACOS_HOSTED_PROBE_DIR=${artifact_dir}" >> "${GITHUB_ENV}"' in workflow
+    assert "matrix:\n        lane: [shared, native, capture]" in workflow
+    assert "fail-fast: false" in workflow
+    assert "needs: probe" in workflow
+    assert "scripts/ci/macos/run-hosted-rust-e2e.sh" in workflow
+    assert "path: artifacts/cua-driver" in workflow
+    assert "needs: [probe, matrix]" in workflow
+    assert "cua-driver/macos-hosted-certification@v1" in workflow
+    assert "workflow_ref: $workflow_ref" in workflow
+    assert "workflow_sha: $workflow_sha" in workflow
 
     for action in ("actions/checkout", "actions/upload-artifact"):
         line = next(line for line in workflow.splitlines() if f"uses: {action}@" in line)
@@ -78,6 +89,8 @@ def test_hosted_macos_probe_proves_textedit_window_content() -> None:
     assert 'result.get("window", {}).get("name") == "probe.txt"' in probe
     assert "textedit-window.png" in probe
     assert "display.png" in probe
+    assert "run_with_deadline 30 /usr/bin/killall TextEdit" in probe
+    assert 'pgrep -x TextEdit' in probe
 
 
 def test_script_ci_runs_when_hosted_macos_contract_changes() -> None:
@@ -88,4 +101,70 @@ def test_script_ci_runs_when_hosted_macos_contract_changes() -> None:
 
     guide = read("scripts/ci/README.md")
     assert "e2e-rust-macos.yml" in guide
-    assert "does not\nestablish `CuaDriverLocal.app` TCC authorization" in guide
+    assert "temporary certificate-backed identity" in " ".join(guide.split())
+    assert "supplemental" in guide
+
+
+def test_hosted_macos_runner_is_strict_and_uses_the_canonical_matrix() -> None:
+    runner = read("scripts/ci/macos/run-hosted-rust-e2e.sh")
+
+    for requirement in (
+        'GITHUB_ACTIONS:-}" == true',
+        'GITHUB_EVENT_NAME:-}" == workflow_dispatch',
+        'RUNNER_ENVIRONMENT:-}" == github-hosted',
+        'ImageOS:-}" == macos26',
+        'CURRENT_USER}" == runner',
+        'CONSOLE_USER}" == runner',
+        'MODEL}" == VirtualMac*',
+        'SIP_STATUS}" == "System Integrity Protection status: disabled."',
+        '[[ ! -e "${LOCAL_APP}" ]]',
+        '[[ ! -e "${KEYCHAIN}" ]]',
+    ):
+        assert requirement in runner
+
+    assert "security create-keychain" in runner
+    assert "ensure_local_signing_identity" in runner
+    assert "security add-trusted-cert" in runner
+    assert runner.index('TRUSTED_IDENTITY="${IDENTITY}"') < runner.index(
+        "security add-trusted-cert"
+    )
+    assert "-p codeSign" in runner
+    assert "security remove-trusted-cert" in runner
+    assert "security delete-certificate" in runner
+    assert "cleanup-attempts.txt" in runner
+    assert "verify_system_certificate_absent" in runner
+    assert "verify_code_signing_trust_absent" in runner
+    assert "security dump-trust-settings -d" in runner
+    assert "cleanup-trust-settings.txt" in runner
+    assert "security verify-cert" not in runner
+    assert "security set-key-partition-list" in runner
+    assert "set-keychain-settings -lut 21600" in runner
+    assert 'security list-keychains -d user -s' in runner
+    assert '"${ORIGINAL_KEYCHAINS[@]}"' in runner
+    assert "run_bounded 30 codesign" in runner
+    assert "phase.txt" in runner
+    assert "--require-stable-signing" in runner
+    assert 'grep -Fq "certificate leaf"' in runner
+    assert "ScreenCaptureApprovals.plist" in runner
+    assert 'SCREEN_CAPTURE_CLIENT="com.trycua.driver.local"' in runner
+    assert "kScreenCaptureApprovalLastAlerted" in runner
+    assert "kScreenCaptureApprovalLastUsed" in runner
+    assert "screen-capture-approval.txt" in runner
+    assert "killall -HUP replayd" in runner
+    assert "seed-tcc-guest.sh" in runner
+    assert "--expected-client com.trycua.driver.local" in runner
+    assert "--dangerously-bypass-approvals" in runner
+    assert ".direct_capture_status == \"not_checked\"" in runner
+    assert '.source.attribution == "driver-daemon"' in runner
+    assert 'bash "${SCRIPT_DIR}/run-rust-e2e.sh"' in runner
+    assert 'CUA_E2E_MACOS_DAEMON_SOCKET="${DAEMON_SOCKET}"' in runner
+    assert '--socket "${DAEMON_SOCKET}"' in runner
+    assert 'trap \'exit 130\' INT' in runner
+    assert 'trap \'exit 143\' TERM' in runner
+    assert 'bash "${SCRIPT_DIR}/probe-hosted-runner.sh"' in runner
+    assert "watch_daemon" in runner
+    assert "daemon status probe failed; confirming before restart" in runner
+    assert "The hosted daemon required a watchdog restart during the matrix" in runner
+    assert "cleanup-status.txt" in runner
+    assert "permissions grant" not in runner
+    assert "cleanup-targets.txt" in runner

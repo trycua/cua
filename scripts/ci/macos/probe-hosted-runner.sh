@@ -14,7 +14,7 @@ PROBE_MESSAGE="probe did not complete"
 SWIFT_RESULT="${ARTIFACT_DIR}/window-capture.json"
 SYSTEM_LOG="${ARTIFACT_DIR}/system.txt"
 WINDOW_METADATA="${ARTIFACT_DIR}/window.json"
-PROBE_BINARY="${ARTIFACT_DIR}/verify-hosted-window"
+PROBE_BINARY="${RUNNER_TEMP:?RUNNER_TEMP is required}/verify-hosted-window"
 
 write_environment() {
   PROBE_STATUS="${PROBE_STATUS}" \
@@ -220,6 +220,16 @@ required = (
 if not all(required):
     raise SystemExit(f"hosted GUI probe failed: {result}")
 PY
+
+if ! run_with_deadline 30 /usr/bin/killall TextEdit; then
+  fail "TextEdit probe cleanup failed or timed out"
+fi
+for _ in {1..10}; do
+  /usr/bin/pgrep -x TextEdit >/dev/null 2>&1 || break
+  sleep 1
+done
+/usr/bin/pgrep -x TextEdit >/dev/null 2>&1 \
+  && fail "TextEdit remained running after probe cleanup"
 
 PROBE_STATUS=passed
 PROBE_MESSAGE="hosted macOS GUI environment and TextEdit window capture passed"

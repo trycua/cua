@@ -281,7 +281,11 @@ background delivery is tested.
 
 ### macOS
 
-Runner: `libs/cua-driver/tests/runners/macos-lume/run-all.sh`
+Canonical runner: `libs/cua-driver/tests/runners/macos-lume/run-all.sh`
+
+Supplemental hosted runner: manually dispatch
+`.github/workflows/e2e-rust-macos.yml` with an exact 40-character source SHA.
+Its probe must pass before independent shared, native, and capture jobs run.
 
 | Runner area               | Rust test                              | Real harness or app                     |
 | ------------------------- | -------------------------------------- | --------------------------------------- |
@@ -301,6 +305,16 @@ canonical logged-in macOS lane, but they do not replace repo-local fixtures.
 The maintainer wrapper provisions the exact source build and verifies the
 private Lume seed's TCC/signing contract before delegating the behavior matrix
 to `scripts/ci/macos/run-rust-e2e.sh`.
+
+The hosted wrapper uses the same behavior matrix on fresh `macos-26` runners.
+It requires the GitHub-hosted Aqua session and SIP-off VirtualMac environment,
+creates a temporary code-signing Keychain, installs a certificate-signed local
+app, seeds only Accessibility and Screen Capture for that app's exact csreq, and
+verifies that permission status is attributed to the driver daemon before any
+test begins. The temporary certificate trust is removed during job cleanup.
+Hosted results remain supplemental until the image and signing
+identity provide the same release-parity guarantees as the maintained Lume
+seed.
 
 ### Linux
 

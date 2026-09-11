@@ -1,5 +1,5 @@
 {
   "libs/cua-driver": "0.27.0",
   "libs/lume": "0.5.3",
-  "libs/python/cua-sandbox": "0.6.0"
+  "libs/python/cua-sandbox": "0.7.0"
 }

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/trycua/cua/compare/sandbox-v0.6.0...sandbox-v0.7.0) (2026-09-11)
+
+
+### Features
+
+* **sandbox:** use shared Driver MCP client ([#3718](https://github.com/trycua/cua/issues/3718)) ([d1ac400](https://github.com/trycua/cua/commit/d1ac40014457556c9d66a4d791fa40a8db5b9d68))
+
 ## [0.6.0](https://github.com/trycua/cua/compare/sandbox-v0.5.0...sandbox-v0.6.0) (2026-09-10)
 
 

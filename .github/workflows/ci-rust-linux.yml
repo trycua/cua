@@ -180,6 +180,9 @@ jobs:
               cargo test -p platform-linux \
               capture::tests::live_xshm_matches_xgetimage_across_resize_reconnect_and_repetition \
               --locked -- --ignored --exact --nocapture --test-threads=1
+            DISPLAY=:98 cargo test -p platform-linux \
+              capture::tests::live_directcolor_capture_tracks_window_colormap \
+              --locked -- --ignored --exact --nocapture --test-threads=1
           } 2>&1 | tee x11-capture-evidence.log
           kill "$xvfb_primary" "$xvfb_secondary" 2>/dev/null || true
           wait "$xvfb_primary" "$xvfb_secondary" || true

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Bug Fixes
+
+* **cua-driver:** capture Linux X11 DirectColor windows using their current per-channel colormap.
+
 ## [0.28.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.27.0...cua-driver-rs-v0.28.0) (2026-09-11)
 
 

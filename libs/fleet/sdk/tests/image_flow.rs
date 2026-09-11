@@ -9,10 +9,10 @@ use support::ScriptedHttpClient;
 const BASE_URL: &str = "https://cyclops.example:8443/prefix";
 const TOKEN_URL: &str = "https://identity.example/oauth/token";
 const NAMESPACE: &str = "workers";
-const IMAGE_NAME: &str = "image-demo";
+const IMAGE_NAME: &str = "image-demo.v1";
 const IMAGE_COLLECTION: &str = "https://cyclops.example:8443/prefix/api/k8s/apis/images.cua.ai/v1alpha1/namespaces/workers/images";
-const IMAGE_ITEM: &str = "https://cyclops.example:8443/prefix/api/k8s/apis/images.cua.ai/v1alpha1/namespaces/workers/images/image-demo";
-const IMAGE_JSON: &[u8] = br#"{"apiVersion":"images.cua.ai/v1alpha1","kind":"Image","metadata":{"namespace":"workers","name":"image-demo"},"spec":{"recipe":"example"}}"#;
+const IMAGE_ITEM: &str = "https://cyclops.example:8443/prefix/api/k8s/apis/images.cua.ai/v1alpha1/namespaces/workers/images/image-demo.v1";
+const IMAGE_JSON: &[u8] = br#"{"apiVersion":"images.cua.ai/v1alpha1","kind":"Image","metadata":{"namespace":"workers","name":"image-demo.v1"},"spec":{"recipe":"example"}}"#;
 
 #[tokio::test]
 async fn image_crud_uses_generic_k8s_paths() {

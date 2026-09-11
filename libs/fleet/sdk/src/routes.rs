@@ -65,7 +65,7 @@ pub fn image_collection(base: &Url, namespace: &str) -> Result<Url, SdkError> {
 
 pub fn image_item(base: &Url, namespace: &str, name: &str) -> Result<Url, SdkError> {
     validate_dns_label_for("namespace", namespace)?;
-    validate_dns_label_for("name", name)?;
+    validate_image_name(name)?;
     route(
         base,
         format!("api/k8s/apis/images.cua.ai/v1alpha1/namespaces/{namespace}/images/{name}"),
@@ -190,6 +190,36 @@ pub(crate) fn validate_dns_label_for(field: &str, value: &str) -> Result<(), Sdk
         Some(reason) => Err(SdkError::InvalidResourceName {
             field: field.into(),
             value: value.into(),
+            reason: reason.into(),
+        }),
+        None => Ok(()),
+    }
+}
+
+fn validate_image_name(name: &str) -> Result<(), SdkError> {
+    let reason = if name.is_empty() {
+        Some("must not be empty")
+    } else if name.len() > 253 {
+        Some("must be at most 253 bytes")
+    } else if !name.split('.').all(|label| {
+        !label.is_empty()
+            && !label.starts_with('-')
+            && !label.ends_with('-')
+            && label
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    }) {
+        Some(
+            "must be dot-separated nonempty labels containing lowercase ASCII letters, digits, and internal hyphens",
+        )
+    } else {
+        None
+    };
+
+    match reason {
+        Some(reason) => Err(SdkError::InvalidResourceName {
+            field: "name".into(),
+            value: name.into(),
             reason: reason.into(),
         }),
         None => Ok(()),
@@ -430,6 +460,59 @@ mod tests {
                 .as_str(),
             "https://cyclops.example:8443/api/k8s/apis/images.cua.ai/v1alpha1/namespaces/example-pool/images/example-image"
         );
+    }
+
+    #[test]
+    fn image_names_match_canonical_admission() {
+        let base = Url::parse("https://gateway.example/cyclops%20api/?old=query#fragment").unwrap();
+        for name in [
+            "ubuntu.24-04".to_owned(),
+            "a".repeat(253),
+            format!("{}.b", "a".repeat(251)),
+        ] {
+            let url = image_item(&base, "workers", &name).unwrap();
+            assert_eq!(
+                url.as_str(),
+                format!(
+                    "https://gateway.example/cyclops%20api/api/k8s/apis/images.cua.ai/v1alpha1/namespaces/workers/images/{name}"
+                )
+            );
+        }
+        for name in [
+            "",
+            ".",
+            "..",
+            ".image",
+            "image.",
+            "image..v1",
+            "../image",
+            "image/other",
+            "image\\other",
+            "image?query",
+            "image#fragment",
+            "%2e%2e",
+            "Image.v1",
+            "-image.v1",
+            "image-.v1",
+            "image.-v1",
+            "image.v1-",
+            "image_v1",
+            "im\u{e1}ge",
+        ] {
+            assert!(image_item(&base, "workers", name).is_err(), "{name:?}");
+        }
+        assert!(image_item(&base, "workers", &"a".repeat(254)).is_err());
+        assert!(image_item(&base, &"a".repeat(63), "image.v1").is_ok());
+        for namespace in ["workers.prod".to_owned(), "a".repeat(64)] {
+            assert!(image_item(&base, &namespace, "image.v1").is_err());
+            assert!(image_collection(&base, &namespace).is_err());
+        }
+        for name in ["image.v1".to_owned(), "a".repeat(64)] {
+            assert!(pool_item(&base, "workers", &name).is_err());
+            assert!(claim_item(&base, "workers", &name).is_err());
+            assert!(template_item(&base, "workers", &name).is_err());
+            assert!(super::service_url(&base, "workers", &name, "/").is_err());
+        }
     }
 
     #[test]

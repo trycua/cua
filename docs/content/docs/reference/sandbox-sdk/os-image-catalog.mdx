@@ -8,21 +8,26 @@ covering your intended use, including the applicable hosting and virtualization
 rights. An image being available or booting successfully does not establish
 licensing eligibility. Bundled applications have their own license terms.
 
+## VM images
+
+VM images boot a guest operating system. A containerDisk is an OCI image that
+packages a VM disk; it is not a desktop container that can be started with
+`docker run`.
+
 <span id="hosted-fleet-images" />
 <span id="ubuntu-2404" />
 
 | OS      | Distribution / version / architecture                              | Desktop / window manager                         | Image kind / runtime                       | Registry image or source                                                                                                |
 | ------- | ------------------------------------------------------------------ | ------------------------------------------------ | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
 | Linux   | Ubuntu 24.04; artifact architecture not established by SDK mapping | Artifact-dependent; not specified by SDK mapping | Fleet containerDisk; local bare-metal QEMU | `public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-38352d34`                                                                |
-| Linux   | Ubuntu 24.04                                                       | XFCE runtime mapping                             | Local Docker container                     | `public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:docker-latest`                                                                |
 | Linux   | Omarchy (Arch Linux-based), amd64                                  | Hyprland / Wayland                               | Fleet containerDisk                        | `public.ecr.aws/k5j5w0x5/cua-omarchy-workspace@sha256:dc448dcc986f443980dfb3586f1b91d8699091ad96a74b369016535f0dbb0342` |
 | Windows | Server 2022; artifact architecture not established by SDK mapping  | Native Windows desktop                           | Fleet containerDisk; local Hyper-V or QEMU | `public.ecr.aws/k5j5w0x5/cua-windows-2022:main-bac7daa3`                                                                |
 | macOS   | Sequoia 15                                                         | Native macOS desktop                             | Local Lume VM                              | `ghcr.io/trycua/macos-sequoia-cua:latest`                                                                               |
 | macOS   | Tahoe 26                                                           | Native macOS desktop                             | Local Lume VM                              | `ghcr.io/trycua/macos-tahoe-cua:latest`                                                                                 |
 
-## NixOS desktop images
+### NixOS desktop VM images
 
-These 41 NixOS 26.05 images are Linux/amd64 containerDisk candidates, one per
+These 41 NixOS 26.05 VM images are Linux/amd64 containerDisk candidates, one per
 desktop environment or window manager. They include computer-server on port
 8000 and Cua Driver MCP on port 3000; StumpWM also includes its Lisp MCP on port 3001. Use an explicit registry image rather than a built-in SDK image selector.
 
@@ -32,7 +37,7 @@ They are published candidates, not `latest` images or a guarantee of Fleet
 compatibility. Profiles without a successful publication are not listed.
 Expose guest services only through authenticated access, not direct public ingress.
 
-| Desktop / window manager | Display server | Registry image                                                                                                          |
+| Desktop / window manager | Display server | VM registry image                                                                                                       |
 | ------------------------ | -------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | Awesome                  | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-awesome@sha256:587d1bc27a51528319c2d6fcd87dcfff2369f4754db6a9e57265e76696fc7a0e`     |
 | berry                    | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-berry@sha256:de4f1fec837794ab2995e53446ad2c6b30df9d3b26b78bc3e2682745831d6380`       |
@@ -75,3 +80,17 @@ Expose guest services only through authenticated access, not direct public ingre
 | wmderland                | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-wmderland@sha256:cae208a0e6767607d772d17f8e43919c6b64708d97b580f54e98945a419303e7`   |
 | wmii                     | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-wmii@sha256:791d466782165d13deaae236624b35923310d2ffe32850c8d8f4ad11d416e3e5`        |
 | XFCE                     | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-xfce@sha256:87e8d3865685fbd69ef03e8ee48458b31836511d1849f2eabc0dea92dfdd0e64`        |
+
+## Docker images
+
+Docker images run desktop userspace in a container rather than booting a VM.
+Use the Docker image below for the local Docker runtime, not the VM
+containerDisk reference with the same repository name. The `docker-latest` tag
+is mutable; pin a resolved digest when you need a reproducible image.
+
+| OS    | Distribution / version | Architecture | Desktop | Docker registry image                                    |
+| ----- | ---------------------- | ------------ | ------- | -------------------------------------------------------- |
+| Linux | Ubuntu 24.04           | amd64, arm64 | XFCE    | `public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:docker-latest` |
+
+The NixOS family listed above publishes VM containerDisks only; it does not
+publish runnable Docker desktop variants.

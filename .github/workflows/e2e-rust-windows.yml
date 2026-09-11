@@ -86,7 +86,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        instance: [1, 2, 3]
+        instance: [1]
     if: inputs.lane == 'all' || inputs.lane == 'native'
     name: "Windows / native WPF + WinUI3 + WebView2"
     needs: source
@@ -101,42 +101,11 @@ jobs:
       - name: Ensure FFmpeg for trajectory video
         shell: pwsh
         run: .\scripts\ci\windows\setup-ffmpeg.ps1
-      - name: Observe bounded canonical recording preflights
+      - name: Contrast queued shutdown with closed and held stdin
         shell: pwsh
-        env:
-          CUA_E2E_INTERNAL_LANE: native
         run: |
-          $source = Get-Content -Raw scripts/ci/windows/run-rust-e2e.ps1
-          $boundary = 'function Invoke-CargoTest {'
-          $index = $source.IndexOf($boundary)
-          if ($index -lt 0 -or $source.LastIndexOf($boundary) -ne $index) { throw 'Canonical preflight boundary changed' }
-          $probe = Join-Path $PWD 'scripts/ci/windows/recorder-preflight-diagnostic.ps1'
-          Set-Content $probe $source.Substring(0, $index)
-          $observations = Join-Path $PWD 'artifacts/recorder-observations'
-          New-Item -ItemType Directory -Force $observations | Out-Null
-          try {
-            foreach ($attempt in 1..20) {
-              $destination = Join-Path $observations ('observation-{0:d2}' -f $attempt)
-              $watch = [Diagnostics.Stopwatch]::StartNew()
-              $failure = $null
-              try {
-                if ($attempt -eq 1) { & $probe -RequireGui } else { & $probe -RequireGui -NoBuild }
-              } catch {
-                $failure = $_.ToString()
-              } finally {
-                if (Test-Path artifacts/cua-driver/windows) {
-                  Move-Item artifacts/cua-driver/windows $destination
-                } else {
-                  New-Item -ItemType Directory -Force $destination | Out-Null
-                }
-                @{ observation = $attempt; elapsed_ms = $watch.ElapsedMilliseconds; failure = $failure; source_sha = $env:CUA_E2E_SOURCE_SHA } |
-                  ConvertTo-Json | Set-Content (Join-Path $destination 'observation.json')
-              }
-              if ($null -ne $failure) { throw $failure }
-            }
-          } finally {
-            Remove-Item $probe -ErrorAction SilentlyContinue
-          }
+          .\scripts\ci\windows\verify-user-session.ps1
+          .\scripts\ci\windows\diagnose-recorder-pipe.ps1
       - name: Preserve every diagnostic observation
         if: always()
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08

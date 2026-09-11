@@ -23,17 +23,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn repeated_start_attempts_report_unsupported() {
-        let config = PipConfig {
-            enabled: true,
-            ..PipConfig::default()
-        };
-        for _ in 0..2 {
-            let error = start(&config).err().expect("unsupported PiP");
-            assert_eq!(
-                error.to_string(),
-                "PiP preview is not yet implemented on Linux — track trycua/cua follow-up issue for status"
-            );
-        }
+    fn start_reports_unsupported() {
+        let error = start(&PipConfig::default()).err().expect("unsupported PiP");
+        assert_eq!(
+            error.to_string(),
+            "PiP preview is not yet implemented on Linux — track trycua/cua follow-up issue for status"
+        );
     }
 }

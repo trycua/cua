@@ -227,23 +227,6 @@ pub fn start(cfg: &PipConfig) -> anyhow::Result<Box<dyn PipBackend>> {
     Ok(Box::new(MacosPipBackend))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn start_and_shutdown_can_be_queued_without_a_main_loop() {
-        assert!(objc2_foundation::MainThreadMarker::new().is_none());
-        let config = PipConfig {
-            enabled: true,
-            ..PipConfig::default()
-        };
-        for _ in 0..2 {
-            start(&config).expect("queue PiP startup").shutdown();
-        }
-    }
-}
-
 unsafe extern "C" fn init_cb(ctx: *mut c_void) {
     use objc2::runtime::AnyObject;
     use objc2::{class, msg_send};

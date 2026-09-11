@@ -2002,13 +2002,12 @@ fn non_ax_escalation() -> Value {
 /// `effect` tri-state. Linux's AT-SPI `insertText` return value acknowledges
 /// the method call but does not read the widget value back, so it and every
 /// keystroke / XSendEvent / XTest / Wayland rung are `"unverifiable"` (the
-/// caller confirms through a separate observation) and
-/// carries a `foreground` escalation, because the field IS in the AT-SPI tree —
-/// it's a delivery/focus problem, not a missing element. The foreground rung
-/// itself (`key_events_fg`) is already the last resort, so it emits no
-/// escalation. Mirrors the macOS `type_text` contract.
+/// caller confirms through a separate observation). No escalation is
+/// attached to a successful delivery: the public projection renders one as
+/// `delivery_failed`, which is wrong for text that landed but was not read
+/// back. Mirrors the macOS `type_text` contract.
 fn type_text_structured(path: &str, characters: usize, verified: bool) -> Value {
-    let mut s = json!({
+    let s = json!({
         "path": path,
         "characters": characters,
         "verified": verified,
@@ -2481,6 +2480,16 @@ fn x11_pixel_click_no_focus_steal(
             ) {
                 Ok(()) => return Ok(()),
                 Err(error) if crate::input::is_uinput_unavailable(&error) => return Err(error),
+                // The synthetic fallback is a silent no-op on GTK/VCL/Qt:
+                // report the real-input failure instead of a click that
+                // changed nothing.
+                Err(error)
+                    if crate::x11::window_pid(xid).is_some_and(synthetic_pointer_is_dropped) =>
+                {
+                    return Err(error.context(
+                        "no-focus-steal MPX click failed and this toolkit drops synthetic pointer events",
+                    ));
+                }
                 Err(e) => tracing::warn!("MPX click fell back to XSendEvent: {e}"),
             }
         }
@@ -5032,34 +5041,39 @@ impl Tool for TypeTextTool {
             let text_len = text.chars().count();
             let text_t = text.clone();
             let foreground = delivery.is_foreground();
-            let result = tokio::task::spawn_blocking(move || -> anyhow::Result<&'static str> {
+            let cursor_id = resolve_cursor_key(&args);
+            let result = spawn_blocking_bounded(
+                "type_text terminal",
+                foreground_budget(text_len),
+                move || -> anyhow::Result<(&'static str, Option<crate::input::KeyboardDeliveryReport>)> {
                 // pty-master injection is preferred — it skips the X event
-                // queue entirely. Falls through to XTest if the terminal
+                // queue entirely. Falls through to key events if the terminal
                 // isn't reachable that way (descendant pty unresolvable).
                 if inject_terminal_input(pid, xid, &text_t)? {
-                    return Ok("pty");
+                    return Ok(("pty", None));
                 }
                 if foreground {
                     crate::input::with_x11_foreground(xid, 80, || {
                         crate::input::send_type_text_xtest(&text_t)
                     })?;
-                    Ok("key_events_fg")
-                } else {
-                    Ok("background_unavailable")
+                    return Ok(("key_events_fg", None));
+                }
+                // Background: real key events through the XI2 virtual master
+                // keyboard (xterm/gnome-terminal accept them like physical input).
+                match background_text_route(&cursor_id, pid, xid, &text_t)? {
+                    Some(KeyRoute::Mpx(report)) => Ok((crate::input::MPX_UINPUT_PATH, Some(report))),
+                    _ => Ok(("background_unavailable", None)),
                 }
             })
             .await;
             return match result {
-                Ok(Ok("background_unavailable")) => {
-                    crate::input::delivery::background_unavailable_error(
-                        crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
-                    )
-                }
-                Ok(Ok(path)) => ToolResult::text(format!(
+                Ok(Ok(("background_unavailable", _))) => background_keyboard_refusal(),
+                Ok(Ok((_, Some(report)))) => type_text_mpx_result(text_len, report),
+                Ok(Ok((path, None))) => ToolResult::text(format!(
                     "Typed {text_len} character(s) (terminal emulator: pty/XTest key events)."
                 ))
                 .with_structured(type_text_structured(path, text_len, false)),
-                Ok(Err(e)) => ToolResult::error(e.to_string()),
+                Ok(Err(e)) => input_error_result(e),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
         }
@@ -10054,6 +10068,7 @@ impl Tool for TypeTextCharsTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        #[allow(unused_assignments)]
         let mut pid = args.u64_or("pid", 0) as u32;
         let text_raw = match args.require_str("text") {
             Ok(v) => v,

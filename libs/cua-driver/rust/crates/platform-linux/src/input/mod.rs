@@ -1494,12 +1494,13 @@ pub fn send_parallel_virtual_pointer_drags(drags: &[(String, VirtualPointerDrag)
         }
         Ok(())
     })();
-    // Remove the per-session masters before handing focus back: non-MPX-aware
-    // WMs (xfwm4, openbox) desync their focus bookkeeping while foreign
-    // master keyboards linger, and the next call recreates masters cheaply.
-    for (cursor_id, _) in drags {
-        forget_master_pointer(cursor_id);
-    }
+    // The per-session master pair is retained for reuse (torn down on
+    // end_session / idle / startup reap). Creating and destroying an XI2 master
+    // plus hot-plugging a uinput slave on every call churns the XInput
+    // hierarchy hard enough to crash fragile toolkits (LibreOffice VCL); one
+    // long-lived pair per session avoids that and is cheaper. The focus is
+    // still saved and restored around each gesture.
+    let _ = drags;
     restore_focus_state(display, &saved_focus);
     unsafe {
         x11::xlib::XCloseDisplay(display);
@@ -1610,7 +1611,7 @@ pub fn send_virtual_pointer_click(cursor_id: &str, click: &VirtualPointerClick) 
         click_result
     })();
 
-    forget_master_pointer(cursor_id);
+    let _ = cursor_id; // master pair retained for reuse (see the drag path).
     restore_focus_state(display, &saved_focus);
     unsafe {
         x11::xlib::XCloseDisplay(display);
@@ -1668,7 +1669,7 @@ pub fn send_virtual_pointer_scroll(cursor_id: &str, scroll: &VirtualPointerScrol
         Ok(())
     })();
 
-    forget_master_pointer(cursor_id);
+    let _ = cursor_id; // master pair retained for reuse (see the drag path).
     restore_focus_state(display, &saved_focus);
     unsafe {
         x11::xlib::XCloseDisplay(display);

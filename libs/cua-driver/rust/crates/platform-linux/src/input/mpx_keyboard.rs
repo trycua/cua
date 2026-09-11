@@ -420,18 +420,28 @@ fn deliver(
         // surface as an error, not take the daemon down through Xlib's default
         // handler.
         let previous_handler = unsafe { x11::xlib::XSetErrorHandler(Some(ignore_x_error)) };
-        let rc = unsafe {
-            x11::xinput2::XISetFocus(display, ids.keyboard_id, window, x11::xlib::CurrentTime)
-        };
-        unsafe { x11::xlib::XSync(display, 0) };
-        unsafe { x11::xlib::XSetErrorHandler(previous_handler) };
-        if rc != 0 {
-            bail!("XISetFocus(virtual master keyboard) failed with status {rc}");
+        // XISetFocus reports async BadWindow/BadMatch (window not viewable)
+        // through the error handler, so a stale GetFocus is the real signal.
+        // Retry once — a freshly mapped/raised toplevel can miss the first set.
+        let mut focus_taken = false;
+        for attempt in 0..2 {
+            let rc = unsafe {
+                x11::xinput2::XISetFocus(display, ids.keyboard_id, window, x11::xlib::CurrentTime)
+            };
+            unsafe { x11::xlib::XSync(display, 0) };
+            if rc == 0 && xi_get_focus(display, ids.keyboard_id) == Some(window) {
+                focus_taken = true;
+                break;
+            }
+            if attempt == 0 {
+                sleep(Duration::from_millis(30));
+            }
         }
-        if xi_get_focus(display, ids.keyboard_id) != Some(window) {
+        unsafe { x11::xlib::XSetErrorHandler(previous_handler) };
+        if !focus_taken {
             bail!(
-                "virtual master keyboard did not take focus on window 0x{target_window:x} \
-                 (is it mapped?)"
+                "virtual master keyboard could not take focus on window 0x{target_window:x} \
+                 (not viewable, or another client owns the master focus)"
             );
         }
 
@@ -481,10 +491,11 @@ fn deliver(
         })
     })();
     drop(remap_guards);
-    // Tear the pair down per call, exactly like the pointer click: a lingering
-    // foreign master keyboard desyncs non-MPX-aware WMs' focus bookkeeping,
-    // and the next call recreates it in well under a second.
-    forget_master_pointer(cursor_id);
+    // The master pair is retained for reuse. Per-call teardown would hot-plug
+    // a uinput keyboard and churn the XInput hierarchy on every keystroke
+    // batch — enough to crash LibreOffice VCL. The pair is cleaned up on
+    // end_session / idle / startup reap instead.
+    let _ = cursor_id;
     unsafe { x11::xlib::XCloseDisplay(display) };
     result
 }

@@ -264,6 +264,13 @@ fn moveresize_window_flags() -> u32 {
     STATIC_GRAVITY | X_PRESENT | Y_PRESENT | WIDTH_PRESENT | HEIGHT_PRESENT
 }
 
+/// `_NET_WM_PID` of a toplevel, when the window advertises one.
+pub fn window_pid(xid: u64) -> Option<u32> {
+    let xid = u32::try_from(xid).ok()?;
+    let (conn, _) = RustConnection::connect(None).ok()?;
+    get_window_pid(&conn, xid).ok().flatten()
+}
+
 fn get_window_pid(conn: &RustConnection, window: Window) -> Result<Option<u32>> {
     let atom = get_atom(conn, "_NET_WM_PID")?;
     let reply = conn

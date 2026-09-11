@@ -23,6 +23,14 @@ on:
         required: true
         default: false
         type: boolean
+  # Publish only after the cross-platform release workflow has built and
+  # published the immutable GitHub release successfully. The context job below
+  # rejects successful manual/diagnostic CD runs that are not attached to a
+  # cua-driver release tag.
+  workflow_run:
+    workflows: ["CD: Cua Driver (cross-platform)"]
+    types:
+      - completed
 
 permissions:
   contents: read
@@ -32,6 +40,7 @@ env:
   CLAWHUB_CLI_VERSION: "0.23.1"
   CLAWHUB_SKILL_SLUG: "driver"
   SKILL_PATH: "libs/cua-driver/rust/Skills/cua-driver"
+  AUTOMATED_PUBLISHER_OWNER: "cua"
 
 jobs:
   dry-run:
@@ -83,32 +92,118 @@ jobs:
           path: ${{ runner.temp }}/clawhub-dry-run.json
           if-no-files-found: ignore
 
-  publish:
-    name: Publish ${{ inputs.version }} as @${{ inputs.owner }}/driver
-    if: github.event_name == 'workflow_dispatch'
+  release-context:
+    name: Resolve trusted ClawHub release context
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    outputs:
+      owner: ${{ steps.release.outputs.owner }}
+      should_publish: ${{ steps.release.outputs.should_publish }}
+      source_ref: ${{ steps.release.outputs.source_ref }}
+      source_sha: ${{ steps.release.outputs.source_sha }}
+      version: ${{ steps.release.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
 
-      - name: Validate release inputs
+      - name: Resolve and validate release
+        id: release
         env:
           CONFIRM_MIT0: ${{ inputs.confirm_mit0 }}
+          EVENT_NAME: ${{ github.event_name }}
+          MANUAL_OWNER: ${{ inputs.owner }}
           REQUESTED_VERSION: ${{ inputs.version }}
+          WORKFLOW_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           python3 - <<'PY'
           import os
           import re
+          import subprocess
           import tomllib
           from pathlib import Path
 
-          if os.environ["CONFIRM_MIT0"] != "true":
-              raise SystemExit("confirm_mit0 must be checked before a public release")
-          if os.environ["GITHUB_REF"] != "refs/heads/main":
-              raise SystemExit("ClawHub releases must be dispatched from the main branch")
+          def git(*args: str) -> str:
+              return subprocess.check_output(["git", *args], text=True).strip()
 
-          requested = os.environ["REQUESTED_VERSION"].strip()
+          event_name = os.environ["EVENT_NAME"]
+          source_sha = git("rev-parse", "HEAD")
+
+          if event_name == "workflow_dispatch":
+              if os.environ["CONFIRM_MIT0"] != "true":
+                  raise SystemExit(
+                      "confirm_mit0 must be checked before a public release"
+                  )
+              if os.environ["GITHUB_REF"] != "refs/heads/main":
+                  raise SystemExit(
+                      "ClawHub releases must be dispatched from the main branch"
+                  )
+              requested = os.environ["REQUESTED_VERSION"].strip()
+              owner = os.environ["MANUAL_OWNER"].strip()
+              source_ref = os.environ["GITHUB_REF"]
+          else:
+              expected_sha = os.environ["WORKFLOW_HEAD_SHA"].strip()
+              if not re.fullmatch(r"[0-9a-f]{40}", expected_sha):
+                  raise SystemExit(f"invalid triggering workflow SHA: {expected_sha!r}")
+              if source_sha != expected_sha:
+                  raise SystemExit(
+                      f"checked-out source {source_sha} does not match trigger {expected_sha}"
+                  )
+
+              tags = [
+                  tag
+                  for tag in git("tag", "--points-at", source_sha).splitlines()
+                  if re.fullmatch(
+                      r"cua-driver-rs-v[0-9]+\.[0-9]+\.[0-9]+"
+                      r"(?:-[0-9A-Za-z.-]+)?",
+                      tag,
+                  )
+              ]
+              if not tags:
+                  print(
+                      "Successful Driver CD run is not attached to a release tag; "
+                      "skipping ClawHub publish."
+                  )
+                  with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
+                      output.write("should_publish=false\n")
+                  raise SystemExit(0)
+              if len(tags) != 1:
+                  raise SystemExit(
+                      f"expected one Driver release tag at {source_sha}, found {tags}"
+                  )
+
+              tag = tags[0]
+              requested = tag.removeprefix("cua-driver-rs-v")
+              owner = os.environ["AUTOMATED_PUBLISHER_OWNER"]
+              source_ref = f"refs/tags/{tag}"
+
+              release = subprocess.run(
+                  [
+                      "gh",
+                      "release",
+                      "view",
+                      tag,
+                      "--repo",
+                      os.environ["GITHUB_REPOSITORY"],
+                      "--json",
+                      "isDraft,tagName",
+                      "--jq",
+                      'select(.isDraft == false) | .tagName',
+                  ],
+                  check=True,
+                  text=True,
+                  capture_output=True,
+              ).stdout.strip()
+              if release != tag:
+                  raise SystemExit(f"published GitHub release {tag} is not available")
+
           cargo = tomllib.loads(Path("libs/cua-driver/rust/Cargo.toml").read_text())
           cargo_version = cargo["workspace"]["package"]["version"]
           skill_text = Path(os.environ["SKILL_PATH"], "SKILL.md").read_text()
@@ -123,7 +218,34 @@ jobs:
                   "version mismatch: "
                   f"requested={requested}, Cargo.toml={cargo_version}, SKILL.md={skill_version}"
               )
+
+          if not owner:
+              raise SystemExit("ClawHub publisher owner is empty")
+
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
+              output.write(f"owner={owner}\n")
+              output.write("should_publish=true\n")
+              output.write(f"source_ref={source_ref}\n")
+              output.write(f"source_sha={source_sha}\n")
+              output.write(f"version={requested}\n")
           PY
+
+  publish:
+    name: Publish ${{ needs.release-context.outputs.version }} as @${{ needs.release-context.outputs.owner }}/driver
+    needs: release-context
+    if: needs.release-context.outputs.should_publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-context.outputs.source_ref }}
+
+      - name: Verify immutable release checkout
+        env:
+          EXPECTED_SHA: ${{ needs.release-context.outputs.source_sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
 
       - name: Configure ClawHub authentication
         env:
@@ -144,10 +266,12 @@ jobs:
               env_file.write(f"CLAWHUB_CONFIG_PATH={path}\n")
           PY
 
-      - name: Publish @${{ inputs.owner }}/driver
+      - name: Publish @${{ needs.release-context.outputs.owner }}/driver
         env:
-          OWNER: ${{ inputs.owner }}
-          VERSION: ${{ inputs.version }}
+          OWNER: ${{ needs.release-context.outputs.owner }}
+          SOURCE_REF: ${{ needs.release-context.outputs.source_ref }}
+          SOURCE_SHA: ${{ needs.release-context.outputs.source_sha }}
+          VERSION: ${{ needs.release-context.outputs.version }}
         run: |
           npx --yes "clawhub@${CLAWHUB_CLI_VERSION}" skill publish "${SKILL_PATH}" \
             --slug "${CLAWHUB_SKILL_SLUG}" \
@@ -157,10 +281,20 @@ jobs:
             --changelog "Cua Driver ${VERSION}" \
             --tags latest \
             --source-repo "${GITHUB_REPOSITORY}" \
-            --source-commit "${GITHUB_SHA}" \
-            --source-ref "${GITHUB_REF}" \
+            --source-commit "${SOURCE_SHA}" \
+            --source-ref "${SOURCE_REF}" \
             --source-path "${SKILL_PATH}" \
             --json | tee "${RUNNER_TEMP}/clawhub-publish.json"
+
+      - name: Request ClawHub security scan
+        env:
+          VERSION: ${{ needs.release-context.outputs.version }}
+        run: |
+          npx --yes "clawhub@${CLAWHUB_CLI_VERSION}" scan \
+            --slug "${CLAWHUB_SKILL_SLUG}" \
+            --version "${VERSION}" \
+            --update \
+            --json | tee "${RUNNER_TEMP}/clawhub-scan.json"
 
       - name: Summarize release
         if: always()
@@ -173,11 +307,21 @@ jobs:
               echo '```'
             } >> "${GITHUB_STEP_SUMMARY}"
           fi
+          if [[ -f "${RUNNER_TEMP}/clawhub-scan.json" ]]; then
+            {
+              echo '## ClawHub scan result'
+              echo '```json'
+              cat "${RUNNER_TEMP}/clawhub-scan.json"
+              echo '```'
+            } >> "${GITHUB_STEP_SUMMARY}"
+          fi
 
       - name: Upload publish result
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: clawhub-driver-publish-${{ inputs.version }}
-          path: ${{ runner.temp }}/clawhub-publish.json
+          name: clawhub-driver-publish-${{ needs.release-context.outputs.version }}
+          path: |
+            ${{ runner.temp }}/clawhub-publish.json
+            ${{ runner.temp }}/clawhub-scan.json
           if-no-files-found: ignore

@@ -35,7 +35,7 @@ struct Entry {
     active: usize,
 }
 
-struct Service {
+pub(crate) struct Service {
     entries: Mutex<HashMap<String, Entry>>,
     factory: Arc<Factory>,
     exchanges: tokio::sync::Semaphore,
@@ -65,7 +65,31 @@ impl Drop for Service {
 }
 
 impl Service {
-    fn reap(&self) {
+    #[cfg(test)]
+    pub(crate) fn for_test(factory: Arc<Factory>) -> Arc<Self> {
+        Arc::new(Self {
+            entries: Mutex::new(HashMap::new()),
+            factory,
+            exchanges: tokio::sync::Semaphore::new(MAX_EXCHANGES),
+        })
+    }
+
+    pub(crate) fn for_sdk(sdk: Arc<crate::sdk_adapter::SdkAdapter>) -> anyhow::Result<Arc<Self>> {
+        let mode = configured_session_mode()?;
+        Ok(Arc::new(Self {
+            entries: Mutex::new(HashMap::new()),
+            factory: Arc::new(move || sdk.create_envelope_receiver(mode)),
+            exchanges: tokio::sync::Semaphore::new(MAX_EXCHANGES),
+        }))
+    }
+
+    pub(crate) fn close_all(&self) {
+        for entry in self.entries.lock().unwrap().values() {
+            entry.receiver.close();
+        }
+    }
+
+    pub(crate) fn reap(&self) {
         self.entries.lock().unwrap().retain(|_, entry| {
             if entry.active == 0 && entry.touched.elapsed() >= IDLE {
                 entry.receiver.close();
@@ -91,7 +115,7 @@ impl Service {
         })
     }
 
-    async fn route(self: &Arc<Self>, request: Request) -> HttpResult<Value> {
+    pub(crate) async fn route(self: &Arc<Self>, request: Request) -> HttpResult<Value> {
         self.reap();
         if request.method == "POST" && request.path == "/v1/connections" {
             let _: Empty = decode(&request.body)?;
@@ -214,11 +238,11 @@ fn decode<T: serde::de::DeserializeOwned>(body: &[u8]) -> HttpResult<T> {
 }
 
 #[derive(Debug)]
-struct Request {
-    method: String,
-    path: String,
-    generation: Option<String>,
-    body: Vec<u8>,
+pub(crate) struct Request {
+    pub(crate) method: String,
+    pub(crate) path: String,
+    pub(crate) generation: Option<String>,
+    pub(crate) body: Vec<u8>,
 }
 
 fn parse_headers(bytes: &[u8]) -> HttpResult<(Request, usize)> {
@@ -390,13 +414,8 @@ fn configured_session_mode() -> anyhow::Result<cua_driver_sdk::SessionPermission
 }
 
 pub async fn start(sdk: Arc<crate::sdk_adapter::SdkAdapter>, port: u16) -> anyhow::Result<Server> {
-    let mode = configured_session_mode()?;
+    let service = Service::for_sdk(sdk)?;
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).await?;
-    let service = Arc::new(Service {
-        entries: Mutex::new(HashMap::new()),
-        factory: Arc::new(move || sdk.create_envelope_receiver(mode)),
-        exchanges: tokio::sync::Semaphore::new(MAX_EXCHANGES),
-    });
     let task = tokio::spawn(async move {
         let permits = Arc::new(tokio::sync::Semaphore::new(64));
         let mut tasks = tokio::task::JoinSet::new();

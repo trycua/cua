@@ -11,6 +11,9 @@ on:
       - ".github/workflows/cd-rust-cua-driver.yml"
       - ".github/workflows/cd-py-cua-driver.yml"
       - ".github/workflows/cd-py-sandbox.yml"
+      - ".github/workflows/cd-py-computer-server.yml"
+      - ".github/workflows/py-reusable-publish.yml"
+      - ".github/workflows/release-github-reusable.yml"
       - ".github/workflows/ci-cua-driver-installer-compat.yml"
       - ".github/workflows/ci-release-metadata.yml"
       - ".github/workflows/cd-swift-lume.yml"
@@ -29,13 +32,14 @@ on:
       - ".github/workflows/ci-test-scripts.yml"
       - ".github/workflows/periodic-cua-sandbox-live.yml"
       - ".github/workflows/ci-contributor-attribution.yml"
+      - ".github/workflows/e2e-rust-macos.yml"
       - "docs/release-backfill-runbook.md"
       - "libs/cua-driver/scripts/**"
       - "libs/cua-driver/tests/fixtures/apps/cross-platform/electron/build.sh"
       - "libs/cua-driver/tests/fixtures/apps/cross-platform/electron/package-lock.json"
       - "libs/cua-driver/tests/fixtures/apps/cross-platform/tauri/build.sh"
       - "libs/cua-driver/tests/runners/macos-lume/**"
-      - "scripts/ci/macos/run-rust-e2e.sh"
+      - "scripts/ci/macos/**"
 
 jobs:
   test:

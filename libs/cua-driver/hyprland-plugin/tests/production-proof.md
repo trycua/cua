@@ -67,6 +67,52 @@ not native results.
 
 ## Reviewed native plans
 
+### Inkscape-only environment profile
+
+Set `app_profile: "inkscape-only"` when qualifying a packaging environment
+whose Inkscape package matches `1.4.4-6` but whose Calc package is not qualified.
+The default Calc/Inkscape profile is unchanged. This test selection does not
+widen Driver's production application allowlist or certify a package by itself.
+
+Use two distinct native Inkscape processes and separate synthetic SVG documents
+for app proof, and a third process for capacity refusal. Bind each observed
+process, native window, document, and geometry. A shared process with two
+windows is not two independent clients. A verified launch form is
+`/usr/bin/inkscape --app-id-tag=cua-profile-lane-0 /ABSOLUTE/cua-smoke-inkscape.svg`;
+use a different tag and document for each client.
+
+The cancellation, geometry, primary-conflict, desktop, DPMS, lock, active-lock,
+active-primary, idle-reconnect, and target-lifetime helpers accept this profile.
+Fault targets use `pointer_stage: "move_rectangle"` and empty `drag` arguments
+for fresh image grounding. Recovery sends a new `scroll_down` or `scroll_up`
+action, never a replay of a partial or unknown drag. Active-lock/primary plans
+declare both recovery directions; fresh visible-canvas grounding chooses one.
+Idle plans omit target drag/stage fields and use fixed down/up scroll actions
+on either side of the real peer expiry. The target-lifetime helper instead
+requires an independently prepared, unselected replacement rectangle and a
+`click_rectangle` recovery, with exact launch-argument and owned-file checks.
+
+Keep production and diagnostic evidence separate. Production runs require the
+installed kit, profile, and build-provenance manifests and cannot use a trace
+socket. Diagnostic runs require a trace socket and cannot borrow production
+package provenance. The independent primary observer can check production
+cursor/focus/grab isolation, but it does not prove compositor lane attribution,
+overlapping delivery, or synthetic-seat cleanup.
+
+For a parked primary, an exact same-position `wl_pointer.motion` notification
+from the established primary pointer is not itself cursor theft. The observer
+retains every motion and reports `duplicate_motion_events`. This exception
+requires unchanged exact wire coordinates, primary identity, focus, held input,
+and independent application state throughout the interval. Actual movement,
+including an excursion and return, still fails. Foreign-pointer or relative
+motion, focus/enter/leave changes, and button/key/scroll changes still fail.
+The GTK journal does not independently identify a motion device and baseline,
+so its motion events and counter changes remain failures even when the wire
+contains duplicates. A passing duplicate-only case does not qualify the
+negative control; that control must detect an actual excursion.
+
+### Plan fields
+
 Run only inside the prepared disposable desktop, after mapping one window per
 app and the independent foreground journal fixture. Ground the exact window
 identities, bounds, and gesture coordinates using fresh Driver snapshots.
@@ -352,9 +398,29 @@ provenance, and repeat controls. Select these diagnostics for unresolved claims
 under the validation strategy above; the canonical desktop matrix remains
 required. No existing failed row is superseded by these helper tests.
 
+### Same-client passive-hover conflict
+
+`production_agent_conflict_proof.py` checks the distinct `agent_target_busy`
+refusal. Prepare the exact identity fields used by the primary-conflict plan,
+with `purpose:"agent_conflict"`, `case:"passive_hover_refusal"`, and
+`app_profile:"inkscape-only"`. Use one agent with `drag:{}` and
+`pointer_stage:"scroll_down"` or `"scroll_up"`; `refused.pointer_stage` must
+name the opposite direction. Set `recovery.pointer_stage` to `"scroll_visible"`
+or a reviewed fixed direction. The same provenance, trace, primary-grab, plan,
+and evidence arguments apply.
+
+One Driver runtime scrolls and retains passive pointer focus. A second runtime
+must refuse input to that same window without dispatching events or disturbing
+the first owner's focus. The runner closes the refused runtime, then the owner,
+and verifies that a third runtime can use the original lane for a fresh action.
+It checks the application effect and continuous primary isolation throughout.
+This case does not prove active-lease conflicts, same-process sibling windows,
+or recovery on the other lane. Portable orchestration tests are not native
+certification; retain the exact native artifact and result separately.
+
 Focused local verification:
 
 ```text
 cd libs/cua-driver/hyprland-plugin/tests
-python3 -m unittest production_realapp_proof_test realapp_proof_test primary_trace_test
+python3 -m unittest production_realapp_proof_test realapp_proof_test primary_trace_test production_agent_conflict_proof_test
 ```

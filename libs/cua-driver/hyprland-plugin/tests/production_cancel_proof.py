@@ -5,6 +5,7 @@ apart from TRACE_START/TRACE_STOP. Kill one exact owned runtime only after fresh
 telemetry proves two active drags; preserve unknown delivery without replay.
 """
 import argparse
+from production_app_smoke import add_provenance_arguments
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
@@ -17,7 +18,7 @@ from driver_input_live import state, wait_for, wm
 from primary_trace import Trace, analyze
 from production_mcp import DirectMCP, assert_distinct_runtimes, stop_process
 import production_pointer_grounding as pointer_grounding
-from production_realapp_proof import (app_process_identity, capacity_lane, check_response,
+from production_realapp_proof import (app_process_identity, inkscape_client_identity, capacity_lane, check_response,
                                      primary_acknowledgement, provenance, trace_interval,
                                      PRIMARY_LIFETIME_MS, require_primary_active)
 from realapp_proof import cleanup_all, released_synthetic_input
@@ -26,27 +27,56 @@ from realapp_proof import cleanup_all, released_synthetic_input
 PROFILE = {'mode': 'unrestricted', 'acknowledge_unrestricted': True}
 DRAG_KEYS = {'from_x', 'from_y', 'to_x', 'to_y', 'duration_ms'}
 POINTER_STAGES = {'calc': 'select_range', 'inkscape': 'move_rectangle'}
-RECOVERY_STAGES = {'calc': {'click_a1', 'click_b2'}, 'inkscape': {'scroll_down', 'scroll_visible'}}
+RECOVERY_STAGES = {'calc': {'click_a1', 'click_b2'}, 'inkscape': {'scroll_down', 'scroll_up', 'scroll_visible'}}
 MAX_GROUNDING_AGE_NS = 5_000_000_000
 # Leave margin over the observed 25–30 ms lane-admission interval. This is not
 # a worst-case scheduling bound: call_drag still checks the actual age.
 GROUNDING_DISPATCH_RESERVE_NS = 250_000_000
 MAX_GROUNDING_ATTEMPTS = 2
 # max_elements counts all visited AT-SPI nodes, not only emitted controls.
-# The native 2,000-node run retained the object row but stopped 14 rendered
-# tree lines before the selection status. Allow 500 more visited nodes while
-# keeping the trailing menu tree bounded; native coverage must verify this.
-# Keep depth uncapped (the object row is deeply nested). Missing oracle
-# evidence still fails closed, as does the unchanged five-second age limit.
-POINTER_SNAPSHOT_LIMITS = {'inkscape': {'max_elements': 2500}}
+# On the qualified Omarchy profile, even a 2,500-node walk retained the object
+# row but stopped before the selection status. A 3,000-node native observation
+# recovered the status and geometry in about 1.2 seconds per independent app.
+# Keep the walk bounded and depth uncapped (the object row is deeply nested).
+# Missing oracle evidence and the unchanged five-second age limit fail closed.
+POINTER_SNAPSHOT_LIMITS = {'inkscape': {'max_elements': 3000}}
+
+
+def validate_app_profile(plan, *, require_drag=True):
+    """Opt-in test profile only; product app admission and two lanes stay fixed."""
+    profile = plan.get('app_profile', 'calc-inkscape')
+    assert profile in ('calc-inkscape', 'inkscape-only'), 'unknown app profile'
+    if profile == 'inkscape-only':
+        specs = plan['agents']
+        assert all(spec['app'] == 'inkscape' for spec in specs), 'inkscape-only requires Inkscape targets'
+        documents = [Path(spec['document']) for spec in specs]
+        assert all(path.is_absolute() and path.name == 'cua-smoke-inkscape.svg' for path in documents), \
+            'Inkscape requires an absolute synthetic SVG document'
+        assert len({path.resolve() for path in documents}) == len(documents), 'distinct documents required'
+        targets = [plan['foreground'], *(spec['target'] for spec in specs)]
+        assert len({target['window_id'] for target in targets}) == len(targets), 'distinct native windows required'
+        if require_drag:
+            assert all(spec.get('pointer_stage') == 'move_rectangle' and spec.get('drag') == {} for spec in specs), \
+                'Inkscape faults require freshly grounded rectangle drags'
+        recovery = plan.get('recovery', {})
+        if 'pointer_stage' in recovery:
+            allowed = {'scroll_down', 'scroll_up'}
+            if plan['purpose'] == 'cancellation':
+                allowed.add('scroll_visible')
+            assert recovery['pointer_stage'] in allowed, 'new Inkscape recovery requires a supported scroll stage'
+        for key in ('identities', 'processes'):
+            if key in plan:
+                assert plan[key]['target']['exe'] == '/usr/bin/inkscape', 'wrong Inkscape executable identity'
+    return profile
 
 
 def validate_plan(plan):
+    profile = validate_app_profile(plan)
     assert plan['purpose'] == 'cancellation'
     assert type(plan['kill_agent']) is int and plan['kill_agent'] in (0, 1)
     assert plan.get('termination_signal', 'SIGKILL') in ('SIGKILL', 'SIGTERM'), 'unsupported termination signal'
     assert len(plan['agents']) == 2
-    assert {spec['app'] for spec in plan['agents']} == {'calc', 'inkscape'}
+    assert {spec['app'] for spec in plan['agents']} == ({'inkscape'} if profile == 'inkscape-only' else {'calc', 'inkscape'})
     targets = [plan['foreground'], *(spec['target'] for spec in plan['agents'])]
     assert len({target['pid'] for target in targets}) == 3, 'need three separate app processes'
     for target in targets:
@@ -195,6 +225,10 @@ def verify_fresh_observation(before, after, observer, *, after_ns):
 
 
 def grounded_snapshot(client, target, spec=None, *, session=True):
+    if spec and spec['app'] == 'inkscape' and 'document' in spec:
+        assert spec['target'] == target, 'observation target differs from reviewed Inkscape client'
+        native = json.loads(subprocess.check_output(['hyprctl', '-j', 'clients'], text=True, timeout=2))
+        inkscape_client_identity(spec, native)
     windows = client.tool('list_windows', {})
     assert not windows.get('isError'), windows
     matches = [w for w in windows['structuredContent']['windows'] if w.get('pid') == target['pid']]
@@ -629,5 +663,5 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('driver', 'plugin', 'source', 'primary-grab', 'plan', 'evidence', 'foreground-journal', 'trace-socket'):
         parser.add_argument('--' + name, required=True, type=Path)
-    parser.add_argument('--source-sha', required=True)
+    add_provenance_arguments(parser)
     raise SystemExit(run(parser.parse_args()))

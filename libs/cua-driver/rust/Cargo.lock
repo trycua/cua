@@ -1151,7 +1151,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver"
-version = "0.25.0"
+version = "0.26.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1189,7 +1189,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-bindgen"
-version = "0.25.0"
+version = "0.26.1"
 dependencies = [
  "cbindgen",
  "uniffi",
@@ -1197,7 +1197,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-contract"
-version = "0.25.0"
+version = "0.26.1"
 dependencies = [
  "schemars",
  "serde",
@@ -1207,7 +1207,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-core"
-version = "0.25.0"
+version = "0.26.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1245,7 +1245,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-sdk"
-version = "0.25.0"
+version = "0.26.1"
 dependencies = [
  "async-trait",
  "core-foundation",
@@ -1267,7 +1267,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-testkit"
-version = "0.25.0"
+version = "0.26.1"
 dependencies = [
  "core-foundation",
  "image",
@@ -1282,7 +1282,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-uia"
-version = "0.25.0"
+version = "0.26.1"
 dependencies = [
  "anyhow",
  "cua-driver-core",
@@ -1297,7 +1297,7 @@ dependencies = [
 
 [[package]]
 name = "cua-embedded-async-io-fixture"
-version = "0.25.0"
+version = "0.26.1"
 dependencies = [
  "cua-driver-sdk",
  "oo7",
@@ -1305,7 +1305,7 @@ dependencies = [
 
 [[package]]
 name = "cursor-overlay"
-version = "0.25.0"
+version = "0.26.1"
 dependencies = [
  "anyhow",
  "cua-driver-contract",
@@ -1322,7 +1322,7 @@ dependencies = [
 
 [[package]]
 name = "cursor-theme-cli"
-version = "0.25.0"
+version = "0.26.1"
 dependencies = [
  "anyhow",
  "cursor-overlay",
@@ -3246,7 +3246,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pip-preview"
-version = "0.25.0"
+version = "0.26.1"
 dependencies = [
  "anyhow",
  "serde_json",
@@ -3306,7 +3306,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "platform-linux"
-version = "0.25.0"
+version = "0.26.1"
 dependencies = [
  "anyhow",
  "ashpd",
@@ -3360,7 +3360,7 @@ dependencies = [
 
 [[package]]
 name = "platform-macos"
-version = "0.25.0"
+version = "0.26.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3400,7 +3400,7 @@ dependencies = [
 
 [[package]]
 name = "platform-windows"
-version = "0.25.0"
+version = "0.26.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3922,9 +3922,9 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "screencapturekit"
-version = "6.0.1"
+version = "8.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "74afe91a6a3f8859ff08339535891819f5438e7cb284c1b74cc8866eb80956bc"
+checksum = "9ddaa8d6b16a2762c9a97c9a6297f04cb8ded0487e5ef02dc98b4e2bee3a26c7"
 dependencies = [
  "apple-cf",
  "apple-metal",

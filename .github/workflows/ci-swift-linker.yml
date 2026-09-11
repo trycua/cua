@@ -1,0 +1,45 @@
+name: "CI: macOS Swift linker"
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua-driver/rust/**"
+      - "scripts/ci/macos/test-swift-linker-symbols.sh"
+      - ".github/workflows/ci-swift-linker.yml"
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua-driver/rust/**"
+      - "scripts/ci/macos/test-swift-linker-symbols.sh"
+      - ".github/workflows/ci-swift-linker.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: swift-linker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  link:
+    name: Fresh macOS link without duplicate symbols
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Verify native linker output
+        env:
+          TMPDIR: ${{ runner.temp }}/
+        run: bash scripts/ci/macos/test-swift-linker-symbols.sh
+      - name: Preserve linker evidence
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+        with:
+          name: swift-linker-evidence
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/cua-swift-linker.*/environment.txt
+            ${{ runner.temp }}/cua-swift-linker.*/build.log
+            ${{ runner.temp }}/cua-swift-linker.*/duplicate-symbols.txt

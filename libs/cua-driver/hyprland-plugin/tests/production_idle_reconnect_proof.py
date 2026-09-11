@@ -1,11 +1,14 @@
 """Opt-in production idle-peer regression in a prepared disposable Hyprland desktop.
 
 Two new, grounded Calc clicks share one DirectMCP runtime and named session.
+The opt-in inkscape-only profile uses scroll_down then scroll_up on a selected
+synthetic rectangle; both require observed pixel and semantic effects.
 Between them only read-only compositor status is polled, for at most 85 seconds.
 Neither a primary grab nor a trace spans the real 60-second input-peer expiry.
 No transport reset, test input packet, timeout override, or action retry is used.
 """
 import argparse
+from production_app_smoke import add_provenance_arguments
 import hashlib
 import json
 import math
@@ -16,7 +19,7 @@ import time
 from driver_input_live import state, wait_for, wm
 from primary_trace import Trace
 from production_cancel_proof import (MAX_GROUNDING_AGE_NS, PROFILE, close_owned,
-                                     grounded_snapshot, verify_recovery_cleanup,
+                                     grounded_snapshot, validate_app_profile, verify_recovery_cleanup,
                                      verify_recovery_trace)
 from production_mcp import DirectMCP, assert_distinct_runtimes, stop_process
 import production_pointer_grounding as grounding
@@ -32,15 +35,20 @@ EXPIRY_DEADLINE_SECONDS = 85
 # budget before starting another read, so a stalled hyprctl cannot extend 85s.
 STATUS_READ_BUDGET_NS = 5_000_000_000
 STAGES = ('click_b2', 'click_a1')
+INKSCAPE_STAGES = ('scroll_down', 'scroll_up')
 
 
 def validate_plan(plan):
+    profile = validate_app_profile(plan, require_drag=False)
     assert plan['purpose'] == 'idle_reconnect'
     assert len(plan['agents']) == 1, 'one persistent input runtime is required'
     spec = plan['agents'][0]
-    assert spec['app'] == 'calc' and spec.get('profile', PROFILE) == PROFILE
+    assert spec['app'] == ('inkscape' if profile == 'inkscape-only' else 'calc') and spec.get('profile', PROFILE) == PROFILE
     assert isinstance(spec['name'], str) and spec['name']
-    assert Path(spec['document']).name == 'cua-smoke-calc.ods', 'only the synthetic document is allowed'
+    document_name = 'cua-smoke-inkscape.svg' if profile == 'inkscape-only' else 'cua-smoke-calc.ods'
+    assert Path(spec['document']).name == document_name, 'only the synthetic document is allowed'
+    if profile == 'inkscape-only':
+        assert 'pointer_stage' not in spec and 'drag' not in spec, 'idle stages are fixed, fresh scroll_down then scroll_up'
     assert set(spec['bounds']) == {'x', 'y', 'width', 'height'}
     assert all(type(v) in (int, float) and math.isfinite(v) for v in spec['bounds'].values())
     assert spec['bounds']['width'] > 0 and spec['bounds']['height'] > 0
@@ -59,7 +67,7 @@ def process_birth(pid, proc_root=Path('/proc')):
 
 def calc_identity(spec):
     pid = spec['target']['pid']
-    identity = app_process_identity('calc', pid)
+    identity = app_process_identity(spec['app'], pid)
     document = Path(spec['document']).resolve(strict=True)
     assert str(document).encode() in Path(f'/proc/{pid}/cmdline').read_bytes().split(b'\0'), \
         'Calc process is not bound to the synthetic document'
@@ -127,8 +135,15 @@ def wait_for_idle_expiry(client, runtime, occupied_status, lane, dispatch_ns, sa
     raise AssertionError('input peer did not expire within 85 seconds; no second action')
 
 
-def grid_digest(snapshot, pixels):
-    x, y, width, height = grounding.calc_table(snapshot, pixels)
+def grid_digest(snapshot, pixels, app='calc'):
+    if app == 'inkscape':
+        # The viewport must visibly change in addition to the strict semantic
+        # and rectangle-translation oracle; no acknowledgement-only pass.
+        grounding.blue_rectangle(snapshot, pixels)
+        x, y, width, height = 0, 0, pixels.width, pixels.height
+    else:
+        assert app == 'calc'
+        x, y, width, height = grounding.calc_table(snapshot, pixels)
     digest = hashlib.sha256()
     for row in range(y, y + height):
         offset = row * pixels.stride + x * pixels.channels
@@ -138,14 +153,15 @@ def grid_digest(snapshot, pixels):
 
 def click_once(client, observer, spec, stage, runtime, identity, trace, boundary, save, result, guard):
     """Exactly one click invocation; unknown outcomes remain failures without replay."""
-    assert stage in STAGES
+    assert stage in (INKSCAPE_STAGES if spec['app'] == 'inkscape' else STAGES)
     require_runtime(client, runtime)
     assert calc_identity(spec) == identity, 'Calc process identity changed'
     fresh = {**spec, 'pointer_stage': stage}
     before = grounded_snapshot(client, spec['target'], fresh)
     pixels = grounding.read_pixels(before['proof_image'])
-    arguments, oracle = grounding.action(before, pixels, 'calc', stage)
-    before_digest = grid_digest(before, pixels)
+    arguments, oracle = grounding.action(before, pixels, spec['app'], stage)
+    tool = grounding.STAGES[spec['app']][stage]
+    before_digest = grid_digest(before, pixels, spec['app'])
     result.update(stage=stage, session=spec['name'], target=dict(spec['target']), runtime_pid=runtime['pid'],
                   grounding=before, arguments=arguments, oracle=oracle, replayed=False)
     save(stage + '-grounding.json', result)
@@ -157,7 +173,7 @@ def click_once(client, observer, spec, stage, runtime, identity, trace, boundary
         'snapshot grounding expired; no input sent'
     result['action'] = {'outcome': 'unknown', 'dispatch_ns': dispatch_ns, 'attempts': 1, 'replayed': False}
     try:
-        response = client.tool('click', {**arguments, **spec['target'], 'session': spec['name'],
+        response = client.tool(tool, {**arguments, **spec['target'], 'session': spec['name'],
                                         'delivery_mode': 'background'})
     except Exception as error:
         result['action']['error'] = str(error)
@@ -170,14 +186,14 @@ def click_once(client, observer, spec, stage, runtime, identity, trace, boundary
     check_response(response, {'kind': 'dispatched'})
     after_pixels = grounding.read_pixels(after['proof_image'])
     result['app_effect'] = grounding.verify(after, after_pixels, oracle)
-    after_digest = grid_digest(after, after_pixels)
+    after_digest = grid_digest(after, after_pixels, spec['app'])
     assert before_digest != after_digest, 'Calc grid pixels did not change'
     result['pixels'] = {'before': before_digest, 'after': after_digest, 'changed': True}
     assert calc_identity(spec) == identity, 'Calc process identity changed'
     require_runtime(client, runtime)
     page = trace.collect()
-    lane = capacity_lane(boundary, page, 'click')
-    result['trace'] = verify_recovery_trace(boundary, page, lane, 'click')
+    lane = capacity_lane(boundary, page, tool)
+    result['trace'] = verify_recovery_trace(boundary, page, lane, tool)
     guard()
     result['result'] = 'verified'
     return page, lane
@@ -294,12 +310,13 @@ def run(args):
         assert not response.get('isError'), response
         first = {}
         report['actions'].append(first)
-        episode(args, plan, client, observer, runtime, identity, STAGES[0], save, first)
+        stages = INKSCAPE_STAGES if spec['app'] == 'inkscape' else STAGES
+        episode(args, plan, client, observer, runtime, identity, stages[0], save, first)
         report['expiry'] = wait_for_idle_expiry(client, runtime, first['occupied_status'], first['lane'],
                                                first['action']['dispatch_ns'], save)
         second = {}
         report['actions'].append(second)
-        episode(args, plan, client, observer, runtime, identity, STAGES[1], save, second, final=True)
+        episode(args, plan, client, observer, runtime, identity, stages[1], save, second, final=True)
         assert second['lane'] == first['lane'], 'fresh action did not reacquire the same lane'
         before = lane_states(report['expiry']['status'])
         after = lane_states(second['occupied_status'])
@@ -325,5 +342,5 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('driver', 'plugin', 'source', 'primary-grab', 'plan', 'evidence', 'foreground-journal', 'trace-socket'):
         parser.add_argument('--' + name, required=True, type=Path)
-    parser.add_argument('--source-sha', required=True)
+    add_provenance_arguments(parser)
     raise SystemExit(run(parser.parse_args()))

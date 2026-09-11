@@ -18,6 +18,7 @@ No product wake/unlock policy, replay, source fixture edit, or native setup.
 Portable tests are orchestration checks, never native certification.
 """
 import argparse
+from production_app_smoke import add_provenance_arguments
 import hashlib
 import json
 import os
@@ -34,12 +35,13 @@ from primary_trace import analyze
 from production_cancel_proof import (MAX_GROUNDING_AGE_NS, PROFILE, close_owned,
     grounded_snapshot, stopped_prefix, verify_recovery_cleanup, verify_recovery_trace)
 from production_mcp import DirectMCP, assert_distinct_runtimes, stop_process
-from production_desktop_fault_proof import idle_lanes
+from production_desktop_fault_proof import idle_lanes, pointer_cleanup
 import production_pointer_grounding as pointer_grounding
 from production_realapp_proof import (PRIMARY_LIFETIME_MS, capacity_lane, check_response,
     primary_acknowledgement, provenance, require_primary_active, trace_interval)
 from production_session_fault_proof import (PROCESS_KEYS, SessionFault, connect_trace,
-    guard_guest, lanes, power, production_status, validate_plan as session_plan)
+    guard_guest, lanes, power, production_status, validate_plan as session_plan,
+    validate_fault_options)
 from realapp_proof import cleanup_all, released_synthetic_input
 
 
@@ -49,8 +51,9 @@ REFUSAL_SETUP_RESERVE_NS = 1_250_000_000
 
 
 def validate_plan(plan):
-    assert plan['purpose'] == 'lock_refusal' and plan['fault'] == {'kind': 'lock'}
-    session_plan({**plan, 'purpose': 'session_fault', 'fault': {'kind': 'dpms'}})
+    assert plan['purpose'] == 'lock_refusal' and plan['fault']['kind'] == 'lock'
+    validate_fault_options(plan['fault'], motion=False)
+    session_plan({**plan, 'purpose': 'session_fault', 'fault': {**plan['fault'], 'kind': 'dpms'}})
     fixture = plan['lock_fixture']
     assert set(fixture) == {'path', 'device', 'inode', 'uid', 'sha256', 'source_sha256'}
     assert Path(fixture['path']).is_absolute() and Path(fixture['path']).name == 'session_lock_fixture'
@@ -61,12 +64,16 @@ def validate_plan(plan):
     assert len({plan['compositor']['pid'], *(p['pid'] for p in plan['identities'].values())}) == 3
 
 
-def stable_status(before, after, *, advanced=False):
-    # Only a pre-transition idle baseline may contain an inert pointer.
-    old = idle_lanes(before) if advanced else lanes(before, cleared=True)
-    new = lanes(after, cleared=True)
+def stable_status(before, after, *, advanced=False, policy='cleared'):
+    # By default only a pre-transition baseline may contain an inert pointer.
+    pointer_cleanup({'pointer_cleanup': policy})
+    retained = policy == 'retained_inert'
+    old = idle_lanes(before) if advanced or retained else lanes(before, cleared=True)
+    new = idle_lanes(after) if retained else lanes(after, cleared=True)
     assert set(old) == set(new)
     for lane in old:
+        if retained:
+            assert old[lane]['pointer_focus'] is new[lane]['pointer_focus'], 'pointer presence changed'
         assert old[lane].get('reserved') is False and new[lane].get('reserved') is False
         assert old[lane]['epoch'] == new[lane]['epoch'], 'compositor lane replaced'
         assert old[lane]['dispatches'] == new[lane]['dispatches'], 'unexpected dispatch'
@@ -91,7 +98,7 @@ def settle_locked(fixture):
         nonlocal stable_since, previous
         fixture.locked()
         current = {'primary': wm(), 'status': production_status(fixture.config)}
-        stable_status(fixture.record['after'], current['status'])
+        stable_status(fixture.record['after'], current['status'], policy=pointer_cleanup(fixture.config))
         now = time.monotonic_ns()
         samples.append({**current, 'observed_ns': now})
         if current != previous:
@@ -112,6 +119,9 @@ class LockFixture(SessionFault):
         self.buffer = b''
         self.events = []
         self.record = {'result': 'unproven', 'events': self.events}
+        for key in ('pointer_cleanup', 'min_motion_px'):
+            if key in plan['fault']:
+                self.config[key] = self.record[key] = plan['fault'][key]
         self.requested = False
         self.restored = False
         self.check_targets()
@@ -191,7 +201,7 @@ class LockFixture(SessionFault):
         self.record['ack'] = self.event('locked')
         assert self.record['requested_ns'] <= self.record['ack']['observed_ns'] < self.deadline_ns
         self.record['after'] = production_status(self.config)
-        stable_status(self.record['before'], self.record['after'], advanced=True)
+        stable_status(self.record['before'], self.record['after'], advanced=True, policy=pointer_cleanup(self.config))
         self.locked()
         self.record['result'] = 'acknowledged'
 
@@ -237,7 +247,7 @@ class LockFixture(SessionFault):
         record.update(after=production_status(self.config), observed_ns=time.monotonic_ns())
         if not cleanup:
             assert self.requested and record['started_ns'] <= record['ack']['observed_ns'] < self.deadline_ns
-            stable_status(self.record['after'], record['after'], advanced=True)
+            stable_status(self.record['after'], record['after'], advanced=True, policy=pointer_cleanup(self.config))
         record['result'] = 'restored'
         return record
 
@@ -247,7 +257,7 @@ def verify_refusal(record):
     check_response(record['response'], {'kind': 'refused', 'reason': 'session_unavailable'})
     assert record['prepared_ns'] <= record['lock_ack_ns'] <= record['runtime_started_ns'] <= record['dispatch_ns'] <= record['observed_ns'] < record['deadline_ns']
     assert record['dispatch_ns'] - record['prepared_ns'] <= MAX_GROUNDING_AGE_NS
-    stable_status(record['before'], record['after'])
+    stable_status(record['before'], record['after'], policy=pointer_cleanup(record))
     assert not any(row[5] in (1, 2) for row in trace_interval(record['trace_before'], record['trace_after'])), 'refused action emitted synthetic events'
     isolation = analyze(stopped_prefix(record['trace_after']))
     assert isolation['result'] == 'passed', isolation
@@ -263,6 +273,17 @@ def verify_refusal_cleanup(prefix, stopped):
     return isolation
 
 
+def verify_inert_transition(initial, stopped):
+    """Retain raw lock analysis without claiming primary transition isolation."""
+    analysis = analyze(stopped)
+    assert analysis.get('telemetry_complete') is True, analysis
+    trace_interval(initial, initial)
+    assert stopped['events'][:initial['count']] == initial['events'], 'transition trace history changed'
+    assert not any(row[5] in (1, 2) for row in stopped['events'][initial['count']:]), 'synthetic activity while pointer must remain inert'
+    return {'continuous_primary_isolation': 'unproven', 'raw_primary_analysis': analysis,
+            'synthetic_pointer_continuity': 'verified'}
+
+
 def click_once(client, arguments, record, save, name):
     """Persist the attempt before transport; an exception never permits replay."""
     assert record['outcome'] == 'unknown' and record['replayed'] is False
@@ -271,7 +292,9 @@ def click_once(client, arguments, record, save, name):
     try:
         record['dispatch_ns'] = time.monotonic_ns()
         assert 0 <= record['dispatch_ns'] - record['prepared_ns'] <= MAX_GROUNDING_AGE_NS, 'grounding expired; no input sent'
-        response = client.tool('click', arguments)
+        tool = record.get('tool', 'click')
+        assert tool in ('click', 'scroll'), 'only a new non-drag action is allowed'
+        response = client.tool(tool, arguments)
         record.update(outcome='response', response=response)
         return response
     except Exception as error:
@@ -288,9 +311,9 @@ def prepare_click(client, spec, *, session=True):
     prepared_ns = snapshot['proof_observation_started_ns']
     assert type(prepared_ns) is int and 0 < prepared_ns <= time.monotonic_ns()
     arguments, oracle = pointer_grounding.action(snapshot,
-        pointer_grounding.read_pixels(snapshot['proof_image']), 'calc', spec['pointer_stage'])
+        pointer_grounding.read_pixels(snapshot['proof_image']), spec['app'], spec['pointer_stage'])
     return {'snapshot': snapshot, 'arguments': arguments, 'oracle': oracle,
-            'prepared_ns': prepared_ns}
+            'prepared_ns': prepared_ns, 'tool': pointer_grounding.STAGES[spec['app']][spec['pointer_stage']]}
 
 
 def prepare_refusal_click(observer, spec, save):
@@ -354,7 +377,8 @@ def run(args):
         fixture = LockFixture(plan, args)
         origin = provenance(args, plan)
         for name in (Path(__file__).name, 'production_lock_refusal_proof_test.py', 'session_lock_fixture.c',
-                     'production_session_fault_proof.py', 'desktop_faults.py', 'production_cancel_proof.py'):
+                     'production_session_fault_proof.py', 'production_desktop_fault_proof.py',
+                     'desktop_faults.py', 'production_cancel_proof.py'):
             path = Path(__file__).with_name(name)
             origin['files'][name] = {'path': str(path.resolve()), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
         origin['lock_fixture'] = plan['lock_fixture']
@@ -365,13 +389,23 @@ def run(args):
         assert state(args.foreground_journal)['held'] is False, 'lock setup requires released primary fixture'
         probe = prepare_refusal_click(observer, spec, save)
         arguments, prepared_ns = probe['arguments'], probe['prepared_ns']
+        policy = pointer_cleanup(fixture.config)
+        if policy == 'retained_inert':
+            lock_initial = start_trace()
         fixture.lock()
         settle_locked(fixture)
+        if policy == 'retained_inert':
+            trace.exchange('TRACE_STOP')
+            tracing = False
+            lock_stopped = trace.collect()
+            save('lock-transition-trace.json', lock_stopped)
+            save('lock-transition-analysis.json', verify_inert_transition(lock_initial, lock_stopped))
         locked_primary, locked_foreground = wm(), state(args.foreground_journal)
         refusal = report['refusal'] = {**probe, 'outcome': 'unknown', 'replayed': False,
+            'pointer_cleanup': policy,
             'lock_ack_ns': fixture.record['ack']['observed_ns'], 'deadline_ns': fixture.deadline_ns,
             'before': production_status(fixture.config)}
-        stable_status(fixture.record['after'], refusal['before'])
+        stable_status(fixture.record['after'], refusal['before'], policy=policy)
         refusal['trace_before'] = start_trace()
         tracing = True
         refusal['runtime_started_ns'] = time.monotonic_ns()
@@ -387,10 +421,16 @@ def run(args):
         fixture.locked()
         refusal.update(after=production_status(fixture.config), trace_after=trace.collect(), observed_ns=time.monotonic_ns())
         refusal['verification'] = verify_refusal(refusal)
-        trace.exchange('TRACE_STOP')
-        tracing = False
-        stopped = trace.collect()
-        save('refusal-trace.json', stopped)
+        if policy == 'retained_inert':
+            # Keep the same trace running through readback and graceful unlock.
+            # The strict settled prefix is separate from raw transition analysis.
+            stopped = stopped_prefix(trace.collect())
+        else:
+            trace.exchange('TRACE_STOP')
+            tracing = False
+            stopped = trace.collect()
+        save('refusal-trace-prefix.json' if policy == 'retained_inert' else 'refusal-trace.json', stopped)
+        refusal['analysis_uses_end_sentinel'] = policy == 'retained_inert'
         refusal['isolation'] = verify_refusal_cleanup(refusal['trace_after'], stopped)
         refusal['primary_readback'] = {'before': locked_primary, 'after': wm(),
             'foreground_before': locked_foreground, 'foreground_after': state(args.foreground_journal)}
@@ -400,6 +440,12 @@ def run(args):
         save('refusal.json', refusal)
         restoration = fixture.restore()
         save('restoration.json', restoration)
+        if policy == 'retained_inert':
+            trace.exchange('TRACE_STOP')
+            tracing = False
+            unlock_stopped = trace.collect()
+            save('unlock-transition-trace.json', unlock_stopped)
+            save('unlock-transition-analysis.json', verify_inert_transition(refusal['trace_before'], unlock_stopped))
         fixture.check_targets()
         power(fixture.config, True)
         # All intentional focus/cursor/grab setup precedes the recovery trace.
@@ -423,7 +469,7 @@ def run(args):
         setup.update(after=primary, observed_ns=time.monotonic_ns())
         save('foreground-setup.json', setup)
         fixture.check_targets()
-        stable_status(restoration['after'], production_status(fixture.config))
+        stable_status(restoration['after'], production_status(fixture.config), policy=policy)
         initial = start_trace()
         tracing = True
         save('recovery-trace-initial.json', initial)
@@ -440,7 +486,7 @@ def run(args):
         dispatched_ns = time.monotonic_ns()
         assert dispatched_ns - prepared_ns <= MAX_GROUNDING_AGE_NS
         recovery['action'] = {'outcome': 'unknown', 'replayed': False, 'dispatch_ns': dispatched_ns,
-                              'prepared_ns': prepared_ns}
+                              'prepared_ns': prepared_ns, 'tool': grounding.get('tool', 'click')}
         response = click_once(fresh, {**arguments, **spec['target'], 'session': name,
             'delivery_mode': 'background'}, recovery['action'], save, 'recovery-action.json')
         check_response(response, {'kind': 'dispatched'})
@@ -449,7 +495,8 @@ def run(args):
         recovery['app_effect'] = pointer_grounding.verify(after, pointer_grounding.read_pixels(after['proof_image']), oracle)
         prefix = trace.collect()
         save('recovery-trace-prefix.json', prefix)
-        recovery['trace'] = verify_recovery_trace(initial, prefix, capacity_lane(initial, prefix, 'click'), 'click')
+        tool = recovery['action']['tool']
+        recovery['trace'] = verify_recovery_trace(initial, prefix, capacity_lane(initial, prefix, tool), tool)
         close_owned(fresh)
         trace.exchange('TRACE_STOP')
         tracing = False
@@ -465,7 +512,8 @@ def run(args):
         fixture.check_targets()
         final_status = production_status(fixture.config)
         # Exactly the one completed recovery click may advance dispatch counts.
-        old, new = lanes(restoration['after'], cleared=True), lanes(final_status, cleared=True, allow_passive=True)
+        old = lanes(restoration['after'], cleared=True, allow_passive=policy == 'retained_inert')
+        new = lanes(final_status, cleared=True, allow_passive=True)
         assert sum(new[k]['dispatches'] - old[k]['dispatches'] for k in old) == 1
         for key in old:
             assert new[key]['dispatches'] >= old[key]['dispatches'] and new[key].get('reserved') is False
@@ -510,5 +558,5 @@ if __name__ == '__main__':
     for name in ('driver', 'plugin', 'source', 'primary-grab', 'plan', 'evidence',
                  'foreground-journal', 'trace-socket', 'lock-fixture'):
         parser.add_argument('--' + name, required=True, type=Path)
-    parser.add_argument('--source-sha', required=True)
+    add_provenance_arguments(parser)
     raise SystemExit(run(parser.parse_args()))

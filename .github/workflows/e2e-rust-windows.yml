@@ -86,7 +86,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        instance: [1]
+        instance: [shim, direct]
     if: inputs.lane == 'all' || inputs.lane == 'native'
     name: "Windows / native WPF + WinUI3 + WebView2"
     needs: source
@@ -101,11 +101,29 @@ jobs:
       - name: Ensure FFmpeg for trajectory video
         shell: pwsh
         run: .\scripts\ci\windows\setup-ffmpeg.ps1
-      - name: Contrast queued shutdown with closed and held stdin
+      - name: Observe public recording tools across short lifetimes
         shell: pwsh
+        env:
+          ENCODER_ROUTE: ${{ matrix.instance }}
         run: |
           .\scripts\ci\windows\verify-user-session.ps1
-          .\scripts\ci\windows\diagnose-recorder-pipe.ps1
+          $root = Join-Path $PWD 'artifacts/recorder-observations'
+          New-Item -ItemType Directory -Force $root | Out-Null
+          if ($env:ENCODER_ROUTE -eq 'direct') {
+            $encoder = @(Get-ChildItem C:/ProgramData/chocolatey/lib/ffmpeg -Filter ffmpeg.exe -Recurse)
+            if ($encoder.Count -ne 1) { throw 'Expected one package-owned FFmpeg executable' }
+            $env:PATH = "$($encoder[0].DirectoryName);$env:PATH"
+          }
+          Get-FileHash (Get-Command ffmpeg.exe).Source | ConvertTo-Json | Set-Content (Join-Path $root 'encoder.json')
+          $env:CUA_RECORDING_DIAGNOSTIC_ROOT = $root
+          Push-Location libs/cua-driver/rust
+          try {
+            & cargo test --locked -p cua-driver-core --test recording_lifetime_diagnostic -- --ignored --exact real_encoder_short_lifetime_observations --nocapture --test-threads=1 2>&1 |
+              Tee-Object (Join-Path $root 'observations.log')
+            if ($LASTEXITCODE -ne 0) { throw 'Public recording lifecycle failure captured' }
+          } finally {
+            Pop-Location
+          }
       - name: Preserve every diagnostic observation
         if: always()
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08

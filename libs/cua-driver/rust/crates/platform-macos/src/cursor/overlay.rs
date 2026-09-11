@@ -31,6 +31,7 @@
 
 use std::collections::HashMap;
 use std::ffi::c_void;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -74,6 +75,11 @@ static CMD_TX: OnceLock<std::sync::mpsc::SyncSender<OverlayMsg>> = OnceLock::new
 // Single-consumer slot; receiver is moved into run_on_main_thread().
 static CMD_RX_CELL: Mutex<Option<std::sync::mpsc::Receiver<OverlayMsg>>> = Mutex::new(None);
 static RENDER: Mutex<Option<RenderMap>> = Mutex::new(None);
+static OVERLAY_WINDOW_ID: AtomicU32 = AtomicU32::new(0);
+
+pub(crate) fn is_overlay_window(window_id: u32) -> bool {
+    window_id != 0 && OVERLAY_WINDOW_ID.load(Ordering::Acquire) == window_id
+}
 
 /// The keyed, insertion-ordered collection of owned cursors that the render
 /// loop composites every frame. Insertion order = stable z-order (later keys
@@ -676,6 +682,9 @@ unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         }
     }
 
+    let window_number: isize = msg_send![win, windowNumber];
+    OVERLAY_WINDOW_ID.store(u32::try_from(window_number).unwrap_or(0), Ordering::Release);
+
     // ---- Show the window ----
     let _: () = msg_send![win, orderFrontRegardless];
 
@@ -688,6 +697,7 @@ unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
 
     // ---- NSApplication run loop (blocks until process exits) ----
     let _: () = msg_send![app, run];
+    OVERLAY_WINDOW_ID.store(0, Ordering::Release);
 }
 
 fn render_loop(

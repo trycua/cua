@@ -914,12 +914,45 @@ for typescript_binding in "$node_sdk_source" "$browser_sdk_source"; do
   grep -Fq -- "FfiConverterOptionalUInt64.write(value.timeoutSecs, into)" "$typescript_binding" || fail "TypeScript bindings do not write HttpRequest.timeoutSecs: $typescript_binding"
   grep -Fq -- "FfiConverterOptionalUInt64.allocationSize(value.timeoutSecs)" "$typescript_binding" || fail "TypeScript bindings do not allocate HttpRequest.timeoutSecs: $typescript_binding"
   grep -Fq -- "const FfiConverterOptionalUInt64 = new FfiConverterOptional" "$typescript_binding" || fail "TypeScript bindings omit the optional UInt64 converter: $typescript_binding"
+  grep -Fq -- "maxResponseBytes?: bigint" "$typescript_binding" || fail "TypeScript bindings omit HttpRequest.maxResponseBytes: $typescript_binding"
+  grep -Fq -- "maxResponseBytes: undefined" "$typescript_binding" || fail "TypeScript bindings do not default HttpRequest.maxResponseBytes to absent: $typescript_binding"
+  grep -Fq -- "maxResponseBytes: FfiConverterOptionalUInt64.read(from)" "$typescript_binding" || fail "TypeScript bindings do not read HttpRequest.maxResponseBytes: $typescript_binding"
+  grep -Fq -- "FfiConverterOptionalUInt64.write(value.maxResponseBytes, into)" "$typescript_binding" || fail "TypeScript bindings do not write HttpRequest.maxResponseBytes: $typescript_binding"
+  grep -Fq -- "FfiConverterOptionalUInt64.allocationSize(value.maxResponseBytes)" "$typescript_binding" || fail "TypeScript bindings do not allocate HttpRequest.maxResponseBytes: $typescript_binding"
 done
 grep -Fq -- "TimeoutSecs *uint64" "$go_sdk_source" || fail "Go bindings omit HttpRequest.TimeoutSecs"
 grep -Fq -- "FfiConverterOptionalUint64INSTANCE.Read(reader)" "$go_sdk_source" || fail "Go bindings do not read HttpRequest.TimeoutSecs"
 grep -Fq -- "FfiConverterOptionalUint64INSTANCE.Write(writer, value.TimeoutSecs)" "$go_sdk_source" || fail "Go bindings do not write HttpRequest.TimeoutSecs"
 grep -Fq -- "FfiDestroyerOptionalUint64{}.Destroy(r.TimeoutSecs)" "$go_sdk_source" || fail "Go bindings do not destroy HttpRequest.TimeoutSecs"
+grep -Fq -- "MaxResponseBytes *uint64" "$go_sdk_source" || fail "Go bindings omit HttpRequest.MaxResponseBytes"
+go_http_request_block="$(sed -n '/^type HttpRequest struct {/,/^type FfiDestroyerHttpRequest struct/p' "$go_sdk_source")"
+[ "$(printf '%s\n' "$go_http_request_block" | grep -Fc -- "FfiConverterOptionalUint64INSTANCE.Read(reader),")" -eq 2 ] || fail "Go bindings do not read both HttpRequest request controls in field order"
+grep -Fq -- "FfiConverterOptionalUint64INSTANCE.Write(writer, value.MaxResponseBytes)" "$go_sdk_source" || fail "Go bindings do not write HttpRequest.MaxResponseBytes"
+grep -Fq -- "FfiDestroyerOptionalUint64{}.Destroy(r.MaxResponseBytes)" "$go_sdk_source" || fail "Go bindings do not destroy HttpRequest.MaxResponseBytes"
 grep -Fq -- "type FfiConverterOptionalUint64 struct{}" "$go_sdk_source" || fail "Go bindings omit the optional uint64 converter"
+node - "$python_sdk_source" "$go_sdk_source" "$node_sdk_source" "$browser_sdk_source" <<'NODE'
+const fs = require("node:fs");
+
+const bindings = [
+  [process.argv[2], /uniffi_cyclops_sdk_checksum_method_httpclient_execute\(\) != (\d+):/],
+  [process.argv[3], /if checksum != (\d+) \{\n\s*\/\/ If this happens try cleaning and rebuilding your project\n\s*panic\("fleet_sdk: uniffi_cyclops_sdk_checksum_method_httpclient_execute/],
+  [process.argv[4], /uniffi_cyclops_sdk_checksum_method_httpclient_execute\(\) !== (\d+)/],
+  [process.argv[5], /ubrn_uniffi_cyclops_sdk_checksum_method_httpclient_execute\(\) !==\s*(\d+)/],
+];
+const checksums = bindings.map(([path, pattern]) => {
+  const match = fs.readFileSync(path, "utf8").match(pattern);
+  if (!match) throw new Error(`HttpClient.execute checksum is missing from ${path}`);
+  return [path, match[1]];
+});
+const expected = checksums[0][1];
+const mismatches = checksums.filter(([, checksum]) => checksum !== expected);
+if (mismatches.length > 0) {
+  throw new Error(
+    `HttpClient.execute checksum drift: expected ${expected}; ` +
+      mismatches.map(([path, checksum]) => `${path} has ${checksum}`).join(", "),
+  );
+}
+NODE
 grep -Fq -- "@uniffi_handle_map = UniffiHandleMap.new" "$ruby_sdk_source" || fail "Ruby callback bindings do not retain native callback objects"
 grep -Fq -- "module UniffiCallbackInterfaceHttpClient" "$ruby_sdk_source" || fail "Ruby callback bindings do not register an HTTP callback vtable"
 grep -Fq -- "[VTableCallbackInterfaceHttpClient.by_ref]" "$ruby_sdk_source" || fail "Ruby callback vtable initializer has the wrong FFI signature"

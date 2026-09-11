@@ -177,6 +177,7 @@ async fn foreign_http_client_preserves_ordered_headers_and_byte_bodies() {
             ],
             body: Some(vec![0, 255]),
             timeout_secs: None,
+            max_response_bytes: None,
         })
         .await
         .unwrap();
@@ -192,6 +193,7 @@ fn http_request_distinguishes_absent_and_empty_bodies() {
         headers: vec![],
         body: None,
         timeout_secs: None,
+        max_response_bytes: None,
     };
     let empty = HttpRequest {
         body: Some(vec![]),
@@ -219,16 +221,19 @@ fn http_request_builder_treats_optional_fields_as_skippable() {
 
     assert_eq!(request.body, None);
     assert_eq!(request.timeout_secs, None);
+    assert_eq!(request.max_response_bytes, None);
 
     let bounded = HttpRequestBuilder::new()
         .method("GET".into())
         .url("https://run.cua.ai/v1/pools".into())
         .headers(vec![])
         .timeout_secs(30)
+        .max_response_bytes(4096)
         .build()
         .unwrap();
 
     assert_eq!(bounded.timeout_secs, Some(30));
+    assert_eq!(bounded.max_response_bytes, Some(4096));
 
     let missing = HttpRequestBuilder::new()
         .method("GET".into())
@@ -239,7 +244,7 @@ fn http_request_builder_treats_optional_fields_as_skippable() {
 }
 
 #[test]
-fn http_request_deserializes_without_timeout_secs() {
+fn http_request_deserializes_without_optional_request_controls() {
     let request: HttpRequest = serde_json::from_value(serde_json::json!({
         "method": "GET",
         "url": "https://run.cua.ai/v1/pools",
@@ -249,6 +254,7 @@ fn http_request_deserializes_without_timeout_secs() {
     .unwrap();
 
     assert_eq!(request.timeout_secs, None);
+    assert_eq!(request.max_response_bytes, None);
 }
 
 #[test]

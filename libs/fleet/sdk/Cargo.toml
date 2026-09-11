@@ -36,7 +36,7 @@ js-sys = "0.3"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 web-time = "1.1.0"
-web-sys = { version = "0.3", features = ["Headers", "Request", "RequestInit", "Response", "Window"] }
+web-sys = { version = "0.3", features = ["Headers", "ReadableStream", "ReadableStreamDefaultReader", "Request", "RequestInit", "Response", "Window"] }
 
 [dev-dependencies]
 camino = "1.0"

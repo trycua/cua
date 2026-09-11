@@ -830,6 +830,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_httprequestbuilder_headers(
     ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_httprequestbuilder_max_response_bytes(
+    ): Short
     external fun uniffi_cyclops_sdk_checksum_method_httprequestbuilder_method(
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_httprequestbuilder_timeout_secs(
@@ -1095,6 +1097,8 @@ external fun uniffi_cyclops_sdk_fn_method_httprequestbuilder_build(`ptr`: Long,u
 ): RustBuffer.ByValue
 external fun uniffi_cyclops_sdk_fn_method_httprequestbuilder_headers(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): Long
+external fun uniffi_cyclops_sdk_fn_method_httprequestbuilder_max_response_bytes(`ptr`: Long,`value`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Long
 external fun uniffi_cyclops_sdk_fn_method_httprequestbuilder_method(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_httprequestbuilder_timeout_secs(`ptr`: Long,`value`: Long,uniffi_out_err: UniffiRustCallStatus,
@@ -1351,7 +1355,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token() != 1180.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cyclops_sdk_checksum_method_httpclient_execute() != 38803.toShort()) {
+    if (lib.uniffi_cyclops_sdk_checksum_method_httpclient_execute() != 33213.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_build() != 10518.toShort()) {
@@ -1436,6 +1440,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_httprequestbuilder_headers() != 19982.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_httprequestbuilder_max_response_bytes() != 42011.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_httprequestbuilder_method() != 4078.toShort()) {
@@ -5517,6 +5524,10 @@ public object FfiConverterTypeCyclopsTokenProviderConfigurationBuilder: FfiConve
 
 public interface HttpClient {
 
+    /**
+     * Executes an HTTP request. Foreign implementations must enforce
+     * `request.max_response_bytes` while streaming the response body.
+     */
     suspend fun `execute`(`request`: HttpRequest): HttpResponse
 
     companion object
@@ -5619,6 +5630,10 @@ open class HttpClientImpl: Disposable, AutoCloseable, HttpClient
     }
 
 
+    /**
+     * Executes an HTTP request. Foreign implementations must enforce
+     * `request.max_response_bytes` while streaming the response body.
+     */
     @Throws(HttpException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
     override suspend fun `execute`(`request`: HttpRequest) : HttpResponse {
@@ -5859,6 +5874,8 @@ public interface HttpRequestBuilderInterface {
 
     fun `headers`(`value`: List<HttpHeader>): HttpRequestBuilder
 
+    fun `maxResponseBytes`(`value`: kotlin.ULong): HttpRequestBuilder
+
     fun `method`(`value`: kotlin.String): HttpRequestBuilder
 
     fun `timeoutSecs`(`value`: kotlin.ULong): HttpRequestBuilder
@@ -6006,6 +6023,19 @@ open class HttpRequestBuilder: Disposable, AutoCloseable, HttpRequestBuilderInte
     UniffiLib.uniffi_cyclops_sdk_fn_method_httprequestbuilder_headers(
         it,
         FfiConverterSequenceTypeHttpHeader.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+    override fun `maxResponseBytes`(`value`: kotlin.ULong): HttpRequestBuilder {
+            return FfiConverterTypeHttpRequestBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_method_httprequestbuilder_max_response_bytes(
+        it,
+        FfiConverterULong.lower(`value`),_status)
 }
     }
     )
@@ -6861,6 +6891,12 @@ data class HttpRequest (
      * falls back to the native client's 30-second default.
      */
     var `timeoutSecs`: kotlin.ULong? = null
+    ,
+    /**
+     * Maximum bytes delivered in the response body. Absent preserves the
+     * historical unbounded response behavior.
+     */
+    var `maxResponseBytes`: kotlin.ULong? = null
 
 ){
 
@@ -6882,6 +6918,7 @@ public object FfiConverterTypeHttpRequest: FfiConverterRustBuffer<HttpRequest> {
             FfiConverterSequenceTypeHttpHeader.read(buf),
             FfiConverterOptionalByteArray.read(buf),
             FfiConverterOptionalULong.read(buf),
+            FfiConverterOptionalULong.read(buf),
         )
     }
 
@@ -6890,7 +6927,8 @@ public object FfiConverterTypeHttpRequest: FfiConverterRustBuffer<HttpRequest> {
             FfiConverterString.allocationSize(value.`url`) +
             FfiConverterSequenceTypeHttpHeader.allocationSize(value.`headers`) +
             FfiConverterOptionalByteArray.allocationSize(value.`body`) +
-            FfiConverterOptionalULong.allocationSize(value.`timeoutSecs`)
+            FfiConverterOptionalULong.allocationSize(value.`timeoutSecs`) +
+            FfiConverterOptionalULong.allocationSize(value.`maxResponseBytes`)
     )
 
     override fun write(value: HttpRequest, buf: ByteBuffer) {
@@ -6899,6 +6937,7 @@ public object FfiConverterTypeHttpRequest: FfiConverterRustBuffer<HttpRequest> {
             FfiConverterSequenceTypeHttpHeader.write(value.`headers`, buf)
             FfiConverterOptionalByteArray.write(value.`body`, buf)
             FfiConverterOptionalULong.write(value.`timeoutSecs`, buf)
+            FfiConverterOptionalULong.write(value.`maxResponseBytes`, buf)
     }
 }
 

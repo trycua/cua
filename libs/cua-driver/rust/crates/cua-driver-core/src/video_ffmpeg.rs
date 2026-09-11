@@ -138,9 +138,13 @@ impl FfmpegVideoBackend {
 impl VideoBackend for FfmpegVideoBackend {
     fn stop(mut self: Box<Self>) -> anyhow::Result<VideoMetadata> {
         let elapsed = self.started_at.elapsed();
+        let shutdown_started = Instant::now();
+        let before_stop = self.child.try_wait();
+        tracing::warn!(target: "recording", pid = self.child.id(), ?before_stop, "shutdown diagnostic before stdin");
         if let Some(mut stdin) = self.child.stdin.take() {
-            let _ = stdin.write_all(b"q\n");
-            let _ = stdin.flush();
+            let write_result = stdin.write_all(b"q\n");
+            let flush_result = stdin.flush();
+            tracing::warn!(target: "recording", ?write_result, ?flush_result, "shutdown diagnostic stdin");
         }
 
         let shutdown_timeout = Duration::from_millis(3000);
@@ -155,8 +159,9 @@ impl VideoBackend for FfmpegVideoBackend {
                     break Err(anyhow::anyhow!("ffmpeg exited with {cause}"));
                 }
                 None if Instant::now() > deadline => {
-                    let _ = self.child.kill();
-                    let _ = self.child.wait();
+                    let kill_result = self.child.kill();
+                    let wait_result = self.child.wait();
+                    tracing::warn!(target: "recording", ?kill_result, ?wait_result, "shutdown diagnostic forced termination");
                     break Err(anyhow::anyhow!(
                         "ffmpeg shutdown timed out after {} ms",
                         shutdown_timeout.as_millis()
@@ -165,6 +170,7 @@ impl VideoBackend for FfmpegVideoBackend {
                 None => std::thread::sleep(Duration::from_millis(80)),
             }
         };
+        tracing::warn!(target: "recording", elapsed_ms = shutdown_started.elapsed().as_millis() as u64, ?result, "shutdown diagnostic result");
         if let Some(handle) = self.stderr_thread.take() {
             let stderr = handle.join().unwrap_or_default();
             if let Err(error) = &result {

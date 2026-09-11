@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Bug Fixes
+
+- **cua-driver:** preserve the delivered X11 click interval, confirm sequential button delivery, and release modifiers after rejected desktop clicks.
+
 ## [0.28.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.27.0...cua-driver-rs-v0.28.0) (2026-09-11)
 
 

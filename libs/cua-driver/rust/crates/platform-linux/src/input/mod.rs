@@ -1958,10 +1958,21 @@ pub fn send_click_with_modifiers(
             same_screen: true,
         };
 
-        conn.send_event(false, target.window, EventMask::BUTTON_PRESS, &press)?;
-        sleep(Duration::from_millis(CLICK_DELAY_MS));
-        conn.send_event(false, target.window, EventMask::BUTTON_RELEASE, &release)?;
-        conn.flush()?;
+        let press_result = conn
+            .send_event(false, target.window, EventMask::BUTTON_PRESS, &press)?
+            .check();
+        if press_result.is_ok() {
+            // A checked request flushes and confirms the down before timing it.
+            sleep(Duration::from_millis(CLICK_DELAY_MS));
+        }
+        // Attempt release even if confirmation of the queued down failed.
+        let release_result = (|| -> Result<()> {
+            conn.send_event(false, target.window, EventMask::BUTTON_RELEASE, &release)?
+                .check()?;
+            Ok(())
+        })();
+        press_result?;
+        release_result?;
 
         if count > 1 {
             sleep(Duration::from_millis(80));
@@ -2089,8 +2100,8 @@ pub fn send_button_down(xid: u64, x: i32, y: i32, button: u8) -> Result<()> {
         state: KeyButMask::from(0u16),
         same_screen: true,
     };
-    conn.send_event(false, target.window, EventMask::BUTTON_PRESS, &press)?;
-    conn.flush()?;
+    conn.send_event(false, target.window, EventMask::BUTTON_PRESS, &press)?
+        .check()?;
     Ok(())
 }
 
@@ -2139,8 +2150,8 @@ pub fn send_button_up(xid: u64, x: i32, y: i32, button: u8) -> Result<()> {
         state: button_state_mask(button),
         same_screen: true,
     };
-    conn.send_event(false, target.window, EventMask::BUTTON_RELEASE, &release)?;
-    conn.flush()?;
+    conn.send_event(false, target.window, EventMask::BUTTON_RELEASE, &release)?
+        .check()?;
     Ok(())
 }
 
@@ -2399,6 +2410,7 @@ pub fn send_click_xtest_desktop_with_modifiers(
         modifier_keycodes.push(keycode);
     }
     let mut pressed = Vec::new();
+    let mut button_pressed = false;
     let gesture_result = (|| -> Result<()> {
         for &keycode in &modifier_keycodes {
             conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
@@ -2409,23 +2421,33 @@ pub fn send_click_xtest_desktop_with_modifiers(
         conn.xtest_fake_input(MOTION_NOTIFY_EVENT, 0, 0, root, x as i16, y as i16, 0)?;
         let count = count.max(1);
         for click_index in 0..count {
-            conn.xtest_fake_input(BUTTON_PRESS_EVENT, button, 0, root, x as i16, y as i16, 0)?;
-            conn.xtest_fake_input(BUTTON_RELEASE_EVENT, button, 0, root, x as i16, y as i16, 0)?;
+            let press =
+                conn.xtest_fake_input(BUTTON_PRESS_EVENT, button, 0, root, x as i16, y as i16, 0)?;
+            button_pressed = true;
+            // Confirm delivery before sleeping; buffering both edges produces a zero-ms click.
+            press.check()?;
+            sleep(Duration::from_millis(CLICK_DELAY_MS));
+            conn.xtest_fake_input(BUTTON_RELEASE_EVENT, button, 0, root, x as i16, y as i16, 0)?
+                .check()?;
+            button_pressed = false;
             if click_index + 1 < count {
-                // Chromium needs the first pair to reach the server before the
-                // second pair. A zero-gap batch produces two click events but
-                // no DOM dblclick event under Xvfb/Openbox.
-                conn.flush()?;
+                // Keep the existing gap between completed click pairs.
                 sleep(Duration::from_millis(DOUBLE_CLICK_DELAY_MS));
             }
         }
         Ok(())
     })();
 
-    // Always attempt to release every modifier that was successfully queued,
-    // including when a later pointer request fails. A failed gesture must not
-    // leave the desktop with a logically stuck Ctrl/Shift/Alt/Super key.
+    // Attempt all releases after a partial failure, including a queued button
+    // down whose confirmation failed. Do not strand buttons or modifiers.
     let mut release_result: Result<()> = Ok(());
+    if button_pressed {
+        release_result = (|| -> Result<()> {
+            conn.xtest_fake_input(BUTTON_RELEASE_EVENT, button, 0, root, x as i16, y as i16, 0)?
+                .check()?;
+            Ok(())
+        })();
+    }
     for &keycode in pressed.iter().rev() {
         if let Err(error) =
             conn.xtest_fake_input(KEY_RELEASE_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)
@@ -2435,12 +2457,8 @@ pub fn send_click_xtest_desktop_with_modifiers(
             }
         }
     }
-    conn.flush()?;
-    // Round-trip so the server processes the warp+button events before this
-    // short-lived connection drops. Pointer events happened to survive the close
-    // under Xtigervnc where keyboard events did not (see send_key_xtest), but make
-    // it explicit so the desktop click is reliable across X servers too.
-    let _ = conn.get_input_focus()?.reply();
+    // Complete queued modifier releases before the short-lived connection closes.
+    conn.get_input_focus()?.reply()?;
     drop(guards);
     gesture_result?;
     release_result?;

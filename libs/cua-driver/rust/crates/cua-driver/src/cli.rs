@@ -518,8 +518,8 @@ pub fn parse_command() -> Command {
         println!("  cua-driver channel set <name>  Save stable or nightly; run update --apply to switch binaries.");
         println!("    --json                        Emit machine-readable channel state.");
         println!();
-        println!("autostart options (Windows-only today):");
-        println!("  cua-driver autostart enable     Register a logon Scheduled Task so serve starts at every interactive logon.");
+        println!("autostart options (Windows: Scheduled Task · macOS: LaunchAgent):");
+        println!("  cua-driver autostart enable     Register a logon autostart entry so serve starts at every interactive logon.");
         println!("  cua-driver autostart disable    Remove the autostart entry. No-op if not registered.");
         println!("  cua-driver autostart status     Print whether the entry is registered + whether the daemon is running.");
         println!("  cua-driver autostart kick       Start the entry now without re-logging.");

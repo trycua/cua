@@ -1563,6 +1563,13 @@ public protocol CyclopsClientProtocol: AnyObject, Sendable {
 
     func presignImageUploads(request: ImageUploadRequest) async throws  -> ImageUploadResponse
 
+    /**
+     * Hash and upload one file, or reuse a matching existing object.
+     * Returns only the bound digest, size, and tenant reference, never a signed URL.
+     * This does not create an Image or attest to object versioning/encryption.
+     */
+    func uploadImageFile(namespace: String, name: String, contents: Data) async throws  -> ImageUploadInstruction
+
     func createImage(namespace: String, manifest: PreservedJson) async throws  -> PreservedJson
 
     func deleteImage(namespace: String, name: String) async throws
@@ -1858,6 +1865,28 @@ open func presignImageUploads(request: ImageUploadRequest)async throws  -> Image
             completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeImageUploadResponse_lift,
+            errorHandler: FfiConverterTypeSdkError_lift
+        )
+}
+
+    /**
+     * Hash and upload one file, or reuse a matching existing object.
+     * Returns only the bound digest, size, and tenant reference, never a signed URL.
+     * This does not create an Image or attest to object versioning/encryption.
+     */
+open func uploadImageFile(namespace: String, name: String, contents: Data)async throws  -> ImageUploadInstruction  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_cyclopsclient_upload_image_file(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(namespace),FfiConverterString.lower(name),FfiConverterData.lower(contents)
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeImageUploadInstruction_lift,
             errorHandler: FfiConverterTypeSdkError_lift
         )
 }
@@ -2669,6 +2698,9 @@ public protocol HttpClient: AnyObject, Sendable {
     /**
      * Executes an HTTP request. Foreign implementations must enforce
      * `request.max_response_bytes` while streaming the response body.
+     * Implementations must not follow redirects, retry requests, or add ambient
+     * authentication/cookies. Send only the supplied headers and body; signed
+     * upload requests also use this interface and must not leak credentials.
      */
     func execute(request: HttpRequest) async throws  -> HttpResponse
 
@@ -2729,6 +2761,9 @@ open class HttpClientImpl: HttpClient, @unchecked Sendable {
     /**
      * Executes an HTTP request. Foreign implementations must enforce
      * `request.max_response_bytes` while streaming the response body.
+     * Implementations must not follow redirects, retry requests, or add ambient
+     * authentication/cookies. Send only the supplied headers and body; signed
+     * upload requests also use this interface and must not leak credentials.
      */
 open func execute(request: HttpRequest)async throws  -> HttpResponse  {
     return
@@ -6041,6 +6076,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_presign_image_uploads() != 53280) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_upload_image_file() != 14212) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_image() != 51053) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -6125,7 +6163,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token() != 1180) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cyclops_sdk_checksum_method_httpclient_execute() != 33213) {
+    if (uniffi_cyclops_sdk_checksum_method_httpclient_execute() != 57947) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_build() != 10518) {

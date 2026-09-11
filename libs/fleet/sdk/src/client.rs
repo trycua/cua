@@ -198,6 +198,10 @@ impl CyclopsClient {
 }
 
 impl CyclopsClient {
+    pub(crate) async fn send_image_upload(&self, request: HttpRequest) -> Result<(), SdkError> {
+        self.transport.execute_upload(request).await
+    }
+
     pub(crate) fn base_url(&self) -> &Url {
         &self.base_url
     }

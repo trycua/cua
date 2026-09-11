@@ -620,6 +620,8 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_template() != 18704:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_upload_image_file() != 14212:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim() != 18984:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_constructor_cyclopscredentials_new() != 25746:
@@ -638,7 +640,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_pool_poll_limit() != 6865:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cyclops_sdk_checksum_method_httpclient_execute() != 33213:
+    if lib.uniffi_cyclops_sdk_checksum_method_httpclient_execute() != 57947:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_constructor_httprequestbuilder_new() != 25892:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -1459,6 +1461,13 @@ _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_update_template.argtypes =
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_update_template.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_upload_image_file.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_upload_image_file.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -1805,6 +1814,9 @@ _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_pool.restype 
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_template.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_template.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_upload_image_file.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_upload_image_file.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim.restype = ctypes.c_uint16
@@ -5311,6 +5323,13 @@ class CyclopsClientProtocol(typing.Protocol):
         raise NotImplementedError
     async def update_template(self, template: Template) -> Template:
         raise NotImplementedError
+    async def upload_image_file(self, namespace: str,name: str,contents: bytes) -> ImageUploadInstruction:
+        """
+        Hash and upload one file, or reuse a matching existing object.
+        Returns only the bound digest, size, and tenant reference, never a signed URL.
+        This does not create an Image or attest to object versioning/encryption.
+"""
+        raise NotImplementedError
     async def wait_claim(self, claim: Claim) -> Sandbox:
         raise NotImplementedError
 
@@ -6054,6 +6073,34 @@ class CyclopsClient(CyclopsClientProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
+    async def upload_image_file(self, namespace: str,name: str,contents: bytes) -> ImageUploadInstruction:
+        """
+        Hash and upload one file, or reuse a matching existing object.
+        Returns only the bound digest, size, and tenant reference, never a signed URL.
+        This does not create an Image or attest to object versioning/encryption.
+"""
+
+        _UniffiFfiConverterString.check_lower(namespace)
+
+        _UniffiFfiConverterString.check_lower(name)
+
+        _UniffiFfiConverterBytes.check_lower(contents)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(namespace),
+            _UniffiFfiConverterString.lower(name),
+            _UniffiFfiConverterBytes.lower(contents),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeImageUploadInstruction.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeSdkError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_upload_image_file(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
     async def wait_claim(self, claim: Claim) -> Sandbox:
 
         _UniffiFfiConverterTypeClaim.check_lower(claim)
@@ -6273,6 +6320,9 @@ class HttpClient():
         """
         Executes an HTTP request. Foreign implementations must enforce
         `request.max_response_bytes` while streaming the response body.
+        Implementations must not follow redirects, retry requests, or add ambient
+        authentication/cookies. Send only the supplied headers and body; signed
+        upload requests also use this interface and must not leak credentials.
 """
         raise NotImplementedError
 
@@ -6304,6 +6354,9 @@ class HttpClientImpl(HttpClient):
         """
         Executes an HTTP request. Foreign implementations must enforce
         `request.max_response_bytes` while streaming the response body.
+        Implementations must not follow redirects, retry requests, or add ambient
+        authentication/cookies. Send only the supplied headers and body; signed
+        upload requests also use this interface and must not leak credentials.
 """
 
         _UniffiFfiConverterTypeHttpRequest.check_lower(request)

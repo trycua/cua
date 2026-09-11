@@ -743,6 +743,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cyclops_sdk_fn_method_cyclopsclient_upload_image_file": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -1218,6 +1223,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cyclops_sdk_checksum_method_cyclopsclient_upload_image_file": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim": {
       args: [],
       ret: FfiType.UInt16,
@@ -1555,6 +1565,7 @@ interface NativeModuleInterface {
     uniffi_cyclops_sdk_fn_method_cyclopsclient_service_request(uniffiSelf: bigint, sandbox: Uint8Array, service: Uint8Array, path: Uint8Array, request: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_update_pool(uniffiSelf: bigint, pool: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_update_template(uniffiSelf: bigint, template: Uint8Array): bigint;
+    uniffi_cyclops_sdk_fn_method_cyclopsclient_upload_image_file(uniffiSelf: bigint, namespace: Uint8Array, name: Uint8Array, contents: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim(uniffiSelf: bigint, claim: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_constructor_cyclopscredentials_new(clientId: Uint8Array, clientSecret: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_fn_constructor_cyclopstokenproviderconfigurationbuilder_new(uniffi_out_err: UniffiRustCallStatus): bigint;
@@ -1650,6 +1661,7 @@ interface NativeModuleInterface {
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_pool(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_template(): number;
+    uniffi_cyclops_sdk_checksum_method_cyclopsclient_upload_image_file(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim(): number;
     uniffi_cyclops_sdk_checksum_constructor_cyclopscredentials_new(): number;
     uniffi_cyclops_sdk_checksum_constructor_cyclopstokenproviderconfigurationbuilder_new(): number;

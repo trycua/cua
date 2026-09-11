@@ -901,8 +901,8 @@ def replace_buffer(match):
         f"{indent})"
     )
 text, buffer_replacements = re.subn(buffer_pattern, replace_buffer, text)
-if buffer_replacements != 29:
-    raise SystemExit(f"expected 29 Ruby Rust-buffer future wrappers, found {buffer_replacements}")
+if buffer_replacements != 30:
+    raise SystemExit(f"expected 30 Ruby Rust-buffer future wrappers, found {buffer_replacements}")
 if len(re.findall(r"result = FleetSdk\.rust_call_with_error\(SdkBuildError,:uniffi_[a-z0-9_]*builder_build,", text)) != 8:
     raise SystemExit("expected eight synchronous Ruby SDK builder build calls")
 

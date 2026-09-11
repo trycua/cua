@@ -991,6 +991,17 @@ impl Tool for GetWindowStateTool {
                     }
                 }
 
+                // Additive read-only `background_input` capability section
+                // (macOS parity): what each background input route would do
+                // against this surface right now, from the same refusal
+                // ladders the input tools run. Advisory — every action
+                // revalidates. Old consumers ignore the extra field.
+                let background = crate::input::delivery::DeliveryMode::Background;
+                structured["background_input"] = background_input_report(
+                    pointer_background_refusal(pid, background),
+                    keyboard_background_refusal(pid, background),
+                );
+
                 if let Some((b64_opt, file_path, w, h, orig_w)) = shot_opt {
                     if !observation_only {
                         if let Some(ow) = orig_w {
@@ -1904,73 +1915,104 @@ fn is_gtk_process(pid: u32) -> bool {
         .unwrap_or(false)
 }
 
-fn unavailable_webkit_background(
+fn webkit_pointer_background_refusal(
     pid: u32,
     delivery: crate::input::delivery::DeliveryMode,
-) -> Option<ToolResult> {
+) -> Option<crate::input::delivery::BackgroundUnavailable> {
     (!delivery.is_foreground()
         && is_webkitgtk_embedder(pid)
         && !crate::wayland::is_inject_mode()
         && !crate::input::real_pointer_input_available())
-    .then(|| {
-        crate::input::delivery::background_unavailable_error(
-            crate::input::delivery::BackgroundUnavailable::WebKitSyntheticInput,
-        )
-    })
+    .then_some(crate::input::delivery::BackgroundUnavailable::WebKitSyntheticInput)
+}
+
+fn unavailable_webkit_background(
+    pid: u32,
+    delivery: crate::input::delivery::DeliveryMode,
+) -> Option<ToolResult> {
+    webkit_pointer_background_refusal(pid, delivery)
+        .map(crate::input::delivery::background_unavailable_error)
+}
+
+fn webkit_keyboard_background_refusal(
+    pid: u32,
+    delivery: crate::input::delivery::DeliveryMode,
+) -> Option<crate::input::delivery::BackgroundUnavailable> {
+    (!delivery.is_foreground() && is_webkitgtk_embedder(pid) && !crate::wayland::is_inject_mode())
+        .then_some(crate::input::delivery::BackgroundUnavailable::FocusedInputOnly)
 }
 
 fn unavailable_webkit_keyboard_background(
     pid: u32,
     delivery: crate::input::delivery::DeliveryMode,
 ) -> Option<ToolResult> {
-    (!delivery.is_foreground() && is_webkitgtk_embedder(pid) && !crate::wayland::is_inject_mode())
-        .then(|| {
-            crate::input::delivery::background_unavailable_error(
-                crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
-            )
-        })
+    webkit_keyboard_background_refusal(pid, delivery)
+        .map(crate::input::delivery::background_unavailable_error)
+}
+
+fn gtk_keyboard_background_refusal(
+    pid: u32,
+    delivery: crate::input::delivery::DeliveryMode,
+) -> Option<crate::input::delivery::BackgroundUnavailable> {
+    (!delivery.is_foreground() && is_gtk_process(pid) && !crate::wayland::is_inject_mode())
+        .then_some(crate::input::delivery::BackgroundUnavailable::FocusedInputOnly)
 }
 
 fn unavailable_gtk_keyboard_background(
     pid: u32,
     delivery: crate::input::delivery::DeliveryMode,
 ) -> Option<ToolResult> {
-    (!delivery.is_foreground() && is_gtk_process(pid) && !crate::wayland::is_inject_mode()).then(
-        || {
-            crate::input::delivery::background_unavailable_error(
-                crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
-            )
-        },
-    )
+    gtk_keyboard_background_refusal(pid, delivery)
+        .map(crate::input::delivery::background_unavailable_error)
+}
+
+fn gtk_pointer_background_refusal(
+    pid: u32,
+    delivery: crate::input::delivery::DeliveryMode,
+) -> Option<crate::input::delivery::BackgroundUnavailable> {
+    (!delivery.is_foreground()
+        && is_gtk_process(pid)
+        && !crate::wayland::is_inject_mode()
+        && !crate::input::real_pointer_input_available())
+    .then_some(crate::input::delivery::BackgroundUnavailable::FocusedInputOnly)
 }
 
 fn unavailable_gtk_pointer_background(
     pid: u32,
     delivery: crate::input::delivery::DeliveryMode,
 ) -> Option<ToolResult> {
-    (!delivery.is_foreground()
-        && is_gtk_process(pid)
-        && !crate::wayland::is_inject_mode()
-        && !crate::input::real_pointer_input_available())
-    .then(|| {
-        crate::input::delivery::background_unavailable_error(
-            crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
-        )
-    })
+    gtk_pointer_background_refusal(pid, delivery)
+        .map(crate::input::delivery::background_unavailable_error)
+}
+
+fn wayland_focused_input_background_refusal(
+    delivery: crate::input::delivery::DeliveryMode,
+    focus_free_inject_supported: bool,
+) -> Option<crate::input::delivery::BackgroundUnavailable> {
+    (crate::wayland::wayland_input_enabled()
+        && !(focus_free_inject_supported && crate::wayland::is_inject_mode())
+        && !delivery.is_foreground())
+    .then_some(crate::input::delivery::BackgroundUnavailable::FocusedInputOnly)
 }
 
 fn unavailable_wayland_focused_input_background(
     delivery: crate::input::delivery::DeliveryMode,
     focus_free_inject_supported: bool,
 ) -> Option<ToolResult> {
-    (crate::wayland::wayland_input_enabled()
-        && !(focus_free_inject_supported && crate::wayland::is_inject_mode())
-        && !delivery.is_foreground())
-    .then(|| {
-        crate::input::delivery::background_unavailable_error(
-            crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
-        )
-    })
+    wayland_focused_input_background_refusal(delivery, focus_free_inject_supported)
+        .map(crate::input::delivery::background_unavailable_error)
+}
+
+fn chromium_background_refusal(
+    pid: u32,
+    delivery: crate::input::delivery::DeliveryMode,
+) -> Option<crate::input::delivery::BackgroundUnavailable> {
+    chromium_background_must_refuse(
+        delivery.is_foreground(),
+        crate::wayland::is_inject_mode(),
+        is_chromium_embedder(pid),
+    )
+    .then_some(crate::input::delivery::BackgroundUnavailable::ChromiumInput)
 }
 
 /// Chromium's X11 renderer drops synthetic input sent to an occluded,
@@ -1981,17 +2023,8 @@ fn unavailable_chromium_background(
     pid: u32,
     delivery: crate::input::delivery::DeliveryMode,
 ) -> Option<ToolResult> {
-    if chromium_background_must_refuse(
-        delivery.is_foreground(),
-        crate::wayland::is_inject_mode(),
-        is_chromium_embedder(pid),
-    ) {
-        Some(crate::input::delivery::background_unavailable_error(
-            crate::input::delivery::BackgroundUnavailable::ChromiumInput,
-        ))
-    } else {
-        None
-    }
+    chromium_background_refusal(pid, delivery)
+        .map(crate::input::delivery::background_unavailable_error)
 }
 
 fn chromium_background_must_refuse(
@@ -2000,6 +2033,96 @@ fn chromium_background_must_refuse(
     chromium: bool,
 ) -> bool {
     chromium && !foreground && !focus_free_inject_mode
+}
+
+/// The refusal a background pointer action would return for `pid`, in the
+/// order every pointer tool (`click`, `double_click`, `scroll`, `drag`) runs
+/// its ladder.
+fn pointer_background_refusal(
+    pid: u32,
+    delivery: crate::input::delivery::DeliveryMode,
+) -> Option<crate::input::delivery::BackgroundUnavailable> {
+    chromium_background_refusal(pid, delivery)
+        .or_else(|| webkit_pointer_background_refusal(pid, delivery))
+        .or_else(|| gtk_pointer_background_refusal(pid, delivery))
+        .or_else(|| wayland_focused_input_background_refusal(delivery, true))
+}
+
+/// The refusal a background key action would return for `pid`, in the order
+/// `press_key` / `hotkey` run their ladder.
+fn keyboard_background_refusal(
+    pid: u32,
+    delivery: crate::input::delivery::DeliveryMode,
+) -> Option<crate::input::delivery::BackgroundUnavailable> {
+    chromium_background_refusal(pid, delivery)
+        .or_else(|| webkit_keyboard_background_refusal(pid, delivery))
+        .or_else(|| gtk_keyboard_background_refusal(pid, delivery))
+        .or_else(|| wayland_focused_input_background_refusal(delivery, true))
+}
+
+fn background_input_route(
+    route: &str,
+    refusal: Option<crate::input::delivery::BackgroundUnavailable>,
+) -> Value {
+    match refusal {
+        None => json!({ "route": route, "status": "available" }),
+        Some(reason) => json!({ "route": route, "status": "refused", "reason": reason.code() }),
+    }
+}
+
+/// Additive read-only `background_input` capability section, in the same
+/// `{routes:[{route,status,reason}]}` shape macOS reports: what a
+/// `delivery_mode:"background"` action would do on this surface right now,
+/// decided by the very refusal ladders the input tools run, so the report
+/// cannot drift from the call. Advisory — every action revalidates.
+///
+/// `accessibility` is the focus-free AT-SPI semantic route (`click` by
+/// `element_index`): no background refusal gates it, which is exactly why the
+/// pointer and keyboard refusals recommend it. Whether this snapshot resolved
+/// an AT-SPI tree at all is reported by `degraded` / `escalation`, not here.
+fn background_input_report(
+    pointer: Option<crate::input::delivery::BackgroundUnavailable>,
+    keyboard: Option<crate::input::delivery::BackgroundUnavailable>,
+) -> Value {
+    json!({
+        "routes": [
+            background_input_route("accessibility", None),
+            background_input_route("window_pointer", pointer),
+            background_input_route("pid_keyboard", keyboard),
+        ]
+    })
+}
+
+#[cfg(test)]
+#[test]
+fn background_input_routes_report_what_each_background_route_would_do() {
+    // A Chromium embedder addressed in background: both synthetic-input
+    // routes refuse with the code the call itself would carry, while the
+    // AT-SPI route those refusals recommend stays open.
+    let chromium = chromium_background_must_refuse(false, false, true)
+        .then_some(crate::input::delivery::BackgroundUnavailable::ChromiumInput);
+    assert!(
+        chromium.is_some(),
+        "a backgrounded Chromium surface refuses"
+    );
+    let report = background_input_report(chromium, chromium);
+    assert_eq!(
+        report["routes"],
+        json!([
+            {"route": "accessibility", "status": "available"},
+            {"route": "window_pointer", "status": "refused", "reason": "background_unavailable"},
+            {"route": "pid_keyboard", "status": "refused", "reason": "background_unavailable"},
+        ])
+    );
+
+    // A native toolkit with a real target-addressed pointer backend: nothing
+    // in either ladder refuses, so every route reports available.
+    let report = background_input_report(None, None);
+    assert!(report["routes"]
+        .as_array()
+        .expect("routes array")
+        .iter()
+        .all(|route| route["status"] == "available" && route["reason"].is_null()));
 }
 
 /// Screen-absolute center of a window (top-left from translate_coordinates plus

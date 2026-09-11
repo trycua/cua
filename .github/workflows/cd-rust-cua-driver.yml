@@ -217,6 +217,11 @@ jobs:
             VERSION="${{ inputs.version }}"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Validate Rust crate version against release tag/input version
+        shell: bash
+        run: |
+          ./.github/scripts/verify-rust-cua-driver-version.sh "${{ steps.version.outputs.version }}"
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -309,6 +314,11 @@ jobs:
             VERSION="${{ inputs.version }}"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Validate Rust crate version against release tag/input version
+        shell: bash
+        run: |
+          ./.github/scripts/verify-rust-cua-driver-version.sh "${{ steps.version.outputs.version }}"
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -601,6 +611,11 @@ jobs:
             VERSION="${{ inputs.version }}"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Validate Rust crate version against release tag/input version
+        shell: bash
+        run: |
+          ./.github/scripts/verify-rust-cua-driver-version.sh "${{ steps.version.outputs.version }}"
       - name: Import code-signing certificate
         if: env.DO_NOTARIZE == 'true'
         env:

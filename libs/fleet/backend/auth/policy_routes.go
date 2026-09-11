@@ -186,12 +186,12 @@ func AccountLookupRoutePolicy() Node {
 }
 
 // K8sRoutePolicy guards /api/k8s/{path...}. It is the same base + surface shape
-// as every other route, with three admission conjuncts: card-or-admin admission
+// as every other route, with Image namespace ownership and four admission conjuncts: card-or-admin admission
 // for custom-resource creation, pool admission over the request body, and
 // sandbox-services admission over the body of the one Sandbox write the
-// allowlist admits.
+// allowlist admits, plus Image admission excluding status and mismatched identity.
 //
-// Every conjunct must pass. The two body-reading leaves read the raw body
+// Every conjunct must pass. The three body-reading leaves read the raw body
 // (bounded at 1 MiB) to inspect the object being created or patched, which is
 // why pool admission names pool_admission.rego alongside authz.rego —
 // pool_admission imports data.authz.is_admin. They stay separate leaves rather
@@ -242,7 +242,13 @@ func K8sRoutePolicy() Node {
 			ServiceWriteNotSupportedMessage,
 		),
 		surfaceLeaf("authz-k8s", "data.authz_k8s.allow"),
+		NamespaceOwnershipPolicy(),
 		Because(CustomResourceCreationAdmissionPolicy(), BillingSetupRequiredMessage),
+		Policy(
+			Registered("image-admission"),
+			Query("data.image_admission.allow"),
+			WithRawBody(1<<20),
+		),
 		Policy(
 			Modules(
 				Registered("authz"),

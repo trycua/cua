@@ -1024,6 +1024,12 @@ impl Tool for GetWindowStateTool {
                     }
                     structured["screenshot_width"] = json!(w);
                     structured["screenshot_height"] = json!(h);
+                    // The capture dispatch returns pixels only for a frame it
+                    // identified as this window (anything else is the
+                    // `surface_identity_unproven` refusal below), so a
+                    // delivered frame is a valid one. macOS reports the same
+                    // bit; Linux only ever reported the false case.
+                    structured["screenshot_frame_valid"] = json!(true);
                     // Surface 7: mirror the MCP image part's `mimeType` onto
                     // the structured payload so consumers don't have to sniff
                     // magic bytes off the base64 to know the format.

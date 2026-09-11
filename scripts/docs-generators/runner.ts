@@ -16,6 +16,7 @@
 import { execSync, spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import { parseArgs } from 'node:util';
 
 // ============================================================================
 // Types
@@ -68,18 +69,34 @@ const SHARED_GENERATOR_FILES = new Set([
 // ============================================================================
 
 async function main() {
-  const args = process.argv.slice(2);
+  const { values } = parseArgs({
+    options: {
+      help: { type: 'boolean' },
+      list: { type: 'boolean' },
+      library: { type: 'string' },
+      check: { type: 'boolean' },
+      'check-only': { type: 'boolean' },
+      changed: { type: 'boolean' },
+      'changed-files-file': { type: 'string' },
+      'test-routing': { type: 'boolean' },
+    },
+  });
+  if (values.help) {
+    console.log(`Usage: pnpm --dir docs docs:generate [options]
 
-  // Parse arguments
-  const checkOnly = args.includes('--check') || args.includes('--check-only');
-  const listOnly = args.includes('--list');
-  const changedOnly = args.includes('--changed');
-  const changedFilesFileIndex = args.indexOf('--changed-files-file');
-  const changedFilesFile =
-    changedFilesFileIndex !== -1 ? args[changedFilesFileIndex + 1] : undefined;
-  const testRouting = args.includes('--test-routing');
-  const libraryIndex = args.indexOf('--library');
-  const specificLibrary = libraryIndex !== -1 ? args[libraryIndex + 1] : null;
+  --help                       Show this help without running generators
+  --list                       List configured generators
+  --library <name>             Run one configured generator
+  --check, --check-only         Check for documentation drift
+  --changed                    Select generators from changed files
+  --changed-files-file <path>   Print generators selected by a changed-file list
+  --test-routing               Verify generator routing`);
+    return;
+  }
+
+  const checkOnly = Boolean(values.check || values['check-only']);
+  const changedFilesFile = values['changed-files-file'];
+  const specificLibrary = values.library;
 
   // Load config
   if (!fs.existsSync(CONFIG_PATH)) {
@@ -89,12 +106,12 @@ async function main() {
 
   const config: Config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
 
-  if (testRouting) {
+  if (values['test-routing']) {
     testGeneratorRouting(config);
     return;
   }
 
-  if (changedFilesFile) {
+  if (changedFilesFile !== undefined) {
     if (!fs.existsSync(changedFilesFile)) {
       console.error(`Changed-files input not found: ${changedFilesFile}`);
       process.exit(1);
@@ -108,7 +125,7 @@ async function main() {
   console.log('==================================\n');
 
   // List mode
-  if (listOnly) {
+  if (values.list) {
     listGenerators(config);
     return;
   }
@@ -116,14 +133,14 @@ async function main() {
   // Determine which generators to run
   let generatorsToRun: string[] = [];
 
-  if (specificLibrary) {
+  if (specificLibrary !== undefined) {
     if (!config.generators[specificLibrary]) {
       console.error(`❌ Unknown library: ${specificLibrary}`);
       console.log('\nAvailable libraries:', Object.keys(config.generators).join(', '));
       process.exit(1);
     }
     generatorsToRun = [specificLibrary];
-  } else if (changedOnly) {
+  } else if (values.changed) {
     generatorsToRun = getChangedGenerators(config);
     if (generatorsToRun.length === 0) {
       console.log('✅ No documentation-related changes detected.');

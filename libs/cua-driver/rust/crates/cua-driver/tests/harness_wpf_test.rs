@@ -335,7 +335,32 @@ fn harness_wpf_query_projects_structured_elements() {
                 returned < total,
                 "query did not compact {returned}/{total} elements"
             );
+            assert_eq!(
+                response.structured()["elements_complete"].as_bool(),
+                Some(true),
+                "query projection must preserve the complete underlying UIA snapshot"
+            );
             let _ = element_token_by_id(&response, "btn-increment");
+
+            let bounded = driver.call(
+                "get_window_state",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "max_elements": 1,
+                    "include_screenshot": false
+                }),
+            );
+            assert!(
+                !bounded.is_error(),
+                "bounded snapshot failed: {}",
+                bounded.text()
+            );
+            assert_eq!(
+                bounded.structured()["elements_complete"].as_bool(),
+                Some(false),
+                "a bound that skips the WPF root's descendants must report an incomplete snapshot"
+            );
             Observation::delivered(vec![OracleKind::AxState], Evidence::default())
         },
     );

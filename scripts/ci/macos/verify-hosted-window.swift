@@ -2,46 +2,7 @@ import ApplicationServices
 import CoreGraphics
 import Foundation
 import ImageIO
-import ScreenCaptureKit
-import UniformTypeIdentifiers
 import Vision
-
-struct Arguments {
-    let marker: String
-    let output: URL
-    let displayOutput: URL
-
-    init() throws {
-        var marker: String?
-        var output: String?
-        var displayOutput: String?
-        var index = 1
-        while index < CommandLine.arguments.count {
-            switch CommandLine.arguments[index] {
-            case "--marker" where index + 1 < CommandLine.arguments.count:
-                index += 1
-                marker = CommandLine.arguments[index]
-            case "--output" where index + 1 < CommandLine.arguments.count:
-                index += 1
-                output = CommandLine.arguments[index]
-            case "--display-output" where index + 1 < CommandLine.arguments.count:
-                index += 1
-                displayOutput = CommandLine.arguments[index]
-            default:
-                throw ProbeError("unknown or incomplete argument: \(CommandLine.arguments[index])")
-            }
-            index += 1
-        }
-        guard let marker, let output, let displayOutput else {
-            throw ProbeError(
-                "usage: verify-hosted-window.swift --marker TEXT --output PATH --display-output PATH"
-            )
-        }
-        self.marker = marker
-        self.output = URL(fileURLWithPath: output)
-        self.displayOutput = URL(fileURLWithPath: displayOutput)
-    }
-}
 
 struct ProbeError: Error, CustomStringConvertible {
     let description: String
@@ -52,63 +13,48 @@ func normalize(_ value: String) -> String {
     value.uppercased().filter { $0.isLetter || $0.isNumber }
 }
 
-func shareableContent() async throws -> SCShareableContent {
-    try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+func textEditWindow() throws -> [String: Any] {
+    guard let windows = CGWindowListCopyWindowInfo(
+        [.optionOnScreenOnly, .excludeDesktopElements],
+        kCGNullWindowID
+    ) as? [[String: Any]] else {
+        throw ProbeError("CoreGraphics did not return an on-screen window list")
+    }
+    let candidates = windows.filter { window in
+        guard window[kCGWindowOwnerName as String] as? String == "TextEdit",
+              window[kCGWindowName as String] as? String == "probe.txt",
+              window[kCGWindowLayer as String] as? Int == 0,
+              let bounds = window[kCGWindowBounds as String] as? [String: Any],
+              let width = bounds["Width"] as? Double,
+              let height = bounds["Height"] as? Double else {
+            return false
+        }
+        return width >= 400 && height >= 250
+    }
+    guard let window = candidates.first,
+          let windowID = window[kCGWindowNumber as String] as? UInt32,
+          let bounds = window[kCGWindowBounds as String] as? [String: Any] else {
+        throw ProbeError("no deterministic on-screen TextEdit probe.txt window was found")
+    }
+    return [
+        "schema": "cua-driver/macos-hosted-window@v1",
+        "id": windowID,
+        "owner": "TextEdit",
+        "name": "probe.txt",
+        "x": bounds["X"] as? Double ?? 0,
+        "y": bounds["Y"] as? Double ?? 0,
+        "width": bounds["Width"] as? Double ?? 0,
+        "height": bounds["Height"] as? Double ?? 0,
+    ]
 }
 
-func textEditWindow(in content: SCShareableContent) throws -> SCWindow {
-    let candidates = content.windows.filter { window in
-        window.owningApplication?.applicationName == "TextEdit"
-            && window.windowLayer == 0
-            && window.title == "probe.txt"
-            && window.frame.width >= 400
-            && window.frame.height >= 250
+func loadImage(at path: String) throws -> CGImage {
+    let url = URL(fileURLWithPath: path)
+    guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+          let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+        throw ProbeError("could not read captured image: \(path)")
     }
-    guard let window = candidates.max(by: {
-        $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height
-    }) else {
-        throw ProbeError("no large, on-screen TextEdit window was found")
-    }
-    return window
-}
-
-func captureWindow(_ window: SCWindow) async throws -> CGImage {
-    let filter = SCContentFilter(desktopIndependentWindow: window)
-    let configuration = SCStreamConfiguration()
-    configuration.width = max(1, Int(window.frame.width))
-    configuration.height = max(1, Int(window.frame.height))
-    configuration.showsCursor = false
-    return try await SCScreenshotManager.captureImage(
-        contentFilter: filter,
-        configuration: configuration
-    )
-}
-
-func captureDisplay(_ display: SCDisplay) async throws -> CGImage {
-    let filter = SCContentFilter(display: display, excludingWindows: [])
-    let configuration = SCStreamConfiguration()
-    configuration.width = display.width
-    configuration.height = display.height
-    configuration.showsCursor = false
-    return try await SCScreenshotManager.captureImage(
-        contentFilter: filter,
-        configuration: configuration
-    )
-}
-
-func writePNG(_ image: CGImage, to output: URL) throws {
-    guard let destination = CGImageDestinationCreateWithURL(
-        output as CFURL,
-        UTType.png.identifier as CFString,
-        1,
-        nil
-    ) else {
-        throw ProbeError("could not create PNG destination")
-    }
-    CGImageDestinationAddImage(destination, image, nil)
-    guard CGImageDestinationFinalize(destination) else {
-        throw ProbeError("could not write PNG")
-    }
+    return image
 }
 
 func recognizeText(in image: CGImage) throws -> String {
@@ -122,66 +68,88 @@ func recognizeText(in image: CGImage) throws -> String {
     }.joined(separator: "\n")
 }
 
-func runProbe() async throws {
-    let arguments = try Arguments()
+func emit(_ object: [String: Any]) throws {
+    let encoded = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+    FileHandle.standardOutput.write(encoded)
+    FileHandle.standardOutput.write(Data("\n".utf8))
+}
+
+func locate() throws {
+    try emit(textEditWindow())
+}
+
+func verify(arguments: [String]) throws {
+    var values: [String: String] = [:]
+    var index = 0
+    while index < arguments.count {
+        guard index + 1 < arguments.count, arguments[index].hasPrefix("--") else {
+            throw ProbeError("verification arguments must be --name value pairs")
+        }
+        values[arguments[index]] = arguments[index + 1]
+        index += 2
+    }
+    guard let marker = values["--marker"],
+          let windowInput = values["--window-input"],
+          let displayInput = values["--display-input"],
+          let metadataInput = values["--window-metadata"] else {
+        throw ProbeError(
+            "usage: verify-hosted-window.swift --verify --marker TEXT --window-input PATH "
+                + "--display-input PATH --window-metadata PATH"
+        )
+    }
+
+    let metadataData = try Data(contentsOf: URL(fileURLWithPath: metadataInput))
+    guard let window = try JSONSerialization.jsonObject(with: metadataData) as? [String: Any] else {
+        throw ProbeError("window metadata is not a JSON object")
+    }
+    let windowImage = try loadImage(at: windowInput)
+    let displayImage = try loadImage(at: displayInput)
+    let windowText = try recognizeText(in: windowImage)
+    let displayText = try recognizeText(in: displayImage)
+    let windowMarkerRecognized = normalize(windowText).contains(normalize(marker))
+    let displayMarkerRecognized = normalize(displayText).contains(normalize(marker))
     let accessibilityTrusted = AXIsProcessTrusted()
     let screenCapturePreflight = CGPreflightScreenCaptureAccess()
-    let content = try await shareableContent()
-    let window = try textEditWindow(in: content)
-    guard let display = content.displays.first(where: { $0.frame.intersects(window.frame) }) else {
-        throw ProbeError("no display contains the TextEdit probe window")
-    }
-    let image = try await captureWindow(window)
-    try writePNG(image, to: arguments.output)
-    let recognizedText = try recognizeText(in: image)
-    let markerRecognized = normalize(recognizedText).contains(normalize(arguments.marker))
-    let displayImage = try await captureDisplay(display)
-    try writePNG(displayImage, to: arguments.displayOutput)
-    let displayText = try recognizeText(in: displayImage)
-    let displayMarkerRecognized = normalize(displayText).contains(normalize(arguments.marker))
 
     let result: [String: Any] = [
-        "schema": "cua-driver/macos-hosted-window-capture@v1",
+        "schema": "cua-driver/macos-hosted-capture-verification@v1",
         "accessibility_trusted": accessibilityTrusted,
         "screen_capture_preflight": screenCapturePreflight,
-        "marker_recognized": markerRecognized,
-        "recognized_text": recognizedText,
         "permission_attribution_scope": "probe process only; does not establish CuaDriverLocal.app TCC",
         "probe_executable": Bundle.main.executableURL?.path ?? CommandLine.arguments[0],
         "probe_process_id": ProcessInfo.processInfo.processIdentifier,
-        "image": ["width": image.width, "height": image.height],
+        "marker_recognized": windowMarkerRecognized,
+        "recognized_text": windowText,
+        "image": ["width": windowImage.width, "height": windowImage.height],
         "display_capture": [
-            "id": display.displayID,
-            "width": display.width,
-            "height": display.height,
-            "image_width": displayImage.width,
-            "image_height": displayImage.height,
             "marker_recognized": displayMarkerRecognized,
             "recognized_text": displayText,
+            "image_width": displayImage.width,
+            "image_height": displayImage.height,
         ],
-        "window": [
-            "id": window.windowID,
-            "owner": window.owningApplication?.applicationName ?? "",
-            "name": window.title ?? "",
-            "width": window.frame.width,
-            "height": window.frame.height,
-        ],
+        "window": window,
     ]
-    let encoded = try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys])
-    FileHandle.standardOutput.write(encoded)
-    FileHandle.standardOutput.write(Data("\n".utf8))
-    if !accessibilityTrusted || !screenCapturePreflight || !markerRecognized || !displayMarkerRecognized {
+    try emit(result)
+    if !accessibilityTrusted || !screenCapturePreflight
+        || !windowMarkerRecognized || !displayMarkerRecognized {
         throw ProbeError("permission preflight or marker recognition failed")
     }
 }
 
-Task {
-    do {
-        try await runProbe()
-        exit(0)
-    } catch {
-        FileHandle.standardError.write(Data("hosted macOS window verification failed: \(error)\n".utf8))
-        exit(1)
+do {
+    let arguments = Array(CommandLine.arguments.dropFirst())
+    guard let mode = arguments.first else {
+        throw ProbeError("expected --locate or --verify")
     }
+    switch mode {
+    case "--locate":
+        try locate()
+    case "--verify":
+        try verify(arguments: Array(arguments.dropFirst()))
+    default:
+        throw ProbeError("unknown mode: \(mode)")
+    }
+} catch {
+    FileHandle.standardError.write(Data("hosted macOS window verification failed: \(error)\n".utf8))
+    exit(1)
 }
-dispatchMain()

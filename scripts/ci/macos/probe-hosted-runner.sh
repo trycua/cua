@@ -13,6 +13,8 @@ PROBE_STATUS=failed
 PROBE_MESSAGE="probe did not complete"
 SWIFT_RESULT="${ARTIFACT_DIR}/window-capture.json"
 SYSTEM_LOG="${ARTIFACT_DIR}/system.txt"
+WINDOW_METADATA="${ARTIFACT_DIR}/window.json"
+PROBE_BINARY="${ARTIFACT_DIR}/verify-hosted-window"
 
 write_environment() {
   PROBE_STATUS="${PROBE_STATUS}" \
@@ -161,13 +163,42 @@ then
   fail "TextEdit window automation failed or timed out"
 fi
 
-if ! run_with_deadline 180 xcrun swift "${REPO_ROOT}/scripts/ci/macos/verify-hosted-window.swift" \
+if ! run_with_deadline 120 xcrun swiftc \
+  "${REPO_ROOT}/scripts/ci/macos/verify-hosted-window.swift" \
+  -o "${PROBE_BINARY}" \
+  > "${ARTIFACT_DIR}/swift-build.log" 2>&1
+then
+  fail "hosted capture verifier compilation failed or timed out"
+fi
+
+if ! run_with_deadline 30 "${PROBE_BINARY}" --locate \
+  > "${WINDOW_METADATA}" 2> "${ARTIFACT_DIR}/window-locate.stderr.log"
+then
+  fail "TextEdit window discovery failed or timed out"
+fi
+WINDOW_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["id"])' "${WINDOW_METADATA}")"
+
+if ! run_with_deadline 30 /usr/sbin/screencapture -x -l "${WINDOW_ID}" \
+  "${ARTIFACT_DIR}/textedit-window.png" \
+  > "${ARTIFACT_DIR}/window-screencapture.log" 2>&1
+then
+  fail "window-scoped screencapture failed or timed out"
+fi
+if ! run_with_deadline 30 /usr/sbin/screencapture -x \
+  "${ARTIFACT_DIR}/display.png" \
+  > "${ARTIFACT_DIR}/display-screencapture.log" 2>&1
+then
+  fail "display screencapture failed or timed out"
+fi
+
+if ! run_with_deadline 120 "${PROBE_BINARY}" --verify \
   --marker "${MARKER}" \
-  --output "${ARTIFACT_DIR}/textedit-window.png" \
-  --display-output "${ARTIFACT_DIR}/display.png" \
+  --window-input "${ARTIFACT_DIR}/textedit-window.png" \
+  --display-input "${ARTIFACT_DIR}/display.png" \
+  --window-metadata "${WINDOW_METADATA}" \
   > "${SWIFT_RESULT}" 2> "${ARTIFACT_DIR}/window-capture.stderr.log"
 then
-  fail "ScreenCaptureKit window/display verification failed or timed out"
+  fail "window/display OCR verification failed or timed out"
 fi
 
 python3 - "${SWIFT_RESULT}" <<'PY'

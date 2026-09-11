@@ -68,9 +68,12 @@ def test_hosted_macos_probe_proves_textedit_window_content() -> None:
     assert "open -a TextEdit" in probe
     assert '"marker_recognized"' in verifier
     assert "VNRecognizeTextRequest" in verifier
-    assert "SCContentFilter(display:" in verifier
+    assert "CGWindowListCopyWindowInfo" in verifier
+    assert "/usr/sbin/screencapture -x -l" in probe
+    assert "/usr/sbin/screencapture -x" in probe
+    assert "ScreenCaptureKit" not in verifier
     assert '"permission_attribution_scope"' in verifier
-    assert '"owner": window.owningApplication?.applicationName' in verifier
+    assert '"owner": "TextEdit"' in verifier
     assert 'result.get("window", {}).get("owner") == "TextEdit"' in probe
     assert 'result.get("window", {}).get("name") == "probe.txt"' in probe
     assert "textedit-window.png" in probe

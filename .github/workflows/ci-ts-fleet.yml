@@ -9,6 +9,9 @@ on:
       - ".github/workflows/ci-ts-fleet.yml"
       - ".github/workflows/ts-reusable-build.yml"
 
+permissions:
+  contents: read
+
 jobs:
   build:
     uses: ./.github/workflows/ts-reusable-build.yml

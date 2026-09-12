@@ -5,7 +5,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
 	"cyclops-cs-backend/signedurls"
@@ -51,12 +50,7 @@ func (h Handlers) HandleSignedSvc(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("signed service capability resolved", "url_id", record.ID)
 
-	upstreamPath := r.PathValue("path")
-	if upstreamPath == "" {
-		upstreamPath = "/"
-	} else if !strings.HasPrefix(upstreamPath, "/") {
-		upstreamPath = "/" + upstreamPath
-	}
+	upstreamPath := normalizeProxyUpstreamPath(r.PathValue("path"))
 
 	h.proxyService(
 		w,

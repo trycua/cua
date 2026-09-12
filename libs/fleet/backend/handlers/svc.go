@@ -50,6 +50,14 @@ func stripOAuth2ProxySvcCookie(header http.Header) {
 	header.Set("Cookie", strings.Join(cookies, "; "))
 }
 
+func normalizeProxyUpstreamPath(pathValue string) string {
+	trimmed := strings.TrimLeft(pathValue, "/\\")
+	if trimmed == "" {
+		return "/"
+	}
+	return "/" + trimmed
+}
+
 func svcProxyErrorStatus(err error) int {
 	if errors.Is(err, context.Canceled) {
 		return statusClientClosedRequest
@@ -256,12 +264,7 @@ func (h Handlers) Svc(w http.ResponseWriter, r *http.Request) {
 	// of SvcRoutePolicy, which has already run by the time this handler is
 	// reached — see auth/authz_ownership.rego.
 
-	upstreamPath := r.PathValue("path")
-	if upstreamPath == "" {
-		upstreamPath = "/"
-	} else if !strings.HasPrefix(upstreamPath, "/") {
-		upstreamPath = "/" + upstreamPath
-	}
+	upstreamPath := normalizeProxyUpstreamPath(r.PathValue("path"))
 
 	h.proxyService(
 		w,

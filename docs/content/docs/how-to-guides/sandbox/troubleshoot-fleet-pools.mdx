@@ -5,8 +5,8 @@ description: Diagnose Fleet pool errors and recover interrupted claim or pool cl
 
 Use this guide when a Fleet pool or claim fails to start, an existing pool
 cannot be reused, or a process exits before releasing its resources. It applies
-to the [Python pool guide](/how-to-guides/sandbox/create-pool-with-python) and
-[TypeScript pool guide](/how-to-guides/sandbox/create-pool-with-typescript).
+to [Create Fleet capacity](/how-to-guides/sandbox/create-fleet-capacity) and
+[Claim a Sandbox](/how-to-guides/sandbox/claim-a-sandbox).
 
 ## Identify the failing operation
 
@@ -85,7 +85,7 @@ anything. A timestamp or similar-looking name alone is not proof of ownership.
 
 For scripted recovery, initialize the TypeScript client using only the imports,
 configuration, and `CyclopsClient.connect(...)` setup from the
-[Node.js example](/how-to-guides/sandbox/create-pool-with-typescript). Do not run
+[Node.js example](/how-to-guides/sandbox/create-fleet-capacity). Do not run
 its reconciliation or claim-creation block. The following snippets use that
 open `client` and the exact `POOL_NAME` you recorded.
 

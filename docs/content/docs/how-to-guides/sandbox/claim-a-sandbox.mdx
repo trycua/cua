@@ -1,0 +1,238 @@
+---
+title: Claim a Sandbox
+description: Reserve one computer from existing Cloud Fleet capacity with Python or TypeScript.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+A claim reserves one computer from an existing Fleet pool. Python uses the
+**Cua Sandbox SDK** to expose that computer through the Sandbox APIs.
+TypeScript uses the **Fleet SDK** for hosted claim lifecycle and service
+routing; it is not a TypeScript Sandbox SDK.
+
+The examples use the pool's `server` service to prove the claimed computer is
+usable. Create a pool first with [Create Fleet capacity](/how-to-guides/sandbox/create-fleet-capacity),
+or use a pool managed by your team.
+
+## Prerequisites
+
+- Permission to claim from the pool.
+- The pool name and a distinct claim name for this task.
+- A declared `server` service on port `8000`.
+
+```bash
+export CUA_POOL_NAME="my-team-sandbox-pool"
+export CUA_CLAIM_NAME="my-task"
+export CUA_CLIENT_ID="<your-client-id>"
+export CUA_CLIENT_SECRET="<your-client-secret>"
+```
+
+## Claim and use a computer
+
+<Tabs groupId="language" persist items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+
+Save this as `claim_sandbox.py`. The Python Sandbox SDK connects the claim to
+the familiar shell and screenshot APIs exposed by `computer-server`.
+
+```python title="claim_sandbox.py"
+# /// script
+# requires-python = ">=3.11,<3.14"
+# dependencies = [
+#   "cua-sandbox==0.4.3",
+# ]
+# ///
+
+import asyncio
+import os
+from pathlib import Path
+
+from cua_sandbox import Pool
+
+
+async def main() -> None:
+    pool = await Pool.get(os.environ["CUA_POOL_NAME"])
+    async with pool.claim(
+        name=os.environ["CUA_CLAIM_NAME"],
+        service="server",
+        time_to_start=900,
+    ) as sandbox:
+        print(f"Pool: {sandbox.pool_name}")
+        print(f"Claim: {sandbox.claim_name}")
+
+        result = await sandbox.shell.run("uname -a")
+        if not result.success:
+            raise RuntimeError(result.stderr)
+        print(result.stdout.strip())
+
+        Path("sandbox.png").write_bytes(await sandbox.screenshot())
+
+
+asyncio.run(main())
+```
+
+Run it:
+
+```bash
+uv run claim_sandbox.py
+```
+
+The claim context reconnects to an existing named claim when one is present,
+waits up to 900 seconds for `server`, and releases the claim on exit.
+
+  </Tab>
+  <Tab value="TypeScript">
+
+The TypeScript Fleet SDK claims and waits for capacity, then routes an HTTP
+request to the declared guest service. It does not expose the Python Sandbox
+object or its shell convenience API.
+
+<Tabs groupId="fleet-typescript-runtime" persist items={['Node.js', 'Browser']}>
+  <Tab value="Node.js">
+
+Install `@trycua/fleet@0.1.1`, `tsx`, and `typescript` as shown in the capacity
+guide. Save this as `claim-sandbox.ts`:
+
+```ts title="claim-sandbox.ts"
+import { writeFile } from 'node:fs/promises';
+import {
+  CreateClaimRequestBuilder,
+  CyclopsClient,
+  CyclopsCredentials,
+  FetchHttpClient,
+  type Claim,
+  type CyclopsConfiguration,
+  uniffiInitAsync,
+} from '@trycua/fleet/node';
+
+function requiredEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`Missing environment variable: ${name}`);
+  return value;
+}
+
+function screenshotBase64(responseBody: ArrayBuffer): string {
+  const text = new TextDecoder().decode(responseBody);
+  const dataLine = text.split('\n').find((line) => line.startsWith('data: '));
+  if (!dataLine) throw new Error(`No screenshot data frame: ${text.slice(0, 200)}`);
+  const payload = JSON.parse(dataLine.slice(6));
+  if (!payload.success) throw new Error(payload.error ?? 'Screenshot failed');
+  const encoded = payload.image_data ?? payload.result?.image_data;
+  if (typeof encoded !== 'string') throw new Error('Screenshot response has no image data');
+  return encoded;
+}
+
+await uniffiInitAsync();
+const configuration: CyclopsConfiguration = {
+  baseUrl: process.env.CUA_FLEET_BASE_URL ?? 'https://run.cua.ai',
+  tokenUrl:
+    process.env.CUA_TOKEN_URL ??
+    'https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token',
+  credentials: new CyclopsCredentials(
+    requiredEnv('CUA_CLIENT_ID'),
+    requiredEnv('CUA_CLIENT_SECRET')
+  ),
+  poolPollIntervalMs: 5_000n,
+  poolPollLimit: 120,
+  claimPollIntervalMs: 5_000n,
+  claimPollLimit: 120,
+};
+const client = CyclopsClient.connect(configuration, new FetchHttpClient()) as CyclopsClient;
+
+let claim: Claim | undefined;
+try {
+  const pool = await client.getPool(requiredEnv('CUA_POOL_NAME'));
+  claim = await client.createClaim(
+    new CreateClaimRequestBuilder()
+      .pool(pool)
+      .name(requiredEnv('CUA_CLAIM_NAME'))
+      .build()
+  );
+  console.log(`Claim: ${claim.metadata.namespace}/${claim.metadata.name}`);
+  const sandbox = await client.waitClaim(claim);
+
+  const body = await new Blob([JSON.stringify({ command: 'screenshot' })]).arrayBuffer();
+  const response = await client.serviceRequest(sandbox, 'server', '/cmd', {
+    method: 'POST',
+    url: 'https://service.invalid/cmd',
+    headers: [{ name: 'content-type', value: 'application/json' }],
+    body,
+    timeoutSecs: 60n,
+  });
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`Screenshot request failed with HTTP ${response.status}`);
+  }
+  await writeFile('sandbox.png', Buffer.from(screenshotBase64(response.body), 'base64'));
+} finally {
+  try {
+    if (claim) await client.deleteClaim(claim);
+  } finally {
+    client.uniffiDestroy();
+  }
+}
+```
+
+Run it:
+
+```bash
+npx tsx claim-sandbox.ts
+```
+
+  </Tab>
+  <Tab value="Browser">
+
+<Callout type="warn">
+  Browser code can read bundled credentials. Use temporary, narrowly scoped credentials only in a
+  trusted application. Keep long-lived credentials on a backend.
+</Callout>
+
+Use the same `getPool()`, `createClaim()`, `waitClaim()`, `serviceRequest()`, and
+`deleteClaim()` sequence as the Node.js example. Import the types and builders
+from `@trycua/fleet/browser`, read configuration from `import.meta.env`, provide
+a browser `fetch` implementation of `HttpClient`, and display the decoded PNG
+with `URL.createObjectURL()` instead of writing it with Node.js `fs`.
+
+  </Tab>
+</Tabs>
+
+`client.uniffiDestroy()` disposes only the local client. The remote claim is
+released by `deleteClaim()`, so keep that call in a `finally` block.
+
+  </Tab>
+</Tabs>
+
+## Result and lifecycle
+
+Both paths reserve one computer, wait for the `server` service, capture a
+screenshot through `computer-server`, and release only the claim. The pool and
+its warm capacity remain available and can continue consuming capacity. Copy
+results out before release; a later claim is not guaranteed to receive the same
+VM or files.
+
+Claim names are scoped to the pool. Give concurrent tasks different names. A
+Python named claim that still exists is reconnected; the TypeScript example
+creates a claim and should use a fresh name after release.
+
+## Keep a Python claim between processes
+
+The Python Sandbox SDK can disconnect while leaving its claim held. Save the
+Sandbox reference before disconnecting:
+
+```python
+import json
+from pathlib import Path
+
+sandbox = await pool.claim(name=CLAIM_NAME, service="server", time_to_start=900)
+try:
+    Path("claim.json").write_text(json.dumps(sandbox.to_dict()))
+finally:
+    await sandbox.disconnect()
+```
+
+Reconnect with `Sandbox.from_dict(reference)`. That context disconnects on
+exit; call `await sandbox.close()` when the task is finished to release the
+claim. A saved reference does not extend its expiry deadline.
+
+If acquisition or cleanup is interrupted, retain the pool and claim names and
+follow [Recover interrupted cleanup](/how-to-guides/sandbox/troubleshoot-fleet-pools#recover-interrupted-cleanup).

@@ -7,10 +7,12 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 This guide runs local sandboxes with `local=True`. Because `Sandbox.ephemeral` and `Sandbox.create` are async, you can **run many local sandboxes at the same time** using `asyncio`.
 
-For hosted Fleet capacity, follow [Create a sandbox pool with Python](/how-to-guides/sandbox/create-pool-with-python) to create a pool and claim sandboxes for your tasks.
+For hosted Fleet capacity, follow [Create Fleet capacity](/how-to-guides/sandbox/create-fleet-capacity)
+to create a pool, then [claim Sandboxes](/how-to-guides/sandbox/claim-a-sandbox) for your tasks.
 
 <Callout type="info">
-  Every local sandbox consumes host CPU, memory, and disk. Start with low concurrency and increase it only after observing host resource use.
+  Every local sandbox consumes host CPU, memory, and disk. Start with low concurrency and increase
+  it only after observing host resource use.
 </Callout>
 
 ## Run a fixed set concurrently
@@ -36,7 +38,7 @@ asyncio.run(main())
 
 ## Cap the number of concurrent sandboxes
 
-Use an `asyncio.Semaphore` when you need *rate limiting*.
+Use an `asyncio.Semaphore` when you need _rate limiting_.
 
 ```python
 import asyncio

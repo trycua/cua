@@ -1,0 +1,279 @@
+---
+title: Create Fleet capacity
+description: Create reusable Cloud Fleet capacity with Python or TypeScript.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+Create a reusable pool before tasks claim computers from it. Python uses the
+**Cua Sandbox SDK**, the programming model for one isolated computer that can
+run locally or on Cloud Fleet capacity. TypeScript uses the **Fleet SDK**, which
+manages hosted Fleet lifecycle and routing; it is not a TypeScript Sandbox SDK.
+
+Both paths below create the same Fleet resources: a one-replica pool, a VM
+template, and a `server` service for `computer-server` on port `8000`. They do
+not claim a Sandbox.
+
+## Prerequisites
+
+- Permission to manage pools at `run.cua.ai`.
+- OAuth client credentials.
+- A globally unique pool name written as a lowercase DNS label.
+
+Set the shared values before continuing:
+
+```bash
+export CUA_CLIENT_ID="<your-client-id>"
+export CUA_CLIENT_SECRET="<your-client-secret>"
+export CUA_POOL_NAME="my-team-sandbox-pool"
+```
+
+Set `CUA_FLEET_BASE_URL` or `CUA_TOKEN_URL` only when you need different Fleet
+or OAuth endpoints.
+
+## Create the pool
+
+<Tabs groupId="language" persist items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+
+Install the Python Sandbox SDK in an isolated environment by saving this as
+`create_fleet_capacity.py`:
+
+```python title="create_fleet_capacity.py"
+# /// script
+# requires-python = ">=3.11,<3.14"
+# dependencies = [
+#   "cua-sandbox==0.4.3",
+# ]
+# ///
+
+import asyncio
+import os
+
+from cua_sandbox import Image, Pool
+
+
+IMAGE = (
+    "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04"
+    "@sha256:c1e601dbb748fdc467c663136f7592e308a91a3c19c309b75261544432826a57"
+)
+
+
+async def main() -> None:
+    pool = await Pool.apply(
+        Image.from_registry(IMAGE),
+        name=os.environ["CUA_POOL_NAME"],
+        replicas=1,
+        cpu=4,
+        memory_mb=4096,
+        services={"server": 8000},
+    )
+    print(f"Fleet capacity is ready: {pool.name}")
+
+
+asyncio.run(main())
+```
+
+Run it with Python 3.11–3.13 and [`uv`](https://docs.astral.sh/uv/):
+
+```bash
+uv run create_fleet_capacity.py
+```
+
+`Pool.apply()` derives and reconciles both the pool and its template. Use it
+only when this script owns their configuration.
+
+  </Tab>
+  <Tab value="TypeScript">
+
+The TypeScript Fleet SDK provides separate Node.js and browser entry points.
+Choose the runtime that owns your Fleet client.
+
+<Tabs groupId="fleet-typescript-runtime" persist items={['Node.js', 'Browser']}>
+  <Tab value="Node.js">
+
+Install the Fleet lifecycle SDK and a TypeScript runner:
+
+```bash
+npm install @trycua/fleet@0.1.1
+npm install --save-dev tsx typescript
+npm pkg set type=module
+```
+
+Save this as `create-fleet-capacity.ts`:
+
+```ts title="create-fleet-capacity.ts"
+import {
+  CreatePoolRequestBuilder,
+  CreateTemplateRequestBuilder,
+  CyclopsClient,
+  CyclopsCredentials,
+  FetchHttpClient,
+  OsGymSandboxTemplateSpecBuilder,
+  OsGymSandboxWarmPoolSpecBuilder,
+  SandboxServiceBuilder,
+  SandboxTemplateRefBuilder,
+  VmTemplateBuilder,
+  type CyclopsConfiguration,
+  uniffiInitAsync,
+} from '@trycua/fleet/node';
+
+const IMAGE =
+  'public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04' +
+  '@sha256:c1e601dbb748fdc467c663136f7592e308a91a3c19c309b75261544432826a57';
+const POOL_NAME = requiredEnv('CUA_POOL_NAME');
+const TEMPLATE_NAME = `${POOL_NAME}-template`;
+
+function requiredEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`Missing environment variable: ${name}`);
+  return value;
+}
+
+await uniffiInitAsync();
+const configuration: CyclopsConfiguration = {
+  baseUrl: process.env.CUA_FLEET_BASE_URL ?? 'https://run.cua.ai',
+  tokenUrl:
+    process.env.CUA_TOKEN_URL ??
+    'https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token',
+  credentials: new CyclopsCredentials(
+    requiredEnv('CUA_CLIENT_ID'),
+    requiredEnv('CUA_CLIENT_SECRET')
+  ),
+  poolPollIntervalMs: 5_000n,
+  poolPollLimit: 120,
+  claimPollIntervalMs: 5_000n,
+  claimPollLimit: 120,
+};
+const client = CyclopsClient.connect(configuration, new FetchHttpClient()) as CyclopsClient;
+
+try {
+  const server = new SandboxServiceBuilder().name('server').targetPort(8000).build();
+  const vm = new VmTemplateBuilder()
+    .containerDiskImage(IMAGE)
+    .cpuCores(4)
+    .memory('4Gi')
+    .services([server])
+    .build();
+  const templateSpec = new OsGymSandboxTemplateSpecBuilder().vmTemplate(vm).build();
+  const templateRef = new SandboxTemplateRefBuilder().name(TEMPLATE_NAME).build();
+  const poolSpec = new OsGymSandboxWarmPoolSpecBuilder()
+    .replicas(1)
+    .sandboxTemplateRef(templateRef)
+    .build();
+
+  const pool = await client.reconcilePool(
+    new CreatePoolRequestBuilder().namespace(POOL_NAME).spec(poolSpec).build()
+  );
+  const template = await client.reconcileTemplate(
+    new CreateTemplateRequestBuilder()
+      .namespace(POOL_NAME)
+      .name(TEMPLATE_NAME)
+      .spec(templateSpec)
+      .build()
+  );
+  console.log(`Fleet capacity is ready: ${pool.metadata.name}/${template.metadata.name}`);
+} finally {
+  client.uniffiDestroy();
+}
+```
+
+Run it:
+
+```bash
+npx tsx create-fleet-capacity.ts
+```
+
+  </Tab>
+  <Tab value="Browser">
+
+<Callout type="warn">
+  Browser code can read every `VITE_*` value bundled into the application. Use this path only in a
+  trusted local or internal application with temporary, narrowly scoped credentials. Keep long-lived
+  credentials in Node.js or on your backend.
+</Callout>
+
+Create a Vite TypeScript project and install the browser SDK:
+
+```bash
+npm create vite@latest fleet-browser -- --template vanilla-ts
+cd fleet-browser
+npm install
+npm install @trycua/fleet@0.1.1
+```
+
+Use the same builders and reconciliation sequence as the Node.js example, but
+import them from `@trycua/fleet/browser`, read credentials from
+`import.meta.env`, and supply an `HttpClient` implementation backed by browser
+`fetch`. The browser and Node.js entry points expose the same Fleet pool,
+template, claim, and service-routing types.
+
+  </Tab>
+</Tabs>
+
+Unlike Python `Pool.apply()`, the TypeScript `reconcilePool()` and
+`reconcileTemplate()` methods are lower-level Fleet primitives. The application
+must build both requests and owns the resulting configuration and cleanup.
+
+  </Tab>
+</Tabs>
+
+## What the operation changes
+
+Reconciliation creates the resources when they do not exist and updates their
+specifications when they do. The pool keeps one computer warm and continues to
+consume capacity until it is scaled down or deleted. It does not reserve that
+computer for a task; continue with [Claim a Sandbox](/how-to-guides/sandbox/claim-a-sandbox).
+
+To consume capacity managed by another process or Terraform, do not reconcile
+it. Look up the existing pool instead:
+
+<Tabs groupId="language" persist items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+
+```python
+pool = await Pool.get(POOL_NAME)
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```ts
+const pool = await client.getPool(POOL_NAME);
+```
+
+  </Tab>
+</Tabs>
+
+Pool names are globally unique across Cua accounts. A changed claim name does
+not resolve a pool namespace collision. HTTP 403 can also indicate payment,
+authorization, or template-policy failures, so inspect the operation and
+response before choosing a different name.
+
+## Delete capacity you own
+
+Delete a pool only after all users have released their claims. Pool deletion
+removes the namespace and its remaining resources; it is not per-task cleanup
+for a shared pool.
+
+<Tabs groupId="language" persist items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+
+```python
+await pool.delete()
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```ts
+await client.deletePool(pool)
+```
+
+  </Tab>
+</Tabs>
+
+If a process stops before cleanup completes, follow
+[Recover interrupted cleanup](/how-to-guides/sandbox/troubleshoot-fleet-pools#recover-interrupted-cleanup)
+instead of provisioning again just to obtain a deletion handle.

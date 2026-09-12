@@ -1139,9 +1139,15 @@ fn render_outline(nodes: &[SemanticNode], selected: &HashSet<usize>) -> String {
                 line.push_str(value);
             }
         }
-        if !node.states.is_empty() {
-            let states = node
-                .states
+        let mut outline_states = node.states.clone();
+        if !node.actions.is_empty() && node.backend_node_id.is_none() {
+            outline_states.insert(
+                "ref_excluded".to_owned(),
+                Value::String("backend_node_unavailable".to_owned()),
+            );
+        }
+        if !outline_states.is_empty() {
+            let states = outline_states
                 .iter()
                 .map(|(name, value)| format!("{name}={value}"))
                 .collect::<Vec<_>>()

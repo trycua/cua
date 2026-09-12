@@ -1734,6 +1734,34 @@ mod tests {
     }
 
     #[test]
+    fn foreground_cgevent_path_is_preserved_when_effect_is_unverifiable() {
+        let record = ActionExecutionRecord::from_legacy(
+            "click",
+            &serde_json::json!({"delivery_mode": "foreground"}),
+            &serde_json::json!({
+                "path": "cgevent_fg",
+                "verified": false,
+                "effect": "unverifiable",
+            }),
+        )
+        .expect("foreground CGEvent result should normalize");
+
+        assert_eq!(record.transport, ActionTransport::MacosCgEventHid);
+        assert_eq!(record.actual_delivery, Some(ActualDelivery::Foreground));
+
+        let public = record.public_result().expect("public ActionResult");
+        assert_eq!(
+            public.effect,
+            cua_driver_contract::ActionEffect::Unverifiable
+        );
+        assert_eq!(public.route, cua_driver_contract::ActionRoute::GlobalInput);
+        assert_eq!(
+            public.delivery.map(|delivery| delivery.mode),
+            Some(cua_driver_contract::ActionDeliveryMode::Foreground)
+        );
+    }
+
+    #[test]
     fn producer_emitted_delivery_wins_over_requested_delivery() {
         let record = ActionExecutionRecord::from_legacy(
             "scroll",

@@ -498,7 +498,7 @@ func run() error {
 	}
 	h.ImageObjects, err = newImageObjectStore(ctx, cfg.ImageUploads)
 	if err != nil {
-		return err
+		return errors.Join(err, startupErrors, telemetryErr, lookupErr)
 	}
 	if h.ImageObjects != nil {
 		slog.Info("image uploads: presigning enabled", "region", cfg.ImageUploads.Region)

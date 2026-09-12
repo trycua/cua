@@ -483,13 +483,13 @@ impl Transport {
     }
 
     pub(crate) async fn execute_upload(&self, request: HttpRequest) -> Result<(), SdkError> {
-        let response = self
-            .http_client
-            .execute(request)
-            .await
-            .map_err(|_| SdkError::Transport {
-                reason: "image upload request failed".into(),
-            })?;
+        let response =
+            self.http_client
+                .execute(request)
+                .await
+                .map_err(|_| SdkError::Transport {
+                    reason: "image upload request failed".into(),
+                })?;
         if !matches!(response.status, 200 | 201 | 204) {
             return Err(SdkError::Status {
                 operation: "upload image file".into(),

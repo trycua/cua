@@ -8,16 +8,89 @@ covering your intended use, including the applicable hosting and virtualization
 rights. An image being available or booting successfully does not establish
 licensing eligibility. Bundled applications have their own license terms.
 
+## VM images
+
+VM images boot a guest operating system. A containerDisk is an OCI image that
+packages a VM disk; it is not a desktop container that can be started with
+`docker run`.
+
 <span id="hosted-fleet-images" />
 <span id="ubuntu-2404" />
 
-| OS      | Distribution / version / architecture                                   | Desktop / window manager                         | Image kind / runtime                       | Registry image or source                                                                                                | Evidence / limits                                                                                                                                                                                                                                                                                                                     |
-| ------- | ----------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Linux   | Ubuntu 24.04; artifact architecture not established by SDK mapping      | Artifact-dependent; not specified by SDK mapping | Fleet containerDisk; local bare-metal QEMU | `public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-38352d34`                                                                | `Image.linux()` mapping in `cua-sandbox` 0.4.3; versioned tag, not a digest pin. [SDK checks](/reference/sandbox-sdk/runtime-support#evidence-and-limits) establish selection, not a live pull, boot, or guest-service check.                                                                                                         |
-| Linux   | Ubuntu 24.04                                                            | XFCE runtime mapping                             | Local Docker container                     | `public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:docker-latest`                                                                | Local container selector; mutable tag, not the Fleet VM disk                                                                                                                                                                                                                                                                          |
-| Linux   | Omarchy (Arch Linux-based), amd64                                       | Hyprland / Wayland                               | Fleet containerDisk                        | `public.ecr.aws/k5j5w0x5/cua-omarchy-workspace@sha256:dc448dcc986f443980dfb3586f1b91d8699091ad96a74b369016535f0dbb0342` | Digest-pinned explicit registry image. The [Fleet recipe](/how-to-guides/sandbox/run-omarchy-on-cloud-fleet) reports boot verification and defines `server: 8000` (computer-server) and `mcp: 3000` (Cua Driver); it does not certify every operation or Hyprland configuration.                                                      |
-| Linux   | NixOS; release and architecture not recorded in the publication summary | StumpWM                                          | Published candidate image                  | `public.ecr.aws/k5j5w0x5/cua-nixos-stumpwm:git-ee87f38043c043831a8761016015d6ef5ae783d9`                                | [Publication summary](https://github.com/trycua/cua/pull/3585) reports computer-server and Cua Driver included, guest tests and CI anonymous-pull checks passed. Component versions, service ports, and Fleet claim checks are not recorded there. Commit-named candidate tag, not a digest pin or `latest`; no built-in SDK mapping. |
-| Linux   | NixOS; release and architecture not recorded in the publication summary | Xfce / Xfwm4                                     | Published candidate image                  | `public.ecr.aws/k5j5w0x5/cua-nixos-xfce:git-ee87f38043c043831a8761016015d6ef5ae783d9`                                   | [Publication summary](https://github.com/trycua/cua/pull/3585) reports computer-server and Cua Driver included, guest tests and CI anonymous-pull checks passed. Component versions, service ports, and Fleet claim checks are not recorded there. Commit-named candidate tag, not a digest pin or `latest`; no built-in SDK mapping. |
-| Windows | Server 2022; artifact architecture not established by SDK mapping       | Native Windows desktop                           | Fleet containerDisk; local Hyper-V or QEMU | `public.ecr.aws/k5j5w0x5/cua-windows-2022:main-bac7daa3`                                                                | `Image.windows()` mapping in `cua-sandbox` 0.4.3; Fleet selects EFI. Versioned tag, not a digest pin. [SDK checks](/reference/sandbox-sdk/runtime-support#evidence-and-limits) establish selection and firmware, not a live pull, boot, or guest-service check.                                                                       |
-| macOS   | Sequoia 15                                                              | Native macOS desktop                             | Local Lume VM                              | `ghcr.io/trycua/macos-sequoia-cua:latest`                                                                               | Compatible Apple silicon host required; mutable tag; no built-in Fleet mapping                                                                                                                                                                                                                                                        |
-| macOS   | Tahoe 26                                                                | Native macOS desktop                             | Local Lume VM                              | `ghcr.io/trycua/macos-tahoe-cua:latest`                                                                                 | Default `Image.macos()` version; compatible Apple silicon host required; mutable tag; no built-in Fleet mapping                                                                                                                                                                                                                       |
+| OS      | Distribution / version / architecture                              | Desktop / window manager                         | Image kind / runtime                       | Registry image or source                                                                                                |
+| ------- | ------------------------------------------------------------------ | ------------------------------------------------ | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| Linux   | Ubuntu 24.04; artifact architecture not established by SDK mapping | Artifact-dependent; not specified by SDK mapping | Fleet containerDisk; local bare-metal QEMU | `public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-38352d34`                                                                |
+| Linux   | Omarchy (Arch Linux-based), amd64                                  | Hyprland / Wayland                               | Fleet containerDisk                        | `public.ecr.aws/k5j5w0x5/cua-omarchy-workspace@sha256:dc448dcc986f443980dfb3586f1b91d8699091ad96a74b369016535f0dbb0342` |
+| Windows | Server 2022; artifact architecture not established by SDK mapping  | Native Windows desktop                           | Fleet containerDisk; local Hyper-V or QEMU | `public.ecr.aws/k5j5w0x5/cua-windows-2022:main-bac7daa3`                                                                |
+| macOS   | Sequoia 15                                                         | Native macOS desktop                             | Local Lume VM                              | `ghcr.io/trycua/macos-sequoia-cua:latest`                                                                               |
+| macOS   | Tahoe 26                                                           | Native macOS desktop                             | Local Lume VM                              | `ghcr.io/trycua/macos-tahoe-cua:latest`                                                                                 |
+
+### NixOS desktop VM images
+
+These 41 NixOS 26.05 VM images are Linux/amd64 containerDisk candidates, one per
+desktop environment or window manager. They include computer-server on port
+8000 and Cua Driver MCP on port 3000; StumpWM also includes its Lisp MCP on port 3001. Use an explicit registry image rather than a built-in SDK image selector.
+
+The references below are pinned to public image digests from source revision
+`07ff3cc44e03c169ce74ef1bd6ec2987928a0031`, verified on September 11, 2026.
+They are published candidates, not `latest` images or a guarantee of Fleet
+compatibility. Profiles without a successful publication are not listed.
+Expose guest services only through authenticated access, not direct public ingress.
+
+| Desktop / window manager | Display server | VM registry image                                                                                                       |
+| ------------------------ | -------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Awesome                  | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-awesome@sha256:587d1bc27a51528319c2d6fcd87dcfff2369f4754db6a9e57265e76696fc7a0e`     |
+| berry                    | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-berry@sha256:de4f1fec837794ab2995e53446ad2c6b30df9d3b26b78bc3e2682745831d6380`       |
+| Budgie                   | Wayland        | `public.ecr.aws/k5j5w0x5/cua-nixos-budgie@sha256:a44723906499dfcef9cdecf3af98a9454ba7611042240a2d96ce109d5a9eca57`      |
+| CDE                      | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-cde@sha256:2815f5047e72a1496c40db04219c4ce08c17e4902b1e5207d53a77b08071f035`         |
+| CLFSWM                   | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-clfswm@sha256:16e574f93a54ab9672fbc6e7ce9790eaba6439c86249ec578e4e8f9e441213c8`      |
+| cwm                      | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-cwm@sha256:94a470329849291e6984cc56d5194d16207a14008933e943c16f073127dac12d`         |
+| dk                       | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-dk@sha256:1d04242cfad6a28cec705f0eb710f2d55ab7beceae50654d16a6a5878d34985c`          |
+| dwl                      | Wayland        | `public.ecr.aws/k5j5w0x5/cua-nixos-dwl@sha256:69c3e802a9d7754f03e0d590f292cbfe8c9643c7be04fdb9474a75d7a9557032`         |
+| dwm                      | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-dwm@sha256:373c1804ea58aae50324b162b9b97feccf1fbc178e9caf4b0f75c93c3b769351`         |
+| Fluxbox                  | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-fluxbox@sha256:1cbc36547ae5b38168449efcad1a025e1300db7b0fe3208dc8cf4c53ad74450b`     |
+| FVWM 2                   | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-fvwm2@sha256:ad8eec9c1399744100d9cd3bfc63338b7a44c8980f7aaa0eec0c9d2166a47530`       |
+| FVWM 3                   | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-fvwm3@sha256:430b768c9171e973edf7114b1478ac35e1eac298647a98ab7da1bcd21a1170a8`       |
+| Hackedbox                | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-hackedbox@sha256:aa7141e423512369cd7c2233d4abc327fdc33bb4fbce870cfe6807cc47cccae6`   |
+| Hyprland                 | Wayland        | `public.ecr.aws/k5j5w0x5/cua-nixos-hyprland@sha256:b7796a857d53dc1c6dd964a43c1bb16768b601dafabf982538c7b6a0ab8bbc74`    |
+| i3                       | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-i3@sha256:6713982b9c13b81e137feb62364ce86c7570813554870191cfff950e92078ec3`          |
+| IceWM                    | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-icewm@sha256:7d5b3c41f685ff52dd38b0e982a2b476026b4819b4f38f96cb133b3ea2be9a1d`       |
+| JWM                      | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-jwm@sha256:528d3a0135e156d5b5d5f945ffb72a659a50fbf3927bfeee6940b3c3ff51b4a0`         |
+| katriawm                 | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-katriawm@sha256:c10cad16dd7a20933b10e75b0b3b43f8114c51f304382aeb5d407c4c2aa74ad5`    |
+| lwm                      | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-lwm@sha256:f5051b2796937c7cffae723c857a5162b8b339be7c159c8dc715c46556261a17`         |
+| LXQt                     | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-lxqt@sha256:cf8333db2a7e1badf09c75dd9319994e3df857806f92d222bead9a0b049e4445`        |
+| MATE                     | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-mate@sha256:061bd4f253017fceffc7b4dbdcd813b5424a387f18f7f9c284b7741d41ec20de`        |
+| MLVWM                    | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-mlvwm@sha256:0a9e5a7d0b19464e315468f797aae2702b44eab21bfba458612c2322a0d02785`       |
+| Motif Window Manager     | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-mwm@sha256:abeadd0b7ded0cfecf430075be30d05c985224e7ea97a0675ffd656ddf10f544`         |
+| Nimdow                   | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-nimdow@sha256:08a364bccb3527f58b116213830b615524e2887eb3f8e282ccc69d2fb6fe1ee8`      |
+| Notion                   | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-notion@sha256:32d8403f39b765e88956c45b97354cb15cabeed3747f7f06ba80b6dd0cb33616`      |
+| Openbox                  | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-openbox@sha256:794cce7b244084a4ce8a09e67b81a73f726906be6a59519266bbf6ab8ecede07`     |
+| oxwm                     | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-oxwm@sha256:8e6fd9140fe038283b09d8d70a56fec56d89d3715c3cf2c3fbb789876b116818`        |
+| PekWM                    | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-pekwm@sha256:a211f539a8230bcfbf6fe3d9798c1c8b2dc7c60ae8fd51d4d2fc1d2c0669892b`       |
+| KDE Plasma 6             | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-plasma@sha256:f10a864fd9e7847b931255f1b69b859f2e674d075106d024e877569e4b75ddfb`      |
+| Qtile                    | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-qtile@sha256:b1b6df339a8aa3aeff88f8bf872f4b8fb49834cb23edf30d14ce13cb1f343834`       |
+| Ratpoison                | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-ratpoison@sha256:dabc5d441a539a8aa43c767bba0fb28a5a0ce48e8541a46f4eaac13ec6cf563c`   |
+| River                    | Wayland        | `public.ecr.aws/k5j5w0x5/cua-nixos-river@sha256:6e0c330a2d0e8ebd88fd18967f6ab9e93e23057b013bacae35227e8379b74606`       |
+| Sawfish                  | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-sawfish@sha256:4f4434f9abac9f38e64c8fc09d2b6b4c2eefedf9add743595cbb02eb769bbd8a`     |
+| smallwm                  | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-smallwm@sha256:75cebedbbed8a7cb7d0ed74365fa38e1149d08049571f28c517a23158e69b4ec`     |
+| StumpWM                  | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-stumpwm@sha256:cb825c8d75b376de4e1265964f35de8be3d06ceffc2999e21973ceeb1bf6a882`     |
+| Sway                     | Wayland        | `public.ecr.aws/k5j5w0x5/cua-nixos-sway@sha256:f272b3cf08e03875eac39e7956edd572f96e706a60b6e87cc83a534b8cc83cf6`        |
+| Wayfire                  | Wayland        | `public.ecr.aws/k5j5w0x5/cua-nixos-wayfire@sha256:3ed50f4fc8d68f9a13c51c6d54afe9734d9473e5d000e8bfd49996404daa55b3`     |
+| Window Maker             | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-windowmaker@sha256:bf88c6d4ee83a914f1b7978be41e10ac41728410d659302441e3dc14e45d38c2` |
+| wmderland                | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-wmderland@sha256:cae208a0e6767607d772d17f8e43919c6b64708d97b580f54e98945a419303e7`   |
+| wmii                     | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-wmii@sha256:791d466782165d13deaae236624b35923310d2ffe32850c8d8f4ad11d416e3e5`        |
+| XFCE                     | X11            | `public.ecr.aws/k5j5w0x5/cua-nixos-xfce@sha256:87e8d3865685fbd69ef03e8ee48458b31836511d1849f2eabc0dea92dfdd0e64`        |
+
+## Docker images
+
+Docker images run desktop userspace in a container rather than booting a VM.
+Use the Docker image below for the local Docker runtime, not the VM
+containerDisk reference with the same repository name. The `docker-latest` tag
+is mutable; pin a resolved digest when you need a reproducible image.
+
+| OS    | Distribution / version | Architecture | Desktop | Docker registry image                                    |
+| ----- | ---------------------- | ------------ | ------- | -------------------------------------------------------- |
+| Linux | Ubuntu 24.04           | amd64, arm64 | XFCE    | `public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:docker-latest` |
+
+The NixOS family listed above publishes VM containerDisks only; it does not
+publish runnable Docker desktop variants.

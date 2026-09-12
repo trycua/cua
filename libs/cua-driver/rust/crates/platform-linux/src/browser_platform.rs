@@ -10,7 +10,7 @@ use cua_driver_core::browser::existing_profile_setup_descriptor;
 use cua_driver_core::browser::platform::{
     select_isolated_browser_executable, BrowserConsentOutcome, BrowserConsentRequest,
     BrowserPlatform, ExistingProfileSetupOutcome, ExistingProfileSetupRequest, PrepareAction,
-    PrepareOutcome, PrepareRequest,
+    PrepareOutcome, PrepareRequest, SpawnedEndpointProcessScope,
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
@@ -19,6 +19,10 @@ use cua_driver_core::browser::types::{
     NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint, Rect,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::Semaphore;
+
+const LISTENER_INSPECTION_TIMEOUT: Duration = Duration::from_secs(2);
+static SELECTED_PORT_LISTENER_PROBE: Semaphore = Semaphore::const_new(1);
 
 #[derive(Debug, Default)]
 pub struct LinuxBrowserPlatform;
@@ -187,6 +191,17 @@ fn loopback_websocket_port(url: &str) -> Option<u16> {
         })
 }
 
+fn canonical_ipv4_websocket_url(url: &str, expected_port: u16) -> Option<String> {
+    ["ws://127.0.0.1:", "ws://localhost:", "ws://[::1]:"]
+        .iter()
+        .find_map(|prefix| {
+            let remainder = url.strip_prefix(prefix)?;
+            let (port, path) = remainder.split_once('/')?;
+            (port.parse::<u16>().ok()? == expected_port && !path.is_empty())
+                .then(|| format!("ws://127.0.0.1:{expected_port}/{path}"))
+        })
+}
+
 fn parse_proc_net_loopback_listeners(text: &str) -> Vec<(u16, u64)> {
     text.lines()
         .skip(1)
@@ -273,14 +288,17 @@ fn socket_inodes_for_process_tree(pid: i64) -> Result<HashSet<u64>, BrowserRefus
     Ok(inodes)
 }
 
-fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
+fn loopback_ports_for_pid_in_tables(
+    pid: i64,
+    table_paths: &[&str],
+) -> Result<Vec<u16>, BrowserRefusal> {
     // Chromium may delegate its DevTools listener to a utility child. Core's
     // ownership contract explicitly accepts the approved browser PID or one
     // of its children, so inspect the bounded descendant tree as well as the
     // root process while still attributing the result to the approved root.
     let owned = socket_inodes_for_process_tree(pid)?;
     let mut listeners = Vec::new();
-    for path in ["/proc/net/tcp", "/proc/net/tcp6"] {
+    for &path in table_paths {
         if let Ok(text) = std::fs::read_to_string(path) {
             listeners.extend(
                 parse_proc_net_loopback_listeners(&text)
@@ -293,6 +311,63 @@ fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
     listeners.sort_unstable();
     listeners.dedup();
     Ok(listeners)
+}
+
+fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
+    loopback_ports_for_pid_in_tables(pid, &["/proc/net/tcp", "/proc/net/tcp6"])
+}
+
+fn ipv4_loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
+    loopback_ports_for_pid_in_tables(pid, &["/proc/net/tcp"])
+}
+
+async fn inspect_ipv4_loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
+    run_bounded_listener_probe(
+        &SELECTED_PORT_LISTENER_PROBE,
+        LISTENER_INSPECTION_TIMEOUT,
+        move || ipv4_loopback_ports_for_pid(pid),
+    )
+    .await
+}
+
+async fn run_bounded_listener_probe<T, Probe>(
+    gate: &'static Semaphore,
+    timeout: Duration,
+    probe: Probe,
+) -> Result<T, BrowserRefusal>
+where
+    T: Default + Send + 'static,
+    Probe: FnOnce() -> Result<T, BrowserRefusal> + Send + 'static,
+{
+    let operation = async {
+        // The permit moves into the blocking worker. If a procfs read outlives
+        // the caller's deadline, later polls wait for that one worker instead
+        // of accumulating detached blocking tasks.
+        let permit = gate.acquire().await.map_err(|error| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("browser listener inspection gate closed: {error}"),
+            )
+        })?;
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            probe()
+        })
+        .await
+        .map_err(|error| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("listener inspection task failed: {error}"),
+            )
+        })?
+    };
+    match tokio::time::timeout(timeout, operation).await {
+        Ok(result) => result,
+        // Readiness polling owns the outer deadline. A slow individual sample
+        // is equivalent to observing no listener in that sample; command,
+        // parsing, and identity failures remain terminal errors.
+        Err(_) => Ok(T::default()),
+    }
 }
 
 fn parse_devtools_active_port(text: &str) -> Option<(u16, &str)> {
@@ -846,6 +921,51 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         Ok(None)
     }
 
+    async fn discover_spawned_endpoint_on_port(
+        &self,
+        process_scope: &SpawnedEndpointProcessScope,
+        port: u16,
+    ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        let Some(pid) = process_scope.root_process_pid() else {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                "Linux fixed-port discovery requires a launch-root process scope",
+            ));
+        };
+        if !inspect_ipv4_loopback_ports_for_pid(pid)
+            .await?
+            .contains(&port)
+        {
+            return Ok(None);
+        }
+        let Some(ws_url) = browser_websocket_url(port)
+            .await
+            .and_then(|url| canonical_ipv4_websocket_url(&url, port))
+        else {
+            return Ok(None);
+        };
+        if !inspect_ipv4_loopback_ports_for_pid(pid)
+            .await?
+            .contains(&port)
+        {
+            return Ok(None);
+        }
+        Ok(Some(OwnedEndpoint {
+            ws_url,
+            http_port: Some(port),
+            transport: EndpointTransport::SpawnedExact,
+            ownership: EndpointOwnershipProof {
+                method: EndpointOwnershipMethod::ListeningSocketPid,
+                owner_pid: pid,
+                listener_pid: None,
+                detail: Some(
+                    "exact /proc process-tree socket owner before and after /json/version"
+                        .to_owned(),
+                ),
+            },
+        }))
+    }
+
     async fn discover_existing_profile_endpoint(
         &self,
         pid: i64,
@@ -1264,6 +1384,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 prepared_pid: Some(endpoint.ownership.owner_pid),
                 endpoint: Some(endpoint),
                 message: "An owned loopback DevTools endpoint is already available.".to_owned(),
+                launch_posture: None,
                 side_effects: Default::default(),
                 attachment: None,
             });
@@ -1278,6 +1399,74 @@ impl BrowserPlatform for LinuxBrowserPlatform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn driver_selected_port_does_not_query_a_foreign_listener() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind foreign listener");
+        let port = listener.local_addr().expect("listener address").port();
+        let mut unrelated = tokio::process::Command::new("sleep")
+            .arg("60")
+            .kill_on_drop(true)
+            .spawn()
+            .expect("spawn unrelated process");
+        let unrelated_pid = i64::from(unrelated.id().expect("unrelated process pid"));
+
+        let endpoint = LinuxBrowserPlatform
+            .discover_spawned_endpoint_on_port(
+                &SpawnedEndpointProcessScope::RootProcess(unrelated_pid),
+                port,
+            )
+            .await
+            .expect("foreign listener should remain an ordinary not-ready result");
+
+        assert!(endpoint.is_none());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), listener.accept())
+                .await
+                .is_err()
+        );
+        unrelated.start_kill().expect("stop unrelated process");
+        unrelated.wait().await.expect("reap unrelated process");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn timed_out_listener_probe_does_not_accumulate_blocking_workers() {
+        static GATE: Semaphore = Semaphore::const_new(1);
+
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let first = run_bounded_listener_probe(&GATE, Duration::from_millis(50), move || {
+            started_tx.send(()).expect("signal first probe start");
+            release_rx.recv().expect("release first probe");
+            Ok(Vec::<u16>::new())
+        })
+        .await
+        .expect("a slow sample is a nonterminal empty observation");
+        assert!(first.is_empty());
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("the first worker started");
+
+        let second_started = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let second_marker = second_started.clone();
+        let second = run_bounded_listener_probe(&GATE, Duration::from_millis(50), move || {
+            second_marker.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(vec![2_u16])
+        })
+        .await
+        .expect("a queued sample is also a nonterminal empty observation");
+        assert!(second.is_empty());
+        assert!(!second_started.load(std::sync::atomic::Ordering::SeqCst));
+
+        release_tx.send(()).expect("finish first probe");
+        let third = run_bounded_listener_probe(&GATE, Duration::from_secs(1), || Ok(vec![3_u16]))
+            .await
+            .expect("a later probe runs after the owned worker exits");
+        assert_eq!(third, vec![3]);
+        assert!(!second_started.load(std::sync::atomic::Ordering::SeqCst));
+    }
 
     #[test]
     fn hyprland_browser_identity_requires_exact_pid_and_full_native_address() {
@@ -1416,6 +1605,22 @@ mod tests {
             Some(9222)
         );
         assert_eq!(loopback_websocket_port("ws://0.0.0.0:9222/devtools"), None);
+    }
+
+    #[test]
+    fn fixed_port_websocket_route_is_canonicalized_to_the_proven_ipv4_listener() {
+        assert_eq!(
+            canonical_ipv4_websocket_url("ws://[::1]:9222/devtools/browser/id", 9222),
+            Some("ws://127.0.0.1:9222/devtools/browser/id".to_owned())
+        );
+        assert_eq!(
+            canonical_ipv4_websocket_url("ws://127.0.0.1:9333/devtools/browser/id", 9222),
+            None
+        );
+        assert_eq!(
+            canonical_ipv4_websocket_url("ws://192.0.2.1:9222/devtools/browser/id", 9222),
+            None
+        );
     }
 
     #[test]

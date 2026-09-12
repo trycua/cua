@@ -49,8 +49,8 @@ use super::reconnect::ReconnectGates;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::semantic::{
     build_dom_index, build_layout_index, compose_accessibility_tree, parse_viewport,
-    OmissionCounts, SemanticDocument, SemanticNode, DEFAULT_SEMANTIC_NODE_BUDGET,
-    SEMANTIC_COMPUTED_STYLES,
+    snapshot_document_title, OmissionCounts, SemanticDocument, SemanticNode,
+    DEFAULT_SEMANTIC_NODE_BUDGET, SEMANTIC_COMPUTED_STYLES,
 };
 use super::store::{
     format_ref, BrowserStore, FrameIdentity, FrameKind, FrameRef, RefEntry, SemanticContinuation,
@@ -285,11 +285,11 @@ fn is_semantic_document_size_error(error: &anyhow::Error) -> bool {
     .any(|needle| message.contains(needle))
 }
 
-fn is_semantic_document_fallback_error(error: &anyhow::Error) -> bool {
+fn is_semantic_document_fallback_error(error: &anyhow::Error, retry_timeouts: bool) -> bool {
     if is_semantic_document_size_error(error) {
         return true;
     }
-    is_semantic_document_timeout_error(error)
+    retry_timeouts && is_semantic_document_timeout_error(error)
 }
 
 fn is_semantic_document_timeout_error(error: &anyhow::Error) -> bool {
@@ -2034,14 +2034,9 @@ impl BrowserEngine {
         let conn = self.connection_for_record(session, &record).await?;
         let cdp_session = self.attach(&conn, &tab.cdp_target_id).await?;
 
-        let doc = conn
-            .call(
-                Some(&cdp_session),
-                "DOM.getDocument",
-                json!({ "depth": -1, "pierce": true }),
-            )
-            .await
-            .map_err(|e| route_err("DOM.getDocument failed", e))?;
+        let (doc, mut document_complete) = self
+            .read_snapshot_document(&conn, &cdp_session, false)
+            .await?;
         let root = doc.get("root").cloned().unwrap_or(Value::Null);
         let url = root
             .get("documentURL")
@@ -2113,16 +2108,14 @@ impl BrowserEngine {
                         else {
                             continue; // identity unprovable → omit this frame
                         };
-                        let Ok(child_doc) = conn
-                            .call(
-                                Some(&child.session_id),
-                                "DOM.getDocument",
-                                json!({ "depth": -1, "pierce": true }),
-                            )
+                        let Ok((child_doc, child_complete)) = self
+                            .read_snapshot_document(&conn, &child.session_id, false)
                             .await
                         else {
+                            document_complete = false;
                             continue;
                         };
+                        document_complete &= child_complete;
                         let child_root = child_doc.get("root").cloned().unwrap_or(Value::Null);
                         let child_root_frame = child_root
                             .get("frameId")
@@ -2193,9 +2186,10 @@ impl BrowserEngine {
             OopifStatus::Unsupported
         };
 
-        let truncated = entries.len() > MAX_REFS_PER_SNAPSHOT;
+        let refs_truncated = entries.len() > MAX_REFS_PER_SNAPSHOT;
+        let truncated = !document_complete || refs_truncated;
         entries.truncate(MAX_REFS_PER_SNAPSHOT);
-        if truncated {
+        if refs_truncated {
             tracing::warn!(
                 "browser snapshot truncated to {MAX_REFS_PER_SNAPSHOT} refs for tab {tab_id}"
             );
@@ -2265,6 +2259,7 @@ impl BrowserEngine {
         )
         .map_err(|error| route_err("semantic layout collection failed", error))?;
         let dom = build_dom_index(&root);
+        let title = snapshot_document_title(&layout, &root);
         let layout = build_layout_index(&layout);
         let viewport = parse_viewport(&metrics);
 
@@ -2316,14 +2311,19 @@ impl BrowserEngine {
                 result.extend(frame_document);
             }
         }
+        result.title = title;
         Ok(result)
     }
 
-    async fn semantic_document(
+    async fn read_snapshot_document(
         &self,
         conn: &Arc<CdpConnection>,
         cdp_session: &str,
+        retry_timeouts: bool,
     ) -> Result<(Value, bool), BrowserRefusal> {
+        // The compatibility reader must not turn a genuinely unanswered request
+        // into several timeout-length retries. Semantic reads retain their
+        // existing timeout recovery; both formats recover prompt size errors.
         match conn
             .call(
                 Some(cdp_session),
@@ -2333,7 +2333,7 @@ impl BrowserEngine {
             .await
         {
             Ok(document) => Ok((document, true)),
-            Err(error) if is_semantic_document_fallback_error(&error) => {
+            Err(error) if is_semantic_document_fallback_error(&error, retry_timeouts) => {
                 let mut last_size_error = error.to_string();
                 let fallback_depths = if is_semantic_document_timeout_error(&error) {
                     SEMANTIC_DOM_TIMEOUT_FALLBACK_DEPTHS
@@ -2355,7 +2355,9 @@ impl BrowserEngine {
                                 .await?;
                             return Ok((document, false));
                         }
-                        Err(error) if is_semantic_document_fallback_error(&error) => {
+                        Err(error)
+                            if is_semantic_document_fallback_error(&error, retry_timeouts) =>
+                        {
                             last_size_error = error.to_string();
                         }
                         Err(error) => {
@@ -2558,7 +2560,7 @@ impl BrowserEngine {
             let (outcome, new_refs) = self.semantic_outcome(
                 snapshot.id,
                 snapshot.url.clone(),
-                tab.title,
+                document.title.clone().unwrap_or_default(),
                 page,
                 document.complete,
                 "continuation",
@@ -2608,7 +2610,9 @@ impl BrowserEngine {
         })?;
         let conn = self.connection_for_record(session, &record).await?;
         let cdp_session = self.attach(&conn, &tab.cdp_target_id).await?;
-        let (document, document_complete) = self.semantic_document(&conn, &cdp_session).await?;
+        let (document, document_complete) = self
+            .read_snapshot_document(&conn, &cdp_session, true)
+            .await?;
         let root = document.get("root").cloned().unwrap_or(Value::Null);
         let url = root
             .get("documentURL")
@@ -2642,15 +2646,17 @@ impl BrowserEngine {
                                 continue;
                             }
                         };
-                        let (child_document, child_complete) =
-                            match self.semantic_document(&conn, &child.session_id).await {
-                                Ok(document) => document,
-                                Err(_) => {
-                                    semantic.unprovable_frame_count += 1;
-                                    semantic.complete = false;
-                                    continue;
-                                }
-                            };
+                        let (child_document, child_complete) = match self
+                            .read_snapshot_document(&conn, &child.session_id, true)
+                            .await
+                        {
+                            Ok(document) => document,
+                            Err(_) => {
+                                semantic.unprovable_frame_count += 1;
+                                semantic.complete = false;
+                                continue;
+                            }
+                        };
                         match self
                             .collect_semantic_session(
                                 &conn,
@@ -2704,6 +2710,7 @@ impl BrowserEngine {
             OopifStatus::Unsupported
         };
 
+        semantic.complete &= semantic.title.is_some();
         let page = semantic.page(
             0,
             DEFAULT_SEMANTIC_NODE_BUDGET,
@@ -2722,7 +2729,7 @@ impl BrowserEngine {
         let (outcome, refs) = self.semantic_outcome(
             snapshot_id,
             url.clone(),
-            tab.title.clone(),
+            semantic.title.clone().unwrap_or_default(),
             page,
             semantic.complete,
             scope,

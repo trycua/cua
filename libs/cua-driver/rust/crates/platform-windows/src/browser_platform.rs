@@ -1,6 +1,6 @@
 //! Windows identity and endpoint evidence for the first-class browser tools.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -13,6 +13,7 @@ use cua_driver_core::browser::platform::{
     select_isolated_browser_executable, BrowserConsentOutcome, BrowserConsentRequest,
     BrowserPlatform, BrowserVisualAction, BrowserVisualActionKind, ExistingProfileSetupOutcome,
     ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
+    SpawnedEndpointProcessScope,
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
@@ -40,6 +41,8 @@ use windows::Win32::UI::Shell::{
     FOLDERID_ProgramFiles, FOLDERID_ProgramFilesX86, SHGetKnownFolderPath, KF_FLAG_DEFAULT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GetWindowRect, GA_ROOT};
+
+const LISTENER_INSPECTION_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone)]
 pub struct WindowsBrowserPlatform {
@@ -599,6 +602,56 @@ struct LifetimeScopedProcessTree {
     started_at: HashMap<u32, u64>,
 }
 
+fn exact_owned_processes_from_scope(
+    launch_pid: i64,
+    process_ids: &[i64],
+    mut started_at: impl FnMut(u32) -> Option<u64>,
+) -> Result<LifetimeScopedProcessTree, BrowserRefusal> {
+    if u32::try_from(launch_pid)
+        .ok()
+        .filter(|pid| *pid != 0)
+        .is_none()
+    {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+            "the fixed-port launch pid is outside the Windows process-id range",
+        ));
+    }
+    let mut seen = HashSet::new();
+    let mut pids = Vec::with_capacity(process_ids.len());
+    let mut starts = HashMap::with_capacity(process_ids.len());
+    for process_id in process_ids {
+        let pid = u32::try_from(*process_id)
+            .ok()
+            .filter(|pid| *pid != 0)
+            .ok_or_else(|| {
+                refusal(
+                    BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+                    "the exact spawned-process scope contains an invalid Windows process id",
+                )
+            })?;
+        if !seen.insert(pid) {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+                "the exact spawned-process scope contains a duplicate Windows process id",
+            ));
+        }
+        // A job member can exit between core's query and this identity
+        // snapshot. Omit vanished members; core rechecks Job membership after
+        // the adapter returns before it accepts any listener.
+        let Some(started) = started_at(pid) else {
+            continue;
+        };
+        pids.push(pid);
+        starts.insert(pid, started);
+    }
+    pids.sort_unstable();
+    Ok(LifetimeScopedProcessTree {
+        pids,
+        started_at: starts,
+    })
+}
+
 fn lifetime_scoped_descendants_from_processes(
     root_pid: u32,
     processes: &[crate::win32::ProcessInfo],
@@ -754,7 +807,11 @@ fn overlay_window_and_scale(window_id: u64) -> Option<(u64, f64)> {
     Some((overlay_window, scale))
 }
 
-fn parse_netstat_loopback_listeners(text: &str, allowed_pids: &[u32]) -> Vec<(u16, u32)> {
+fn parse_netstat_loopback_listeners_with_scope(
+    text: &str,
+    allowed_pids: &[u32],
+    ipv4_only: bool,
+) -> Vec<(u16, u32)> {
     let mut listeners = text
         .lines()
         .filter_map(|line| {
@@ -772,14 +829,20 @@ fn parse_netstat_loopback_listeners(text: &str, allowed_pids: &[u32]) -> Vec<(u1
             let local = fields[1];
             let (host, port) = local.rsplit_once(':')?;
             let host = host.trim_matches(['[', ']']);
-            matches!(host, "127.0.0.1" | "::1" | "localhost")
-                .then(|| port.parse::<u16>().ok().map(|port| (port, owner_pid)))
-                .flatten()
+            ((ipv4_only && host == "127.0.0.1")
+                || (!ipv4_only && matches!(host, "127.0.0.1" | "::1" | "localhost")))
+            .then(|| port.parse::<u16>().ok().map(|port| (port, owner_pid)))
+            .flatten()
         })
         .collect::<Vec<_>>();
     listeners.sort_unstable();
     listeners.dedup();
     listeners
+}
+
+#[cfg(test)]
+fn parse_netstat_loopback_listeners(text: &str, allowed_pids: &[u32]) -> Vec<(u16, u32)> {
+    parse_netstat_loopback_listeners_with_scope(text, allowed_pids, false)
 }
 
 #[cfg(test)]
@@ -811,23 +874,36 @@ fn system_netstat_path() -> Result<PathBuf, BrowserRefusal> {
 
 async fn netstat_loopback_listeners(
     allowed_pids: &[u32],
+    ipv4_only: bool,
 ) -> Result<Vec<(u16, u32)>, BrowserRefusal> {
     let netstat = system_netstat_path()?;
-    let output = tokio::process::Command::new(netstat)
+    let mut command = tokio::process::Command::new(netstat);
+    command
         .args(["-ano", "-p", "tcp"])
         .stdin(Stdio::null())
         .stderr(Stdio::null())
-        .output()
-        .await
-        .map_err(|error| {
-            refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("could not inspect browser listeners: {error}"),
-            )
-        })?;
-    Ok(parse_netstat_loopback_listeners(
+        .kill_on_drop(true);
+    let output = if ipv4_only {
+        match tokio::time::timeout(LISTENER_INSPECTION_TIMEOUT, command.output()).await {
+            Ok(output) => output,
+            // Endpoint readiness owns the total deadline. A slow netstat
+            // sample means "not observed yet"; spawn and parse failures remain
+            // terminal below.
+            Err(_) => return Ok(Vec::new()),
+        }
+    } else {
+        command.output().await
+    }
+    .map_err(|error| {
+        refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            format!("could not inspect browser listeners: {error}"),
+        )
+    })?;
+    Ok(parse_netstat_loopback_listeners_with_scope(
         &String::from_utf8_lossy(&output.stdout),
         allowed_pids,
+        ipv4_only,
     ))
 }
 
@@ -843,7 +919,7 @@ async fn raw_loopback_listeners_for_process_tree(
                     format!("could not inspect browser process tree: {error}"),
                 )
             })?;
-    let observed = netstat_loopback_listeners(&allowed_pids).await?;
+    let observed = netstat_loopback_listeners(&allowed_pids, false).await?;
     tokio::task::spawn_blocking(move || {
         observed
             .into_iter()
@@ -859,8 +935,9 @@ async fn raw_loopback_listeners_for_process_tree(
     })
 }
 
-async fn loopback_listeners_for_process_tree(
+async fn loopback_listeners_for_process_tree_with_scope(
     root_pid: u32,
+    ipv4_only: bool,
 ) -> Result<Vec<(u16, u32)>, BrowserRefusal> {
     let tree = tokio::task::spawn_blocking(move || {
         let processes = crate::win32::list_processes();
@@ -882,8 +959,18 @@ async fn loopback_listeners_for_process_tree(
         )
     })?;
 
-    let observed = netstat_loopback_listeners(&tree.pids).await?;
-    let expected_starts = tree.started_at;
+    loopback_listeners_for_identity_scope(&tree, ipv4_only).await
+}
+
+async fn loopback_listeners_for_identity_scope(
+    tree: &LifetimeScopedProcessTree,
+    ipv4_only: bool,
+) -> Result<Vec<(u16, u32)>, BrowserRefusal> {
+    if tree.pids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let observed = netstat_loopback_listeners(&tree.pids, ipv4_only).await?;
+    let expected_starts = tree.started_at.clone();
     tokio::task::spawn_blocking(move || {
         retain_identity_matched_listeners(observed, &expected_starts, |pid| {
             process_identity(pid).ok().map(|identity| identity.0)
@@ -898,6 +985,65 @@ async fn loopback_listeners_for_process_tree(
     })
 }
 
+async fn spawned_process_identity_scope(
+    process_scope: &SpawnedEndpointProcessScope,
+) -> Result<LifetimeScopedProcessTree, BrowserRefusal> {
+    match process_scope {
+        SpawnedEndpointProcessScope::RootProcess(root_pid) => {
+            let root_pid = u32::try_from(*root_pid).map_err(|_| {
+                refusal(
+                    BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+                    "the fixed-port launch pid is outside the Windows process-id range",
+                )
+            })?;
+            tokio::task::spawn_blocking(move || {
+                let processes = crate::win32::list_processes();
+                lifetime_scoped_descendants_from_processes(root_pid, &processes, |pid| {
+                    process_identity(pid).ok().map(|identity| identity.0)
+                })
+            })
+            .await
+            .map_err(|error| {
+                refusal(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    format!("could not inspect browser process lifetimes: {error}"),
+                )
+            })?
+            .ok_or_else(|| {
+                refusal(
+                    BrowserRefusalCode::BrowserBindingStale,
+                    format!("browser process {root_pid} is no longer available"),
+                )
+            })
+        }
+        SpawnedEndpointProcessScope::ExactOwnedProcesses {
+            launch_pid,
+            process_ids,
+        } => {
+            let launch_pid = *launch_pid;
+            let process_ids = process_ids.clone();
+            tokio::task::spawn_blocking(move || {
+                exact_owned_processes_from_scope(launch_pid, &process_ids, |pid| {
+                    process_identity(pid).ok().map(|identity| identity.0)
+                })
+            })
+            .await
+            .map_err(|error| {
+                refusal(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    format!("could not inspect exact spawned-process identities: {error}"),
+                )
+            })?
+        }
+    }
+}
+
+async fn loopback_listeners_for_process_tree(
+    root_pid: u32,
+) -> Result<Vec<(u16, u32)>, BrowserRefusal> {
+    loopback_listeners_for_process_tree_with_scope(root_pid, false).await
+}
+
 async fn loopback_listeners_for_exact_pid(pid: u32) -> Result<Vec<(u16, u32)>, BrowserRefusal> {
     let expected_started =
         tokio::task::spawn_blocking(move || process_identity(pid).map(|identity| identity.0))
@@ -908,7 +1054,7 @@ async fn loopback_listeners_for_exact_pid(pid: u32) -> Result<Vec<(u16, u32)>, B
                     format!("could not inspect browser process identity: {error}"),
                 )
             })??;
-    let observed = netstat_loopback_listeners(&[pid]).await?;
+    let observed = netstat_loopback_listeners(&[pid], false).await?;
     tokio::task::spawn_blocking(move || {
         retain_identity_matched_listeners(
             observed,
@@ -941,7 +1087,7 @@ async fn loopback_ports_for_exact_pid(pid: u32) -> Result<Vec<u16>, BrowserRefus
 }
 
 async fn unfiltered_loopback_ports_for_exact_pid(pid: u32) -> Result<Vec<u16>, BrowserRefusal> {
-    let mut ports = netstat_loopback_listeners(&[pid])
+    let mut ports = netstat_loopback_listeners(&[pid], false)
         .await?
         .into_iter()
         .map(|(port, _owner_pid)| port)
@@ -1198,6 +1344,34 @@ async fn spawned_browser_endpoints_for_pid(
     .await
 }
 
+async fn fixed_port_spawned_browser_endpoints_once(
+    process_scope: &SpawnedEndpointProcessScope,
+    expected_port: u16,
+) -> Result<Vec<(u16, String, u32)>, BrowserRefusal> {
+    // Capture process start identities once and retain that same evidence on
+    // both sides of /json/version. Recapturing after HTTP would let pid reuse
+    // join observations made against two different processes.
+    let identity_scope = spawned_process_identity_scope(process_scope).await?;
+    let mut endpoints = Vec::new();
+    for (port, listener_pid) in loopback_listeners_for_identity_scope(&identity_scope, true)
+        .await?
+        .into_iter()
+        .filter(|(port, _listener_pid)| *port == expected_port)
+    {
+        let Some(ws_url) = browser_websocket_url(port).await else {
+            continue;
+        };
+        // Unlike the DevToolsActivePort route, the endpoint URL came from the
+        // listener itself. Reprove it only against the original closed scope;
+        // never use the stale-parent handoff fallback here.
+        let reproved = loopback_listeners_for_identity_scope(&identity_scope, true).await?;
+        if reproved.contains(&(port, listener_pid)) {
+            endpoints.push((port, ws_url, listener_pid));
+        }
+    }
+    Ok(endpoints)
+}
+
 fn owned_endpoint_from_listener(
     root_pid: i64,
     port: u16,
@@ -1255,6 +1429,18 @@ fn select_unique_owned_endpoint(
                 .collect::<Vec<_>>(),
         }))),
     }
+}
+
+fn select_fixed_port_spawned_endpoint(
+    root_pid: i64,
+    discovered: Vec<(u16, String, u32)>,
+) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+    select_unique_owned_endpoint(
+        root_pid,
+        discovered,
+        "driver-selected fixed port owned by the current driver-spawned process scope",
+        EndpointTransport::SpawnedExact,
+    )
 }
 
 async fn loopback_port_is_owned_with_retry(
@@ -1590,6 +1776,20 @@ impl BrowserPlatform for WindowsBrowserPlatform {
             spawned_browser_endpoints_for_pid(pid_u32, expected_ws_url).await?,
             "exact private-profile endpoint owned by the driver-spawned browser tree",
             EndpointTransport::SpawnedExact,
+        )
+    }
+
+    async fn discover_spawned_endpoint_on_port(
+        &self,
+        process_scope: &SpawnedEndpointProcessScope,
+        port: u16,
+    ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        // An empty ownership snapshot is an ordinary startup state. Preserve
+        // Ok(None) so core's single bounded discovery deadline remains the
+        // owner of readiness polling.
+        select_fixed_port_spawned_endpoint(
+            process_scope.launch_pid(),
+            fixed_port_spawned_browser_endpoints_once(process_scope, port).await?,
         )
     }
 
@@ -1939,6 +2139,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                 prepared_pid: Some(endpoint.ownership.owner_pid),
                 endpoint: Some(endpoint),
                 message: "An owned loopback DevTools endpoint is already available.".to_owned(),
+                launch_posture: None,
                 side_effects: Default::default(),
                 attachment: None,
             });
@@ -2200,6 +2401,10 @@ mod tests {
             parse_netstat_loopback_ports(input, &[42, 43]),
             vec![9222, 9444]
         );
+        assert_eq!(
+            parse_netstat_loopback_listeners_with_scope(input, &[42, 43], true),
+            vec![(9222, 42)]
+        );
     }
 
     #[test]
@@ -2298,6 +2503,13 @@ mod tests {
         assert_eq!(candidates[0]["listener_pid"], 43);
         assert_eq!(candidates[1]["port"], 9333);
         assert_eq!(candidates[1]["listener_pid"], 44);
+    }
+
+    #[test]
+    fn fixed_port_empty_discovery_remains_retryable() {
+        assert!(select_fixed_port_spawned_endpoint(42, Vec::new())
+            .expect("an ordinary not-ready snapshot is not an ownership mismatch")
+            .is_none());
     }
 
     #[test]
@@ -2410,6 +2622,51 @@ mod tests {
         })
         .expect("live root");
         assert_eq!(tree.pids, vec![42]);
+    }
+
+    #[test]
+    fn exact_owned_scope_survives_launcher_exit_without_admitting_outsiders() {
+        let starts = HashMap::from([(43, 300), (44, 400)]);
+        let empty = exact_owned_processes_from_scope(42, &[], |_| None)
+            .expect("an empty active Job is an ordinary not-ready scope");
+        assert!(empty.pids.is_empty());
+        let tree = exact_owned_processes_from_scope(42, &[43], |pid| {
+            assert_ne!(
+                pid, 42,
+                "a dead launcher must not be queried as the scope root"
+            );
+            starts.get(&pid).copied()
+        })
+        .expect("one live exact Job member");
+
+        assert_eq!(tree.pids, vec![43]);
+        assert_eq!(tree.started_at, HashMap::from([(43, 300)]));
+        assert_eq!(
+            retain_identity_matched_listeners(
+                vec![(9222, 43), (9222, 44)],
+                &tree.started_at,
+                |pid| starts.get(&pid).copied(),
+            ),
+            vec![(9222, 43)]
+        );
+    }
+
+    #[test]
+    fn exact_owned_scope_rejects_malformed_process_ids() {
+        for process_ids in [vec![0], vec![-1], vec![43, 43]] {
+            assert_eq!(
+                exact_owned_processes_from_scope(42, &process_ids, |_| Some(100))
+                    .expect_err("malformed exact scope must fail closed")
+                    .code,
+                BrowserRefusalCode::BrowserEndpointOwnerMismatch
+            );
+        }
+        assert_eq!(
+            exact_owned_processes_from_scope(0, &[43], |_| Some(100))
+                .expect_err("invalid launch pid must fail closed")
+                .code,
+            BrowserRefusalCode::BrowserEndpointOwnerMismatch
+        );
     }
 
     #[test]

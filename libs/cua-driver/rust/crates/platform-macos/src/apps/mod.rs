@@ -41,34 +41,59 @@ pub struct AppInfo {
 /// This stays entirely inside AppKit so listing or classifying an application
 /// never triggers the macOS Automation permission for System Events.
 pub fn list_running_apps() -> Vec<AppInfo> {
-    list_running_apps_native()
+    enumerate_running_apps().0
 }
 
-fn list_running_apps_native() -> Vec<AppInfo> {
+/// Single walk over `NSWorkspace.runningApplications` producing both views the
+/// app listing needs from ONE snapshot:
+///
+/// * standalone entries — `Regular`-policy apps only, so background helpers
+///   and system UI agents stay out of the list. This stays entirely inside
+///   AppKit so listing or classifying an application never triggers the
+///   macOS Automation permission for System Events.
+/// * live `(pid, active)` state for every process that reports a bundle
+///   identifier, across ALL activation policies. The `Regular`-only filter
+///   above must not decide whether an *installed* app is running: bundles
+///   shipped with `LSUIElement = true` (Cua Driver itself, many menu-bar
+///   apps) run as `Accessory`, never enter the standalone list, and would
+///   otherwise surface as `running = false / pid = 0` while windows and the
+///   accessibility tree see the live process (#3060).
+fn enumerate_running_apps() -> (Vec<AppInfo>, std::collections::HashMap<String, (i32, bool)>) {
     use objc2_app_kit::{NSApplicationActivationPolicy, NSWorkspace};
 
-    let mut apps = Vec::new();
+    let mut standalone = Vec::new();
+    let mut states = std::collections::HashMap::new();
     unsafe {
         let workspace = NSWorkspace::sharedWorkspace();
         let running = workspace.runningApplications();
         for index in 0..running.count() {
             let app = running.objectAtIndex(index);
-            if app.isTerminated()
-                || app.activationPolicy() != NSApplicationActivationPolicy::Regular
-            {
+            if app.isTerminated() {
+                continue;
+            }
+            let pid = app.processIdentifier();
+            if pid <= 0 {
+                continue;
+            }
+            let bundle_id = app.bundleIdentifier().map(|value| value.to_string());
+            if let Some(bid) = bundle_id.as_deref() {
+                if !bid.is_empty() {
+                    states.insert(bid.to_owned(), (pid, app.isActive()));
+                }
+            }
+            if app.activationPolicy() != NSApplicationActivationPolicy::Regular {
                 continue;
             }
             let Some(name) = app.localizedName().map(|value| value.to_string()) else {
                 continue;
             };
-            let pid = app.processIdentifier();
-            if name.is_empty() || pid <= 0 {
+            if name.is_empty() {
                 continue;
             }
-            apps.push(AppInfo {
+            standalone.push(AppInfo {
                 name,
                 pid,
-                bundle_id: app.bundleIdentifier().map(|value| value.to_string()),
+                bundle_id,
                 running: true,
                 active: app.isActive(),
                 launch_path: None,
@@ -77,7 +102,7 @@ fn list_running_apps_native() -> Vec<AppInfo> {
             });
         }
     }
-    apps
+    (standalone, states)
 }
 
 /// Launch an app by bundle ID via NSWorkspace, background only (no focus
@@ -425,8 +450,31 @@ fn bundle_id_for_app_path(app_path: &str) -> Option<String> {
 ///   * `launch_path` (filesystem `.app` path when known, else `None`),
 ///   * `kind` (`"desktop"` on macOS).
 pub fn list_all_apps() -> Vec<AppInfo> {
-    let mut running = list_running_apps();
+    let (running, running_states) = enumerate_running_apps();
     let installed = scan_installed_apps();
+    merge_app_lists(running, installed, &running_states)
+}
+
+/// Pure merge behind [`list_all_apps`] — extracted so the identity rules
+/// are testable without a live NSWorkspace:
+///
+/// * standalone entries keep the `Regular`-only contract of
+///   [`list_running_apps`] (helpers and UI agents stay out of the list);
+/// * installed entries resolve `running` / `pid` / `active` against the
+///   all-policies running-state map by bundle id, so an installed `.app`
+///   whose process runs as an accessory reports its live state instead
+///   of the `pid = 0` scan defaults (#3060). When several live instances
+///   share one bundle id the map keeps the last enumerated — the upgrade
+///   reports one of them, unspecified which, while standalone `Regular`
+///   instances each keep their own entry as before;
+/// * installed entries already covered by a standalone running entry are
+///   dropped — the standalone entry wins and is backfilled with the
+///   `launch_path` / `last_used` the installed scan resolved.
+pub(crate) fn merge_app_lists(
+    mut running: Vec<AppInfo>,
+    mut installed: Vec<AppInfo>,
+    running_states: &std::collections::HashMap<String, (i32, bool)>,
+) -> Vec<AppInfo> {
     // Lookup: bundle_id → (launch_path, last_used) from the installed scan.
     let installed_by_bundle: std::collections::HashMap<String, (Option<String>, Option<String>)> =
         installed
@@ -451,10 +499,19 @@ pub fn list_all_apps() -> Vec<AppInfo> {
         }
     }
 
+    // Upgrade installed entries whose live process runs outside the
+    // Regular list (accessory / LSUIElement apps) to their real state.
+    for app in installed.iter_mut() {
+        if let Some(&(pid, active)) = app.bundle_id.as_deref().and_then(|b| running_states.get(b)) {
+            app.running = true;
+            app.pid = pid;
+            app.active = active;
+        }
+    }
+
     let running_bundles: std::collections::HashSet<String> =
         running.iter().filter_map(|a| a.bundle_id.clone()).collect();
 
-    let mut installed = installed;
     // Remove apps already in running list.
     installed.retain(|a| {
         !a.bundle_id
@@ -462,9 +519,8 @@ pub fn list_all_apps() -> Vec<AppInfo> {
             .is_some_and(|b| running_bundles.contains(b))
     });
 
-    let mut all = running;
-    all.extend(installed);
-    all
+    running.extend(installed);
+    running
 }
 
 fn scan_installed_apps() -> Vec<AppInfo> {
@@ -716,7 +772,90 @@ pub fn format_app_list(apps: &[AppInfo]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{finder_folder_handoff, unix_secs_to_rfc3339};
+    use super::{finder_folder_handoff, merge_app_lists, unix_secs_to_rfc3339, AppInfo};
+
+    fn app(name: &str, pid: i32, bundle: Option<&str>, running: bool) -> AppInfo {
+        AppInfo {
+            name: name.to_owned(),
+            pid,
+            bundle_id: bundle.map(str::to_owned),
+            running,
+            active: false,
+            launch_path: None,
+            kind: None,
+            last_used: None,
+        }
+    }
+
+    fn states(pairs: &[(&str, i32, bool)]) -> std::collections::HashMap<String, (i32, bool)> {
+        pairs
+            .iter()
+            .map(|(bundle, pid, active)| ((*bundle).to_owned(), (*pid, *active)))
+            .collect()
+    }
+
+    #[test]
+    fn installed_app_running_as_accessory_reports_live_state() {
+        // The #3060 shape: CuaDriver.app ships LSUIElement=true, so its live
+        // process runs as Accessory and never enters the Regular list.
+        let mut entry = app("Cua Driver", 0, Some("com.trycua.driver"), false);
+        entry.launch_path = Some("/Applications/CuaDriver.app".to_owned());
+        let merged = merge_app_lists(
+            vec![],
+            vec![entry],
+            &states(&[("com.trycua.driver", 31438, false)]),
+        );
+        assert_eq!(merged.len(), 1);
+        assert!(merged[0].running);
+        assert_eq!(merged[0].pid, 31438);
+        // The upgrade must not clobber the fields the installed scan owns.
+        assert_eq!(
+            merged[0].launch_path.as_deref(),
+            Some("/Applications/CuaDriver.app")
+        );
+    }
+
+    #[test]
+    fn installed_app_not_running_keeps_scan_defaults() {
+        let merged = merge_app_lists(
+            vec![],
+            vec![app("TextEdit", 0, Some("com.apple.TextEdit"), false)],
+            &states(&[]),
+        );
+        assert_eq!(merged.len(), 1);
+        assert!(!merged[0].running);
+        assert_eq!(merged[0].pid, 0);
+    }
+
+    #[test]
+    fn regular_running_app_wins_over_installed_entry() {
+        let running = vec![app("Safari", 100, Some("com.apple.Safari"), true)];
+        let installed = vec![{
+            let mut entry = app("Safari", 0, Some("com.apple.Safari"), false);
+            entry.launch_path = Some("/Applications/Safari.app".to_owned());
+            entry
+        }];
+        let merged = merge_app_lists(
+            running,
+            installed,
+            &states(&[("com.apple.Safari", 100, true)]),
+        );
+        assert_eq!(merged.len(), 1);
+        assert!(merged[0].running);
+        assert_eq!(merged[0].pid, 100);
+        assert_eq!(
+            merged[0].launch_path.as_deref(),
+            Some("/Applications/Safari.app")
+        );
+    }
+
+    #[test]
+    fn accessory_process_without_installed_bundle_adds_no_entry() {
+        // A background helper with a bundle id but no installed .app must not
+        // materialize a row just because it appears in the states map.
+        let merged = merge_app_lists(vec![], vec![], &states(&[("dev.helper.agent", 9, false)]));
+        assert!(merged.is_empty());
+    }
 
     #[test]
     fn finder_folder_handoff_is_narrowly_selected() {

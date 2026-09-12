@@ -8,7 +8,7 @@ Silicon.
 Hyprland boots. The Omarchy shell renders. Keyboard, mouse, networking, native
 ARM64 Chromium, and transparent Rosetta translation all work. 🧵
 
-**Attach:** https://github.com/user-attachments/assets/811018be-6ed8-4b94-b719-4d147affdde3
+**Attach:** https://github.com/user-attachments/assets/883af3b5-6adc-40af-a5c8-0e0f84406757
 
 **Alt text:** Omarchy on Apple Silicon. A technical diagram shows an Omarchy
 desktop running inside an ARM64 Lume VM, with official source and an Arch Linux
@@ -71,7 +71,7 @@ The gaps:
 • 27 package names are absent, but 16 look packaging-only and 7 source-portable
 • dynamic x86-64 apps still need x86-64 libraries
 
-**Attach:** https://github.com/user-attachments/assets/629c9343-5a27-4749-beca-3099ac3af313
+**Attach:** https://github.com/user-attachments/assets/1be4f977-9229-455d-b650-a87994a8098b
 
 **Alt text:** A capability matrix marks desktop boot, input, networking,
 Chromium, and Rosetta user-space translation as tested; graphics acceleration

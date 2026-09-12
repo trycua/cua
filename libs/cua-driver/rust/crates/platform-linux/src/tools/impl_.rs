@@ -4724,7 +4724,21 @@ impl Tool for TypeTextTool {
                         .find(|w| Some(w.xid) == active && w.pid.is_some())
                         .or_else(|| windows.iter().find(|w| w.is_on_screen && w.pid.is_some()))
                 } else {
-                    windows.first()
+                    // The pid's active window, else its largest on-screen
+                    // toplevel: LibreOffice and GIMP own hidden/utility
+                    // toplevels that a plain `first()` could pick, and an
+                    // unmapped window cannot take the virtual keyboard focus.
+                    let active = crate::x11::active_window();
+                    windows
+                        .iter()
+                        .find(|w| Some(w.xid) == active)
+                        .or_else(|| {
+                            windows
+                                .iter()
+                                .filter(|w| w.is_on_screen)
+                                .max_by_key(|w| u64::from(w.width) * u64::from(w.height))
+                        })
+                        .or_else(|| windows.first())
                 };
                 match chosen {
                     Some(w) => {
@@ -5124,6 +5138,34 @@ impl Tool for TypeTextTool {
                 Ok(Err(e)) => input_error_result(e),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
+        }
+
+        // With a focus-free real keyboard available, type where the widget
+        // focus is — exactly what a physical keyboard does after the click that
+        // focused the field. The blind AT-SPI editable search below can pick a
+        // different editable of the app (it "succeeded" into GIMP's wrong entry
+        // and VS Code's search box); it stays as the fallback for hosts without
+        // the MPX route and for explicit element targets.
+        if !delivery.is_foreground()
+            && resolved_elem_idx.is_none()
+            && crate::input::real_keyboard_input_available()
+        {
+            let text_b = text.clone();
+            let cursor_id = resolve_cursor_key(&args);
+            let result = spawn_blocking_bounded(
+                "background type_text",
+                foreground_budget(text_len),
+                move || background_text_route(&cursor_id, pid, xid, &text_b),
+            )
+            .await;
+            match result {
+                Ok(Ok(Some(KeyRoute::Mpx(report)))) => {
+                    return type_text_mpx_result(text_len, report)
+                }
+                Ok(Err(e)) => return input_error_result(e),
+                Err(e) => return ToolResult::error(format!("Task error: {e}")),
+                Ok(Ok(_)) => {}
+            }
         }
 
         // Prefer the focused widget — the element the user just clicked. If a
@@ -5542,7 +5584,21 @@ impl Tool for PressKeyTool {
                         .find(|w| Some(w.xid) == active && w.pid.is_some())
                         .or_else(|| windows.iter().find(|w| w.is_on_screen && w.pid.is_some()))
                 } else {
-                    windows.first()
+                    // The pid's active window, else its largest on-screen
+                    // toplevel: LibreOffice and GIMP own hidden/utility
+                    // toplevels that a plain `first()` could pick, and an
+                    // unmapped window cannot take the virtual keyboard focus.
+                    let active = crate::x11::active_window();
+                    windows
+                        .iter()
+                        .find(|w| Some(w.xid) == active)
+                        .or_else(|| {
+                            windows
+                                .iter()
+                                .filter(|w| w.is_on_screen)
+                                .max_by_key(|w| u64::from(w.width) * u64::from(w.height))
+                        })
+                        .or_else(|| windows.first())
                 };
                 match chosen {
                     Some(w) => {
@@ -5940,7 +5996,21 @@ impl Tool for HotkeyTool {
                         .find(|w| Some(w.xid) == active && w.pid.is_some())
                         .or_else(|| windows.iter().find(|w| w.is_on_screen && w.pid.is_some()))
                 } else {
-                    windows.first()
+                    // The pid's active window, else its largest on-screen
+                    // toplevel: LibreOffice and GIMP own hidden/utility
+                    // toplevels that a plain `first()` could pick, and an
+                    // unmapped window cannot take the virtual keyboard focus.
+                    let active = crate::x11::active_window();
+                    windows
+                        .iter()
+                        .find(|w| Some(w.xid) == active)
+                        .or_else(|| {
+                            windows
+                                .iter()
+                                .filter(|w| w.is_on_screen)
+                                .max_by_key(|w| u64::from(w.width) * u64::from(w.height))
+                        })
+                        .or_else(|| windows.first())
                 };
                 match chosen {
                     Some(w) => {
@@ -6528,7 +6598,21 @@ impl Tool for ScrollTool {
                         .find(|w| Some(w.xid) == active && w.pid.is_some())
                         .or_else(|| windows.iter().find(|w| w.is_on_screen && w.pid.is_some()))
                 } else {
-                    windows.first()
+                    // The pid's active window, else its largest on-screen
+                    // toplevel: LibreOffice and GIMP own hidden/utility
+                    // toplevels that a plain `first()` could pick, and an
+                    // unmapped window cannot take the virtual keyboard focus.
+                    let active = crate::x11::active_window();
+                    windows
+                        .iter()
+                        .find(|w| Some(w.xid) == active)
+                        .or_else(|| {
+                            windows
+                                .iter()
+                                .filter(|w| w.is_on_screen)
+                                .max_by_key(|w| u64::from(w.width) * u64::from(w.height))
+                        })
+                        .or_else(|| windows.first())
                 };
                 match chosen {
                     Some(w) => {
@@ -10097,7 +10181,21 @@ impl Tool for TypeTextCharsTool {
                         .find(|w| Some(w.xid) == active && w.pid.is_some())
                         .or_else(|| windows.iter().find(|w| w.is_on_screen && w.pid.is_some()))
                 } else {
-                    windows.first()
+                    // The pid's active window, else its largest on-screen
+                    // toplevel: LibreOffice and GIMP own hidden/utility
+                    // toplevels that a plain `first()` could pick, and an
+                    // unmapped window cannot take the virtual keyboard focus.
+                    let active = crate::x11::active_window();
+                    windows
+                        .iter()
+                        .find(|w| Some(w.xid) == active)
+                        .or_else(|| {
+                            windows
+                                .iter()
+                                .filter(|w| w.is_on_screen)
+                                .max_by_key(|w| u64::from(w.width) * u64::from(w.height))
+                        })
+                        .or_else(|| windows.first())
                 };
                 match chosen {
                     Some(w) => {

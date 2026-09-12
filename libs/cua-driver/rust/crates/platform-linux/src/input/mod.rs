@@ -1104,6 +1104,28 @@ fn replay_shielded_presses(
         }
         unsafe { x11::xlib::XFreeEventData(display, &mut cookie) };
     }
+    // A press that never arrived (the point was over a window whose grab beat
+    // ours, e.g. the shell's desktop) leaves the sync-grabbed device frozen.
+    // The master is retained across calls, so thaw it here or every later
+    // press on this session would queue behind the freeze.
+    for &device_id in pending_devices.iter() {
+        thaw_device(display, device_id);
+    }
+}
+
+/// Release a device frozen by a synchronous grab; harmless when not frozen.
+fn thaw_device(display: *mut x11::xlib::Display, device_id: i32) {
+    unsafe {
+        let prev = x11::xlib::XSetErrorHandler(Some(ignore_x_error));
+        x11::xinput2::XIAllowEvents(
+            display,
+            device_id,
+            x11::xinput2::XIAsyncDevice,
+            x11::xlib::CurrentTime,
+        );
+        x11::xlib::XSync(display, 0);
+        x11::xlib::XSetErrorHandler(prev);
+    }
 }
 
 fn ewmh_active_window(display: *mut x11::xlib::Display) -> Option<x11::xlib::Window> {
@@ -1572,6 +1594,7 @@ pub fn send_virtual_pointer_click(cursor_id: &str, click: &VirtualPointerClick) 
             }
             _ => window,
         };
+        thaw_device(display, ids.pointer_id);
         install_shield_grab(display, ids.pointer_id, shield_window, click.button)
             .with_context(|| format!("shield grab failed for '{cursor_id}'"))?;
         // Run the press train under a guard so the shield is always removed,

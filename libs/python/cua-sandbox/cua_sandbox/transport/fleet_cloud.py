@@ -223,9 +223,22 @@ class _FleetClient:
             client_id = get_client_id()
             client_secret = get_client_secret()
             if not client_id or not client_secret:
+                missing = ", ".join(
+                    name
+                    for name, value in (
+                        ("CUA_CLIENT_ID", client_id),
+                        ("CUA_CLIENT_SECRET", client_secret),
+                    )
+                    if not value
+                )
                 raise ValueError(
                     "Fleet cloud sandboxes require CUA_CLIENT_ID and CUA_CLIENT_SECRET, "
-                    "or cua.configure(client_id=..., client_secret=...)."
+                    "or cua.configure(client_id=..., client_secret=...). "
+                    f"Missing client credential fields: {missing}. "
+                    "Alternatively supply a Fleet token with FLEETS_TOKEN or "
+                    "cua.configure(fleet_token=...). "
+                    "This SDK path does not read the CLI credential store populated by "
+                    "'cua auth login'. CUA_API_KEY is not a Fleet credential."
                 )
         self._base_url = get_fleet_base_url().rstrip("/")
         self._http_client = CyclopsHttpClient()

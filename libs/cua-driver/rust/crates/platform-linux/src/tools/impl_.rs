@@ -6610,6 +6610,7 @@ impl Tool for DragTool {
     }
     async fn invoke(&self, args: Value) -> ToolResult {
         let cursor_id = resolve_cursor_key(&args);
+        let modifiers: Vec<String> = args.str_array("modifier");
         if args.opt_str("scope").as_deref() == Some("desktop")
             && args.get("pid").is_none()
             && args.get("window_id").is_none()
@@ -6622,10 +6623,17 @@ impl Tool for DragTool {
             let button = parse_mouse_button(input.button.unwrap_or(ClickButton::Left).as_str());
             let duration_ms = input.duration_ms.unwrap_or(500).min(10_000);
             let steps = input.steps.unwrap_or(20).clamp(1, 200) as usize;
+            let modifiers = input.modifier.unwrap_or_default();
             let wayland = crate::wayland::wayland_input_enabled();
             let path = if wayland { "wayland_desktop" } else { "xtest" };
             let result = tokio::task::spawn_blocking(move || {
                 if wayland {
+                    if !modifiers.is_empty() {
+                        anyhow::bail!(
+                            "modified desktop drags are unavailable on native Wayland: \
+                             the virtual-pointer route cannot carry keyboard modifier state"
+                        );
+                    }
                     crate::wayland::drag_desktop(
                         from_x.round() as i32,
                         from_y.round() as i32,
@@ -6636,7 +6644,8 @@ impl Tool for DragTool {
                         button,
                     )
                 } else {
-                    crate::input::send_drag_xtest_desktop(
+                    let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+                    crate::input::send_drag_xtest_desktop_with_modifiers(
                         from_x.round() as i32,
                         from_y.round() as i32,
                         to_x.round() as i32,
@@ -6644,6 +6653,7 @@ impl Tool for DragTool {
                         button,
                         duration_ms,
                         steps,
+                        &modifier_refs,
                     )
                 }
             });
@@ -6679,6 +6689,11 @@ impl Tool for DragTool {
         let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
         let isolated_background = isolated_hyprland_background(delivery);
         if !isolated_background {
+            if crate::wayland::wayland_input_enabled() && !modifiers.is_empty() {
+                return ToolResult::error(
+                    "modified drags are unavailable on native Wayland: the pointer route cannot carry keyboard modifier state",
+                );
+            }
             if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
                 return refusal;
             }
@@ -6976,8 +6991,9 @@ impl Tool for DragTool {
                 Err(e) => return ToolResult::error(format!("Task error: {e}")),
             };
             let drag_result = tokio::task::spawn_blocking(move || {
+                let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
                 crate::input::with_x11_foreground(xid, 80, || {
-                    crate::input::send_drag_xtest_desktop(
+                    crate::input::send_drag_xtest_desktop_with_modifiers(
                         screen_from_x.round() as i32,
                         screen_from_y.round() as i32,
                         screen_to_x.round() as i32,
@@ -6985,6 +7001,7 @@ impl Tool for DragTool {
                         button,
                         duration_ms,
                         steps,
+                        &modifier_refs,
                     )
                 })
             });

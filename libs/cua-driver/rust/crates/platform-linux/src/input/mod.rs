@@ -2499,60 +2499,139 @@ pub fn send_drag_xtest_desktop(
     duration_ms: u64,
     steps: usize,
 ) -> Result<()> {
+    send_drag_xtest_desktop_with_modifiers(
+        from_x,
+        from_y,
+        to_x,
+        to_y,
+        button,
+        duration_ms,
+        steps,
+        &[],
+    )
+}
+
+/// Screen-absolute drag via XTest with physical modifier transitions around
+/// the complete press/motion/release gesture.
+pub fn send_drag_xtest_desktop_with_modifiers(
+    from_x: i32,
+    from_y: i32,
+    to_x: i32,
+    to_y: i32,
+    button: u8,
+    duration_ms: u64,
+    steps: usize,
+    modifiers: &[&str],
+) -> Result<()> {
     use x11rb::protocol::xtest::ConnectionExt as _;
     let (conn, screen_num) = connect_x11_for_input()?;
     let root = conn.setup().roots[screen_num].root;
+    let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    let mut guards = Vec::new();
+    let mut modifier_keycodes = Vec::new();
+    for modifier in modifiers {
+        let keysym = key_name_to_keysym(modifier)?;
+        let (keycode, guard) = keycode_for_keysym(&conn, &mapping, keysym, modifier)?;
+        if let Some(guard) = guard {
+            guards.push(guard);
+        }
+        modifier_keycodes.push(keycode);
+    }
     let steps = steps.max(1);
     let delay = duration_ms / steps as u64;
+    let mut pressed_modifiers = Vec::new();
+    let mut button_pressed = false;
 
-    conn.xtest_fake_input(
-        MOTION_NOTIFY_EVENT,
-        0,
-        0,
-        root,
-        from_x as i16,
-        from_y as i16,
-        0,
-    )?;
-    conn.xtest_fake_input(
-        BUTTON_PRESS_EVENT,
-        button,
-        0,
-        root,
-        from_x as i16,
-        from_y as i16,
-        0,
-    )?;
-    conn.flush()?;
-    for step in 1..=steps {
-        let t = step as f64 / steps as f64;
-        let x = from_x as f64 + (to_x - from_x) as f64 * t;
-        let y = from_y as f64 + (to_y - from_y) as f64 * t;
+    let gesture_result = (|| -> Result<()> {
+        for &keycode in &modifier_keycodes {
+            conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
+            pressed_modifiers.push(keycode);
+        }
         conn.xtest_fake_input(
             MOTION_NOTIFY_EVENT,
             0,
             0,
             root,
-            x.round() as i16,
-            y.round() as i16,
+            from_x as i16,
+            from_y as i16,
             0,
         )?;
+        conn.xtest_fake_input(
+            BUTTON_PRESS_EVENT,
+            button,
+            0,
+            root,
+            from_x as i16,
+            from_y as i16,
+            0,
+        )?;
+        button_pressed = true;
         conn.flush()?;
-        if delay > 0 {
-            sleep(Duration::from_millis(delay));
+        for step in 1..=steps {
+            let t = step as f64 / steps as f64;
+            let x = from_x as f64 + (to_x - from_x) as f64 * t;
+            let y = from_y as f64 + (to_y - from_y) as f64 * t;
+            conn.xtest_fake_input(
+                MOTION_NOTIFY_EVENT,
+                0,
+                0,
+                root,
+                x.round() as i16,
+                y.round() as i16,
+                0,
+            )?;
+            conn.flush()?;
+            if delay > 0 {
+                sleep(Duration::from_millis(delay));
+            }
+        }
+        conn.xtest_fake_input(
+            BUTTON_RELEASE_EVENT,
+            button,
+            0,
+            root,
+            to_x as i16,
+            to_y as i16,
+            0,
+        )?;
+        button_pressed = false;
+        Ok(())
+    })();
+
+    // Always attempt to release the button and every modifier queued above,
+    // including when a later motion request fails.
+    let mut cleanup_result: Result<()> = Ok(());
+    if button_pressed {
+        if let Err(error) = conn.xtest_fake_input(
+            BUTTON_RELEASE_EVENT,
+            button,
+            0,
+            root,
+            to_x as i16,
+            to_y as i16,
+            0,
+        ) {
+            cleanup_result = Err(error.into());
         }
     }
-    conn.xtest_fake_input(
-        BUTTON_RELEASE_EVENT,
-        button,
-        0,
-        root,
-        to_x as i16,
-        to_y as i16,
-        0,
-    )?;
-    conn.flush()?;
+    for &keycode in pressed_modifiers.iter().rev() {
+        if let Err(error) =
+            conn.xtest_fake_input(KEY_RELEASE_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)
+        {
+            if cleanup_result.is_ok() {
+                cleanup_result = Err(error.into());
+            }
+        }
+    }
+    if let Err(error) = conn.flush() {
+        if cleanup_result.is_ok() {
+            cleanup_result = Err(error.into());
+        }
+    }
     let _ = conn.get_input_focus()?.reply();
+    drop(guards);
+    gesture_result?;
+    cleanup_result?;
     Ok(())
 }
 

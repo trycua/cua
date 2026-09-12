@@ -46,6 +46,8 @@ class HarnessWindow(Gtk.Window):
         self._menu_action = "none"
         self.key_presses = 0
         self.hotkeys = 0
+        self._drag_modifier_seen = False
+        self.drag_events = 0
 
         # Top-level scroller so every control is reachable even on a short window.
         scroller = Gtk.ScrolledWindow()
@@ -99,9 +101,16 @@ class HarnessWindow(Gtk.Window):
         self.click_target = aid(Gtk.Button(label="Click target (left / right / double)"), "btn-clicktarget")
         self.click_target.connect("clicked", self.on_click_target)
         self.click_target.connect("button-press-event", self.on_click_target_press)
+        self.click_target.add_events(
+            Gdk.EventMask.POINTER_MOTION_MASK | Gdk.EventMask.BUTTON_RELEASE_MASK
+        )
+        self.click_target.connect("motion-notify-event", self.on_drag_motion)
+        self.click_target.connect("button-release-event", self.on_drag_release)
         root.pack_start(self.click_target, False, False, 0)
         self.click_status = Gtk.Label(label="last_action=none  clicks=0", xalign=0)
         root.pack_start(self.click_status, False, False, 0)
+        self.drag_status = Gtk.Label(label="drag_modifier=none  drag_events=0", xalign=0)
+        root.pack_start(self.drag_status, False, False, 0)
 
         # ── keyboard delivery ─────────────────────────────────────────────
         self.key_status = Gtk.Label(label="last_key=none  key_presses=0", xalign=0)
@@ -218,6 +227,8 @@ class HarnessWindow(Gtk.Window):
         self.click_status.set_text(f"last_action={self._last_action}  clicks={self.clicks}")
 
     def on_click_target_press(self, _w, ev):
+        if ev.button == 1:
+            self._drag_modifier_seen = False
         if ev.type == Gdk.EventType.DOUBLE_BUTTON_PRESS:
             self._double_click_pending = True
             self._last_action = "double_click"
@@ -227,6 +238,20 @@ class HarnessWindow(Gtk.Window):
             self.click_status.set_text(f"last_action=right_click  clicks={self.clicks}")
         elif ev.button == 1:
             self._double_click_pending = False
+
+    def on_drag_motion(self, _w, ev):
+        if ev.state & Gdk.ModifierType.BUTTON1_MASK and ev.state & Gdk.ModifierType.CONTROL_MASK:
+            self._drag_modifier_seen = True
+        return False
+
+    def on_drag_release(self, _w, ev):
+        if ev.button == 1:
+            self.drag_events += 1
+            modifier = "ctrl" if self._drag_modifier_seen else "none"
+            self.drag_status.set_text(
+                f"drag_modifier={modifier}  drag_events={self.drag_events}"
+            )
+        return False
 
     def on_scale(self, s):
         self.scale_status.set_text(f"slider_value={int(s.get_value())}")

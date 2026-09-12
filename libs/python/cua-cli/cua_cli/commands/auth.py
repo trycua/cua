@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from cua_cli.auth.oidc import OidcClient, OidcError
 from cua_cli.auth.store import (
     CredentialStorageError,
+    check_credential_store,
     clear_credentials,
     load_credentials,
     save_credentials,
@@ -52,6 +53,12 @@ def execute(args: argparse.Namespace) -> int:
 
 def cmd_login(args: argparse.Namespace) -> int:
     """Start OAuth device authorization and store the resulting tokens."""
+    try:
+        check_credential_store()
+    except CredentialStorageError as error:
+        print_error(str(error))
+        return 1
+
     client = OidcClient()
     try:
         discovery = run_async(client.discover())

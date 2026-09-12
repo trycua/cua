@@ -8,10 +8,13 @@ import pytest
 from cua_cli.auth.store import (
     CredentialStorageError,
     OAuthCredentials,
+    check_credential_store,
     clear_credentials,
     load_credentials,
     save_credentials,
 )
+from keyring.backends.fail import Keyring as FailKeyring
+from keyring.backends.null import Keyring as NullKeyring
 from keyring.errors import NoKeyringError
 
 
@@ -22,6 +25,43 @@ def credentials() -> OAuthCredentials:
         expires_at=datetime(2030, 1, 1, tzinfo=UTC),
         scope="openid profile offline_access",
     )
+
+
+@pytest.mark.parametrize("raw", [None, "malformed old credentials", "{}"])
+def test_preflight_reads_without_parsing_or_writing(raw) -> None:
+    with (
+        patch("cua_cli.auth.store.keyring.get_keyring", return_value=object()),
+        patch("cua_cli.auth.store.keyring.get_password", return_value=raw) as read,
+        patch("cua_cli.auth.store.keyring.set_password") as write,
+        patch("cua_cli.auth.store.keyring.delete_password") as delete,
+    ):
+        check_credential_store()
+    read.assert_called_once_with("run.cua.ai", "cua-cli")
+    write.assert_not_called()
+    delete.assert_not_called()
+
+
+@pytest.mark.parametrize("backend", [FailKeyring(), NullKeyring()])
+def test_preflight_rejects_unavailable_or_disabled_backend(backend) -> None:
+    with (
+        patch("cua_cli.auth.store.keyring.get_keyring", return_value=backend),
+        patch("cua_cli.auth.store.keyring.get_password", side_effect=backend.get_password),
+        patch("cua_cli.auth.store.keyring.set_password") as write,
+    ):
+        with pytest.raises(CredentialStorageError, match="secure credential store"):
+            check_credential_store()
+    write.assert_not_called()
+
+
+@pytest.mark.parametrize("error", [NoKeyringError("secret-value"), OSError("secret-value")])
+def test_preflight_sanitizes_backend_errors(error) -> None:
+    with (
+        patch("cua_cli.auth.store.keyring.get_keyring", return_value=object()),
+        patch("cua_cli.auth.store.keyring.get_password", side_effect=error),
+    ):
+        with pytest.raises(CredentialStorageError) as caught:
+            check_credential_store()
+    assert "secret-value" not in str(caught.value)
 
 
 def test_save_credentials_uses_keyring() -> None:

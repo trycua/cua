@@ -40,6 +40,7 @@ def save(
     memory_mb: Optional[int] = None,
     cpu_count: Optional[int] = None,
     arch: Optional[str] = None,
+    network_restrict: bool = True,
     status: str = "running",
 ) -> None:
     """Write or overwrite the state file for a local sandbox."""
@@ -62,6 +63,7 @@ def save(
         "memory_mb": memory_mb,
         "cpu_count": cpu_count,
         "arch": arch,
+        "network_restrict": network_restrict,
         "status": status,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }

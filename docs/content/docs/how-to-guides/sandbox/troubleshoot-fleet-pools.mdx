@@ -114,26 +114,21 @@ if (remaining.some((item) => item.metadata.name === claimName)) {
 }
 ```
 
-If you own the entire pool and all users have finished, fetch and delete it:
-
-```ts
-const pool = await client.getPool(POOL_NAME);
-await client.deletePool(pool);
-```
-
-This deletes the pool namespace and its remaining resources, including other
-claims and templates. Use this operation only for a pool you intend to remove
-completely. In Python, the equivalent is
-`pool = await Pool.get(POOL_NAME)` followed by `await pool.delete()`.
-
-If the pool lookup returns 404 but namespace inventory still shows the exact
-dedicated namespace, inspect its remaining claims and templates. Once you have
-confirmed that all remaining resources belong to the cleanup task, delete the
-namespace directly:
+If you own the entire Fleet and all users have finished, delete its namespace:
 
 ```ts
 await client.deleteNamespace(POOL_NAME);
 ```
+
+This deletes the namespace and its remaining resources, including pools,
+claims, and templates. Use this operation only for a Fleet you intend to remove
+completely. `deletePool(pool)` removes only the pool resource. In Python, the equivalent is
+`pool = await Pool.get(POOL_NAME)` followed by `await pool.delete()`.
+
+If the pool lookup returns 404 but namespace inventory still shows the exact
+dedicated namespace, inspect its remaining claims and templates. Once you have
+confirmed that all remaining resources belong to the cleanup task, use the
+same namespace deletion.
 
 In `@trycua/fleet@0.1.2`, namespace deletion accepts an already-absent namespace
 as success, so the same exact deletion can be retried after interruption.

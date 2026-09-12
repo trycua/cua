@@ -13,7 +13,6 @@ import {
   type CyclopsConfiguration,
   type HttpRequest,
   type Pool,
-  type Template,
 } from '@trycua/fleet/node';
 
 const SOURCE_TEXT = 'pear\napple\npear\nbanana\n';
@@ -79,6 +78,19 @@ async function serverCommand(
   return payload;
 }
 
+async function deleteOwnedNamespace(
+  client: CyclopsClientLike,
+  namespace: string
+): Promise<void> {
+  await client.deleteNamespace(namespace);
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const namespaces = await client.listNamespaces();
+    if (!namespaces.some((item) => item.name === namespace)) return;
+    await sleep(2_000);
+  }
+  throw new Error(`Cloud Fleet namespace is still visible: ${namespace}`);
+}
+
 export async function runTutorial(
   client: CyclopsClientLike,
   imageRef: string,
@@ -86,7 +98,6 @@ export async function runTutorial(
 ): Promise<void> {
   const templateName = `${poolName}-template`;
   let pool: Pool | undefined;
-  let template: Template | undefined;
   let claim: Claim | undefined;
 
   try {
@@ -109,7 +120,7 @@ export async function runTutorial(
         },
       },
     };
-    template = await client.createTemplate(templateRequest);
+    await client.createTemplate(templateRequest);
 
     const claimRequest: CreateClaimRequest = { pool };
     claim = await client.createClaim(claimRequest);
@@ -139,17 +150,10 @@ export async function runTutorial(
         cleanupErrors.push(error);
       }
     }
-    if (template) {
-      try {
-        await client.deleteTemplate(template);
-      } catch (error) {
-        cleanupErrors.push(error);
-      }
-    }
     if (pool) {
       console.log(`Requesting deletion of Cloud Fleet: ${poolName}`);
       try {
-        await client.deletePool(pool);
+        await deleteOwnedNamespace(client, poolName);
       } catch (error) {
         cleanupErrors.push(error);
       }

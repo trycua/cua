@@ -22,6 +22,10 @@ function response(payload) {
 function fakeClient({ failCommand, failDeleteClaim = false } = {}) {
   const calls = [];
   const files = new Map();
+  const namespaceListings = [
+    [{ name: POOL_NAME }, { name: `${POOL_NAME}-recovery` }],
+    [{ name: `${POOL_NAME}-recovery` }],
+  ];
   const pool = { metadata: { namespace: POOL_NAME, name: POOL_NAME } };
   const template = { metadata: { namespace: POOL_NAME, name: `${POOL_NAME}-template` } };
   const claim = { metadata: { namespace: POOL_NAME, name: 'first-task' } };
@@ -36,8 +40,11 @@ function fakeClient({ failCommand, failDeleteClaim = false } = {}) {
       calls.push(['deleteClaim', value]);
       if (failDeleteClaim) throw new Error('synthetic claim cleanup failure');
     },
-    deleteTemplate: async (value) => calls.push(['deleteTemplate', value]),
-    deletePool: async (value) => calls.push(['deletePool', value]),
+    deleteNamespace: async (value) => calls.push(['deleteNamespace', value]),
+    listNamespaces: async () => {
+      calls.push(['listNamespaces']);
+      return namespaceListings.shift() ?? namespaceListings.at(-1) ?? [];
+    },
     serviceRequest: async (_sandbox, service, path, request) => {
       if (path === '/status') {
         calls.push(['serviceRequest', service, path, 'status']);
@@ -76,25 +83,26 @@ test('TypeScript example writes, transforms, independently verifies, and cleans 
     ['status', 'write_text', 'run_command', 'read_text']
   );
   assert.deepEqual(
-    client.calls.slice(-3).map(([name]) => name),
-    ['deleteClaim', 'deleteTemplate', 'deletePool']
+    client.calls.slice(-4).map(([name]) => name),
+    ['deleteClaim', 'deleteNamespace', 'listNamespaces', 'listNamespaces']
   );
+  assert.equal(client.calls.find(([name]) => name === 'deleteNamespace')[1], POOL_NAME);
 });
 
 test('TypeScript example cleans up after a guest command fails', async () => {
   const client = fakeClient({ failCommand: 'run_command' });
   await assert.rejects(runTutorial(client, IMAGE_REF, POOL_NAME), /synthetic run_command failure/);
   assert.deepEqual(
-    client.calls.slice(-3).map(([name]) => name),
-    ['deleteClaim', 'deleteTemplate', 'deletePool']
+    client.calls.slice(-4).map(([name]) => name),
+    ['deleteClaim', 'deleteNamespace', 'listNamespaces', 'listNamespaces']
   );
 });
 
-test('TypeScript example continues pool cleanup after claim cleanup fails', async () => {
+test('TypeScript example continues namespace cleanup after claim cleanup fails', async () => {
   const client = fakeClient({ failDeleteClaim: true });
   await assert.rejects(runTutorial(client, IMAGE_REF, POOL_NAME), /Cleanup failed/);
   assert.deepEqual(
-    client.calls.slice(-3).map(([name]) => name),
-    ['deleteClaim', 'deleteTemplate', 'deletePool']
+    client.calls.slice(-4).map(([name]) => name),
+    ['deleteClaim', 'deleteNamespace', 'listNamespaces', 'listNamespaces']
   );
 });

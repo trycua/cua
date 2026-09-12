@@ -44,7 +44,7 @@ Install the Python Sandbox SDK in an isolated environment by saving this as
 # /// script
 # requires-python = ">=3.11,<3.14"
 # dependencies = [
-#   "cua-sandbox==0.4.3",
+#   "cua-sandbox==0.7.0",
 # ]
 # ///
 
@@ -96,7 +96,7 @@ Choose the runtime that owns your Fleet client.
 Install the Fleet lifecycle SDK and a TypeScript runner:
 
 ```bash
-npm install @trycua/fleet@0.1.1
+npm install @trycua/fleet@0.1.2
 npm install --save-dev tsx typescript
 npm pkg set type=module
 ```
@@ -200,7 +200,7 @@ Create a Vite TypeScript project and install the browser SDK:
 npm create vite@latest fleet-browser -- --template vanilla-ts
 cd fleet-browser
 npm install
-npm install @trycua/fleet@0.1.1
+npm install @trycua/fleet@0.1.2
 ```
 
 Use the same builders and reconciliation sequence as the Node.js example, but
@@ -253,9 +253,10 @@ response before choosing a different name.
 
 ## Delete capacity you own
 
-Delete a pool only after all users have released their claims. Pool deletion
-removes the namespace and its remaining resources; it is not per-task cleanup
-for a shared pool.
+Delete a Fleet namespace only after all users have released their claims.
+Namespace deletion removes the pool, its template, and remaining resources; it
+is not per-task cleanup for shared capacity. `deletePool(pool)` removes only the
+pool resource and is insufficient for whole-Fleet cleanup.
 
 <Tabs groupId="language" persist items={['Python', 'TypeScript']}>
   <Tab value="Python">
@@ -268,7 +269,7 @@ await pool.delete()
   <Tab value="TypeScript">
 
 ```ts
-await client.deletePool(pool)
+await client.deleteNamespace(POOL_NAME)
 ```
 
   </Tab>

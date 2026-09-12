@@ -170,6 +170,13 @@ pub(crate) struct SemanticDocument {
 }
 
 impl SemanticDocument {
+    pub(crate) fn document_title(&self) -> Option<&str> {
+        self.nodes
+            .iter()
+            .find(|node| matches!(node.role.as_str(), "rootwebarea" | "webarea"))
+            .and_then(|node| node.name.as_deref())
+    }
+
     pub(crate) fn extend(&mut self, mut other: Self) {
         let was_empty = self.nodes.is_empty();
         let offset = self.nodes.len();

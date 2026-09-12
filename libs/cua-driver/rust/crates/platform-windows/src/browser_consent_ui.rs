@@ -27,12 +27,6 @@ fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefus
     BrowserRefusal::new(code, message)
 }
 
-fn release_nodes(nodes: &[UiaNode]) {
-    for node in nodes.iter().filter(|node| node.element_ptr != 0) {
-        unsafe { drop(IUIAutomationElement::from_raw(node.element_ptr as *mut _)) };
-    }
-}
-
 fn is_in_web_content(nodes: &[UiaNode], node: &UiaNode) -> bool {
     let mut parent = node.parent_element_index;
     for _ in 0..nodes.len() {
@@ -390,7 +384,6 @@ pub fn dismiss(pid: u32, hwnd: u64) -> Result<bool, BrowserRefusal> {
         let tree = crate::uia::walk_tree(hwnd, None);
         let prompt_present = native_prompt_surface_present(&tree.nodes);
         if !prompt_present {
-            release_nodes(&tree.nodes);
             return Ok(dismissed);
         }
         let cancel = exact_cancel_button(&tree.nodes);
@@ -402,7 +395,6 @@ pub fn dismiss(pid: u32, hwnd: u64) -> Result<bool, BrowserRefusal> {
             )),
             Err(error) => Err(error),
         };
-        release_nodes(&tree.nodes);
         invoked?;
         dismissed = true;
         if Instant::now() >= deadline {
@@ -443,15 +435,11 @@ pub async fn handle(
         match exact_allow_button(&tree.nodes) {
             Ok(Some(element)) => {
                 let invoked = unsafe { invoke(element) };
-                release_nodes(&tree.nodes);
                 invoked?;
                 return Ok(BrowserConsentOutcome::Accepted);
             }
-            Ok(None) => release_nodes(&tree.nodes),
-            Err(error) => {
-                release_nodes(&tree.nodes);
-                return Err(error);
-            }
+            Ok(None) => {}
+            Err(error) => return Err(error),
         }
         if saw_prompt && !prompt_present {
             return Err(refusal(

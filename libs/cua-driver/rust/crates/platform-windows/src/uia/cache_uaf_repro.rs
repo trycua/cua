@@ -3,7 +3,7 @@
 //!
 //! THE RACE (what these tests model):
 //!   Two concurrent sessions drive the same (pid, hwnd).
-//!   - Session A: `get_window_state` → `ElementCache::update` → `core.insert`
+//!   - Session A: `get_window_state` → `ElementCache::adopt_walk` → `core.insert`
 //!     replaces the snapshot → old `CachedSnapshot::drop` → COM `Release` on
 //!     every cached `IUIAutomationElement`.
 //!   - Session B: `click` / `type_text` / `set_value` looked the element up out
@@ -36,6 +36,7 @@
 //! BEFORE deterministically trips and AFTER deterministically survives.
 
 use super::{CacheKey, CachedSnapshot, ElementCache, SnapshotKind};
+use crate::uia::{tests::node, UiaNode, UiaTreeResult};
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
 use std::sync::mpsc;
@@ -132,6 +133,20 @@ fn snapshot_with(ptrs: Vec<usize>) -> CachedSnapshot {
     }
 }
 
+fn walk_with(ptr: usize) -> UiaTreeResult {
+    UiaTreeResult {
+        tree_markdown: String::new(),
+        nodes: vec![UiaNode {
+            element_ptr: ptr,
+            ..node(Some(0), "Button", "", None, Some(true), None, &["invoke"])
+        }],
+    }
+}
+
+fn fake_refcount(ptr: usize) -> isize {
+    unsafe { (*(ptr as *const FakeObj)).refcount.load(Ordering::SeqCst) }
+}
+
 /// Pre-fix accessor, restored verbatim: a bare `usize` copy with NO AddRef
 /// under the lock. This is exactly the `get_element_ptr` body deleted by
 /// d95b89a1 — the vulnerable path.
@@ -216,6 +231,34 @@ fn run_forced_interleave(use_retained: bool, poison_on_zero: bool) -> usize {
 }
 
 // ---- Regression guards (run in the normal suite) ----------------------------
+
+#[test]
+fn walk_result_releases_unadopted_references_on_drop() {
+    let uaf_hits: &'static AtomicUsize = Box::leak(Box::new(AtomicUsize::new(0)));
+    let ptr = make_fake(uaf_hits, false);
+
+    drop(walk_with(ptr));
+
+    assert_eq!(fake_refcount(ptr), 0);
+    assert_eq!(uaf_hits.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn cache_adoption_transfers_reference_ownership() {
+    let uaf_hits: &'static AtomicUsize = Box::leak(Box::new(AtomicUsize::new(0)));
+    let ptr = make_fake(uaf_hits, false);
+    let cache = ElementCache::new();
+    let mut walk = walk_with(ptr);
+
+    cache.adopt_walk(PID, HWND, &mut walk);
+    assert_eq!(walk.nodes[0].element_ptr, 0);
+    drop(walk);
+    assert_eq!(fake_refcount(ptr), 1);
+
+    drop(cache);
+    assert_eq!(fake_refcount(ptr), 0);
+    assert_eq!(uaf_hits.load(Ordering::SeqCst), 0);
+}
 
 /// AFTER: the fixed `get_element_retained` path survives the exact dangerous
 /// interleave with zero use-after-free touches.

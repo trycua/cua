@@ -5,22 +5,23 @@
 //! path, or `IAccessible` for the MSAA fallback used on SAL/VCL targets).
 //!
 //! Memory contract: `UiaNode::element_ptr` is a raw COM vtable pointer with
-//! an extra AddRef from `clone()+forget()` in the walker. `CachedSnapshot::Drop`
-//! calls `Release()` via the kind-appropriate vtable to balance.
+//! an extra AddRef from `clone()+forget()` in the walker. `UiaTreeResult`
+//! releases it unless `ElementCache::adopt_walk` transfers it into a
+//! `CachedSnapshot`, whose `Drop` then balances the reference.
 //!
 //! The locked-HashMap plumbing lives in `cua_driver_core::element_cache` — see
 //! `docs/dedup-audit.md` item #3. This module owns the Windows-specific
 //! `CacheKey`, `CachedSnapshot`, and the `Drop` impl that fires COM `Release`
 //! when an entry is replaced or removed.
 
-use super::UiaNode;
+use super::{UiaNode, UiaTreeResult};
 use cua_driver_core::element_cache::ElementCacheCore;
 use windows::core::Interface;
 use windows::Win32::UI::Accessibility::{IAccessible, IUIAutomationElement};
 
 /// A cached element pointer borrowed out of the cache with an extra COM
 /// `AddRef`, so it stays alive for the duration of a UIA/MSAA action even if a
-/// concurrent `get_window_state` (→ [`ElementCache::update`]) replaces and
+/// concurrent `get_window_state` (→ [`ElementCache::adopt_walk`]) replaces and
 /// drops the snapshot it came from. Without this, the snapshot's `Drop` could
 /// `Release` the element to zero while an in-flight click / SetValue was still
 /// dereferencing the raw COM vtable pointer — a use-after-free. This is the
@@ -148,44 +149,52 @@ impl ElementCache {
         }
     }
 
-    /// Update the snapshot for (pid, hwnd) with the actionable elements
-    /// from a UIA walk. Mirrors `update_msaa` for the MSAA path.
-    pub fn update(&self, pid: u32, hwnd: u64, nodes: &[UiaNode]) {
-        self.update_with_kind(pid, hwnd, nodes, SnapshotKind::Uia);
+    /// Adopt the actionable element references from a completed walk.
+    ///
+    /// Each pointer moves into the cache by being replaced with zero in the
+    /// walk result. Any pointer not transferred remains owned by
+    /// [`UiaTreeResult`] and is released when the result is dropped.
+    pub fn adopt_walk(&self, pid: u32, hwnd: u64, walk: &mut UiaTreeResult) {
+        let kind = if walk.nodes.iter().any(|node| node.msaa_role.is_some()) {
+            SnapshotKind::Msaa
+        } else {
+            SnapshotKind::Uia
+        };
+        self.adopt_nodes(pid, hwnd, &mut walk.nodes, kind);
     }
 
-    /// Same as `update` but tags the snapshot as MSAA so Drop releases the
-    /// pointers as `IAccessible` and the click tool routes through the
-    /// MSAA dispatch path.
-    pub fn update_msaa(&self, pid: u32, hwnd: u64, nodes: &[UiaNode]) {
-        self.update_with_kind(pid, hwnd, nodes, SnapshotKind::Msaa);
-    }
-
-    fn update_with_kind(&self, pid: u32, hwnd: u64, nodes: &[UiaNode], kind: SnapshotKind) {
-        let actionable: Vec<&UiaNode> =
-            nodes.iter().filter(|n| n.element_index.is_some()).collect();
-        let elements: Vec<usize> = actionable.iter().map(|n| n.element_ptr).collect();
-        let centers: Vec<(i32, i32)> = actionable
-            .iter()
-            .map(|n| (n.center_x, n.center_y))
-            .collect();
-        let rects: Vec<Option<(i32, i32, i32, i32)>> = actionable.iter().map(|n| n.rect).collect();
-        let msaa_roles: Vec<Option<i32>> = actionable.iter().map(|n| n.msaa_role).collect();
-        self.core.insert(
-            CacheKey { pid, hwnd },
-            CachedSnapshot {
-                kind,
-                elements,
-                centers,
-                rects,
-                msaa_roles,
-            },
+    fn adopt_nodes(&self, pid: u32, hwnd: u64, nodes: &mut [UiaNode], kind: SnapshotKind) {
+        debug_assert!(
+            nodes
+                .iter()
+                .all(|node| (node.element_ptr != 0) == node.element_index.is_some()),
+            "UiaNode element pointer/index invariant violated"
         );
+        let actionable_count = nodes
+            .iter()
+            .filter(|node| node.element_index.is_some())
+            .count();
+        let mut snapshot = CachedSnapshot {
+            kind,
+            elements: Vec::with_capacity(actionable_count),
+            centers: Vec::with_capacity(actionable_count),
+            rects: Vec::with_capacity(actionable_count),
+            msaa_roles: Vec::with_capacity(actionable_count),
+        };
+        for node in nodes.iter_mut().filter(|node| node.element_index.is_some()) {
+            snapshot
+                .elements
+                .push(std::mem::take(&mut node.element_ptr));
+            snapshot.centers.push((node.center_x, node.center_y));
+            snapshot.rects.push(node.rect);
+            snapshot.msaa_roles.push(node.msaa_role);
+        }
+        self.core.insert(CacheKey { pid, hwnd }, snapshot);
     }
 
     /// Look up + COM-`AddRef` the element for `element_index` in (pid, hwnd),
     /// returning a guard that `Release`s on drop. The `AddRef` happens **under
-    /// the cache lock**, so a concurrent [`update`](Self::update) (which
+    /// the cache lock**, so a concurrent [`adopt_walk`](Self::adopt_walk) (which
     /// replaces the snapshot and `Release`s its pointers in
     /// `CachedSnapshot::drop`) cannot free the element between the lookup and
     /// the `AddRef`. Hold the returned guard for the entire UIA/MSAA action —

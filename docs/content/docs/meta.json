@@ -3,13 +3,17 @@
   "root": true,
   "pages": [
     "index",
-    "cloud-fleets",
-    "---Learn---",
     "tutorials",
+    "(cloud-fleets)",
+    "(local-sandboxes)",
+    "---Products---",
+    "[Cua Driver](/how-to-guides/driver/install)",
+    "[Cua CLI](/reference/cua-cli)",
+    "[Lume](/how-to-guides/lume/install-lume)",
+    "[Cua-Bench](/how-to-guides/cua-bench/run-a-task)",
+    "---Browse by type---",
     "concepts",
-    "---Connect---",
     "use-cua-with",
-    "---Do---",
     "how-to-guides",
     "reference"
   ]

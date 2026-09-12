@@ -302,6 +302,7 @@ const FILE_TRANSFER_OPERATIONS: &[&str] = &[
     "browser_set_input_files",
     "browser_download",
     "get_desktop_state[with_file_output]",
+    "wait_for_screen[with_file_output]",
     "get_window_state[with_file_output]",
     "start_recording",
     "stop_recording",
@@ -736,6 +737,7 @@ pub fn enforcement_adapters_for_call(
         tool,
         "get_desktop_state"
             | "get_accessibility_tree"
+            | "wait_for_screen"
             | "get_window_state"
             | "verify_state"
             | "list_apps"
@@ -768,7 +770,7 @@ pub fn enforcement_adapters_for_call(
         add("clipboard");
     }
 
-    let writes_screenshot = matches!(tool, "get_desktop_state" | "get_window_state")
+    let writes_screenshot = matches!(tool, "get_desktop_state" | "get_window_state" | "wait_for_screen")
         && args
             .get("screenshot_out_file")
             .and_then(Value::as_str)
@@ -912,6 +914,7 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "check_permissions"
         | "get_accessibility_tree"
         | "verify_state"
+        | "wait_for_screen"
         | "set_config"
         | "escalate_session"
         | "start_recording"
@@ -1000,7 +1003,7 @@ pub fn classify_tool_call(tool: &str, args: &Value) -> RiskAssessment {
                 operation_sensitive: true,
             }
         }
-        "get_desktop_state" | "get_window_state" => RiskAssessment {
+        "get_desktop_state" | "get_window_state" | "wait_for_screen" => RiskAssessment {
             class: if args
                 .get("screenshot_out_file")
                 .and_then(Value::as_str)

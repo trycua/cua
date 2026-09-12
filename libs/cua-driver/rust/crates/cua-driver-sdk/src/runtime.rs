@@ -234,9 +234,11 @@ impl DriverRuntime {
         cua_driver_core::session::forget_suspended_runtime_scope(
             &self.compatibility_context.runtime_scope_key(),
         );
-        cua_driver_core::element_token::global()
-            .clear_runtime_scope(&self.compatibility_context.runtime_scope_key());
-        let _ = self.registry.recording.stop_owner(None);
+        cua_driver_core::element_cache::retire_runtime_scope(
+            &self.compatibility_context.runtime_scope_key(),
+        );
+        let recording = self.registry.recording.clone();
+        let _ = tokio::task::spawn_blocking(move || recording.stop_owner(None)).await;
     }
 
     fn stop_lifecycle_maintenance(&self) {
@@ -454,7 +456,7 @@ impl Drop for DriverRuntime {
         cua_driver_core::session::revoke_sessions_with_prefix(&runtime_prefix);
         cua_driver_core::session::forget_ended_sessions_with_prefix(&runtime_prefix);
         cua_driver_core::session::forget_suspended_runtime_scope(&runtime_scope);
-        cua_driver_core::element_token::global().clear_runtime_scope(&runtime_scope);
+        cua_driver_core::element_cache::retire_runtime_scope(&runtime_scope);
         // Explicit `shutdown()` drains work and finalizes recordings. Drop is
         // runtime-scoped and non-blocking so a retained binding cannot affect
         // another generation.

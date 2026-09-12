@@ -208,9 +208,9 @@ impl Tool for TypeTextTool {
             .into_owned();
         // Surface 6: element_token / element_index precedence resolution.
         let element_token_arg = args.opt_str("element_token");
-        let window_id_arg = args.opt_u64("window_id").map(|v| v as u32);
+        let window_id_arg = args.opt_u64("window_id");
         let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match cua_driver_core::element_token::resolve_element_args(
+        let resolved = match self.state.element_cache.resolve_element_args(
             pid,
             element_index_arg,
             element_token_arg.as_deref(),
@@ -221,13 +221,10 @@ impl Tool for TypeTextTool {
             Ok(r) => r,
             Err(e) => return e,
         };
-        let (element_index, window_id) = match resolved {
-            cua_driver_core::element_token::ResolvedElement::None => (None, window_id_arg),
-            cua_driver_core::element_token::ResolvedElement::Element {
-                window_id: wid,
-                element_index: idx,
-                via_token: _,
-            } => (Some(idx), wid),
+        let (element_index, window_id, element_guard) = resolved.into_parts(window_id_arg);
+        let window_id = match super::native_window_id(window_id) {
+            Ok(window_id) => window_id,
+            Err(error) => return error,
         };
         let delay_ms = args.u64_or("delay_ms", 30);
         let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
@@ -256,22 +253,7 @@ impl Tool for TypeTextTool {
             );
         }
 
-        // Resolve the element pointer (if element_index given). Retain it out
-        // of the cache so a concurrent get_window_state can't free it before
-        // the blocking type below dereferences it (use-after-free → daemon
-        // crash). The guard lives to method end, past type_text_blocking.
-        let element_guard = if let (Some(idx), Some(wid)) = (element_index, window_id) {
-            match self.state.element_cache.get_element_retained(pid, wid, idx) {
-                Some(e) => Some((e, idx)),
-                None => {
-                    return ToolResult::error(format!(
-                        "Element index {idx} not found. Call get_window_state first."
-                    ))
-                }
-            }
-        } else {
-            None
-        };
+        let element_guard = element_guard.zip(element_index);
 
         // ── Exact-target background gate (macOS background input v1) ──
         // A window-addressed background insert must prove exact delivery
@@ -331,9 +313,9 @@ impl Tool for TypeTextTool {
             // focused element via the CGEvent (key_events) rung.
         }
         if let (Some((element, _)), Some(wid)) = (element_guard.as_ref(), window_id) {
-            let center_ptr = element.as_ptr() as usize;
+            let center_guard = element.clone();
             if let Ok(Some((screen_x, screen_y))) = tokio::task::spawn_blocking(move || unsafe {
-                crate::ax::bindings::element_screen_center(center_ptr as AXUIElementRef)
+                crate::ax::bindings::element_screen_center(center_guard.as_ptr() as AXUIElementRef)
             })
             .await
             {
@@ -372,12 +354,14 @@ impl Tool for TypeTextTool {
         let is_terminal_target = crate::terminal::is_terminal_pid(pid);
 
         let blocking_policy = keyboard_policy.clone();
+        let native_guard = element_guard.clone();
         let result = focus_guard::with_focus_suppressed(
             Some(pid),
             prior_front,
             "type_text.AXSelectedText",
             || async move {
                 tokio::task::spawn_blocking(move || {
+                    let _native_guard = native_guard;
                     type_text_blocking(
                         pid,
                         &text_clone,
@@ -800,7 +784,10 @@ async fn background_keyboard_policy(
         decide_background_input, BackgroundAction, BackgroundInputDecision, ExactWindowTarget,
     };
     let lease = super::acquire_background_mutation(pid).await;
+    let element_guard =
+        element_ptr.map(|ptr| unsafe { crate::ax::cache::RetainedElement::retain(ptr) });
     let facts = match tokio::task::spawn_blocking(move || {
+        let element_ptr = element_guard.as_ref().map(|guard| guard.as_ptr());
         crate::ax::exact_target::gather_background_facts(pid, window_id, element_ptr)
     })
     .await

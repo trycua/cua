@@ -1,0 +1,189 @@
+import { createHash, randomUUID } from 'node:crypto';
+import { setTimeout as sleep } from 'node:timers/promises';
+import {
+  CyclopsClient,
+  CyclopsCredentials,
+  FetchHttpClient,
+  uniffiInitAsync,
+  type Claim,
+  type CreateClaimRequest,
+  type CreatePoolRequest,
+  type CreateTemplateRequest,
+  type CyclopsClientLike,
+  type CyclopsConfiguration,
+  type HttpRequest,
+  type Pool,
+  type Template,
+} from '@trycua/fleet/node';
+
+const SOURCE_TEXT = 'pear\napple\npear\nbanana\n';
+const SOURCE_PATH = '/tmp/first-cloud-fleet.txt';
+const RESULT_PATH = '/tmp/first-cloud-fleet.sha256';
+
+function requiredEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`Missing environment variable: ${name}`);
+  return value;
+}
+
+function commandBody(command: string, params: Record<string, unknown>): ArrayBuffer {
+  return new TextEncoder().encode(JSON.stringify({ command, params })).buffer as ArrayBuffer;
+}
+
+async function waitForServer(
+  client: CyclopsClientLike,
+  sandbox: Parameters<CyclopsClientLike['serviceRequest']>[0]
+): Promise<void> {
+  const deadline = Date.now() + 15 * 60 * 1_000;
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    try {
+      const response = await client.serviceRequest(sandbox, 'server', '/status', {
+        method: 'GET',
+        url: 'https://service.invalid/status',
+        headers: [],
+        timeoutSecs: 10n,
+      });
+      if (response.status === 200) return;
+      lastError = new Error(`computer-server returned HTTP ${response.status}`);
+    } catch (error) {
+      lastError = error;
+    }
+    await sleep(2_000);
+  }
+  throw new Error('computer-server was not ready within 15 minutes', { cause: lastError });
+}
+
+async function serverCommand(
+  client: CyclopsClientLike,
+  sandbox: Parameters<CyclopsClientLike['serviceRequest']>[0],
+  command: string,
+  params: Record<string, unknown>
+): Promise<Record<string, unknown>> {
+  const request: HttpRequest = {
+    method: 'POST',
+    url: 'https://service.invalid/cmd',
+    headers: [{ name: 'content-type', value: 'application/json' }],
+    body: commandBody(command, params),
+  };
+  const response = await client.serviceRequest(sandbox, 'server', '/cmd', request);
+  if (response.status !== 200) throw new Error(`computer-server returned HTTP ${response.status}`);
+
+  const event = new TextDecoder()
+    .decode(response.body)
+    .split('\n')
+    .find((line) => line.startsWith('data: '));
+  if (!event) throw new Error('computer-server returned no data event');
+  const payload = JSON.parse(event.slice(6)) as Record<string, unknown>;
+  if (payload.success !== true) throw new Error(String(payload.error ?? `${command} failed`));
+  return payload;
+}
+
+export async function runTutorial(
+  client: CyclopsClientLike,
+  imageRef: string,
+  poolName: string
+): Promise<void> {
+  const templateName = `${poolName}-template`;
+  let pool: Pool | undefined;
+  let template: Template | undefined;
+  let claim: Claim | undefined;
+
+  try {
+    console.log(`Cloud Fleet name: ${poolName}`);
+    const poolRequest: CreatePoolRequest = {
+      namespace: poolName,
+      spec: { replicas: 1, sandboxTemplateRef: { name: templateName } },
+    };
+    pool = await client.createPool(poolRequest);
+
+    const templateRequest: CreateTemplateRequest = {
+      namespace: poolName,
+      name: templateName,
+      spec: {
+        vmTemplate: {
+          containerDiskImage: imageRef,
+          cpuCores: 4,
+          memory: '4Gi',
+          services: [{ name: 'server', targetPort: 8000 }],
+        },
+      },
+    };
+    template = await client.createTemplate(templateRequest);
+
+    const claimRequest: CreateClaimRequest = { pool };
+    claim = await client.createClaim(claimRequest);
+    const sandbox = await client.waitClaim(claim);
+    await waitForServer(client, sandbox);
+
+    await serverCommand(client, sandbox, 'write_text', {
+      path: SOURCE_PATH,
+      content: SOURCE_TEXT,
+    });
+    await serverCommand(client, sandbox, 'run_command', {
+      command: `sha256sum ${SOURCE_PATH} | cut -d ' ' -f 1 > ${RESULT_PATH}`,
+    });
+    const result = await serverCommand(client, sandbox, 'read_text', { path: RESULT_PATH });
+    const guestDigest = String(result.content ?? '').trim();
+    const localDigest = createHash('sha256').update(SOURCE_TEXT).digest('hex');
+    if (guestDigest !== localDigest) {
+      throw new Error(`Verification failed: guest=${guestDigest} local=${localDigest}`);
+    }
+    console.log(`Verified SHA-256: ${guestDigest}`);
+  } finally {
+    const cleanupErrors: unknown[] = [];
+    if (claim) {
+      try {
+        await client.deleteClaim(claim);
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+    if (template) {
+      try {
+        await client.deleteTemplate(template);
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+    if (pool) {
+      console.log(`Requesting deletion of Cloud Fleet: ${poolName}`);
+      try {
+        await client.deletePool(pool);
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError(cleanupErrors, `Cleanup failed for Cloud Fleet ${poolName}`);
+    }
+  }
+}
+
+async function main(): Promise<void> {
+  await uniffiInitAsync();
+  const configuration: CyclopsConfiguration = {
+    baseUrl: process.env.CUA_FLEET_BASE_URL ?? 'https://run.cua.ai',
+    tokenUrl:
+      process.env.CUA_TOKEN_URL ??
+      'https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token',
+    credentials: new CyclopsCredentials(
+      requiredEnv('CUA_CLIENT_ID'),
+      requiredEnv('CUA_CLIENT_SECRET')
+    ),
+    poolPollIntervalMs: 2_000n,
+    poolPollLimit: 450,
+    claimPollIntervalMs: 2_000n,
+    claimPollLimit: 450,
+  };
+  const client = CyclopsClient.connect(configuration, new FetchHttpClient());
+  const poolName = `first-fleet-${randomUUID().replaceAll('-', '').slice(0, 16)}`;
+  await runTutorial(client, requiredEnv('CUA_FLEET_IMAGE'), poolName);
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((error: unknown) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+}

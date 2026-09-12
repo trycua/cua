@@ -1,0 +1,1 @@
+Verification requires artifacts/cleanup.json with ok set to true.

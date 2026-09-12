@@ -1,0 +1,18 @@
+{
+  "schema": "driver.schema.json",
+  "base": "../examples/driver.cuabench.json",
+  "cases": [
+    { "name": "root-fields", "remove": ["/schema_version", "/id", "/version", "/interface", "/provided_capabilities"], "covers": "#/required", "expect": { "instance": "/", "validator": "required" } },
+    { "name": "interface-fields", "remove": ["/interface/kind", "/interface/protocol", "/interface/tools", "/interface/tool_schemas_digest_algorithm", "/interface/tool_schemas_digest"], "covers": "#/$defs/interface/required", "expect": { "instance": "/interface", "validator": "required" } },
+    { "name": "protocol-fields", "remove": ["/interface/protocol/name", "/interface/protocol/revision"], "covers": "#/$defs/protocol/oneOf/1/required", "expect": { "instance": "/interface/protocol", "validator": "oneOf" } },
+    { "name": "tool-fields", "remove": ["/interface/tools/0/name", "/interface/tools/0/description", "/interface/tools/0/input_schema"], "covers": "#/$defs/tool/required", "expect": { "instance": "/interface/tools/0", "validator": "required" } },
+    { "name": "skill-fields", "remove": ["/skill/id", "/skill/version", "/skill/format", "/skill/artifact", "/skill/source"], "covers": "#/$defs/skill/required", "expect": { "instance": "/skill", "validator": "required" } },
+    { "name": "artifact-fields", "remove": ["/skill/artifact/path", "/skill/artifact/sha256"], "covers": "#/$defs/artifact/required", "expect": { "instance": "/skill/artifact", "validator": "required" } },
+    { "name": "source-fields", "remove": ["/skill/source/kind", "/skill/source/uri", "/skill/source/revision"], "covers": "#/$defs/source/required", "expect": { "instance": "/skill/source", "validator": "required" } },
+    { "name": "generated-skill-generator", "replace": { "/skill/format": "generated" }, "remove": ["/skill/generator_version"], "allow_missing_remove": true, "covers": "#/$defs/skill/allOf/0/then/required", "expect": { "instance": "/skill", "validator": "required" } },
+    { "name": "non-generated-skill-generator", "replace": { "/skill/generator_version": "1.0.0" }, "expect": { "instance": "/skill", "validator": "not" } },
+    { "name": "wrong-tool-digest-algorithm", "replace": { "/interface/tool_schemas_digest_algorithm": "sha256-sorted-json" }, "expect": { "instance": "/interface/tool_schemas_digest_algorithm", "validator": "const" } },
+    { "name": "unknown-capability", "replace": { "/provided_capabilities/0": "vendor.magic-click" }, "expect": { "instance": "/provided_capabilities/0", "validator": "enum" } },
+    { "name": "unsafe-skill-path", "replace": { "/skill/artifact/path": "../skill.md" }, "expect": { "instance": "/skill/artifact/path", "validator": "pattern" } }
+  ]
+}

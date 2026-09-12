@@ -1,0 +1,25 @@
+#!/usr/bin/env python3
+import os
+from pathlib import Path
+import runpy
+import subprocess
+import sys
+
+
+script = Path(__file__).resolve()
+if sys.version_info < (3, 11):
+    virtualenv_python = script.parents[1] / ".venv" / (
+        "Scripts/python.exe" if os.name == "nt" else "bin/python"
+    )
+    if not virtualenv_python.is_file():
+        raise SystemExit(
+            "compare_drivers requires Python 3.11+; repository .venv not found"
+        )
+    raise SystemExit(
+        subprocess.call(
+            [str(virtualenv_python), str(script), *sys.argv[1:]],
+            cwd=script.parents[1],
+        )
+    )
+
+runpy.run_path(str(script.with_name("cli.py")), run_name="__main__")

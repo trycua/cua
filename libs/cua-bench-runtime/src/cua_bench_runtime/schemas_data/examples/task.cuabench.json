@@ -1,0 +1,88 @@
+{
+  "schema_version": "0.1.0",
+  "id": "cua.synthetic.background-note",
+  "version": "1.0.0",
+  "title": "Write a note in a background fixture",
+  "authors": [
+    { "name": "Cua AI" }
+  ],
+  "provenance": {
+    "origin": "original",
+    "sources_consulted": [
+      {
+        "title": "Cua Driver Bench architecture",
+        "purpose": "Repository-owned manifest requirements"
+      }
+    ],
+    "third_party_material": false
+  },
+  "instructions": "Write the supplied text in the designated fixture window while leaving the foreground window unchanged.",
+  "variants": [
+    {
+      "id": "fixture.alpha",
+      "fixture_artifacts": [
+        {
+          "path": "freeze-inputs/fixture.json",
+          "sha256": "93ac39a437f48af1c8a5afe95cdf2ca142bec46cfe9516f0146b5903dd3b9db6"
+        }
+      ],
+      "parameters": { "text": "sample note" }
+    }
+  ],
+  "required_capabilities": [
+    "observe.window-metadata",
+    "act.keyboard",
+    "target.window",
+    "operate.background"
+  ],
+  "observation_surfaces": ["window-system", "input-events"],
+  "network_policy": {
+    "setup": { "mode": "deny" },
+    "agent": { "mode": "deny" },
+    "evaluation": { "mode": "deny" },
+    "cleanup": { "mode": "deny" }
+  },
+  "limits": {
+    "agent_seconds": 120,
+    "evaluator_seconds": 30
+  },
+  "side_effects": {
+    "allowed": [
+      { "scope": "fixture.target", "description": "Change the target note text." }
+    ],
+    "forbidden": [
+      { "scope": "fixture.foreground", "description": "Change the foreground decoy window." }
+    ]
+  },
+  "evaluator": {
+    "entrypoint": "freeze-inputs/evaluator.txt",
+    "inputs": [
+      {
+        "path": "freeze-inputs/evaluator.txt",
+        "sha256": "101a1639b91e8dde0cd80baed1f3fb2d8d3bf11451cebf867c0833f48aa7f125"
+      }
+    ],
+    "staging": "agent-inaccessible",
+    "oracle": {
+      "required": true,
+      "staging": "after-agent"
+    }
+  },
+  "reset": {
+    "entrypoint": "reset/reset-note",
+    "verification": {
+      "entrypoint": "reset/verify-note",
+      "timeout_seconds": 20
+    },
+    "failure_fixtures": [
+      {
+        "id": "reset.retained-note",
+        "artifact": {
+          "path": "freeze-inputs/reset-retained-note.json",
+          "sha256": "9de699c02ef52a14bd1f9e14cff3a3510c229f06869fbe78fdbe5760f75dfed4"
+        },
+        "expected_failure": "reset verification detects retained text"
+      }
+    ]
+  }
+}

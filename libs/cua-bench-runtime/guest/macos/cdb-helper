@@ -1,0 +1,3756 @@
+#!/usr/bin/python3 -I
+"""Root-owned fixed-verb helper for protected macOS benchmark attempts."""
+
+from __future__ import annotations
+
+import base64
+import ctypes
+import errno
+import fcntl
+import grp
+import hashlib
+import ipaddress
+import json
+import os
+import plistlib
+import pwd
+import re
+import resource
+import select
+import shlex
+import signal
+import shutil
+import socket
+import stat
+import subprocess
+import sys
+import tarfile
+import tempfile
+import time
+import unicodedata
+import zipfile
+from datetime import datetime, timezone
+from pathlib import Path, PurePosixPath
+from typing import Callable, Optional, TypeVar
+
+ATTEMPT_BASE = Path("/Users/Shared/cdb-attempts")
+SCRATCH_BASE = Path("/Users/lume/Library/Caches/cdb-inbox")
+STATE_BASE = Path("/var/run/cdb-helper")
+MEDIATOR_BASE = Path("/private/var/run/cdb-mediator")
+PROTECTED_BASE = Path("/private/var/db/cdb-protected")
+MEDIATOR_PATH = Path("/usr/local/libexec/cdb-driver-mediator")
+DRIVER_SOCKET = Path("/Users/lume/Library/Caches/cua-driver/cua-driver.sock")
+PFCTL = "/sbin/pfctl"
+AGENT_USER = "cdb-agent"
+CONTROL_USER = "lume"
+CONSOLE_GROUP = "staff"
+ELECTRON_APP = Path("/opt/cdb/electron-43.4.0/Electron.app")
+SUDOERS_PATH = Path("/etc/sudoers.d/cdb-helper")
+MAX_ARCHIVE_BYTES = 32 * 1024 * 1024
+MAX_MEMBERS = 4096
+MAX_EXPANDED_BYTES = 256 * 1024 * 1024
+MAX_AGENT_STDIN_BYTES = 1024 * 1024
+MAX_CREDENTIAL_VALUE_BYTES = 16 * 1024
+MAX_CREDENTIAL_ENVELOPE_BYTES = 32 * 1024
+CODEX_STARTUP_TIMEOUT_SECONDS = 5.0
+MAX_CODEX_STARTUP_LINE_BYTES = 16 * 1024
+CLAUDE_STARTUP_TIMEOUT_SECONDS = 5.0
+MAX_CLAUDE_STARTUP_LINE_BYTES = 64 * 1024
+MAX_CLAUDE_STARTUP_PRELUDE_EVENTS = 8
+CLAUDE_CODE_PINNED_VERSION = "2.1.233"
+CLAUDE_CODE_OAUTH_CREDENTIAL = "CLAUDE_CODE_OAUTH_TOKEN"
+CLAUDE_CODE_OAUTH_FD_ENV = "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR"
+CLAUDE_CODE_OAUTH_FD = 198
+MAX_CLAUDE_OAUTH_TOKEN_BYTES = 4096
+CODEX_COMPANION_SOURCE = Path("/Users/lume/Library/Caches/cdb-inbox/codex-code-mode-host")
+CODEX_COMPANION_TARGET = Path("/usr/local/bin/codex-code-mode-host")
+CODEX_COMPANION_STAGING = Path("/usr/local/bin/.codex-code-mode-host.cdb-staging")
+CODEX_COMPANION_SHA256 = "a059beb029cdbc989e72e23f8680be9f703cb6cf83d9598d91041f82178d018d"
+CODEX_COMPANION_TEAM_ID = "2DC432GLL2"
+CODEX_COMPANION_IDENTIFIER = "codex-code-mode-host"
+MAX_CODEX_COMPANION_BYTES = 64 * 1024 * 1024
+CHROME_ARCHIVE_SOURCE = Path(
+    "/Users/lume/Library/Caches/cdb-inbox/google-chrome-151.0.7922.138-universal.zip"
+)
+CHROME_TARGET = Path("/Applications/Google Chrome.app")
+CHROME_STAGE_PARENT = Path("/Applications/.cdb-google-chrome-stage")
+# These identities bind the canonical ditto archive and its normalized
+# extracted tree; changing either artifact requires an intentional source edit.
+CHROME_ARCHIVE_SHA256 = "8a1359f7885993dc693a420660da309034ccf5cadfe3279ca6908b5d1e05af25"
+CHROME_TREE_SHA256 = "02ba043e584aed92442cf1aabc89236e4d56999568a650240f2af5c9e07fe460"
+CHROME_VERSION = "151.0.7922.138"
+CHROME_IDENTIFIER = "com.google.Chrome"
+CHROME_TEAM_ID = "EQHXZ8M8AV"
+CHROME_CONTROL_UID = 501
+# The seed projects the control user's home and Library as 99:99 to this
+# privileged helper, while the Caches subtree retains its 501:staff identity.
+# The host orchestrator independently binds the logged-in user's 501:staff view.
+CHROME_PRIVILEGED_HOME_UID = 99
+CHROME_PRIVILEGED_HOME_GID = 99
+CHROME_PRIVILEGED_SOURCE_UID = 501
+CHROME_PRIVILEGED_SOURCE_GID = 20
+CHROME_STAGE_UID = 0
+CHROME_STAGE_GID = 0
+MAX_CHROME_ARCHIVE_BYTES = 768 * 1024 * 1024
+MAX_CHROME_MEMBERS = 32768
+MAX_CHROME_EXPANDED_BYTES = 2 * 1024 * 1024 * 1024
+MAX_CHROME_MEMBER_BYTES = 512 * 1024 * 1024
+MAX_CHROME_COMPRESSION_RATIO = 200
+# macOS PF stores anchor names in a 64-byte buffer including the trailing NUL.
+MAX_PF_ANCHOR_NAME_BYTES = 63
+PF_ANCHOR_PREFIX = "com.trycua.cdb/a-"
+PF_ANCHOR_DIGEST_HEX_LENGTH = 40
+SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+TASK_ID = re.compile(r"^[a-z0-9]+(?:[._-][a-z0-9]+)+$")
+DIGEST = re.compile(r"^[a-f0-9]{64}$")
+LAUNCH_ARGUMENT = re.compile(r"^--[a-z][a-z0-9-]{0,31}=[A-Za-z0-9._:@/+,-]{1,256}$")
+JWT = re.compile(r"^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$")
+ACCOUNT_ID = re.compile(r"^[A-Za-z0-9_-]{1,256}$")
+PRODUCTION_HARNESSES = frozenset({"codex", "claude-code", "opencode"})
+PRODUCTION_EXECUTABLE_ROOTS = (Path("/usr/local/bin"),)
+PRODUCTION_CREDENTIALS = {
+    "codex": frozenset({"CDB_CODEX_AUTH_JSON", "OPENAI_API_KEY"}),
+    "claude-code": frozenset({CLAUDE_CODE_OAUTH_CREDENTIAL}),
+    "opencode": frozenset({"OPENAI_API_KEY", "ANTHROPIC_API_KEY"}),
+}
+OFF_TARGET_REASONS = frozenset(
+    {
+        "launch_identity_mismatch",
+        "launch_target_unapproved",
+        "target_identity_conflict",
+        "target_input_address_unstable",
+        "target_input_unbound",
+        "target_observation_unbound",
+        "tool_unapproved",
+    }
+)
+# Lowercase proxy aliases are intentionally rendered alongside their uppercase
+# forms because the supported production CLIs do not share one proxy-variable
+# convention. Keep this exception closed instead of accepting arbitrary
+# lowercase launch-environment names.
+LOWERCASE_LAUNCH_ENVIRONMENT_NAMES = frozenset({"https_proxy", "no_proxy"})
+PF_STAGES = frozenset(
+    {
+        "anchor-flush",
+        "anchor-load",
+        "anchor-rules-read",
+        "main-rules-read",
+        "pf-enable",
+        "pf-info-read",
+        "pf-token-release",
+        "rollback-anchor-flush",
+        "rollback-token-release",
+    }
+)
+LAUNCH_STAGES = frozenset(
+    {
+        "launch-stage-agent-account",
+        "launch-stage-codex-auth-path",
+        "launch-stage-codex-auth-validate",
+        "launch-stage-credential-policy",
+        "launch-stage-credential-read",
+        "launch-stage-envelope-load",
+        "launch-stage-fork",
+        "launch-stage-output-init",
+        "launch-stage-pipe",
+        "launch-stage-state-commit",
+        "launch-stage-state-load",
+        "launch-stage-stdin-open",
+    }
+)
+
+
+class HelperError(Exception):
+    pass
+
+
+class LaunchStageError(HelperError):
+    """A fixed, non-sensitive diagnostic for synchronous launch setup."""
+
+
+LaunchStageResult = TypeVar("LaunchStageResult")
+
+
+def launch_stage(code: str, operation: Callable[[], LaunchStageResult]) -> LaunchStageResult:
+    if code not in LAUNCH_STAGES:
+        raise RuntimeError("invalid launch stage code")
+    try:
+        return operation()
+    except BaseException as error:
+        raise LaunchStageError(code) from error
+
+
+def emit(value: dict) -> None:
+    print(json.dumps(value, sort_keys=True, separators=(",", ":")))
+
+
+def run(
+    argv: list[str],
+    *,
+    input_text: Optional[str] = None,
+    cwd: Optional[Path] = None,
+) -> subprocess.CompletedProcess[str]:
+    completed = subprocess.run(
+        argv,
+        input=input_text,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+        cwd=cwd,
+        env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "C"},
+    )
+    if completed.returncode:
+        raise HelperError(f"fixed command failed: {Path(argv[0]).name}")
+    return completed
+
+
+def run_pf(
+    stage: str,
+    arguments: list[str],
+    *,
+    input_text: Optional[str] = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run pfctl with a fixed, non-sensitive failure stage."""
+
+    if stage not in PF_STAGES:
+        raise HelperError("PF stage is invalid")
+    try:
+        completed = subprocess.run(
+            [PFCTL, *arguments],
+            input=input_text,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+            env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "C"},
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise HelperError(f"PF stage {stage} failed without an exit code") from error
+    if completed.returncode:
+        raise HelperError(f"PF stage {stage} failed with exit code {completed.returncode}")
+    return completed
+
+
+def require_root_caller() -> None:
+    if os.geteuid() != 0:
+        raise HelperError("helper must run as root")
+    if os.environ.get("SUDO_USER") != CONTROL_USER:
+        raise HelperError("helper caller is not the protected control account")
+
+
+def slug(value: str) -> str:
+    if not SLUG.fullmatch(value):
+        raise HelperError("invalid attempt id")
+    return value
+
+
+def component_slug(value: str, label: str) -> str:
+    if not isinstance(value, str) or not SLUG.fullmatch(value):
+        raise HelperError(f"invalid {label}")
+    return value
+
+
+def pf_anchor(attempt: str) -> str:
+    """Return the bounded PF anchor bound to a canonical attempt slug."""
+
+    canonical = slug(attempt)
+    digest = hashlib.sha256(canonical.encode("ascii")).hexdigest()
+    anchor = PF_ANCHOR_PREFIX + digest[:PF_ANCHOR_DIGEST_HEX_LENGTH]
+    if len(anchor.encode("ascii")) > MAX_PF_ANCHOR_NAME_BYTES:
+        raise HelperError("generated PF anchor exceeds the platform limit")
+    return anchor
+
+
+def root_for(value: str) -> Path:
+    candidate = ATTEMPT_BASE / slug(value)
+    if candidate.parent != ATTEMPT_BASE:
+        raise HelperError("attempt path escaped its root")
+    return candidate
+
+
+def state_for(value: str) -> Path:
+    return STATE_BASE / f"{slug(value)}.json"
+
+
+def protected_for(value: str) -> Path:
+    return PROTECTED_BASE / slug(value)
+
+
+def mediator_runtime_for(value: str) -> Path:
+    return MEDIATOR_BASE / slug(value)
+
+
+def load_state(attempt: str) -> dict:
+    path = state_for(attempt)
+    if not path.exists():
+        return {"attempt": slug(attempt)}
+    if not path.is_file() or path.is_symlink():
+        raise HelperError("attempt state is unsafe")
+    document = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(document, dict) or document.get("attempt") != slug(attempt):
+        raise HelperError("attempt state binding mismatch")
+    return document
+
+
+def save_state(attempt: str, document: dict) -> None:
+    if document.get("attempt") != slug(attempt):
+        raise HelperError("attempt state binding mismatch")
+    STATE_BASE.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path = state_for(attempt)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{attempt}-", dir=STATE_BASE)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            json.dump(document, output, sort_keys=True, separators=(",", ":"))
+            output.flush()
+            os.fsync(output.fileno())
+        os.chmod(temporary_name, 0o600)
+        os.replace(temporary_name, path)
+    except BaseException:
+        try:
+            os.unlink(temporary_name)
+        except OSError:
+            pass
+        raise
+
+
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def safe_member(member: tarfile.TarInfo) -> PurePosixPath:
+    name = PurePosixPath(member.name)
+    if name.is_absolute() or not name.parts or ".." in name.parts:
+        raise HelperError("archive member path is unsafe")
+    if not (member.isdir() or member.isreg()) or member.issym() or member.islnk():
+        raise HelperError("archive contains a forbidden member type")
+    return name
+
+
+def prepare_permissions(root: Path) -> None:
+    agent = pwd.getpwnam(AGENT_USER)
+    for path in sorted(root.rglob("*"), key=lambda item: len(item.parts)):
+        status = path.lstat()
+        if stat.S_ISLNK(status.st_mode) or not (
+            stat.S_ISDIR(status.st_mode) or stat.S_ISREG(status.st_mode)
+        ):
+            raise HelperError("staged tree contains a forbidden file type")
+        os.chown(path, 0, agent.pw_gid, follow_symlinks=False)
+        mode = 0o550 if path.is_dir() or status.st_mode & 0o111 else 0o440
+        os.chmod(path, mode, follow_symlinks=False)
+    os.chown(root, 0, agent.pw_gid)
+    os.chmod(root, 0o550)
+    for relative in ("home", "workspace", "artifacts"):
+        writable = root / relative
+        if not writable.is_dir():
+            raise HelperError("archive omitted a required writable directory")
+        for path in [writable, *writable.rglob("*")]:
+            status = path.lstat()
+            if stat.S_ISLNK(status.st_mode) or not (
+                stat.S_ISDIR(status.st_mode) or stat.S_ISREG(status.st_mode)
+            ):
+                raise HelperError("writable tree contains a forbidden file type")
+            os.chown(path, agent.pw_uid, agent.pw_gid, follow_symlinks=False)
+            os.chmod(path, 0o700 if path.is_dir() else 0o600, follow_symlinks=False)
+
+
+def require_attempt_base() -> None:
+    base_status = ATTEMPT_BASE.lstat()
+    if (
+        not stat.S_ISDIR(base_status.st_mode)
+        or base_status.st_uid != 0
+        or base_status.st_gid != 0
+        or stat.S_IMODE(base_status.st_mode) != 0o755
+    ):
+        raise HelperError("attempt base is not root protected")
+
+
+def stage_attempt(attempt: str, expected_digest: str) -> dict:
+    attempt = slug(attempt)
+    if not DIGEST.fullmatch(expected_digest):
+        raise HelperError("invalid archive digest")
+    archive = SCRATCH_BASE / f"cdb-{attempt}-payload.tar.gz"
+    status = archive.lstat()
+    if not stat.S_ISREG(status.st_mode) or stat.S_ISLNK(status.st_mode):
+        raise HelperError("payload is not a regular file")
+    if status.st_size <= 0 or status.st_size > MAX_ARCHIVE_BYTES:
+        raise HelperError("payload size is out of bounds")
+    if sha256(archive) != expected_digest:
+        raise HelperError("payload digest mismatch")
+    destination = root_for(attempt)
+    if destination.exists():
+        raise HelperError("attempt root already exists")
+    require_attempt_base()
+    temporary = Path(tempfile.mkdtemp(prefix=f".{attempt}-", dir=ATTEMPT_BASE))
+    try:
+        with tarfile.open(archive, "r:gz") as bundle:
+            members = bundle.getmembers()
+            if not members or len(members) > MAX_MEMBERS:
+                raise HelperError("archive member count is out of bounds")
+            if sum(member.size for member in members) > MAX_EXPANDED_BYTES:
+                raise HelperError("expanded archive is too large")
+            for member in members:
+                name = safe_member(member)
+                target = temporary.joinpath(*name.parts)
+                if member.isdir():
+                    target.mkdir(mode=0o700, parents=True, exist_ok=True)
+                    continue
+                target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                source = bundle.extractfile(member)
+                if source is None:
+                    raise HelperError("archive member cannot be read")
+                with target.open("xb") as output:
+                    shutil.copyfileobj(source, output, 1024 * 1024)
+                os.chmod(target, 0o550 if member.mode & 0o111 else 0o440)
+        prepare_permissions(temporary)
+        temporary.rename(destination)
+    except BaseException:
+        if temporary.is_dir() and temporary.parent == ATTEMPT_BASE:
+            shutil.rmtree(temporary)
+        raise
+    archive.unlink()
+    return {"verb": "stage-attempt", "attempt": attempt, "archive_sha256": expected_digest}
+
+
+def as_agent(argv: list[str], *, cwd: Optional[Path] = None) -> subprocess.CompletedProcess[str]:
+    command = ["/usr/bin/sudo", "-n", "-u", AGENT_USER, "--", *argv]
+    return run(command, cwd=cwd)
+
+
+def reset_attempt(attempt: str) -> dict:
+    root = root_for(attempt)
+    workspace = root / "workspace"
+    outputs: list[dict] = []
+    for name in ("setup.py", "verify.py"):
+        script = root / "task/reset" / name
+        if not script.is_file() or script.is_symlink():
+            raise HelperError("reset program is unavailable")
+        completed = as_agent(
+            ["/usr/bin/python3", str(script), "--workspace", str(workspace)], cwd=root
+        )
+        try:
+            outputs.append(json.loads(completed.stdout.splitlines()[-1]))
+        except (IndexError, json.JSONDecodeError) as error:
+            raise HelperError("reset program returned invalid evidence") from error
+    if outputs[-1].get("ok") is not True:
+        raise HelperError("reset verification failed")
+    return {"verb": "reset-attempt", "attempt": slug(attempt), "verification": outputs[-1]}
+
+
+def share_console_path(attempt: str, relative: str) -> dict:
+    relative = component_slug(relative, "console-share path")
+    root = root_for(attempt)
+    workspace = root / "workspace"
+    shared = workspace / relative
+    if not shared.is_dir() or shared.is_symlink():
+        raise HelperError("console share is unavailable")
+    agent = pwd.getpwnam(AGENT_USER)
+    console_group = grp.getgrnam(CONSOLE_GROUP)
+    os.chown(workspace, agent.pw_uid, console_group.gr_gid, follow_symlinks=False)
+    os.chmod(workspace, 0o710, follow_symlinks=False)
+    for path in [shared, *shared.rglob("*")]:
+        status = path.lstat()
+        if stat.S_ISLNK(status.st_mode) or not (
+            stat.S_ISDIR(status.st_mode) or stat.S_ISREG(status.st_mode)
+        ):
+            raise HelperError("console share contains a forbidden file type")
+        os.chown(path, agent.pw_uid, console_group.gr_gid, follow_symlinks=False)
+        os.chmod(path, 0o770 if path.is_dir() else 0o660, follow_symlinks=False)
+    return {
+        "verb": "share-console-path",
+        "attempt": slug(attempt),
+        "relative": relative,
+        "mode": "shared-agent-console",
+    }
+
+
+def prepare_task_store(attempt: str, relative: str) -> dict:
+    """Copy reset state into a root-confined console store.
+
+    The benchmark agent retains its normal writable workspace, but neither the
+    native app nor the evaluator trusts the agent-writable task-store copy.
+    """
+
+    relative = component_slug(relative, "task-store path")
+    attempt = slug(attempt)
+    source = root_for(attempt) / "workspace" / relative
+    if not source.is_dir() or source.is_symlink():
+        raise HelperError("task store source is unavailable")
+    PROTECTED_BASE.mkdir(mode=0o711, parents=True, exist_ok=True)
+    os.chown(PROTECTED_BASE, 0, 0)
+    os.chmod(PROTECTED_BASE, 0o711)
+    protected = protected_for(attempt)
+    if protected.exists():
+        raise HelperError("protected attempt state already exists")
+    protected.mkdir(mode=0o711)
+    destination = protected / relative
+    destination.mkdir(mode=0o700)
+    total = 0
+    files = 0
+    for item in sorted(source.rglob("*")):
+        status = item.lstat()
+        if stat.S_ISLNK(status.st_mode) or not (
+            stat.S_ISDIR(status.st_mode) or stat.S_ISREG(status.st_mode)
+        ):
+            raise HelperError("task store contains a forbidden file type")
+        target = destination / item.relative_to(source)
+        if stat.S_ISDIR(status.st_mode):
+            target.mkdir(mode=0o700)
+            continue
+        if status.st_size > 4 * 1024 * 1024 or total + status.st_size > 16 * 1024 * 1024:
+            raise HelperError("task store exceeds protected copy bounds")
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(item, flags)
+        try:
+            opened = os.fstat(descriptor)
+            if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (
+                status.st_dev,
+                status.st_ino,
+            ):
+                raise HelperError("task store changed during protected copy")
+            with os.fdopen(descriptor, "rb") as reader, target.open("xb") as writer:
+                descriptor = -1
+                shutil.copyfileobj(reader, writer, 1024 * 1024)
+                writer.flush()
+                os.fsync(writer.fileno())
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+        total += status.st_size
+        files += 1
+    console = pwd.getpwnam(CONTROL_USER)
+    for path in [destination, *destination.rglob("*")]:
+        status = path.lstat()
+        os.chown(path, console.pw_uid, console.pw_gid, follow_symlinks=False)
+        os.chmod(path, 0o700 if stat.S_ISDIR(status.st_mode) else 0o600, follow_symlinks=False)
+    return {
+        "verb": "prepare-task-store",
+        "attempt": attempt,
+        "relative": relative,
+        "files": files,
+        "bytes": total,
+        "mode": "protected-console-only",
+    }
+
+
+def launch_task_app(
+    attempt: str,
+    app_id: str,
+    store_relative: str,
+    launch_arguments_json: str,
+    store_mode: str = "protected-console-only",
+) -> dict:
+    app_id = component_slug(app_id, "task app id")
+    store_relative = component_slug(store_relative, "task-store path")
+    try:
+        launch_arguments = json.loads(launch_arguments_json)
+    except json.JSONDecodeError as error:
+        raise HelperError("task app launch arguments are invalid") from error
+    if (
+        not isinstance(launch_arguments, list)
+        or len(launch_arguments) > 16
+        or any(
+            not isinstance(argument, str)
+            or not LAUNCH_ARGUMENT.fullmatch(argument)
+            or argument.startswith("--store=")
+            for argument in launch_arguments
+        )
+    ):
+        raise HelperError("task app launch arguments are invalid")
+    if store_mode not in {"protected-console-only", "shared-agent-console"}:
+        raise HelperError("unsupported task app store mode")
+    root = root_for(attempt)
+    state = load_state(attempt)
+    if "task_app" in state:
+        raise HelperError("task app launch is one-shot")
+    application = root / "task" / "apps" / app_id
+    store = (
+        protected_for(attempt) / store_relative
+        if store_mode == "protected-console-only"
+        else root / "workspace" / store_relative
+    )
+    electron = ELECTRON_APP / "Contents/MacOS/Electron"
+    for path in (application, electron):
+        if not path.exists() or path.is_symlink():
+            raise HelperError("task app dependency is unavailable")
+    if not store.is_dir() or store.is_symlink():
+        label = (
+            "protected task store"
+            if store_mode == "protected-console-only"
+            else "shared task store"
+        )
+        raise HelperError(f"{label} is unavailable")
+    store_status = store.stat()
+    store_path_sha256 = hashlib.sha256(str(store.resolve(strict=True)).encode("utf-8")).hexdigest()
+    console = run(["/usr/bin/stat", "-f", "%u", "/dev/console"]).stdout.strip()
+    if not console.isdigit() or int(console) < 1:
+        raise HelperError("console uid is unavailable")
+    console_account = pwd.getpwuid(int(console))
+    if console_account.pw_name != CONTROL_USER:
+        raise HelperError("unexpected console account")
+    if store_status.st_uid != int(console):
+        raise HelperError("task app store owner is invalid")
+    store_argument = f"--store={store}"
+    run(
+        [
+            "/bin/launchctl",
+            "asuser",
+            console,
+            "/usr/bin/sudo",
+            "-n",
+            "-u",
+            CONTROL_USER,
+            "--",
+            "/usr/bin/open",
+            "-n",
+            "-g",
+            "-a",
+            str(ELECTRON_APP),
+            "--args",
+            str(application),
+            store_argument,
+            *launch_arguments,
+        ]
+    )
+    target_pid: Optional[int] = None
+    target_identity: Optional[str] = None
+    deadline = time.monotonic() + 10.0
+    stable = 0
+    try:
+        while time.monotonic() < deadline:
+            candidates = _task_app_processes(int(console), electron, application, store_argument)
+            if len(candidates) == 1:
+                candidate = candidates[0]
+                identity = _process_identity(candidate)
+                if identity is not None and (candidate, identity) == (
+                    target_pid,
+                    target_identity,
+                ):
+                    stable += 1
+                elif identity is not None:
+                    target_pid, target_identity, stable = candidate, identity, 1
+                if stable >= 3:
+                    break
+            else:
+                target_pid, target_identity, stable = None, None, 0
+            time.sleep(0.05)
+        if target_pid is None or target_identity is None or stable < 3:
+            raise HelperError("task app did not expose a unique store-bound target")
+    except BaseException:
+        for candidate in _task_app_processes(int(console), electron, application, store_argument):
+            try:
+                os.kill(candidate, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+        raise
+    state["task_app"] = {
+        "app_id": app_id,
+        "store_relative": store_relative,
+        "store_mode": store_mode,
+        "launch_arguments_sha256": hashlib.sha256(
+            json.dumps(launch_arguments, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+        "store_path_sha256": store_path_sha256,
+        "store_device": store_status.st_dev,
+        "store_inode": store_status.st_ino,
+        "target_pid": target_pid,
+        "target_process_identity": target_identity,
+        "console_uid": int(console),
+    }
+    save_state(attempt, state)
+    return {
+        "verb": "launch-task-app",
+        "attempt": slug(attempt),
+        "app_id": app_id,
+        "store_relative": store_relative,
+        "store_mode": store_mode,
+        "launch_arguments_sha256": state["task_app"]["launch_arguments_sha256"],
+        "store_path_sha256": store_path_sha256,
+        "store_device": store_status.st_dev,
+        "store_inode": store_status.st_ino,
+        "target_pid": target_pid,
+        "target_process_identity": target_identity,
+    }
+
+
+def _task_app_processes(
+    console_uid: int, electron: Path, application: Path, store_argument: str
+) -> list[int]:
+    completed = subprocess.run(
+        ["/bin/ps", "-axo", "pid=,uid=,command="],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+        env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "C"},
+    )
+    if completed.returncode:
+        raise HelperError("task app process discovery failed")
+    matches: list[int] = []
+    for line in completed.stdout.splitlines():
+        fields = line.strip().split(None, 2)
+        if len(fields) != 3 or not fields[0].isdigit() or not fields[1].isdigit():
+            continue
+        try:
+            argv = shlex.split(fields[2])
+        except ValueError:
+            continue
+        if (
+            int(fields[1]) == console_uid
+            and argv
+            and Path(argv[0]) == electron
+            and str(application) in argv
+            and store_argument in argv
+            and not any(value.startswith("--type=") for value in argv)
+        ):
+            matches.append(int(fields[0]))
+    return matches
+
+
+def _process_uid(pid: int) -> Optional[int]:
+    completed = subprocess.run(
+        ["/bin/ps", "-o", "uid=", "-p", str(pid)],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+        env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "C"},
+    )
+    if completed.returncode:
+        return None
+    value = completed.stdout.strip()
+    return int(value) if value.isdigit() else None
+
+
+def _process_identity(pid: int) -> Optional[str]:
+    completed = subprocess.run(
+        ["/bin/ps", "-o", "uid=", "-o", "lstart=", "-o", "comm=", "-p", str(pid)],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+        env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "C"},
+    )
+    value = " ".join(completed.stdout.split())
+    if completed.returncode or not value:
+        return None
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
+def _terminate_and_reap(pid: int) -> None:
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        try:
+            waited, _status = os.waitpid(pid, os.WNOHANG)
+        except ChildProcessError:
+            return
+        if waited == pid:
+            return
+        time.sleep(0.05)
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    try:
+        os.waitpid(pid, 0)
+    except ChildProcessError:
+        pass
+
+
+def _wait_for_process_exit(pid: int, process_identity: str, timeout_seconds: float) -> bool:
+    """Wait for an exact process instance even when it is not our child."""
+
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        current_identity = _process_identity(pid)
+        if current_identity is None or current_identity != process_identity:
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def _remove_mediator_runtime(runtime: Path) -> None:
+    if runtime.parent != MEDIATOR_BASE:
+        raise HelperError("mediator runtime cleanup escaped its root")
+    if runtime.exists() and (runtime.is_symlink() or not runtime.is_dir()):
+        raise HelperError("mediator runtime cleanup target is unsafe")
+    frontend = runtime / "driver.sock"
+    if frontend.exists() or frontend.is_symlink():
+        frontend.unlink()
+    if runtime.exists():
+        runtime.rmdir()
+
+
+def start_mediator(
+    attempt: str,
+    task_id: str,
+    expected_tool_contract_sha256: Optional[str] = None,
+    expected_daemon_tool_list_envelope_sha256: Optional[str] = None,
+) -> dict:
+    attempt = slug(attempt)
+    if not isinstance(task_id, str) or not TASK_ID.fullmatch(task_id):
+        raise HelperError("task id is invalid")
+    if expected_tool_contract_sha256 is not None and (
+        not isinstance(expected_tool_contract_sha256, str)
+        or not DIGEST.fullmatch(expected_tool_contract_sha256)
+    ):
+        raise HelperError("expected tool contract digest is invalid")
+    if expected_daemon_tool_list_envelope_sha256 is not None and (
+        not isinstance(expected_daemon_tool_list_envelope_sha256, str)
+        or not DIGEST.fullmatch(expected_daemon_tool_list_envelope_sha256)
+    ):
+        raise HelperError("expected daemon tool-list envelope digest is invalid")
+    if (
+        expected_daemon_tool_list_envelope_sha256 is not None
+        and expected_tool_contract_sha256 is None
+    ):
+        raise HelperError("daemon tool-list envelope binding requires tool contract binding")
+    state = load_state(attempt)
+    if "mediator" in state:
+        raise HelperError("mediator start is one-shot")
+    task_app = state.get("task_app")
+    if not isinstance(task_app, dict) or task_app.get("store_mode") != "protected-console-only":
+        raise HelperError("task app target identity is unavailable")
+    target_pid = task_app.get("target_pid")
+    target_identity = task_app.get("target_process_identity")
+    store_relative = task_app.get("store_relative")
+    if not isinstance(store_relative, str) or not SLUG.fullmatch(store_relative):
+        raise HelperError("task app store identity is unavailable")
+    protected_store = protected_for(attempt) / store_relative
+    try:
+        store_status = protected_store.lstat()
+        store_path_sha256 = hashlib.sha256(
+            str(protected_store.resolve(strict=True)).encode("utf-8")
+        ).hexdigest()
+    except OSError as error:
+        raise HelperError("protected task store identity is unavailable") from error
+    if (
+        not isinstance(target_pid, int)
+        or target_pid < 1
+        or not isinstance(target_identity, str)
+        or not DIGEST.fullmatch(target_identity)
+        or _process_uid(target_pid) != task_app.get("console_uid")
+        or _process_identity(target_pid) != target_identity
+        or not stat.S_ISDIR(store_status.st_mode)
+        or (store_status.st_dev, store_status.st_ino)
+        != (task_app.get("store_device"), task_app.get("store_inode"))
+        or store_path_sha256 != task_app.get("store_path_sha256")
+    ):
+        raise HelperError("task app target identity changed before mediator start")
+    protected = protected_for(attempt)
+    if not protected.is_dir() or protected.is_symlink():
+        raise HelperError("protected attempt state is unavailable")
+    mediator_status = MEDIATOR_PATH.stat()
+    if (
+        not stat.S_ISREG(mediator_status.st_mode)
+        or mediator_status.st_uid != 0
+        or mediator_status.st_gid != 0
+        or stat.S_IMODE(mediator_status.st_mode) != 0o555
+    ):
+        raise HelperError("mediator installation is unsafe")
+    console = pwd.getpwnam(CONTROL_USER)
+    agent = pwd.getpwnam(AGENT_USER)
+    backend_parent = DRIVER_SOCKET.parent
+    parent_status = backend_parent.lstat()
+    if (
+        not stat.S_ISDIR(parent_status.st_mode)
+        or stat.S_ISLNK(parent_status.st_mode)
+        or parent_status.st_uid != console.pw_uid
+    ):
+        raise HelperError("driver backend parent identity is invalid")
+    backend_status = DRIVER_SOCKET.lstat()
+    if not stat.S_ISSOCK(backend_status.st_mode) or backend_status.st_uid != console.pw_uid:
+        raise HelperError("driver backend socket identity is invalid")
+    original_parent_mode = stat.S_IMODE(parent_status.st_mode)
+    locked_parent_mode = original_parent_mode & ~0o222
+
+    MEDIATOR_BASE.mkdir(mode=0o755, parents=True, exist_ok=True)
+    os.chown(MEDIATOR_BASE, 0, 0)
+    os.chmod(MEDIATOR_BASE, 0o755)
+    runtime = mediator_runtime_for(attempt)
+    if runtime.exists():
+        raise HelperError("mediator runtime path already exists")
+    runtime.mkdir(mode=0o710)
+    os.chown(runtime, 0, agent.pw_gid)
+    os.chmod(backend_parent, locked_parent_mode, follow_symlinks=False)
+    locked_parent_status = backend_parent.lstat()
+    locked_backend_status = DRIVER_SOCKET.lstat()
+    if (
+        (locked_parent_status.st_dev, locked_parent_status.st_ino)
+        != (parent_status.st_dev, parent_status.st_ino)
+        or stat.S_IMODE(locked_parent_status.st_mode) != locked_parent_mode
+        or (locked_backend_status.st_dev, locked_backend_status.st_ino)
+        != (backend_status.st_dev, backend_status.st_ino)
+    ):
+        os.chmod(backend_parent, original_parent_mode, follow_symlinks=False)
+        _remove_mediator_runtime(runtime)
+        raise HelperError("driver backend identity changed while being pinned")
+    frontend = runtime / "driver.sock"
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    log_fd = -1
+    pid: Optional[int] = None
+    try:
+        listener.bind(str(frontend))
+        listener.listen(16)
+        os.chown(frontend, console.pw_uid, agent.pw_gid)
+        os.chmod(frontend, 0o660)
+        log_path = protected / "mediator.ndjson"
+        log_fd = os.open(
+            log_path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        os.set_inheritable(listener.fileno(), True)
+        os.set_inheritable(log_fd, True)
+        pid = os.fork()
+        if pid == 0:
+            try:
+                os.setsid()
+                detach_standard_streams({listener.fileno(), log_fd})
+                os.initgroups(CONTROL_USER, console.pw_gid)
+                os.setgid(console.pw_gid)
+                os.setuid(console.pw_uid)
+                arguments = [
+                    str(MEDIATOR_PATH),
+                    "--listener-fd",
+                    str(listener.fileno()),
+                    "--log-fd",
+                    str(log_fd),
+                    "--backend-socket",
+                    str(DRIVER_SOCKET),
+                    "--expected-agent-uid",
+                    str(agent.pw_uid),
+                    "--target-pid",
+                    str(target_pid),
+                    "--attempt",
+                    attempt,
+                    "--task",
+                    task_id,
+                ]
+                if expected_tool_contract_sha256 is not None:
+                    arguments.extend(
+                        [
+                            "--expected-daemon-tool-schemas-sha256",
+                            expected_tool_contract_sha256,
+                        ]
+                    )
+                if expected_daemon_tool_list_envelope_sha256 is not None:
+                    arguments.extend(
+                        [
+                            "--expected-daemon-tool-list-envelope-sha256",
+                            expected_daemon_tool_list_envelope_sha256,
+                        ]
+                    )
+                os.execve(str(MEDIATOR_PATH), arguments, {"PATH": "/usr/bin:/bin", "LANG": "C"})
+            except BaseException:
+                os._exit(70)
+        listener.close()
+        os.close(log_fd)
+        log_fd = -1
+    except BaseException:
+        listener.close()
+        if log_fd >= 0:
+            os.close(log_fd)
+        if pid is not None and pid > 0:
+            _terminate_and_reap(pid)
+        _remove_mediator_runtime(runtime)
+        os.chmod(backend_parent, original_parent_mode, follow_symlinks=False)
+        raise
+    assert pid is not None
+    try:
+        deadline = time.monotonic() + 5.0
+        process_identity: Optional[str] = None
+        stable = 0
+        while time.monotonic() < deadline:
+            try:
+                waited, _status = os.waitpid(pid, os.WNOHANG)
+            except ChildProcessError as error:
+                raise HelperError("mediator worker was not reapable") from error
+            if waited == pid:
+                raise HelperError("mediator worker exited before readiness")
+            identity = _process_identity(pid)
+            current_frontend = frontend.lstat()
+            current_parent = backend_parent.lstat()
+            current_backend = DRIVER_SOCKET.lstat()
+            ready = (
+                _process_uid(pid) == console.pw_uid
+                and identity is not None
+                and stat.S_ISSOCK(current_frontend.st_mode)
+                and (current_parent.st_dev, current_parent.st_ino)
+                == (parent_status.st_dev, parent_status.st_ino)
+                and (current_backend.st_dev, current_backend.st_ino)
+                == (backend_status.st_dev, backend_status.st_ino)
+            )
+            if ready and identity == process_identity:
+                stable += 1
+            elif ready:
+                process_identity, stable = identity, 1
+            else:
+                stable = 0
+            if stable >= 3:
+                break
+            time.sleep(0.05)
+        if process_identity is None or stable < 3:
+            raise HelperError("mediator worker did not become ready")
+        frontend_status = frontend.lstat()
+    except BaseException:
+        _terminate_and_reap(pid)
+        _remove_mediator_runtime(runtime)
+        log_path = protected / "mediator.ndjson"
+        if log_path.is_file() and not log_path.is_symlink():
+            log_path.unlink()
+        os.chmod(backend_parent, original_parent_mode, follow_symlinks=False)
+        raise
+    try:
+        state["mediator"] = {
+            "pid": pid,
+            "worker_uid": console.pw_uid,
+            "process_identity": process_identity,
+            "agent_uid": agent.pw_uid,
+            "frontend_device": frontend_status.st_dev,
+            "frontend_inode": frontend_status.st_ino,
+            "mediator_sha256": sha256(MEDIATOR_PATH),
+            "backend_device": backend_status.st_dev,
+            "backend_inode": backend_status.st_ino,
+            "backend_parent_device": parent_status.st_dev,
+            "backend_parent_inode": parent_status.st_ino,
+            "backend_parent_original_mode": original_parent_mode,
+            "target_pid": target_pid,
+            "target_process_identity": target_identity,
+            "task_id": task_id,
+            "expected_tool_contract_sha256": expected_tool_contract_sha256,
+            "tool_contract_required": expected_tool_contract_sha256 is not None,
+            "expected_daemon_tool_list_envelope_sha256": (
+                expected_daemon_tool_list_envelope_sha256
+            ),
+            "daemon_tool_list_envelope_required": (
+                expected_daemon_tool_list_envelope_sha256 is not None
+            ),
+            "sealed": False,
+        }
+        save_state(attempt, state)
+    except BaseException:
+        _terminate_and_reap(pid)
+        _remove_mediator_runtime(runtime)
+        log_path = protected / "mediator.ndjson"
+        if log_path.is_file() and not log_path.is_symlink():
+            log_path.unlink()
+        os.chmod(backend_parent, original_parent_mode, follow_symlinks=False)
+        raise
+    return {
+        "verb": "mediator-start",
+        "attempt": attempt,
+        "worker_uid": console.pw_uid,
+        "agent_uid": agent.pw_uid,
+        "frontend_mode": "0660",
+        "frontend_owner_uid": console.pw_uid,
+        "frontend_group_gid": agent.pw_gid,
+        "mediator_sha256": state["mediator"]["mediator_sha256"],
+        "backend_owner_uid": backend_status.st_uid,
+        "backend_parent_device": parent_status.st_dev,
+        "backend_parent_inode": parent_status.st_ino,
+        "backend_device": backend_status.st_dev,
+        "backend_inode": backend_status.st_ino,
+        "target_pid": target_pid,
+        "task_id": task_id,
+        "expected_tool_contract_sha256": expected_tool_contract_sha256,
+        "tool_contract_required": expected_tool_contract_sha256 is not None,
+        "expected_daemon_tool_list_envelope_sha256": (expected_daemon_tool_list_envelope_sha256),
+        "daemon_tool_list_envelope_required": (
+            expected_daemon_tool_list_envelope_sha256 is not None
+        ),
+    }
+
+
+def _validate_chained_log(
+    path: Path,
+    attempt: str,
+    *,
+    expected_task: str | None = None,
+    expected_owner_uid: int = 0,
+) -> tuple[list[dict], str]:
+    if not path.is_file() or path.is_symlink() or path.stat().st_uid != expected_owner_uid:
+        raise HelperError("mediator evidence path is unsafe")
+    content = path.read_bytes()
+    if not content or len(content) > 16 * 1024 * 1024:
+        raise HelperError("mediator evidence size is invalid")
+    previous = "0" * 64
+    records: list[dict] = []
+    for sequence, line in enumerate(content.splitlines(), 1):
+        if len(line) > 1024 * 1024:
+            raise HelperError("mediator evidence record is too large")
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise HelperError("mediator evidence is malformed") from error
+        if (
+            not isinstance(record, dict)
+            or record.get("seq") != sequence
+            or record.get("prev") != previous
+        ):
+            raise HelperError("mediator evidence chain is discontinuous")
+        claimed = record.get("hash")
+        body = {key: value for key, value in record.items() if key != "hash"}
+        actual = hashlib.sha256(
+            json.dumps(
+                body,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+        ).hexdigest()
+        if claimed != actual:
+            raise HelperError("mediator evidence hash mismatch")
+        if record.get("attempt") != attempt or (
+            expected_task is not None and record.get("task") != expected_task
+        ):
+            raise HelperError("mediator evidence attempt binding mismatch")
+        if record.get("kind") == "anomaly" and (
+            set(record)
+            != {
+                "seq",
+                "prev",
+                "attempt",
+                "task",
+                "kind",
+                "anomaly",
+                "reason",
+                "hash",
+            }
+            or record.get("anomaly") != "off_target_gui_activity"
+            or record.get("reason") not in OFF_TARGET_REASONS
+        ):
+            raise HelperError("mediator anomaly evidence is invalid")
+        previous = claimed
+        records.append(record)
+    if (
+        records[-1].get("kind") != "seal"
+        or not isinstance(records[-1].get("fatal"), bool)
+        or not isinstance(records[-1].get("certifying"), bool)
+        or not isinstance(records[-1].get("tool_contract_validated"), bool)
+        or not isinstance(records[-1].get("tool_contract_required"), bool)
+    ):
+        raise HelperError("mediator evidence did not seal")
+    return records, hashlib.sha256(content).hexdigest()
+
+
+def _off_target_reason_counts(records: list[dict]) -> dict[str, int]:
+    counts = {reason: 0 for reason in OFF_TARGET_REASONS}
+    for record in records:
+        if record.get("kind") == "anomaly":
+            counts[record["reason"]] += 1
+    return {reason: counts[reason] for reason in sorted(counts) if counts[reason]}
+
+
+def _write_durable_json_new(path: Path, payload: dict) -> None:
+    descriptor = os.open(
+        path,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+        json.dump(payload, output, sort_keys=True, separators=(",", ":"))
+        output.write("\n")
+        output.flush()
+        os.fsync(output.fileno())
+        full_fsync = getattr(fcntl, "F_FULLFSYNC", None)
+        if full_fsync is not None:
+            fcntl.fcntl(output.fileno(), full_fsync)
+    directory = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+
+
+def stop_and_seal_mediator(attempt: str) -> dict:
+    attempt = slug(attempt)
+    state = load_state(attempt)
+    mediator = state.get("mediator")
+    if not isinstance(mediator, dict) or mediator.get("sealed") is True:
+        raise HelperError("mediator is unavailable or already sealed")
+    pid = mediator.get("pid")
+    if not isinstance(pid, int):
+        raise HelperError("mediator worker identity changed before sealing")
+    runtime = mediator_runtime_for(attempt)
+    frontend = runtime / "driver.sock"
+    backend_parent = DRIVER_SOCKET.parent
+    try:
+        status = frontend.lstat()
+        parent_status = backend_parent.lstat()
+        backend_status = DRIVER_SOCKET.lstat()
+        task_app = state.get("task_app")
+        store_relative = task_app.get("store_relative") if isinstance(task_app, dict) else None
+        if not isinstance(store_relative, str) or not SLUG.fullmatch(store_relative):
+            raise HelperError("task app store identity changed before sealing")
+        protected_store = protected_for(attempt) / store_relative
+        store_status = protected_store.lstat()
+        store_path_sha256 = hashlib.sha256(
+            str(protected_store.resolve(strict=True)).encode("utf-8")
+        ).hexdigest()
+        if _process_uid(pid) != mediator.get("worker_uid") or _process_identity(
+            pid
+        ) != mediator.get("process_identity"):
+            raise HelperError("mediator worker identity changed before sealing")
+        if (status.st_dev, status.st_ino) != (
+            mediator.get("frontend_device"),
+            mediator.get("frontend_inode"),
+        ):
+            raise HelperError("mediator frontend identity changed")
+        if (parent_status.st_dev, parent_status.st_ino) != (
+            mediator.get("backend_parent_device"),
+            mediator.get("backend_parent_inode"),
+        ):
+            raise HelperError("driver backend parent identity changed before sealing")
+        if (backend_status.st_dev, backend_status.st_ino) != (
+            mediator.get("backend_device"),
+            mediator.get("backend_inode"),
+        ):
+            raise HelperError("driver backend socket identity changed before sealing")
+        if (
+            not isinstance(task_app, dict)
+            or task_app.get("target_pid") != mediator.get("target_pid")
+            or _process_identity(mediator["target_pid"]) != mediator.get("target_process_identity")
+            or _process_uid(mediator["target_pid"]) != task_app.get("console_uid")
+            or (store_status.st_dev, store_status.st_ino)
+            != (task_app.get("store_device"), task_app.get("store_inode"))
+            or store_path_sha256 != task_app.get("store_path_sha256")
+        ):
+            raise HelperError("task app target identity changed before sealing")
+    except BaseException:
+        _terminate_and_reap(pid)
+        _remove_mediator_runtime(runtime)
+        if (
+            backend_parent.exists()
+            and not backend_parent.is_symlink()
+            and (backend_parent.stat().st_dev, backend_parent.stat().st_ino)
+            == (mediator.get("backend_parent_device"), mediator.get("backend_parent_inode"))
+        ):
+            os.chmod(
+                backend_parent,
+                mediator.get("backend_parent_original_mode", 0o700),
+                follow_symlinks=False,
+            )
+        raise
+    process_identity = mediator.get("process_identity")
+    if not isinstance(process_identity, str) or not DIGEST.fullmatch(process_identity):
+        raise HelperError("mediator worker identity changed before sealing")
+    os.kill(pid, signal.SIGTERM)
+    if not _wait_for_process_exit(pid, process_identity, 10.0):
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        _wait_for_process_exit(pid, process_identity, 2.0)
+        raise HelperError("mediator did not seal before deadline")
+    final_parent_status = backend_parent.lstat()
+    final_backend_status = DRIVER_SOCKET.lstat()
+    if (final_parent_status.st_dev, final_parent_status.st_ino) != (
+        mediator.get("backend_parent_device"),
+        mediator.get("backend_parent_inode"),
+    ) or (final_backend_status.st_dev, final_backend_status.st_ino) != (
+        mediator.get("backend_device"),
+        mediator.get("backend_inode"),
+    ):
+        _remove_mediator_runtime(runtime)
+        if (final_parent_status.st_dev, final_parent_status.st_ino) == (
+            mediator.get("backend_parent_device"),
+            mediator.get("backend_parent_inode"),
+        ):
+            os.chmod(
+                backend_parent,
+                mediator.get("backend_parent_original_mode", 0o700),
+                follow_symlinks=False,
+            )
+        raise HelperError("driver backend identity changed while sealing")
+    os.chmod(
+        backend_parent,
+        mediator.get("backend_parent_original_mode", 0o700),
+        follow_symlinks=False,
+    )
+    records, log_digest = _validate_chained_log(
+        protected_for(attempt) / "mediator.ndjson",
+        attempt,
+        expected_task=mediator.get("task_id"),
+    )
+    events = [record["event"] for record in records if record.get("kind") == "event"]
+    off_target_activity = records[-1].get("off_target_activity")
+    if not isinstance(off_target_activity, bool):
+        raise HelperError("mediator seal omitted off-target activity evidence")
+    evidence_complete = records[-1].get("evidence_complete")
+    if not isinstance(evidence_complete, bool):
+        raise HelperError("mediator seal omitted evidence completeness")
+    off_target_reason_counts = _off_target_reason_counts(records)
+    if off_target_activity != bool(off_target_reason_counts):
+        raise HelperError("mediator seal off-target evidence is inconsistent")
+    expected_tool_contract_sha256 = mediator.get("expected_tool_contract_sha256")
+    observed_tool_contract_sha256 = records[-1].get("observed_tool_contract_sha256")
+    tool_contract_validated = records[-1].get("tool_contract_validated")
+    tool_contract_tool_count = records[-1].get("tool_contract_tool_count")
+    tool_contract_required = mediator.get("tool_contract_required")
+    expected_daemon_tool_list_envelope_sha256 = mediator.get(
+        "expected_daemon_tool_list_envelope_sha256"
+    )
+    observed_daemon_tool_list_envelope_sha256 = records[-1].get(
+        "observed_daemon_tool_list_envelope_sha256"
+    )
+    daemon_tool_list_envelope_validated = records[-1].get("daemon_tool_list_envelope_validated")
+    daemon_tool_list_envelope_required = mediator.get("daemon_tool_list_envelope_required")
+    if (
+        records[-1].get("expected_tool_contract_sha256") != expected_tool_contract_sha256
+        or records[-1].get("tool_contract_required") != tool_contract_required
+        or not isinstance(tool_contract_required, bool)
+        or (tool_contract_required and not DIGEST.fullmatch(str(expected_tool_contract_sha256)))
+        or (not tool_contract_required and expected_tool_contract_sha256 is not None)
+        or (
+            observed_tool_contract_sha256 is not None
+            and not DIGEST.fullmatch(str(observed_tool_contract_sha256))
+        )
+        or not isinstance(tool_contract_validated, bool)
+        or records[-1].get("expected_daemon_tool_list_envelope_sha256")
+        != expected_daemon_tool_list_envelope_sha256
+        or records[-1].get("daemon_tool_list_envelope_required")
+        != daemon_tool_list_envelope_required
+        or not isinstance(daemon_tool_list_envelope_required, bool)
+        or (
+            daemon_tool_list_envelope_required
+            and not DIGEST.fullmatch(str(expected_daemon_tool_list_envelope_sha256))
+        )
+        or (
+            not daemon_tool_list_envelope_required
+            and expected_daemon_tool_list_envelope_sha256 is not None
+        )
+        or (
+            observed_daemon_tool_list_envelope_sha256 is not None
+            and not DIGEST.fullmatch(str(observed_daemon_tool_list_envelope_sha256))
+        )
+        or not isinstance(daemon_tool_list_envelope_validated, bool)
+        or (
+            tool_contract_tool_count is not None
+            and (
+                not isinstance(tool_contract_tool_count, int)
+                or isinstance(tool_contract_tool_count, bool)
+                or tool_contract_tool_count < 1
+            )
+        )
+    ):
+        raise HelperError("mediator seal tool contract evidence is invalid")
+    report_body = {
+        "attempt": attempt,
+        "events": events,
+        "event_log_sha256": log_digest,
+        "event_log_tail": records[-1]["hash"],
+        "records": len(records),
+        "worker_uid": mediator["worker_uid"],
+        "agent_uid": mediator["agent_uid"],
+        "mediator_sha256": mediator["mediator_sha256"],
+        "transport_integrity": records[-1]["fatal"] is False,
+        "evidence_complete": evidence_complete,
+        "off_target_activity": off_target_activity,
+        "off_target_reason_counts": off_target_reason_counts,
+        "expected_tool_contract_sha256": expected_tool_contract_sha256,
+        "observed_tool_contract_sha256": observed_tool_contract_sha256,
+        "tool_contract_tool_count": tool_contract_tool_count,
+        "tool_contract_validated": tool_contract_validated,
+        "tool_contract_required": tool_contract_required,
+        "expected_daemon_tool_list_envelope_sha256": (expected_daemon_tool_list_envelope_sha256),
+        "observed_daemon_tool_list_envelope_sha256": (observed_daemon_tool_list_envelope_sha256),
+        "daemon_tool_list_envelope_validated": daemon_tool_list_envelope_validated,
+        "daemon_tool_list_envelope_required": daemon_tool_list_envelope_required,
+        "frontend_device": mediator["frontend_device"],
+        "frontend_inode": mediator["frontend_inode"],
+        "backend_device": mediator["backend_device"],
+        "backend_inode": mediator["backend_inode"],
+        "backend_parent_device": mediator["backend_parent_device"],
+        "backend_parent_inode": mediator["backend_parent_inode"],
+        "target_pid": mediator["target_pid"],
+    }
+    report = {
+        **report_body,
+        "report_digest": hashlib.sha256(
+            json.dumps(report_body, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+    }
+    report_path = protected_for(attempt) / "participation.sealed.json"
+    _write_durable_json_new(report_path, report)
+    mediator["sealed"] = True
+    mediator["report_digest"] = report["report_digest"]
+    state["mediator"] = mediator
+    save_state(attempt, state)
+    _remove_mediator_runtime(runtime)
+    os.sync()
+    return {"verb": "mediator-stop-and-seal", **report}
+
+
+def _root_owned_unwritable(path: Path, *, directory: bool) -> os.stat_result:
+    try:
+        status = path.lstat()
+    except OSError as error:
+        raise HelperError("production executable path is unavailable") from error
+    if (
+        (not stat.S_ISDIR(status.st_mode) if directory else not stat.S_ISREG(status.st_mode))
+        or stat.S_ISLNK(status.st_mode)
+        or status.st_uid != 0
+        or status.st_gid != 0
+        or status.st_mode & 0o022
+    ):
+        raise HelperError("production executable path is not root protected")
+    return status
+
+
+def validate_production_executable(
+    path: Path, expected_digest: str, *, expected_mode: Optional[int] = None
+) -> None:
+    """Validate every name-resolution component and the exact executable bytes."""
+    if (
+        not path.is_absolute()
+        or not isinstance(expected_digest, str)
+        or not DIGEST.fullmatch(expected_digest)
+    ):
+        raise HelperError("production executable identity mismatch")
+    try:
+        prefix = next(base for base in PRODUCTION_EXECUTABLE_ROOTS if path.is_relative_to(base))
+    except StopIteration as error:
+        raise HelperError("production executable identity mismatch") from error
+    # Check / through the selected immutable prefix and every parent to prevent
+    # a writable directory from swapping a later path component at exec time.
+    current = Path("/")
+    _root_owned_unwritable(current, directory=True)
+    for part in path.relative_to(Path("/")).parts[:-1]:
+        current /= part
+        _root_owned_unwritable(current, directory=True)
+    if current != path.parent or not current.is_relative_to(prefix.parent):
+        raise HelperError("production executable identity mismatch")
+    executable_status = _root_owned_unwritable(path, directory=False)
+    if (
+        not executable_status.st_mode & 0o111
+        or (expected_mode is not None and stat.S_IMODE(executable_status.st_mode) != expected_mode)
+        or sha256(path) != expected_digest
+    ):
+        raise HelperError("production executable identity mismatch")
+
+
+def _validate_codex_companion_binary(path: Path) -> None:
+    binary_environment = {"PATH": "/usr/bin:/bin", "LANG": "C"}
+    architecture = subprocess.run(
+        ["/usr/bin/file", "-b", str(path)],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+        env=binary_environment,
+    )
+    if architecture.returncode != 0 or "Mach-O 64-bit executable arm64" not in architecture.stdout:
+        raise HelperError("Codex companion architecture mismatch")
+    verification = subprocess.run(
+        ["/usr/bin/codesign", "--verify", "--strict", str(path)],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+        timeout=10,
+        env=binary_environment,
+    )
+    if verification.returncode != 0:
+        raise HelperError("Codex companion signature is invalid")
+    identity = subprocess.run(
+        ["/usr/bin/codesign", "-dv", "--verbose=2", str(path)],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+        env=binary_environment,
+    )
+    fields = dict(line.split("=", 1) for line in identity.stderr.splitlines() if "=" in line)
+    if (
+        identity.returncode != 0
+        or fields.get("TeamIdentifier") != CODEX_COMPANION_TEAM_ID
+        or fields.get("Identifier") != CODEX_COMPANION_IDENTIFIER
+    ):
+        raise HelperError("Codex companion signing identity mismatch")
+
+
+def _validate_codex_companion_parent() -> None:
+    current = Path("/")
+    _root_owned_unwritable(current, directory=True)
+    for part in CODEX_COMPANION_TARGET.parent.relative_to(Path("/")).parts:
+        current /= part
+        _root_owned_unwritable(current, directory=True)
+    if current != CODEX_COMPANION_TARGET.parent:
+        raise HelperError("Codex companion target parent is invalid")
+
+
+def provision_codex_companion() -> dict:
+    """Install only the fixed, signed, digest-pinned Codex companion."""
+
+    _validate_codex_companion_parent()
+    control_uid = pwd.getpwnam(CONTROL_USER).pw_uid
+    source_fd = -1
+    staging_fd = -1
+    staging_created = False
+    installed = False
+    provision_complete = False
+    linked_target_identity: Optional[tuple[int, int]] = None
+    try:
+        source_fd = os.open(
+            CODEX_COMPANION_SOURCE,
+            os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0),
+        )
+        source_status = os.fstat(source_fd)
+        source_path_status = CODEX_COMPANION_SOURCE.lstat()
+        source_identity = (source_status.st_dev, source_status.st_ino)
+        if (
+            not stat.S_ISREG(source_status.st_mode)
+            or stat.S_ISLNK(source_path_status.st_mode)
+            or source_status.st_uid != control_uid
+            or source_status.st_nlink != 1
+            or not 0 < source_status.st_size <= MAX_CODEX_COMPANION_BYTES
+            or (source_path_status.st_dev, source_path_status.st_ino) != source_identity
+        ):
+            raise HelperError("Codex companion source is unsafe")
+        staging_fd = os.open(
+            CODEX_COMPANION_STAGING,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0),
+            0o700,
+        )
+        staging_created = True
+        digest = hashlib.sha256()
+        copied = 0
+        while True:
+            chunk = os.read(source_fd, 1024 * 1024)
+            if not chunk:
+                break
+            copied += len(chunk)
+            if copied > MAX_CODEX_COMPANION_BYTES:
+                raise HelperError("Codex companion source is unsafe")
+            digest.update(chunk)
+            offset = 0
+            while offset < len(chunk):
+                written = os.write(staging_fd, chunk[offset:])
+                if written <= 0:
+                    raise HelperError("Codex companion staging write was incomplete")
+                offset += written
+        final_source_status = os.fstat(source_fd)
+        final_path_status = CODEX_COMPANION_SOURCE.lstat()
+        if (
+            copied != source_status.st_size
+            or not stat.S_ISREG(final_source_status.st_mode)
+            or (final_source_status.st_dev, final_source_status.st_ino) != source_identity
+            or final_source_status.st_uid != control_uid
+            or final_source_status.st_nlink != 1
+            or final_source_status.st_size != source_status.st_size
+            or stat.S_ISLNK(final_path_status.st_mode)
+            or (final_path_status.st_dev, final_path_status.st_ino) != source_identity
+            or digest.hexdigest() != CODEX_COMPANION_SHA256
+        ):
+            raise HelperError("Codex companion source identity mismatch")
+        os.fchown(staging_fd, 0, 0)
+        os.fchmod(staging_fd, 0o755)
+        os.fsync(staging_fd)
+        staging_status = os.fstat(staging_fd)
+        staging_identity = (staging_status.st_dev, staging_status.st_ino)
+        os.close(staging_fd)
+        staging_fd = -1
+        _validate_codex_companion_binary(CODEX_COMPANION_STAGING)
+
+        try:
+            os.link(
+                CODEX_COMPANION_STAGING,
+                CODEX_COMPANION_TARGET,
+                follow_symlinks=False,
+            )
+            installed = True
+            linked_target_identity = staging_identity
+        except FileExistsError:
+            pass
+        validate_production_executable(
+            CODEX_COMPANION_TARGET,
+            CODEX_COMPANION_SHA256,
+            expected_mode=0o755,
+        )
+        _validate_codex_companion_binary(CODEX_COMPANION_TARGET)
+
+        cleanup_source_status = CODEX_COMPANION_SOURCE.lstat()
+        if (
+            not stat.S_ISREG(cleanup_source_status.st_mode)
+            or cleanup_source_status.st_uid != control_uid
+            or cleanup_source_status.st_nlink != 1
+            or cleanup_source_status.st_size != source_status.st_size
+            or (
+                cleanup_source_status.st_dev,
+                cleanup_source_status.st_ino,
+            )
+            != source_identity
+        ):
+            raise HelperError("Codex companion source identity mismatch")
+        CODEX_COMPANION_SOURCE.unlink()
+        provision_complete = True
+        return {
+            "verb": "provision-codex-companion",
+            "installed": installed,
+            "target": str(CODEX_COMPANION_TARGET),
+            "sha256": CODEX_COMPANION_SHA256,
+            "owner": "root:wheel",
+            "mode": "0755",
+        }
+    except FileNotFoundError as error:
+        raise HelperError("Codex companion source is unavailable") from error
+    except FileExistsError as error:
+        raise HelperError("Codex companion staging path is unavailable") from error
+    except OSError as error:
+        raise HelperError("Codex companion provisioning failed") from error
+    finally:
+        rollback_error = None
+        if staging_fd >= 0:
+            os.close(staging_fd)
+        if source_fd >= 0:
+            os.close(source_fd)
+        if installed and not provision_complete:
+            try:
+                target_status = CODEX_COMPANION_TARGET.lstat()
+            except FileNotFoundError:
+                pass
+            else:
+                if (
+                    target_status.st_dev,
+                    target_status.st_ino,
+                ) != linked_target_identity:
+                    rollback_error = HelperError(
+                        "Codex companion rollback target identity mismatch"
+                    )
+                else:
+                    try:
+                        CODEX_COMPANION_TARGET.unlink()
+                    except OSError:
+                        rollback_error = HelperError("Codex companion rollback failed")
+        if staging_created:
+            try:
+                CODEX_COMPANION_STAGING.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                if rollback_error is None:
+                    rollback_error = HelperError("Codex companion staging cleanup failed")
+        if rollback_error is not None:
+            raise rollback_error
+
+
+def _chrome_archive_members(archive_file) -> None:
+    """Reject names and metadata that ditto must not be allowed to interpret."""
+    seen: set[str] = set()
+    expanded = 0
+    try:
+        with zipfile.ZipFile(archive_file) as archive:
+            members = archive.infolist()
+            if not members or len(members) > MAX_CHROME_MEMBERS:
+                raise HelperError("Chrome archive member count is unsafe")
+            for member in members:
+                name = member.filename
+                if (
+                    not isinstance(name, str)
+                    or not name
+                    or "\x00" in name
+                    or "\\" in name
+                    or name.startswith("/")
+                ):
+                    raise HelperError("Chrome archive member path is unsafe")
+                path = PurePosixPath(name)
+                if (
+                    not path.parts
+                    or path.parts[0] != "Google Chrome.app"
+                    or any(part in {"", ".", ".."} for part in path.parts)
+                ):
+                    raise HelperError("Chrome archive member path is unsafe")
+                alias = unicodedata.normalize("NFC", name.rstrip("/")).casefold()
+                if alias in seen:
+                    raise HelperError("Chrome archive contains duplicate aliases")
+                seen.add(alias)
+                mode = member.external_attr >> 16
+                kind = stat.S_IFMT(mode)
+                if kind not in {0, stat.S_IFREG, stat.S_IFDIR, stat.S_IFLNK}:
+                    raise HelperError("Chrome archive member type is unsupported")
+                is_directory = member.is_dir() or kind == stat.S_IFDIR
+                if is_directory and member.file_size != 0:
+                    raise HelperError("Chrome archive directory is invalid")
+                if member.flag_bits & 0x1:
+                    raise HelperError("Chrome archive encryption is unsupported")
+                if member.file_size > MAX_CHROME_MEMBER_BYTES:
+                    raise HelperError("Chrome archive member is too large")
+                expanded += member.file_size
+                if expanded > MAX_CHROME_EXPANDED_BYTES:
+                    raise HelperError("Chrome archive expansion is too large")
+                if (
+                    member.file_size > 1024 * 1024
+                    and member.file_size
+                    > max(1, member.compress_size) * MAX_CHROME_COMPRESSION_RATIO
+                ):
+                    raise HelperError("Chrome archive compression ratio is unsafe")
+                # Reading every payload before extraction verifies CRCs, actual
+                # expanded bounds, and (for symlinks) the link destination.
+                actual = 0
+                link_payload = bytearray()
+                with archive.open(member, "r") as payload:
+                    while True:
+                        chunk = payload.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        actual += len(chunk)
+                        if actual > member.file_size or actual > MAX_CHROME_MEMBER_BYTES:
+                            raise HelperError("Chrome archive member size changed")
+                        if kind == stat.S_IFLNK:
+                            link_payload.extend(chunk)
+                if actual != member.file_size:
+                    raise HelperError("Chrome archive member size mismatch")
+                if kind == stat.S_IFLNK:
+                    try:
+                        target = link_payload.decode("utf-8")
+                    except UnicodeDecodeError as error:
+                        raise HelperError("Chrome archive symlink is invalid") from error
+                    if not target or target.startswith("/") or "\x00" in target:
+                        raise HelperError("Chrome archive symlink is unsafe")
+                    resolved = path.parent.joinpath(target)
+                    depth = 0
+                    for part in resolved.parts:
+                        if part == "..":
+                            depth -= 1
+                        elif part not in {"", "."}:
+                            depth += 1
+                        if depth < 1:
+                            raise HelperError("Chrome archive symlink escapes bundle")
+    except (zipfile.BadZipFile, OSError, RuntimeError) as error:
+        if isinstance(error, HelperError):
+            raise
+        raise HelperError("Chrome archive is invalid") from error
+
+
+def _chrome_tree_entries(root: Path) -> list[tuple[Path, os.stat_result]]:
+    """Return a bounded, case-unique, non-following snapshot of a bundle tree."""
+    pending = [root]
+    entries: list[tuple[Path, os.stat_result]] = []
+    aliases: set[str] = set()
+    total_bytes = 0
+    while pending:
+        path = pending.pop()
+        status = path.lstat()
+        relative = "." if path == root else path.relative_to(root).as_posix()
+        alias = unicodedata.normalize("NFC", relative).casefold()
+        if alias in aliases:
+            raise HelperError("Chrome bundle contains duplicate aliases")
+        aliases.add(alias)
+        entries.append((path, status))
+        if len(entries) > MAX_CHROME_MEMBERS:
+            raise HelperError("Chrome bundle member count is unsafe")
+        if stat.S_ISREG(status.st_mode):
+            total_bytes += status.st_size
+            if status.st_size > MAX_CHROME_MEMBER_BYTES:
+                raise HelperError("Chrome bundle member is too large")
+            if total_bytes > MAX_CHROME_EXPANDED_BYTES:
+                raise HelperError("Chrome bundle expansion is too large")
+        if stat.S_ISDIR(status.st_mode):
+            try:
+                with os.scandir(path) as directory:
+                    children = sorted(
+                        (Path(entry.path) for entry in directory),
+                        key=lambda item: item.name,
+                        reverse=True,
+                    )
+            except OSError as error:
+                raise HelperError("Chrome bundle traversal failed") from error
+            pending.extend(children)
+    return entries
+
+
+def _chrome_tree_digest(root: Path) -> str:
+    digest = hashlib.sha256()
+    entries = _chrome_tree_entries(root)
+    for path, expected_status in sorted(entries, key=lambda item: str(item[0].relative_to(root))):
+        status = path.lstat()
+        if (status.st_dev, status.st_ino) != (
+            expected_status.st_dev,
+            expected_status.st_ino,
+        ):
+            raise HelperError("Chrome bundle identity changed")
+        relative = "." if path == root else path.relative_to(root).as_posix()
+        if stat.S_ISDIR(status.st_mode):
+            kind, payload = "d", b""
+        elif stat.S_ISREG(status.st_mode):
+            kind, payload = "f", bytes.fromhex(sha256(path))
+        elif stat.S_ISLNK(status.st_mode):
+            kind, payload = "l", os.readlink(path).encode("utf-8")
+        else:
+            raise HelperError("Chrome bundle contains unsupported file type")
+        header = f"{relative}\0{kind}\0{stat.S_IMODE(status.st_mode):04o}\0".encode()
+        digest.update(header + len(payload).to_bytes(8, "big") + payload)
+    return digest.hexdigest()
+
+
+def _validate_chrome_tree_security(root: Path) -> None:
+    root_status = root.lstat()
+    if not stat.S_ISDIR(root_status.st_mode) or stat.S_ISLNK(root_status.st_mode):
+        raise HelperError("Chrome bundle root is invalid")
+    root_resolved = root.resolve(strict=True)
+    for path, expected_status in _chrome_tree_entries(root):
+        status = path.lstat()
+        if (status.st_dev, status.st_ino) != (
+            expected_status.st_dev,
+            expected_status.st_ino,
+        ):
+            raise HelperError("Chrome bundle identity changed")
+        if (
+            status.st_uid != 0
+            or status.st_gid != 0
+            or (not stat.S_ISLNK(status.st_mode) and status.st_mode & 0o022)
+        ):
+            raise HelperError("Chrome bundle permissions are unsafe")
+        xattr_arguments = ["/usr/bin/xattr"]
+        if stat.S_ISLNK(status.st_mode):
+            xattr_arguments.append("-s")
+        xattrs = subprocess.run(
+            [*xattr_arguments, str(path)],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+            env={"PATH": "/usr/bin:/bin", "LANG": "C"},
+        )
+        if xattrs.returncode != 0 or xattrs.stdout:
+            raise HelperError("Chrome bundle has extended attributes")
+        acl = subprocess.run(
+            ["/bin/ls", "-lde", str(path)],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+            env={"PATH": "/usr/bin:/bin", "LANG": "C"},
+        )
+        first = acl.stdout.splitlines()[0].split()[0] if acl.stdout.splitlines() else ""
+        if acl.returncode != 0 or first.endswith("+"):
+            raise HelperError("Chrome bundle ACL state is unsafe")
+        if stat.S_ISLNK(status.st_mode):
+            target = (path.parent / os.readlink(path)).resolve(strict=True)
+            if target != root_resolved and root_resolved not in target.parents:
+                raise HelperError("Chrome bundle symlink escapes bundle")
+        elif stat.S_ISREG(status.st_mode) and status.st_nlink != 1:
+            raise HelperError("Chrome bundle contains hard links")
+        elif not stat.S_ISDIR(status.st_mode) and not stat.S_ISREG(status.st_mode):
+            raise HelperError("Chrome bundle contains unsupported file type")
+
+
+def _scrub_chrome_tree(root: Path, wheel_gid: int) -> None:
+    entries = _chrome_tree_entries(root)
+    for path, expected_status in reversed(entries):
+        status = path.lstat()
+        if (status.st_dev, status.st_ino) != (
+            expected_status.st_dev,
+            expected_status.st_ino,
+        ):
+            raise HelperError("Chrome bundle identity changed during normalization")
+        try:
+            xattr_arguments = ["/usr/bin/xattr"]
+            if stat.S_ISLNK(status.st_mode):
+                xattr_arguments.append("-s")
+            xattrs = subprocess.run(
+                [*xattr_arguments, "-c", str(path)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=10,
+                env={"PATH": "/usr/bin:/bin", "LANG": "C"},
+            )
+            if xattrs.returncode != 0:
+                raise HelperError("Chrome bundle xattr scrub failed")
+            os.chown(path, 0, wheel_gid, follow_symlinks=False)
+            if not stat.S_ISLNK(status.st_mode):
+                acl = subprocess.run(
+                    ["/bin/chmod", "-N", str(path)],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                    timeout=10,
+                    env={"PATH": "/usr/bin:/bin", "LANG": "C"},
+                )
+                if acl.returncode != 0:
+                    raise HelperError("Chrome bundle ACL scrub failed")
+                os.chmod(path, stat.S_IMODE(status.st_mode) & ~0o022)
+        except OSError as error:
+            raise HelperError("Chrome bundle metadata scrub failed") from error
+
+
+def _remove_chrome_tree(root: Path, expected_identity: tuple[int, int]) -> None:
+    status = root.lstat()
+    if (status.st_dev, status.st_ino) != expected_identity:
+        raise HelperError("Chrome cleanup root identity mismatch")
+    entries = _chrome_tree_entries(root)
+    for path, expected_status in reversed(entries):
+        current = path.lstat()
+        if (current.st_dev, current.st_ino) != (
+            expected_status.st_dev,
+            expected_status.st_ino,
+        ):
+            raise HelperError("Chrome cleanup entry identity mismatch")
+        if stat.S_ISDIR(current.st_mode):
+            path.rmdir()
+        else:
+            path.unlink()
+
+
+def _recover_chrome_stage() -> bool:
+    """Remove only an exact, bounded root-owned stage left by this helper."""
+    try:
+        status = CHROME_STAGE_PARENT.lstat()
+    except FileNotFoundError:
+        return False
+    except OSError as error:
+        raise HelperError("Chrome staging recovery path is unavailable") from error
+    if (
+        not stat.S_ISDIR(status.st_mode)
+        or stat.S_ISLNK(status.st_mode)
+        or status.st_uid != CHROME_STAGE_UID
+        or status.st_gid != CHROME_STAGE_GID
+        or stat.S_IMODE(status.st_mode) != 0o700
+    ):
+        raise HelperError("Chrome staging recovery path is unsafe")
+    _validate_chrome_tree_security(CHROME_STAGE_PARENT)
+    _remove_chrome_tree(CHROME_STAGE_PARENT, (status.st_dev, status.st_ino))
+    if CHROME_STAGE_PARENT.exists() or CHROME_STAGE_PARENT.is_symlink():
+        raise HelperError("Chrome staging recovery was incomplete")
+    return True
+
+
+def _validate_chrome_bundle(path: Path) -> None:
+    _validate_chrome_tree_security(path)
+    if _chrome_tree_digest(path) != CHROME_TREE_SHA256:
+        raise HelperError("Chrome bundle tree identity mismatch")
+    info = path / "Contents/Info.plist"
+    binary = path / "Contents/MacOS/Google Chrome"
+    try:
+        with info.open("rb") as stream:
+            metadata = plistlib.load(stream)
+    except (OSError, plistlib.InvalidFileException) as error:
+        raise HelperError("Chrome bundle metadata is invalid") from error
+    if (
+        metadata.get("CFBundleIdentifier") != CHROME_IDENTIFIER
+        or metadata.get("CFBundleShortVersionString") != CHROME_VERSION
+    ):
+        raise HelperError("Chrome bundle metadata mismatch")
+    environment = {"PATH": "/usr/bin:/bin", "LANG": "C"}
+    signature = subprocess.run(
+        ["/usr/bin/codesign", "--verify", "--deep", "--strict", str(path)],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+        env=environment,
+    )
+    identity = subprocess.run(
+        ["/usr/bin/codesign", "-dv", "--verbose=2", str(path)],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+        env=environment,
+    )
+    fields = dict(line.split("=", 1) for line in identity.stderr.splitlines() if "=" in line)
+    architectures = subprocess.run(
+        ["/usr/bin/lipo", "-archs", str(binary)],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+        env=environment,
+    )
+    if signature.returncode != 0:
+        raise HelperError("Chrome bundle signature is invalid")
+    if (
+        identity.returncode != 0
+        or fields.get("Identifier") != CHROME_IDENTIFIER
+        or fields.get("TeamIdentifier") != CHROME_TEAM_ID
+    ):
+        raise HelperError("Chrome bundle signing identity mismatch")
+    if architectures.returncode != 0 or set(architectures.stdout.split()) != {
+        "arm64",
+        "x86_64",
+    }:
+        raise HelperError("Chrome bundle architecture mismatch")
+
+
+def _rename_no_replace(source: Path, target: Path) -> None:
+    libc = ctypes.CDLL(None, use_errno=True)
+    renameatx_np = libc.renameatx_np
+    renameatx_np.argtypes = [
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    ]
+    renameatx_np.restype = ctypes.c_int
+    if renameatx_np(-2, os.fsencode(source), -2, os.fsencode(target), 0x00000004) != 0:
+        error = ctypes.get_errno()
+        if error == errno.EEXIST:
+            raise FileExistsError(error, os.strerror(error), target)
+        raise OSError(error, os.strerror(error), target)
+
+
+def _chrome_parent_metadata_is_clean(path: Path) -> bool:
+    environment = {"PATH": "/usr/bin:/bin", "LANG": "C"}
+    xattrs = subprocess.run(
+        ["/usr/bin/xattr", str(path)],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+        env=environment,
+    )
+    acl = subprocess.run(
+        ["/bin/ls", "-lde", str(path)],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+        env=environment,
+    )
+    first = acl.stdout.splitlines()[0].split()[0] if acl.stdout.splitlines() else ""
+    return (
+        xattrs.returncode == 0
+        and not xattrs.stdout
+        and acl.returncode == 0
+        and not first.endswith("+")
+    )
+
+
+def _validate_chrome_parent() -> bool:
+    """Validate and, once, harden the standard macOS Applications directory."""
+    applications = Path("/Applications")
+    if CHROME_TARGET.parent != applications or CHROME_STAGE_PARENT.parent != applications:
+        raise HelperError("Chrome target parent is invalid")
+    _root_owned_unwritable(Path("/"), directory=True)
+    admin_gid = grp.getgrnam("admin").gr_gid
+    wheel_gid = grp.getgrnam("wheel").gr_gid
+    parent_fd = -1
+    try:
+        parent_fd = os.open(
+            applications,
+            os.O_RDONLY
+            | os.O_CLOEXEC
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+        initial = os.fstat(parent_fd)
+        named = applications.lstat()
+        identity = (initial.st_dev, initial.st_ino)
+        if (
+            not stat.S_ISDIR(initial.st_mode)
+            or stat.S_ISLNK(named.st_mode)
+            or (named.st_dev, named.st_ino) != identity
+            or not _chrome_parent_metadata_is_clean(applications)
+        ):
+            raise HelperError("Chrome target parent is unsafe")
+        seed_state = (
+            initial.st_uid == 0
+            and initial.st_gid == admin_gid
+            and stat.S_IMODE(initial.st_mode) == 0o775
+        )
+        hardened_state = (
+            initial.st_uid == 0
+            and initial.st_gid == wheel_gid
+            and stat.S_IMODE(initial.st_mode) == 0o755
+        )
+        if not seed_state and not hardened_state:
+            raise HelperError("Chrome target parent state is unsupported")
+        hardening_error: Optional[OSError] = None
+        if seed_state:
+            try:
+                os.fchown(parent_fd, 0, wheel_gid)
+                os.fchmod(parent_fd, 0o755)
+                os.fsync(parent_fd)
+            except OSError as error:
+                # Complete the one-way hardening after any partial syscall so a
+                # failed invocation never leaves an intermediate parent state.
+                try:
+                    os.fchown(parent_fd, 0, wheel_gid)
+                    os.fchmod(parent_fd, 0o755)
+                    os.fsync(parent_fd)
+                except OSError as stabilization_error:
+                    raise HelperError(
+                        "Chrome target parent hardening could not be stabilized"
+                    ) from stabilization_error
+                hardening_error = error
+        final = os.fstat(parent_fd)
+        final_named = applications.lstat()
+        if (
+            (final.st_dev, final.st_ino) != identity
+            or (final_named.st_dev, final_named.st_ino) != identity
+            or not stat.S_ISDIR(final.st_mode)
+            or final.st_uid != 0
+            or final.st_gid != wheel_gid
+            or stat.S_IMODE(final.st_mode) != 0o755
+            or not _chrome_parent_metadata_is_clean(applications)
+        ):
+            raise HelperError("Chrome target parent hardening verification failed")
+        _root_owned_unwritable(applications, directory=True)
+        if hardening_error is not None:
+            raise HelperError("Chrome target parent hardening failed") from hardening_error
+        return seed_state
+    except OSError as error:
+        raise HelperError("Chrome target parent is unavailable") from error
+    finally:
+        if parent_fd >= 0:
+            os.close(parent_fd)
+
+
+def _validate_chrome_source_parent(control_uid: int) -> None:
+    _root_owned_unwritable(Path("/"), directory=True)
+    if control_uid != CHROME_CONTROL_UID:
+        raise HelperError("Chrome control account identity mismatch")
+    admin_gid = grp.getgrnam("admin").gr_gid
+    profile = (
+        (Path("/Users"), 0, admin_gid, 0o755),
+        (
+            Path("/Users/lume"),
+            CHROME_PRIVILEGED_HOME_UID,
+            CHROME_PRIVILEGED_HOME_GID,
+            0o755,
+        ),
+        (
+            Path("/Users/lume/Library"),
+            CHROME_PRIVILEGED_HOME_UID,
+            CHROME_PRIVILEGED_HOME_GID,
+            0o755,
+        ),
+        (
+            Path("/Users/lume/Library/Caches"),
+            CHROME_PRIVILEGED_SOURCE_UID,
+            CHROME_PRIVILEGED_SOURCE_GID,
+            0o700,
+        ),
+        (
+            CHROME_ARCHIVE_SOURCE.parent,
+            CHROME_PRIVILEGED_SOURCE_UID,
+            CHROME_PRIVILEGED_SOURCE_GID,
+            0o700,
+        ),
+    )
+    if tuple(path.name for path, *_ in profile) != (
+        "Users",
+        "lume",
+        "Library",
+        "Caches",
+        "cdb-inbox",
+    ):
+        raise HelperError("Chrome archive parent profile is invalid")
+    for index, (current, expected_uid, expected_gid, expected_mode) in enumerate(profile):
+        descriptor = -1
+        try:
+            descriptor = os.open(
+                current,
+                os.O_RDONLY
+                | os.O_CLOEXEC
+                | getattr(os, "O_DIRECTORY", 0)
+                | getattr(os, "O_NOFOLLOW", 0),
+            )
+            opened = os.fstat(descriptor)
+            named = current.lstat()
+        except OSError as error:
+            if descriptor >= 0:
+                os.close(descriptor)
+                descriptor = -1
+            raise HelperError("Chrome archive parent is unavailable") from error
+        try:
+            prefix = f"Chrome archive parent profile {index}"
+            if not stat.S_ISDIR(opened.st_mode) or stat.S_ISLNK(named.st_mode):
+                raise HelperError(f"{prefix} type mismatch")
+            if (named.st_dev, named.st_ino) != (opened.st_dev, opened.st_ino):
+                raise HelperError(f"{prefix} identity mismatch")
+            if opened.st_uid != expected_uid:
+                raise HelperError(f"{prefix} owner mismatch {opened.st_uid}/{expected_uid}")
+            if opened.st_gid != expected_gid:
+                raise HelperError(f"{prefix} group mismatch {opened.st_gid}/{expected_gid}")
+            if stat.S_IMODE(opened.st_mode) != expected_mode:
+                raise HelperError(
+                    f"{prefix} mode mismatch {stat.S_IMODE(opened.st_mode):04o}/{expected_mode:04o}"
+                )
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+
+
+def provision_chrome() -> dict:
+    """Install only the fixed digest-pinned universal Google Chrome bundle."""
+    parent_seed_normalized = _validate_chrome_parent()
+    control_uid = pwd.getpwnam(CONTROL_USER).pw_uid
+    wheel_gid = grp.getgrnam("wheel").gr_gid
+    if CHROME_TARGET.exists() or CHROME_TARGET.is_symlink():
+        _validate_chrome_bundle(CHROME_TARGET)
+        installed = False
+    else:
+        installed = True
+    _validate_chrome_source_parent(control_uid)
+    source_fd = -1
+    stage_created = False
+    stage_identity: Optional[tuple[int, int]] = None
+    published_identity: Optional[tuple[int, int]] = None
+    recovered_stale_stage = False
+    complete = False
+    try:
+        source_fd = os.open(
+            CHROME_ARCHIVE_SOURCE,
+            os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0),
+        )
+        initial = os.fstat(source_fd)
+        named = CHROME_ARCHIVE_SOURCE.lstat()
+        identity = (initial.st_dev, initial.st_ino)
+        if (
+            not stat.S_ISREG(initial.st_mode)
+            or stat.S_ISLNK(named.st_mode)
+            or initial.st_uid != CHROME_PRIVILEGED_SOURCE_UID
+            or initial.st_gid != CHROME_PRIVILEGED_SOURCE_GID
+            or initial.st_nlink != 1
+            or stat.S_IMODE(initial.st_mode) != 0o600
+            or not 0 < initial.st_size <= MAX_CHROME_ARCHIVE_BYTES
+            or (named.st_dev, named.st_ino) != identity
+        ):
+            raise HelperError("Chrome archive source is unsafe")
+        with os.fdopen(os.dup(source_fd), "rb") as archive_stream:
+            archive_digest = hashlib.sha256()
+            while chunk := archive_stream.read(1024 * 1024):
+                archive_digest.update(chunk)
+            if archive_digest.hexdigest() != CHROME_ARCHIVE_SHA256:
+                raise HelperError("Chrome archive digest mismatch")
+            archive_stream.seek(0)
+            _chrome_archive_members(archive_stream)
+        if installed:
+            recovered_stale_stage = _recover_chrome_stage()
+            try:
+                os.mkdir(CHROME_STAGE_PARENT, 0o700)
+            except FileExistsError as error:
+                raise HelperError("Chrome staging path already exists") from error
+            stage_created = True
+            stage_status = CHROME_STAGE_PARENT.lstat()
+            stage_identity = (stage_status.st_dev, stage_status.st_ino)
+            if (
+                not stat.S_ISDIR(stage_status.st_mode)
+                or stat.S_IMODE(stage_status.st_mode) != 0o700
+            ):
+                raise HelperError("Chrome staging directory is unsafe")
+            os.lseek(source_fd, 0, os.SEEK_SET)
+            extracted = subprocess.run(
+                [
+                    "/usr/bin/ditto",
+                    "-x",
+                    "-k",
+                    "--norsrc",
+                    "--noextattr",
+                    "--noacl",
+                    "--noqtn",
+                    f"/dev/fd/{source_fd}",
+                    ".",
+                ],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=300,
+                cwd=CHROME_STAGE_PARENT,
+                env={"PATH": "/usr/bin:/bin", "LANG": "C"},
+                pass_fds=(source_fd,),
+            )
+            if extracted.returncode != 0:
+                raise HelperError("Chrome archive extraction failed")
+            staged_app = CHROME_STAGE_PARENT / "Google Chrome.app"
+            if sorted(item.name for item in CHROME_STAGE_PARENT.iterdir()) != ["Google Chrome.app"]:
+                raise HelperError("Chrome archive extracted unexpected roots")
+            _scrub_chrome_tree(staged_app, wheel_gid)
+            _validate_chrome_bundle(staged_app)
+            staged_status = staged_app.lstat()
+            try:
+                _rename_no_replace(staged_app, CHROME_TARGET)
+            except FileExistsError as error:
+                raise HelperError("Chrome target path already exists") from error
+            published_identity = (staged_status.st_dev, staged_status.st_ino)
+            _validate_chrome_bundle(CHROME_TARGET)
+        final = os.fstat(source_fd)
+        final_named = CHROME_ARCHIVE_SOURCE.lstat()
+        os.lseek(source_fd, 0, os.SEEK_SET)
+        final_digest = hashlib.sha256()
+        while chunk := os.read(source_fd, 1024 * 1024):
+            final_digest.update(chunk)
+        if (
+            (final.st_dev, final.st_ino) != identity
+            or final.st_uid != CHROME_PRIVILEGED_SOURCE_UID
+            or final.st_gid != CHROME_PRIVILEGED_SOURCE_GID
+            or final.st_nlink != 1
+            or final.st_size != initial.st_size
+            or stat.S_IMODE(final.st_mode) != 0o600
+            or final_digest.hexdigest() != CHROME_ARCHIVE_SHA256
+            or stat.S_ISLNK(final_named.st_mode)
+            or (final_named.st_dev, final_named.st_ino) != identity
+        ):
+            raise HelperError("Chrome archive source identity mismatch")
+        CHROME_ARCHIVE_SOURCE.unlink()
+        complete = True
+        return {
+            "verb": "provision-chrome",
+            "installed": installed,
+            "target": str(CHROME_TARGET),
+            "version": CHROME_VERSION,
+            "archive_sha256": CHROME_ARCHIVE_SHA256,
+            "tree_sha256": CHROME_TREE_SHA256,
+            "owner": "root:wheel",
+            "applications_parent_hardened": True,
+            "applications_parent_seed_normalized": parent_seed_normalized,
+            "recovered_stale_stage": recovered_stale_stage,
+        }
+    except FileNotFoundError as error:
+        raise HelperError("Chrome archive source is unavailable") from error
+    except OSError as error:
+        raise HelperError("Chrome provisioning failed") from error
+    finally:
+        if source_fd >= 0:
+            os.close(source_fd)
+        rollback_error = None
+        if installed and published_identity is not None and not complete:
+            try:
+                status = CHROME_TARGET.lstat()
+                if (status.st_dev, status.st_ino) != published_identity:
+                    rollback_error = HelperError("Chrome rollback target identity mismatch")
+                else:
+                    rollback_path = CHROME_STAGE_PARENT / "Google Chrome.app"
+                    _rename_no_replace(CHROME_TARGET, rollback_path)
+                    _remove_chrome_tree(rollback_path, published_identity)
+            except FileNotFoundError:
+                pass
+            except (OSError, HelperError):
+                rollback_error = HelperError("Chrome rollback failed")
+        if stage_created:
+            try:
+                status = CHROME_STAGE_PARENT.lstat()
+                if (
+                    stage_identity is None
+                    or (
+                        status.st_dev,
+                        status.st_ino,
+                    )
+                    != stage_identity
+                ):
+                    rollback_error = rollback_error or HelperError(
+                        "Chrome staging identity mismatch"
+                    )
+                else:
+                    _remove_chrome_tree(CHROME_STAGE_PARENT, stage_identity)
+            except FileNotFoundError:
+                pass
+            except (OSError, HelperError):
+                rollback_error = rollback_error or HelperError("Chrome staging cleanup failed")
+        if rollback_error is not None:
+            raise rollback_error
+
+
+def load_launch(
+    root: Path,
+) -> tuple[
+    list[str],
+    dict[str, str],
+    Path,
+    Optional[Path],
+    tuple[str, ...],
+    Optional[str],
+    tuple[tuple[Path, str], ...],
+]:
+    path = root / "harness/launch.json"
+    status = path.lstat()
+    if not stat.S_ISREG(status.st_mode) or status.st_uid != 0 or status.st_mode & 0o022:
+        raise HelperError("launch envelope is not root protected")
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise HelperError("launch envelope is invalid") from error
+    base_fields = {"argv", "cwd", "environment"}
+    production_fields = {
+        "stdin_path",
+        "harness_kind",
+        "executable_sha256",
+        "credential_names",
+    }
+    if not isinstance(document, dict) or not base_fields.issubset(document):
+        raise HelperError("launch envelope shape is invalid")
+    unknown = set(document).difference(base_fields | production_fields | {"support_executables"})
+    if unknown:
+        raise HelperError("launch envelope shape is invalid")
+    production = bool(set(document).intersection(production_fields - {"stdin_path"}))
+    if production and not production_fields.issubset(document):
+        raise HelperError("production launch envelope is incomplete")
+    if not production and set(document).difference(base_fields) not in (set(), {"stdin_path"}):
+        raise HelperError("launch envelope shape is invalid")
+    argv = document["argv"]
+    environment = document["environment"]
+    cwd = Path(document["cwd"])
+    stdin_value = document.get("stdin_path")
+    if (
+        not isinstance(argv, list)
+        or not argv
+        or any(not isinstance(v, str) or not v or "\x00" in v for v in argv)
+    ):
+        raise HelperError("launch argv is invalid")
+    if not isinstance(environment, dict) or any(
+        not isinstance(key, str)
+        or (
+            not re.fullmatch(r"[A-Z_][A-Z0-9_]{0,63}", key)
+            and key not in LOWERCASE_LAUNCH_ENVIRONMENT_NAMES
+        )
+        or not isinstance(value, str)
+        or "\x00" in value
+        for key, value in environment.items()
+    ):
+        raise HelperError("launch environment is invalid")
+    if any(key.startswith(("DYLD_", "LD_")) for key in environment):
+        raise HelperError("launch environment contains a loader override")
+    if CLAUDE_CODE_OAUTH_FD_ENV in environment:
+        raise HelperError("launch environment contains a reserved credential descriptor")
+    if stdin_value is not None and (
+        not isinstance(stdin_value, str) or not stdin_value or "\x00" in stdin_value
+    ):
+        raise HelperError("launch stdin path is invalid")
+    harness_kind = document.get("harness_kind")
+    executable_sha256 = document.get("executable_sha256")
+    raw_credential_names = document.get("credential_names", [])
+    raw_support_executables = document.get("support_executables", [])
+    support_executables: tuple[tuple[Path, str], ...] = ()
+    if production:
+        if harness_kind not in PRODUCTION_HARNESSES:
+            raise HelperError("production harness kind is invalid")
+        if not isinstance(executable_sha256, str) or not DIGEST.fullmatch(executable_sha256):
+            raise HelperError("production executable digest is invalid")
+        if (
+            not isinstance(raw_credential_names, list)
+            or any(not isinstance(name, str) for name in raw_credential_names)
+            or len(raw_credential_names) != len(set(raw_credential_names))
+            or not set(raw_credential_names) <= PRODUCTION_CREDENTIALS[harness_kind]
+            or (not raw_credential_names and harness_kind != "opencode")
+        ):
+            raise HelperError("production credential policy is invalid")
+        if any(name in environment for name in raw_credential_names):
+            raise HelperError("credential value must not be persisted in the launch envelope")
+        if "CDB_CODEX_AUTH_JSON" in raw_credential_names:
+            if harness_kind != "codex":
+                raise HelperError("Codex auth is only valid for the Codex harness")
+            if set(raw_credential_names) != {"CDB_CODEX_AUTH_JSON"}:
+                raise HelperError("Codex auth credential policy must be one-name")
+            codex_auth_path(root, environment)
+        if harness_kind == "claude-code" and argv[0] != "/usr/local/bin/claude":
+            raise HelperError("Claude Code executable path is not pinned")
+        if not isinstance(raw_support_executables, list) or any(
+            not isinstance(entry, dict)
+            or set(entry) != {"path", "sha256"}
+            or not isinstance(entry.get("path"), str)
+            or not isinstance(entry.get("sha256"), str)
+            or not DIGEST.fullmatch(entry["sha256"])
+            for entry in raw_support_executables
+        ):
+            raise HelperError("production support executable policy is invalid")
+        support_executables = tuple(
+            (Path(entry["path"]), entry["sha256"]) for entry in raw_support_executables
+        )
+        if harness_kind == "codex":
+            if len(support_executables) != 1 or support_executables[0][0] != Path(
+                "/usr/local/bin/codex-code-mode-host"
+            ):
+                raise HelperError("Codex support executable path is not pinned")
+        elif support_executables:
+            raise HelperError("production support executable policy is invalid")
+    resolved_root = root.resolve(strict=True)
+    resolved_cwd = cwd.resolve(strict=True)
+    if not resolved_cwd.is_relative_to(resolved_root):
+        raise HelperError("launch path escaped the attempt")
+    executable_path = Path(argv[0])
+    executable = executable_path.resolve(strict=True)
+    if production:
+        validate_production_executable(executable_path, executable_sha256)
+        for support_path, support_digest in support_executables:
+            validate_production_executable(support_path, support_digest, expected_mode=0o755)
+    elif not executable.is_relative_to(resolved_root):
+        if argv[0] != "/usr/bin/python3" or len(argv) < 2:
+            raise HelperError("launch executable escaped the attempt")
+        script = Path(argv[1]).resolve(strict=True)
+        protected_agent = (resolved_root / "harness/agent").resolve(strict=True)
+        if not script.is_relative_to(protected_agent):
+            raise HelperError("interpreter script escaped the protected harness")
+        script_status = script.stat()
+        if (
+            not stat.S_ISREG(script_status.st_mode)
+            or script_status.st_uid != 0
+            or script_status.st_mode & 0o022
+        ):
+            raise HelperError("interpreter script is not root protected")
+    stdin_path = Path(stdin_value) if stdin_value is not None else None
+    if stdin_path is not None:
+        try:
+            resolved_stdin = stdin_path.resolve(strict=True)
+        except OSError as error:
+            raise HelperError("launch stdin is unavailable") from error
+        if not stdin_path.is_absolute() or not resolved_stdin.is_relative_to(resolved_root):
+            raise HelperError("launch stdin escaped the attempt")
+    return (
+        argv,
+        environment,
+        cwd,
+        stdin_path,
+        tuple(raw_credential_names),
+        executable_sha256 if production else None,
+        support_executables,
+    )
+
+
+def open_agent_stdin(root: Path, path: Optional[Path]) -> Optional[int]:
+    if path is None:
+        return None
+    try:
+        resolved_root = root.resolve(strict=True)
+        resolved_path = path.resolve(strict=True)
+        status = path.lstat()
+    except OSError as error:
+        raise HelperError("launch stdin is unavailable") from error
+    if not path.is_absolute() or not resolved_path.is_relative_to(resolved_root):
+        raise HelperError("launch stdin escaped the attempt")
+    control_uid = pwd.getpwnam(CONTROL_USER).pw_uid
+    if (
+        not stat.S_ISREG(status.st_mode)
+        or stat.S_ISLNK(status.st_mode)
+        or status.st_uid not in {0, control_uid}
+        or status.st_mode & stat.S_IWOTH
+        or status.st_size > MAX_AGENT_STDIN_BYTES
+    ):
+        raise HelperError("launch stdin is unsafe")
+    descriptor = -1
+    try:
+        descriptor = os.open(resolved_path, os.O_RDONLY | os.O_NOFOLLOW)
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_uid not in {0, control_uid}
+            or opened.st_mode & stat.S_IWOTH
+            or opened.st_size > MAX_AGENT_STDIN_BYTES
+            or (opened.st_dev, opened.st_ino) != (status.st_dev, status.st_ino)
+        ):
+            raise HelperError("launch stdin changed during open")
+        return descriptor
+    except OSError as error:
+        if descriptor >= 0:
+            os.close(descriptor)
+        raise HelperError("launch stdin cannot be opened safely") from error
+    except BaseException:
+        if descriptor >= 0:
+            os.close(descriptor)
+        raise
+
+
+def parse_credential_envelope(content: bytes, expected_names: tuple[str, ...]) -> dict[str, str]:
+    if not expected_names:
+        if content:
+            raise HelperError("credential input was supplied without a policy")
+        return {}
+    if not content or len(content) > MAX_CREDENTIAL_ENVELOPE_BYTES:
+        raise HelperError("credential input size is invalid")
+
+    def closed_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise HelperError("credential input contains a duplicate name")
+            result[key] = value
+        return result
+
+    try:
+        document = json.loads(content.decode("utf-8"), object_pairs_hook=closed_object)
+    except (UnicodeError, json.JSONDecodeError) as error:
+        raise HelperError("credential input is invalid") from error
+    if not isinstance(document, dict) or set(document) != set(expected_names):
+        raise HelperError("credential input does not match the launch policy")
+    credentials: dict[str, str] = {}
+    for name in expected_names:
+        value = document.get(name)
+        if not isinstance(value, str) or not value or "\x00" in value:
+            raise HelperError("credential value is invalid")
+        try:
+            encoded = value.encode("utf-8")
+        except UnicodeError as error:
+            raise HelperError("credential value is invalid") from error
+        if len(encoded) > MAX_CREDENTIAL_VALUE_BYTES:
+            raise HelperError("credential value is too large")
+        credentials[name] = value
+    return credentials
+
+
+def _closed_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise HelperError("credential input contains a duplicate name")
+        result[key] = value
+    return result
+
+
+def parse_codex_auth_json(value: str) -> bytes:
+    """Validate the non-refreshable ChatGPT auth document before staging it."""
+    if not isinstance(value, str) or not value or "\x00" in value:
+        raise HelperError("Codex auth JSON is invalid")
+    try:
+        content = value.encode("utf-8")
+    except UnicodeError as error:
+        raise HelperError("Codex auth JSON is invalid") from error
+    if len(content) > MAX_CREDENTIAL_VALUE_BYTES:
+        raise HelperError("Codex auth JSON is too large")
+    try:
+        document = json.loads(value, object_pairs_hook=_closed_json_object)
+    except (UnicodeError, json.JSONDecodeError) as error:
+        raise HelperError("Codex auth JSON is invalid") from error
+    if not isinstance(document, dict) or set(document) != {"auth_mode", "tokens", "last_refresh"}:
+        raise HelperError("Codex auth JSON shape is invalid")
+    if document["auth_mode"] != "chatgpt" or not isinstance(document["tokens"], dict):
+        raise HelperError("Codex auth JSON shape is invalid")
+    tokens = document["tokens"]
+    if set(tokens) != {"id_token", "access_token", "refresh_token", "account_id"}:
+        raise HelperError("Codex auth token shape is invalid")
+    if tokens["refresh_token"] != "cdb-non-refreshable":
+        raise HelperError("Codex auth refresh token is not non-refreshable")
+    for name in ("id_token", "access_token"):
+        token = tokens[name]
+        if (
+            not isinstance(token, str)
+            or not token
+            or len(token.encode("utf-8")) > MAX_CREDENTIAL_VALUE_BYTES
+            or not JWT.fullmatch(token)
+        ):
+            raise HelperError("Codex auth token is invalid")
+    account_id = tokens["account_id"]
+    if not isinstance(account_id, str) or not ACCOUNT_ID.fullmatch(account_id):
+        raise HelperError("Codex auth account id is invalid")
+    last_refresh = document["last_refresh"]
+    if not isinstance(last_refresh, str) or not re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z", last_refresh
+    ):
+        raise HelperError("Codex auth timestamp is invalid")
+    try:
+        parsed_refresh = datetime.fromisoformat(last_refresh.removesuffix("Z") + "+00:00")
+    except ValueError as error:
+        raise HelperError("Codex auth timestamp is invalid") from error
+    if parsed_refresh.tzinfo != timezone.utc or not 2020 <= parsed_refresh.year <= 2100:
+        raise HelperError("Codex auth timestamp is invalid")
+    return content
+
+
+def codex_auth_path(root: Path, environment: dict[str, str]) -> Path:
+    codex_home = environment.get("CODEX_HOME")
+    if not isinstance(codex_home, str) or not codex_home:
+        raise HelperError("Codex auth requires CODEX_HOME")
+    path = Path(codex_home) / "auth.json"
+    try:
+        resolved_root = root.resolve(strict=True)
+        resolved_home = Path(codex_home).resolve(strict=True)
+    except OSError as error:
+        raise HelperError("Codex auth home is unavailable") from error
+    if (
+        not Path(codex_home).is_absolute()
+        or not resolved_home.is_relative_to(resolved_root)
+        or path.parent != Path(codex_home)
+    ):
+        raise HelperError("Codex auth path escaped the attempt")
+    return path
+
+
+def write_codex_auth(
+    path: Path, content: bytes, agent_account: pwd.struct_passwd
+) -> tuple[int, int, tuple[int, int, int]]:
+    descriptor = -1
+    parent_descriptor = -1
+    try:
+        parent_descriptor = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        descriptor = os.open(
+            path.name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o440,
+            dir_fd=parent_descriptor,
+        )
+        os.fchmod(descriptor, 0o440)
+        # The agent may read the staged lease but must never own or modify it.
+        os.fchown(descriptor, 0, agent_account.pw_gid)
+        offset = 0
+        while offset < len(content):
+            written = os.write(descriptor, content[offset:])
+            if written <= 0:
+                raise OSError("Codex auth file write was incomplete")
+            offset += written
+        os.fsync(descriptor)
+        status = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(status.st_mode)
+            or status.st_uid != 0
+            or status.st_gid != agent_account.pw_gid
+            or stat.S_IMODE(status.st_mode) != 0o440
+            or status.st_nlink != 1
+        ):
+            raise HelperError("Codex auth file is not safely staged")
+        result = (descriptor, parent_descriptor, (status.st_dev, status.st_ino, status.st_nlink))
+        descriptor = -1
+        parent_descriptor = -1
+        return result
+    except OSError as error:
+        raise HelperError("Codex auth file cannot be written safely") from error
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        if parent_descriptor >= 0:
+            os.close(parent_descriptor)
+
+
+def revoke_codex_auth(
+    path: Path,
+    descriptor: int,
+    parent_descriptor: int,
+    identity: tuple[int, int, int],
+) -> None:
+    """Scrub the held inode; never reopen an agent-writable pathname."""
+    failure: Optional[BaseException] = None
+    try:
+        os.ftruncate(descriptor, 0)
+        os.fsync(descriptor)
+        status = os.fstat(descriptor)
+        if (status.st_dev, status.st_ino) != identity[:2] or status.st_nlink != 1:
+            raise HelperError("Codex auth file changed before revocation")
+        entry = os.stat(path.name, dir_fd=parent_descriptor, follow_symlinks=False)
+        if (entry.st_dev, entry.st_ino, entry.st_nlink) != identity:
+            raise HelperError("Codex auth pathname changed before revocation")
+        os.unlink(path.name, dir_fd=parent_descriptor)
+        if os.fstat(descriptor).st_nlink != 0:
+            raise HelperError("Codex auth file remained linked after revocation")
+    except (OSError, HelperError) as error:
+        failure = error
+    finally:
+        os.close(descriptor)
+        os.close(parent_descriptor)
+    if failure is not None:
+        raise HelperError("Codex auth file cannot be revoked safely") from failure
+
+
+def run_agent_process(
+    *,
+    argv: list[str],
+    cwd: Path,
+    stdin: object,
+    stdout: object,
+    stderr: object,
+    environment: dict[str, str],
+    drop_to_agent: object,
+    codex_auth_file: Optional[Path],
+    codex_auth_content: Optional[bytes],
+    agent_account: pwd.struct_passwd,
+    production_executable_sha256: Optional[str] = None,
+    production_support_executables: tuple[tuple[Path, str], ...] = (),
+    claude_oauth_content: Optional[bytearray] = None,
+) -> subprocess.CompletedProcess[bytes]:
+    """Run one agent child; ephemeral auth is revoked before model work continues."""
+    if claude_oauth_content is not None and (
+        codex_auth_file is not None or codex_auth_content is not None
+    ):
+        claude_oauth_content[:] = b"\x00" * len(claude_oauth_content)
+        raise HelperError("multiple ephemeral authentication routes are forbidden")
+    auth_handles = None
+    if codex_auth_file is not None:
+        if codex_auth_content is None:
+            raise HelperError("Codex auth content is unavailable")
+        auth_handles = write_codex_auth(codex_auth_file, codex_auth_content, agent_account)
+    try:
+        if production_executable_sha256 is not None:
+            # Recheck the exact regular file immediately before Popen/exec.
+            validate_production_executable(Path(argv[0]), production_executable_sha256)
+            for support_path, support_digest in production_support_executables:
+                validate_production_executable(support_path, support_digest, expected_mode=0o755)
+        if claude_oauth_content is not None:
+            return run_claude_with_oauth_fd(
+                argv=argv,
+                cwd=cwd,
+                stdin=stdin,
+                stdout=stdout,
+                stderr=stderr,
+                environment=environment,
+                drop_to_agent=drop_to_agent,
+                token=claude_oauth_content,
+            )
+        if codex_auth_file is None:
+            return subprocess.run(
+                argv,
+                cwd=cwd,
+                stdin=stdin,
+                stdout=stdout,
+                stderr=stderr,
+                check=False,
+                env=environment,
+                preexec_fn=drop_to_agent,
+            )
+        child = subprocess.Popen(
+            argv,
+            cwd=cwd,
+            stdin=stdin,
+            stdout=subprocess.PIPE,
+            stderr=stderr,
+            env=environment,
+            preexec_fn=drop_to_agent,
+        )
+        assert child.stdout is not None
+        deadline = time.monotonic() + CODEX_STARTUP_TIMEOUT_SECONDS
+        startup = b""
+        while b"\n" not in startup:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                child.terminate()
+                child.wait(timeout=1)
+                child.stdout.close()
+                raise HelperError("Codex did not emit a startup signal")
+            readable, _, _ = select.select([child.stdout], [], [], remaining)
+            if not readable:
+                continue
+            chunk = os.read(child.stdout.fileno(), 4096)
+            if not chunk:
+                child.stdout.close()
+                raise HelperError("Codex exited before its startup signal")
+            startup += chunk
+            if len(startup) > MAX_CODEX_STARTUP_LINE_BYTES:
+                child.terminate()
+                child.wait(timeout=1)
+                child.stdout.close()
+                raise HelperError("Codex startup signal is too large")
+        line, remainder = startup.split(b"\n", 1)
+        try:
+            event = json.loads(line.decode("utf-8"))
+            if not isinstance(event, dict) or event.get("type") != "thread.started":
+                raise ValueError
+        except (UnicodeError, json.JSONDecodeError, ValueError) as error:
+            child.terminate()
+            child.wait(timeout=1)
+            child.stdout.close()
+            raise HelperError("Codex startup signal is invalid") from error
+        assert auth_handles is not None
+        handles = auth_handles
+        auth_handles = None
+        try:
+            revoke_codex_auth(codex_auth_file, *handles)
+        except HelperError:
+            child.terminate()
+            child.wait(timeout=1)
+            child.stdout.close()
+            raise
+        stdout.write(startup)
+        while True:
+            chunk = child.stdout.read(65536)
+            if not chunk:
+                break
+            stdout.write(chunk)
+        child.stdout.close()
+        return subprocess.CompletedProcess(argv, child.wait())
+    finally:
+        if codex_auth_file is not None and auth_handles is not None:
+            try:
+                revoke_codex_auth(codex_auth_file, *auth_handles)
+            except HelperError:
+                pass
+        if claude_oauth_content is not None:
+            claude_oauth_content[:] = b"\x00" * len(claude_oauth_content)
+
+
+def _terminate_child(child: subprocess.Popen[bytes]) -> None:
+    """Bounded best-effort termination for a child that failed its auth gate."""
+    if child.poll() is not None:
+        return
+    child.terminate()
+    try:
+        child.wait(timeout=1)
+    except subprocess.TimeoutExpired:
+        child.kill()
+        child.wait(timeout=1)
+
+
+def _parse_claude_startup_event(line: bytes) -> dict[str, object]:
+    try:
+        event = json.loads(line.decode("utf-8"), object_pairs_hook=_closed_json_object)
+        if not isinstance(event, dict):
+            raise ValueError
+        return event
+    except (UnicodeError, json.JSONDecodeError, HelperError, ValueError) as error:
+        raise HelperError("Claude Code startup signal is invalid") from error
+
+
+def _validate_claude_startup_event(event: dict[str, object], argv: list[str]) -> None:
+    """Recognize the pinned 2.1.233 stream-json system/init boundary."""
+    try:
+        model_index = argv.index("--model")
+        requested_model = argv[model_index + 1]
+        if (
+            event.get("type") != "system"
+            or event.get("subtype") != "init"
+            or event.get("claude_code_version") != CLAUDE_CODE_PINNED_VERSION
+            or event.get("model") != requested_model
+            or event.get("permissionMode") != "bypassPermissions"
+            or not isinstance(event.get("session_id"), str)
+            or not event["session_id"]
+            or not isinstance(event.get("uuid"), str)
+            or not event["uuid"]
+            or not isinstance(event.get("tools"), list)
+            or not isinstance(event.get("mcp_servers"), list)
+        ):
+            raise ValueError
+    except (ValueError, IndexError) as error:
+        raise HelperError("Claude Code startup signal is invalid") from error
+
+
+def _read_claude_startup(
+    child: subprocess.Popen[bytes], *, timeout: float, maximum: int, argv: list[str]
+) -> bytes:
+    assert child.stdout is not None
+    deadline = time.monotonic() + timeout
+    startup = bytearray()
+    parsed_offset = 0
+    prelude_events = 0
+    while True:
+        while True:
+            newline = startup.find(b"\n", parsed_offset)
+            if newline < 0:
+                break
+            event = _parse_claude_startup_event(bytes(startup[parsed_offset:newline]))
+            parsed_offset = newline + 1
+            if event.get("type") == "rate_limit_event":
+                prelude_events += 1
+                if prelude_events > MAX_CLAUDE_STARTUP_PRELUDE_EVENTS:
+                    raise HelperError("Claude Code startup signal is invalid")
+                continue
+            if event.get("type") != "system":
+                raise HelperError("Claude Code startup signal is invalid")
+            _validate_claude_startup_event(event, argv)
+            return bytes(startup)
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise HelperError("Claude Code did not emit a startup signal")
+        readable, _, _ = select.select([child.stdout], [], [], remaining)
+        if not readable:
+            continue
+        chunk = os.read(child.stdout.fileno(), min(4096, maximum + 1 - len(startup)))
+        if not chunk:
+            raise HelperError("Claude Code exited before its startup signal")
+        startup.extend(chunk)
+        if len(startup) > maximum:
+            raise HelperError("Claude Code startup signal is too large")
+
+
+def run_claude_with_oauth_fd(
+    *,
+    argv: list[str],
+    cwd: Path,
+    stdin: object,
+    stdout: object,
+    stderr: object,
+    environment: dict[str, str],
+    drop_to_agent: object,
+    token: bytearray,
+) -> subprocess.CompletedProcess[bytes]:
+    """Hand a one-shot OAuth token to pinned Claude through an anonymous pipe."""
+    if not token or len(token) > MAX_CLAUDE_OAUTH_TOKEN_BYTES or b"\x00" in token:
+        token[:] = b"\x00" * len(token)
+        raise HelperError("Claude Code OAuth token is invalid")
+    if CLAUDE_CODE_OAUTH_CREDENTIAL in environment or CLAUDE_CODE_OAUTH_FD_ENV in environment:
+        token[:] = b"\x00" * len(token)
+        raise HelperError("Claude Code authentication overlaps the launch environment")
+
+    read_fd = -1
+    write_fd = -1
+    child = None
+    try:
+        read_fd, write_fd = os.pipe()
+        try:
+            os.fstat(CLAUDE_CODE_OAUTH_FD)
+        except OSError as error:
+            if error.errno != errno.EBADF:
+                raise HelperError("Claude Code OAuth descriptor cannot be reserved") from error
+        else:
+            raise HelperError("Claude Code OAuth descriptor is already in use")
+        os.dup2(read_fd, CLAUDE_CODE_OAUTH_FD, inheritable=False)
+        os.close(read_fd)
+        read_fd = CLAUDE_CODE_OAUTH_FD
+        offset = 0
+        while offset < len(token):
+            written = os.write(write_fd, memoryview(token)[offset:])
+            if written <= 0:
+                raise HelperError("Claude Code OAuth pipe write was incomplete")
+            offset += written
+        os.close(write_fd)
+        write_fd = -1
+
+        child_environment = dict(environment)
+        child_environment[CLAUDE_CODE_OAUTH_FD_ENV] = str(CLAUDE_CODE_OAUTH_FD)
+        child = subprocess.Popen(
+            argv,
+            cwd=cwd,
+            stdin=stdin,
+            stdout=subprocess.PIPE,
+            stderr=stderr,
+            env=child_environment,
+            preexec_fn=drop_to_agent,
+            pass_fds=(read_fd,),
+        )
+        child_environment.clear()
+        assert child.stdout is not None
+        startup = _read_claude_startup(
+            child,
+            timeout=CLAUDE_STARTUP_TIMEOUT_SECONDS,
+            maximum=MAX_CLAUDE_STARTUP_LINE_BYTES,
+            argv=argv,
+        )
+
+        # The writer was closed before exec. EOF therefore proves that pinned
+        # Claude consumed the complete one-shot token; bytes or EAGAIN fail closed.
+        os.set_blocking(read_fd, False)
+        residual_buffer = bytearray(MAX_CREDENTIAL_VALUE_BYTES + 1)
+        try:
+            try:
+                residual_count = os.readv(read_fd, [residual_buffer])
+            except BlockingIOError as error:
+                raise HelperError("Claude Code OAuth pipe was not exhausted") from error
+        finally:
+            residual_buffer[:] = b"\x00" * len(residual_buffer)
+        if residual_count:
+            raise HelperError("Claude Code OAuth pipe retained credential bytes")
+        os.close(read_fd)
+        read_fd = -1
+
+        stdout.write(startup)
+        while True:
+            chunk = child.stdout.read(65536)
+            if not chunk:
+                break
+            stdout.write(chunk)
+        child.stdout.close()
+        return subprocess.CompletedProcess(argv, child.wait())
+    except BaseException:
+        if child is not None:
+            _terminate_child(child)
+            if child.stdout is not None:
+                child.stdout.close()
+        raise
+    finally:
+        token[:] = b"\x00" * len(token)
+        if write_fd >= 0:
+            os.close(write_fd)
+        if read_fd >= 0:
+            os.close(read_fd)
+
+
+def read_credential_envelope(expected_names: tuple[str, ...]) -> dict[str, str]:
+    content = bytearray(sys.stdin.buffer.read(MAX_CREDENTIAL_ENVELOPE_BYTES + 1))
+    try:
+        return parse_credential_envelope(content, expected_names)
+    finally:
+        content[:] = b"\x00" * len(content)
+
+
+def detach_standard_streams(retained: set[int]) -> None:
+    devnull = os.open(os.devnull, os.O_RDWR)
+    for descriptor in (0, 1, 2):
+        os.dup2(devnull, descriptor)
+    if devnull > 2:
+        os.close(devnull)
+    for descriptor_text in os.listdir("/dev/fd"):
+        descriptor = int(descriptor_text)
+        if descriptor > 2 and descriptor not in retained:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+
+def launch_agent(attempt: str, *, credential_input: bool = False) -> dict:
+    attempt = slug(attempt)
+    root = root_for(attempt)
+    (
+        argv,
+        environment,
+        cwd,
+        stdin_path,
+        credential_names,
+        executable_sha256,
+        support_executables,
+    ) = launch_stage("launch-stage-envelope-load", lambda: load_launch(root))
+    state = launch_stage("launch-stage-state-load", lambda: load_state(attempt))
+
+    def validate_credential_policy() -> None:
+        if "agent" in state:
+            raise HelperError("agent launch is one-shot for an attempt")
+        if credential_names and not credential_input:
+            raise HelperError("production credentials were not supplied")
+        if credential_input and not credential_names:
+            raise HelperError("credential input is not allowed for this launch")
+
+    launch_stage("launch-stage-credential-policy", validate_credential_policy)
+    credentials = launch_stage(
+        "launch-stage-credential-read",
+        lambda: read_credential_envelope(credential_names) if credential_input else {},
+    )
+
+    def validate_credential_overlap() -> None:
+        if set(credentials).intersection(environment):
+            raise HelperError("credential input overlaps the persisted environment")
+
+    launch_stage("launch-stage-credential-policy", validate_credential_overlap)
+    codex_auth_content = None
+    codex_auth_file = None
+    claude_oauth_content = None
+    if "CDB_CODEX_AUTH_JSON" in credentials:
+        codex_auth_content = launch_stage(
+            "launch-stage-codex-auth-validate",
+            lambda: parse_codex_auth_json(credentials.pop("CDB_CODEX_AUTH_JSON")),
+        )
+        codex_auth_file = launch_stage(
+            "launch-stage-codex-auth-path", lambda: codex_auth_path(root, environment)
+        )
+    if CLAUDE_CODE_OAUTH_CREDENTIAL in credentials:
+        try:
+            claude_oauth_content = bytearray(credentials.pop(CLAUDE_CODE_OAUTH_CREDENTIAL), "utf-8")
+        except UnicodeError as error:
+            raise HelperError("Claude Code OAuth token is invalid") from error
+    child_environment = {**environment, **credentials}
+    agent_account = launch_stage("launch-stage-agent-account", lambda: pwd.getpwnam(AGENT_USER))
+    stdin_descriptor = launch_stage(
+        "launch-stage-stdin-open", lambda: open_agent_stdin(root, stdin_path)
+    )
+    stdout_path = STATE_BASE / f"{attempt}.stdout"
+    stderr_path = STATE_BASE / f"{attempt}.stderr"
+
+    def initialize_output() -> tuple[list[int], str]:
+        STATE_BASE.mkdir(mode=0o700, parents=True, exist_ok=True)
+        descriptors: list[int] = []
+        try:
+            for path in (stdout_path, stderr_path):
+                descriptors.append(
+                    os.open(
+                        path,
+                        os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW,
+                        0o600,
+                    )
+                )
+            return descriptors, sha256(root / "harness/launch.json")
+        except BaseException:
+            for descriptor in descriptors:
+                os.close(descriptor)
+            raise
+
+    try:
+        output_descriptors, launch_digest = launch_stage(
+            "launch-stage-output-init", initialize_output
+        )
+    except BaseException:
+        if stdin_descriptor is not None:
+            os.close(stdin_descriptor)
+        raise
+    try:
+        ready_read, ready_write = launch_stage("launch-stage-pipe", os.pipe)
+    except BaseException:
+        for descriptor in output_descriptors:
+            os.close(descriptor)
+        if stdin_descriptor is not None:
+            os.close(stdin_descriptor)
+        raise
+    try:
+        supervisor_pid = os.fork()
+    except BaseException as error:
+        if claude_oauth_content is not None:
+            claude_oauth_content[:] = b"\x00" * len(claude_oauth_content)
+        os.close(ready_read)
+        os.close(ready_write)
+        for descriptor in output_descriptors:
+            os.close(descriptor)
+        if stdin_descriptor is not None:
+            os.close(stdin_descriptor)
+        raise LaunchStageError("launch-stage-fork") from error
+    if supervisor_pid == 0:
+        try:
+            os.close(ready_write)
+            os.setsid()
+            retained = {ready_read, *output_descriptors}
+            if stdin_descriptor is not None:
+                retained.add(stdin_descriptor)
+            detach_standard_streams(retained)
+            if os.read(ready_read, 1) != b"1":
+                raise HelperError("agent supervisor state was not committed")
+            os.close(ready_read)
+            resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+            resource.setrlimit(resource.RLIMIT_FSIZE, (64 * 1024 * 1024, 64 * 1024 * 1024))
+
+            def drop_to_agent() -> None:
+                os.initgroups(agent_account.pw_name, agent_account.pw_gid)
+                os.setgid(agent_account.pw_gid)
+                os.setuid(agent_account.pw_uid)
+                os.umask(0o077)
+
+            with (
+                os.fdopen(output_descriptors[0], "wb", buffering=0) as stdout,
+                os.fdopen(output_descriptors[1], "wb", buffering=0) as stderr,
+            ):
+                stdin = (
+                    os.fdopen(stdin_descriptor, "rb", buffering=0)
+                    if stdin_descriptor is not None
+                    else None
+                )
+                try:
+                    completed = run_agent_process(
+                        argv=argv,
+                        cwd=cwd,
+                        stdin=stdin if stdin is not None else subprocess.DEVNULL,
+                        stdout=stdout,
+                        stderr=stderr,
+                        environment=child_environment,
+                        drop_to_agent=drop_to_agent,
+                        codex_auth_file=codex_auth_file,
+                        codex_auth_content=codex_auth_content,
+                        agent_account=agent_account,
+                        production_executable_sha256=executable_sha256,
+                        production_support_executables=support_executables,
+                        claude_oauth_content=claude_oauth_content,
+                    )
+                finally:
+                    if stdin is not None:
+                        stdin.close()
+            # A clone admits one attempt only, so no other attempt can own this
+            # UID here; reap detached descendants before completion is reported.
+            _killed, survivors = terminate_agent_processes()
+            if survivors:
+                raise HelperError("benchmark-agent descendants survived completion")
+            child_state = load_state(attempt)
+            child_state["agent"] = {
+                **child_state.get("agent", {}),
+                "completed": True,
+                "exit_code": completed.returncode,
+            }
+            save_state(attempt, child_state)
+        except BaseException as error:
+            try:
+                _killed, survivors = terminate_agent_processes()
+                if survivors:
+                    raise HelperError("benchmark-agent descendants survived completion")
+            except BaseException:
+                pass
+            try:
+                child_state = load_state(attempt)
+            except BaseException:
+                child_state = {"attempt": attempt}
+            child_state["agent"] = {
+                **child_state.get("agent", {}),
+                "completed": True,
+                "exit_code": None,
+                "supervisor_error": type(error).__name__,
+            }
+            try:
+                save_state(attempt, child_state)
+            except BaseException:
+                pass
+        finally:
+            os._exit(0)
+    os.close(ready_read)
+    if claude_oauth_content is not None:
+        claude_oauth_content[:] = b"\x00" * len(claude_oauth_content)
+    credentials.clear()
+    child_environment.clear()
+    if stdin_descriptor is not None:
+        os.close(stdin_descriptor)
+    state["agent"] = {
+        "supervisor_pid": supervisor_pid,
+        "launch_envelope_sha256": launch_digest,
+        "completed": False,
+        "exit_code": None,
+        "killed": False,
+    }
+    try:
+        save_state(attempt, state)
+        os.write(ready_write, b"1")
+    except BaseException as error:
+        os.kill(supervisor_pid, signal.SIGKILL)
+        raise LaunchStageError("launch-stage-state-commit") from error
+    finally:
+        os.close(ready_write)
+        for descriptor in output_descriptors:
+            os.close(descriptor)
+    return {"verb": "launch-agent", "attempt": attempt, **state["agent"]}
+
+
+def wait_agent(attempt: str, seconds_text: str) -> dict:
+    attempt = slug(attempt)
+    if not seconds_text.isdigit() or not 0 <= int(seconds_text) <= 86400:
+        raise HelperError("wait duration is invalid")
+    deadline = time.monotonic() + int(seconds_text)
+    while True:
+        state = load_state(attempt)
+        agent = state.get("agent")
+        if not isinstance(agent, dict):
+            raise HelperError("agent was not launched")
+        if agent.get("completed") is True:
+
+            def content(suffix: str) -> dict:
+                data = (STATE_BASE / f"{attempt}.{suffix}").read_bytes()
+                return {
+                    f"{suffix}_b64": base64.b64encode(data[-65536:]).decode("ascii"),
+                    f"{suffix}_bytes": len(data),
+                    f"{suffix}_sha256": hashlib.sha256(data).hexdigest(),
+                    f"{suffix}_truncated": len(data) > 65536,
+                }
+
+            return {
+                "verb": "wait-agent",
+                "attempt": attempt,
+                **agent,
+                **content("stdout"),
+                **content("stderr"),
+            }
+        if time.monotonic() >= deadline:
+            return {"verb": "wait-agent", "attempt": attempt, **agent}
+        time.sleep(0.1)
+
+
+def agent_pids() -> list[int]:
+    agent_uid = pwd.getpwnam(AGENT_USER).pw_uid
+    probe = subprocess.run(
+        ["/bin/ps", "-axo", "pid=,uid="],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+        env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "C"},
+    )
+    if probe.returncode:
+        raise HelperError("could not enumerate benchmark-agent processes")
+    processes: list[int] = []
+    for line in probe.stdout.splitlines():
+        fields = line.split()
+        if len(fields) != 2:
+            continue
+        try:
+            pid, uid = (int(value) for value in fields)
+        except ValueError as error:
+            raise HelperError("benchmark-agent process probe was malformed") from error
+        if uid == agent_uid and pid > 1:
+            processes.append(pid)
+    return sorted(set(processes))
+
+
+def terminate_agent_processes() -> tuple[bool, list[int]]:
+    killed = False
+    deadline = time.monotonic() + 5.0
+    while True:
+        processes = agent_pids()
+        if not processes:
+            return killed, []
+        killed = True
+        for pid in processes:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        if time.monotonic() >= deadline:
+            return killed, agent_pids()
+        time.sleep(0.05)
+
+
+def kill_agent(attempt: str) -> dict:
+    attempt = slug(attempt)
+    state = load_state(attempt)
+    agent = state.get("agent")
+    if not isinstance(agent, dict):
+        return {"verb": "kill-agent", "attempt": attempt, "killed": False}
+    killed, survivors = terminate_agent_processes()
+    if survivors:
+        raise HelperError("benchmark-agent processes survived termination")
+    if killed or agent.get("completed") is not True:
+        agent["completed"] = True
+        agent["exit_code"] = None
+        agent["killed"] = True
+        state["agent"] = agent
+        save_state(attempt, state)
+    return {
+        "verb": "kill-agent",
+        "attempt": attempt,
+        **agent,
+        "no_agent_processes": True,
+    }
+
+
+def render_pf(mode: str, entries: list[str]) -> tuple[str, str]:
+    if mode not in {"none", "allowlist"}:
+        raise HelperError("network mode is invalid")
+    if mode == "none" and entries:
+        raise HelperError("none policy cannot contain allowlist entries")
+    normalized: list[tuple[str, int]] = []
+    for entry in entries:
+        try:
+            address_text, port_text = entry.rsplit("@", 1)
+            address = str(ipaddress.ip_address(address_text))
+            port = int(port_text)
+        except (ValueError, TypeError) as error:
+            raise HelperError("allowlist entry is invalid") from error
+        if (
+            not 1 <= port <= 65535
+            or port in {53, 5353}
+            or ipaddress.ip_address(address).is_loopback
+        ):
+            raise HelperError("allowlist endpoint is invalid")
+        normalized.append((address, port))
+    if mode == "allowlist" and not normalized:
+        raise HelperError("allowlist policy requires at least one endpoint")
+    agent_uid = pwd.getpwnam(AGENT_USER).pw_uid
+    lines = [
+        f"pass out quick proto tcp from any to {address} port = {port} user = {agent_uid}"
+        for address, port in sorted(set(normalized))
+    ]
+    lines += [
+        "block drop out quick proto tcp from any to any port = 53",
+        "block drop out quick proto udp from any to any port = 53",
+        "block drop out quick proto udp from any to any port = 5353",
+        "block drop out quick inet proto icmp from any to any",
+        "block drop out quick inet6 proto ipv6-icmp from any to any",
+        f"block drop out quick inet proto tcp from any to any user = {agent_uid}",
+        f"block drop out quick inet proto udp from any to any user = {agent_uid}",
+        f"block drop out quick inet6 proto tcp from any to any user = {agent_uid}",
+        f"block drop out quick inet6 proto udp from any to any user = {agent_uid}",
+    ]
+    rules = "\n".join(lines) + "\n"
+    allowlist_digest = hashlib.sha256(
+        json.dumps(sorted(set(normalized)), separators=(",", ":")).encode()
+    ).hexdigest()
+    return rules, allowlist_digest
+
+
+def apply_network(
+    attempt: str, mode: str, expected_main_rules_sha256: str, entries: list[str]
+) -> dict:
+    attempt = slug(attempt)
+    state = load_state(attempt)
+    if "network" in state:
+        raise HelperError("network policy is already active")
+    rules, allowlist_digest = render_pf(mode, entries)
+    anchor = pf_anchor(attempt)
+    main_rules = run_pf("main-rules-read", ["-sr"]).stdout
+    main_rules_sha256 = hashlib.sha256(main_rules.encode()).hexdigest()
+    if not DIGEST.fullmatch(expected_main_rules_sha256):
+        raise HelperError("expected main PF ruleset digest is invalid")
+    if main_rules_sha256 != expected_main_rules_sha256:
+        raise HelperError("main PF ruleset digest mismatch")
+    if 'anchor "com.trycua.cdb/*"' not in main_rules:
+        raise HelperError("benchmark PF anchor is not referenced by the main ruleset")
+    before_anchor = main_rules.split('anchor "com.trycua.cdb/*"', 1)[0]
+    if any(re.search(r"\bpass\b.*\bquick\b", line) for line in before_anchor.splitlines()):
+        raise HelperError("a permissive quick rule precedes the benchmark PF anchor")
+    if any(re.match(r"^\s*anchor\s", line) for line in before_anchor.splitlines()):
+        raise HelperError("another filter anchor precedes the benchmark PF anchor")
+    token: Optional[str] = None
+    try:
+        run_pf("anchor-load", ["-a", anchor, "-f", "-"], input_text=rules)
+        enabled = run_pf("pf-enable", ["-E"])
+        token_match = re.search(r"Token\s*:\s*(\d+)", enabled.stdout + "\n" + enabled.stderr)
+        if token_match is None:
+            raise HelperError("PF enable token was unavailable")
+        token = token_match.group(1)
+        pf_info = run_pf("pf-info-read", ["-s", "info"]).stdout
+        anchor_rules = run_pf("anchor-rules-read", ["-a", anchor, "-sr"]).stdout
+        if "Status: Enabled" not in pf_info or not anchor_rules.strip():
+            raise HelperError("PF enforcement could not be verified")
+        network = {
+            "anchor": anchor,
+            "mode": mode,
+            "rules_sha256": hashlib.sha256(rules.encode()).hexdigest(),
+            "ruleset_main_sha256": main_rules_sha256,
+            "anchor_rules_sha256": hashlib.sha256(anchor_rules.encode()).hexdigest(),
+            "pf_enabled": True,
+            "allowlist_sha256": allowlist_digest,
+            "residual_channels": [
+                "unix-domain-sockets",
+                "shared-filesystem",
+                "console-user-gui-egress",
+                "deferred-scheduling",
+            ],
+            "global_protocol_blocks": ["dns", "mdns", "icmp", "ipv6-icmp"],
+            "pf_token": token,
+        }
+        state["network"] = network
+        save_state(attempt, state)
+    except BaseException as primary_error:
+        rollback_incomplete = False
+        try:
+            run_pf("rollback-anchor-flush", ["-a", anchor, "-F", "rules"])
+        except BaseException:
+            rollback_incomplete = True
+        if token is not None:
+            try:
+                run_pf("rollback-token-release", ["-X", token])
+            except BaseException:
+                rollback_incomplete = True
+        if rollback_incomplete and isinstance(primary_error, HelperError):
+            raise HelperError(f"{primary_error}; PF rollback incomplete") from primary_error
+        raise
+    return {
+        "verb": "network-apply",
+        "attempt": attempt,
+        **{key: value for key, value in network.items() if key != "pf_token"},
+    }
+
+
+def remove_network(attempt: str) -> dict:
+    attempt = slug(attempt)
+    state = load_state(attempt)
+    network = state.get("network")
+    if not isinstance(network, dict):
+        return {"verb": "network-remove", "attempt": attempt, "removed": False}
+    anchor = pf_anchor(attempt)
+    if network.get("anchor") != anchor:
+        raise HelperError("recorded network policy is malformed")
+    run_pf("anchor-flush", ["-a", anchor, "-F", "rules"])
+    if network.get("pf_token"):
+        run_pf("pf-token-release", ["-X", str(network["pf_token"])])
+    del state["network"]
+    save_state(attempt, state)
+    return {"verb": "network-remove", "attempt": attempt, "removed": True}
+
+
+def network_status(attempt: str) -> dict:
+    """Re-probe the active PF policy without rewriting the protected rules."""
+
+    attempt = slug(attempt)
+    state = load_state(attempt)
+    network = state.get("network")
+    if not isinstance(network, dict):
+        raise HelperError("network policy is not active")
+    expected_fields = {
+        "anchor",
+        "mode",
+        "rules_sha256",
+        "ruleset_main_sha256",
+        "anchor_rules_sha256",
+        "pf_enabled",
+        "allowlist_sha256",
+        "residual_channels",
+        "global_protocol_blocks",
+        "pf_token",
+    }
+    if set(network) != expected_fields or network.get("anchor") != pf_anchor(attempt):
+        raise HelperError("recorded network policy is malformed")
+    main_rules = run_pf("main-rules-read", ["-sr"]).stdout
+    anchor_rules = run_pf("anchor-rules-read", ["-a", network["anchor"], "-sr"]).stdout
+    pf_info = run_pf("pf-info-read", ["-s", "info"]).stdout
+    if (
+        "Status: Enabled" not in pf_info
+        or not anchor_rules.strip()
+        or hashlib.sha256(main_rules.encode()).hexdigest() != network.get("ruleset_main_sha256")
+        or hashlib.sha256(anchor_rules.encode()).hexdigest() != network.get("anchor_rules_sha256")
+    ):
+        raise HelperError("active network policy changed during execution")
+    return {
+        "verb": "network-status",
+        "attempt": attempt,
+        **{key: value for key, value in network.items() if key != "pf_token"},
+    }
+
+
+def start_driver() -> dict:
+    console = run(["/usr/bin/stat", "-f", "%u", "/dev/console"]).stdout.strip()
+    if not console.isdigit() or int(console) < 1:
+        raise HelperError("console uid is unavailable")
+    deadline = time.monotonic() + 20.0
+    while True:
+        try:
+            run(
+                [
+                    "/bin/launchctl",
+                    "asuser",
+                    console,
+                    "/usr/bin/open",
+                    "-n",
+                    "-g",
+                    "/Applications/CuaDriver.app",
+                    "--args",
+                    "serve",
+                    "--dangerously-bypass-approvals",
+                ]
+            )
+            break
+        except HelperError as error:
+            if time.monotonic() >= deadline:
+                raise HelperError("logged-in Aqua launch domain is unavailable") from error
+            time.sleep(1.0)
+    return {"verb": "start-driver", "console_uid": int(console)}
+
+
+def installation_facts() -> dict:
+    helper_path = Path(__file__).resolve(strict=True)
+    helper_status = helper_path.stat()
+    mediator_status = MEDIATOR_PATH.stat()
+    sudoers_status = SUDOERS_PATH.stat()
+    if not stat.S_ISREG(helper_status.st_mode) or stat.S_IMODE(helper_status.st_mode) != 0o555:
+        raise HelperError("helper installation mode is invalid")
+    if (
+        helper_status.st_uid != 0
+        or helper_status.st_gid != 0
+        or helper_status.st_mode & stat.S_ISUID
+    ):
+        raise HelperError("helper installation ownership is invalid")
+    if (
+        not stat.S_ISREG(mediator_status.st_mode)
+        or stat.S_IMODE(mediator_status.st_mode) != 0o555
+        or mediator_status.st_uid != 0
+        or mediator_status.st_gid != 0
+        or mediator_status.st_mode & stat.S_ISUID
+    ):
+        raise HelperError("mediator installation is invalid")
+    if not stat.S_ISREG(sudoers_status.st_mode) or stat.S_IMODE(sudoers_status.st_mode) != 0o440:
+        raise HelperError("sudoers installation mode is invalid")
+    if sudoers_status.st_uid != 0 or sudoers_status.st_gid != 0:
+        raise HelperError("sudoers installation ownership is invalid")
+    denied = subprocess.run(
+        [
+            "/usr/bin/sudo",
+            "-n",
+            "-u",
+            AGENT_USER,
+            "--",
+            "/usr/bin/sudo",
+            "-n",
+            "--",
+            "/usr/bin/true",
+        ],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+        timeout=10,
+        env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "C"},
+    )
+    if denied.returncode == 0:
+        raise HelperError("benchmark agent unexpectedly has passwordless sudo access")
+    membership = run(
+        ["/usr/bin/dsmemberutil", "checkmembership", "-U", AGENT_USER, "-G", "admin"]
+    ).stdout.lower()
+    if re.search(r"is not a member of (?:the )?group", membership) is None:
+        raise HelperError("benchmark agent unexpectedly belongs to the admin group")
+    sudo_listing = subprocess.run(
+        ["/usr/bin/sudo", "-l", "-U", AGENT_USER],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+        env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "C"},
+    )
+    sudo_listing_text = (sudo_listing.stdout + "\n" + sudo_listing.stderr).lower()
+    if "not allowed to run sudo" not in sudo_listing_text:
+        raise HelperError("benchmark agent sudo policy is not an explicit denial")
+    sshd = run(["/usr/sbin/sshd", "-T"]).stdout.lower().splitlines()
+    settings = dict(line.split(None, 1) for line in sshd if " " in line)
+    if (
+        settings.get("passwordauthentication") != "no"
+        or settings.get("kbdinteractiveauthentication") != "no"
+    ):
+        raise HelperError("SSH password authentication is not disabled")
+    main_rules = run([PFCTL, "-sr"]).stdout
+    main_rules_sha256 = hashlib.sha256(main_rules.encode()).hexdigest()
+    return {
+        "verb": "installation-facts",
+        "helper_sha256": sha256(helper_path),
+        "helper_mode": "0555",
+        "mediator_sha256": sha256(MEDIATOR_PATH),
+        "mediator_mode": "0555",
+        "sudoers_sha256": sha256(SUDOERS_PATH),
+        "sudoers_mode": "0440",
+        "pf_main_rules_sha256": main_rules_sha256,
+        "agent_passwordless_sudo_denied": True,
+        "agent_admin_group_member": False,
+        "agent_sudo_policy_denied": True,
+        "ssh_password_authentication": False,
+        "ssh_keyboard_interactive_authentication": False,
+    }
+
+
+def shutdown_guest() -> None:
+    os.execve(
+        "/sbin/shutdown",
+        ("/sbin/shutdown", "-h", "now"),
+        {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "C"},
+    )
+
+
+def dispatch(argv: list[str]) -> int:
+    require_root_caller()
+    if not argv:
+        raise HelperError("missing helper verb")
+    verb, *args = argv
+    if verb == "stage-attempt" and len(args) == 2:
+        emit(stage_attempt(args[0], args[1]))
+    elif verb == "reset-attempt" and len(args) == 1:
+        emit(reset_attempt(args[0]))
+    elif verb == "share-console-path" and len(args) == 2:
+        emit(share_console_path(args[0], args[1]))
+    elif verb == "prepare-task-store" and len(args) == 2:
+        emit(prepare_task_store(args[0], args[1]))
+    elif verb == "launch-task-app" and len(args) in {4, 5}:
+        emit(launch_task_app(*args))
+    elif verb == "mediator-start" and len(args) in {2, 3, 4}:
+        emit(start_mediator(*args))
+    elif verb == "mediator-stop-and-seal" and len(args) == 1:
+        emit(stop_and_seal_mediator(args[0]))
+    elif verb == "launch-agent" and len(args) == 1:
+        emit(launch_agent(args[0]))
+    elif verb == "launch-agent-with-lease" and len(args) == 1:
+        emit(launch_agent(args[0], credential_input=True))
+    elif verb == "wait-agent" and len(args) == 2:
+        emit(wait_agent(args[0], args[1]))
+    elif verb == "kill-agent" and len(args) == 1:
+        emit(kill_agent(args[0]))
+    elif verb == "network-apply" and len(args) >= 3:
+        emit(apply_network(args[0], args[1], args[2], args[3:]))
+    elif verb == "network-remove" and len(args) == 1:
+        emit(remove_network(args[0]))
+    elif verb == "network-status" and len(args) == 1:
+        emit(network_status(args[0]))
+    elif verb == "shutdown" and not args:
+        shutdown_guest()
+    elif verb == "start-driver" and not args:
+        emit(start_driver())
+    elif verb == "installation-facts" and not args:
+        emit(installation_facts())
+    elif verb == "provision-codex-companion" and not args:
+        emit(provision_codex_companion())
+    elif verb == "provision-chrome" and not args:
+        emit(provision_chrome())
+    else:
+        raise HelperError("unsupported helper invocation")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(dispatch(sys.argv[1:]))
+    except Exception as error:
+        detail = str(error) if isinstance(error, HelperError) else type(error).__name__
+        print(f"cdb-helper: {detail}", file=sys.stderr)
+        raise SystemExit(64)

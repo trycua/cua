@@ -1,0 +1,75 @@
+{
+  "schema_version": "0.1.0",
+  "id": "cua.synthetic.driver",
+  "version": "1.0.0",
+  "interface": {
+    "kind": "mcp-server",
+    "protocol": {
+      "name": "mcp",
+      "revision": "2025-11-25"
+    },
+    "tools": [
+      {
+        "name": "observe",
+        "description": "Observe a selected synthetic window.",
+        "input_schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["window_id"],
+          "properties": {
+            "window_id": { "type": "string" }
+          }
+        },
+        "output_schema": {
+          "type": "object",
+          "required": ["text"],
+          "properties": {
+            "text": { "type": "string" }
+          }
+        }
+      },
+      {
+        "name": "type_text",
+        "description": "Type text into a selected synthetic window.",
+        "input_schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["window_id", "text"],
+          "properties": {
+            "window_id": { "type": "string" },
+            "text": { "type": "string" }
+          }
+        },
+        "output_schema": {
+          "type": "object",
+          "required": ["accepted"],
+          "properties": {
+            "accepted": { "type": "boolean" }
+          }
+        }
+      }
+    ],
+    "tool_schemas_digest_algorithm": "sha256-rfc8785",
+    "tool_schemas_digest": "078b9f5820ea38f63ed11a13916a5a3b4e57a9fae813df06cf29725953478cb9"
+  },
+  "provided_capabilities": [
+    "observe.window-metadata",
+    "act.keyboard",
+    "target.window",
+    "operate.background"
+  ],
+  "skill": {
+    "id": "cua.synthetic.driver-skill",
+    "version": "1.0.0",
+    "format": "markdown",
+    "artifact": {
+      "path": "freeze-inputs/driver-skill.md",
+      "sha256": "fd91a0fae667490b07e23619dd3481458ca2da7192bd3bca5785c7fd6506714d"
+    },
+    "source": {
+      "kind": "artifact",
+      "uri": "urn:cuabench:synthetic-driver-skill",
+      "revision": "1.0.0"
+    }
+  }
+}

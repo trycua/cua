@@ -1,0 +1,16 @@
+{
+  "schema_version": "0.1.0",
+  "id": "driver-only-diagnostic",
+  "version": "1.0.0",
+  "description": "Restricted Computer-Use 1.0 diagnostic with vendor guidance removed.",
+  "harness": {
+    "kind": "restricted",
+    "inventory": {
+      "path": "freeze-inputs/harness-restricted.json",
+      "sha256": "303461eba455dc5529f28880629ba58df13ba997ed6b55b49f283ca26d296797"
+    }
+  },
+  "driver_presentation": "candidate-native",
+  "guidance": { "mode": "removed" },
+  "decision_bearing": false
+}

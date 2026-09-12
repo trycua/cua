@@ -35,6 +35,7 @@
 //!   supplies one via the optional argument).
 
 use crate::{
+    motion::{click_offset, motion_spec},
     CompiledTheme, CursorAction, CursorConfig, CursorVisualState, DeliveryModifier, MotionConfig,
     OverlayCommand, PathPlanner, PathState, PlannedPath, Spring, TargetModifier,
 };
@@ -273,8 +274,12 @@ impl RenderStateCore {
     /// Returns `true` when the planned path just ended (so the caller can
     /// fire an arrival oneshot to unblock `animate_cursor_to`).
     pub fn tick_motion(&mut self, dt: f64) -> bool {
-        let spring_k = self.motion.spring * 400.0;
-        let spring_c = self.motion.spring * 20.0;
+        // Windows/Linux settle constants are derived from the runtime `spring`
+        // scalar; the derivation factors are the repository-owned spec values.
+        let settle = &motion_spec().spring_settle.windows_linux;
+        let spring_k = self.motion.spring * settle.k_per_spring;
+        let spring_c = self.motion.spring * settle.c_per_spring;
+        let spring_overshoot = settle.overshoot;
 
         let mut fire_arrival = false;
 
@@ -316,8 +321,8 @@ impl RenderStateCore {
                 self.spring = Some(Spring {
                     ox: 0.0,
                     oy: 0.0,
-                    vx: impulse * 0.5 * vh.cos(),
-                    vy: impulse * 0.5 * vh.sin(),
+                    vx: impulse * spring_overshoot * vh.cos(),
+                    vy: impulse * spring_overshoot * vh.sin(),
                 });
                 self.spring_tgt = Some((end.x, end.y, end_heading));
                 self.pos = (end.x, end.y);
@@ -365,10 +370,15 @@ impl RenderStateCore {
         fire_arrival
     }
 
-    /// Advance the animation by `dt` seconds using the hardcoded Swift
-    /// reference constants (`peakSpeed=900`, `minStart=300`, `minEnd=200`,
-    /// `springK=400`, `springC=17`, `springOvershoot=0.8`).  Used by macOS,
-    /// which mirrors `AgentCursorRenderer.swift` 1:1.
+    /// Advance the animation by `dt` seconds using the Swift reference
+    /// settle constants from the repository-owned movement spec
+    /// (`spring_settle.macos`: `k=400`, `c=17`, `overshoot=0.8`) plus the
+    /// shared speed contract (`peak=900`, `start=300`, `end=200`).
+    /// Used by macOS, which mirrors `AgentCursorRenderer.swift` 1:1.
+    ///
+    /// Platform limitation, recorded deliberately in the spec: this path
+    /// does not scale its settle constants with the runtime `spring`
+    /// override — only the Windows/Linux `tick_motion` path does.
     ///
     /// Returns `true` when the path just ended (so the caller can fire its
     /// arrival oneshot to unblock `animate_cursor_to`).
@@ -378,12 +388,13 @@ impl RenderStateCore {
     /// peak at 1.0 at u=0.5.  The original Swift code uses the 30/1.875
     /// form so we preserve it here for parity.
     pub fn tick_swift_constants(&mut self, dt: f64) -> bool {
-        const PEAK_SPEED: f64 = 900.0;
-        const MIN_START_SPEED: f64 = 300.0;
-        const MIN_END_SPEED: f64 = 200.0;
-        const SPRING_K: f64 = 400.0;
-        const SPRING_C: f64 = 17.0;
-        const SPRING_OVERSHOOT: f64 = 0.8;
+        let spec = motion_spec();
+        let peak_speed = spec.shared.peak_speed;
+        let min_start_speed = spec.shared.min_start_speed;
+        let min_end_speed = spec.shared.min_end_speed;
+        let spring_k = spec.spring_settle.macos.k;
+        let spring_c = spec.spring_settle.macos.c;
+        let spring_overshoot = spec.spring_settle.macos.overshoot;
 
         let mut fire_arrival = false;
 
@@ -394,11 +405,11 @@ impl RenderStateCore {
             // Smootherstep speed profile (normalised: peak = 1.0).
             let profile = (30.0 * u * u * (1.0 - u) * (1.0 - u)) / 1.875;
             let floor_speed = if u < 0.5 {
-                MIN_START_SPEED
+                min_start_speed
             } else {
-                MIN_END_SPEED
+                min_end_speed
             };
-            let speed_based = floor_speed + (PEAK_SPEED - floor_speed) * profile;
+            let speed_based = floor_speed + (peak_speed - floor_speed) * profile;
             // Fixed-duration override: when `glide_duration_ms > 0` the move
             // takes exactly that long regardless of distance, so an orchestrator
             // can lock glides to a known cadence. `0` (the default) keeps the
@@ -421,15 +432,15 @@ impl RenderStateCore {
                 // stays as crisp as a speed-based glide instead of overshooting
                 // proportionally to a short duration.
                 let impulse = if self.motion.glide_duration_ms > 0.0 {
-                    MIN_END_SPEED
+                    min_end_speed
                 } else {
                     current_speed
                 };
                 self.spring = Some(Spring {
                     ox: 0.0,
                     oy: 0.0,
-                    vx: impulse * SPRING_OVERSHOOT * vh.cos(),
-                    vy: impulse * SPRING_OVERSHOOT * vh.sin(),
+                    vx: impulse * spring_overshoot * vh.cos(),
+                    vy: impulse * spring_overshoot * vh.sin(),
                 });
                 self.spring_tgt = Some((end.x, end.y, end_heading));
                 self.pos = (end.x, end.y);
@@ -450,8 +461,8 @@ impl RenderStateCore {
                 let substeps = 4;
                 let sdt = dt / substeps as f64;
                 for _ in 0..substeps {
-                    s.vx += (-SPRING_K * s.ox - SPRING_C * s.vx) * sdt;
-                    s.vy += (-SPRING_K * s.oy - SPRING_C * s.vy) * sdt;
+                    s.vx += (-spring_k * s.ox - spring_c * s.vx) * sdt;
+                    s.vy += (-spring_k * s.oy - spring_c * s.vy) * sdt;
                     s.ox += s.vx * sdt;
                     s.oy += s.vy * sdt;
                 }
@@ -560,10 +571,10 @@ impl RenderStateCore {
                 // matching Swift `moveTo(point:endAngleRadians:)`:
                 //   tx = clickPoint.x + cos(endAngle) * clickOffset
                 //   ty = clickPoint.y + sin(endAngle) * clickOffset
-                const CLICK_OFFSET: f64 = 16.0;
+                let offset = click_offset();
                 let turn_radius = self.motion.turn_radius;
-                let tx = x + end_heading_radians.cos() * CLICK_OFFSET;
-                let ty = y + end_heading_radians.sin() * CLICK_OFFSET;
+                let tx = x + end_heading_radians.cos() * offset;
+                let ty = y + end_heading_radians.sin() * offset;
 
                 // macOS-only: if the cursor is still at the initial off-screen
                 // sentinel, snap it to the offset target so the path starts on-screen.
@@ -630,12 +641,9 @@ impl RenderStateCore {
                     // After that the cursor stays where the animation landed.
                     if self.pos.0 < -50.0 {
                         // Apply same click offset so tip lands at click point.
-                        const CLICK_OFFSET: f64 = 16.0;
+                        let offset = click_offset();
                         let angle = std::f64::consts::FRAC_PI_4;
-                        self.pos = (
-                            x + angle.cos() * CLICK_OFFSET,
-                            y + angle.sin() * CLICK_OFFSET,
-                        );
+                        self.pos = (x + angle.cos() * offset, y + angle.sin() * offset);
                     }
                 } else {
                     self.pos = (x, y);

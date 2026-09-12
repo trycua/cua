@@ -1,0 +1,33 @@
+{
+  "schema": "cua.cursor-motion/1",
+  "shared": {
+    "start_handle": 0.3,
+    "end_handle": 0.3,
+    "arc_size": 0.25,
+    "arc_flow": 0.0,
+    "spring": 0.72,
+    "glide_duration_ms": 0.0,
+    "dwell_after_click_ms": 80.0,
+    "idle_hide_ms": 20000.0,
+    "press_duration_ms": 120.0,
+    "peak_speed": 900.0,
+    "min_start_speed": 300.0,
+    "min_end_speed": 200.0,
+    "turn_radius": 80.0,
+    "click_offset": 16.0
+  },
+  "spring_settle": {
+    "macos": {
+      "mode": "fixed",
+      "k": 400.0,
+      "c": 17.0,
+      "overshoot": 0.8
+    },
+    "windows_linux": {
+      "mode": "derived",
+      "k_per_spring": 400.0,
+      "c_per_spring": 20.0,
+      "overshoot": 0.5
+    }
+  }
+}

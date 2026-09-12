@@ -398,7 +398,8 @@ fi
 if [[ "${SUITE}" == capture || "${SUITE}" == all ]]; then
   run_test capture-contract cargo test -p cua-driver --test capture_contract_test -- \
     --ignored --nocapture --test-threads=1
-  run_test capture-environment cargo test -p cua-driver --test macos_capture_environment_test -- \
+  run_test capture-environment env CUA_TEST_DRIVER_BIN="${MACOS_DAEMON_BIN}" \
+    cargo test -p cua-driver --test macos_capture_environment_test -- \
     --ignored --nocapture --test-threads=1
   run_test desktop-scope cargo test -p cua-driver --test desktop_scope_macos_test -- \
     --ignored --nocapture --test-threads=1

@@ -2691,7 +2691,11 @@ fn char_to_keycode_shift(mapping: &GetKeyboardMappingReply, keysym: u32) -> Opti
 /// Map a human key name (e.g. "Return", "F5", "a") to its X11 keysym. Pure name
 /// resolution — no server interaction — split out from keycode lookup so the
 /// keysym can be remapped onto a spare keycode when the keymap lacks it.
-fn key_name_to_keysym(key: &str) -> Result<u32> {
+/// Resolve a key name in the shared X keysym vocabulary, or error on an
+/// unknown name. Exposed crate-wide so input-adjacent paths (e.g. the
+/// press_key terminal short-circuit gate) can test key identity against
+/// this canonical mapping instead of a local string comparison.
+pub(crate) fn key_name_to_keysym(key: &str) -> Result<u32> {
     // Common X11 keysym names.
     let keysym: u32 = match key.to_lowercase().as_str() {
         "return" | "enter" => 0xFF0D,

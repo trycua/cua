@@ -346,6 +346,19 @@ fn codesign_identity_matches(details: &str, identifier: &str, team_identifier: &
     observed_identifier == Some(identifier) && observed_team == Some(team_identifier)
 }
 
+fn codesign_verification_args(requirement: &str) -> [&str; 4] {
+    // The explicit requirement already pins the Apple anchor, vendor team, and
+    // bundle identifier. Bare `--strict` also rejects harmless Finder/resource-
+    // fork metadata. Retain sealed-symlink validation without requiring
+    // sideband hygiene.
+    [
+        "--verify",
+        "--strict=symlinks",
+        "--test-requirement",
+        requirement,
+    ]
+}
+
 fn has_trusted_codesign_identity(
     executable: &std::path::Path,
     identifier: &str,
@@ -355,7 +368,7 @@ fn has_trusted_codesign_identity(
         "=anchor apple generic and certificate leaf[subject.OU] = \"{team_identifier}\" and identifier \"{identifier}\""
     );
     let verified = std::process::Command::new("/usr/bin/codesign")
-        .args(["--verify", "--strict", "--test-requirement", &requirement])
+        .args(codesign_verification_args(&requirement))
         .arg(executable)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -1563,6 +1576,21 @@ mod tests {
             "com.google.Chrome",
             "EQHXZ8M8AV"
         ));
+    }
+
+    #[test]
+    fn vendor_verification_does_not_require_filesystem_metadata_hygiene() {
+        let requirement = "=anchor apple generic and identifier \"com.example.Browser\"";
+        assert_eq!(
+            codesign_verification_args(requirement),
+            [
+                "--verify",
+                "--strict=symlinks",
+                "--test-requirement",
+                requirement
+            ]
+        );
+        assert!(!codesign_verification_args(requirement).contains(&"--strict"));
     }
 
     fn window(window_id: u32, pid: i32, title: &str) -> crate::windows::WindowInfo {

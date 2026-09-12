@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import os
 import re
 import time
@@ -15,8 +14,8 @@ from tests.live.fleet_e2e_support import (
     assert_template_contract,
     build_fleet_client,
     build_namespace_name,
-    collect_resource_inventory,
     wait_claims_absent,
+    wait_resource_inventory_empty,
     write_summary,
 )
 
@@ -195,15 +194,11 @@ async def run_fleet_ephemeral_live() -> None:
                     record_cleanup_error(error)
                 try:
                     expected_inventory = {"templates": [], "pools": [], "claims": []}
-                    inventory = await collect_resource_inventory(fleet, resource_namespace)
-                    if claims_absent is True and primary_error is None:
-                        inventory_deadline = time.monotonic() + 180.0
-                        while (
-                            inventory != expected_inventory
-                            and time.monotonic() < inventory_deadline
-                        ):
-                            await asyncio.sleep(5.0)
-                            inventory = await collect_resource_inventory(fleet, resource_namespace)
+                    inventory = await wait_resource_inventory_empty(
+                        fleet,
+                        resource_namespace,
+                        timeout=180.0 if claims_absent is True and primary_error is None else 0,
+                    )
                     summary["persistent_resources"] = inventory
                 except BaseException as error:
                     record_cleanup_error(error)

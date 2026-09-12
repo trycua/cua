@@ -953,6 +953,18 @@ fn warp_master_pointer(
     Ok(())
 }
 
+/// True when `window` is override-redirect — a menu, tooltip, or other popup
+/// the WM does not manage. Such a window takes its own active pointer grab, so
+/// the shield-grab-and-replay dance cannot deliver into it; a plain warp+press
+/// on the virtual master is what reaches it (and there is no WM focus to steal).
+fn is_override_redirect(display: *mut x11::xlib::Display, window: x11::xlib::Window) -> bool {
+    let mut attrs: x11::xlib::XWindowAttributes = unsafe { std::mem::zeroed() };
+    let previous_handler = unsafe { x11::xlib::XSetErrorHandler(Some(ignore_x_error)) };
+    let rc = unsafe { x11::xlib::XGetWindowAttributes(display, window, &mut attrs) };
+    unsafe { x11::xlib::XSetErrorHandler(previous_handler) };
+    rc != 0 && attrs.override_redirect != 0
+}
+
 /// Direct child of the root window under screen point `(x, y)`: the WM frame
 /// of a managed toplevel, or an override-redirect popup (menu, tooltip).
 fn root_child_under_point(
@@ -1658,43 +1670,73 @@ pub fn send_virtual_pointer_click(cursor_id: &str, click: &VirtualPointerClick) 
             }
             _ => window,
         };
-        thaw_device(display, ids.pointer_id);
-        install_shield_grab(display, ids.pointer_id, shield_window, click.button)
-            .with_context(|| format!("shield grab failed for '{cursor_id}'"))?;
-        // Run the press train under a guard so the shield is always removed,
-        // even on an early error mid-train.
-        let click_result = (|| -> Result<()> {
-            warp_master_pointer(display, ids, click.x, click.y)?;
-            let count = click.count.max(1);
-            for i in 0..count {
-                {
-                    let mut device = device.lock().unwrap();
-                    emit_button(&mut device, click.button, true)?;
+        // A menu/combo/tooltip popup manages its own active pointer grab; the
+        // shield-grab-and-replay would time out against it. Deliver the button
+        // straight from the virtual master instead — the popup is override-
+        // redirect, so there is no WM focus to protect.
+        let popup = is_override_redirect(display, shield_window);
+        let count = click.count.max(1);
+        let click_result = if popup {
+            thaw_device(display, ids.pointer_id);
+            (|| -> Result<()> {
+                warp_master_pointer(display, ids, click.x, click.y)?;
+                for i in 0..count {
+                    {
+                        let mut device = device.lock().unwrap();
+                        emit_button(&mut device, click.button, true)?;
+                        emit_button(&mut device, click.button, false)?;
+                    }
+                    if count > 1 && i + 1 < count {
+                        sleep(Duration::from_millis(CLICK_DELAY_MS));
+                    }
                 }
-                // The shield grab freezes the device on every press; drain and
-                // replay this one so it reaches the app (and re-arms for the
-                // next press in a multi-click train).
-                let mut pending = std::collections::HashSet::from([ids.pointer_id]);
-                replay_shielded_presses(display, opcode, &mut pending, Duration::from_millis(1000));
-                if !pending.is_empty() {
-                    return Err(anyhow!(
-                        "shield replay timed out before XI_ButtonPress arrived for '{cursor_id}'"
-                    ));
+                unsafe { x11::xlib::XSync(display, 0) };
+                Ok(())
+            })()
+        } else {
+            thaw_device(display, ids.pointer_id);
+            install_shield_grab(display, ids.pointer_id, shield_window, click.button)
+                .with_context(|| format!("shield grab failed for '{cursor_id}'"))?;
+            // Run the press train under a guard so the shield is always removed,
+            // even on an early error mid-train.
+            let r = (|| -> Result<()> {
+                warp_master_pointer(display, ids, click.x, click.y)?;
+                for i in 0..count {
+                    {
+                        let mut device = device.lock().unwrap();
+                        emit_button(&mut device, click.button, true)?;
+                    }
+                    // The shield grab freezes the device on every press; drain
+                    // and replay this one so it reaches the app (and re-arms for
+                    // the next press in a multi-click train).
+                    let mut pending = std::collections::HashSet::from([ids.pointer_id]);
+                    replay_shielded_presses(
+                        display,
+                        opcode,
+                        &mut pending,
+                        Duration::from_millis(1000),
+                    );
+                    if !pending.is_empty() {
+                        return Err(anyhow!(
+                            "shield replay timed out before XI_ButtonPress arrived for '{cursor_id}'"
+                        ));
+                    }
+                    {
+                        let mut device = device.lock().unwrap();
+                        emit_button(&mut device, click.button, false)?;
+                    }
+                    // Multi-click cadence: keep press→press well under the
+                    // toolkit double-click threshold (GTK default 250 ms) so
+                    // count=2 lands as a real double-click, not two singles.
+                    if count > 1 && i + 1 < count {
+                        sleep(Duration::from_millis(CLICK_DELAY_MS));
+                    }
                 }
-                {
-                    let mut device = device.lock().unwrap();
-                    emit_button(&mut device, click.button, false)?;
-                }
-                // Multi-click cadence: keep press→press well under the toolkit
-                // double-click threshold (GTK default 250 ms) so count=2 lands
-                // as a real double-click, not two singles.
-                if count > 1 && i + 1 < count {
-                    sleep(Duration::from_millis(CLICK_DELAY_MS));
-                }
-            }
-            Ok(())
-        })();
-        remove_shield_grab(display, ids.pointer_id, shield_window, click.button);
+                Ok(())
+            })();
+            remove_shield_grab(display, ids.pointer_id, shield_window, click.button);
+            r
+        };
         click_result
     })();
 

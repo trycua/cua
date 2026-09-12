@@ -140,6 +140,15 @@ static MPX_POINTERS: OnceLock<Mutex<HashMap<String, MasterPointerIds>>> = OnceLo
 static UINPUT_POINTERS: OnceLock<Mutex<HashMap<String, Arc<Mutex<VirtualDevice>>>>> =
     OnceLock::new();
 static XLIB_THREADS_READY: OnceLock<Result<(), String>> = OnceLock::new();
+/// Serialises every MPX operation against the idle reaper (and each other),
+/// so a retained master pair is never torn down while a call is using it.
+static MPX_OP_LOCK: Mutex<()> = Mutex::new(());
+static MPX_LAST_USE: OnceLock<Mutex<HashMap<String, std::time::Instant>>> = OnceLock::new();
+static MPX_IDLE_REAPER: std::sync::Once = std::sync::Once::new();
+/// A session's retained master pair is removed after this much inactivity;
+/// `end_session` and the startup reaper cover the explicit and crash cases.
+const MPX_IDLE_TTL: Duration = Duration::from_secs(180);
+const MPX_IDLE_REAPER_PERIOD: Duration = Duration::from_secs(30);
 static MPX_NAME_COUNTER: AtomicU64 = AtomicU64::new(1);
 // evdev 0.12.2 asserts `name.len() + 1 < UINPUT_MAX_NAME_SIZE` while building
 // a device. Linux defines UINPUT_MAX_NAME_SIZE as 80, leaving 78 usable bytes.
@@ -155,6 +164,52 @@ struct UinputUnavailable {
 
 fn mpx_pointers() -> &'static Mutex<HashMap<String, MasterPointerIds>> {
     MPX_POINTERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn mpx_last_use() -> &'static Mutex<HashMap<String, std::time::Instant>> {
+    MPX_LAST_USE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Take the MPX operation lock for one call on `cursor_id`, stamp its last
+/// use, and make sure the idle reaper is running. Hold the guard for the
+/// whole operation.
+fn mpx_op_guard(cursor_id: &str) -> std::sync::MutexGuard<'static, ()> {
+    let guard = MPX_OP_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    mpx_last_use()
+        .lock()
+        .unwrap()
+        .insert(cursor_id.to_owned(), std::time::Instant::now());
+    MPX_IDLE_REAPER.call_once(|| {
+        std::thread::Builder::new()
+            .name("cua-mpx-idle-reaper".into())
+            .spawn(|| loop {
+                sleep(MPX_IDLE_REAPER_PERIOD);
+                let _op = MPX_OP_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                let stale = {
+                    let last_use = mpx_last_use().lock().unwrap();
+                    stale_cursor_ids(&last_use, std::time::Instant::now(), MPX_IDLE_TTL)
+                };
+                for cursor_id in stale {
+                    tracing::info!(cursor_id, "removing idle MPX master pair");
+                    forget_master_pointer(&cursor_id);
+                }
+            })
+            .ok();
+    });
+    guard
+}
+
+/// Sessions whose last MPX use is older than `ttl`.
+fn stale_cursor_ids(
+    last_use: &HashMap<String, std::time::Instant>,
+    now: std::time::Instant,
+    ttl: Duration,
+) -> Vec<String> {
+    last_use
+        .iter()
+        .filter(|(_, at)| now.saturating_duration_since(**at) >= ttl)
+        .map(|(id, _)| id.clone())
+        .collect()
 }
 
 fn uinput_pointers() -> &'static Mutex<HashMap<String, Arc<Mutex<VirtualDevice>>>> {
@@ -637,6 +692,7 @@ fn ensure_master_pointer_for_session(
 }
 
 pub fn forget_master_pointer(cursor_id: &str) {
+    mpx_last_use().lock().unwrap().remove(cursor_id);
     // Drop the uinput slaves first: closing the fds unplugs them, so the master
     // removal below never has to hand a live slave back to the user's core
     // devices (XIAttachToMaster only re-homes slaves that still exist).
@@ -1341,6 +1397,13 @@ fn emit_scroll(device: &mut VirtualDevice, horizontal: bool, value: i32) -> Resu
 }
 
 pub fn send_parallel_virtual_pointer_drags(drags: &[(String, VirtualPointerDrag)]) -> Result<()> {
+    let _op = mpx_op_guard(drags.first().map(|(id, _)| id.as_str()).unwrap_or("default"));
+    {
+        let mut last_use = mpx_last_use().lock().unwrap();
+        for (cursor_id, _) in drags {
+            last_use.insert(cursor_id.clone(), std::time::Instant::now());
+        }
+    }
     let display = open_display()?;
     supports_parallel_pointer_injection(display)?;
     let xi_opcode = xinput_opcode(display);
@@ -1559,6 +1622,7 @@ pub struct VirtualPointerClick {
 /// the WM stays blind to it. The master is torn down and focus restored on exit
 /// (matching the drag) to keep non-MPX WMs' focus bookkeeping consistent.
 pub fn send_virtual_pointer_click(cursor_id: &str, click: &VirtualPointerClick) -> Result<()> {
+    let _op = mpx_op_guard(cursor_id);
     let display = open_display()?;
     supports_parallel_pointer_injection(display)?;
     let xi_opcode = xinput_opcode(display);
@@ -1663,6 +1727,7 @@ pub struct VirtualPointerScroll {
 /// point, then emits `|ticks|` wheel detents on the uinput slave. The master is
 /// torn down and focus restored on exit, matching the click/drag paths.
 pub fn send_virtual_pointer_scroll(cursor_id: &str, scroll: &VirtualPointerScroll) -> Result<()> {
+    let _op = mpx_op_guard(cursor_id);
     let display = open_display()?;
     supports_parallel_pointer_injection(display)?;
     let saved_focus = save_focus_state(display);
@@ -3006,6 +3071,20 @@ mod path_tests {
             modifiers_to_state(&["control", "alt"]),
             KeyButMask::from(u16::from(KeyButMask::CONTROL) | u16::from(KeyButMask::MOD1))
         );
+    }
+
+    #[test]
+    fn idle_reaper_selects_only_sessions_past_the_ttl() {
+        use super::{stale_cursor_ids, MPX_IDLE_TTL};
+        let now = std::time::Instant::now();
+        let mut last_use = std::collections::HashMap::new();
+        last_use.insert("fresh".to_owned(), now);
+        last_use.insert("old".to_owned(), now - std::time::Duration::from_secs(400));
+        last_use.insert("edge".to_owned(), now - MPX_IDLE_TTL);
+        let mut stale = stale_cursor_ids(&last_use, now, MPX_IDLE_TTL);
+        stale.sort();
+        assert_eq!(stale, vec!["edge".to_owned(), "old".to_owned()]);
+        assert!(stale_cursor_ids(&std::collections::HashMap::new(), now, MPX_IDLE_TTL).is_empty());
     }
 
     #[test]

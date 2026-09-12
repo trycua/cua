@@ -397,6 +397,7 @@ fn deliver(
     remap_guards: Vec<RemappedKeycode<'_>>,
     keymap_conn: &RustConnection,
 ) -> Result<KeyboardDeliveryReport> {
+    let _op = mpx_op_guard(cursor_id);
     let display = open_display()?;
     let result = (|| -> Result<KeyboardDeliveryReport> {
         supports_parallel_pointer_injection(display)?;

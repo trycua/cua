@@ -1,9 +1,9 @@
 ---
 title: Sandbox interfaces reference
-description: Python Sandbox computer-control, file, service, tunnel, and application interfaces in cua-sandbox 0.4.3.
+description: Python Sandbox computer-control, file, service, tunnel, and application interfaces in cua-sandbox 0.7.0.
 ---
 
-These interfaces are exposed by `Sandbox` in the published `cua-sandbox` 0.4.3
+These interfaces are exposed by `Sandbox` in the published `cua-sandbox` 0.7.0
 package. A method's presence does not guarantee support by every transport.
 Fleet claims route computer-server operations through the selected named
 service; local and legacy transports have different capabilities.
@@ -97,7 +97,7 @@ Requests forwarding for one or more sandbox ports or Android abstract sockets
 from the connected transport. Supports `await` and `async with`; context exit
 closes the forwards.
 
-In 0.4.3, the `FleetTransport` used by `Pool.claim()` does not implement
+In 0.7.0, the `FleetTransport` used by `Pool.claim()` does not implement
 `tunnel.forward()`. Use `sb.services.request()` for authenticated HTTP requests
 to a Fleet service. Local HTTP transports also do not implement this tunnel
 API; use `sb.exposed_ports` for ports forwarded at local startup.
@@ -139,10 +139,19 @@ value is an `httpx.Response`. `method` is the HTTP method, `path` is the service
 request path, `json` is an optional JSON body, and `headers` adds request headers.
 Transports without named service support raise `NotImplementedError`.
 
-The released 0.4.3 `Services` interface has `request()` only. Signed service URL
-creation is available in the [TypeScript Fleet client](/reference/sandbox-sdk/typescript#service-access);
-`create_signed_url()`, `list_signed_urls()`, and `revoke_signed_url()` are not
-part of this Python release.
+The released 0.7.0 `Services` interface also manages signed Fleet service URLs:
+
+```python
+async def create_signed_url(
+    name: str, *, expires_in_seconds: int, label: str | None = None
+) -> SignedServiceURL: ...
+async def list_signed_urls() -> list[SignedServiceURL]: ...
+async def revoke_signed_url(signed_url: SignedServiceURL) -> None: ...
+```
+
+Transports without signed URL support raise `NotImplementedError`. A signed URL
+is a bearer credential; see [Share a service with a signed URL](/how-to-guides/sandbox/share-service-with-signed-url)
+for expiration and revocation guidance.
 
 ## Files
 

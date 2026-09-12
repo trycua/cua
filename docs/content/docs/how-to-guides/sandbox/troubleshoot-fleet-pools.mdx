@@ -135,7 +135,7 @@ namespace directly:
 await client.deleteNamespace(POOL_NAME);
 ```
 
-In `@trycua/fleet@0.1.1`, namespace deletion accepts an already-absent namespace
+In `@trycua/fleet@0.1.2`, namespace deletion accepts an already-absent namespace
 as success, so the same exact deletion can be retried after interruption.
 Close the local client with `client.uniffiDestroy()` in a `finally` block when
 the recovery script ends.

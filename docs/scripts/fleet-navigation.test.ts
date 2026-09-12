@@ -44,6 +44,7 @@ async function routeExists(url: string): Promise<boolean> {
 
 test('desktop and mobile sidebars share the approved top-level product order', async () => {
   const root = await metadata('.');
+  const tutorials = await metadata('tutorials');
   const expected = [
     'index',
     'tutorials',
@@ -66,6 +67,8 @@ test('desktop and mobile sidebars share the approved top-level product order', a
     assert.deepEqual(root.pages, expected, `${viewport} sidebar order`);
   }
   assert.equal(root.pages.filter((entry) => entry === 'tutorials').length, 1);
+  assert.equal(tutorials.title, 'Start here');
+  assert.equal(tutorials.pages.includes('index'), false, 'omit the redundant Start here link');
 });
 
 test('Cua Fleets uses the approved stages and contains no local setup tasks', async () => {

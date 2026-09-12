@@ -1287,6 +1287,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn startup_control_disconnect_does_not_leave_initialize_waiting() {
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            supervise_control_connection(async {}, async {
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                Ok::<_, anyhow::Error>(())
+            }),
+        )
+        .await
+        .expect("control disconnect must end startup promptly")
+        .unwrap_err();
+
+        assert!(result.to_string().contains("reconnect the MCP client"));
+    }
+
+    #[tokio::test]
     async fn proxy_loop_returns_promptly_on_clean_eof() {
         let reader = BufReader::new(&b""[..]);
         let mut writer = Vec::new();

@@ -38,12 +38,13 @@ DEFAULT_API_PORT = 8000
 DEFAULT_VNC_PORT = 6901
 
 
-def resolve_image(os_type: str, registry: str | None = None) -> str:
-    """Map an os_type to a default Docker image tag."""
+def resolve_image(os_type: str, registry: str | None = None, kind: str = "vm") -> str:
+    """Map an os_type + kind to a default Docker image tag."""
     if registry:
         return registry
+    if os_type == "linux":
+        return UBUNTU_XFCE if kind == "container" else QEMU_LINUX
     return {
-        "linux": UBUNTU_XFCE,
         "windows": QEMU_WINDOWS,
         "macos": MACOS_SEQUOIA,
         "android": QEMU_ANDROID,

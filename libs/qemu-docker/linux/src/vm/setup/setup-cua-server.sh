@@ -4,7 +4,7 @@
 
 set -e
 
-USER_NAME="docker"
+USER_NAME="cua"
 USER_HOME="/home/$USER_NAME"
 SCRIPT_DIR="/opt/oem"
 PROJECT_DIR="/opt/cua-server"
@@ -131,6 +131,21 @@ cat > "$START_SCRIPT" << 'EOF'
 PROJECT_DIR="/opt/cua-server"
 LOG_FILE="$PROJECT_DIR/server.log"
 
+# Wait for DISPLAY :1 to be ready (check X socket, not xdpyinfo which needs XAUTHORITY)
+echo "$(date '+%Y-%m-%d %H:%M:%S') Waiting for DISPLAY :1..." >> "$LOG_FILE"
+for i in $(seq 1 60); do
+    if test -S /tmp/.X11-unix/X1; then
+        break
+    fi
+    sleep 2
+done
+
+# Apply XFCE theme and icon pack
+DISPLAY=:1 xfconf-query -c xsettings -p /Net/IconThemeName -s elementary-xfce-dark 2>/dev/null || true
+DISPLAY=:1 xfconf-query -c xsettings -p /Net/ThemeName -s Greybird 2>/dev/null || true
+DISPLAY=:1 xfconf-query -c xfce4-desktop -p /backdrop/screen0/monitorVNC-0/workspace0/last-image -s /usr/share/backgrounds/xfce/xfce-shapes.svg 2>/dev/null || true
+DISPLAY=:1 xfdesktop --reload 2>/dev/null || true
+
 start_server() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') Updating cua-computer-server and cua-agent..." >> "$LOG_FILE"
     uv add --directory "$PROJECT_DIR" cua-computer-server "cua-agent[all]" >> "$LOG_FILE" 2>&1
@@ -162,42 +177,41 @@ EOF
 sudo chmod +x /etc/X11/Xsession.d/99xauth
 log "X11 access script created"
 
-# Create system-level systemd service
-log "Creating systemd system service..."
+# Create system-level service with DISPLAY=:1 (TigerVNC desktop)
+log "Creating system systemd service for $USER_NAME..."
 
-sudo tee /etc/systemd/system/$SERVICE_NAME.service > /dev/null << EOF
+sudo tee "/etc/systemd/system/$SERVICE_NAME.service" > /dev/null << EOF
 [Unit]
 Description=Cua Computer Server
-After=graphical.target
+After=network.target
 
 [Service]
 Type=simple
+User=$USER_NAME
+Environment=HOME=$USER_HOME
+Environment=USER=$USER_NAME
+Environment=DISPLAY=:1
+Environment=XAUTHORITY=$USER_HOME/.Xauthority
+Environment=PYTHONUNBUFFERED=1
 ExecStart=$START_SCRIPT
 Restart=always
 RestartSec=5
-Environment=PYTHONUNBUFFERED=1
-Environment=DISPLAY=:0
-Environment=XAUTHORITY=$USER_HOME/.Xauthority
-User=$USER_NAME
-WorkingDirectory=$PROJECT_DIR
+StartLimitIntervalSec=0
 
 [Install]
-WantedBy=graphical.target
+WantedBy=multi-user.target
 EOF
 
-log "Systemd service created at /etc/systemd/system/$SERVICE_NAME.service"
+log "System service created at /etc/systemd/system/$SERVICE_NAME.service"
 
 # Ensure proper ownership of project directory
 log "Setting ownership of $PROJECT_DIR to $USER_NAME..."
 sudo chown -R "$USER_NAME:$USER_NAME" "$PROJECT_DIR"
 
-# Enable and start the service
-log "Enabling systemd service..."
-sudo systemctl daemon-reload
-sudo systemctl enable "$SERVICE_NAME.service"
-
-log "Starting Cua Computer Server service..."
+# Enable and start the system service
+log "Enabling and starting system service..."
+sudo systemctl daemon-reload || true
+sudo systemctl enable "$SERVICE_NAME.service" || true
 sudo systemctl start "$SERVICE_NAME.service" || true
 
 log "=== Cua Computer Server setup completed ==="
-log "Service status: $(sudo systemctl is-active $SERVICE_NAME.service 2>/dev/null || echo 'unknown')"

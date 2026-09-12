@@ -64,6 +64,79 @@ def assert_callable_with(f, *args, **kwargs):
         raise IllegalArgumentError(f"Expected {sig}, got args={args} kwargs={kwargs}") from e
 
 
+# Name of the computer tool as advertised to models without native
+# computer-use support. Those models are given a plain function tool (see
+# `loops/openai.py::_map_computer_tool_to_openai`) and answer with
+# `function_call` items rather than `computer_call` items.
+COMPUTER_FUNCTION_TOOL_NAME = "computer"
+
+
+def parse_computer_function_call(arguments: Any) -> Tuple[str, Dict[str, Any]]:
+    """Map a `computer` function-call payload onto a computer action.
+
+    Two shapes arrive here:
+
+    - the flat schema the function tool advertises, e.g.
+      ``{"action": "click", "x": 12, "y": 34}``;
+    - the native action dict, e.g. ``{"type": "click", "x": 12, "y": 34}``,
+      which `replace_failed_computer_calls_with_function_calls` re-emits when a
+      computer_call is retried as a function_call.
+
+    Returns the action name and its keyword arguments.
+    """
+    if arguments is None:
+        parsed: Any = {}
+    elif isinstance(arguments, str):
+        try:
+            parsed = json.loads(arguments or "{}")
+        except json.JSONDecodeError as e:
+            raise ToolError(f"computer call arguments are not valid JSON: {e}") from e
+    elif isinstance(arguments, dict):
+        parsed = dict(arguments)
+    else:
+        raise ToolError(
+            f"computer call arguments must be a JSON object, got {type(arguments).__name__}"
+        )
+    if not isinstance(parsed, dict):
+        raise ToolError("computer call arguments must be a JSON object")
+
+    # Omitted optional fields are commonly sent as null by function-calling
+    # models; they are absent arguments, not values.
+    action_args = {k: v for k, v in parsed.items() if v is not None}
+    action_type = action_args.pop("action", None) or action_args.pop("type", None)
+    action_args.pop("type", None)
+    if not isinstance(action_type, str) or not action_type:
+        raise ToolError("computer call is missing its `action`")
+
+    # The flat schema spells a drag as start/end coordinates; the computer
+    # handler protocol takes a path.
+    if action_type == "drag" and "path" not in action_args:
+        corners = ["start_x", "start_y", "end_x", "end_y"]
+        if all(corner in action_args for corner in corners):
+            start_x, start_y, end_x, end_y = (action_args.pop(c) for c in corners)
+            action_args["path"] = [{"x": start_x, "y": start_y}, {"x": end_x, "y": end_y}]
+
+    return action_type, action_args
+
+
+def accepted_action_args(method: Callable, action_args: Dict[str, Any]) -> Dict[str, Any]:
+    """Drop arguments the action does not take.
+
+    The function tool advertises one flat parameter object shared by every
+    action, so fields belonging to other actions are noise by construction —
+    models routinely echo them back (a `keypress` carrying `status`, say).
+    Native `computer_call` items are unaffected: their action dict is already
+    per-action.
+    """
+    try:
+        parameters = inspect.signature(method).parameters
+    except (TypeError, ValueError):
+        return action_args
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values()):
+        return action_args
+    return {name: value for name, value in action_args.items() if name in parameters}
+
+
 def get_json(obj: Any, max_depth: int = 10) -> Any:
     def custom_serializer(o: Any, depth: int = 0, seen: Optional[Set[int]] = None) -> Any:
         if seen is None:
@@ -767,42 +840,11 @@ class ComputerAgent:
                 # Extract action arguments (all fields except 'type')
                 action_args = {k: v for k, v in action.items() if k != "type"}
 
-                # Execute the computer action
-                computer_method = getattr(computer, action_type, None)
-                action_result = None
-                if computer_method:
-                    assert_callable_with(computer_method, **action_args)
-                    action_result = await computer_method(**action_args)
-                else:
-                    raise ToolError(f"Unknown computer action: {action_type}")
-
-                # Track computer action execution
-                if self.telemetry_enabled and is_telemetry_enabled():
-                    record_event(
-                        "computer_action_executed",
-                        {
-                            "action_type": action_type,
-                        },
-                    )
-                    record_event(
-                        "agent_tool_executed",
-                        {
-                            "tool_type": "computer",
-                            "tool_name": action_type,
-                        },
-                    )
-
-                # Check if this was a terminate action
-                is_terminate = action_type == "terminate" or (
-                    isinstance(action_result, dict) and action_result.get("terminated")
-                )
-
-                # Take screenshot after action (skip for terminate)
-                if not is_terminate:
-                    if self.screenshot_delay and self.screenshot_delay > 0:
-                        await asyncio.sleep(self.screenshot_delay)
-                    screenshot_base64 = await computer.screenshot()
-                    await self._on_screenshot(screenshot_base64, "screenshot_after")
+                (
+                    action_result,
+                    screenshot_base64,
+                    is_terminate,
+                ) = await self._execute_computer_action(computer, action_type, action_args)
 
                 # Handle safety checks
                 pending_checks = item.get("pending_safety_checks", [])
@@ -850,9 +892,19 @@ class ComputerAgent:
             if item_type == "function_call":
                 await self._on_function_call_start(item)
                 # Perform function call
-                function = self._get_tool(item.get("name"))
+                name = item.get("name")
+                function = self._get_tool(name)
+                if function is None and name == COMPUTER_FUNCTION_TOOL_NAME:
+                    # Models without native computer-use support are given the
+                    # computer tool as a plain function, so they answer with a
+                    # `function_call` instead of a `computer_call`. The action
+                    # semantics are the same; only the item shape differs. A
+                    # caller-registered tool named "computer" still wins above.
+                    result = await self._execute_computer_function_call(item, computer)
+                    await self._on_function_call_end(item, result)
+                    return result
                 if not function:
-                    raise ToolError(f"Function {item.get('name')} not found")
+                    raise ToolError(f"Function {name} not found")
 
                 args = json.loads(item.get("arguments"))
 
@@ -894,6 +946,106 @@ class ComputerAgent:
             return [make_tool_error_item(repr(e), call_id)]
 
         return []
+
+    async def _execute_computer_action(
+        self, computer: Any, action_type: str, action_args: Dict[str, Any]
+    ) -> Tuple[Any, Optional[str], bool]:
+        """Run one computer action and capture the screen it left behind.
+
+        Shared by the native `computer_call` path and the function-calling
+        `computer` path so both execute identical semantics. Returns the
+        action's own result, the post-action screenshot (absent for a
+        terminating action), and whether the action terminated the task.
+        """
+        computer_method = getattr(computer, action_type, None)
+        if not computer_method:
+            raise ToolError(f"Unknown computer action: {action_type}")
+        assert_callable_with(computer_method, **action_args)
+        action_result = await computer_method(**action_args)
+
+        # Track computer action execution
+        if self.telemetry_enabled and is_telemetry_enabled():
+            record_event(
+                "computer_action_executed",
+                {
+                    "action_type": action_type,
+                },
+            )
+            record_event(
+                "agent_tool_executed",
+                {
+                    "tool_type": "computer",
+                    "tool_name": action_type,
+                },
+            )
+
+        # Check if this was a terminate action
+        is_terminate = bool(
+            action_type == "terminate"
+            or (isinstance(action_result, dict) and action_result.get("terminated"))
+        )
+
+        # Take screenshot after action (skip for terminate)
+        screenshot_base64: Optional[str] = None
+        if not is_terminate:
+            if self.screenshot_delay and self.screenshot_delay > 0:
+                await asyncio.sleep(self.screenshot_delay)
+            screenshot_base64 = await computer.screenshot()
+            await self._on_screenshot(screenshot_base64, "screenshot_after")
+
+        return action_result, screenshot_base64, is_terminate
+
+    async def _execute_computer_function_call(
+        self, item: Dict[str, Any], computer: Any
+    ) -> List[Dict[str, Any]]:
+        """Execute a `computer` action that arrived as a function call."""
+        if not computer:
+            raise ToolError("Computer handler is required for computer calls")
+
+        action_type, action_args = parse_computer_function_call(item.get("arguments"))
+        computer_method = getattr(computer, action_type, None)
+        if not computer_method:
+            raise ToolError(f"Unknown computer action: {action_type}")
+        action_args = accepted_action_args(computer_method, action_args)
+
+        action_result, screenshot_base64, _is_terminate = await self._execute_computer_action(
+            computer, action_type, action_args
+        )
+
+        if action_result is None:
+            output = f"{action_type} executed."
+        elif isinstance(action_result, (dict, list)):
+            output = json.dumps(action_result)
+        else:
+            output = str(action_result)
+        if screenshot_base64:
+            output = f"{output} A screenshot taken after the action follows."
+
+        # The model that emitted this item holds the function tool, not
+        # `computer_use_preview`, so the reply has to be a function_call_output
+        # — and that carries text only. The screenshot therefore rides in its
+        # own user message, which `ImageRetentionCallback` trims like any other
+        # post-action capture.
+        results: List[Dict[str, Any]] = [
+            {
+                "type": "function_call_output",
+                "call_id": item.get("call_id"),
+                "output": output,
+            }
+        ]
+        if screenshot_base64:
+            results.append(
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_image",
+                            "image_url": f"data:image/png;base64,{screenshot_base64}",
+                        }
+                    ],
+                }
+            )
+        return results
 
     # ============================================================================
     # MAIN AGENT LOOP

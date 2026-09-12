@@ -38,6 +38,14 @@ pipe and accepts `--socket` when you want to make the endpoint explicit. The
 SSH process only moves protocol messages; the daemon performs the actual GUI
 work from a session with a desktop attached.
 
+<Callout type="warn">
+  Sign in through SSH with the same Windows account that owns the interactive
+  daemon. The named pipe is private to that account; a different local or domain
+  account can detect the pipe but receives `Access is denied` when it tries to
+  connect. Run `whoami /user` in both sessions and compare the SIDs, which must
+  match exactly.
+</Callout>
+
 ```
 ┌───────────────────────────────────────────────────────────────┐
 │  Session 1+ (RDP / console, has interactive desktop)          │
@@ -87,8 +95,11 @@ cua-driver status
 # Cua Driver daemon is running
 #   socket: \\.\pipe\cua-driver
 #   pid: 12345
-#   session: 2    ← daemon is in your interactive session
 ```
+
+`status` opens the pipe and requests daemon state. If the endpoint exists but
+belongs to another Windows account, it reports that the endpoint is not
+reachable and tells you to compare the two account SIDs.
 
 **3. Call tools from SSH:**
 
@@ -113,15 +124,16 @@ that process as a protocol proxy to the interactive daemon. Bare `cua-driver
 mcp` owns a direct runtime on Windows and therefore fails closed in Session 0;
 it never silently falls back to another session.
 
-## Diagnose empty results
+## Diagnose connection or empty results
 
 Check these items before opening an issue:
 
 1. Confirm that `cua-driver --version` on the SSH side reports the same current install you expect. Upgrade if needed with `irm https://cua.ai/driver/install.ps1 | iex`.
-2. Run `cua-driver status` from SSH and confirm it reports a running daemon. If it does not, use `cua-driver autostart status` to see whether the Scheduled Task is registered.
-3. Run `query session` and confirm your user has a row in `Active` or `Disc` state.
-4. Run `cua-driver doctor` from RDP and confirm it reports `[ok] interactive session: session N has an attached interactive desktop`.
-5. Confirm that the MCP command includes `--socket \\.\pipe\cua-driver`, or the
+2. Run `whoami /user` over SSH and in the interactive desktop. The SIDs must match; the pipe does not permit cross-account desktop control.
+3. Run `cua-driver status` from SSH and confirm it reports a reachable daemon. If the daemon is absent, use `cua-driver autostart status` to see whether the Scheduled Task is registered. If the endpoint exists but access is denied, fix the account mismatch.
+4. Run `query session` and confirm your user has a row in `Active` or `Disc` state.
+5. Run `cua-driver doctor` from RDP and confirm it reports `[ok] interactive session: session N has an attached interactive desktop`.
+6. Confirm that the MCP command includes `--socket \\.\pipe\cua-driver`, or the
    exact endpoint reported by `cua-driver status`.
 
 If the explicitly selected interactive-session daemon is unavailable, MCP

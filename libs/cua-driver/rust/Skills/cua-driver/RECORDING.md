@@ -9,18 +9,31 @@ Session-scoped capture of action sequences + pre/post state, suitable
 for demos, regression diffs, and training data. Invoked only when the
 user explicitly asks to record — the skill does not auto-enable this.
 
-`start_recording` turns on a session-scoped trajectory recorder. While
-enabled, every action-tool call (`click`, `right_click`, `scroll`,
-`type_text`, `press_key`, `hotkey`, `set_value`) writes a numbered
-turn folder under a caller-chosen output directory. Read-only tools
-(`get_window_state`, `list_windows`, `screenshot`, `list_apps`,
-permission probes, agent-cursor getters / setters, and the recording
-controls themselves) are not recorded.
+`start_recording` turns on a trajectory recorder scoped to the session
+that started it. While enabled, that session's action-tool calls
+(`click`, `right_click`, `scroll`, `type_text`, `press_key`, `hotkey`,
+`set_value`, and the other state-changing tools) each write a numbered
+turn folder under a caller-chosen output directory.
 
-**Video on by default.** `start_recording` also captures the main
-display to `<output_dir>/recording.mp4` (H.264 / 30 fps) for the
-lifetime of the session. The mp4 is finalized on `stop_recording`. Opt
-out with `record_video: false` when you don't want video.
+Nothing else is recorded:
+
+- Calls from **other sessions** — a second MCP connection, or a one-shot
+  `cua-driver <tool>` CLI invocation, each of which is its own implicit
+  session. The recorder itself is daemon-global, so this scoping is what
+  keeps a concurrent CLI call out of your turn numbering.
+- **Session lifecycle** (`start_session`, `end_session`) and the
+  **recording controls** themselves.
+- **Read-only tools**: `get_window_state`, `list_windows`, `screenshot`,
+  `list_apps`, permission probes, agent-cursor getters / setters.
+
+A recording started through the CLI (`cua-driver recording start`) has no
+owning session and stays daemon-wide, recording every session's actions.
+
+**Video is off by default** for the `start_recording` tool. Pass
+`record_video: true` to also capture the main display to
+`<output_dir>/recording.mp4` (H.264 / 30 fps) for the lifetime of the
+session; the mp4 is finalized on `stop_recording`. The CLI
+`cua-driver recording start` records video.
 
 **macOS — native ScreenCaptureKit, zero-config.** On macOS the daemon's
 recorder uses `SCStream` + `SCRecordingOutput`, so it inherits the daemon's

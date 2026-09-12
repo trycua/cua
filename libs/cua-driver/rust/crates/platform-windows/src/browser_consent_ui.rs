@@ -430,7 +430,7 @@ pub async fn handle(
     loop {
         prove_window_owner(request.window_id, pid)?;
         let hwnd = request.window_id;
-        let tree = tokio::task::spawn_blocking(move || crate::uia::walk_tree(hwnd, None))
+        let tree = crate::dpi::spawn_blocking(move || crate::uia::walk_tree(hwnd, None))
             .await
             .map_err(|error| {
                 refusal(

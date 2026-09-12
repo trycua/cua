@@ -312,11 +312,12 @@ impl AppsFolderLookupSingleFlight {
         let timed_out = Arc::new(AtomicBool::new(false));
         let worker_timed_out = Arc::clone(&timed_out);
         let worker_gate = Arc::clone(self);
-        let worker = tokio::task::spawn_blocking(move || {
-            let _guard = AppsFolderLookupInFlightGuard {
-                gate: worker_gate,
-                timed_out: worker_timed_out,
-            };
+        let guard = AppsFolderLookupInFlightGuard {
+            gate: worker_gate,
+            timed_out: worker_timed_out,
+        };
+        let worker = crate::dpi::spawn_blocking(move || {
+            let _guard = guard;
             work()
         });
 

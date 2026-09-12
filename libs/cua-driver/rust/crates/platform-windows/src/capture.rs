@@ -342,6 +342,7 @@ pub(crate) fn screenshot_window_click_target(
 }
 
 fn screenshot_window_mapped(hwnd: u64) -> Result<(Vec<u8>, bool, Option<FrameGeometry>)> {
+    crate::dpi::check_owned_thread().map_err(anyhow::Error::msg)?;
     match unsafe { screenshot_window_bytes_with_occlusion_unsafe(hwnd) } {
         Ok(capture) => Ok(capture),
         Err(primary_error) => {
@@ -692,6 +693,7 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(
 
 /// Capture the primary display (full screen), returning raw PNG bytes.
 pub fn screenshot_display_bytes() -> Result<Vec<u8>> {
+    crate::dpi::check_owned_thread().map_err(anyhow::Error::msg)?;
     unsafe {
         use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
         // Under Per-Monitor V2 DPI awareness, GetSystemMetrics returns
@@ -779,4 +781,32 @@ pub fn crosshair_png_bytes(png_bytes: &[u8], cx: f64, cy: f64) -> Result<Vec<u8>
 /// the `_pub` export; the public alias is what callers use today.
 pub fn png_dimensions_pub(data: &[u8]) -> Result<(u32, u32)> {
     cua_driver_core::image_utils::png_dimensions(data)
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod dpi_admission_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn mapped_capture_and_click_evidence_refuse_failed_dpi_owner() {
+        // Isolate the injected terminal failure from other test workers.
+        std::thread::spawn(|| {
+            let owner = Arc::new(crate::dpi::OwnedThreadDpi::new(Arc::new(|| {
+                Err("mapped capture DPI rejection".into())
+            })));
+            owner.initialize_current_thread();
+            // An invalid HWND must never reach native capture or fallback:
+            // both public window capture and click evidence share this gate.
+            let mapped = screenshot_window_mapped(0).unwrap_err().to_string();
+            let window = screenshot_window_bytes_with_occlusion(0)
+                .unwrap_err()
+                .to_string();
+            assert!(mapped.contains("mapped capture DPI rejection"));
+            assert!(window.contains("mapped capture DPI rejection"));
+            assert!(screenshot_window_click_target(0, 0, 0).is_none());
+        })
+        .join()
+        .unwrap();
+    }
 }

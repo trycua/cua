@@ -113,7 +113,7 @@ pub async fn try_bookmark_exec(pid: i32, window_id: u32, javascript: &str) -> Re
         bail!("javascript expression is empty");
     }
     let js = javascript.to_owned();
-    tokio::task::spawn_blocking(move || -> Result<String> {
+    crate::dpi::spawn_blocking(move || -> Result<String> {
         let _g = BOOKMARK_EVAL_MUTEX
             .lock()
             .map_err(|_| anyhow!("bookmark-exec mutex poisoned"))?;

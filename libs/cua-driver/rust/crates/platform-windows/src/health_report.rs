@@ -8,12 +8,16 @@
 //! The TCC / bundle checks emit `status: "skip"` with `message: "not
 //! applicable on Windows"` rather than `fail`; Windows has no TCC.
 
+#[cfg(target_os = "windows")]
+use crate::dpi::spawn_blocking;
 use async_trait::async_trait;
 use cua_driver_core::health_report::{
     CheckData, CheckEntry, HealthCheckProvider, NAME_AX_CAPABILITY, NAME_BINARY_VERSION,
     NAME_BUNDLE_IDENTITY, NAME_PLATFORM_SUPPORTED, NAME_SCREEN_CAPTURE_CAPABILITY,
     NAME_SESSION_ACTIVE, NAME_TCC_ACCESSIBILITY, NAME_TCC_SCREEN_RECORDING,
 };
+#[cfg(not(target_os = "windows"))]
+use tokio::task::spawn_blocking;
 
 /// Windows canonical check names — the same Swift-PR contract, with
 /// TCC/bundle entries surfaced as `skip("not applicable on Windows")`
@@ -99,7 +103,7 @@ fn skip_not_applicable(name: &str) -> CheckEntry {
 async fn check_ax_capability() -> CheckEntry {
     // CoCreateInstance is synchronous and can take a few ms; keep the
     // async runtime responsive by punting to spawn_blocking.
-    let result = tokio::task::spawn_blocking(crate::diagnostics::ui_automation_available)
+    let result = spawn_blocking(crate::diagnostics::ui_automation_available)
         .await
         .unwrap_or(Err("UIA probe task panicked".to_owned()));
     match result {
@@ -122,7 +126,7 @@ async fn check_ax_capability() -> CheckEntry {
 }
 
 async fn check_screen_capture_capability() -> CheckEntry {
-    let result = tokio::task::spawn_blocking(probe_d3d11_device)
+    let result = spawn_blocking(probe_d3d11_device)
         .await
         .unwrap_or(Err("D3D11 probe task panicked".to_owned()));
     match result {

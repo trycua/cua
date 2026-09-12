@@ -292,15 +292,16 @@ impl UwpScanSingleFlight {
         let timed_out = Arc::new(AtomicBool::new(false));
         let worker_timed_out = Arc::clone(&timed_out);
         let worker_gate = Arc::clone(self);
+        let guard = UwpScanInFlightGuard {
+            gate: worker_gate,
+            timed_out: worker_timed_out,
+        };
         let spawn = thread::Builder::new()
             .name("cua-uwp-package-scan".to_owned())
-            .spawn(move || {
-                let _guard = UwpScanInFlightGuard {
-                    gate: worker_gate,
-                    timed_out: worker_timed_out,
-                };
+            .spawn(crate::dpi::owned_thread(move || {
+                let _guard = guard;
                 let _ = tx.send(f());
-            });
+            }));
 
         if let Err(error) = spawn {
             self.in_flight.store(false, Ordering::Release);

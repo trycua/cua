@@ -59,7 +59,7 @@ test('the Sandbox navigation swaps only the two legacy slugs', async () => {
   }
 });
 
-test('only the integration-owned tutorial retains a legacy link handoff', async () => {
+test('no page retains a legacy language-specific capacity link', async () => {
   const files = await mdxFiles(path.join(docs, 'content/docs'));
   const legacySlug = /create-pool-with-(python|typescript)/;
   const remaining: string[] = [];
@@ -68,7 +68,7 @@ test('only the integration-owned tutorial retains a legacy link handoff', async 
       remaining.push(path.relative(docs, file));
     }
   }
-  assert.deepEqual(remaining, ['content/docs/tutorials/your-first-cloud-fleet.mdx']);
+  assert.deepEqual(remaining, []);
 });
 
 test('legacy language-specific URLs permanently redirect to neutral capacity', async () => {

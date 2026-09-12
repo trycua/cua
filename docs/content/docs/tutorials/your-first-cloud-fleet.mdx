@@ -17,7 +17,7 @@ Sandbox SDKs.
 <Callout type="warn">
   A pool with one replica keeps cloud capacity available and can incur usage charges until it is
   deleted. The examples request deletion even when the task fails, but a stopped process cannot run
-  its cleanup block. Keep the printed Fleet name until you confirm that the pool is absent.
+  its cleanup block. Keep the printed Fleet name until you confirm that the Fleet is absent.
 </Callout>
 
 ## 1. Prepare your account
@@ -135,13 +135,14 @@ process hashed. It does not rely on the guest shell to verify its own result.
 
 ## 5. Confirm cleanup
 
-The claim is released before the example requests pool deletion. Pool deletion
-also removes the dedicated namespace and its remaining Fleet resources, but an
-accepted deletion request can precede final removal.
+Both examples release the claim before removing the dedicated Fleet resources.
+Python deletes the pool and the template it created; Fleet can then remove the
+empty namespace. TypeScript requests deletion of the dedicated namespace
+directly. An accepted cleanup request can precede final removal.
 
-Open [Fleet](https://run.cua.ai) and confirm that the printed pool name is no
+Open [Fleet](https://run.cua.ai) and confirm that the printed Fleet name is no
 longer present. Do not treat closing the terminal, a local exception, or a
-deletion request by itself as proof that chargeable capacity is gone.
+cleanup request by itself as proof that chargeable capacity is gone.
 
 If the process stopped before cleanup completed, do not rerun the tutorial.
 Follow [Recover this tutorial after an interruption](/how-to-guides/sandbox/recover-first-cloud-fleet)
@@ -152,8 +153,8 @@ with the printed pool name.
 You created a Fleet pool containing one hosted computer. A claim reserved that
 computer for the task, and the declared `server` service routed file and shell
 operations to its `computer-server` on port `8000`. Releasing the claim ended
-the reservation. Deleting the pool requested removal of the dedicated
-namespace and its capacity.
+the reservation. The final cleanup removed the dedicated Fleet resources and
+requested removal of their capacity.
 
 ## Next steps
 

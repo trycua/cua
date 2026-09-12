@@ -8,7 +8,7 @@ Cua Fleet capacity. Cua Fleets adds hosted pools, claims, authentication, and
 service routing so workloads can reserve and use managed cloud computers.
 
 Start with [Your first Cloud Fleet](/tutorials/your-first-cloud-fleet) to provision
-a pool, run a command, save a screenshot, and clean up the cloud resources.
+a pool, transform a file, verify the result, and clean up the cloud resources.
 
 ## Find the right page
 
@@ -47,7 +47,7 @@ before selecting your environment.
 
 Exiting a `pool.claim()` context releases the claim. The pool can still retain
 warm sandboxes, and cloud resources can incur usage charges after your workload
-finishes. The hosted tutorial includes pool deletion; reusable pools need an
-explicit cleanup or expiry policy. See [Pool lifecycle](/reference/sandbox-sdk/pool)
+finishes. The hosted tutorial removes its dedicated Fleet resources; reusable
+pools need an explicit cleanup or expiry policy. See [Pool lifecycle](/reference/sandbox-sdk/pool)
 for connection and release semantics, and [Expire pools and claims automatically](/how-to-guides/sandbox/expire-pools-and-claims)
 for deadlines and their effect on active work.

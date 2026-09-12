@@ -78,10 +78,7 @@ async function serverCommand(
   return payload;
 }
 
-async function deleteOwnedNamespace(
-  client: CyclopsClientLike,
-  namespace: string
-): Promise<void> {
+async function deleteOwnedNamespace(client: CyclopsClientLike, namespace: string): Promise<void> {
   await client.deleteNamespace(namespace);
   for (let attempt = 0; attempt < 60; attempt += 1) {
     const namespaces = await client.listNamespaces();

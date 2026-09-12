@@ -138,7 +138,7 @@ class DocumentationContractTests(unittest.TestCase):
         page = PAGE.read_text()
         recovery = RECOVERY.read_text()
         self.assertIn("can incur usage charges until it is", page)
-        self.assertIn("accepted deletion request can precede final removal", page)
+        self.assertIn("accepted cleanup request can precede final removal", page)
         self.assertIn("/how-to-guides/sandbox/recover-first-cloud-fleet", page)
         self.assertIn("Do not rerun the", recovery)
         self.assertIn("exact `first-fleet-...` name", recovery)

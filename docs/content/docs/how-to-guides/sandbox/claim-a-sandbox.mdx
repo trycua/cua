@@ -144,10 +144,7 @@ let claim: Claim | undefined;
 try {
   const pool = await client.getPool(requiredEnv('CUA_POOL_NAME'));
   claim = await client.createClaim(
-    new CreateClaimRequestBuilder()
-      .pool(pool)
-      .name(requiredEnv('CUA_CLAIM_NAME'))
-      .build()
+    new CreateClaimRequestBuilder().pool(pool).name(requiredEnv('CUA_CLAIM_NAME')).build()
   );
   console.log(`Claim: ${claim.metadata.namespace}/${claim.metadata.name}`);
   const sandbox = await client.waitClaim(claim);

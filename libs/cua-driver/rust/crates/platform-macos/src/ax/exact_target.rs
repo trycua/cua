@@ -16,7 +16,10 @@ use super::bindings::{
     ax_get_window_id, copy_ax_windows, copy_bool_attr, copy_element_attr, copy_string_attr,
     focused_element_of_pid, AXUIElementCreateApplication, AXUIElementRef,
 };
-use crate::windows::{all_windows, resolve_window_owner, WindowOwner};
+use crate::windows::{
+    all_windows_with_space_snapshot, all_windows_without_space_metadata, resolve_window_owner,
+    resolve_window_owner_in, window_space_facts_in, WindowEnumeration, WindowInfo, WindowOwner,
+};
 
 /// Bounded `AXParent` ascent used when an element does not expose `AXWindow`.
 const MAX_ANCESTRY_DEPTH: usize = 40;
@@ -139,6 +142,59 @@ fn count_competing_keyboard_destinations(
         .count()
 }
 
+/// Convert WindowServer's positive membership fact into the negative fact
+/// consumed by the background-input policy. Preserve `None`: unknown Space
+/// membership must never be treated as proof that a window is off-Space.
+fn off_active_space_from(on_current_space: Option<bool>) -> Option<bool> {
+    on_current_space.map(|is_on_current_space| !is_on_current_space)
+}
+
+/// Choose the cheap layer-0 census when AX already proves the target and the
+/// Space-enriched census only when AX is unresolved. Injected collectors keep
+/// the hot/cold path choice testable without a live WindowServer.
+fn background_window_census(
+    ax_window_present: bool,
+    pid: i32,
+    window_id: u32,
+    without_space_metadata: impl FnOnce() -> Vec<WindowInfo>,
+    with_space_metadata: impl FnOnce() -> WindowEnumeration,
+) -> (Vec<WindowInfo>, Option<bool>) {
+    if ax_window_present {
+        return (without_space_metadata(), None);
+    }
+
+    let snapshot = with_space_metadata();
+    let on_current_space = window_space_facts_in(&snapshot.windows, pid, window_id)
+        .and_then(|window| window.on_current_space);
+    (snapshot.windows, off_active_space_from(on_current_space))
+}
+
+fn window_server_ownership(owner: WindowOwner) -> WindowServerOwnership {
+    match owner {
+        WindowOwner::SamePid => WindowServerOwnership::SamePid,
+        WindowOwner::ForeignPid { owner_pid, .. } => {
+            WindowServerOwnership::ForeignPid { owner_pid }
+        }
+        WindowOwner::Unknown => WindowServerOwnership::NotFound,
+    }
+}
+
+/// Resolve ownership from the same latest layer-0 census used for Space facts.
+/// If that census omits the id, run a fresh any-layer lookup: a still-live
+/// accessory window stays addressable, while a close/re-parent race refreshes
+/// to NotFound/ForeignPid rather than reusing stale pre-AX evidence.
+fn refresh_window_server_ownership(
+    windows: &[WindowInfo],
+    pid: i32,
+    window_id: u32,
+    any_layer_lookup: impl FnOnce() -> WindowOwner,
+) -> WindowServerOwnership {
+    match resolve_window_owner_in(windows, pid, window_id) {
+        WindowOwner::Unknown => window_server_ownership(any_layer_lookup()),
+        owner => window_server_ownership(owner),
+    }
+}
+
 /// Gather fresh background-input facts for one `(pid, window_id)` target.
 ///
 /// `element_ptr` is an optional retained `AXUIElementRef` (as `usize`) for an
@@ -150,14 +206,6 @@ pub fn gather_background_facts(
     window_id: u32,
     element_ptr: Option<usize>,
 ) -> BackgroundTargetFacts {
-    let window_server = match resolve_window_owner(pid, window_id) {
-        WindowOwner::SamePid => WindowServerOwnership::SamePid,
-        WindowOwner::Unknown => WindowServerOwnership::NotFound,
-        WindowOwner::ForeignPid { owner_pid, .. } => {
-            WindowServerOwnership::ForeignPid { owner_pid }
-        }
-    };
-
     // SAFETY: the application element is created and released here; window
     // elements are released inside ax_window_records; the caller guarantees
     // element_ptr stays retained.
@@ -186,10 +234,25 @@ pub fn gather_background_facts(
     };
 
     let target = records.iter().find(|record| record.window_id == window_id);
+    // Issue #3458: only the AX-unresolved case consumes the off-active-Space
+    // fact, so the happy path (AX resolved) keeps the cheap enumeration and
+    // never pays the per-window space query. `on_current_space` stays `None`
+    // when the space query cannot answer, and an unknown fact never changes
+    // a refusal code.
+    let (window_census, off_active_space) = background_window_census(
+        target.is_some(),
+        pid,
+        window_id,
+        all_windows_without_space_metadata,
+        all_windows_with_space_snapshot,
+    );
+    let window_server = refresh_window_server_ownership(&window_census, pid, window_id, || {
+        resolve_window_owner(pid, window_id)
+    });
     let competing_keyboard_destinations = count_competing_keyboard_destinations(
         pid,
         window_id,
-        all_windows()
+        window_census
             .iter()
             .map(|window| (window.pid, window.window_id)),
         &records,
@@ -198,6 +261,7 @@ pub fn gather_background_facts(
     BackgroundTargetFacts {
         window_server,
         ax_window_present: target.is_some(),
+        off_active_space,
         target_minimized: target.and_then(|record| record.minimized),
         app_hidden,
         competing_keyboard_destinations,
@@ -207,12 +271,135 @@ pub fn gather_background_facts(
 
 #[cfg(test)]
 mod tests {
-    use super::{count_competing_keyboard_destinations, AxWindowRecord};
+    use super::{
+        background_window_census, count_competing_keyboard_destinations, off_active_space_from,
+        refresh_window_server_ownership, AxWindowRecord,
+    };
+    use crate::windows::{WindowBounds, WindowEnumeration, WindowInfo, WindowOwner};
+    use cua_driver_core::background_input::{
+        decide_background_input, BackgroundAction, BackgroundTargetFacts, ElementAncestry,
+        ExactWindowTarget, WindowServerOwnership,
+    };
+    use std::cell::Cell;
 
     fn ax_window(window_id: u32, minimized: Option<bool>) -> AxWindowRecord {
         AxWindowRecord {
             window_id,
             minimized,
+        }
+    }
+
+    fn window(window_id: u32, pid: i32, on_current_space: Option<bool>) -> WindowInfo {
+        WindowInfo {
+            window_id,
+            pid,
+            app_name: String::new(),
+            title: String::new(),
+            bounds: WindowBounds {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 100.0,
+            },
+            layer: 0,
+            z_index: 1,
+            is_on_screen: true,
+            current_space_id: None,
+            on_current_space,
+            space_ids: None,
+        }
+    }
+
+    #[test]
+    fn window_space_membership_is_inverted_without_guessing_unknowns() {
+        assert_eq!(off_active_space_from(Some(false)), Some(true));
+        assert_eq!(off_active_space_from(Some(true)), Some(false));
+        assert_eq!(off_active_space_from(None), None);
+    }
+
+    #[test]
+    fn resolved_ax_target_uses_only_the_metadata_free_census() {
+        let cheap_calls = Cell::new(0);
+        let enriched_calls = Cell::new(0);
+        let (windows, off_active_space) = background_window_census(
+            true,
+            800,
+            42,
+            || {
+                cheap_calls.set(cheap_calls.get() + 1);
+                vec![window(42, 800, None)]
+            },
+            || {
+                enriched_calls.set(enriched_calls.get() + 1);
+                WindowEnumeration {
+                    windows: vec![],
+                    current_space_id: None,
+                }
+            },
+        );
+
+        assert_eq!(cheap_calls.get(), 1);
+        assert_eq!(enriched_calls.get(), 0);
+        assert_eq!(windows.len(), 1);
+        assert_eq!(off_active_space, None);
+    }
+
+    #[test]
+    fn foreign_same_id_row_cannot_supply_an_off_space_fact() {
+        let (windows, off_active_space) =
+            background_window_census(false, 800, 42, Vec::new, || WindowEnumeration {
+                windows: vec![window(42, 900, Some(false))],
+                current_space_id: Some(7),
+            });
+
+        assert_eq!(off_active_space, None);
+        assert_eq!(
+            refresh_window_server_ownership(&windows, 800, 42, || {
+                panic!("present layer-0 row must avoid the any-layer fallback")
+            }),
+            WindowServerOwnership::ForeignPid { owner_pid: 900 }
+        );
+    }
+
+    #[test]
+    fn absent_layer_zero_row_refreshes_from_any_layer_without_reusing_stale_ownership() {
+        let same_pid = refresh_window_server_ownership(&[], 800, 42, || WindowOwner::SamePid);
+        assert_eq!(same_pid, WindowServerOwnership::SamePid);
+
+        let foreign = refresh_window_server_ownership(&[], 800, 42, || WindowOwner::ForeignPid {
+            owner_pid: 900,
+            owner_app_name: "Panel Service".into(),
+        });
+        assert_eq!(
+            foreign,
+            WindowServerOwnership::ForeignPid { owner_pid: 900 }
+        );
+
+        let missing = refresh_window_server_ownership(&[], 800, 42, || WindowOwner::Unknown);
+        assert_eq!(missing, WindowServerOwnership::NotFound);
+
+        for ownership in [foreign, missing] {
+            let facts = BackgroundTargetFacts {
+                window_server: ownership,
+                ax_window_present: true,
+                off_active_space: None,
+                target_minimized: Some(false),
+                app_hidden: Some(false),
+                competing_keyboard_destinations: 0,
+                element: ElementAncestry::NotAddressed,
+            };
+            assert!(
+                !decide_background_input(
+                    ExactWindowTarget {
+                        pid: 800,
+                        window_id: 42,
+                    },
+                    &facts,
+                    BackgroundAction::GenericKey,
+                )
+                .is_execute(),
+                "foreign/missing fallback must refuse process-scoped input"
+            );
         }
     }
 

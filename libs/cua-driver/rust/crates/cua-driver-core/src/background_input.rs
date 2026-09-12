@@ -60,6 +60,12 @@ pub struct BackgroundTargetFacts {
     /// `AXWindows` (mapped through `_AXUIElementGetWindow`). Absent means
     /// off-Space or AX-unresolved: observation-only.
     pub ax_window_present: bool,
+    /// WindowServer space metadata proves the requested CGWindowID is not on
+    /// the active Space of its display (`on_current_space == Some(false)`
+    /// from the same layer-0 enumeration `list_windows` reports). `None`
+    /// means the space fact is unknown — never guessed, and an unknown fact
+    /// never changes a refusal code (issue #3458).
+    pub off_active_space: Option<bool>,
     /// `AXMinimized` on the exact target window. `None` means the attribute
     /// could not be read — an unproven fact, which fails closed for pointer
     /// and keyboard routes (it never unlocks them).
@@ -107,6 +113,11 @@ pub mod refusal_codes {
     pub const WINDOW_NOT_FOUND: &str = "window_not_found";
     pub const OWNER_PID_MISMATCH: &str = "owner_pid_mismatch";
     pub const OFF_SPACE_OR_AX_UNRESOLVED: &str = "off_space_or_ax_unresolved";
+    /// The off-Space half of [`OFF_SPACE_OR_AX_UNRESOLVED`], emitted only when
+    /// WindowServer space metadata PROVES the target window is not on the
+    /// active Space of its display (issue #3458). The conflated code remains
+    /// for the genuinely ambiguous case.
+    pub const OFF_SPACE: &str = "off_space";
     pub const MINIMIZED_OR_HIDDEN: &str = "minimized_or_hidden_window";
     pub const SAME_PID_KEYBOARD_AMBIGUITY: &str = "same_pid_keyboard_ambiguity";
     pub const ELEMENT_OUTSIDE_TARGET_WINDOW: &str = "element_outside_target_window";
@@ -227,6 +238,21 @@ pub fn decide_background_input(
     }
 
     if !facts.ax_window_present {
+        if facts.off_active_space == Some(true) {
+            return refuse(
+                refusal_codes::OFF_SPACE,
+                format!(
+                    "window {} is provably not on the active Space of its display; \
+                     background input is refused while the window stays there — move it \
+                     to the active Space (or switch Space) and re-snapshot; AX typically \
+                     repopulates immediately. Apps whose windows are ALL off the active \
+                     Space (Safari/WebKit reproducibly) may expose no AXWindows at all. \
+                     Observation (capture/list_windows) remains available",
+                    target.window_id
+                ),
+                Some("foreground"),
+            );
+        }
         return refuse(
             refusal_codes::OFF_SPACE_OR_AX_UNRESOLVED,
             format!(
@@ -376,6 +402,7 @@ mod tests {
         BackgroundTargetFacts {
             window_server: WindowServerOwnership::SamePid,
             ax_window_present: true,
+            off_active_space: None,
             target_minimized: Some(false),
             app_hidden: Some(false),
             competing_keyboard_destinations: 0,
@@ -483,6 +510,53 @@ mod tests {
                 "{action:?}"
             );
         }
+    }
+
+    /// A window PROVABLY off the active Space names the actionable cause
+    /// instead of the conflated code (issue #3458); an unknown space fact
+    /// keeps the conflated code.
+    #[test]
+    fn off_active_space_refusal_names_the_remedy() {
+        let proven = BackgroundTargetFacts {
+            ax_window_present: false,
+            off_active_space: Some(true),
+            ..matched_facts()
+        };
+        for action in ALL_ACTIONS {
+            assert_eq!(
+                code_of(decide_background_input(TARGET, &proven, action)),
+                refusal_codes::OFF_SPACE,
+                "{action:?}"
+            );
+        }
+        let unknown = BackgroundTargetFacts {
+            ax_window_present: false,
+            off_active_space: None,
+            ..matched_facts()
+        };
+        assert_eq!(
+            code_of(decide_background_input(
+                TARGET,
+                &unknown,
+                BackgroundAction::AxSemantic
+            )),
+            refusal_codes::OFF_SPACE_OR_AX_UNRESOLVED
+        );
+        // A proven on-Space window never trips the off-space branch even when
+        // its AX surface is unresolved.
+        let on_space = BackgroundTargetFacts {
+            ax_window_present: false,
+            off_active_space: Some(false),
+            ..matched_facts()
+        };
+        assert_eq!(
+            code_of(decide_background_input(
+                TARGET,
+                &on_space,
+                BackgroundAction::AxSemantic
+            )),
+            refusal_codes::OFF_SPACE_OR_AX_UNRESOLVED
+        );
     }
 
     /// Minimized/hidden targets retain exact semantic AX actions; raw keys and
@@ -603,6 +677,7 @@ mod tests {
         let worst = BackgroundTargetFacts {
             window_server: WindowServerOwnership::ForeignPid { owner_pid: 9 },
             ax_window_present: false,
+            off_active_space: None,
             target_minimized: Some(true),
             app_hidden: Some(true),
             competing_keyboard_destinations: 3,

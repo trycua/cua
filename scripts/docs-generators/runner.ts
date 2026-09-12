@@ -349,11 +349,20 @@ function testGeneratorRouting(config: Config): void {
     ],
     ['lume']
   );
+  assertSelection(
+    config,
+    [
+      'libs/python/cua-sandbox/cua_sandbox/image.py',
+      'docs/content/docs/reference/sandbox-sdk/os-image-catalog.mdx',
+      'scripts/docs-generators/sandbox-facts.json',
+    ],
+    ['sandbox']
+  );
   for (const file of ['mcp-tools.mdx', 'mcp-tools-linux.mdx', 'mcp-tools-windows.mdx']) {
     assertSelection(config, [`docs/content/docs/reference/cua-driver/${file}`], ['cua-driver']);
   }
-  assertSelection(config, ['scripts/docs-generators/runner.ts'], ['cua-driver', 'lume']);
-  assertSelection(config, ['scripts/docs-generators/config.json'], ['cua-driver', 'lume']);
+  assertSelection(config, ['scripts/docs-generators/runner.ts'], ['cua-driver', 'lume', 'sandbox']);
+  assertSelection(config, ['scripts/docs-generators/config.json'], ['cua-driver', 'lume', 'sandbox']);
 
   console.log(`Generator routing assertions passed with pinned tsx ${tsxVersion}`);
 }

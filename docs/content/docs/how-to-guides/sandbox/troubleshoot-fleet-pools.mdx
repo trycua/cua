@@ -5,8 +5,8 @@ description: Diagnose Fleet pool errors and recover interrupted claim or pool cl
 
 Use this guide when a Fleet pool or claim fails to start, an existing pool
 cannot be reused, or a process exits before releasing its resources. It applies
-to the [Python pool guide](/how-to-guides/sandbox/create-pool-with-python) and
-[TypeScript pool guide](/how-to-guides/sandbox/create-pool-with-typescript).
+to [Create Fleet capacity](/how-to-guides/sandbox/create-fleet-capacity) and
+[Claim a Sandbox](/how-to-guides/sandbox/claim-a-sandbox).
 
 ## Identify the failing operation
 
@@ -85,7 +85,7 @@ anything. A timestamp or similar-looking name alone is not proof of ownership.
 
 For scripted recovery, initialize the TypeScript client using only the imports,
 configuration, and `CyclopsClient.connect(...)` setup from the
-[Node.js example](/how-to-guides/sandbox/create-pool-with-typescript). Do not run
+[Node.js example](/how-to-guides/sandbox/create-fleet-capacity). Do not run
 its reconciliation or claim-creation block. The following snippets use that
 open `client` and the exact `POOL_NAME` you recorded.
 
@@ -114,28 +114,23 @@ if (remaining.some((item) => item.metadata.name === claimName)) {
 }
 ```
 
-If you own the entire pool and all users have finished, fetch and delete it:
-
-```ts
-const pool = await client.getPool(POOL_NAME);
-await client.deletePool(pool);
-```
-
-This deletes the pool namespace and its remaining resources, including other
-claims and templates. Use this operation only for a pool you intend to remove
-completely. In Python, the equivalent is
-`pool = await Pool.get(POOL_NAME)` followed by `await pool.delete()`.
-
-If the pool lookup returns 404 but namespace inventory still shows the exact
-dedicated namespace, inspect its remaining claims and templates. Once you have
-confirmed that all remaining resources belong to the cleanup task, delete the
-namespace directly:
+If you own the entire Fleet and all users have finished, delete its namespace:
 
 ```ts
 await client.deleteNamespace(POOL_NAME);
 ```
 
-In `@trycua/fleet@0.1.1`, namespace deletion accepts an already-absent namespace
+This deletes the namespace and its remaining resources, including pools,
+claims, and templates. Use this operation only for a Fleet you intend to remove
+completely. `deletePool(pool)` removes only the pool resource. In Python, the equivalent is
+`pool = await Pool.get(POOL_NAME)` followed by `await pool.delete()`.
+
+If the pool lookup returns 404 but namespace inventory still shows the exact
+dedicated namespace, inspect its remaining claims and templates. Once you have
+confirmed that all remaining resources belong to the cleanup task, use the
+same namespace deletion.
+
+In `@trycua/fleet@0.1.2`, namespace deletion accepts an already-absent namespace
 as success, so the same exact deletion can be retried after interruption.
 Close the local client with `client.uniffiDestroy()` in a `finally` block when
 the recovery script ends.

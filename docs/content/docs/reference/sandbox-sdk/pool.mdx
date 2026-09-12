@@ -1,9 +1,9 @@
 ---
 title: Pool and claim reference
-description: Python Fleet pool configuration, claim acquisition, cleanup, and resource types in cua-sandbox 0.4.3.
+description: Python Fleet pool configuration, claim acquisition, cleanup, and resource types in cua-sandbox 0.7.0.
 ---
 
-`Pool` and `Template` are exported by `cua_sandbox` 0.4.3. These APIs use Fleet
+`Pool` and `Template` are exported by `cua_sandbox` 0.7.0. These APIs use Fleet
 credentials independently of the legacy `CUA_API_KEY` flow. See
 [configuration and authentication](/reference/sandbox-sdk#configuration-and-authentication).
 
@@ -152,6 +152,6 @@ reexported. A `ClaimSpec` constructor requires keyword arguments
 the latter three are `None`; `ttl_seconds_after_created` is optional. Builders
 provide named setters and `build()` for the types listed above.
 
-These bindings come from the published `cua-fleet` 0.1.14 dependency, imported
+These bindings come from the published `cua-fleet` 0.1.17 dependency, imported
 as `fleet_sdk`. Type availability describes the client schema; it does not
 establish runtime or image support on a deployment.

@@ -10,6 +10,7 @@ scripts/docs-generators/
 ├── runner.ts           # Main orchestrator that runs generators
 ├── cua-driver.ts       # cua-driver (Rust) generator
 ├── lume.ts             # Lume (Swift) generator
+├── sandbox.ts          # Sandbox package/image fact generator
 ├── cua-cli.ts          # Cua CLI (TypeScript) generator (planned)
 ├── mcp-server.ts       # MCP Server (Python) generator (planned)
 ├── python-sdk.ts       # Python SDK generator (planned)
@@ -109,6 +110,7 @@ The `.github/workflows/docs-sync-check.yml` workflow:
 | ----------------------- | -------------- | ------------------------- |
 | cua-driver              | ✅ Implemented | CLI + MCP tools           |
 | lume                    | ✅ Implemented | CLI + HTTP API            |
+| sandbox                 | ✅ Implemented | Package + image facts     |
 | cua-cli                 | ⏸️ Planned     | Needs yargs introspection |
 | mcp-server              | ⏸️ Planned     | Needs MCP tool extraction |
 | computer-sdk-python     | ⏸️ Planned     | Needs Sphinx/pydoc        |

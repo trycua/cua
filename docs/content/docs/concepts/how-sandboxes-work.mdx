@@ -82,7 +82,7 @@ A _snapshot_ records a machine's state for later reuse. A _fork_ starts a separa
 machine from that captured state. These mechanisms can avoid repeating expensive
 setup, but they require support from the provisioning and storage system.
 
-In `cua-sandbox` 0.4.3, `Sandbox.snapshot()` is not implemented for local sandboxes
+In `cua-sandbox` 0.7.0, `Sandbox.snapshot()` is not implemented for local sandboxes
 or the Fleet creation paths. Fleet also rejects snapshot-derived image inputs.
 For these paths, prepare a reusable boot artifact instead. See
 [Sandbox runtime support](/reference/sandbox-sdk/runtime-support#image-customization)

@@ -1,7 +1,8 @@
 """Exercise the documented commands with synthetic secrets and a local shell.
 
-Run with Python and cua-sandbox==0.4.3 installed. No sandbox is provisioned;
-the released Shell interface sends commands to a disposable local test transport.
+Run with Python and the source-matched cua-sandbox package installed. No sandbox
+is provisioned; the Shell interface sends commands to a disposable local test
+transport.
 """
 
 import asyncio
@@ -14,6 +15,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import tomllib
 import types
 import unittest
 from unittest.mock import patch
@@ -22,6 +24,11 @@ from cua_sandbox.interfaces.shell import Shell
 
 
 PAGE = Path(__file__).resolve().parents[2] / "content/docs/how-to-guides/sandbox/secrets.mdx"
+SANDBOX_PROJECT = (
+    Path(__file__).resolve().parents[3] / "libs/python/cua-sandbox/pyproject.toml"
+)
+with SANDBOX_PROJECT.open("rb") as stream:
+    SANDBOX_VERSION = tomllib.load(stream)["project"]["version"]
 BLOCKS = re.findall(r"```python\n(.*?)\n```", PAGE.read_text(), re.DOTALL)
 SYNTHETIC = "synthetic space 'quote' \"double\" $HOME $(exit 91) `exit 92`\nEOF\nlast\n"
 
@@ -56,7 +63,7 @@ class SecretExampleTests(unittest.TestCase):
         return namespace[function_name]
 
     def test_released_api_and_python_syntax(self):
-        self.assertEqual(importlib.metadata.version("cua-sandbox"), "0.4.3")
+        self.assertEqual(importlib.metadata.version("cua-sandbox"), SANDBOX_VERSION)
         for block in BLOCKS:
             compile(block, str(PAGE), "exec")
 

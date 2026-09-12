@@ -8,12 +8,12 @@ import { Callout } from 'fumadocs-ui/components/callout';
 Fleet does not build a sandbox environment from the full SDK image-builder surface. Instead, Fleet expects a **prebuilt OCI artifact** that already carries the bootable guest image for the pool.
 
 <Callout type="info">
-  Configure [Fleet pool credentials](/reference/cua-cli/authentication#fleet-pools-need-their-own-credentials) before running the SDK example. The image-based `Sandbox.ephemeral()` path in `cua-sandbox` 0.4.3 accepts only the default region, `us-east-1`.
+  Configure [Fleet pool credentials](/reference/cua-cli/authentication#fleet-pools-need-their-own-credentials) before running the SDK example. The image-based `Sandbox.ephemeral()` path in `cua-sandbox` 0.7.0 accepts only the default region, `us-east-1`.
 </Callout>
 
 ## Before you start
 
-This guide uses `cua-sandbox` 0.4.3 through `cua` 0.1.6. Choose a bootable guest
+This guide uses `cua-sandbox` 0.7.0 through `cua` 0.1.6. Choose a bootable guest
 artifact compatible with your Fleet deployment and a registry that deployment
 can pull from. SDK acceptance does not establish registry access or successful boot.
 
@@ -99,7 +99,7 @@ print(response.text)
 The image-based `Sandbox.ephemeral()` example creates a temporary pool and claim
 and uses the same `FleetTransport` as `Pool.claim()` and `Sandbox.create(pool=...)`.
 It does not create a localhost listener, and that transport does not implement
-`tunnel.forward()` in 0.4.3. See [ports and transports](/reference/sandbox-sdk/runtime-support#ports-and-transports).
+`tunnel.forward()` in 0.7.0. See [ports and transports](/reference/sandbox-sdk/runtime-support#ports-and-transports).
 
 ## Related pages
 

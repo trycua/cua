@@ -75,6 +75,39 @@
       "enabled": true,
       "notes": "Generates cli-reference.mdx + http-api.mdx from the Swift binary's `dump-docs` output. These files live under the Diátaxis Reference tree; task-oriented Lume docs belong under how-to-guides/lume."
     },
+    "sandbox": {
+      "name": "Sandbox package and image facts",
+      "language": "typescript",
+      "sourcePath": "libs/python/cua-sandbox",
+      "docsOutputPath": "docs/content/docs/reference/sandbox-sdk",
+      "generatorScript": "scripts/docs-generators/sandbox.ts",
+      "watchPaths": [
+        "libs/python/cua/pyproject.toml",
+        "libs/python/computer-server/pyproject.toml",
+        "libs/typescript/fleet/package.json",
+        "libs/cua-driver/hyprland-plugin/packaging/release/profiles/omarchy-stable-20260910.json",
+        "scripts/docs-generators/sandbox-facts.json",
+        "scripts/docs-generators/sandbox-facts.schema.json",
+        "scripts/docs-generators/sandbox.test.ts"
+      ],
+      "buildCommand": null,
+      "buildDirectory": ".",
+      "extractionMethod": "source-manifest",
+      "outputs": [
+        {
+          "type": "reference",
+          "outputFile": "runtime-support.mdx",
+          "extractCommand": null
+        },
+        {
+          "type": "reference",
+          "outputFile": "os-image-catalog.mdx",
+          "extractCommand": null
+        }
+      ],
+      "enabled": true,
+      "notes": "Generates package versions and client image mappings from public source manifests, then combines them with schema-checked deployment qualification facts."
+    },
     "cua-cli": {
       "name": "Cua CLI",
       "language": "typescript",

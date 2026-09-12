@@ -1,10 +1,10 @@
 ---
 title: TypeScript Fleet reference
-description: Entry points, client methods, resource types, and lifecycle contracts for @trycua/fleet 0.1.1.
+description: Entry points, client methods, resource types, and lifecycle contracts for @trycua/fleet 0.1.2.
 ---
 
-This page describes the published `@trycua/fleet` 0.1.1 package
-([npm version metadata](https://registry.npmjs.org/@trycua/fleet/0.1.1)).
+This page describes the published `@trycua/fleet` 0.1.2 package
+([npm version metadata](https://registry.npmjs.org/@trycua/fleet/0.1.2)).
 It provides Fleet resource operations through WebAssembly bindings.
 Its `Pool` and `Sandbox` exports are resource records, not the Python
 `Pool.apply()` and computer-control `Sandbox` classes.
@@ -14,7 +14,7 @@ Its `Pool` and `Sandbox` exports are resource records, not the Python
 The package is installed with:
 
 ```bash
-npm install @trycua/fleet@0.1.1
+npm install @trycua/fleet@0.1.2
 ```
 
 Choose the entry point for the execution environment:
@@ -114,9 +114,9 @@ These operations address a service on a bound `Sandbox`:
 | `revokeSignedServiceUrl(signedServiceUrl: SignedServiceUrl)` | `Promise<void>` |
 
 `HttpRequest` carries `method`, `url`, `headers`, optional `body`, and optional
-`timeoutSecs`. `HttpResponse` carries `status`, `headers`, and `body`. Headers
-are `{ name: string, value: string }[]`; bodies use `ArrayBuffer`, and
-`timeoutSecs` uses `bigint`.
+`timeoutSecs` and `maxResponseBytes`. `HttpResponse` carries `status`, `headers`,
+and `body`. Headers are `{ name: string, value: string }[]`; bodies use
+`ArrayBuffer`, and both limits use `bigint`.
 
 Signed URLs grant access to their selected service without a separate bearer
 header. See [Share a service with a signed URL](/how-to-guides/sandbox/share-service-with-signed-url)
@@ -149,4 +149,4 @@ support. The exported `SdkError` variants include status/transport failures,
 `SignedServiceUrlsUnavailable`.
 
 For a complete provisioning example, see
-[Create a pool with TypeScript](/how-to-guides/sandbox/create-pool-with-typescript).
+[Create Fleet capacity](/how-to-guides/sandbox/create-fleet-capacity).

@@ -41,7 +41,10 @@ pub fn window_belongs_to_pid(xid: u64, pid: u32) -> bool {
     let Ok(xid) = u32::try_from(xid) else {
         return false;
     };
-    let Ok((conn, _)) = RustConnection::connect(None) else {
+    if let Ok((conn, _)) = RustConnection::connect(None) {
+        return window_owner_matches(get_window_pid(&conn, xid).ok().flatten(), pid);
+    }
+    let Ok((conn, _)) = XCBConnection::connect(None) else {
         return false;
     };
     window_owner_matches(get_window_pid(&conn, xid).ok().flatten(), pid)

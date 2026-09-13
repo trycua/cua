@@ -155,10 +155,8 @@ pub unsafe fn is_attribute_settable(element: AXUIElementRef, attr_name: &str) ->
         && settable != 0
 }
 
-/// # Safety
-///
-/// `element` must be a valid, live `AXUIElementRef` for the duration of the call.
-pub unsafe fn element_pid(element: AXUIElementRef) -> Option<i32> {
+// SAFETY: `element` must be a live `AXUIElementRef` for the call.
+pub(crate) unsafe fn element_pid(element: AXUIElementRef) -> Option<i32> {
     let mut pid = 0;
     (AXUIElementGetPid(element, &mut pid) == kAXErrorSuccess && pid > 0).then_some(pid)
 }

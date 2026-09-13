@@ -43,7 +43,6 @@ pub enum ElementAncestry {
     /// requested one.
     ProvenDescendant,
     ProvenAppMenu,
-    /// The live element ascends to a different window.
     OutsideTargetWindow {
         owner_pid: i32,
         window_id: u32,
@@ -174,20 +173,6 @@ fn refuse(
 }
 
 /// Decide whether one background action may run against one exact target.
-///
-/// The rules encode the v1 state-policy matrix:
-/// - a stale or foreign CGWindowID refuses every mutation;
-/// - a target absent from fresh `AXWindows` (off-Space or AX-unresolved) is
-///   observation-only;
-/// - an addressed element must prove ancestry to the requested window for
-///   every route, including semantic AX, except that the process's own menu
-///   bar is addressable by semantic AX when the process directs its input at
-///   the requested window;
-/// - semantic AX actions remain available for minimized/hidden targets;
-/// - the routed pointer requires a visible (possibly occluded) target; and
-/// - process-scoped routes additionally require that the process directs its
-///   input at the requested window, because the transport addresses a
-///   process, not a window.
 pub fn decide_background_input(
     target: ExactWindowTarget,
     facts: &BackgroundTargetFacts,

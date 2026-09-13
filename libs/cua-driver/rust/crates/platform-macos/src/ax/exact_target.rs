@@ -65,9 +65,7 @@ pub unsafe fn element_window_id(element: AXUIElementRef) -> Option<u32> {
     resolved
 }
 
-/// # Safety
-///
-/// `element` must be a valid `AXUIElementRef` for the duration of the call.
+// SAFETY: `element` must be a live `AXUIElementRef` for the call.
 unsafe fn element_is_app_menu_descendant(element: AXUIElementRef, pid: i32) -> bool {
     if element_pid(element) != Some(pid) {
         return false;
@@ -118,9 +116,7 @@ fn foreign_window_ancestry(
     }
 }
 
-/// # Safety
-///
-/// `element` must be a valid `AXUIElementRef` for the duration of the call.
+// SAFETY: `element` must be a live `AXUIElementRef` for the call.
 unsafe fn classify_foreign_ancestry(
     element: AXUIElementRef,
     pid: i32,
@@ -213,7 +209,7 @@ fn count_competing_keyboard_destinations(
 ///
 /// `element_ptr` is an optional retained `AXUIElementRef` (as `usize`) for an
 /// explicitly addressed element; the caller must keep it retained for the
-/// duration of this call. Blocking: performs CGWindowList enumerations and
+/// duration of this call. Blocking: performs one CGWindowList enumeration and
 /// bounded AX reads. Call from a blocking context immediately before deciding.
 pub fn gather_background_facts(
     pid: i32,

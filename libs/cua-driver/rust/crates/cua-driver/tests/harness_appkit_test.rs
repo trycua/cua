@@ -605,8 +605,7 @@ fn harness_appkit_document_state_follows_the_window() {
             );
             assert_eq!(clean.structured()["document_edited"].as_bool(), Some(false));
 
-            set_document_edited(driver, pid, wid, true);
-            let dirty = snapshot_elements(driver, pid, wid);
+            let dirty = set_document_edited(driver, pid, wid, true);
             assert_eq!(
                 dirty.structured()["document_edited"].as_bool(),
                 Some(true),
@@ -614,9 +613,13 @@ fn harness_appkit_document_state_follows_the_window() {
                 dirty.structured()
             );
 
-            set_document_edited(driver, pid, wid, false);
-            let saved = snapshot_elements(driver, pid, wid);
-            assert_eq!(saved.structured()["document_edited"].as_bool(), Some(false));
+            let saved = set_document_edited(driver, pid, wid, false);
+            assert_eq!(
+                saved.structured()["document_edited"].as_bool(),
+                Some(false),
+                "dirty bit did not clear: {}",
+                saved.structured()
+            );
 
             let without_tree = driver.call(
                 "get_window_state",
@@ -637,31 +640,38 @@ fn harness_appkit_document_state_follows_the_window() {
     );
 }
 
-fn set_document_edited(driver: &mut McpDriver, pid: u32, wid: u64, edited: bool) {
+fn set_document_edited(driver: &mut McpDriver, pid: u32, wid: u64, edited: bool) -> ToolResponse {
     let snapshot = snapshot_elements(driver, pid, wid);
-    let index = element_index_by_id(snapshot.tree_text(), "txt-input")
-        .expect("txt-input element_index not found");
-    let command = if edited {
-        "cua-document-edited-on"
-    } else {
-        "cua-document-edited-off"
-    };
+    let index = element_index_by_id(snapshot.tree_text(), "chk-agree")
+        .expect("chk-agree element_index not found");
     let response = driver.call(
-        "set_value",
+        "click",
         serde_json::json!({
             "pid": pid as i64,
             "window_id": wid,
             "element_index": index,
-            "snapshot_id": snapshot.snapshot_id(),
-            "value": command
+            "snapshot_id": snapshot.snapshot_id()
         }),
     );
     assert!(
         !response.is_error(),
-        "fixture document command failed: {}",
+        "fixture document toggle failed: {}",
         response.text()
     );
-    std::thread::sleep(Duration::from_millis(250));
+
+    // The press is delivered to the app's main thread, so give the flip a
+    // bounded window instead of one immediate snapshot; the returned snapshot
+    // is the one the caller asserts on, so a flip that never lands still fails.
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        let snapshot = snapshot_elements(driver, pid, wid);
+        if snapshot.structured()["document_edited"].as_bool() == Some(edited)
+            || std::time::Instant::now() >= deadline
+        {
+            return snapshot;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 #[test]

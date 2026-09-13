@@ -135,7 +135,10 @@ fn is_addressable(actions_present: bool, value_settable: bool, enabled: Option<b
 pub struct TreeWalkResult {
     pub tree_markdown: String,
     pub nodes: Vec<AXNode>,
-    /// True when the walk was cut short by the MAX_ELEMENTS cap.
+    /// True when the walk did not enumerate its whole scope: an element or
+    /// depth cap stopped a subtree, or a child list could not be read.
+    /// `false` means every child of every visited node was seen, so a control
+    /// missing from `nodes` is missing from the window.
     pub truncated: bool,
     /// Whether the requested `window_id` actually resolved to an AX surface,
     /// and if not, why. `None` when no `window_id` was requested.
@@ -192,9 +195,9 @@ pub fn walk_tree_bounded(
     let mut index_counter = 0usize;
     // Shared visited-node counter passed into walk_element to enforce the cap.
     let mut visited_count = 0usize;
-    // Set to true only when walk_element actually stops early due to the cap —
-    // avoids a false-positive when the tree naturally ends on exactly the cap.
-    let mut truncated = false;
+    // Recorded only when the walk actually gives something up — a tree that
+    // naturally ends on exactly the cap is complete.
+    let mut truncation = WalkTruncation::default();
     let mut window_scope: Option<WindowScope> = None;
 
     unsafe {
@@ -225,7 +228,8 @@ pub fn walk_tree_bounded(
         // Union AXChildren + AXWindows — the only way to see background windows.
         // AXChildren omits windows when the app isn't frontmost (AppKit limitation).
         // AXWindows returns the window list regardless of activation state.
-        let from_children = copy_children(app_elem);
+        let (from_children, root_hid_descendants) = copy_children_checked(app_elem);
+        truncation.unreadable |= root_hid_descendants;
         let from_windows = copy_ax_windows(app_elem);
 
         let mut top_level = from_children;
@@ -298,7 +302,7 @@ pub fn walk_tree_bounded(
                 &mut lines,
                 &mut index_counter,
                 &mut visited_count,
-                &mut truncated,
+                &mut truncation,
                 max_elements,
                 max_depth,
             );
@@ -312,7 +316,7 @@ pub fn walk_tree_bounded(
         CFRelease(app_elem as CFTypeRef);
     }
 
-    let truncated_flag = truncated;
+    let truncated_flag = truncation.any();
     let raw_markdown = render_lines(&lines);
     let mut tree_markdown = if let Some(q) = query {
         filter_tree(&raw_markdown, q)
@@ -320,13 +324,19 @@ pub fn walk_tree_bounded(
         raw_markdown
     };
 
-    if truncated_flag {
+    if truncation.limit {
         tree_markdown.push_str(&format!(
-            "\n⚠️  AX tree truncated at {max_elements} nodes \
+            "\n⚠️  AX tree truncated at its {max_elements}-node / depth-{max_depth} limit \
              (app has a very large accessibility tree — Arc, Electron, or similar). \
              Element indices above are still valid. Use pixel clicks for elements \
              not visible in this partial tree."
         ));
+    } else if truncation.unreadable {
+        tree_markdown.push_str(
+            "\n⚠️  AX tree is partial: an element's child list could not be read, so an \
+             unknown part of this window is missing. Element indices above are still \
+             valid. Use pixel clicks for elements not visible in this partial tree.",
+        );
     }
 
     TreeWalkResult {
@@ -334,6 +344,21 @@ pub fn walk_tree_bounded(
         nodes,
         truncated: truncated_flag,
         window_scope,
+    }
+}
+
+/// Why a walk stopped short of enumerating its whole scope.
+#[derive(Default)]
+struct WalkTruncation {
+    /// An element or depth cap stopped a subtree.
+    limit: bool,
+    /// An `AXChildren` read hid descendants — see [`copy_children_checked`].
+    unreadable: bool,
+}
+
+impl WalkTruncation {
+    fn any(&self) -> bool {
+        self.limit || self.unreadable
     }
 }
 
@@ -347,17 +372,18 @@ unsafe fn walk_element(
     lines: &mut Vec<(usize, String)>,
     counter: &mut usize,
     visited_count: &mut usize,
-    truncated: &mut bool,
+    truncation: &mut WalkTruncation,
     max_elements: usize,
     max_depth: usize,
 ) {
     if depth > max_depth {
+        truncation.limit = true;
         return;
     }
     // Enforce total-node cap — mirrors Swift's maxElements guard.
     // Set the truncated flag only when we actually stop early.
     if *visited_count >= max_elements {
-        *truncated = true;
+        truncation.limit = true;
         return;
     }
     *visited_count += 1;
@@ -375,7 +401,8 @@ unsafe fn walk_element(
         // Still recurse — children may be interesting. Layout containers
         // collapse, so children inherit the parent's depth AND the same
         // parent_index (no actionable node was emitted here).
-        let children = copy_children(element);
+        let (children, hid_descendants) = copy_children_checked(element);
+        truncation.unreadable |= hid_descendants;
         for child in children {
             walk_element(
                 child,
@@ -386,7 +413,7 @@ unsafe fn walk_element(
                 lines,
                 counter,
                 visited_count,
-                truncated,
+                truncation,
                 max_elements,
                 max_depth,
             );
@@ -443,7 +470,8 @@ unsafe fn walk_element(
     let is_actionable = is_addressable(!actions.is_empty(), value_settable, enabled);
 
     if !is_actionable && !has_content && role != "AXWindow" && role != "AXSheet" {
-        let children = copy_children(element);
+        let (children, hid_descendants) = copy_children_checked(element);
+        truncation.unreadable |= hid_descendants;
         for child in children {
             walk_element(
                 child,
@@ -454,7 +482,7 @@ unsafe fn walk_element(
                 lines,
                 counter,
                 visited_count,
-                truncated,
+                truncation,
                 max_elements,
                 max_depth,
             );
@@ -566,7 +594,8 @@ unsafe fn walk_element(
     lines.push((depth, line));
     nodes.push(node);
 
-    let children = copy_children(element);
+    let (children, hid_descendants) = copy_children_checked(element);
+    truncation.unreadable |= hid_descendants;
     for child in children {
         walk_element(
             child,
@@ -577,7 +606,7 @@ unsafe fn walk_element(
             lines,
             counter,
             visited_count,
-            truncated,
+            truncation,
             max_elements,
             max_depth,
         );

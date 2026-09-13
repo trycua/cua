@@ -330,20 +330,20 @@ fn harness_appkit_exact_activation_with_agent_cursor() {
 
 #[test]
 #[ignore]
-fn harness_appkit_exact_activation_refuses_competing_window() {
+fn harness_appkit_exact_activation_ignores_competing_application_window() {
     let mut case = native_foreground_case(
         "appkit",
         "exact_activation_competing_window",
         Targeting::NotApplicable,
         DriverRoute::WindowState,
-    )
-    .expecting_refusal(vec![RefusalCode::BringToFrontExactWindowUnverified]);
+    );
     case.oracles.push(OracleKind::Cursor);
     run_case(case, |pid, wid, driver| {
         let competitor = Harness::launch_with_options(None, None, true);
         let (competing_wid, _) = driver
             .find_window(competitor.pid as i64, "CuaTestHarness AppKit")
             .expect("find competing ordinary window");
+        assert_ne!(competing_wid, u64::from(wid));
         let snapshot = snapshot_elements(driver, pid, wid);
         assert!(!snapshot.is_error(), "target snapshot: {}", snapshot.text());
         let observer = NativeObserver::new();
@@ -357,33 +357,31 @@ fn harness_appkit_exact_activation_refuses_competing_window() {
             serde_json::json!({"pid": pid, "window_id": wid}),
         );
         assert!(
-            response.is_error(),
-            "competing window must prevent verification"
+            !response.is_error(),
+            "another application ordering its window front must not unverify activation: {}",
+            response.raw
         );
         assert_eq!(
             response.structured()["code"],
-            "bring_to_front_exact_window_unverified"
+            "bring_to_front_exact_window_verified"
         );
-        assert_eq!(response.structured()["activated"], false);
+        assert_eq!(response.structured()["activated"], true);
         assert_eq!(response.structured()["process_activated"], true);
         assert_eq!(
             response.structured()["exact_window_effect"]["focused"],
             true
         );
         assert_eq!(
-            response.structured()["observed"]["frontmost_ordinary_window_id"].as_u64(),
-            Some(competing_wid)
+            response.structured()["exact_window_effect"]["front_in_process_on_display"],
+            true
         );
-        let after = observer
-            .snapshot(target)
-            .expect("observe refused activation");
+        assert_eq!(
+            response.structured()["observed"]["focused_window_id"].as_u64(),
+            Some(u64::from(wid))
+        );
+        let after = observer.snapshot(target).expect("observe activated target");
         assert_eq!(after.cursor_pos, before.cursor_pos, "real pointer moved");
-        Observation::refused(
-            RefusalCode::BringToFrontExactWindowUnverified,
-            vec![OracleKind::FixtureState, OracleKind::Cursor],
-            response.text(),
-            Evidence::default(),
-        )
+        Observation::delivered_with_fixture_state(vec![OracleKind::Cursor])
     });
 }
 

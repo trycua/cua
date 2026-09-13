@@ -34,7 +34,7 @@ fn macos_semantic_activation_without_a_point_preserves_truth_without_a_marker() 
     .actual_delivery(ActualDelivery::Foreground)
     .build()
     .unwrap();
-    let pending = recording.begin_turn("click", &args, 0).unwrap();
+    let pending = recording.begin_turn("click", &args, 0, None).unwrap();
     recording.finish_turn_with_outcome(pending, "Performed AXPress", Some(&action), false);
     recording.stop_owner(None).unwrap();
 

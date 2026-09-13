@@ -33,7 +33,7 @@ use cua_driver_testkit::e2e::{
     execute_case, native_background_case, native_foreground_case, native_readonly_case,
     recording_evidence, DriverRoute, Evidence, Observation, OracleKind, RefusalCode, Targeting,
 };
-use cua_driver_testkit::observer::TargetWindow;
+use cua_driver_testkit::observer::{NativeObserver, ObserverBackend, TargetWindow};
 use cua_driver_testkit::sentinel::run_with_background_oracles;
 use cua_driver_testkit::{Driver, McpDriver, ToolResponse};
 
@@ -70,6 +70,14 @@ impl Harness {
     }
 
     fn launch_with_oracles(command_oracle: Option<&Path>, pointer_oracle: Option<&Path>) -> Self {
+        Self::launch_with_options(command_oracle, pointer_oracle, false)
+    }
+
+    fn launch_with_options(
+        command_oracle: Option<&Path>,
+        pointer_oracle: Option<&Path>,
+        keep_ordered_front: bool,
+    ) -> Self {
         let exe = harness_exe();
         assert!(
             exe.exists(),
@@ -85,6 +93,9 @@ impl Harness {
         }
         if let Some(path) = pointer_oracle {
             command.env("CUA_APPKIT_POINTER_ORACLE", path);
+        }
+        if keep_ordered_front {
+            command.env("CUA_APPKIT_KEEP_ORDERED_FRONT", "1");
         }
         let app = command
             .spawn()
@@ -215,6 +226,166 @@ fn run_background_case_targeting(
 }
 
 // ── tests ────────────────────────────────────────────────────────────────────
+
+#[test]
+#[ignore]
+fn harness_appkit_exact_activation_with_agent_cursor() {
+    let mut case = native_foreground_case(
+        "appkit",
+        "exact_activation_with_agent_cursor",
+        Targeting::NotApplicable,
+        DriverRoute::WindowState,
+    );
+    case.oracles.extend([OracleKind::Focus, OracleKind::Cursor]);
+    run_case(case, |pid, wid, driver| {
+        let snapshot = snapshot_elements(driver, pid, wid);
+        assert!(!snapshot.is_error(), "snapshot: {}", snapshot.text());
+        let target = TargetWindow {
+            pid,
+            native_id: wid,
+        };
+        let observer = NativeObserver::new();
+        let before = observer.snapshot(target).expect("observe native desktop");
+        let socket = std::env::var("CUA_E2E_MACOS_DAEMON_SOCKET")
+            .expect("canonical installed daemon socket");
+        let mut peer = McpDriver::spawn_daemon_proxy_unrecorded(&socket)
+            .expect("start concurrent cursor session");
+        let verifies_target = |response: &ToolResponse| {
+            let state = response.structured();
+            !response.is_error()
+                && state["activated"] == true
+                && state["observed"]["focused_window_id"].as_u64() == Some(wid)
+                && state["observed"]["frontmost_ordinary_window_id"].as_u64() == Some(wid)
+                && state["observed"]["frontmost_pid"].as_u64() == Some(u64::from(pid))
+        };
+        let stopped = std::sync::atomic::AtomicBool::new(false);
+        let (ready, started) = std::sync::mpsc::sync_channel(1);
+        let activated = std::thread::scope(|scope| {
+            let moving = scope.spawn(|| {
+                let snapshot = snapshot_elements(&mut peer, pid, wid);
+                assert!(!snapshot.is_error(), "peer snapshot: {}", snapshot.text());
+                let motion = peer.call(
+                    "set_agent_cursor_motion",
+                    serde_json::json!({"idle_hide_ms": 0, "glide_duration_ms": 0}),
+                );
+                assert!(!motion.is_error(), "cursor motion: {}", motion.text());
+                let deadline = std::time::Instant::now() + Duration::from_secs(60);
+                let mut first = true;
+                let mut x = 120;
+                while !stopped.load(std::sync::atomic::Ordering::Relaxed)
+                    && std::time::Instant::now() < deadline
+                {
+                    let moved = peer.call(
+                        "move_cursor",
+                        serde_json::json!({
+                            "target": {"kind": "window", "pid": pid, "window_id": wid},
+                            "x": x,
+                            "y": 100
+                        }),
+                    );
+                    assert!(!moved.is_error(), "agent cursor: {}", moved.text());
+                    if first {
+                        ready.send(()).expect("cursor readiness");
+                        first = false;
+                    }
+                    x = if x == 120 { 121 } else { 120 };
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                assert!(
+                    stopped.load(std::sync::atomic::Ordering::Relaxed),
+                    "cursor producer expired before the activation interval completed"
+                );
+            });
+            started
+                .recv_timeout(Duration::from_secs(15))
+                .expect("live cursor ready");
+            let mut result = driver.call(
+                "bring_to_front",
+                serde_json::json!({"pid": pid, "window_id": wid}),
+            );
+            for _ in 1..20 {
+                if !verifies_target(&result) {
+                    break;
+                }
+                result = driver.call(
+                    "bring_to_front",
+                    serde_json::json!({"pid": pid, "window_id": wid}),
+                );
+            }
+            stopped.store(true, std::sync::atomic::Ordering::Relaxed);
+            moving.join().expect("concurrent cursor transport");
+            result
+        });
+        assert!(
+            verifies_target(&activated),
+            "active agent cursor must not invalidate exact activation: {}",
+            activated.raw
+        );
+        let after = observer.snapshot(target).expect("observe activated target");
+        assert_eq!(after.foreground, Some(u64::from(pid)));
+        assert_eq!(after.cursor_pos, before.cursor_pos, "real pointer moved");
+        Observation::delivered_with_fixture_state(vec![OracleKind::Focus, OracleKind::Cursor])
+    });
+}
+
+#[test]
+#[ignore]
+fn harness_appkit_exact_activation_refuses_competing_window() {
+    let mut case = native_foreground_case(
+        "appkit",
+        "exact_activation_competing_window",
+        Targeting::NotApplicable,
+        DriverRoute::WindowState,
+    )
+    .expecting_refusal(vec![RefusalCode::BringToFrontExactWindowUnverified]);
+    case.oracles.push(OracleKind::Cursor);
+    run_case(case, |pid, wid, driver| {
+        let competitor = Harness::launch_with_options(None, None, true);
+        let (competing_wid, _) = driver
+            .find_window(competitor.pid as i64, "CuaTestHarness AppKit")
+            .expect("find competing ordinary window");
+        let snapshot = snapshot_elements(driver, pid, wid);
+        assert!(!snapshot.is_error(), "target snapshot: {}", snapshot.text());
+        let observer = NativeObserver::new();
+        let target = TargetWindow {
+            pid,
+            native_id: wid,
+        };
+        let before = observer.snapshot(target).expect("observe competing window");
+        let response = driver.call(
+            "bring_to_front",
+            serde_json::json!({"pid": pid, "window_id": wid}),
+        );
+        assert!(
+            response.is_error(),
+            "competing window must prevent verification"
+        );
+        assert_eq!(
+            response.structured()["code"],
+            "bring_to_front_exact_window_unverified"
+        );
+        assert_eq!(response.structured()["activated"], false);
+        assert_eq!(response.structured()["process_activated"], true);
+        assert_eq!(
+            response.structured()["exact_window_effect"]["focused"],
+            true
+        );
+        assert_eq!(
+            response.structured()["observed"]["frontmost_ordinary_window_id"].as_u64(),
+            Some(competing_wid)
+        );
+        let after = observer
+            .snapshot(target)
+            .expect("observe refused activation");
+        assert_eq!(after.cursor_pos, before.cursor_pos, "real pointer moved");
+        Observation::refused(
+            RefusalCode::BringToFrontExactWindowUnverified,
+            vec![OracleKind::FixtureState, OracleKind::Cursor],
+            response.text(),
+            Evidence::default(),
+        )
+    });
+}
 
 #[test]
 #[ignore]

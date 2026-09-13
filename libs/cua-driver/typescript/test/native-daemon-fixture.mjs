@@ -18,7 +18,7 @@ const server = net.createServer((connection) => {
           ok: true,
           result: {
             driver_version: "0.12.6",
-            contract_version: "0.7.0",
+            contract_version: "0.8.0",
             tools_list_schema_version: "1",
             capability_version: "1",
             mcp_protocol_version: "2025-06-18",
@@ -31,7 +31,7 @@ const server = net.createServer((connection) => {
       return
     }
     process.send?.({ request })
-    const structuredContent =
+    let structuredContent =
       request.name === "verify_state"
         ? {
             status: "satisfied",
@@ -45,6 +45,14 @@ const server = net.createServer((connection) => {
             route: "global_input",
             delivery: { mode: "not_applicable" },
           }
+    let isError = false
+    if (request.name === "list_apps") structuredContent = { apps: [{ pid: 42, name: "Editor", running: true, active: false }] }
+    if (request.name === "list_windows") structuredContent = { windows: [{ pid: 42, window_id: 123, app_name: "Editor", title: "Document", bounds: { x: 0, y: 0, width: 800, height: 600 }, is_on_screen: true, z_index: null }] }
+    if (request.name === "get_window_state") structuredContent = { pid: 42, window_id: 123, snapshot_id: "snapshot-1", screenshot_width: 800, screenshot_height: 600, elements: [{ element_index: 0, role: "button", depth: 0, element_token: "fresh-token", label: "Save" }] }
+    if (request.name === "click" && (request.args.element_token === "stale-token" || request.args.target?.window_id === 124)) {
+      isError = true
+      structuredContent = { code: request.args.element_token === "stale-token" ? "stale_element_token" : "element_target_mismatch" }
+    }
     connection.end(
       `${JSON.stringify({
         ok: true,
@@ -54,12 +62,12 @@ const server = net.createServer((connection) => {
             { type: "image", mimeType: "image/png", data: "cG5n" },
           ],
           structuredContent,
-          isError: false,
+          isError,
         },
       })}\n`,
     )
     completedCalls += 1
-    if (completedCalls === 2) server.close()
+    if (completedCalls === 8) server.close()
   })
 })
 

@@ -160,14 +160,20 @@ impl RemoteDriverClient {
             .bind_session(options)
             .await
             .map_err(|reason| DriverError::Remote { reason })?;
+        let mut pending = PendingBoundChannel(Some(channel.clone()));
         if channel.authenticated_principal() != self.channel.authenticated_principal()
             || channel.connection_generation() != self.channel.connection_generation()
         {
+            pending.close().await;
             return Err(DriverError::Remote {
                 reason: "remote bound session changed principal or connection generation".into(),
             });
         }
-        negotiate(&channel).await?;
+        if let Err(error) = negotiate(&channel).await {
+            pending.close().await;
+            return Err(error);
+        }
+        pending.0.take();
         Ok(Arc::new(RemoteBoundSession {
             channel,
             closed: AtomicBool::new(false),
@@ -188,6 +194,33 @@ impl RemoteDriverClient {
 pub(crate) struct RemoteBoundSession {
     channel: Arc<dyn DriverEnvelopeChannel>,
     closed: AtomicBool,
+}
+
+/// Own a newly bound channel until validation completes, including when the
+/// caller cancels the binding future during negotiation.
+struct PendingBoundChannel(Option<Arc<dyn DriverEnvelopeChannel>>);
+
+impl PendingBoundChannel {
+    async fn close(&mut self) {
+        if let Some(channel) = &self.0 {
+            let _ = channel.close().await;
+        }
+        self.0.take();
+    }
+}
+
+impl Drop for PendingBoundChannel {
+    fn drop(&mut self) {
+        let Some(channel) = self.0.take() else { return };
+        std::thread::spawn(move || {
+            if let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                let _ = runtime.block_on(channel.close());
+            }
+        });
+    }
 }
 
 impl RemoteBoundSession {
@@ -352,4 +385,94 @@ fn now_unix_ms() -> u128 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SessionPermissionMode;
+    use std::sync::atomic::AtomicUsize;
+
+    struct BindingCarrier {
+        child: Option<Arc<BindingCarrier>>,
+        principal: &'static str,
+        version: u32,
+        cancellation: bool,
+        closes: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl DriverEnvelopeChannel for BindingCarrier {
+        async fn negotiate(&self) -> Result<DriverChannelCapabilities, String> {
+            Ok(DriverChannelCapabilities {
+                minimum_envelope_version: self.version,
+                maximum_envelope_version: self.version,
+                supports_cancellation: self.cancellation,
+            })
+        }
+
+        async fn exchange(
+            &self,
+            _: DriverRequestEnvelope,
+        ) -> Result<DriverResponseEnvelope, String> {
+            panic!("rejected binding must not dispatch")
+        }
+
+        async fn bind_session(
+            &self,
+            _: TrustedSessionOptions,
+        ) -> Result<Arc<dyn DriverEnvelopeChannel>, String> {
+            Ok(self.child.as_ref().unwrap().clone())
+        }
+
+        async fn close(&self) -> Result<(), String> {
+            self.closes.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn authenticated_principal(&self) -> &str {
+            self.principal
+        }
+        fn connection_generation(&self) -> &str {
+            "generation"
+        }
+    }
+
+    #[tokio::test]
+    async fn rejected_bound_channels_close_before_returning() {
+        for (principal, version, cancellation) in [
+            ("other", 1, true),
+            ("principal", 2, true),
+            ("principal", 1, false),
+        ] {
+            let child = Arc::new(BindingCarrier {
+                child: None,
+                principal,
+                version,
+                cancellation,
+                closes: AtomicUsize::new(0),
+            });
+            let parent = Arc::new(BindingCarrier {
+                child: Some(child.clone()),
+                principal: "principal",
+                version: 1,
+                cancellation: true,
+                closes: AtomicUsize::new(0),
+            });
+            let client = RemoteDriverClient::connect(parent.clone()).unwrap();
+            let result = client
+                .bind_session(TrustedSessionOptions {
+                    public_session: "test".into(),
+                    mode: SessionPermissionMode::Standard,
+                    ttl_seconds: 60,
+                    idle_ttl_seconds: 30,
+                    capability_manifest_path: None,
+                    bounded_manifest_path: None,
+                })
+                .await;
+            assert!(result.is_err());
+            assert_eq!(child.closes.load(Ordering::SeqCst), 1);
+            assert_eq!(parent.closes.load(Ordering::SeqCst), 0);
+        }
+    }
 }

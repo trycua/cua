@@ -97,8 +97,9 @@ Each action writes to `turn-NNNNN/` (five-digit zero-padded counter):
   window's origin and any snapshot resize or zoom. Absent for non-click tools.
   It is also absent, and explicitly
   classified as not applicable, when the driver refuses a click before target
-  resolution; no input was aimed in that case. A successful plain Linux AT-SPI
-  or Windows UIA element click (Invoke, Toggle, SelectionItem, or ExpandCollapse)
+  resolution; no input was aimed in that case. A successful plain macOS AX,
+  Linux AT-SPI, or Windows UIA element click (Invoke, Toggle, SelectionItem, or
+  ExpandCollapse)
   can activate a control without a visible point, such as an offscreen button.
   In that case, `semantic_action_without_point` records why
   there is no marker. The action must carry explicit accessibility transport

@@ -3,6 +3,7 @@ name: "CI: Rust Linux unit"
 on:
   pull_request:
     paths:
+      - "libs/cua-driver/rust/crates/cua-driver-sdk/**"
       - "libs/cua-driver/rust/.cargo/**"
       - "libs/cua-driver/rust/Cargo.toml"
       - "libs/cua-driver/rust/Cargo.lock"
@@ -23,6 +24,7 @@ on:
   push:
     branches: [main]
     paths:
+      - "libs/cua-driver/rust/crates/cua-driver-sdk/**"
       - "libs/cua-driver/rust/.cargo/**"
       - "libs/cua-driver/rust/Cargo.toml"
       - "libs/cua-driver/rust/Cargo.lock"
@@ -129,11 +131,19 @@ jobs:
       - name: Run Linux Rust tests
         working-directory: libs/cua-driver/rust
         run: cargo test -p cua-driver -p cua-driver-contract -p cua-driver-core -p cua-driver-testkit -p cursor-overlay -p cursor-theme-cli -p platform-linux --all-targets --locked
+      - name: Compile and link an async-io embedded host
+        working-directory: libs/cua-driver/rust
+        run: cargo test -p cua-driver-sdk --test async_io_embedding --locked
       - name: Verify final-frame extraction without a desktop
         working-directory: libs/cua-driver/rust
         run: |
           cargo test -p cua-driver --test e2e_environment_preflight_test --locked -- \
             --ignored --exact last_frame_extraction_handles_long_final_duration_and_invalid_input --nocapture
+      - name: Run X11 keyboard tap timing regression
+        working-directory: libs/cua-driver/rust
+        run: |
+          xvfb-run -a cargo test -p platform-linux --test key_input_x11 \
+            --locked -- --ignored --nocapture --test-threads=1
       - name: Run X11 overlay click-through regression
         working-directory: libs/cua-driver/rust
         run: |

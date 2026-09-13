@@ -1,8 +1,11 @@
-/* TEST ONLY: one explicit primary hover, never a primary button/key.
+/* TEST ONLY: one explicit primary hover gesture, never a primary button/key.
  * Build with the same generated virtual-pointer protocol as primary_grab.c.
  * Usage: primary_hover_fixture WIDTH HEIGHT LIFETIME_MS COMPOSITOR_PID
- * READY creates no input. One MOVE X Y command sends motion+frame and waits
- * for display.sync before reporting moved. The caller must independently
+ * READY creates no input. MOVE X Y sends one motion sample. Optional
+ * MOVE_FROM FROM_X FROM_Y X Y sends midpoint then destination, each followed
+ * by frame+sync and an observation. The caller attests the starting position.
+ * Two samples model follow-mouse movement after an idle interval without
+ * changing compositor policy or substituting a click. The caller must independently
  * attest the actual focused client; a sync is not a focus acknowledgement.
  * EOF, signals and a bounded deadline destroy only this fixture's pointer.
  */
@@ -107,18 +110,25 @@ int main(int argc, char **argv) {
             if (command[used++] == '\n') break;
         }
     }
-    unsigned x, y; char extra;
+    unsigned x, y, from_x = 0, from_y = 0; char extra;
+    int continuous = sscanf(command, "MOVE_FROM %u %u %u %u %c", &from_x, &from_y, &x, &y, &extra) == 4;
     if (!used || command[used - 1] != '\n' || stopped || now_ns() >= deadline ||
-        sscanf(command, "MOVE %u %u %c", &x, &y, &extra) != 2 || x >= width || y >= height) return 1;
-    /* This is the only input request in the entire fixture. */
-    zwlr_virtual_pointer_v1_motion_absolute(pointer, (uint32_t)(now_ns() / 1000000ULL), x, y, width, height);
-    zwlr_virtual_pointer_v1_frame(pointer);
-    start_sync(display);
-    deadline = now_ns() + 2000000000ULL;
-    while (!synced && !stopped && now_ns() < deadline)
-        if (pump(display) < 0) return 1;
-    if (!synced || stopped) return 1;
-    event("moved", x, y);
+        (!continuous && sscanf(command, "MOVE %u %u %c", &x, &y, &extra) != 2) ||
+        x >= width || y >= height || from_x >= width || from_y >= height) return 1;
+    unsigned xs[2] = {(from_x + x) / 2, x}, ys[2] = {(from_y + y) / 2, y};
+    if (continuous && ((xs[0] == from_x && ys[0] == from_y) || (xs[0] == x && ys[0] == y))) return 1;
+    /* Exactly one or two explicitly selected samples, never a replay loop. */
+    for (unsigned step = continuous ? 0 : 1; step < 2; ++step) {
+        if (stopped) return 1;
+        zwlr_virtual_pointer_v1_motion_absolute(pointer, (uint32_t)(now_ns() / 1000000ULL), xs[step], ys[step], width, height);
+        zwlr_virtual_pointer_v1_frame(pointer);
+        start_sync(display);
+        deadline = now_ns() + 2000000000ULL;
+        while (!synced && !stopped && now_ns() < deadline)
+            if (pump(display) < 0) return 1;
+        if (!synced || stopped) return 1;
+        event(step == 0 ? "intermediate" : "moved", xs[step], ys[step]);
+    }
     int failed = 0, closed = 0;
     deadline = now_ns() + (uint64_t)lifetime * 1000000ULL;
     while (!stopped && now_ns() < deadline) {

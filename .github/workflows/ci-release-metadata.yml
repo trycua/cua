@@ -49,7 +49,7 @@ jobs:
           PRODUCT_CHANGED=false
           while IFS= read -r path; do
             case "$path" in
-              libs/lume/*)
+              libs/lume/*|libs/python/cua-sandbox/*)
                 PRODUCT_CHANGED=true
                 ;;
               libs/cua-driver/docs/*|libs/cua-driver/python/*|libs/cua-driver/tests/*)
@@ -128,4 +128,19 @@ jobs:
               --path libs/lume \
               --changelog libs/lume/CHANGELOG.md \
               --output /tmp/lume-release-manifest.json
+          fi
+          if grep -qx 'libs/python/cua-sandbox/VERSION' <<<"$CHANGED"; then
+            VERSION=$(tr -d '[:space:]' < libs/python/cua-sandbox/VERSION)
+            python3 .github/scripts/release_attribution.py collect \
+              --repository "${{ github.repository }}" \
+              --product sandbox \
+              --display-name "Cua Sandbox" \
+              --version "$VERSION" \
+              --tag "sandbox-v$VERSION" \
+              --tag-prefix sandbox-v \
+              --ref "$HEAD_SHA" \
+              --sha "$HEAD_SHA" \
+              --path libs/python/cua-sandbox \
+              --changelog libs/python/cua-sandbox/CHANGELOG.md \
+              --output /tmp/sandbox-release-manifest.json
           fi

@@ -15,7 +15,10 @@ func TestProvisionWorkloadOIDC_DisabledIsNoop(t *testing.T) {
 	overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")
 
 	h := Handlers{} // WorkloadAdmin == nil
-	h.provisionWorkloadOIDC(context.Background(), "sub-1", "mypool")
+	result, err := h.provisionWorkloadOIDC(context.Background(), "sub-1", "mypool")
+	if err != nil || result != "disabled" {
+		t.Fatalf("result=%q err=%v, want disabled nil", result, err)
+	}
 
 	if len(fk.requests) != 0 {
 		t.Fatalf("disabled feature made %d k8s request(s), want 0", len(fk.requests))

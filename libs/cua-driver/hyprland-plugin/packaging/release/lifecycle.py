@@ -3,6 +3,7 @@
 
 import argparse
 import hashlib
+import importlib.util
 import io
 import json
 import os
@@ -20,6 +21,9 @@ SOURCE = f"usr/share/{PACKAGE}/SOURCE-PROVENANCE.json"
 BUILD = f"usr/share/{PACKAGE}/BUILD-PROVENANCE.json"
 LICENSE = f"usr/share/licenses/{PACKAGE}/LICENSE"
 PAYLOAD = {MODULE, SOURCE, BUILD, LICENSE}
+PROFILE = f"usr/share/{PACKAGE}/PROFILE.json"
+KIT = f"usr/share/{PACKAGE}/KIT-PROVENANCE.json"
+VERIFIER = f"usr/share/{PACKAGE}/profile_verify.py"
 
 
 def require(condition, message):
@@ -63,23 +67,63 @@ def verify_kit(kit, revision, driver_version):
     return manifest, checksums
 
 
-def package_payload(package, manifest):
+def verify_profile_kit(kit, revision, driver_version, kit_sha256):
+    require(re.fullmatch(r"[0-9a-f]{64}", kit_sha256), "requires reviewed kit provenance SHA-256")
+    provenance_path = kit / "KIT-PROVENANCE.json"
+    require(not provenance_path.is_symlink() and digest(provenance_path.read_bytes()) == kit_sha256, "kit provenance checksum mismatch")
+    provenance = json.loads(provenance_path.read_bytes())
+    verifier_path = kit / "profile_verify.py"
+    require(not verifier_path.is_symlink() and digest(verifier_path.read_bytes()) == provenance["tooling_files"]["profile_verify.py"], "profile verifier checksum mismatch")
+    spec = importlib.util.spec_from_file_location("kit_profile_verify", verifier_path)
+    verifier = importlib.util.module_from_spec(spec)
+    # Execute only the checksum-verified helper without adding __pycache__ to
+    # the fresh kit whose exact inventory is checked immediately below.
+    exec(compile(verifier_path.read_bytes(), str(verifier_path), "exec"), verifier.__dict__)
+    profile, provenance = verifier.verify_kit(kit, kit_sha256, complete=True)
+    require(revision == profile["source"]["revision"] and driver_version == profile["source"]["driver_version"], "kit source revision/version mismatch")
+    stem = verifier.source_stem(profile)
+    expected = set(verifier.TOOLING) | {"PROFILE.json", "KIT-PROVENANCE.json", "SOURCE-PROVENANCE.json", "PKGBUILD", stem + ".tar.gz"}
+    checksums = {}
+    for line in (kit / "SHA256SUMS").read_text().splitlines():
+        checksum, name = line.split("  ")
+        require(name in expected and name not in checksums and re.fullmatch(r"[0-9a-f]{64}", checksum), "invalid profile kit checksum entry")
+        checksums[name] = checksum
+    require(set(checksums) == expected and {p.name for p in kit.iterdir()} == expected | {"SHA256SUMS"}, "use a fresh complete profile kit")
+    for name, checksum in checksums.items():
+        path = kit / name
+        require(path.is_file() and not path.is_symlink() and digest(path.read_bytes()) == checksum, f"kit checksum mismatch: {name}")
+    require(digest(Path(__file__).read_bytes()) == provenance["tooling_files"]["lifecycle.py"], "runner differs from reviewed kit")
+    manifest = verifier.verify_archive(kit / (stem + ".tar.gz"), profile)
+    require(verifier.source_manifest((kit / "SOURCE-PROVENANCE.json").read_bytes(), profile) == manifest, "kit historical manifest mismatch")
+    return manifest, checksums, profile, provenance
+
+
+def package_payload(package, manifest, profile=None, kit_provenance=None):
+    allowed_payload = PAYLOAD | ({PROFILE, KIT, VERIFIER} if profile else set())
     names = run(["bsdtar", "-tf", str(package)]).stdout.splitlines()
     files = [name for name in names if not name.endswith("/")]
     require(len(names) == len(set(names)), "duplicate package entries")
-    require(set(files) == PAYLOAD | {".PKGINFO", ".BUILDINFO", ".MTREE"}, "unexpected package payload or hooks")
-    directories = {str(parent) + "/" for name in PAYLOAD for parent in Path(name).parents if str(parent) != "."}
+    require(set(files) == allowed_payload | {".PKGINFO", ".BUILDINFO", ".MTREE"}, "unexpected package payload or hooks")
+    directories = {str(parent) + "/" for name in allowed_payload for parent in Path(name).parents if str(parent) != "."}
     require(set(names) - set(files) <= directories, "unexpected package directory")
     info = run(["bsdtar", "-xOf", str(package), ".PKGINFO"]).stdout.splitlines()
     require(f"pkgname = {PACKAGE}" in info, "package name mismatch")
-    require(f"pkgver = {manifest['driver_version']}-1" in info, "package version mismatch")
+    package_release = profile["package_release"] if profile else 1
+    require(f"pkgver = {manifest['driver_version']}-{package_release}" in info, "package version mismatch")
     require("arch = x86_64" in info, "package architecture mismatch")
-    require({line for line in info if line.startswith("depend = ")} ==
-            {"depend = hyprland=0.56.2-1", "depend = gcc-libs"}, "package dependency mismatch")
-    payload = {name: subprocess.check_output(["bsdtar", "-xOf", str(package), name]) for name in PAYLOAD}
+    dependencies = ({f"depend = hyprland={profile['hyprland']['package_version']}", "depend = python>=3.11", "depend = binutils"} |
+                    {f"depend = {name}={version}" for name, version in profile["runtime"]["packages"].items()}
+                    if profile else {"depend = hyprland=0.56.2-1", "depend = gcc-libs"})
+    require({line for line in info if line.startswith("depend = ")} == dependencies, "package dependency mismatch")
+    payload = {name: subprocess.check_output(["bsdtar", "-xOf", str(package), name]) for name in allowed_payload}
     require(json.loads(payload[SOURCE]) == manifest, "packaged source provenance mismatch")
     require(digest(payload[LICENSE]) == manifest["files"]["LICENSE.md"], "packaged license provenance mismatch")
     build = json.loads(payload[BUILD])
+    if profile:
+        require(json.loads(payload[PROFILE]) == profile and build["profile"] == profile, "packaged profile mismatch")
+        require(json.loads(payload[KIT]) == kit_provenance and build["kit"] == kit_provenance, "packaged kit mismatch")
+        require(digest(payload[VERIFIER]) == kit_provenance["tooling_files"]["profile_verify.py"], "packaged verifier mismatch")
+        require(build["compiler_runtime_sha256"] == profile["runtime"]["sha256"], "packaged profile runtime mismatch")
     require(build["source"] == manifest, "packaged build source mismatch")
     require(build["module_sha256"] == digest(payload[MODULE]), "packaged module hash mismatch")
     require(build["module_runtime_sha256"] == build["compiler_runtime_sha256"] ==
@@ -134,7 +178,7 @@ def assert_state(root, payload, installed):
             require(not path.exists() and not path.is_symlink(), f"removed payload remains: {name}")
 
 
-def qualify(work, package, payload, manifest):
+def qualify(work, package, payload, manifest, profile=None):
     log = []
 
     def transaction(root, *arguments, check=True):
@@ -146,18 +190,25 @@ def qualify(work, package, payload, manifest):
         require(not check or result.returncode == 0, "pacman failed; see retained transactions.json")
         return result
 
-    gcc = work / "gcc-libs-fixture.pkg.tar.gz"
-    dependency_fixture(gcc, "gcc-libs", "1-1")
-    for label, version in (("matching", "0.56.2-1"), ("mismatched", "0.56.2-2")):
+    runtime_packages = {**profile["runtime"]["packages"], "python": "3.11.0-1", "binutils": "1-1"} if profile else {"gcc-libs": "1-1"}
+    runtime_fixtures = []
+    for name, version in runtime_packages.items():
+        fixture = work / f"{name}-fixture.pkg.tar.gz"
+        dependency_fixture(fixture, name, version)
+        runtime_fixtures.append(str(fixture))
+    matching_version = profile["hyprland"]["package_version"] if profile else "0.56.2-1"
+    mismatched_version = matching_version + ".1" if profile else "0.56.2-2"
+    package_release = profile["package_release"] if profile else 1
+    for label, version in (("matching", matching_version), ("mismatched", mismatched_version)):
         root = new_root(work, label)
         hyprland = work / f"hyprland-{label}-fixture.pkg.tar.gz"
         dependency_fixture(hyprland, "hyprland", version)
-        transaction(root, "-U", str(gcc), str(hyprland))
+        transaction(root, "-U", *runtime_fixtures, str(hyprland))
         if label == "mismatched":
             result = transaction(root, "-U", str(package), check=False)
             diagnostic = result.stdout + result.stderr
             require(result.returncode != 0 and 'unable to satisfy dependency' in diagnostic and
-                    'hyprland=0.56.2-1' in diagnostic, "missing specific Hyprland dependency refusal")
+                    f'hyprland={matching_version}' in diagnostic, "missing specific Hyprland dependency refusal")
             assert_state(root, payload, False)
             require(transaction(root, "-Q", PACKAGE, check=False).returncode != 0,
                     "rejected package registered in ALPM")
@@ -169,7 +220,7 @@ def qualify(work, package, payload, manifest):
             result = transaction(root, "-Q", PACKAGE, check=False)
             if installed:
                 require(result.returncode == 0 and result.stdout.strip() ==
-                        f"{PACKAGE} {manifest['driver_version']}-1", "installed ALPM identity mismatch")
+                        f"{PACKAGE} {manifest['driver_version']}-{package_release}", "installed ALPM identity mismatch")
             else:
                 require(result.returncode != 0, "removed package registered in ALPM")
 
@@ -179,6 +230,7 @@ def main():
     parser.add_argument("--kit", type=Path, required=True, help="fresh standalone development or release kit")
     parser.add_argument("--revision", required=True)
     parser.add_argument("--driver-version", required=True)
+    parser.add_argument("--kit-sha256", help="reviewed KIT-PROVENANCE.json digest; required for profile kits")
     parser.add_argument("--cxx", type=Path, default=Path("/usr/bin/g++"))
     parser.add_argument("--output", type=Path, required=True, help="new retained evidence/build directory")
     args = parser.parse_args()
@@ -187,7 +239,12 @@ def main():
         require(os.geteuid() != 0, "run as an ordinary build user; only isolated pacman uses sudo")
         require(args.cxx.is_absolute() and args.cxx.is_file(), "requires an absolute compiler path")
         kit = args.kit.resolve(strict=True)
-        manifest, checksums = verify_kit(kit, args.revision, args.driver_version)
+        profile = kit_provenance = None
+        if args.kit_sha256:
+            manifest, checksums, profile, kit_provenance = verify_profile_kit(kit, args.revision, args.driver_version, args.kit_sha256)
+        else:
+            require(not (kit / "KIT-PROVENANCE.json").exists(), "profile kit requires --kit-sha256")
+            manifest, checksums = verify_kit(kit, args.revision, args.driver_version)
         work = args.output.absolute()
         work.mkdir(parents=True, exist_ok=False)
         work = work.resolve(strict=True)
@@ -209,8 +266,12 @@ def main():
         packages = [p for p in packages if not p.name.endswith(".sig")]
         require(len(packages) == 1, "expected one built plugin package")
         package = packages[0]
-        payload = package_payload(package, manifest)
-        qualify(work, package, payload, manifest)
+        if profile:
+            payload = package_payload(package, manifest, profile, kit_provenance)
+            qualify(work, package, payload, manifest, profile)
+        else:
+            payload = package_payload(package, manifest)
+            qualify(work, package, payload, manifest)
         evidence = {"schema": 1, "result": "passed", "scope": "native build and isolated ALPM lifecycle",
                     "source_revision": args.revision, "driver_version": args.driver_version,
                     "plugin_version": manifest["plugin_version"], "kit_sha256": checksums,
@@ -218,10 +279,12 @@ def main():
                     "dependency_fixtures": "metadata only; ABI verified by the native recipe",
                     "live_restart_verified": False, "live_rollback_verified": False,
                     "published_release_verified": False}
+        if profile:
+            evidence.update(profile=profile, kit=kit_provenance, kit_provenance_sha256=args.kit_sha256)
         (work / "RESULT.json").write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n")
         print("Passed: native build and isolated ALPM install/remove/reinstall/dependency refusal.")
         print("Live restart, rollback, and published release verification remain separate gates.")
-    except (ValueError, KeyError, OSError, subprocess.CalledProcessError) as error:
+    except (ValueError, KeyError, TypeError, OSError, tarfile.TarError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"error: {error}\n")
 
 

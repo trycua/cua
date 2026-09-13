@@ -128,6 +128,8 @@ export async function checkLinks(files: FileObject[], scanned: ScanResult, check
             '.mp4',
             '.webm',
             '.pdf',
+            '.csv',
+            '.geojson',
             '.css',
             '.js',
             '.woff',

@@ -27,6 +27,11 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use cua_driver_contract::{
+    ActionTarget, ClickInput, ClickPosition, GetWindowStateInput, InputDeliveryMode, ListAppsInput,
+    ListWindowsInput, WindowStateOutput,
+};
+use cua_driver_sdk::{CuaDriver, DriverError};
 use cua_driver_testkit::ax::{element_index_by_id, element_index_containing};
 use cua_driver_testkit::e2e::{
     recording_evidence, shared_web_route, write_declaration_from_env, write_result_from_env,
@@ -472,24 +477,90 @@ fn window_origin(fixture: &Fixture, _state: &ToolResponse) -> (f64, f64) {
     (fixture.window_x, fixture.window_y)
 }
 
-fn screenshot_scale(state: &ToolResponse) -> f64 {
-    let Some(width) = state.structured()["screenshot_width"].as_f64() else {
-        return 1.0;
-    };
-    let window_width = state.structured()["elements"]
+fn screenshot_scale(state: &ToolResponse) -> (f64, f64) {
+    screenshot_scale_for_platform(state.structured(), cfg!(target_os = "linux"))
+}
+
+fn screenshot_scale_for_platform(state: &serde_json::Value, linux: bool) -> (f64, f64) {
+    let window_role = if linux { "frame" } else { "AXWindow" };
+    let capture = (
+        state["screenshot_width"].as_f64().unwrap_or(0.0),
+        state["screenshot_height"].as_f64().unwrap_or(0.0),
+    );
+    let window = state["elements"]
         .as_array()
         .and_then(|elements| {
             elements
                 .iter()
-                .find(|element| element["role"].as_str() == Some("AXWindow"))
+                .find(|element| element["role"].as_str() == Some(window_role))
         })
-        .and_then(|window| window["frame"]["w"].as_f64())
-        .unwrap_or(0.0);
-    if window_width > 0.0 && width > 0.0 {
-        width / window_width
+        .map(|window| {
+            (
+                window["frame"]["w"].as_f64().unwrap_or(0.0),
+                window["frame"]["h"].as_f64().unwrap_or(0.0),
+            )
+        })
+        .unwrap_or((0.0, 0.0));
+    if capture.0 > 0.0 && capture.1 > 0.0 && window.0 > 0.0 && window.1 > 0.0 {
+        (capture.0 / window.0, capture.1 / window.1)
     } else {
-        1.0
+        (1.0, 1.0)
     }
+}
+
+fn screenshot_local_point(
+    screen_point: (f64, f64),
+    window_origin: (f64, f64),
+    scale: (f64, f64),
+) -> (f64, f64) {
+    (
+        (screen_point.0 - window_origin.0) * scale.0,
+        (screen_point.1 - window_origin.1) * scale.1,
+    )
+}
+
+#[test]
+fn linux_frame_geometry_drives_resized_screenshot_scale() {
+    let state = serde_json::json!({
+        "screenshot_width": 1568,
+        "screenshot_height": 852,
+        "elements": [{
+            "element_index": 0,
+            "role": "frame",
+            "frame": {"x": 12, "y": 38, "w": 1896, "h": 1030}
+        }, {
+            "element_index": 1,
+            "role": "AXWindow",
+            "frame": {"x": 0, "y": 0, "w": 1000, "h": 500}
+        }]
+    });
+
+    let linux_scale = screenshot_scale_for_platform(&state, true);
+    assert!((linux_scale.0 - 1568.0 / 1896.0).abs() < f64::EPSILON);
+    assert!((linux_scale.1 - 852.0 / 1030.0).abs() < f64::EPSILON);
+
+    let ax_scale = screenshot_scale_for_platform(&state, false);
+    assert!((ax_scale.0 - 1568.0 / 1000.0).abs() < f64::EPSILON);
+    assert!((ax_scale.1 - 852.0 / 500.0).abs() < f64::EPSILON);
+}
+
+#[test]
+fn resized_screenshot_coordinates_use_capture_scale() {
+    let state = serde_json::json!({
+        "screenshot_width": 1568,
+        "screenshot_height": 852,
+        "elements": [{
+            "role": "frame",
+            "frame": {"x": 12, "y": 38, "w": 1896, "h": 1030}
+        }]
+    });
+    let scale = screenshot_scale_for_platform(&state, true);
+    let point = screenshot_local_point((949.0, 398.0), (12.0, 38.0), scale);
+
+    assert!((point.0 - 774.903).abs() < 0.001);
+    assert!((point.1 - 297.786).abs() < 0.001);
+    assert!(point.0 < 1568.0);
+    assert!(point.1 < 852.0);
 }
 
 fn require_element(snapshot: &ToolResponse, id: &str) -> u64 {
@@ -700,9 +771,8 @@ fn action_target_args(
     } else {
         let origin = window_origin(fixture, state);
         let scale = screenshot_scale(state);
-        let (x, y) = element_center(state, index);
-        let local_x = (x - origin.0) * scale;
-        let local_y = (y - origin.1) * scale;
+        let screen_point = element_center(state, index);
+        let (local_x, local_y) = screenshot_local_point(screen_point, origin, scale);
         let width = state.structured()["screenshot_width"].as_f64();
         let height = state.structured()["screenshot_height"].as_f64();
         if width.is_none() || height.is_none() {
@@ -723,8 +793,8 @@ fn action_target_args(
         let width = width.unwrap();
         let height = height.unwrap();
         eprintln!(
-            "[shared-px] {} target={id} screen=({x:.1},{y:.1}) origin=({:.1},{:.1}) scale={scale:.3} local=({local_x:.1},{local_y:.1}) capture=({width:.1}x{height:.1})",
-            fixture.name, origin.0, origin.1
+            "[shared-px] {} target={id} screen=({:.1},{:.1}) origin=({:.1},{:.1}) scale=({:.3},{:.3}) local=({local_x:.1},{local_y:.1}) capture=({width:.1}x{height:.1})",
+            fixture.name, screen_point.0, screen_point.1, origin.0, origin.1, scale.0, scale.1
         );
         assert!(
             local_x >= 0.0 && local_x < width && local_y >= 0.0 && local_y < height,
@@ -772,6 +842,222 @@ fn run_pointer_action(
 
 fn delivered_observation() -> Observation {
     Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+}
+
+fn sdk_window_input(fixture: &Fixture) -> GetWindowStateInput {
+    GetWindowStateInput {
+        pid: fixture.pid,
+        window_id: fixture.wid,
+        session: None,
+        query: None,
+        include_accessibility_tree: Some(true),
+        include_screenshot: Some(false),
+        screenshot_out_file: None,
+        max_elements: None,
+        max_depth: None,
+        max_dimension: None,
+    }
+}
+
+fn sdk_click_token(state: &WindowStateOutput) -> String {
+    let elements = state.elements.as_ref().expect("typed AX elements");
+    // The fixture's aria-label is its accessible name. Native adapters need
+    // not preserve the DOM id or visible text in the rendered markdown.
+    [
+        "border-click-target",
+        "Click target (left / right / double)",
+    ]
+    .into_iter()
+    .find_map(|label| {
+        elements
+            .iter()
+            .find(|element| element.label.as_deref() == Some(label))
+            .and_then(|element| element.element_token.clone())
+    })
+    .unwrap_or_else(|| panic!("typed click target has no snapshot-bound token: {elements:?}"))
+}
+
+#[test]
+fn typed_click_target_uses_accessible_label_without_markdown_ids() {
+    for label in [
+        "border-click-target",
+        "Click target (left / right / double)",
+    ] {
+        let state: WindowStateOutput = serde_json::from_value(serde_json::json!({
+            "pid": 42,
+            "window_id": 73,
+            "tree_markdown": "[9] button \"border-click-target\"",
+            "elements": [{
+                "element_index": 9,
+                "role": "button",
+                "depth": 1,
+                "label": label,
+                "element_token": "snapshot-token"
+            }]
+        }))
+        .unwrap();
+        assert_eq!(sdk_click_token(&state), "snapshot-token");
+    }
+}
+
+fn sdk_background_click(fixture: &Fixture, token: String) -> ClickInput {
+    ClickInput {
+        target: ActionTarget::Window {
+            pid: fixture.pid,
+            window_id: fixture.wid,
+        },
+        position: ClickPosition::Element {
+            element_token: token,
+        },
+        delivery_mode: InputDeliveryMode::Background,
+        session: None,
+        button: None,
+        count: None,
+    }
+}
+
+fn run_typed_sdk_native_window(fixture: &mut Fixture) -> Observation {
+    let runtime = tokio::runtime::Runtime::new().expect("SDK test runtime");
+    // The macOS harness authorizes the installed daemon, not cargo's test
+    // executable. Exercise the typed SDK over that verified native backend.
+    #[cfg(target_os = "macos")]
+    let sdk = {
+        let socket = std::env::var("CUA_E2E_MACOS_DAEMON_SOCKET")
+            .expect("canonical macOS harness must specify its authorized daemon socket");
+        CuaDriver::connect(Some(socket)).expect("connect SDK to authorized macOS daemon")
+    };
+    #[cfg(not(target_os = "macos"))]
+    let sdk = {
+        use cua_driver_sdk::{
+            ConfiguredDriverOptions, RuntimeAuthorizationOptions, SessionPermissionMode,
+        };
+
+        // Match the disposable desktop opt-in that McpDriver applies only to
+        // its child process, without changing this test process's environment.
+        if std::env::var_os("CUA_E2E_UNRESTRICTED_GUI").is_some() {
+            CuaDriver::create_configured(ConfiguredDriverOptions {
+                claude_code_compatibility: false,
+                authorization: RuntimeAuthorizationOptions {
+                    allowed_modes: vec![SessionPermissionMode::Unrestricted],
+                    compatibility_mode: SessionPermissionMode::Unrestricted,
+                    compatibility_capability_manifest_path: None,
+                    compatibility_bounded_manifest_path: None,
+                    unrestricted_acknowledged: true,
+                    max_session_ttl_seconds: 300,
+                    max_idle_ttl_seconds: 300,
+                },
+            })
+        } else {
+            CuaDriver::create(None)
+        }
+        .expect("create in-process native SDK runtime")
+    };
+
+    runtime.block_on(async {
+        let apps = sdk
+            .list_apps(ListAppsInput {})
+            .await
+            .expect("typed app discovery");
+        assert!(
+            apps.apps
+                .iter()
+                .any(|app| app.pid == fixture.pid && app.running),
+            "typed app discovery must include the running fixture"
+        );
+        let windows = sdk
+            .list_windows(ListWindowsInput {
+                pid: None,
+                on_screen_only: None,
+            })
+            .await
+            .expect("typed window discovery");
+        assert!(
+            windows
+                .windows
+                .iter()
+                .any(|window| window.window_id == fixture.wid && window.pid == Some(fixture.pid)),
+            "typed window discovery must preserve exact fixture identity"
+        );
+
+        let before = sdk
+            .get_window_state(sdk_window_input(fixture))
+            .await
+            .expect("typed initial window state");
+        assert_eq!((before.pid, before.window_id), (fixture.pid, fixture.wid));
+        let stale_token = sdk_click_token(&before);
+        let current = sdk
+            .get_window_state(sdk_window_input(fixture))
+            .await
+            .expect("typed fresh window state invalidates previous token");
+        let current_token = sdk_click_token(&current);
+        assert_ne!(
+            stale_token, current_token,
+            "fresh snapshot must mint fresh tokens"
+        );
+        let journal_before = fixture.journal.snapshot();
+        let stale = sdk
+            .click(sdk_background_click(fixture, stale_token))
+            .await
+            .expect_err("stale SDK token must refuse");
+        assert!(
+            matches!(stale, DriverError::Tool { ref tool, ref error_code, .. }
+            if tool == "click" && error_code == "stale_element_token"),
+            "expected typed stale-token refusal, got {stale:?}"
+        );
+        thread::sleep(Duration::from_millis(150));
+        assert_eq!(
+            fixture.journal.snapshot(),
+            journal_before,
+            "stale SDK token changed fixture state"
+        );
+
+        let other_window = windows
+            .windows
+            .iter()
+            .find(|window| window.window_id != fixture.wid && window.pid != Some(fixture.pid))
+            .expect("foreground sentinel supplies a different native window");
+        let mut mismatched = sdk_background_click(fixture, current_token.clone());
+        mismatched.target = ActionTarget::Window {
+            pid: fixture.pid,
+            window_id: other_window.window_id,
+        };
+        let mismatch = sdk
+            .click(mismatched)
+            .await
+            .expect_err("SDK token must not address a different window");
+        assert!(
+            matches!(mismatch, DriverError::Tool { ref tool, ref error_code, .. }
+            if tool == "click" && matches!(error_code.as_str(),
+                "conflicting_element_target" | "window_target_not_found" | "window_target_mismatch")),
+            "expected typed window-identity refusal, got {mismatch:?}"
+        );
+        thread::sleep(Duration::from_millis(150));
+        assert_eq!(
+            fixture.journal.snapshot(),
+            journal_before,
+            "mismatched SDK window identity changed fixture state"
+        );
+
+        sdk.click(sdk_background_click(fixture, current_token.clone()))
+            .await
+            .expect("typed background element click");
+        assert_fixture_contains(fixture, "last_action=left_click");
+        // Match the fixture's delivery contract: its DOM journal is the effect
+        // oracle because embedded browsers can retain stale accessible text.
+        // A fresh native observation must still preserve identity and tokens.
+        let after = sdk
+            .get_window_state(sdk_window_input(fixture))
+            .await
+            .expect("typed post-action window state");
+        assert_eq!((after.pid, after.window_id), (fixture.pid, fixture.wid));
+        assert_ne!(
+            sdk_click_token(&after),
+            current_token,
+            "post-action observation must mint a fresh snapshot-bound token"
+        );
+        sdk.shutdown().await.expect("shut down typed SDK client");
+    });
+    delivered_observation()
 }
 
 fn browser_ref_by_label(snapshot: &ToolResponse, label_fragment: &str) -> String {
@@ -1117,10 +1403,7 @@ fn run_drag_action(fixture: &mut Fixture, delivery: &str) -> Observation {
     let target = require_element(&pre, "drop-target");
     let origin = window_origin(fixture, &pre);
     let scale = screenshot_scale(&pre);
-    let point = |index: u64| {
-        let (x, y) = element_center(&pre, index);
-        ((x - origin.0) * scale, (y - origin.1) * scale)
-    };
+    let point = |index: u64| screenshot_local_point(element_center(&pre, index), origin, scale);
     let (from_x, from_y) = point(source);
     let (to_x, to_y) = point(target);
     let response = fixture.driver.call(
@@ -1904,6 +2187,15 @@ fn shared_web_action_matrix_is_state_verified() {
     let mut failure = None;
     let mut selected = 0usize;
     for spec in host_specs() {
+        let mut sdk_case = shared_case(&spec, "left_click", "ax", "background");
+        sdk_case.cell_id.push_str("-typed-sdk");
+        if cell_selected(&sdk_case) {
+            selected += 1;
+            let result = run_host_case_with_outcome(sdk_case, &spec, run_typed_sdk_native_window);
+            if failure.is_none() {
+                failure = result;
+            }
+        }
         for (action, tool, marker) in [
             ("left_click", "click", "last_action=left_click"),
             ("right_click", "right_click", "last_action=right_click"),

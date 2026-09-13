@@ -6,6 +6,13 @@ fault={kind:config_disable|keymap}; vm={machine_id,boot_id}; compositor includes
 pid,instance,uid,starttime,exe; config includes absolute path,device,inode,uid,
 mode,sha256. Config-disable requires the already sourced, exact ENABLED Lua
 include from input_config_toggle. Main configuration and policy are never edited.
+Optional fault.min_motion_px requires that much Euclidean surface-local motion
+from the pre-press pointer position on the same live lane before fault injection.
+Omitting it retains the held-drag gate without a minimum motion requirement.
+Optional fault.pointer_cleanup=retained_inert certifies continuous inert hover
+on the interrupted lane; omitted or cleared retains the original cleanup proof.
+The retained proof checks presence, trace continuity, and grounded app identity;
+the protocol does not expose a Wayland pointer surface identity.
 
 Config suspension disconnects the trace transport. Restore the fixture, reconnect
 without TRACE_START, and require unchanged trace history with cancellation and
@@ -23,10 +30,12 @@ DPMS and lock are deliberately unsupported here. Portable tests prepare
 this proof; only execution on the exact native candidate can certify a row.
 """
 import argparse
+from production_app_smoke import add_provenance_arguments
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import platform
@@ -81,8 +90,14 @@ def verify_keymap_options(replies, restored):
             'exact sourced keymap option not observed'
 
 
-def keymap_lanes(status, *, cleared=False):
-    verify_status(status, True)
+def pointer_cleanup(record):
+    policy = record.get('pointer_cleanup', 'cleared')
+    assert policy in ('cleared', 'retained_inert'), 'unknown pointer cleanup policy'
+    return policy
+
+
+def keymap_lanes(status, *, cleared=False, enabled=True):
+    verify_status(status, enabled)
     lanes = {row['lane']: row for row in status['input']['lanes']}
     for row in lanes.values():
         assert isinstance(row.get('epoch'), str) and row['epoch'], 'missing compositor epoch'
@@ -94,8 +109,27 @@ def keymap_lanes(status, *, cleared=False):
     return lanes
 
 
-def verify_keymap_transition(before, after):
-    old, new = keymap_lanes(before), keymap_lanes(after, cleared=True)
+def verify_retained_inert(before, after, lane, *, enabled=True):
+    """Presence continuity, not an invented surface/resource identity."""
+    assert type(lane) is int and lane in (1, 2), 'missing interrupted lane'
+    old = keymap_lanes(before, enabled=before['configured'])
+    new = keymap_lanes(after, enabled=enabled)
+    assert old[lane - 1].get('pointer_focus') is True, 'interrupted pointer was not present'
+    for index, row in new.items():
+        assert type(old[index].get('pointer_focus')) is bool
+        assert row.get('pointer_focus') is old[index]['pointer_focus'], 'pointer presence changed'
+        assert row['dispatches'] == old[index]['dispatches'], 'fault or refusal dispatched new input'
+        assert all(type(row.get(key)) is int and row[key] == 0 for key in ('held_button', 'held_keys'))
+        assert all(row.get(key) is False for key in
+                   ('drag_active', 'lease_active', 'keyboard_focus', 'reserved')), 'retained hover owns authority'
+    return new
+
+
+def verify_keymap_transition(before, after, policy='cleared', lane=None):
+    assert pointer_cleanup({'pointer_cleanup': policy}) == policy
+    old, new = keymap_lanes(before), keymap_lanes(after, cleared=policy == 'cleared')
+    if policy == 'retained_inert':
+        verify_retained_inert(before, after, lane)
     for lane in old:
         assert old[lane]['epoch'] == new[lane]['epoch'], 'compositor lane replaced'
         assert new[lane]['desktop_generation'] > old[lane]['desktop_generation'], 'keymap did not invalidate authority'
@@ -149,7 +183,10 @@ def file_identity(path):
 
 
 def validate_plan(plan):
-    assert plan['purpose'] == 'desktop_fault' and set(plan['fault']) == {'kind'}
+    assert plan['purpose'] == 'desktop_fault' and {'kind'} <= set(plan['fault']) <= {'kind', 'min_motion_px', 'pointer_cleanup'}
+    pointer_cleanup(plan['fault'])
+    if 'min_motion_px' in plan['fault']:
+        validate_min_motion(plan['fault']['min_motion_px'])
     original, _ = fixed_bytes(plan['fault']['kind'])
     # Reuse the strict existing target/grounding/recovery plan checks unchanged.
     bounds = plan['agents'][0]['bounds']
@@ -169,6 +206,43 @@ def validate_plan(plan):
     assert Path(config['path']).is_absolute()
     assert all(type(config[key]) is int and config[key] >= 0 for key in ('device', 'inode', 'uid', 'mode'))
     assert config['sha256'] == digest(original.encode()), 'only the exact dedicated include is permitted'
+
+
+def validate_min_motion(value):
+    assert type(value) in (int, float) and math.isfinite(value) and value > 0, 'positive finite min_motion_px required'
+
+
+def drag_motion_px(page, lane):
+    """Use protocol coordinates, never the primary cursor or another lane."""
+    assert set(active_drags(page)) == {lane}, 'motion gate requires the same held lane'
+    rows = [row for row in page['events'] if row[5] in (1, 2)]
+    assert all(row[5] == lane for row in rows), 'motion gate crossed lanes'
+    press = next(row for row in rows if row[2] == 'pointer_button')
+    assert not any(row[2] == 'pointer_leave' or
+                   (row[2] == 'pointer_enter' and row[0] > press[0]) for row in rows), 'motion gate pointer identity changed'
+    positions = [row for row in rows if row[2] in ('pointer_enter', 'pointer_motion')]
+    assert all(len(row) == 9 for row in positions), 'motion gate requires surface coordinates'
+    before = [row for row in positions if row[0] < press[0]]
+    assert before, 'motion gate lacks initial pointer position'
+    motion = [row for row in positions if row[2] == 'pointer_motion' and row[0] > press[0]]
+    return math.dist(before[-1][7:9], motion[-1][7:9]) if motion else 0
+
+
+def poll_fault_active(trace, initial, pending, min_motion_px=None, timeout=3):
+    if min_motion_px is None:
+        return poll_active(trace, initial, None, [pending], timeout=timeout)
+    validate_min_motion(min_motion_px)
+    deadline = time.monotonic() + timeout
+    previous, lanes = initial, None
+    while (remaining := deadline - time.monotonic()) > 0:
+        page, active = poll_active(trace, previous, lanes, [pending], timeout=remaining)
+        lane = next(iter(active))
+        displacement = drag_motion_px(page, lane)
+        assert time.monotonic() <= deadline, 'motion gate exceeded bounded wait'
+        if displacement >= min_motion_px:
+            return page, active
+        previous, lanes = page, set(active)
+    raise AssertionError('insufficient drag motion within bounded wait')
 
 
 def _guard(config):
@@ -323,6 +397,13 @@ class ConfigFault:
                        'record': str((evidence / 'config-watchdog.json').resolve()), 'files': {
                            'original': {'path': str(path), 'identity': file_identity(path)}}}
         self.record, self.restoration = {'result': 'unproven', 'kind': kind}, None
+        if 'pointer_cleanup' in plan['fault']:
+            self.config['pointer_cleanup'] = self.record['pointer_cleanup'] = pointer_cleanup(plan['fault'])
+        if pointer_cleanup(plan['fault']) == 'retained_inert':
+            self.record['target'] = dict(plan['agents'][0]['target'])
+            self.record['bounds'] = dict(plan['agents'][0]['bounds'])
+        if 'min_motion_px' in plan['fault']:
+            self.config['min_motion_px'] = self.record['min_motion_px'] = plan['fault']['min_motion_px']
         self.child = self.cancel_fd = None
         self.mutated = False
         _guard(self.config)
@@ -330,6 +411,7 @@ class ConfigFault:
         (evidence / 'pre-fault-status.json').write_text(json.dumps(self.record['before']))
         if kind == 'keymap':
             self.record['keymap_before'] = keymap_options(expected['instance'], True)
+        if kind == 'keymap' or pointer_cleanup(self.config) == 'retained_inert':
             idle_lanes(self.record['before'])
         # Files are prepared before the watchdog and before any live drag.
         # Known inodes let either process reject an unrelated replacement.
@@ -367,10 +449,10 @@ class ConfigFault:
 
     def inject(self, trace, initial, pending, guard):
         assert self.child and self.child.poll() is None, 'live restoration watchdog required'
-        prefix, lanes = poll_active(trace, initial, None, [pending])
+        prefix, lanes = poll_fault_active(trace, initial, pending, self.config.get('min_motion_px'))
         gate_ns = time.monotonic_ns()
         with _locked(self.config):
-            if self.config.get('kind') == 'keymap':
+            if self.config.get('kind') == 'keymap' or pointer_cleanup(self.config) == 'retained_inert':
                 self.record['gate_status'] = production_status(self.config['instance'], True)
                 previous = keymap_lanes(self.record['before'])
                 current = keymap_lanes(self.record['gate_status'])
@@ -379,6 +461,9 @@ class ConfigFault:
                 active = current[next(iter(lanes)) - 1]
                 assert active['drag_active'] is True and active['lease_active'] is True
                 assert type(active['held_button']) is int and active['held_button'] > 0, 'drag ended before keymap fault'
+                if pointer_cleanup(self.config) == 'retained_inert':
+                    assert active.get('pointer_focus') is True, 'missing live pointer at fault gate'
+            if self.config.get('kind') == 'keymap':
                 self.record['keymap_before'] = keymap_options(self.config['instance'], True)
             def authorize():
                 # Run AFTER all potentially blocking identity checks, directly
@@ -391,12 +476,16 @@ class ConfigFault:
                 assert requested_ns + 3_000_000_000 < self.config['deadline_ns'], 'watchdog deadline too near'
                 self.record.update(prefix=prefix, lane=next(iter(lanes)), gate_ns=gate_ns,
                                    requested_ns=requested_ns, watchdog_deadline_ns=self.config['deadline_ns'])
+                self.config['lane'] = self.record['lane']
                 self.mutated = True  # Lost replies still require restoration.
             _replace(self.config, False, before_replace=authorize)
             self.record['after'] = _reload(self.config, False)
             if self.config.get('kind') == 'keymap':
                 self.record['keymap_after'] = keymap_options(self.config['instance'], False)
-                verify_keymap_transition(self.record['gate_status'], self.record['after'])
+                verify_keymap_transition(self.record['gate_status'], self.record['after'],
+                                         pointer_cleanup(self.config), self.record['lane'])
+            elif pointer_cleanup(self.config) == 'retained_inert':
+                verify_retained_inert(self.record['gate_status'], self.record['after'], self.record['lane'], enabled=False)
             self.record['acknowledged_ns'] = time.monotonic_ns()
             self.record['config'] = file_identity(self.config['path'])
             self.record['result'] = 'observed'
@@ -433,7 +522,11 @@ class ConfigFault:
 def verify_cancelled(boundary, record, before_restore_ns):
     """Check the live fault before any restoration or new action is attempted."""
     prefix, lane = record['prefix'], record['lane']
+    policy = pointer_cleanup(record)
     assert set(active_drags(prefix)) == {lane}
+    if 'min_motion_px' in record:
+        validate_min_motion(record['min_motion_px'])
+        assert drag_motion_px(prefix, lane) >= record['min_motion_px'], 'fault preceded required drag motion'
     tail = trace_interval(prefix, boundary)
     assert prefix['events'][-1][1] <= record['gate_ns'] <= record['requested_ns'] <= record['acknowledged_ns']
     assert record['acknowledged_ns'] <= before_restore_ns
@@ -448,6 +541,11 @@ def verify_cancelled(boundary, record, before_restore_ns):
     assert len(releases) == 1 and releases[0][6] == 0 and releases[0][0] > cancelled[0][0]
     assert releases[0][1] < before_restore_ns, 'release was delayed until restoration'
     assert not any(row[2] in ('pointer_motion', 'pointer_enter') and row[0] > cancelled[0][0] for row in synthetic)
+    if policy == 'retained_inert':
+        drag_motion_px(prefix, lane)  # Requires coordinates and unchanged pre-press pointer presence.
+        assert not any(row[2] in ('pointer_leave', 'pointer_enter') for row in synthetic), 'retained pointer left or retargeted'
+        assert all(row[2] in ('agent_cancel', 'pointer_button', 'keyboard_leave')
+                   for row in synthetic if row[0] >= cancelled[0][0]), 'retained pointer was not inert'
     stopped = stopped_prefix(boundary)
     isolation = analyze(stopped)
     assert isolation['result'] == 'passed' and released_synthetic_input(stopped), isolation
@@ -455,6 +553,7 @@ def verify_cancelled(boundary, record, before_restore_ns):
 
 
 def verify_layout_refusal(record):
+    policy = pointer_cleanup(record)
     assert record['outcome'] == 'response' and record['replayed'] is False
     assert record['tool'] in ('click', 'scroll')
     assert type(record['runtime_pid']) is int and record['runtime_pid'] != record['previous_runtime_pid']
@@ -465,7 +564,11 @@ def verify_layout_refusal(record):
     content = record['response']['structuredContent']
     assert content.get('route') == 'synthetic_events' and content.get('detail') == 'unsupported_layout'
     assert content.get('code') == 'background_unavailable', 'not the compositor layout refusal'
-    before, after = keymap_lanes(record['before'], cleared=True), keymap_lanes(record['after'], cleared=True)
+    before, after = keymap_lanes(record['before'], cleared=policy == 'cleared'), keymap_lanes(record['after'], cleared=policy == 'cleared')
+    if policy == 'retained_inert':
+        verify_retained_inert(record['before'], record['before'], record['lane'])
+        verify_refusal_claim(record['before'], record['after'], record['response'], record['lane'])
+        verify_target_snapshots(record['target'], record['bounds'], record['snapshot'], record['after_snapshot'])
     for lane in before:
         assert all(before[lane][key] == after[lane][key] for key in ('epoch', 'desktop_generation', 'dispatches')), \
             'layout refusal changed compositor state or dispatched input'
@@ -473,8 +576,46 @@ def verify_layout_refusal(record):
     tail = trace_interval(record['trace_before'], record['trace_after'])
     assert not any(row[5] in (1, 2) for row in tail), 'refused fresh action dispatched synthetic input'
     assert analyze(stopped_prefix(record['trace_after']))['result'] == 'passed'
+    if policy == 'retained_inert':
+        verify_refusal_closed(record, record['lane'])
     return {'result': 'verified', 'reason': 'unsupported_layout', 'no_dispatch': 'verified',
             'compiled_map_invalidation': 'verified', 'keymap_hash': 'not_exposed'}
+
+
+def verify_refusal_claim(before, after, response, interrupted_lane=None):
+    """A fresh CLAIM reserves capacity, never TARGET authority or inherited hover.
+
+    This exception is only for the fresh refusal probe between its action and
+    EOF. Fault cancellation and post-EOF checks still require no reservation.
+    The response identifies the claimed lane; no status owner PID is exposed.
+    """
+    old, new = idle_lanes(before), keymap_lanes(after)
+    claimed = response['structuredContent'].get('lane')
+    assert type(claimed) is int and claimed in (0, 1), 'refusal has no exact claimed lane'
+    if interrupted_lane is not None:
+        assert type(interrupted_lane) is int and interrupted_lane in (1, 2)
+        assert old[interrupted_lane - 1]['pointer_focus'] is True
+    for lane, row in new.items():
+        assert type(old[lane].get('pointer_focus')) is bool
+        assert row.get('pointer_focus') is old[lane]['pointer_focus'], 'refusal changed pointer presence'
+        assert row.get('reserved') is (lane == claimed), 'unexpected refusal reservation'
+        assert all(type(row.get(k)) is int and row[k] == 0 for k in ('held_button', 'held_keys'))
+        assert all(row.get(k) is False for k in ('lease_active', 'drag_active', 'keyboard_focus')), 'refused CLAIM gained input authority'
+        assert all(row[k] == old[lane][k] for k in ('epoch', 'desktop_generation', 'dispatches')), 'refusal changed desktop or dispatched'
+    return {'claimed_lane': claimed, 'capacity_only': True, 'input_authority': False,
+            'owner_pid_in_status': 'not_exposed'}
+
+
+def verify_refusal_closed(record, interrupted_lane):
+    closed = record['closure']
+    assert closed['runtime_pid'] == record['runtime_pid'] and type(closed['exit_code']) is int
+    assert record['observed_ns'] <= closed['started_ns'] <= closed['reaped_ns'] <= closed['observed_ns']
+    verify_retained_inert(record['before'], closed['status'], interrupted_lane)
+    old, new = keymap_lanes(record['after']), keymap_lanes(closed['status'])
+    for lane in old:
+        assert all(old[lane][k] == new[lane][k] for k in ('epoch', 'desktop_generation', 'dispatches'))
+    assert not any(row[5] in (1, 2) for row in trace_interval(record['trace_after'], closed['trace'])), 'probe EOF changed inert pointer or emitted input'
+    return {'result': 'verified', 'reservation_released': True}
 
 
 def refuse_new_action(client, observer, victim, spec, stage, trace, config, guard, save):
@@ -493,7 +634,12 @@ def refuse_new_action(client, observer, victim, spec, stage, trace, config, guar
               'previous_runtime_pid': victim.process.pid, 'tool': tool, 'prepared_ns': prepared_ns,
               'snapshot': snapshot, 'arguments': arguments, 'session': fresh['name'],
               'before': production_status(config['instance'], True), 'trace_before': trace.collect()}
-    keymap_lanes(record['before'], cleared=True)
+    policy = pointer_cleanup(config)
+    if policy == 'retained_inert':
+        record.update(pointer_cleanup=policy, lane=config['lane'], target=dict(spec['target']), bounds=dict(spec['bounds']))
+        verify_retained_inert(record['before'], record['before'], record['lane'])
+    else:
+        keymap_lanes(record['before'], cleared=True)
     record['keymap_options'] = keymap_options(config['instance'], False)
     guard()
     _guard(config)
@@ -513,13 +659,40 @@ def refuse_new_action(client, observer, victim, spec, stage, trace, config, guar
         record['observed_ns'] = time.monotonic_ns()
         assert record['observed_ns'] < config['deadline_ns'], 'watchdog restored during refusal probe'
         guard()
+        if policy == 'retained_inert':
+            record['claim'] = verify_refusal_claim(record['before'], record['after'], record['response'], record['lane'])
+            closed = record['closure'] = {'runtime_pid': client.process.pid, 'started_ns': time.monotonic_ns()}
+            close_owned(client)
+            closed.update(reaped_ns=time.monotonic_ns(), exit_code=client.process.poll())
+            closed.update(status=production_status(config['instance'], True), trace=trace.collect(), observed_ns=time.monotonic_ns())
+            assert closed['observed_ns'] < config['deadline_ns'], 'watchdog restored during probe closure'
+            guard()
         record['verification'] = verify_layout_refusal(record)
         return record
     finally:
         save('wrong-layout-action.json', record)
 
 
+def verify_target_snapshots(target, bounds, before, after):
+    for snapshot in (before, after):
+        assert all(type(target.get(key)) is int and target[key] > 0 and
+                   type(snapshot.get(key)) is int and snapshot[key] == target[key]
+                   for key in ('pid', 'window_id')), 'retained hover target identity changed or missing'
+        assert snapshot['window_bounds'] == bounds, 'retained hover target geometry changed'
+        assert isinstance(snapshot.get('snapshot_id'), str) and snapshot['snapshot_id'], 'missing target snapshot identity'
+        runtime = snapshot.get('proof_runtime', {})
+        assert type(runtime.get('pid')) is int and runtime['pid'] > 0, 'missing observation runtime'
+    # Snapshot counters belong to the observing Driver process, not the app.
+    assert (before['proof_runtime']['pid'], before['snapshot_id']) != \
+           (after['proof_runtime']['pid'], after['snapshot_id']), 'reused target snapshot'
+    times = [snapshot.get(key) for snapshot in (before, after)
+             for key in ('proof_observation_started_ns', 'proof_observation_finished_ns')]
+    assert all(type(value) is int and value >= 0 for value in times), 'invalid observation timestamp'
+    assert times == sorted(times) and times[0] < times[2], 'stale or out-of-order observation'
+
+
 def verify_fault(boundary, record, restoration, action):
+    policy = pointer_cleanup(record)
     original, changed = fixed_bytes(record['kind'])
     assert record['result'] == 'observed' and restoration['result'] == 'restored'
     assert record['config']['sha256'] == digest(changed.encode())
@@ -534,8 +707,13 @@ def verify_fault(boundary, record, restoration, action):
         verify_keymap_options(record['keymap_after'], False)
         verify_keymap_options(restoration['keymap_options'], True)
         assert record['keymap_before'] == restoration['keymap_options'], 'original map options not restored'
-        verify_keymap_transition(record['gate_status'], record['after'])
+        verify_keymap_transition(record['gate_status'], record['after'], policy, record['lane'])
         refusal = record['wrong_layout']
+        assert pointer_cleanup(refusal) == policy, 'refusal changed pointer cleanup contract'
+        if policy == 'retained_inert':
+            assert refusal['lane'] == record['lane'] and refusal['target'] == record['target'] and refusal['bounds'] == record['bounds']
+            verify_retained_inert(record['after'], refusal['before'], record['lane'])
+            assert refusal['closure']['observed_ns'] < restoration['started_ns'], 'probe not closed before restoration'
         verify_layout_refusal(refusal)
         after, before_refusal = keymap_lanes(record['after']), keymap_lanes(refusal['before'])
         for lane in after:
@@ -544,12 +722,34 @@ def verify_fault(boundary, record, restoration, action):
         trace_interval(record['prefix'], refusal['trace_before'])
         trace_interval(refusal['trace_after'], boundary)
         assert record['acknowledged_ns'] <= refusal['prepared_ns'] <= refusal['observed_ns'] < restoration['started_ns']
-        verify_keymap_transition(refusal['after'], restoration['status'])
+        verify_keymap_transition(refusal['after'], restoration['status'], policy, record['lane'])
+    if policy == 'retained_inert':
+        gate = keymap_lanes(record['gate_status'])
+        initial = idle_lanes(record['before'])
+        assert all(initial[lane][key] == gate[lane][key]
+                   for lane in gate for key in ('epoch', 'desktop_generation')), 'stale native drag gate'
+        active = gate[record['lane'] - 1]
+        assert active['drag_active'] is True and active['lease_active'] is True
+        assert type(active['held_button']) is int and active['held_button'] > 0, 'retained proof has no live native drag gate'
+        after = verify_retained_inert(record['gate_status'], record['after'], record['lane'], enabled=record['kind'] == 'keymap')
+        restored = verify_retained_inert(record['after'], restoration['status'], record['lane'])
+        observed = verify_retained_inert(restoration['status'], record['target_status'], record['lane'])
+        assert all(restored[lane][key] == observed[lane][key]
+                   for lane in restored for key in ('epoch', 'desktop_generation')), 'desktop changed during target observation'
+        if record['kind'] == 'config_disable':
+            for lane in gate:
+                assert gate[lane]['epoch'] == after[lane]['epoch'], 'disabled compositor lane replaced'
+                assert after[lane]['epoch'] != restored[lane]['epoch'], 'restoration reused old admission epoch'
+                assert gate[lane]['desktop_generation'] <= after[lane]['desktop_generation'] <= restored[lane]['desktop_generation']
+        verify_target_snapshots(record['target'], record['bounds'], record['target_before'], record['target_after'])
     isolation = verify_cancelled(boundary, record, restoration['started_ns'])
     result = {'result': 'verified', 'outcome': fault_outcome(action), 'continuous_isolation': isolation,
               'synthetic_cleanup': 'verified', 'saved_document_effect': 'unproven'}
     if record['kind'] == 'keymap':
         result['wrong_layout'] = verify_layout_refusal(record['wrong_layout'])
+    if policy == 'retained_inert':
+        result['pointer_cleanup'] = {'policy': policy, 'presence_continuity': 'verified',
+                                     'grounded_target_identity': 'verified', 'wayland_surface_identity': 'not_exposed'}
     return result
 
 
@@ -610,6 +810,8 @@ def run(args):
         assert start_ns <= initial['events'][0][1] <= time.monotonic_ns()
         assert not active_drags(initial) and not any(row[5] in (1, 2) for row in initial['events'])
         prepared = prepare_drag(clients[0], spec)
+        if pointer_cleanup(plan['fault']) == 'retained_inert':
+            fault.record['target_before'] = prepared['snapshot']
         save('drag-grounding.json', prepared)
         fault.arm()
         guard()
@@ -637,13 +839,26 @@ def run(args):
         trace = connect_trace(args.trace_socket, fault.config)  # NEVER reset trace history.
         boundary = trace.collect()
         save('fault-prefix.json', boundary)
+        if pointer_cleanup(plan['fault']) == 'retained_inert':
+            interrupted = grounded_snapshot(observer, spec['target'], spec, session=False)
+            fault.record['target_after'] = interrupted
+            observed = production_status(fault.config['instance'], True)
+            verify_retained_inert(restoration['status'], observed, lane)
+            fault.record['target_status'] = observed
+            save('interrupted-status.json', observed)
+            boundary = trace.collect()
+            save('fault-prefix.json', boundary)
         report['fault'] = verify_fault(boundary, fault.record, restoration, report['action'])
-        save('interrupted-state.json', {'snapshot': grounded_snapshot(observer, spec['target'], spec, session=False),
+        if pointer_cleanup(plan['fault']) == 'cleared':
+            interrupted = grounded_snapshot(observer, spec['target'], spec, session=False)
+        save('interrupted-state.json', {'snapshot': interrupted,
                                        'action': report['action'], 'replayed': False})
         close_owned(clients[0])
         teardown = trace.collect()
         save('pre-recovery-prefix.json', teardown)
         report['runtime_teardown'] = verify_recovery_cleanup(boundary, stopped_prefix(teardown))
+        if pointer_cleanup(plan['fault']) == 'retained_inert':
+            verify_cancelled(teardown, fault.record, restoration['started_ns'])
         clients.append(launch('recovery'))
         prefix = recover(clients[-1], observer, clients[0], spec, plan['recovery']['pointer_stage'],
                          trace, teardown, lane, guard, save, report['recovery'])
@@ -709,5 +924,5 @@ if __name__ == '__main__':
         parser = argparse.ArgumentParser(description=__doc__)
         for name in ('driver', 'plugin', 'source', 'primary-grab', 'plan', 'evidence', 'foreground-journal', 'trace-socket'):
             parser.add_argument('--' + name, required=True, type=Path)
-        parser.add_argument('--source-sha', required=True)
+        add_provenance_arguments(parser)
         raise SystemExit(run(parser.parse_args()))

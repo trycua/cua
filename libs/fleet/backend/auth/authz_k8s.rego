@@ -179,6 +179,44 @@ native_fleet_resources := {
 
 k8s_request_allowed {
 	parts := split(input.params.path, "/")
+	image_request(parts)
+}
+
+image_request(parts) {
+	apis_namespaced_group(parts, "images.cua.ai", "v1alpha1")
+	authz.valid_dns_label(parts[4])
+	parts[5] == "images"
+	image_crud_shape(parts)
+}
+
+image_crud_shape(parts) {
+	apis_collection(parts)
+	input.method == "GET"
+}
+
+image_crud_shape(parts) {
+	image_item(parts)
+	input.method == "GET"
+}
+
+image_crud_shape(parts) {
+	apis_collection(parts)
+	input.method == "POST"
+}
+
+image_crud_shape(parts) {
+	image_item(parts)
+	{"PATCH", "DELETE"}[input.method]
+}
+
+image_item(parts) {
+	apis_item(parts)
+	count(parts[6]) <= 253
+	regex.match(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`, parts[6])
+}
+
+k8s_request_allowed {
+	parts := split(input.params.path, "/")
 	apis_namespaced_group(parts, "osgym.cua.ai", "v1alpha1")
 	native_fleet_resources[parts[5]]
 	fleet_crud_shape(parts)
@@ -587,6 +625,12 @@ is_infra_literal(path) {
 	parts[1] == "capsule.clastix.io"
 	parts[2] != ""
 	parts[3] == "tenants"
+}
+
+github_k8s_request_allowed {
+	parts := split(input.params.path, "/")
+	image_request(parts)
+	github_namespace_allowed(parts[4])
 }
 
 github_k8s_request_allowed {

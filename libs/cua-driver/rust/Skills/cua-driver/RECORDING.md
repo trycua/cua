@@ -29,11 +29,11 @@ Nothing else is recorded:
 A recording started through the CLI (`cua-driver recording start`) has no
 owning session and stays daemon-wide, recording every session's actions.
 
-**Video is off by default** for the `start_recording` tool. Pass
-`record_video: true` to also capture the main display to
-`<output_dir>/recording.mp4` (H.264 / 30 fps) for the lifetime of the
-session; the mp4 is finalized on `stop_recording`. The CLI
-`cua-driver recording start` records video.
+**Video is off by default.** Pass `record_video: true` to
+`start_recording` to capture the main display to
+`<output_dir>/recording.mp4` (H.264 / 30 fps); the mp4 is finalized on
+`stop_recording`. `cua-driver recording start` omits `record_video`, so
+it also starts without video.
 
 **macOS — native ScreenCaptureKit, zero-config.** On macOS the daemon's
 recorder uses `SCStream` + `SCRecordingOutput`, so it inherits the daemon's
@@ -58,7 +58,7 @@ tools, or the friendlier `cua-driver recording` subcommand group
 cua-driver recording start ~/cua-trajectories/run-1
 # … run the workflow …
 cua-driver recording status    # -> enabled / disabled, next_turn, output_dir
-cua-driver recording stop      # -> "Recording stopped. (video → recording.mp4)"
+cua-driver recording stop      # -> "Recording stopped."
 ```
 
 Raw-tool equivalent:
@@ -68,6 +68,11 @@ cua-driver start_recording '{"output_dir":"~/cua-trajectories/run-1"}'
 cua-driver get_recording_state
 cua-driver stop_recording '{}'
 ```
+
+For a named multi-call session, pass the same public label to the start
+and action calls, for example `start_recording({output_dir:…, session:"demo"})`
+and `click({…, session:"demo"})`. If `session` is omitted, the authenticated
+transport's implicit lifecycle session owns the recording.
 
 The `recording` subcommands require a running daemon (`cua-driver
 serve &`) because recording state is per-process. `output_dir` expands
@@ -110,9 +115,8 @@ Each action writes to `turn-NNNNN/` (five-digit zero-padded counter):
   window's origin and any snapshot resize or zoom. Absent for non-click tools.
   It is also absent, and explicitly
   classified as not applicable, when the driver refuses a click before target
-  resolution; no input was aimed in that case. A successful plain macOS AX,
-  Linux AT-SPI, or Windows UIA element click (Invoke, Toggle, SelectionItem, or
-  ExpandCollapse)
+  resolution; no input was aimed in that case. A successful plain Linux AT-SPI
+  or Windows UIA element click (Invoke, Toggle, SelectionItem, or ExpandCollapse)
   can activate a control without a visible point, such as an offscreen button.
   In that case, `semantic_action_without_point` records why
   there is no marker. The action must carry explicit accessibility transport
@@ -136,8 +140,8 @@ Each action writes to `turn-NNNNN/` (five-digit zero-padded counter):
 This skill does **not** auto-enable recording. The client invokes
 `start_recording` explicitly when the user asks to capture a session.
 If the user says "record this session" or similar, call
-`start_recording({output_dir:…})` before the first action (video on
-by default; pass `record_video: false` to opt out), and
+`start_recording({output_dir:…})` before the first action (video off
+by default; pass `record_video: true` to opt in), and
 `stop_recording({})` when done.
 
 ## Replaying a recorded trajectory

@@ -5763,6 +5763,39 @@ impl Tool for ScrollTool {
                 return refusal;
             }
         }
+        if let cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } =
+            &resolved
+        {
+            let idx = *element_index;
+            // WebKitGTK acknowledges the AT-SPI scroll action without moving
+            // the DOM scroller. On native Wayland, use a real compositor wheel
+            // event at the resolved element instead of reporting a silent
+            // success. Other AX targets keep their semantic route before any
+            // coordinate-based compositor fallback.
+            if !(crate::wayland::wayland_input_enabled() && is_webkitgtk_embedder(pid)) {
+                let direction_for_ax = direction.clone();
+                let ax_result = tokio::task::spawn_blocking(move || {
+                    crate::atspi::scroll_element(pid, idx, &direction_for_ax, amount, by)
+                })
+                .await;
+                match ax_result {
+                    Ok(Ok(progress)) => {
+                        return atspi_scroll_result(progress, delivery.is_foreground())
+                    }
+                    Err(error) => {
+                        return atspi_scroll_result(
+                            crate::atspi::ScrollProgress {
+                                acknowledged: 0,
+                                complete: false,
+                                detail: Some(error.to_string()),
+                            },
+                            delivery.is_foreground(),
+                        )
+                    }
+                    Ok(Err(_)) => {}
+                }
+            }
+        }
         if hyprland_foreground(delivery) {
             if xid_opt.is_none() {
                 return foreground_hyprland_refusal(
@@ -5797,39 +5830,6 @@ impl Tool for ScrollTool {
             )
             .await;
         }
-        if let cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } =
-            &resolved
-        {
-            let idx = *element_index;
-            // WebKitGTK acknowledges the AT-SPI scroll action without moving
-            // the DOM scroller. On native Wayland, use a real compositor wheel
-            // event at the resolved element instead of reporting a silent
-            // success. Chromium's AT-SPI scroll path remains effective.
-            if !(crate::wayland::wayland_input_enabled() && is_webkitgtk_embedder(pid)) {
-                let direction_for_ax = direction.clone();
-                let ax_result = tokio::task::spawn_blocking(move || {
-                    crate::atspi::scroll_element(pid, idx, &direction_for_ax, amount, by)
-                })
-                .await;
-                match ax_result {
-                    Ok(Ok(progress)) => {
-                        return atspi_scroll_result(progress, delivery.is_foreground())
-                    }
-                    Err(error) => {
-                        return atspi_scroll_result(
-                            crate::atspi::ScrollProgress {
-                                acknowledged: 0,
-                                complete: false,
-                                detail: Some(error.to_string()),
-                            },
-                            delivery.is_foreground(),
-                        )
-                    }
-                    Ok(Err(_)) => {}
-                }
-            }
-        }
-
         if isolated_background {
             if xid_opt.is_none() {
                 return isolated_hyprland_refusal(

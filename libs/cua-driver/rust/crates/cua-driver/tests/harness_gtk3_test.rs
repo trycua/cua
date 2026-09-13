@@ -813,6 +813,18 @@ fn invoke_operation(
                 "GTK3 scroll failed: {}",
                 response.text()
             );
+            if !pixel
+                && mode == "foreground"
+                && platform_linux::wayland::wayland_input_enabled()
+                && platform_linux::wayland::hyprland::is_session()
+            {
+                assert_eq!(
+                    response.action_route(),
+                    Some("accessibility"),
+                    "GTK3 AX scroll must use its semantic action: {}",
+                    response.raw
+                );
+            }
             wait_for_positive_state(driver, pid, window_id, state_key);
             return false;
         }

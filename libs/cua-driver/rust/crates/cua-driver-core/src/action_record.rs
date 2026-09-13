@@ -263,6 +263,9 @@ pub struct ActionExecutionRecord {
     pub delivered_count: Option<u32>,
     pub detail: Option<String>,
     pub refusal: Option<ActionRefusal>,
+    /// Value-setting actions only: whether the app's own editing pipeline
+    /// accepted the written value.
+    pub committed: Option<bool>,
 }
 
 impl ActionExecutionRecord {
@@ -283,6 +286,7 @@ impl ActionExecutionRecord {
             delivered_count: None,
             detail: None,
             refusal: None,
+            committed: None,
         }
     }
 
@@ -451,6 +455,7 @@ impl ActionExecutionRecord {
                 }
                 _ => None,
             },
+            committed: self.committed,
         })
     }
 
@@ -486,6 +491,9 @@ impl ActionExecutionRecord {
             .or_else(|| structured.pointer("/refusal/detail/delivered_chars"))
             .and_then(serde_json::Value::as_u64)
             .and_then(|count| u32::try_from(count).ok());
+        record.committed = structured
+            .get("committed")
+            .and_then(serde_json::Value::as_bool);
 
         if legacy_has_publishable_readback(tool_name, structured) {
             record.evidence.push(ActionEvidence {

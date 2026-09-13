@@ -573,6 +573,10 @@ pub struct ActionResult {
     /// Present only with `effect: refused`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<ActionError>,
+    /// Value-setting actions only: whether the target application's own
+    /// editing pipeline accepted the written value. Absent when the action has
+    /// no commit step. `false` means unproven, not necessarily rejected.
+    pub committed: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -725,6 +729,7 @@ mod tests {
             escalation: None,
             summary: None,
             error: None,
+            committed: None,
         }
     }
 
@@ -738,6 +743,7 @@ mod tests {
         assert_eq!(
             properties.keys().map(String::as_str).collect::<Vec<_>>(),
             [
+                "committed",
                 "delivery",
                 "effect",
                 "error",

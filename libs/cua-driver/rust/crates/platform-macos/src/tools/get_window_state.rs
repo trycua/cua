@@ -78,6 +78,20 @@ fn def() -> &'static ToolDef {
             the requested WindowServer bounds. `px_frame_mismatch` or \
             `px_capture_unavailable` omits an unprovable screenshot/pixel frame \
             instead of guessing a transform; the truthful AX payload remains available.\n\n\
+            A document window also reports `document_path` (its `AXDocument` — the \
+            `file://` URL the document lives at) and `document_edited` (the app's own \
+            unsaved-changes flag). Both keys are ABSENT when the app reports neither: \
+            absent means unknown, never `clean`. `document_edited:true` is positive \
+            evidence of unsaved changes; `false` is NOT proof of a durable save — \
+            autosave-in-place apps (TextEdit, Preview) keep the flag clear while \
+            holding unsaved in-memory text. NOTE that an AX value write (`set_value`) \
+            is NON-DURABLE in document apps: it never reaches disk, and it is not \
+            guaranteed to register as an edit at all — measured on TextEdit the new \
+            text appeared in the AX tree while the dirty flag stayed false, with no \
+            undo entry and a byte-identical file. To make an edit durable, take the \
+            app's own save action (`press_key` cmd+s, or `invoke_menu` File > Save) \
+            and re-check `document_edited`; when the file's bytes matter, re-read \
+            `document_path` from disk.\n\n\
             Optional `query` projects both tree_markdown and structured `elements` to \
             matching lines plus their ancestor chain (case-insensitive substring). The \
             element_index values are unchanged, the complete snapshot remains actionable, \
@@ -610,6 +624,14 @@ impl Tool for GetWindowStateTool {
         if let Some(r) = tree_result.as_ref() {
             r.walk.apply(&mut structured);
         }
+        // Per-window document state, read off the resolved target window
+        // during the AX walk (two attribute reads, no extra walk). Keys are
+        // omitted when the app reports neither, so absent = unknown.
+        cua_driver_core::window_inspection::attach_document_state(
+            &mut structured,
+            tree_result.as_ref().and_then(|r| r.document.as_deref()),
+            tree_result.as_ref().and_then(|r| r.document_edited),
+        );
         // Surface 6: an opaque snapshot identifier consumers can log
         // alongside the per-element tokens for debug correlation. Same value
         // embedded in every `element_token` emitted in `elements[]` above.

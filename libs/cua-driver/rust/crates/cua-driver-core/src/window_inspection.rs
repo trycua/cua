@@ -55,6 +55,33 @@ pub fn mark_browser_chrome_capture_coverage(
     });
 }
 
+/// Attach the target window's document state to a window snapshot.
+///
+/// Two questions an agent cannot otherwise answer about a document window:
+/// where the document lives (`document_path`) and whether the app is holding
+/// unsaved changes (`document_edited`). Each key is EMITTED ONLY when the
+/// platform actually read it: an absent key means unknown, so a consumer can
+/// never mistake "the app does not report a dirty bit" for "no unsaved
+/// changes".
+///
+/// `document_edited: false` is not proof of "saved" either — autosave-in-place
+/// apps (TextEdit, Preview) keep the flag clear while holding unsaved in-memory
+/// text, and an accessibility value write does not necessarily mark the
+/// document changed at all. Only `true` is positive evidence; a durable save
+/// needs an explicit save action plus a re-read of `document_path`.
+pub fn attach_document_state(
+    structured: &mut Value,
+    document_path: Option<&str>,
+    document_edited: Option<bool>,
+) {
+    if let Some(path) = document_path {
+        structured["document_path"] = json!(path);
+    }
+    if let Some(edited) = document_edited {
+        structured["document_edited"] = json!(edited);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,5 +155,34 @@ mod tests {
                 "coverage signal leaked a prompt-content field: {public}"
             );
         }
+    }
+
+    #[test]
+    fn document_state_reports_the_path_and_the_dirty_bit_it_was_given() {
+        let mut dirty = json!({"window_id": 11, "pid": 5});
+        attach_document_state(&mut dirty, Some("file:///Users/x/notes.txt"), Some(true));
+        assert_eq!(dirty["document_path"], "file:///Users/x/notes.txt");
+        assert_eq!(dirty["document_edited"], json!(true));
+
+        let mut saved = json!({"window_id": 11, "pid": 5});
+        attach_document_state(&mut saved, Some("file:///Users/x/notes.txt"), Some(false));
+        assert_eq!(saved["document_edited"], json!(false));
+    }
+
+    #[test]
+    fn unread_document_state_is_absent_rather_than_a_claim() {
+        // An app that reports neither attribute must not be described as a
+        // clean, path-less document: absence has to stay distinguishable from
+        // `false` / `""`, which is what a consumer would act on.
+        let mut unknown = json!({"window_id": 4, "pid": 2});
+        let untouched = unknown.clone();
+        attach_document_state(&mut unknown, None, None);
+        assert_eq!(unknown, untouched);
+
+        // Half-known stays half-emitted: a saved-to path with no dirty bit.
+        let mut path_only = untouched;
+        attach_document_state(&mut path_only, Some("file:///tmp/a.txt"), None);
+        assert_eq!(path_only["document_path"], "file:///tmp/a.txt");
+        assert!(path_only.get("document_edited").is_none());
     }
 }

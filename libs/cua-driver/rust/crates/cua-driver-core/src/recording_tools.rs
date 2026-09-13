@@ -103,6 +103,12 @@ impl Tool for StartRecordingTool {
                             screenshots + JSON are recorded). On macOS this uses native \
                             ScreenCaptureKit (no extra TCC prompt, macOS 15.0+); on \
                             Windows + Linux it requires ffmpeg on PATH."
+                    },
+                    "session": {
+                        "type": "string",
+                        "description": "For multi-call work, prefer a short public session label \
+                            and repeat it on every call that accepts it. Omit it to use the \
+                            authenticated transport's implicit lifecycle session."
                     }
                 },
                 "additionalProperties": false
@@ -310,9 +316,9 @@ impl Tool for ReplayTrajectoryTool {
                   because element indices are per-snapshot and don't survive across \
                   sessions. Pixel clicks (`click({pid, x, y})`) and all keyboard tools \
                   replay cleanly. Failures are reported but don't stop replay unless \
-                  `stop_on_error` is true.\n\
+                  `stop_on_error` is true.\n\n\
                 - `get_window_state` and other read-only tools are NOT currently recorded, \
-                  so replays do not re-populate the per-(pid, window_id) element cache.\n\
+                  so replays do not re-populate the per-(pid, window_id) element cache.\n\n\
                 - If recording is ENABLED while replay runs, the replay itself is recorded \
                   into the currently configured output directory.  That's deliberate: \
                   recording a replay against a new build and diffing the two trajectories \

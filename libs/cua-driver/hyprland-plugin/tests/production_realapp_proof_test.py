@@ -523,11 +523,18 @@ class CapacityTests(unittest.TestCase):
             self.assertEqual(result['capacity']['result'], 'unproven')
 
     def test_runner_serial_capacity_and_failures_without_replay(self):
-        for failure in (None, 'same_lane', 'missing_input', 'wrong_refusal', 'dispatch_on_refusal',
-                        'dead_runtime', 'stale_window', 'transport', 'missing_hook', 'reset_trace'):
-            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
+        cases = [(app_profile, failure) for app_profile in ('calc-inkscape', 'inkscape-only')
+                 for failure in (None, 'same_lane', 'missing_input', 'wrong_refusal', 'dispatch_on_refusal',
+                                 'dead_runtime', 'stale_window', 'transport', 'missing_hook', 'reset_trace')]
+        cases += [('inkscape-only', failure) for failure in ('owner_lost', 'owner_changed', 'document_changed')]
+        for app_profile, failure in cases:
+            with self.subTest(app_profile=app_profile, failure=failure), tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
                 root = Path(directory)
                 candidate = capacity_plan()
+                if app_profile == 'inkscape-only':
+                    candidate['app_profile'] = app_profile
+                    for i, spec in enumerate(candidate['agents']):
+                        spec.update(app='inkscape', document=str(root.resolve() / f'lane-{i}.svg'))
                 path = root / 'plan.json'
                 path.write_text(json.dumps(candidate))
                 args = SimpleNamespace(plan=path, evidence=root / 'evidence',
@@ -548,6 +555,7 @@ class CapacityTests(unittest.TestCase):
                     if name == 'get_window_state':
                         calls.append(('snapshot', index))
                         return {'structuredContent': {'screenshot_width': 600,
+                                'window_title': 'unrelated.svg' if failure == 'document_changed' else f'lane-{index}.svg',
                                 'window_bounds': candidate['agents'][0]['bounds']}}
                     if name == 'get_desktop_state':
                         return {'structuredContent': {'screen_width': 800, 'screen_height': 800}}
@@ -582,7 +590,16 @@ class CapacityTests(unittest.TestCase):
                     return {**trace(*events), 'active': events[-1] != STOP, 'hook': failure != 'missing_hook'}
                 trace_client.collect.side_effect = collect
                 grab = Mock(poll=Mock(return_value=None))
+                def input_status():
+                    third_called = ('click', 2) in calls
+                    return {'state': 'input_v3_candidate', 'input': {'protocol': 3, 'test_only': False,
+                            'transport_ready': True, 'lanes': [
+                                {'lane': lane, 'reserved': not (third_called and failure == 'owner_lost'),
+                                 'epoch': 100 if third_called and failure == 'owner_changed' else 50 + lane,
+                                 'desktop_generation': 1, 'lease_active': False, 'drag_active': False,
+                                 'held_keys': 0, 'held_button': 0} for lane in (0, 1)]}}
                 replacements = {'provenance': Mock(return_value={}),
+                    'read_input_status': input_status,
                     'DirectMCP': Mock(side_effect=agents + [observer]), 'Trace': Mock(return_value=trace_client),
                     'subprocess.Popen': Mock(return_value=grab),
                     'primary_acknowledgement': Mock(return_value='HELD\n'),
@@ -616,6 +633,10 @@ class CapacityTests(unittest.TestCase):
                     self.assertEqual(result['synthetic_cleanup'], 'verified')
                     for i in range(3):
                         self.assertTrue((args.evidence / f'capacity-agent-{i}-trace.json').is_file())
+                    if app_profile == 'inkscape-only':
+                        self.assertEqual(set(result['actions'][2]['persistent_owners']), {'1', '2'})
+                        self.assertTrue((args.evidence / 'capacity-agent-2-owners-before.json').is_file())
+                        self.assertTrue((args.evidence / 'capacity-agent-2-owners-after.json').is_file())
 
 
 class PlanTests(unittest.TestCase):

@@ -299,6 +299,7 @@ pub enum OracleKind {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RefusalCode {
+    BringToFrontExactWindowUnverified,
     BackgroundUnavailable,
     BackgroundOccluded,
     BackgroundUipiBlocked,
@@ -321,6 +322,9 @@ pub enum RefusalCode {
 impl RefusalCode {
     pub fn from_driver_code(code: &str) -> Option<Self> {
         match code {
+            "bring_to_front_exact_window_unverified" => {
+                Some(Self::BringToFrontExactWindowUnverified)
+            }
             "background_unavailable" => Some(Self::BackgroundUnavailable),
             "background_occluded" => Some(Self::BackgroundOccluded),
             "background_uipi_blocked" => Some(Self::BackgroundUipiBlocked),
@@ -572,21 +576,30 @@ impl CaseSpec {
             return Err(format!("{}: no external oracle declared", self.cell_id));
         }
         if let ContractExpectation::Refuse { allowed_codes } = &self.expected_behavior {
-            if self.delivery != Delivery::Background {
+            let exact_activation_refusal = self.delivery == Delivery::Foreground
+                && self.scope == Scope::Window
+                && self.driver_route == DriverRoute::WindowState
+                && allowed_codes == &[RefusalCode::BringToFrontExactWindowUnverified];
+            if self.delivery != Delivery::Background && !exact_activation_refusal {
                 return Err(format!(
-                    "{}: only background delivery may declare refusal",
+                    "{}: only background delivery or exact-window activation may declare refusal",
                     self.cell_id
                 ));
             }
             if allowed_codes.is_empty() {
                 return Err(format!("{}: refusal has no allowed code", self.cell_id));
             }
-            for required in [
-                OracleKind::Focus,
-                OracleKind::ZOrder,
-                OracleKind::NoLeakedInput,
-            ] {
-                if !self.oracles.contains(&required) {
+            let required_oracles: &[OracleKind] = if exact_activation_refusal {
+                &[OracleKind::FixtureState]
+            } else {
+                &[
+                    OracleKind::Focus,
+                    OracleKind::ZOrder,
+                    OracleKind::NoLeakedInput,
+                ]
+            };
+            for required in required_oracles {
+                if !self.oracles.contains(required) {
                     return Err(format!(
                         "{}: refusal is missing {:?} oracle",
                         self.cell_id, required
@@ -1749,7 +1762,8 @@ fn semantic_action_without_point(action: &Value) -> bool {
         && matches!(
             truth["transport"].as_str(),
             Some(
-                "linux_at_spi_action"
+                "macos_ax_action"
+                    | "linux_at_spi_action"
                     | "windows_uia_invoke"
                     | "windows_uia_toggle"
                     | "windows_uia_selection"
@@ -2090,9 +2104,15 @@ mod tests {
 
     #[test]
     fn validator_semantic_click_requires_classification_and_retained_evidence() {
-        for token_target in [false, true] {
+        for (transport, token_target) in [
+            ("linux_at_spi_action", false),
+            ("linux_at_spi_action", true),
+            ("macos_ax_action", false),
+            ("macos_ax_action", true),
+        ] {
             let (root, case, result, turn) = complete_turn_fixture();
             let mut action = semantic_click_fixture();
+            action["action_truth"]["transport"] = serde_json::json!(transport);
             if token_target {
                 action["arguments"]
                     .as_object_mut()

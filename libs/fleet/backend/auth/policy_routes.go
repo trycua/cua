@@ -185,13 +185,19 @@ func AccountLookupRoutePolicy() Node {
 	return All(BasePolicy(), surfaceLeaf("authz-account-lookup", "data.authz_account_lookup.allow"))
 }
 
+// ImageUploadsRoutePolicy guards bounded image upload signing. Namespace ownership
+// is evaluated by the handler because the namespace is carried in the JSON body.
+func ImageUploadsRoutePolicy() Node {
+	return All(BasePolicy(), surfaceLeaf("authz-image-uploads", "data.authz_image_uploads.allow"))
+}
+
 // K8sRoutePolicy guards /api/k8s/{path...}. It is the same base + surface shape
-// as every other route, with three admission conjuncts: card-or-admin admission
+// as every other route, with Image namespace ownership and four admission conjuncts: card-or-admin admission
 // for custom-resource creation, pool admission over the request body, and
 // sandbox-services admission over the body of the one Sandbox write the
-// allowlist admits.
+// allowlist admits, plus Image admission excluding status and mismatched identity.
 //
-// Every conjunct must pass. The two body-reading leaves read the raw body
+// Every conjunct must pass. The three body-reading leaves read the raw body
 // (bounded at 1 MiB) to inspect the object being created or patched, which is
 // why pool admission names pool_admission.rego alongside authz.rego —
 // pool_admission imports data.authz.is_admin. They stay separate leaves rather
@@ -242,7 +248,13 @@ func K8sRoutePolicy() Node {
 			ServiceWriteNotSupportedMessage,
 		),
 		surfaceLeaf("authz-k8s", "data.authz_k8s.allow"),
+		NamespaceOwnershipPolicy(),
 		Because(CustomResourceCreationAdmissionPolicy(), BillingSetupRequiredMessage),
+		Policy(
+			Registered("image-admission"),
+			Query("data.image_admission.allow"),
+			WithRawBody(1<<20),
+		),
 		Policy(
 			Modules(
 				Registered("authz"),
@@ -305,6 +317,7 @@ var surfacePolicies = map[string]surfacePolicy{
 	"signed-service-urls": {tree: SignedServiceURLsRoutePolicy},
 	"state-query":         {tree: StateQueryRoutePolicy},
 	"feature-flags":       {tree: FeatureFlagsRoutePolicy, options: []MiddlewareOption{WithDeniedAudit("feature_flag_admin", featureFlagAuditBodyLimit), WithAdminAPIErrorResponses(), WithFreshAdminAuthorization()}},
+	"image-uploads":       {tree: ImageUploadsRoutePolicy},
 	"k8s": {
 		tree:    K8sRoutePolicy,
 		options: []MiddlewareOption{WithDeniedMessage("k8s request is not allowed")},
@@ -327,6 +340,7 @@ var routeSurfaces = map[string]string{
 	"/api/usage/overview":         "usage",
 	"/api/usage/pool":             "usage",
 	"/api/usage/browser-timings":  "usage",
+	"/api/image-uploads/presign":  "image-uploads",
 
 	"/api/chat/conversations":            "chat",
 	"/api/chat/conversations/{id}":       "chat",

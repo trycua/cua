@@ -37,6 +37,7 @@ func TestRouteModulesNeverReadInputFacts(t *testing.T) {
 		"authz.rego":                      authzPolicy,
 		"pool_admission.rego":             poolAdmissionPolicy,
 		"sandbox_services_admission.rego": sandboxServicesAdmissionPolicy,
+		"image_admission.rego":            imageAdmissionPolicy,
 	}
 	// Every base and surface module too, read from the same map LoadOpa
 	// registers, so a surface added there is covered without being named here.

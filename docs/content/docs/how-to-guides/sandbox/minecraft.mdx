@@ -10,11 +10,11 @@ Minecraft exercises almost everything a Windows sandbox can do: it needs interne
 The timings, guest hardware, graphics behavior, and deployment errors below are
 observations from this recipe's environment. They are not a certification of every
 Fleet deployment or local host. The [runtime support reference](/reference/sandbox-sdk/runtime-support)
-separates those observations from the released 0.4.3 image and transport contracts.
+separates those observations from the released 0.7.0 image and transport contracts.
 
 ## Before you start
 
-- **cua-sandbox 0.4.3** for the examples below, including the explicit Fleet pool and claim workflow. The local recipe was originally developed against 0.3.3; its recorded timings and guest behavior are observations from that environment, not a new end-to-end test of 0.4.3.
+- **cua-sandbox 0.7.0** for the examples below, including the explicit Fleet pool and claim workflow. The local recipe was originally developed against 0.3.3; its recorded timings and guest behavior are observations from that environment, not a new end-to-end test of 0.7.0.
 - **A host with hardware virtualisation** for the local path — a Linux x86_64 machine with `/dev/kvm`, or an Intel Mac. This guide passes `-cpu host`, which QEMU only accepts with KVM or HVF. An x86_64 guest on Apple Silicon runs under TCG emulation, where `-cpu host` is rejected outright. The Fleet path runs there instead, including the game, with the one extra environment variable described in the Fleet section below.
 - **A Microsoft account that owns Minecraft Java Edition.** Signing in uses Microsoft device authorization, so one step in the middle is manual: a code appears inside the sandbox and you approve it in your own browser.
 - **A vision-capable LLM endpoint** for the agent loop.
@@ -63,7 +63,7 @@ A warm boot takes about 30 seconds. `exposed_ports` maps each exposed guest port
 <Callout type="warn">
   **Read the port from `sb.exposed_ports` on this bare-metal QEMU path.**
   `sb.tunnel.forward(3000)` raises `NotImplementedError: HTTPTransport does not support port forwarding`
-  on the local HTTP transport in 0.4.3. This runtime picks a host port at boot and
+  on the local HTTP transport in 0.7.0. This runtime picks a host port at boot and
   saves the mapping with the sandbox state so a later `Sandbox.connect()` can read
   it back. The property is backend-specific. Fleet publishes services instead;
   use an authenticated named-service request or the service URL as shown below.
@@ -320,7 +320,7 @@ Everything above is a one-time cost, and none of it has to be repeated — least
 Despite the name, `/disk/disk.img` is a **qcow2**, not a raw image. The puller looks for exactly `disk/disk.img` or `./disk/disk.img` inside the layer tarball and caches whatever it finds under `~/.cua/cua-sandbox/images/container-disks/`. Nothing reads the extension — it is a KubeVirt convention.
 
 `Sandbox.snapshot()` is not a substitute for publishing a containerDisk. In
-`cua-sandbox` 0.4.3, it is not implemented for local sandboxes or the current Fleet
+`cua-sandbox` 0.7.0, it is not implemented for local sandboxes or the current Fleet
 creation paths. The package's legacy cloud snapshot code does not enable this
 workflow. See [image customization support](/reference/sandbox-sdk/runtime-support#image-customization).
 
@@ -430,7 +430,7 @@ IMAGE = Image.from_registry(REF, os_type='windows', kind='vm').expose(3000)
 `IMAGE` is then a drop-in replacement for `Image.windows().expose(3000)` in both snippets earlier in this guide — the local `Sandbox.create(..., local=True, runtime=QEMURuntime(...))` call and the Fleet one. Nothing else changes: the same `EXTRA_ARGS` locally, the same agent loop, and on Fleet the same `GALLIUM_DRIVER=softpipe`.
 
 <Callout type="warn">
-  A Fleet pool claim carries `FleetTransport`, which does not implement `sb.tunnel.forward(3000)` in 0.4.3. Image-based `Sandbox.ephemeral()` uses a pool claim too, and `Sandbox.create(image)` requires an explicitly named pool. For HTTP requests, use `sb.services.request('port-3000', method='GET', path='/healthz')`. A streaming MCP client instead needs the service URL and authentication shown below.
+  A Fleet pool claim carries `FleetTransport`, which does not implement `sb.tunnel.forward(3000)` in 0.7.0. Image-based `Sandbox.ephemeral()` uses a pool claim too, and `Sandbox.create(image)` requires an explicitly named pool. For HTTP requests, use `sb.services.request('port-3000', method='GET', path='/healthz')`. A streaming MCP client instead needs the service URL and authentication shown below.
 </Callout>
 
 Booted locally, that image printed `Image(windows/registry:latest, kind=vm, ...)`, came up on the first try, and had everything in it: `instances\1.20.1`, `java\java-runtime-gamma`, Mesa's `opengl32.dll` beside `javaw.exe`, `minecraft-1.20.1-client.jar`, `MaxMemAlloc=2048` — and `Test-Path C:\mc\prismw\accounts.json` returning `False`. Opening Prism shows the Quick Setup account page and *No accounts added!*, which is what a correctly-built image looks like.
@@ -453,7 +453,7 @@ The image and the agent loop are identical on Fleet. Two things change: there is
 
 `.expose(3000)` becomes a Fleet **service** named `port-3000`. Configure
 [Fleet pool credentials](/reference/cua-cli/authentication#fleet-pools-need-their-own-credentials)
-before running this `cua-sandbox` 0.4.3 example. It creates a dedicated pool with a
+before running this `cua-sandbox` 0.7.0 example. It creates a dedicated pool with a
 unique name and claims a sandbox. The proxy URL uses the returned namespace and
 bound sandbox name, not the claim name. The MCP client sends a bearer token;
 the URL alone does not grant access.

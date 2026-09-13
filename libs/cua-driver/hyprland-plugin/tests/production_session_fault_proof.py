@@ -24,6 +24,7 @@ need a separately qualified oracle. A lock request fails preflight, never
 becomes a skipped/passing row. Portable tests are not native certification.
 """
 import argparse
+from production_app_smoke import add_provenance_arguments
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 import fcntl
@@ -46,7 +47,9 @@ from driver_input_live import state, wait_for, wm
 from primary_trace import Trace, analyze
 from production_cancel_proof import (MAX_GROUNDING_AGE_NS, PROFILE, active_drags, call_drag,
     close_owned, grounded_snapshot, poll_active, prepare_drag, stopped_prefix, verify_recovery_cleanup)
-from production_desktop_fault_proof import guest_identity, idle_lanes, verify_status
+from production_desktop_fault_proof import (guest_identity, idle_lanes, verify_status,
+    pointer_cleanup, validate_min_motion, drag_motion_px, poll_fault_active, verify_retained_inert,
+    verify_refusal_claim)
 from production_geometry_fault_proof import recover, fault_outcome, validate_plan as geometry_plan
 from production_mcp import DirectMCP, assert_distinct_runtimes, stop_process
 import production_pointer_grounding as pointer_grounding
@@ -61,13 +64,15 @@ MONITOR_KEYS = ('id', 'name', 'width', 'height', 'x', 'y', 'scale', 'transform')
 
 
 def validate_plan(plan):
-    assert plan['purpose'] == 'session_fault' and plan['fault'] == {'kind': 'dpms'}, \
+    assert plan['purpose'] == 'session_fault' and plan['fault']['kind'] == 'dpms', \
         'only DPMS is qualified; session-lock primary transition oracle is unsupported'
+    validate_fault_options(plan['fault'])
     bounds = plan['agents'][0]['bounds']
     geometry_plan({**plan, 'purpose': 'geometry_fault',
                    'compositor': {key: plan['compositor'][key] for key in ('pid', 'instance')},
                    'fault': {'kind': 'move', 'to': [bounds['x'] + 1, bounds['y']]}})
-    assert plan['agents'][0]['app'] == 'calc', 'only the qualified synthetic Calc episode is supported'
+    assert plan['agents'][0]['app'] == ('inkscape' if plan.get('app_profile') == 'inkscape-only' else 'calc'), \
+        'app requires its explicit qualification profile'
     assert set(plan['vm']) == {'machine_id', 'boot_id'}
     assert re.fullmatch(r'[0-9a-f]{32}', plan['vm']['machine_id'])
     assert re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', plan['vm']['boot_id'])
@@ -142,12 +147,62 @@ def lanes(status, cleared=False, *, allow_passive=False):
     return result
 
 
-def transition(before, after):
-    old, new = lanes(before), lanes(after, cleared=True)
+def validate_fault_options(fault, *, motion=True):
+    allowed = {'kind', 'pointer_cleanup'} | ({'min_motion_px'} if motion else set())
+    assert {'kind'} <= set(fault) <= allowed, 'unsupported fault option'
+    pointer_cleanup(fault)
+    if 'min_motion_px' in fault:
+        validate_min_motion(fault['min_motion_px'])
+
+
+def transition(before, after, policy='cleared', lane=None):
+    pointer_cleanup({'pointer_cleanup': policy})
+    old, new = lanes(before), lanes(after, cleared=True, allow_passive=policy == 'retained_inert')
+    if policy == 'retained_inert':
+        verify_retained_inert(before, after, lane)
     for lane in old:
         assert old[lane]['epoch'] == new[lane]['epoch'], 'compositor lane replaced'
         assert new[lane]['desktop_generation'] > old[lane]['desktop_generation'], 'DPMS did not revoke authority'
         assert new[lane].get('reserved') is False, 'reservation survived DPMS transition'
+
+
+def verify_held_gate(record):
+    """Recheck the opt-in trace/status/trace gate from saved evidence."""
+    first, page, lane = record['gate_first'], record['prefix'], record['lane']
+    trace_interval(first, page)
+    assert active_drags(first) == active_drags(page) and set(active_drags(page)) == {lane}, 'held lane changed across status'
+    synthetic = [row for row in page['events'] if row[5] in (1, 2)]
+    assert all(row[5] == lane for row in synthetic), 'held gate crossed lanes'
+    press = next(row for row in synthetic if row[2] == 'pointer_button')
+    assert not any(row[2] == 'pointer_leave' or (row[2] == 'pointer_enter' and row[0] > press[0])
+                   for row in synthetic), 'held pointer left or retargeted'
+    started, requested = record['status_started_ns'], record['requested_ns']
+    assert first['events'][-1][1] <= started <= requested
+    assert 0 <= requested - started <= 250_000_000, 'stale held-input status'
+    assert 0 <= requested - page['events'][-1][1] <= 250_000_000, 'stale held-input trace'
+    rows = lanes(record['gate_status'])
+    for key, row in rows.items():
+        assert type(row['held_keys']) is int and row['held_keys'] == 0
+        if key == lane - 1:
+            assert type(row['held_button']) is int and row['held_button'] == 272
+            assert all(row.get(k) is True for k in ('drag_active', 'lease_active', 'pointer_focus', 'reserved'))
+        else:
+            assert type(row['held_button']) is int and row['held_button'] == 0
+            assert all(row.get(k) is False for k in ('drag_active', 'lease_active', 'keyboard_focus', 'reserved'))
+    if 'min_motion_px' in record:
+        validate_min_motion(record['min_motion_px'])
+        assert all(drag_motion_px(p, lane) >= record['min_motion_px'] for p in (first, page)), 'insufficient held motion'
+
+
+def verify_inert_interval(before, after):
+    assert not any(row[5] in (1, 2) for row in trace_interval(before, after)), 'synthetic activity while pointer must remain inert'
+
+
+def verify_stable_inert(before, after, lane):
+    old = idle_lanes(before)
+    new = verify_retained_inert(before, after, lane)
+    assert all(old[key][field] == row[field] for key, row in new.items()
+               for field in ('epoch', 'desktop_generation')), 'desktop changed during inert interval'
 
 
 @contextmanager
@@ -199,6 +254,9 @@ class SessionFault:
         self.child = self.cancel_fd = None
         self.mutated = False
         self.record = {'result': 'unproven', 'kind': 'dpms'}
+        for key in ('pointer_cleanup', 'min_motion_px'):
+            if key in plan['fault']:
+                self.config[key] = self.record[key] = plan['fault'][key]
         self.check_targets()
         power(self.config, True)
         self.record['before'] = production_status(self.config)
@@ -210,7 +268,7 @@ class SessionFault:
         spec = self.plan['agents'][0]
         for identity in self.plan['identities'].values():
             assert identity['uid'] == os.getuid() and _identity(identity['pid']) == identity, 'process identity changed'
-        app_process_identity('calc', spec['target']['pid'])
+        app_process_identity(spec['app'], spec['target']['pid'])
         fixture = self.args.source / 'libs/cua-driver/tests/fixtures/apps/linux/isolated-input/main.py'
         assert fixture.resolve(strict=True) == fixture, 'canonical source fixture required'
         assert hashlib.sha256(fixture.read_bytes()).hexdigest() == self.plan['foreground_fixture']['sha256']
@@ -228,7 +286,7 @@ class SessionFault:
             assert len(selected) == 1 and selected[0].get('xwayland') is False
             assert int(selected[0]['address'], 16) == target['window_id'], 'target window changed'
             if target == spec['target']:
-                assert 'cua-smoke-calc' in selected[0].get('title', ''), 'wrong synthetic Calc document'
+                assert f'cua-smoke-{spec["app"]}' in selected[0].get('title', ''), 'wrong synthetic document'
                 assert dict(zip(('x', 'y', 'width', 'height'), [*selected[0]['at'], *selected[0]['size']])) == spec['bounds']
 
     def arm(self):
@@ -259,8 +317,19 @@ class SessionFault:
         with control_lock(self.config):
             self.check_targets()
             self.record['monitors_before'] = power(self.config, True)
-            self.record['gate_status'] = production_status(self.config)
-            page, active = poll_active(trace, initial, None, [pending])
+            gated = 'min_motion_px' in self.config or pointer_cleanup(self.config) == 'retained_inert'
+            if gated:
+                gate_deadline = time.monotonic() + 3
+                first, _ = poll_fault_active(trace, initial, pending, self.config.get('min_motion_px'))
+                self.record.update(gate_first=first, status_started_ns=time.monotonic_ns())
+                self.record['gate_status'] = production_status(self.config)
+                remaining = min(0.25, gate_deadline - time.monotonic())
+                assert remaining > 0, 'held gate exceeded bounded wait'
+                page, active = poll_fault_active(trace, first, pending, self.config.get('min_motion_px'), timeout=remaining)
+                assert time.monotonic() <= gate_deadline, 'held gate exceeded bounded wait'
+            else:
+                self.record['gate_status'] = production_status(self.config)
+                page, active = poll_active(trace, initial, None, [pending])
             lane = next(iter(active))
             assert set(active) == {lane}
             guard()
@@ -270,6 +339,11 @@ class SessionFault:
             assert 0 <= requested - page['events'][-1][1] <= 250_000_000, 'stale active drag gate'
             self.record.update(prefix=page, lane=lane, requested_ns=requested,
                                watchdog_deadline_ns=self.config['deadline_ns'])
+            if gated:
+                verify_held_gate(self.record)
+                for key, row in lanes(self.record['before']).items():
+                    assert all(row[field] == lanes(self.record['gate_status'])[key][field]
+                               for field in ('epoch', 'desktop_generation', 'dispatches')), 'desktop changed before DPMS'
             self.mutated = True  # Lost IPC reply may still mean power changed.
             assert _hypr(self.config['instance'], 'dispatch', _dpms_dispatch('off')) == 'ok', 'DPMS-off dispatcher unsupported'
             self.record['acknowledged_ns'] = time.monotonic_ns()
@@ -278,7 +352,7 @@ class SessionFault:
                 return rows if all(row['dpmsStatus'] is False for row in rows) else None
             self.record['monitors_off'] = wait_for(off, timeout=2)
             self.record.update(after=production_status(self.config), observed_ns=time.monotonic_ns(), result='observed')
-            transition(self.record['gate_status'], self.record['after'])
+            transition(self.record['gate_status'], self.record['after'], pointer_cleanup(self.config), lane)
             guard()
         return lane
 
@@ -316,6 +390,9 @@ class SessionFault:
 
 def verify_cancelled(boundary, record, action):
     assert record['result'] == 'observed'
+    policy = pointer_cleanup(record)
+    if policy == 'retained_inert' or 'min_motion_px' in record:
+        verify_held_gate(record)
     prefix, lane = record['prefix'], record['lane']
     assert set(active_drags(prefix)) == {lane}
     assert prefix['events'][-1][1] <= record['requested_ns'] <= record['acknowledged_ns'] <= record['observed_ns']
@@ -332,11 +409,15 @@ def verify_cancelled(boundary, record, action):
                           'pointer_motion', 'pointer_enter') for row in tail), 'unexpected action after fault'
     assert not any(row[2] in ('pointer_motion', 'pointer_enter') and row[0] > cancelled[0][0]
                    for row in tail), 'input continued after cancellation'
+    if policy == 'retained_inert':
+        assert not any(row[2] in ('pointer_enter', 'pointer_leave') for row in tail), 'retained pointer left or retargeted'
     releases = [row for row in tail if row[2] == 'pointer_button']
     assert len(releases) == 1 and releases[0][6] == 0 and releases[0][0] > cancelled[0][0], 'missing own-seat release'
+    if policy == 'retained_inert':
+        assert releases[0][1] <= record['observed_ns'], 'release was not observed before inert status'
     isolation = analyze(stopped_prefix(boundary))
     assert isolation['result'] == 'passed' and released_synthetic_input(stopped_prefix(boundary)), isolation
-    transition(record['gate_status'], record['after'])
+    transition(record['gate_status'], record['after'], policy, lane)
     return {'result': 'verified', 'outcome': fault_outcome(action), 'continuous_isolation': isolation}
 
 
@@ -344,7 +425,14 @@ def verify_refusal(record):
     assert record['outcome'] == 'response' and record['replayed'] is False
     check_response(record['response'], {'kind': 'refused', 'reason': 'session_unavailable'})
     assert not [row for row in trace_interval(record['trace_before'], record['trace_after']) if row[5] in (1, 2)], 'refused action emitted synthetic events'
-    before, after = lanes(record['before'], cleared=True), lanes(record['after'], cleared=True)
+    policy = pointer_cleanup(record)
+    before = lanes(record['before'], cleared=True, allow_passive=policy == 'retained_inert')
+    after = lanes(record['after'], cleared=True, allow_passive=policy == 'retained_inert')
+    if policy == 'retained_inert':
+        # A fresh CLAIM reserves capacity even when TARGET is refused. It is
+        # not the cancelled actor's lease and must disappear when this probe closes.
+        claim = verify_refusal_claim(record['before'], record['after'], record['response'],
+                                     interrupted_lane=record['lane'])
     for lane in before:
         assert all(before[lane][key] == after[lane][key] for key in ('epoch', 'desktop_generation', 'dispatches')), 'refused action dispatched or desktop changed'
     assert record['prepared_ns'] <= record['dispatch_ns'] <= record['observed_ns'] < record['deadline_ns']
@@ -352,7 +440,20 @@ def verify_refusal(record):
     assert all(row['dpmsStatus'] is False for row in record['monitors_before'] + record['monitors_after'])
     assert monitor_identity(record['monitors_before']) == monitor_identity(record['monitors_after'])
     assert analyze(stopped_prefix(record['trace_after']))['result'] == 'passed'
-    return {'result': 'verified', 'reason': 'session_unavailable', 'no_dispatch': 'verified'}
+    return {'result': 'verified', 'reason': 'session_unavailable', 'no_dispatch': 'verified',
+            **({'claim': claim} if policy == 'retained_inert' else {})}
+
+
+def verify_refusal_close(record):
+    assert pointer_cleanup(record) == 'retained_inert'
+    assert type(record['exit_code']) is int, 'refusal runtime was not reaped'
+    assert record['observed_ns'] <= record['close_started_ns'] <= record['reaped_ns'] <= record['closed_ns'] < record['deadline_ns']
+    verify_stable_inert(record['before'], record['after_close'], record['lane'])
+    verify_inert_interval(record['trace_after'], record['trace_after_close'])
+    assert all(row['dpmsStatus'] is False for row in record['monitors_after_close']), 'DPMS ended before probe close'
+    assert monitor_identity(record['monitors_after']) == monitor_identity(record['monitors_after_close'])
+    assert analyze(stopped_prefix(record['trace_after_close']))['result'] == 'passed'
+    return {'result': 'verified', 'reservation_released': True, 'no_dispatch': 'verified'}
 
 
 def prepare_refusal(prepared, spec, stage):
@@ -363,16 +464,16 @@ def prepare_refusal(prepared, spec, stage):
     contention, not newer evidence. The refusal remains bounded by the first
     observation's original timestamp; powered-off capture is unavailable.
     """
-    assert spec['app'] == 'calc' and stage in ('click_a1', 'click_b2')
+    assert stage in ({'click_a1', 'click_b2'} if spec['app'] == 'calc' else {'scroll_down', 'scroll_up'})
     snapshot = prepared['snapshot']
     assert prepared['target'] == spec['target']
     assert {key: snapshot[key] for key in ('pid', 'window_id')} == spec['target']
     assert snapshot['window_bounds'] == spec['bounds']
     assert prepared['prepared_ns'] == snapshot['proof_observation_started_ns']
     arguments, _ = pointer_grounding.action(
-        snapshot, pointer_grounding.read_pixels(snapshot['proof_image']), 'calc', stage)
+        snapshot, pointer_grounding.read_pixels(snapshot['proof_image']), spec['app'], stage)
     return {'snapshot': snapshot, 'arguments': arguments, 'session': spec['name'] + '-unavailable',
-            'prepared_ns': prepared['prepared_ns']}
+            'prepared_ns': prepared['prepared_ns'], 'tool': pointer_grounding.STAGES[spec['app']][stage]}
 
 
 def prepare_actions(clients, spec, stage, save):
@@ -388,19 +489,31 @@ def prepare_actions(clients, spec, stage, save):
 
 def refuse(client, spec, prepared, fault, trace, guard, save):
     record = {**prepared, 'outcome': 'unknown', 'replayed': False, 'runtime_pid': client.process.pid,
+              'pointer_cleanup': pointer_cleanup(fault.config),
               'deadline_ns': fault.config['deadline_ns'], 'before': production_status(fault.config),
               'monitors_before': fault.unavailable(), 'trace_before': trace.collect()}
     try:
+        if pointer_cleanup(record) == 'retained_inert':
+            record['lane'] = fault.record['lane']
+            verify_stable_inert(fault.record['after'], record['before'], record['lane'])
         guard()
         fault.live_deadline()
         record['dispatch_ns'] = time.monotonic_ns()
         assert 0 <= record['dispatch_ns'] - record['prepared_ns'] <= MAX_GROUNDING_AGE_NS, 'refusal grounding expired'
-        record['response'] = client.tool('click', {**prepared['arguments'], **spec['target'],
+        record['response'] = client.tool(prepared.get('tool', 'click'), {**prepared['arguments'], **spec['target'],
             'session': prepared['session'], 'delivery_mode': 'background'})
         record['outcome'] = 'response'
         record.update(after=production_status(fault.config), monitors_after=fault.unavailable(),
                       trace_after=trace.collect(), observed_ns=time.monotonic_ns())
         record['verification'] = verify_refusal(record)
+        if pointer_cleanup(record) == 'retained_inert':
+            record['close_started_ns'] = time.monotonic_ns()
+            close_owned(client)
+            record.update(exit_code=client.process.poll(), reaped_ns=time.monotonic_ns())
+            assert type(record['exit_code']) is int, 'refusal runtime was not reaped'
+            record.update(after_close=production_status(fault.config), monitors_after_close=fault.unavailable(),
+                          trace_after_close=trace.collect(), closed_ns=time.monotonic_ns())
+            record['close_verification'] = verify_refusal_close(record)
         return record
     finally:
         save('unavailable-action.json', record)
@@ -505,20 +618,37 @@ def run(args):
         boundary = trace.collect()
         save('fault-prefix.json', boundary)
         report['fault'] = verify_cancelled(boundary, fault.record, report['action'])
+        if pointer_cleanup(fault.config) == 'retained_inert':
+            close_owned(clients[0])
+            assert clients[0].process.poll() is not None, 'interrupted runtime was not reaped'
         report['refusal'] = refuse(clients[1], spec, probe, fault, trace, guard, save)
+        if pointer_cleanup(fault.config) == 'retained_inert':
+            verify_inert_interval(boundary, report['refusal']['trace_before'])
         fault.unavailable()
         restoration = fault.restore()
         save('restoration.json', restoration)
         assert boundary['events'][-1][1] < restoration['started_ns']
         assert report['refusal']['observed_ns'] <= restoration['started_ns']
         assert restoration['observed_ns'] < fault.config['deadline_ns'] and not Path(fault.config['watchdog_path']).exists(), 'watchdog recovery is not proof'
-        transition(report['refusal']['after'], restoration['status'])
+        if pointer_cleanup(fault.config) == 'retained_inert':
+            assert report['refusal']['closed_ns'] <= restoration['started_ns']
+            transition(report['refusal']['after_close'], restoration['status'], 'retained_inert', lane)
+        else:
+            transition(report['refusal']['after'], restoration['status'])
         for client in clients:
             close_owned(client)
         boundary = trace.collect()
         save('pre-recovery-prefix.json', boundary)
         report['teardown'] = verify_recovery_cleanup(report['refusal']['trace_after'], stopped_prefix(boundary))
         preserve_interrupted_state(observer, spec, report['action'], restoration, guard, save)
+        if pointer_cleanup(fault.config) == 'retained_inert':
+            # Include runtime teardown and read-only app observation, before any recovery input.
+            before_recovery = production_status(fault.config)
+            verify_stable_inert(restoration['status'], before_recovery, lane)
+            boundary = trace.collect()
+            verify_inert_interval(report['refusal']['trace_after'], boundary)
+            save('pre-recovery-retained-status.json', before_recovery)
+            save('pre-recovery-prefix.json', boundary)
         clients.append(launch('recovery'))
         assert clients[-1].process.pid not in report['runtime_pids'], 'reused prior runtime'
         prefix = recover(clients[-1], observer, clients[0], spec, plan['recovery']['pointer_stage'],
@@ -585,5 +715,5 @@ if __name__ == '__main__':
         parser = argparse.ArgumentParser(description=__doc__)
         for name in ('driver', 'plugin', 'source', 'primary-grab', 'plan', 'evidence', 'foreground-journal', 'trace-socket'):
             parser.add_argument('--' + name, required=True, type=Path)
-        parser.add_argument('--source-sha', required=True)
+        add_provenance_arguments(parser)
         raise SystemExit(run(parser.parse_args()))

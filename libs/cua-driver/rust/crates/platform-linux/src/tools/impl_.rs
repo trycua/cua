@@ -1000,6 +1000,8 @@ impl Tool for GetWindowStateTool {
                     }
                 }
 
+                structured["background_input"] = ProcessSurface(pid).background_input_report();
+
                 if let Some((b64_opt, file_path, w, h, orig_w)) = shot_opt {
                     if !observation_only {
                         if let Some(ow) = orig_w {
@@ -1912,73 +1914,216 @@ fn is_gtk_process(pid: u32) -> bool {
         .unwrap_or(false)
 }
 
-fn unavailable_webkit_background(
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BackgroundAction {
+    AxSemantic,
+    WindowClick,
+    WindowPointerGesture,
+    WindowScroll,
+    PidKeyboard,
+}
+
+impl BackgroundAction {
+    const ALL: [BackgroundAction; 5] = [
+        BackgroundAction::AxSemantic,
+        BackgroundAction::WindowClick,
+        BackgroundAction::WindowPointerGesture,
+        BackgroundAction::WindowScroll,
+        BackgroundAction::PidKeyboard,
+    ];
+
+    fn route(self) -> &'static str {
+        match self {
+            BackgroundAction::AxSemantic => "accessibility",
+            BackgroundAction::WindowClick => "window_click",
+            BackgroundAction::WindowPointerGesture => "window_pointer_gesture",
+            BackgroundAction::WindowScroll => "window_scroll",
+            BackgroundAction::PidKeyboard => "pid_keyboard",
+        }
+    }
+
+    fn tools(self) -> &'static [&'static str] {
+        match self {
+            BackgroundAction::AxSemantic => &["click", "scroll", "set_value"],
+            BackgroundAction::WindowClick => &["click"],
+            BackgroundAction::WindowPointerGesture => &["double_click", "right_click", "drag"],
+            BackgroundAction::WindowScroll => &["scroll"],
+            BackgroundAction::PidKeyboard => &["press_key", "hotkey"],
+        }
+    }
+}
+
+trait BackgroundSurface {
+    fn chromium_embedder(&self) -> bool;
+    fn webkitgtk_embedder(&self) -> bool;
+    fn gtk_toolkit(&self) -> bool;
+    fn wayland_input(&self) -> bool;
+    fn focus_free_inject(&self) -> bool;
+    fn real_pointer_input(&self) -> bool;
+
+    fn chromium_refusal(
+        &self,
+        delivery: crate::input::delivery::DeliveryMode,
+    ) -> Option<crate::input::delivery::BackgroundUnavailable> {
+        chromium_background_must_refuse(
+            delivery.is_foreground(),
+            self.focus_free_inject(),
+            self.chromium_embedder(),
+        )
+        .then_some(crate::input::delivery::BackgroundUnavailable::ChromiumInput)
+    }
+
+    fn webkit_pointer_refusal(
+        &self,
+        delivery: crate::input::delivery::DeliveryMode,
+    ) -> Option<crate::input::delivery::BackgroundUnavailable> {
+        (!delivery.is_foreground()
+            && !self.focus_free_inject()
+            && !self.real_pointer_input()
+            && self.webkitgtk_embedder())
+        .then_some(crate::input::delivery::BackgroundUnavailable::WebKitSyntheticInput)
+    }
+
+    fn webkit_keyboard_refusal(
+        &self,
+        delivery: crate::input::delivery::DeliveryMode,
+    ) -> Option<crate::input::delivery::BackgroundUnavailable> {
+        (!delivery.is_foreground() && !self.focus_free_inject() && self.webkitgtk_embedder())
+            .then_some(crate::input::delivery::BackgroundUnavailable::FocusedInputOnly)
+    }
+
+    fn gtk_pointer_refusal(
+        &self,
+        delivery: crate::input::delivery::DeliveryMode,
+    ) -> Option<crate::input::delivery::BackgroundUnavailable> {
+        (!delivery.is_foreground()
+            && !self.focus_free_inject()
+            && !self.real_pointer_input()
+            && self.gtk_toolkit())
+        .then_some(crate::input::delivery::BackgroundUnavailable::FocusedInputOnly)
+    }
+
+    fn gtk_keyboard_refusal(
+        &self,
+        delivery: crate::input::delivery::DeliveryMode,
+    ) -> Option<crate::input::delivery::BackgroundUnavailable> {
+        (!delivery.is_foreground() && !self.focus_free_inject() && self.gtk_toolkit())
+            .then_some(crate::input::delivery::BackgroundUnavailable::FocusedInputOnly)
+    }
+
+    fn wayland_focused_input_refusal(
+        &self,
+        delivery: crate::input::delivery::DeliveryMode,
+    ) -> Option<crate::input::delivery::BackgroundUnavailable> {
+        (!delivery.is_foreground() && !self.focus_free_inject() && self.wayland_input())
+            .then_some(crate::input::delivery::BackgroundUnavailable::FocusedInputOnly)
+    }
+
+    fn refusal(
+        &self,
+        action: BackgroundAction,
+        delivery: crate::input::delivery::DeliveryMode,
+    ) -> Option<crate::input::delivery::BackgroundUnavailable> {
+        match action {
+            BackgroundAction::AxSemantic => None,
+            BackgroundAction::WindowClick => self.chromium_refusal(delivery),
+            BackgroundAction::WindowPointerGesture => self
+                .chromium_refusal(delivery)
+                .or_else(|| self.webkit_pointer_refusal(delivery))
+                .or_else(|| self.gtk_pointer_refusal(delivery))
+                .or_else(|| self.wayland_focused_input_refusal(delivery)),
+            BackgroundAction::WindowScroll => self
+                .chromium_refusal(delivery)
+                .or_else(|| self.wayland_focused_input_refusal(delivery))
+                .or_else(|| self.webkit_pointer_refusal(delivery))
+                .or_else(|| self.gtk_pointer_refusal(delivery)),
+            BackgroundAction::PidKeyboard => self
+                .chromium_refusal(delivery)
+                .or_else(|| self.webkit_keyboard_refusal(delivery))
+                .or_else(|| self.gtk_keyboard_refusal(delivery))
+                .or_else(|| self.wayland_focused_input_refusal(delivery)),
+        }
+    }
+
+    fn refusal_result(
+        &self,
+        action: BackgroundAction,
+        delivery: crate::input::delivery::DeliveryMode,
+    ) -> Option<ToolResult> {
+        self.refusal(action, delivery)
+            .map(crate::input::delivery::background_unavailable_error)
+    }
+
+    fn background_input_report(&self) -> Value {
+        let delivery = crate::input::delivery::DeliveryMode::Background;
+        let routes: Vec<Value> = BackgroundAction::ALL
+            .iter()
+            .map(|action| match self.refusal(*action, delivery) {
+                None => json!({
+                    "route": action.route(),
+                    "tools": action.tools(),
+                    "status": "available",
+                }),
+                Some(reason) => json!({
+                    "route": action.route(),
+                    "tools": action.tools(),
+                    "status": "refused",
+                    "reason": reason.code(),
+                    "detail": reason.detail(),
+                }),
+            })
+            .collect();
+        json!({ "routes": routes })
+    }
+}
+
+struct ProcessSurface(u32);
+
+impl BackgroundSurface for ProcessSurface {
+    fn chromium_embedder(&self) -> bool {
+        is_chromium_embedder(self.0)
+    }
+    fn webkitgtk_embedder(&self) -> bool {
+        is_webkitgtk_embedder(self.0)
+    }
+    fn gtk_toolkit(&self) -> bool {
+        is_gtk_process(self.0)
+    }
+    fn wayland_input(&self) -> bool {
+        crate::wayland::wayland_input_enabled()
+    }
+    fn focus_free_inject(&self) -> bool {
+        crate::wayland::is_inject_mode()
+    }
+    fn real_pointer_input(&self) -> bool {
+        crate::input::real_pointer_input_available()
+    }
+}
+
+fn background_refusal(
+    action: BackgroundAction,
     pid: u32,
     delivery: crate::input::delivery::DeliveryMode,
 ) -> Option<ToolResult> {
-    (!delivery.is_foreground()
-        && is_webkitgtk_embedder(pid)
-        && !crate::wayland::is_inject_mode()
-        && !crate::input::real_pointer_input_available())
-    .then(|| {
-        crate::input::delivery::background_unavailable_error(
-            crate::input::delivery::BackgroundUnavailable::WebKitSyntheticInput,
-        )
-    })
+    ProcessSurface(pid).refusal_result(action, delivery)
 }
 
 fn unavailable_webkit_keyboard_background(
     pid: u32,
     delivery: crate::input::delivery::DeliveryMode,
 ) -> Option<ToolResult> {
-    (!delivery.is_foreground() && is_webkitgtk_embedder(pid) && !crate::wayland::is_inject_mode())
-        .then(|| {
-            crate::input::delivery::background_unavailable_error(
-                crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
-            )
-        })
-}
-
-fn unavailable_gtk_keyboard_background(
-    pid: u32,
-    delivery: crate::input::delivery::DeliveryMode,
-) -> Option<ToolResult> {
-    (!delivery.is_foreground() && is_gtk_process(pid) && !crate::wayland::is_inject_mode()).then(
-        || {
-            crate::input::delivery::background_unavailable_error(
-                crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
-            )
-        },
-    )
-}
-
-fn unavailable_gtk_pointer_background(
-    pid: u32,
-    delivery: crate::input::delivery::DeliveryMode,
-) -> Option<ToolResult> {
-    (!delivery.is_foreground()
-        && is_gtk_process(pid)
-        && !crate::wayland::is_inject_mode()
-        && !crate::input::real_pointer_input_available())
-    .then(|| {
-        crate::input::delivery::background_unavailable_error(
-            crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
-        )
-    })
+    ProcessSurface(pid)
+        .webkit_keyboard_refusal(delivery)
+        .map(crate::input::delivery::background_unavailable_error)
 }
 
 fn unavailable_wayland_focused_input_background(
+    pid: u32,
     delivery: crate::input::delivery::DeliveryMode,
-    focus_free_inject_supported: bool,
 ) -> Option<ToolResult> {
-    (crate::wayland::wayland_input_enabled()
-        && !(focus_free_inject_supported && crate::wayland::is_inject_mode())
-        && !delivery.is_foreground())
-    .then(|| {
-        crate::input::delivery::background_unavailable_error(
-            crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
-        )
-    })
+    ProcessSurface(pid)
+        .wayland_focused_input_refusal(delivery)
+        .map(crate::input::delivery::background_unavailable_error)
 }
 
 /// Chromium's X11 renderer drops synthetic input sent to an occluded,
@@ -1989,17 +2134,9 @@ fn unavailable_chromium_background(
     pid: u32,
     delivery: crate::input::delivery::DeliveryMode,
 ) -> Option<ToolResult> {
-    if chromium_background_must_refuse(
-        delivery.is_foreground(),
-        crate::wayland::is_inject_mode(),
-        is_chromium_embedder(pid),
-    ) {
-        Some(crate::input::delivery::background_unavailable_error(
-            crate::input::delivery::BackgroundUnavailable::ChromiumInput,
-        ))
-    } else {
-        None
-    }
+    ProcessSurface(pid)
+        .chromium_refusal(delivery)
+        .map(crate::input::delivery::background_unavailable_error)
 }
 
 fn chromium_background_must_refuse(
@@ -2008,6 +2145,176 @@ fn chromium_background_must_refuse(
     chromium: bool,
 ) -> bool {
     chromium && !foreground && !focus_free_inject_mode
+}
+
+#[cfg(test)]
+mod background_input_route_tests {
+    use super::*;
+    use crate::input::delivery::DeliveryMode;
+
+    #[derive(Clone, Copy, Default)]
+    struct SimulatedSurface {
+        chromium_embedder: bool,
+        webkitgtk_embedder: bool,
+        gtk_toolkit: bool,
+        wayland_input: bool,
+        focus_free_inject: bool,
+        real_pointer_input: bool,
+    }
+
+    impl BackgroundSurface for SimulatedSurface {
+        fn chromium_embedder(&self) -> bool {
+            self.chromium_embedder
+        }
+        fn webkitgtk_embedder(&self) -> bool {
+            self.webkitgtk_embedder
+        }
+        fn gtk_toolkit(&self) -> bool {
+            self.gtk_toolkit
+        }
+        fn wayland_input(&self) -> bool {
+            self.wayland_input
+        }
+        fn focus_free_inject(&self) -> bool {
+            self.focus_free_inject
+        }
+        fn real_pointer_input(&self) -> bool {
+            self.real_pointer_input
+        }
+    }
+
+    fn surfaces() -> Vec<(&'static str, SimulatedSurface)> {
+        vec![
+            ("x11 native toolkit", SimulatedSurface::default()),
+            (
+                "x11 chromium",
+                SimulatedSurface {
+                    chromium_embedder: true,
+                    ..SimulatedSurface::default()
+                },
+            ),
+            (
+                "x11 webkitgtk",
+                SimulatedSurface {
+                    webkitgtk_embedder: true,
+                    gtk_toolkit: true,
+                    ..SimulatedSurface::default()
+                },
+            ),
+            (
+                "x11 gtk",
+                SimulatedSurface {
+                    gtk_toolkit: true,
+                    ..SimulatedSurface::default()
+                },
+            ),
+            (
+                "x11 gtk with a target-addressed pointer backend",
+                SimulatedSurface {
+                    gtk_toolkit: true,
+                    real_pointer_input: true,
+                    ..SimulatedSurface::default()
+                },
+            ),
+            (
+                "native wayland",
+                SimulatedSurface {
+                    gtk_toolkit: true,
+                    wayland_input: true,
+                    ..SimulatedSurface::default()
+                },
+            ),
+            (
+                "wayland with focus-free injection",
+                SimulatedSurface {
+                    chromium_embedder: true,
+                    gtk_toolkit: true,
+                    wayland_input: true,
+                    focus_free_inject: true,
+                    ..SimulatedSurface::default()
+                },
+            ),
+        ]
+    }
+
+    #[test]
+    fn report_carries_the_refusal_each_tool_would_return() {
+        for (name, surface) in surfaces() {
+            let report = surface.background_input_report();
+            let routes = report["routes"].as_array().expect("routes array").clone();
+            assert_eq!(routes.len(), BackgroundAction::ALL.len(), "{name}");
+            for (action, entry) in BackgroundAction::ALL.iter().zip(routes) {
+                let route = action.route();
+                assert_eq!(entry["route"], route, "{name}");
+                assert_eq!(entry["tools"], json!(action.tools()), "{name}/{route}");
+                match surface.refusal_result(*action, DeliveryMode::Background) {
+                    None => {
+                        assert_eq!(entry["status"], "available", "{name}/{route}");
+                        assert!(entry["reason"].is_null(), "{name}/{route}");
+                        assert!(entry["detail"].is_null(), "{name}/{route}");
+                    }
+                    Some(refusal) => {
+                        let structured = refusal
+                            .structured_content
+                            .expect("a background refusal carries structured content");
+                        assert_eq!(entry["status"], "refused", "{name}/{route}");
+                        assert_eq!(entry["reason"], structured["code"], "{name}/{route}");
+                        assert_eq!(entry["detail"], structured["detail"], "{name}/{route}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn foreground_delivery_passes_every_ladder() {
+        for (name, surface) in surfaces() {
+            for action in BackgroundAction::ALL {
+                assert!(
+                    surface.refusal(action, DeliveryMode::Foreground).is_none(),
+                    "{name}/{}",
+                    action.route()
+                );
+            }
+        }
+    }
+
+    fn refused_routes(surface: &SimulatedSurface) -> Vec<&'static str> {
+        BackgroundAction::ALL
+            .iter()
+            .filter(|action| {
+                surface
+                    .refusal(**action, DeliveryMode::Background)
+                    .is_some()
+            })
+            .map(|action| action.route())
+            .collect()
+    }
+
+    #[test]
+    fn each_pointer_family_reports_its_own_ladder() {
+        for (name, surface) in surfaces() {
+            let expected: Vec<&'static str> = match name {
+                "x11 native toolkit" => vec![],
+                "x11 chromium" => vec![
+                    "window_click",
+                    "window_pointer_gesture",
+                    "window_scroll",
+                    "pid_keyboard",
+                ],
+                "x11 webkitgtk" | "x11 gtk" => {
+                    vec!["window_pointer_gesture", "window_scroll", "pid_keyboard"]
+                }
+                "x11 gtk with a target-addressed pointer backend" => vec!["pid_keyboard"],
+                "native wayland" => {
+                    vec!["window_pointer_gesture", "window_scroll", "pid_keyboard"]
+                }
+                "wayland with focus-free injection" => vec![],
+                other => panic!("unlisted surface {other}"),
+            };
+            assert_eq!(refused_routes(&surface), expected, "{name}");
+        }
+    }
 }
 
 /// Screen-absolute center of a window (top-left from translate_coordinates plus
@@ -3568,7 +3875,8 @@ impl Tool for ClickTool {
                     Err(error) => isolated_hyprland_task_error(error, false),
                 };
             }
-            if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
+            if let Some(refusal) = background_refusal(BackgroundAction::WindowClick, pid, delivery)
+            {
                 return refusal;
             }
 
@@ -3633,7 +3941,8 @@ impl Tool for ClickTool {
         }
 
         if !isolated_background {
-            if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
+            if let Some(refusal) = background_refusal(BackgroundAction::WindowClick, pid, delivery)
+            {
                 return refusal;
             }
         }
@@ -4080,7 +4389,7 @@ impl Tool for TypeTextTool {
             return refusal;
         }
         if resolved_elem_idx.is_none() {
-            if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, true) {
+            if let Some(refusal) = unavailable_wayland_focused_input_background(pid, delivery) {
                 return refusal;
             }
         }
@@ -4798,17 +5107,7 @@ impl Tool for PressKeyTool {
             )
             .await;
         }
-        if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
-            return refusal;
-        }
-
-        if let Some(refusal) = unavailable_webkit_keyboard_background(pid, delivery) {
-            return refusal;
-        }
-        if let Some(refusal) = unavailable_gtk_keyboard_background(pid, delivery) {
-            return refusal;
-        }
-        if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, true) {
+        if let Some(refusal) = background_refusal(BackgroundAction::PidKeyboard, pid, delivery) {
             return refusal;
         }
 
@@ -5208,16 +5507,7 @@ impl Tool for HotkeyTool {
             )
             .await;
         }
-        if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
-            return refusal;
-        }
-        if let Some(refusal) = unavailable_webkit_keyboard_background(pid, delivery) {
-            return refusal;
-        }
-        if let Some(refusal) = unavailable_gtk_keyboard_background(pid, delivery) {
-            return refusal;
-        }
-        if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, true) {
+        if let Some(refusal) = background_refusal(BackgroundAction::PidKeyboard, pid, delivery) {
             return refusal;
         }
 
@@ -5758,11 +6048,6 @@ impl Tool for ScrollTool {
 
         let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
         let isolated_background = isolated_hyprland_background(delivery);
-        if !isolated_background {
-            if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
-                return refusal;
-            }
-        }
         if hyprland_foreground(delivery) {
             if xid_opt.is_none() {
                 return foreground_hyprland_refusal(
@@ -5865,6 +6150,9 @@ impl Tool for ScrollTool {
                 Err(error) => isolated_hyprland_task_error(error, false),
             };
         }
+        if let Some(refusal) = background_refusal(BackgroundAction::WindowScroll, pid, delivery) {
+            return refusal;
+        }
 
         if crate::wayland::is_inject_mode() {
             let Some((x, y)) = pixel_target else {
@@ -5892,9 +6180,6 @@ impl Tool for ScrollTool {
         }
 
         if crate::wayland::wayland_input_enabled() {
-            if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, false) {
-                return refusal;
-            }
             let direction_for_wayland = direction.clone();
             let local_point = match (pixel_target, &resolved) {
                 (Some(point), _) => Some(point),
@@ -5940,13 +6225,6 @@ impl Tool for ScrollTool {
                 Ok(Err(error)) => ToolResult::error(error.to_string()),
                 Err(error) => ToolResult::error(format!("Task error: {error}")),
             };
-        }
-
-        if let Some(refusal) = unavailable_webkit_background(pid, delivery) {
-            return refusal;
-        }
-        if let Some(refusal) = unavailable_gtk_pointer_background(pid, delivery) {
-            return refusal;
         }
 
         // An element-addressed scroll must land over the element. The old
@@ -6123,16 +6401,9 @@ impl Tool for DoubleClickTool {
             Err(e) => return e,
         };
         let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
-        if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
-            return refusal;
-        }
-        if let Some(refusal) = unavailable_webkit_background(pid, delivery) {
-            return refusal;
-        }
-        if let Some(refusal) = unavailable_gtk_pointer_background(pid, delivery) {
-            return refusal;
-        }
-        if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, true) {
+        if let Some(refusal) =
+            background_refusal(BackgroundAction::WindowPointerGesture, pid, delivery)
+        {
             return refusal;
         }
         if hyprland_foreground(delivery) {
@@ -6362,16 +6633,9 @@ impl Tool for RightClickTool {
             Err(e) => return e,
         };
         let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
-        if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
-            return refusal;
-        }
-        if let Some(refusal) = unavailable_webkit_background(pid, delivery) {
-            return refusal;
-        }
-        if let Some(refusal) = unavailable_gtk_pointer_background(pid, delivery) {
-            return refusal;
-        }
-        if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, true) {
+        if let Some(refusal) =
+            background_refusal(BackgroundAction::WindowPointerGesture, pid, delivery)
+        {
             return refusal;
         }
         if hyprland_foreground(delivery) {
@@ -6679,16 +6943,9 @@ impl Tool for DragTool {
         let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
         let isolated_background = isolated_hyprland_background(delivery);
         if !isolated_background {
-            if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
-                return refusal;
-            }
-            if let Some(refusal) = unavailable_webkit_background(pid, delivery) {
-                return refusal;
-            }
-            if let Some(refusal) = unavailable_gtk_pointer_background(pid, delivery) {
-                return refusal;
-            }
-            if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, true) {
+            if let Some(refusal) =
+                background_refusal(BackgroundAction::WindowPointerGesture, pid, delivery)
+            {
                 return refusal;
             }
         }

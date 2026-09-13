@@ -63,6 +63,14 @@ struct FixtureState {
     viewport_css_width: f64,
     viewport_css_height: f64,
     tab_visible: bool,
+    /// Extra page targets Chromium reports but cannot map to any browser
+    /// window (`Browser.getWindowForTarget` → `-32000 Browser window not
+    /// found`): an extension side panel, an offscreen document.
+    windowless_targets: Vec<Value>,
+    /// Drop the primary tab target T1 from `Target.getTargets`.
+    omit_primary_target: bool,
+    /// Make `Browser.getWindowForTarget` for T1 answer this CDP error.
+    primary_window_error: Option<(i64, String)>,
     /// Every incoming CDP call: (sessionId, method, params).
     calls: Vec<(Option<String>, String, Value)>,
 }
@@ -74,6 +82,9 @@ impl Default for FixtureState {
             oopif_present: true,
             emit_rogue_attach: false,
             main_url: "https://fixture.test/".into(),
+            windowless_targets: Vec::new(),
+            omit_primary_target: false,
+            primary_window_error: None,
             main_loader: "L_MAIN_1".into(),
             iframe_loader: "L_IFRAME_1".into(),
             oopif_loader: "L_OOPIF_1".into(),
@@ -424,16 +435,34 @@ fn fixture_handler(state: SharedState) -> MockHandler {
         let is_oopif = sess.starts_with("oopif-sess-");
 
         match call.method.as_str() {
-            "Target.getTargets" => MockReply::ok(json!({
-                "targetInfos": [{
-                    "targetId": "T1",
-                    "type": "page",
-                    "title": "Fixture",
-                    "url": "https://fixture.test/",
-                    "attached": false,
-                }]
-            })),
-            "Browser.getWindowForTarget" => MockReply::ok(json!({ "windowId": 11 })),
+            "Target.getTargets" => {
+                let mut infos: Vec<Value> = Vec::new();
+                if !st.omit_primary_target {
+                    infos.push(json!({
+                        "targetId": "T1",
+                        "type": "page",
+                        "title": "Fixture",
+                        "url": "https://fixture.test/",
+                        "attached": false,
+                    }));
+                }
+                infos.extend(st.windowless_targets.iter().cloned());
+                MockReply::ok(json!({ "targetInfos": infos }))
+            }
+            "Browser.getWindowForTarget" => {
+                let target_id = call.params["targetId"].as_str().unwrap_or("");
+                let windowless = st
+                    .windowless_targets
+                    .iter()
+                    .any(|t| t["targetId"].as_str() == Some(target_id));
+                if windowless {
+                    MockReply::err(-32000, "Browser window not found")
+                } else if let Some((code, message)) = st.primary_window_error.clone() {
+                    MockReply::err(code, &message)
+                } else {
+                    MockReply::ok(json!({ "windowId": 11 }))
+                }
+            }
             "Browser.getWindowBounds" => MockReply::ok(json!({
                 "bounds": { "left": 0.0, "top": 0.0, "width": 800.0, "height": 600.0 }
             })),
@@ -2407,4 +2436,98 @@ async fn keystrokes_use_char_events_for_text_delivery() {
     }));
     assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
     assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
+}
+
+
+// ---- window-less page targets (trycua/cua#3540) ------------------------------------------
+//
+// Chromium exposes page targets that live in no browser window — an extension
+// side panel, an offscreen document — and answers `Browser.getWindowForTarget`
+// for them with `-32000 Browser window not found`. Such a target can never be
+// the tab of the requested native window, so candidate enumeration skips it;
+// every other error keeps failing the whole proof.
+
+fn side_panel_target() -> Value {
+    json!({
+        "targetId": "T_SIDEPANEL",
+        "type": "page",
+        "title": "Claude",
+        "url": "chrome-extension://fcoeoabgfenejglbffodgkkbkcdhcgfn/sidepanel.html?tabId=42",
+        "attached": false,
+    })
+}
+
+async fn bind_result(f: &Fixture) -> Value {
+    let tool = GetBrowserStateTool::new(f.engine.clone());
+    let result = tool
+        .invoke(json!({ "pid": 1, "window_id": 7, "session": SESSION }))
+        .await;
+    structured(&result).clone()
+}
+
+#[tokio::test]
+async fn windowless_side_panel_target_is_skipped_and_bind_stays_exact() {
+    let f = fixture_with(|st| st.windowless_targets.push(side_panel_target())).await;
+    let s = bind_result(&f).await;
+    assert_eq!(s["status"], "ok", "bind must succeed: {s}");
+    assert_eq!(s["binding_quality"], "exact");
+    let tabs = s["tabs"].as_array().expect("tabs");
+    assert_eq!(tabs.len(), 1, "the side panel is not a tab of the bound window: {s}");
+    assert_eq!(tabs[0]["url"], "https://fixture.test/");
+    // The window-less target was asked for its window (and skipped), never attached to.
+    let st = f.state.lock().unwrap();
+    assert!(st.calls.iter().any(|(_, m, p)| {
+        m == "Browser.getWindowForTarget" && p["targetId"] == "T_SIDEPANEL"
+    }));
+    assert!(!st.calls.iter().any(|(_, m, p)| {
+        m == "Target.attachToTarget" && p["targetId"] == "T_SIDEPANEL"
+    }));
+}
+
+#[tokio::test]
+async fn only_windowless_targets_refuse_wrong_target_never_route_unavailable() {
+    let f = fixture_with(|st| {
+        st.omit_primary_target = true;
+        st.windowless_targets.push(side_panel_target());
+    })
+    .await;
+    let s = bind_result(&f).await;
+    assert_eq!(s["status"], "refused", "{s}");
+    assert_eq!(
+        s["refusal"]["code"], "browser_wrong_target_refused",
+        "no windowed candidate → refuse rather than guess, and never a route failure: {s}"
+    );
+}
+
+#[tokio::test]
+async fn other_window_lookup_errors_still_fail_the_whole_proof() {
+    let f = fixture_with(|st| {
+        st.primary_window_error = Some((-32000, "Target closed".into()));
+    })
+    .await;
+    let s = bind_result(&f).await;
+    assert_eq!(s["status"], "refused", "{s}");
+    assert_eq!(s["refusal"]["code"], "browser_route_unavailable", "{s}");
+    assert!(
+        s["refusal"]["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("Browser.getWindowForTarget failed while proving the native window"),
+        "{s}"
+    );
+}
+
+#[tokio::test]
+async fn method_unsupported_keeps_the_electron_none_path() {
+    // Electron omits the Browser domain method entirely: the candidate keeps a
+    // None geometry and the proof continues on the existing path — it must not
+    // become a route failure because of the window-less skip.
+    let f = fixture_with(|st| {
+        st.primary_window_error = Some((-32601, "'Browser.getWindowForTarget' wasn't found".into()));
+    })
+    .await;
+    let s = bind_result(&f).await;
+    assert_ne!(s["refusal"]["code"], "browser_route_unavailable", "{s}");
+    let st = f.state.lock().unwrap();
+    assert!(st.calls.iter().any(|(_, m, _)| m == "Target.getTargets"));
 }

@@ -46,6 +46,15 @@ impl ScrollTool {
 
 static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
+/// Wheel notches or keystroke repetitions accepted in one call. The input
+/// schema advertises this range and both delivery paths enforce it.
+const AMOUNT_MIN: u64 = 1;
+const AMOUNT_MAX: u64 = 50;
+
+fn clamp_amount(requested: u64) -> usize {
+    requested.clamp(AMOUNT_MIN, AMOUNT_MAX) as usize
+}
+
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "scroll".into(),
@@ -85,9 +94,9 @@ fn def() -> &'static ToolDef {
                 },
                 "amount": {
                     "type": "integer",
-                    "minimum": 1,
-                    "maximum": 50,
-                    "description": "Pixel-wheel path: number of wheel notches. Keystroke path: number of keystroke repetitions. Default: 3."
+                    "minimum": AMOUNT_MIN,
+                    "maximum": AMOUNT_MAX,
+                    "description": "Pixel-wheel path: number of wheel notches. Keystroke path: number of keystroke repetitions. Larger requests are clamped to the maximum. Default: 3."
                 },
                 "window_id": { "type": "integer" },
                 "element_index": cua_driver_core::tool_schema::element_index_schema(),
@@ -126,7 +135,7 @@ impl Tool for ScrollTool {
             let (x, y) = (input.x, input.y);
             let direction = input.direction.as_str();
             let by = input.by.unwrap_or(ScrollBy::Line).as_str();
-            let amount = input.amount.unwrap_or(3).clamp(1, 50) as usize;
+            let amount = clamp_amount(input.amount.unwrap_or(3));
             let step = if input.by == Some(ScrollBy::Page) {
                 WHEEL_STEP_PAGE_PX
             } else {
@@ -177,7 +186,7 @@ impl Tool for ScrollTool {
             Err(e) => return e,
         };
         let by = args.str_or("by", "line");
-        let amount = args.u64_or("amount", 3) as usize;
+        let amount = clamp_amount(args.u64_or("amount", 3));
         // Surface 6: element_token / element_index precedence.
         let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id");
@@ -731,5 +740,20 @@ unsafe fn collect_ax_buttons(
             collect_ax_buttons(child, depth + 1, buttons);
             CFRelease(child as CFTypeRef);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn amount_is_clamped_to_the_advertised_range() {
+        let amount = &def().input_schema["properties"]["amount"];
+        assert_eq!(amount["minimum"], serde_json::json!(AMOUNT_MIN));
+        assert_eq!(amount["maximum"], serde_json::json!(AMOUNT_MAX));
+        assert_eq!(clamp_amount(1100), AMOUNT_MAX as usize);
+        assert_eq!(clamp_amount(0), AMOUNT_MIN as usize);
+        assert_eq!(clamp_amount(3), 3);
     }
 }

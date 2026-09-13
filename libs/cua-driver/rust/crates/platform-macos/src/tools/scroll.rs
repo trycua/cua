@@ -792,8 +792,9 @@ mod tests {
             target_minimized: Some(false),
             app_hidden: Some(false),
             competing_keyboard_destinations: 0,
+            focused_window_id: None,
             element: ElementAncestry::OutsideTargetWindow {
-                pid: Some(42),
+                owner_pid: 42,
                 window_id: 8,
             },
         };

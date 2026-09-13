@@ -33,11 +33,12 @@ fn def() -> &'static ToolDef {
             PREFERRED CONSUMERS read `structuredContent.elements` (one entry per \
             indexed row with `element_index`, `role`, `label`, `value` (the \
             element's text/AXValue when present — use it to verify what a field \
-            holds), `actions` (names of AX actions exposed by the element, \
-            omitted when empty), `frame: {x,y,w,h}`, `parent_index`, `depth`). The markdown \
-            `tree_markdown` stays available \
-            and unchanged in shape for existing text-parsing callers — but new \
-            fields will only be added to the structured side.\n\n\
+            holds, preserving empty strings and whitespace), optional `placeholder` \
+            (a separate hint, never the value), `actions` (names of AX actions \
+            exposed by the element, omitted when empty), `frame: {x,y,w,h}`, \
+            `parent_index`, `depth`). The markdown \
+            `tree_markdown` stays available for text consumers, with raw string \
+            values quoted and escaped and placeholders identified separately.\n\n\
             Always returns BOTH the element tree AND a screenshot — ground on \
             both and cross-check (the tree lies on some surfaces: Electron \
             echo-confirms, Catalyst null values, virtualized off-viewport rows \
@@ -830,6 +831,25 @@ fn degradation_for(
     Degradation::None
 }
 
+fn derive_label(node: &crate::ax::tree::AXNode) -> Option<String> {
+    node.title
+        .clone()
+        .or_else(|| node.description.clone())
+        .or_else(|| {
+            node.value
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+        })
+        .or_else(|| {
+            node.placeholder
+                .clone()
+                .filter(|hint| !hint.trim().is_empty())
+        })
+        .or_else(|| node.identifier.clone())
+}
+
 /// Render the actionable nodes from the AX walk into the
 /// `structuredContent.elements` array shape described on the tool: one entry
 /// per node with an `element_index`, carrying role, label (built from
@@ -848,15 +868,7 @@ pub(crate) fn build_elements_array_with_token(
         .iter()
         .filter_map(|node| {
             let idx = node.element_index?;
-            // `label` is a best-effort human-readable string: title first,
-            // then description, then value, then identifier. Mirrors what
-            // a human reading the markdown row would call this element.
-            let label = node
-                .title
-                .clone()
-                .or_else(|| node.description.clone())
-                .or_else(|| node.value.clone())
-                .or_else(|| node.identifier.clone());
+            let label = derive_label(node);
             let frame = node
                 .frame
                 .map(|[x, y, w, h]| serde_json::json!({ "x": x, "y": y, "w": w, "h": h }));
@@ -890,13 +902,11 @@ pub(crate) fn build_elements_array_with_token(
             // "1"/"0") — controls whose state was previously invisible here.
             // Falls back to `value` so the field never regresses for
             // string-valued elements.
-            if let Some(value) = node
-                .value_state
-                .clone()
-                .or_else(|| node.value.clone())
-                .filter(|v| !v.is_empty())
-            {
+            if let Some(value) = node.value_state.clone().or_else(|| node.value.clone()) {
                 entry["value"] = serde_json::Value::String(value);
+            }
+            if let Some(placeholder) = &node.placeholder {
+                entry["placeholder"] = serde_json::Value::String(placeholder.clone());
             }
             if let Some(desc) = node.value_description.clone() {
                 entry["value_description"] = serde_json::Value::String(desc);
@@ -1139,6 +1149,7 @@ mod tests {
             role: role.into(),
             title: title.map(|s| s.to_string()),
             value: None,
+            placeholder: None,
             description: None,
             identifier: None,
             help: None,
@@ -1447,13 +1458,34 @@ mod tests {
     }
 
     #[test]
-    fn elements_omit_empty_value() {
-        // An empty AXValue must not emit a `value` field (matches the other
-        // optional fields' omit-when-absent contract).
-        let mut nodes = vec![node(Some(0), "AXButton", Some("OK"), 0, None, None, vec![])];
-        nodes[0].value = Some(String::new());
+    fn elements_preserve_empty_whitespace_and_unicode_values_separately_from_placeholder() {
+        for raw in ["", "\n", " \tΩ café\n"] {
+            let mut nodes = vec![node(Some(0), "AXTextArea", None, 0, None, None, vec![])];
+            nodes[0].value = Some(raw.into());
+            nodes[0].value_state = Some(raw.into());
+            nodes[0].placeholder = Some("Ask for follow-up changes".into());
+            let entry = &build_elements_array_with_token(&nodes, None)[0];
+            assert_eq!(
+                entry["value"], raw,
+                "raw field content must survive serialization"
+            );
+            assert_eq!(entry["placeholder"], "Ask for follow-up changes");
+            if raw.trim().is_empty() {
+                assert_eq!(entry["label"], "Ask for follow-up changes");
+            } else {
+                assert_eq!(entry["label"], raw.trim());
+            }
+        }
+    }
+
+    #[test]
+    fn a_placeholder_never_fabricates_an_absent_value() {
+        let mut nodes = vec![node(Some(0), "AXTextField", None, 0, None, None, vec![])];
+        nodes[0].placeholder = Some("Search".into());
         let entry = &build_elements_array_with_token(&nodes, None)[0];
-        assert!(entry.get("value").is_none(), "empty value must be omitted");
+        assert_eq!(entry["placeholder"], "Search");
+        assert_eq!(entry["label"], "Search");
+        assert!(entry.get("value").is_none());
     }
 
     #[test]

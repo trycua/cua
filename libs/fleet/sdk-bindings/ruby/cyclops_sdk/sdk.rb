@@ -3214,6 +3214,9 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_presign_image_uploads,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_upload_image_file,
+    [:uint64, RustBuffer.by_value, RustBuffer.by_value, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_create_image,
     [:uint64, RustBuffer.by_value, :uint64, RustCallStatus.by_ref],
     :uint64
@@ -3600,6 +3603,9 @@ module UniFFILib
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_presign_image_uploads,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_upload_image_file,
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_image,
@@ -4831,6 +4837,22 @@ end
       UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_presign_image_uploads(uniffi_clone_handle(),RustBuffer.alloc_from_TypeImageUploadRequest(request),RustCallStatus.new),
     )
     return result.consumeIntoTypeImageUploadResponse
+  end
+  def upload_image_file(namespace, name, contents)
+        namespace = FleetSdk::uniffi_utf8(namespace)
+
+        name = FleetSdk::uniffi_utf8(name)
+
+        contents = FleetSdk::uniffi_bytes(contents)
+
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
+
+      SdkError,
+
+      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_upload_image_file(uniffi_clone_handle(),RustBuffer.allocFromString(namespace),RustBuffer.allocFromString(name),RustBuffer.allocFromBytes(contents),RustCallStatus.new),
+
+    )
+    return result.consumeIntoTypeImageUploadInstruction
   end
   def create_image(namespace, manifest)
         namespace = FleetSdk::uniffi_utf8(namespace)

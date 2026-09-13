@@ -1,6 +1,6 @@
 ---
 title: Share a sandbox service with a signed URL
-description: Create, list, and revoke time-limited public URLs for sandbox services with the TypeScript Fleet SDK.
+description: Create, list, and revoke time-limited public URLs for sandbox services with the Fleet SDKs.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -21,17 +21,17 @@ the bound sandbox.
 - A Fleet pool whose template exposes the service you want to share.
 - A bound sandbox claim. The signed URL does not create or keep a claim alive.
 - OAuth client credentials with permission to manage the claim.
-- The published `@trycua/fleet` 0.1.1 TypeScript package and a Node.js environment
+- The published `@trycua/fleet` 0.1.2 TypeScript package and a Node.js environment
   with `fetch` and `AbortSignal.timeout`.
 
-The published Python `cua-sandbox` 0.4.3 package exposes
-`sandbox.services.request()`, but does not expose `create_signed_url()`,
-`list_signed_urls()`, or `revoke_signed_url()`. Use the TypeScript API below
-for signed URLs. See the [service reference](/reference/sandbox-sdk/interfaces#services).
+The published Python `cua-sandbox` 0.7.0 package also exposes
+`sandbox.services.create_signed_url()`, `list_signed_urls()`, and
+`revoke_signed_url()`. This guide uses the TypeScript API below. See the
+[service reference](/reference/sandbox-sdk/interfaces#services) for the Python
+signatures.
 
-If you do not have a pool yet, create one with
-[Python](/how-to-guides/sandbox/create-pool-with-python) or
-[TypeScript](/how-to-guides/sandbox/create-pool-with-typescript). The service
+If you do not have a pool yet, follow
+[Create Fleet capacity](/how-to-guides/sandbox/create-fleet-capacity). The service
 name passed to the signed URL API must match a service declared on that pool's
 template.
 
@@ -65,7 +65,7 @@ releasing the claim.
 Install the Fleet SDK and a TypeScript runner:
 
 ```bash
-npm install @trycua/fleet@0.1.1
+npm install @trycua/fleet@0.1.2
 npm install --save-dev tsx typescript
 npm pkg set type=module
 ```
@@ -195,6 +195,6 @@ lifecycle.
 ### The SDK says signed service URLs are unavailable
 
 Confirm that the Fleet environment has signed service URLs configured. The
-TypeScript `@trycua/fleet` 0.1.1 package includes the create, list, and revoke
-operations, but package availability does not enable the feature on the server.
-The Python `cua-sandbox` 0.4.3 service interface does not include these methods.
+TypeScript `@trycua/fleet` 0.1.2 and Python `cua-sandbox` 0.7.0 include the
+create, list, and revoke operations, but package availability does not enable
+the feature on the server.

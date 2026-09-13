@@ -15,7 +15,7 @@ The public SDK model is documented in [How sandboxes work](/concepts/how-sandbox
 
 ## Fleet uses a constrained subset of the SDK image surface
 
-Fleet uses a prebuilt registry artifact as its starting point. The Sandbox SDK can reference that artifact directly with `Image.from_registry(...)` or resolve a built-in image with a registry mapping. In `cua-sandbox` 0.4.3, the built-in Ubuntu 24.04 and Windows Server 2022 VM images have registry mappings.
+Fleet uses a prebuilt registry artifact as its starting point. The Sandbox SDK can reference that artifact directly with `Image.from_registry(...)` or resolve a built-in image with a registry mapping. In `cua-sandbox` 0.7.0, the built-in Ubuntu 24.04 and Windows Server 2022 VM images have registry mappings.
 
 Fleet does **not** build an environment from SDK layers such as `apt_install`, `pip_install`, `uv_install`, `run`, `copy`, `env`, `from_file`, or snapshot-derived images. The Fleet registry input must reference a guest artifact published before sandbox creation.
 
@@ -47,7 +47,7 @@ A Fleet image does not only determine what operating system boots. It also deter
 
 Readiness depends on the services started by the image. A running replica whose configured readiness checks have not passed remains unready for claims.
 
-Ports you mark with `.expose(...)` become named Fleet services. A service URL identifies an endpoint in Fleet's proxy; it does not create a localhost listener or grant access by itself. Access requires Fleet authentication. In 0.4.3, pool-backed sandboxes use `sb.services.request()` for authenticated HTTP requests; their transport does not implement `sb.tunnel.forward()`. See [ports and transports](/reference/sandbox-sdk/runtime-support#ports-and-transports).
+Ports you mark with `.expose(...)` become named Fleet services. A service URL identifies an endpoint in Fleet's proxy; it does not create a localhost listener or grant access by itself. Access requires Fleet authentication. In 0.7.0, pool-backed sandboxes use `sb.services.request()` for authenticated HTTP requests; their transport does not implement `sb.tunnel.forward()`. See [ports and transports](/reference/sandbox-sdk/runtime-support#ports-and-transports).
 
 With the Sandbox SDK's default service configuration, the published image must start the computer-server endpoint on port `8000`. The SDK creates the `server` service and a TCP readiness probe on that port, then waits for `/status` before returning a connected sandbox.
 

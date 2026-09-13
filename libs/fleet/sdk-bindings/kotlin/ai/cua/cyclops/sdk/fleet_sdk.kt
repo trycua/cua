@@ -729,6 +729,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_presign_image_uploads(
     ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_upload_image_file(
+    ): Short
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_image(
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_image(
@@ -945,6 +947,8 @@ external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_renew_claim(`ptr`: Long,
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim(`ptr`: Long,`claim`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_presign_image_uploads(`ptr`: Long,`request`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_upload_image_file(`ptr`: Long,`namespace`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,`contents`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_create_image(`ptr`: Long,`namespace`: RustBuffer.ByValue,`manifest`: Long,
 ): Long
@@ -1309,6 +1313,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_presign_image_uploads() != 53280.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_upload_image_file() != 14212.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_image() != 51053.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1393,7 +1400,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token() != 1180.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cyclops_sdk_checksum_method_httpclient_execute() != 33213.toShort()) {
+    if (lib.uniffi_cyclops_sdk_checksum_method_httpclient_execute() != 57947.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_build() != 10518.toShort()) {
@@ -4001,6 +4008,13 @@ public interface CyclopsClientInterface {
 
     suspend fun `presignImageUploads`(`request`: ImageUploadRequest): ImageUploadResponse
 
+    /**
+     * Hash and upload one file, or reuse a matching existing object.
+     * Returns only the bound digest, size, and tenant reference, never a signed URL.
+     * This does not create an Image or attest to object versioning/encryption.
+     */
+    suspend fun `uploadImageFile`(`namespace`: kotlin.String, `name`: kotlin.String, `contents`: kotlin.ByteArray): ImageUploadInstruction
+
     suspend fun `createImage`(`namespace`: kotlin.String, `manifest`: PreservedJson): PreservedJson
 
     suspend fun `deleteImage`(`namespace`: kotlin.String, `name`: kotlin.String)
@@ -4305,6 +4319,32 @@ open class CyclopsClient: Disposable, AutoCloseable, CyclopsClientInterface
         { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeImageUploadResponse.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * Hash and upload one file, or reuse a matching existing object.
+     * Returns only the bound digest, size, and tenant reference, never a signed URL.
+     * This does not create an Image or attest to object versioning/encryption.
+     */
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `uploadImageFile`(`namespace`: kotlin.String, `name`: kotlin.String, `contents`: kotlin.ByteArray) : ImageUploadInstruction {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_upload_image_file(
+                uniffiHandle,
+                FfiConverterString.lower(`namespace`),FfiConverterString.lower(`name`),FfiConverterByteArray.lower(`contents`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeImageUploadInstruction.lift(it) },
         // Error FFI converter
         SdkException.ErrorHandler,
     )
@@ -5681,6 +5721,9 @@ public interface HttpClient {
     /**
      * Executes an HTTP request. Foreign implementations must enforce
      * `request.max_response_bytes` while streaming the response body.
+     * Implementations must not follow redirects, retry requests, or add ambient
+     * authentication/cookies. Send only the supplied headers and body; signed
+     * upload requests also use this interface and must not leak credentials.
      */
     suspend fun `execute`(`request`: HttpRequest): HttpResponse
 
@@ -5787,6 +5830,9 @@ open class HttpClientImpl: Disposable, AutoCloseable, HttpClient
     /**
      * Executes an HTTP request. Foreign implementations must enforce
      * `request.max_response_bytes` while streaming the response body.
+     * Implementations must not follow redirects, retry requests, or add ambient
+     * authentication/cookies. Send only the supplied headers and body; signed
+     * upload requests also use this interface and must not leak credentials.
      */
     @Throws(HttpException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")

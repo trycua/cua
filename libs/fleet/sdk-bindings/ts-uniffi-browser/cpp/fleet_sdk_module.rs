@@ -67,6 +67,12 @@ extern "C" {
         ptr: u64,
         request: u::RustBuffer,
     ) -> u64;
+    fn uniffi_cyclops_sdk_fn_method_cyclopsclient_upload_image_file(
+        ptr: u64,
+        namespace: u::RustBuffer,
+        name: u::RustBuffer,
+        contents: u::RustBuffer,
+    ) -> u64;
     fn uniffi_cyclops_sdk_fn_method_cyclopsclient_create_image(
         ptr: u64,
         namespace: u::RustBuffer,
@@ -607,6 +613,7 @@ extern "C" {
     fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim() -> u16;
     fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim() -> u16;
     fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_presign_image_uploads() -> u16;
+    fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_upload_image_file() -> u16;
     fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_image() -> u16;
     fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_image() -> u16;
     fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_image() -> u16;
@@ -910,6 +917,21 @@ pub unsafe fn ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_presign_image_uplo
     uniffi_cyclops_sdk_fn_method_cyclopsclient_presign_image_uploads(
         u64::into_rust(ptr),
         u::RustBuffer::into_rust(request),
+    )
+    .into_js()
+}
+#[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_upload_image_file(
+    ptr: js::Handle,
+    namespace: js::ForeignBytes,
+    name: js::ForeignBytes,
+    contents: js::ForeignBytes,
+) -> js::Handle {
+    uniffi_cyclops_sdk_fn_method_cyclopsclient_upload_image_file(
+        u64::into_rust(ptr),
+        u::RustBuffer::into_rust(namespace),
+        u::RustBuffer::into_rust(name),
+        u::RustBuffer::into_rust(contents),
     )
     .into_js()
 }
@@ -2708,6 +2730,11 @@ pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim()
 pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_presign_image_uploads(
 ) -> js::UInt16 {
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_presign_image_uploads().into_js()
+}
+#[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_upload_image_file() -> js::UInt16
+{
+    uniffi_cyclops_sdk_checksum_method_cyclopsclient_upload_image_file().into_js()
 }
 #[wasm_bindgen]
 pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_image() -> js::UInt16 {

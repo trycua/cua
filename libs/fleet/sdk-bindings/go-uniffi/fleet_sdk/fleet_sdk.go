@@ -486,6 +486,15 @@ func uniffiCheckChecksums() {
 	}
 	{
 		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_method_cyclopsclient_upload_image_file()
+		})
+		if checksum != 14212 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_upload_image_file: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
 			return C.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_image()
 		})
 		if checksum != 51053 {
@@ -740,7 +749,7 @@ func uniffiCheckChecksums() {
 		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
 			return C.uniffi_cyclops_sdk_checksum_method_httpclient_execute()
 		})
-		if checksum != 33213 {
+		if checksum != 57947 {
 			// If this happens try cleaning and rebuilding your project
 			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_httpclient_execute: UniFFI API checksum mismatch")
 		}
@@ -1357,6 +1366,10 @@ type CyclopsClientInterface interface {
 	RenewClaim(claim Claim, shutdownTime string) (Claim, error)
 	WaitClaim(claim Claim) (Sandbox, error)
 	PresignImageUploads(request ImageUploadRequest) (ImageUploadResponse, error)
+	// Hash and upload one file, or reuse a matching existing object.
+	// Returns only the bound digest, size, and tenant reference, never a signed URL.
+	// This does not create an Image or attest to object versioning/encryption.
+	UploadImageFile(namespace string, name string, contents []byte) (ImageUploadInstruction, error)
 	CreateImage(namespace string, manifest *cyclops_sdk_schema.PreservedJson) (*cyclops_sdk_schema.PreservedJson, error)
 	DeleteImage(namespace string, name string) error
 	GetImage(namespace string, name string) (*cyclops_sdk_schema.PreservedJson, error)
@@ -1703,6 +1716,44 @@ func (_self *CyclopsClient) PresignImageUploads(request ImageUploadRequest) (Ima
 		},
 		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_presign_image_uploads(
 			_pointer, FfiConverterImageUploadRequestINSTANCE.Lower(request)),
+		// pollFn
+		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_poll_rust_buffer(handle, continuation, data)
+		},
+		// freeFn
+		func(handle C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_free_rust_buffer(handle)
+		},
+	)
+
+	if err == nil {
+		return res, nil
+	}
+
+	return res, err
+}
+
+// Hash and upload one file, or reuse a matching existing object.
+// Returns only the bound digest, size, and tenant reference, never a signed URL.
+// This does not create an Image or attest to object versioning/encryption.
+func (_self *CyclopsClient) UploadImageFile(namespace string, name string, contents []byte) (ImageUploadInstruction, error) {
+	_pointer := _self.ffiObject.incrementPointer("*CyclopsClient")
+	defer _self.ffiObject.decrementPointer()
+	res, err := uniffiRustCallAsync[*SdkError](
+		FfiConverterSdkErrorINSTANCE,
+		// completeFn
+		func(handle C.uint64_t, status *C.RustCallStatus) RustBufferI {
+			res := C.ffi_cyclops_sdk_rust_future_complete_rust_buffer(handle, status)
+			return GoRustBuffer{
+				inner: res,
+			}
+		},
+		// liftFn
+		func(ffi RustBufferI) ImageUploadInstruction {
+			return FfiConverterImageUploadInstructionINSTANCE.Lift(ffi)
+		},
+		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_upload_image_file(
+			_pointer, FfiConverterStringINSTANCE.Lower(namespace), FfiConverterStringINSTANCE.Lower(name), FfiConverterBytesINSTANCE.Lower(contents)),
 		// pollFn
 		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
 			C.ffi_cyclops_sdk_rust_future_poll_rust_buffer(handle, continuation, data)
@@ -2769,6 +2820,9 @@ func (_ FfiDestroyerCyclopsCredentials) Destroy(value *CyclopsCredentials) {
 type HttpClient interface {
 	// Executes an HTTP request. Foreign implementations must enforce
 	// `request.max_response_bytes` while streaming the response body.
+	// Implementations must not follow redirects, retry requests, or add ambient
+	// authentication/cookies. Send only the supplied headers and body; signed
+	// upload requests also use this interface and must not leak credentials.
 	Execute(request HttpRequest) (HttpResponse, error)
 }
 type HttpClientImpl struct {
@@ -2777,6 +2831,9 @@ type HttpClientImpl struct {
 
 // Executes an HTTP request. Foreign implementations must enforce
 // `request.max_response_bytes` while streaming the response body.
+// Implementations must not follow redirects, retry requests, or add ambient
+// authentication/cookies. Send only the supplied headers and body; signed
+// upload requests also use this interface and must not leak credentials.
 func (_self *HttpClientImpl) Execute(request HttpRequest) (HttpResponse, error) {
 	_pointer := _self.ffiObject.incrementPointer("HttpClient")
 	defer _self.ffiObject.decrementPointer()

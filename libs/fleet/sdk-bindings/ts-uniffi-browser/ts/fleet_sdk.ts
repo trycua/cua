@@ -3624,6 +3624,12 @@ export interface CyclopsClientLike {
     serviceRequest(sandbox: Sandbox, service: string, path: string, request: HttpRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<HttpResponse>;
     updatePool(pool: Pool, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Pool>;
     updateTemplate(template: Template, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Template>;
+/**
+ * Hash and upload one file, or reuse a matching existing object.
+ * Returns only the bound digest, size, and tenant reference, never a signed URL.
+ * This does not create an Image or attest to object versioning/encryption.
+ */
+    uploadImageFile(namespace: string, name: string, contents: ArrayBuffer, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ImageUploadInstruction>;
     waitClaim(claim: Claim, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Sandbox>;
 }
 /**
@@ -4504,6 +4510,35 @@ private constructor(pointer: UniffiHandle) {
         );
     }
 
+/**
+ * Hash and upload one file, or reuse a matching existing object.
+ * Returns only the bound digest, size, and tenant reference, never a signed URL.
+ * This does not create an Image or attest to object versioning/encryption.
+ */
+    async uploadImageFile(namespace: string, name: string, contents: ArrayBuffer, asyncOpts_?: { signal: AbortSignal }): Promise<ImageUploadInstruction> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_upload_image_file(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterString.lower(namespace, nativeModule().rustbuffer_alloc),FfiConverterString.lower(name, nativeModule().rustbuffer_alloc),FfiConverterArrayBuffer.lower(contents, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeImageUploadInstruction.lift.bind(FfiConverterTypeImageUploadInstruction),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    }
+
     async waitClaim(claim: Claim, asyncOpts_?: { signal: AbortSignal }): Promise<Sandbox> /*throws*/ {
     return await uniffiRustCallAsync(
             /*rustCaller:*/ uniffiCaller,
@@ -4808,6 +4843,9 @@ export interface HttpClient {
 /**
  * Executes an HTTP request. Foreign implementations must enforce
  * `request.max_response_bytes` while streaming the response body.
+ * Implementations must not follow redirects, retry requests, or add ambient
+ * authentication/cookies. Send only the supplied headers and body; signed
+ * upload requests also use this interface and must not leak credentials.
  */
     execute(request: HttpRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<HttpResponse>;
 }
@@ -4831,6 +4869,9 @@ private constructor(pointer: UniffiHandle) {
 /**
  * Executes an HTTP request. Foreign implementations must enforce
  * `request.max_response_bytes` while streaming the response body.
+ * Implementations must not follow redirects, retry requests, or add ambient
+ * authentication/cookies. Send only the supplied headers and body; signed
+ * upload requests also use this interface and must not leak credentials.
  */
     async execute(request: HttpRequest, asyncOpts_?: { signal: AbortSignal }): Promise<HttpResponse> /*throws*/ {
     return await uniffiRustCallAsync(
@@ -5681,6 +5722,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_template() !== 18704) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_template");
     }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_upload_image_file() !== 14212) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_upload_image_file");
+    }
     if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim() !== 18984) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim");
     }
@@ -5708,7 +5752,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_pool_poll_limit() !== 6865) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_pool_poll_limit");
     }
-    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_httpclient_execute() !== 33213) {
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_httpclient_execute() !== 57947) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_httpclient_execute");
     }
     if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_httprequestbuilder_new() !== 25892) {

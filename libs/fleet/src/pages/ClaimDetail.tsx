@@ -10,6 +10,7 @@ import SpaceBetween from "@cloudscape-design/components/space-between"
 import StatusIndicator from "@cloudscape-design/components/status-indicator"
 import { useFlash } from "../components/FlashContext"
 import { DesktopPane } from "../components/DesktopPane"
+import { FirstWorkloadGuide } from "../components/FirstWorkloadGuide"
 import { deleteClaim, getClaim } from "../fleet/claims"
 import type { Claim, PoolService } from "../fleet/models"
 import { getPool } from "../fleet/pools"
@@ -218,6 +219,15 @@ function ClaimDetailContent({
           </div>
         </ColumnLayout>
       </Container>
+
+      {isBound && (
+        <FirstWorkloadGuide
+          namespace={namespace}
+          pool={poolName}
+          claim={claimName}
+          services={services}
+        />
+      )}
 
       {isBound && sandboxName && services.some(s => s.name === "vnc") && (
         <Container

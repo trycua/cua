@@ -363,8 +363,7 @@ struct AxWindowDocument {
 
 impl AxWindowDocument {
     unsafe fn budget(element: AXUIElementRef, deadline: &Deadline) -> Option<()> {
-        let left = deadline.remaining()?;
-        AXUIElementSetMessagingTimeout(element, left.as_secs_f32());
+        AXUIElementSetMessagingTimeout(element, deadline.messaging_timeout_seconds()?);
         Some(())
     }
 }

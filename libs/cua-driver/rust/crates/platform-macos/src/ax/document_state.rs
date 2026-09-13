@@ -18,6 +18,10 @@ impl Deadline {
             .checked_duration_since(Instant::now())
             .filter(|left| !left.is_zero())
     }
+
+    pub fn messaging_timeout_seconds(&self) -> Option<f32> {
+        Some(self.remaining()?.as_secs_f32())
+    }
 }
 
 pub trait DocumentAttributes {
@@ -68,34 +72,65 @@ mod tests {
         close_button_edited: Option<bool>,
         stalls: bool,
         calls: RefCell<Vec<&'static str>>,
+        timeouts: RefCell<Vec<f32>>,
     }
 
     impl FakeApp {
-        fn record(&self, attribute: &'static str) {
+        fn record(&self, attribute: &'static str, deadline: &Deadline) {
             self.calls.borrow_mut().push(attribute);
+            // Mirrors the AX reader: whatever the deadline hands over is what
+            // AXUIElementSetMessagingTimeout would receive for this request.
+            if let Some(seconds) = deadline.messaging_timeout_seconds() {
+                self.timeouts.borrow_mut().push(seconds);
+            }
             if self.stalls {
-                // A request to a hung app costs the same wall clock every time,
-                // whatever the caller thinks its remaining budget is.
                 std::thread::sleep(STALL);
             }
         }
     }
 
     impl DocumentAttributes for FakeApp {
-        fn document_url(&self, _deadline: &Deadline) -> Option<String> {
-            self.record("AXDocument");
+        fn document_url(&self, deadline: &Deadline) -> Option<String> {
+            self.record("AXDocument", deadline);
             self.url.clone()
         }
 
-        fn edited_on_window(&self, _deadline: &Deadline) -> Option<bool> {
-            self.record("AXEdited");
+        fn edited_on_window(&self, deadline: &Deadline) -> Option<bool> {
+            self.record("AXEdited", deadline);
             self.window_edited
         }
 
-        fn edited_on_close_button(&self, _deadline: &Deadline) -> Option<bool> {
-            self.record("AXCloseButton/AXEdited");
+        fn edited_on_close_button(&self, deadline: &Deadline) -> Option<bool> {
+            self.record("AXCloseButton/AXEdited", deadline);
             self.close_button_edited
         }
+    }
+
+    #[test]
+    fn each_request_is_given_only_the_time_that_is_left() {
+        let slow = FakeApp {
+            stalls: true,
+            close_button_edited: Some(true),
+            ..FakeApp::default()
+        };
+        let budget = STALL * 3;
+
+        collect_within(&slow, budget);
+
+        let timeouts = slow.timeouts.borrow().clone();
+        assert_eq!(timeouts.len(), 3, "every attribute should have been read");
+        assert!(
+            timeouts[0] <= budget.as_secs_f32(),
+            "first request exceeded the budget: {timeouts:?}"
+        );
+        assert!(
+            timeouts.windows(2).all(|pair| pair[1] < pair[0]),
+            "each request must be handed less time than the previous: {timeouts:?}"
+        );
+        assert!(
+            timeouts[2] < (budget - STALL * 2).as_secs_f32() + 0.01,
+            "the last request kept time already spent: {timeouts:?}"
+        );
     }
 
     #[test]

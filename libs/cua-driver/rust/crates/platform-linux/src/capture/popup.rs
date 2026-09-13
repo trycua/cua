@@ -1,4 +1,4 @@
-//! Conservative X11 composition of one exact-window combo popup.
+//! Conservative X11 composition of exact-window combo popups.
 //! Never reads desktop pixels, activates windows, waits for UI, or expands the canvas.
 use anyhow::{anyhow, bail, Context, Result};
 use x11rb::connection::Connection;
@@ -38,11 +38,13 @@ struct Surface {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Snapshot {
     target: Surface,
-    popup: Surface,
+    // Root-child order is X11 stacking order, from bottom to top.
+    popups: Vec<Surface>,
     pid: u32,
     root_children: Vec<Window>,
     target_ancestry: Vec<Window>,
-    // Every mapped drawable above the popup, including geometry, is checked.
+    // Every mapped foreign drawable above the lowest popup, including geometry,
+    // is checked. Owned combo popups are captured in stack order instead.
     above: Vec<Surface>,
 }
 
@@ -179,22 +181,22 @@ impl Inspector {
             };
             eligible.push(popup);
         }
-        let popup = match eligible.len() {
-            0 => return Ok(None),
-            1 => eligible.remove(0),
-            _ => bail!("multiple same-window combo popups are unsupported"),
-        };
+        if eligible.is_empty() {
+            return Ok(None);
+        }
         let target_surface = self
             .surface(target)?
             .ok_or_else(|| anyhow!("foreground popup target is not viewable"))?;
-        validate_format(&popup)?;
-        let opacity = self.singleton(popup.xid, self.opacity, AtomEnum::CARDINAL)?;
-        if opacity.is_some_and(|value| value != u32::MAX) {
-            bail!("translucent X11 combo popup is unsupported");
-        }
-        let shape = self.conn.shape_query_extents(popup.xid)?.reply()?;
-        if shape.bounding_shaped || shape.clip_shaped {
-            bail!("shaped X11 combo popup is unsupported");
+        for popup in &eligible {
+            validate_format(popup)?;
+            let opacity = self.singleton(popup.xid, self.opacity, AtomEnum::CARDINAL)?;
+            if opacity.is_some_and(|value| value != u32::MAX) {
+                bail!("translucent X11 combo popup is unsupported");
+            }
+            let shape = self.conn.shape_query_extents(popup.xid)?.reply()?;
+            if shape.bounding_shaped || shape.clip_shaped {
+                bail!("shaped X11 combo popup is unsupported");
+            }
         }
         let mut ancestry = vec![target];
         let mut parent = target;
@@ -213,17 +215,31 @@ impl Inspector {
             .iter()
             .position(|xid| *xid == parent)
             .ok_or_else(|| anyhow!("X11 target frame missing from root stack"))?;
-        let popup_stack = children
+        let popup_stack = eligible
             .iter()
-            .position(|xid| *xid == popup.xid)
-            .ok_or_else(|| anyhow!("X11 combo popup missing from root stack"))?;
-        if popup_stack <= target_stack {
+            .map(|popup| {
+                children
+                    .iter()
+                    .position(|xid| *xid == popup.xid)
+                    .ok_or_else(|| anyhow!("X11 combo popup missing from root stack"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        if popup_stack.iter().any(|stack| *stack <= target_stack) {
             bail!("X11 combo popup is below its target frame");
         }
+        let lowest_popup_stack = *popup_stack
+            .first()
+            .ok_or_else(|| anyhow!("X11 combo popup stack is empty"))?;
         let mut above = Vec::new();
-        for &xid in &children[popup_stack + 1..] {
+        for &xid in &children[lowest_popup_stack + 1..] {
+            if eligible.iter().any(|popup| popup.xid == xid) {
+                continue;
+            }
             if let Some(surface) = self.surface(xid)? {
-                if surface.rect.overlaps(popup.rect) {
+                if eligible
+                    .iter()
+                    .any(|popup| surface.rect.overlaps(popup.rect))
+                {
                     bail!("X11 combo popup is occluded by another window");
                 }
                 above.push(surface);
@@ -231,7 +247,7 @@ impl Inspector {
         }
         Ok(Some(Snapshot {
             target: target_surface,
-            popup,
+            popups: eligible,
             pid,
             root_children: children,
             target_ancestry: ancestry,
@@ -254,24 +270,32 @@ fn validate_format(popup: &Surface) -> Result<()> {
     Ok(())
 }
 
-fn paint(base: &[u8], popup: &[u8], snapshot: &Snapshot) -> Result<Vec<u8>> {
+fn paint(base: &[u8], popups: &[Vec<u8>], snapshot: &Snapshot) -> Result<Vec<u8>> {
     let mut canvas = image::load_from_memory_with_format(base, image::ImageFormat::Png)?.to_rgba8();
-    let pixels = image::load_from_memory_with_format(popup, image::ImageFormat::Png)?.to_rgba8();
-    if canvas.dimensions() != (snapshot.target.rect.width, snapshot.target.rect.height)
-        || pixels.dimensions() != (snapshot.popup.rect.width, snapshot.popup.rect.height)
-    {
+    if canvas.dimensions() != (snapshot.target.rect.width, snapshot.target.rect.height) {
         bail!("X11 combo capture dimensions changed");
     }
-    if pixels.pixels().any(|pixel| pixel.0[3] != 255) {
-        bail!("X11 combo capture has unsupported alpha");
+    if popups.len() != snapshot.popups.len() {
+        bail!("X11 combo capture popup inventory changed");
     }
-    // The image API clips negative offsets and pixels outside the original canvas.
-    image::imageops::overlay(
-        &mut canvas,
-        &pixels,
-        i64::from(snapshot.popup.rect.x) - i64::from(snapshot.target.rect.x),
-        i64::from(snapshot.popup.rect.y) - i64::from(snapshot.target.rect.y),
-    );
+    for (popup, bytes) in snapshot.popups.iter().zip(popups) {
+        let pixels =
+            image::load_from_memory_with_format(bytes, image::ImageFormat::Png)?.to_rgba8();
+        if pixels.dimensions() != (popup.rect.width, popup.rect.height) {
+            bail!("X11 combo capture dimensions changed");
+        }
+        if pixels.pixels().any(|pixel| pixel.0[3] != 255) {
+            bail!("X11 combo capture has unsupported alpha");
+        }
+        // The image API clips negative offsets and pixels outside the original canvas.
+        // Popups are overlaid in root-stack order, so later windows remain on top.
+        image::imageops::overlay(
+            &mut canvas,
+            &pixels,
+            i64::from(popup.rect.x) - i64::from(snapshot.target.rect.x),
+            i64::from(popup.rect.y) - i64::from(snapshot.target.rect.y),
+        );
+    }
     let mut png = std::io::Cursor::new(Vec::new());
     canvas.write_to(&mut png, image::ImageFormat::Png)?;
     Ok(png.into_inner())
@@ -288,14 +312,18 @@ pub(super) fn capture(xid: u64, raw: impl Fn(u64) -> Result<Vec<u8>>) -> Result<
     };
     let base = raw(xid)?;
     // Direct drawable capture only; no recursive composition or desktop pixels.
-    let popup = raw(u64::from(before.popup.xid))?;
+    let popups = before
+        .popups
+        .iter()
+        .map(|popup| raw(u64::from(popup.xid)))
+        .collect::<Result<Vec<_>>>()?;
     let after = inspector
         .inspect(target)
         .map_err(|error| anyhow!("X11 popup capture revalidation: {error:#}"))?;
     if after.as_ref() != Some(&before) {
         bail!("X11 popup capture became unstable; observe again");
     }
-    paint(&base, &popup, &before)
+    paint(&base, &popups, &before)
 }
 
 #[cfg(test)]
@@ -317,10 +345,10 @@ mod tests {
             override_redirect: true,
         }
     }
-    fn snapshot(popup: Surface) -> Snapshot {
+    fn snapshot(popups: Vec<Surface>) -> Snapshot {
         Snapshot {
             target: surface(1, 100, 200, 4, 3),
-            popup,
+            popups,
             pid: 10,
             root_children: vec![1, 2],
             target_ancestry: vec![1],
@@ -338,7 +366,7 @@ mod tests {
     fn clips_popup_without_expanding_or_shifting_original_canvas() {
         let base = png(4, 3, [0, 0, 255, 255]);
         let popup = png(3, 2, [255, 0, 0, 255]);
-        let result = paint(&base, &popup, &snapshot(surface(2, 99, 202, 3, 2))).unwrap();
+        let result = paint(&base, &[popup], &snapshot(vec![surface(2, 99, 202, 3, 2)])).unwrap();
         let actual = image::load_from_memory(&result).unwrap().to_rgba8();
         assert_eq!(actual.dimensions(), (4, 3));
         for (x, y, pixel) in actual.enumerate_pixels() {
@@ -358,8 +386,8 @@ mod tests {
         let base = png(4, 3, [0, 0, 255, 255]);
         let result = paint(
             &base,
-            &png(2, 2, [255, 0, 0, 255]),
-            &snapshot(surface(2, 105, 200, 2, 2)),
+            &[png(2, 2, [255, 0, 0, 255])],
+            &snapshot(vec![surface(2, 105, 200, 2, 2)]),
         )
         .unwrap();
         assert_eq!(
@@ -370,20 +398,41 @@ mod tests {
 
     #[test]
     fn changed_image_dimensions_and_alpha_are_explicit_errors() {
-        let state = snapshot(surface(2, 101, 201, 2, 2));
+        let state = snapshot(vec![surface(2, 101, 201, 2, 2)]);
         assert!(paint(
             &png(5, 3, [0, 0, 0, 255]),
-            &png(2, 2, [1, 2, 3, 255]),
+            &[png(2, 2, [1, 2, 3, 255])],
             &state
         )
         .is_err());
         assert!(paint(
             &png(4, 3, [0, 0, 0, 255]),
-            &png(2, 1, [1, 2, 3, 255]),
+            &[png(2, 1, [1, 2, 3, 255])],
             &state
         )
         .is_err());
-        assert!(paint(&png(4, 3, [0, 0, 0, 255]), &png(2, 2, [1, 2, 3, 0]), &state).is_err());
+        assert!(paint(
+            &png(4, 3, [0, 0, 0, 255]),
+            &[png(2, 2, [1, 2, 3, 0])],
+            &state
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn overlays_owned_popups_in_root_stack_order() {
+        let base = png(4, 3, [0, 0, 255, 255]);
+        let result = paint(
+            &base,
+            &[png(3, 2, [255, 0, 0, 255]), png(2, 2, [0, 255, 0, 255])],
+            &snapshot(vec![surface(2, 100, 200, 3, 2), surface(3, 101, 201, 2, 2)]),
+        )
+        .unwrap();
+        let actual = image::load_from_memory(&result).unwrap().to_rgba8();
+        assert_eq!(actual.get_pixel(0, 0).0, [255, 0, 0, 255]);
+        assert_eq!(actual.get_pixel(1, 1).0, [0, 255, 0, 255]);
+        assert_eq!(actual.get_pixel(2, 2).0, [0, 255, 0, 255]);
+        assert_eq!(actual.get_pixel(3, 2).0, [0, 0, 255, 255]);
     }
 
     #[test]
@@ -417,9 +466,9 @@ mod tests {
 
     #[test]
     fn metadata_changes_do_not_match_the_captured_snapshot() {
-        let original = snapshot(surface(2, 101, 201, 2, 2));
+        let original = snapshot(vec![surface(2, 101, 201, 2, 2)]);
         let mut after = original.clone();
-        after.popup.rect.height += 1;
+        after.popups[0].rect.height += 1;
         assert_ne!(original, after);
         after = original.clone();
         after.pid += 1;
@@ -428,7 +477,7 @@ mod tests {
         after.root_children.reverse();
         assert_ne!(original, after);
         after = original.clone();
-        after.popup.xid = 3;
+        after.popups[0].xid = 3;
         assert_ne!(original, after);
     }
 }
@@ -480,28 +529,31 @@ mod live_tests {
             fixture.sibling = fixture.window(400, 300, 96, 72, false, 0x0011_2233);
             fixture.activate(fixture.target);
             let target = fixture.inspector.surface(fixture.target).unwrap().unwrap();
-            fixture.popup = fixture.window(
+            fixture.popup = fixture.combo_popup(
                 (target.rect.x + 10) as i16,
                 (target.rect.y + 10) as i16,
                 24,
                 20,
-                true,
                 0x00dd_2244,
-            );
-            fixture.property(
-                fixture.popup,
-                fixture.inspector.transient,
-                AtomEnum::WINDOW,
-                &[fixture.target],
-            );
-            fixture.property(
-                fixture.popup,
-                fixture.inspector.window_type,
-                AtomEnum::ATOM,
-                &[fixture.inspector.combo],
             );
             fixture.sync();
             fixture
+        }
+        fn combo_popup(&mut self, x: i16, y: i16, width: u16, height: u16, pixel: u32) -> Window {
+            let popup = self.window(x, y, width, height, true, pixel);
+            self.property(
+                popup,
+                self.inspector.transient,
+                AtomEnum::WINDOW,
+                &[self.target],
+            );
+            self.property(
+                popup,
+                self.inspector.window_type,
+                AtomEnum::ATOM,
+                &[self.inspector.combo],
+            );
+            popup
         }
         fn window(
             &mut self,
@@ -674,6 +726,37 @@ mod live_tests {
             .unwrap();
         f.activate(f.sibling);
         f.assert_baseline();
+    }
+
+    #[test]
+    #[ignore = "requires disposable depth24 Xvfb with real EWMH WM; run --test-threads=1"]
+    fn live_multiple_owned_combos_compose_in_root_stack_order() {
+        let mut f = Fixture::new();
+        let target = f.inspector.surface(f.target).unwrap().unwrap();
+        let upper = f.combo_popup(
+            (target.rect.x + 16) as i16,
+            (target.rect.y + 16) as i16,
+            24,
+            20,
+            0x0022_dd44,
+        );
+        f.sync();
+
+        let image = image::load_from_memory(&f.capture().unwrap())
+            .unwrap()
+            .to_rgba8();
+        assert_eq!(image.get_pixel(12, 12).0, [0xdd, 0x22, 0x44, 255]);
+        assert_eq!(image.get_pixel(18, 18).0, [0x22, 0xdd, 0x44, 255]);
+
+        // An otherwise matching but wrong-owner popup remains a foreign
+        // occluder rather than being included in the composition.
+        f.property(
+            upper,
+            f.inspector.pid,
+            AtomEnum::CARDINAL,
+            &[std::process::id().wrapping_add(1)],
+        );
+        assert!(f.capture().is_err());
     }
 
     #[test]

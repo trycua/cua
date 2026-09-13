@@ -42,8 +42,16 @@ pub enum ElementAncestry {
     /// The live element ascends to an AX window whose CGWindowID is the
     /// requested one.
     ProvenDescendant,
-    /// The live element ascends to a different window of the same process.
-    OutsideTargetWindow,
+    /// The live element ascends to the requested process's own `AXMenuBar`.
+    /// A menu bar is process-scoped: it has no CGWindowID and no window
+    /// ancestor, so window ancestry is unprovable for it by construction.
+    /// The exact owning application is proven instead, which is the scope a
+    /// menu command actually acts in.
+    ProvenAppMenu,
+    /// The live element ascends to a different window. `window_id` is the
+    /// window it does belong to, with the owning `pid` when WindowServer
+    /// could resolve one, so a refusal can name a scope that exists.
+    OutsideTargetWindow { pid: Option<i32>, window_id: u32 },
     /// Ancestry could not be resolved (dead element, SPI failure). An address
     /// the shell cannot re-prove is not an exact target.
     Unproven,
@@ -174,7 +182,9 @@ fn refuse(
 /// - a target absent from fresh `AXWindows` (off-Space or AX-unresolved) is
 ///   observation-only;
 /// - an addressed element must prove ancestry to the requested window for
-///   every route, including semantic AX;
+///   every route, including semantic AX, except that the process's own menu
+///   bar — which cannot have that ancestry — is addressable by semantic AX
+///   action;
 /// - semantic AX actions remain available for minimized/hidden targets;
 /// - the routed pointer requires a visible (possibly occluded) target; and
 /// - process-scoped keyboard additionally requires that the target is the
@@ -213,7 +223,29 @@ pub fn decide_background_input(
 
     match facts.element {
         ElementAncestry::NotAddressed | ElementAncestry::ProvenDescendant => {}
-        ElementAncestry::OutsideTargetWindow | ElementAncestry::Unproven => {
+        // An application menu is owned by the process, not by a window, so a
+        // semantic AX action on it is exactly addressed even though it can
+        // have no window ancestry to the requested id. Window-aimed routes
+        // still require that ancestry: a stamped pointer event or a
+        // process-scoped keystroke would land somewhere other than what was
+        // addressed.
+        ElementAncestry::ProvenAppMenu if matches!(action, BackgroundAction::AxSemantic) => {}
+        ElementAncestry::OutsideTargetWindow { pid, window_id } => {
+            let owner = match pid {
+                Some(pid) => format!("pid {pid}"),
+                None => "an unresolved owner".into(),
+            };
+            return refuse(
+                refusal_codes::ELEMENT_OUTSIDE_TARGET_WINDOW,
+                format!(
+                    "this element belongs to window {window_id} ({owner}), not to the \
+                     requested window {} — acquire that window id and act there",
+                    target.window_id
+                ),
+                Some("get_window_state"),
+            );
+        }
+        ElementAncestry::Unproven | ElementAncestry::ProvenAppMenu => {
             return refuse(
                 refusal_codes::ELEMENT_OUTSIDE_TARGET_WINDOW,
                 format!(
@@ -397,6 +429,13 @@ mod tests {
         }
     }
 
+    fn reason_of(decision: BackgroundInputDecision) -> String {
+        match decision {
+            BackgroundInputDecision::Refuse(refusal) => refusal.reason,
+            BackgroundInputDecision::Execute { .. } => panic!("expected a refusal"),
+        }
+    }
+
     /// Regression for the proven same-PID wrong-target case: target window A
     /// requested while sibling window B is the process's focused/eligible
     /// window. Process-scoped keyboard must refuse before dispatch — an
@@ -569,7 +608,14 @@ mod tests {
     #[test]
     fn unproven_element_ancestry_refuses_all_routes() {
         for element in [
-            ElementAncestry::OutsideTargetWindow,
+            ElementAncestry::OutsideTargetWindow {
+                pid: Some(42),
+                window_id: 701,
+            },
+            ElementAncestry::OutsideTargetWindow {
+                pid: None,
+                window_id: 701,
+            },
             ElementAncestry::Unproven,
         ] {
             let facts = BackgroundTargetFacts {
@@ -586,6 +632,46 @@ mod tests {
         }
     }
 
+    /// The remediation must name a scope the element can actually be acted in.
+    /// Advising a fresh snapshot of the requested window is wrong whenever the
+    /// element provably lives in a different window: re-snapshotting cannot
+    /// move it there, and the caller re-issues the same refused call.
+    #[test]
+    fn sibling_window_refusal_names_the_window_the_element_belongs_to() {
+        let facts = BackgroundTargetFacts {
+            element: ElementAncestry::OutsideTargetWindow {
+                pid: Some(43),
+                window_id: 701,
+            },
+            ..matched_facts()
+        };
+        let reason = reason_of(decide_background_input(
+            TARGET,
+            &facts,
+            BackgroundAction::WindowPointer,
+        ));
+        assert!(reason.contains("window 701"), "{reason}");
+        assert!(reason.contains("pid 43"), "{reason}");
+        assert!(
+            !reason.contains("get_window_state snapshot"),
+            "must not advise re-snapshotting the requested window: {reason}"
+        );
+
+        let unresolved_owner = BackgroundTargetFacts {
+            element: ElementAncestry::OutsideTargetWindow {
+                pid: None,
+                window_id: 701,
+            },
+            ..matched_facts()
+        };
+        let reason = reason_of(decide_background_input(
+            TARGET,
+            &unresolved_owner,
+            BackgroundAction::WindowPointer,
+        ));
+        assert!(reason.contains("unresolved owner"), "{reason}");
+    }
+
     #[test]
     fn proven_element_ancestry_executes_semantic_ax_even_when_minimized() {
         let facts = BackgroundTargetFacts {
@@ -594,6 +680,30 @@ mod tests {
             ..matched_facts()
         };
         assert!(decide_background_input(TARGET, &facts, BackgroundAction::AxSemantic).is_execute());
+    }
+
+    /// A menu bar has no window ancestor, so requiring one would refuse every
+    /// menu command by construction. Semantic AX is admitted on the proven
+    /// application menu; the window-aimed routes still are not, because they
+    /// cannot be aimed at a row that lives outside every window.
+    #[test]
+    fn proven_app_menu_ancestry_admits_only_semantic_ax() {
+        let facts = BackgroundTargetFacts {
+            element: ElementAncestry::ProvenAppMenu,
+            ..matched_facts()
+        };
+        assert!(decide_background_input(TARGET, &facts, BackgroundAction::AxSemantic).is_execute());
+        for action in [
+            BackgroundAction::WindowPointer,
+            BackgroundAction::InsertText,
+            BackgroundAction::GenericKey,
+        ] {
+            assert_eq!(
+                code_of(decide_background_input(TARGET, &facts, action)),
+                refusal_codes::ELEMENT_OUTSIDE_TARGET_WINDOW,
+                "{action:?} on an application menu row"
+            );
+        }
     }
 
     /// Refusal precedence: exactness failures are reported before state or
@@ -606,7 +716,10 @@ mod tests {
             target_minimized: Some(true),
             app_hidden: Some(true),
             competing_keyboard_destinations: 3,
-            element: ElementAncestry::OutsideTargetWindow,
+            element: ElementAncestry::OutsideTargetWindow {
+                pid: Some(9),
+                window_id: 701,
+            },
         };
         assert_eq!(
             code_of(decide_background_input(

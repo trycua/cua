@@ -14,7 +14,7 @@ use cua_driver_core::background_input::{
 
 use super::bindings::{
     ax_get_window_id, copy_ax_windows_including, copy_bool_attr, copy_element_attr,
-    copy_string_attr, focused_element_of_pid, AXUIElementCreateApplication, AXUIElementRef,
+    copy_string_attr, element_pid, focused_element_of_pid, AXUIElementCreateApplication, AXUIElementRef,
 };
 use crate::windows::{all_windows, resolve_window_owner, WindowOwner};
 
@@ -55,18 +55,91 @@ pub unsafe fn element_window_id(element: AXUIElementRef) -> Option<u32> {
         if owned {
             CFRelease(current as CFTypeRef);
         }
-        match parent {
-            Some(parent) => {
-                current = parent;
-                owned = true;
-            }
-            None => return None,
-        }
+        current = parent?;
+        owned = true;
     }
     if owned {
         CFRelease(current as CFTypeRef);
     }
     resolved
+}
+
+/// Whether `element` belongs to `pid`'s own menu bar.
+///
+/// A menu bar and its rows are process-scoped: they carry no CGWindowID and
+/// their `AXParent` chain terminates at `AXApplication` without passing an
+/// `AXWindow`, so [`element_window_id`] returns `None` for every menu row and
+/// window ancestry can never be proven. This proves the exact fact that does
+/// exist instead — the row ascends to the requested process's `AXMenuBar` —
+/// and leaves the routing decision to the core gate.
+///
+/// # Safety
+///
+/// `element` must be a valid `AXUIElementRef` for the duration of the call.
+unsafe fn element_is_app_menu_descendant(element: AXUIElementRef, pid: i32) -> bool {
+    if element_pid(element) != Some(pid) {
+        return false;
+    }
+    let mut current: AXUIElementRef = element;
+    let mut owned = false;
+    let mut in_menu_bar = false;
+    for _ in 0..MAX_ANCESTRY_DEPTH {
+        match copy_string_attr(current, "AXRole").as_deref() {
+            Some("AXMenuBar") => {
+                in_menu_bar = true;
+                break;
+            }
+            Some("AXWindow" | "AXSheet" | "AXApplication") | None => break,
+            _ => {}
+        }
+        let parent = copy_element_attr(current, "AXParent");
+        if owned {
+            CFRelease(current as CFTypeRef);
+        }
+        match parent {
+            Some(parent) => {
+                current = parent;
+                owned = true;
+            }
+            None => return false,
+        }
+    }
+    if owned {
+        CFRelease(current as CFTypeRef);
+    }
+    in_menu_bar
+}
+
+/// WindowServer's owner for one CGWindowID, as `get_window_state` reports it.
+/// `None` means WindowServer has no record of the id, so no owner may be named.
+fn window_owner_pid(pid: i32, window_id: u32) -> Option<i32> {
+    match resolve_window_owner(pid, window_id) {
+        WindowOwner::SamePid => Some(pid),
+        WindowOwner::ForeignPid { owner_pid, .. } => Some(owner_pid),
+        WindowOwner::Unknown => None,
+    }
+}
+
+/// Classify an addressed element that did not resolve to the requested window.
+/// `resolved` is the window its `AXWindow`/`AXParent` chain did reach, when
+/// one could be mapped at all.
+///
+/// # Safety
+///
+/// `element` must be a valid `AXUIElementRef` for the duration of the call.
+unsafe fn classify_foreign_ancestry(
+    element: AXUIElementRef,
+    pid: i32,
+    resolved: Option<u32>,
+) -> ElementAncestry {
+    match resolved {
+        Some(window_id) => ElementAncestry::OutsideTargetWindow {
+            pid: window_owner_pid(pid, window_id),
+            window_id,
+        },
+        None if element_is_app_menu_descendant(element, pid) => ElementAncestry::ProvenAppMenu,
+        None => ElementAncestry::Unproven,
+    }
 }
 
 /// The process's focused AX element, but only when it provably belongs to the
@@ -176,10 +249,12 @@ pub fn gather_background_facts(
             super::enablement::ensure_chromium_ax_enabled(pid, app);
             let records = ax_window_records(app, pid, window_id);
             let app_hidden = copy_bool_attr(app, "AXHidden");
-            let element = element_ptr.map(|ptr| match element_window_id(ptr as AXUIElementRef) {
-                Some(id) if id == window_id => ElementAncestry::ProvenDescendant,
-                Some(_) => ElementAncestry::OutsideTargetWindow,
-                None => ElementAncestry::Unproven,
+            let element = element_ptr.map(|ptr| {
+                let element = ptr as AXUIElementRef;
+                match element_window_id(element) {
+                    Some(id) if id == window_id => ElementAncestry::ProvenDescendant,
+                    resolved => classify_foreign_ancestry(element, pid, resolved),
+                }
             });
             CFRelease(app as CFTypeRef);
             (records, app_hidden, element)

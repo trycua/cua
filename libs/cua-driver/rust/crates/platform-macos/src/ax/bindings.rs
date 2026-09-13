@@ -67,6 +67,7 @@ extern "C" {
         element: *mut AXUIElementRef,
     ) -> AXError;
     pub fn AXUIElementPerformAction(element: AXUIElementRef, action: CFStringRef) -> AXError;
+    pub fn AXUIElementGetPid(element: AXUIElementRef, pid: *mut i32) -> AXError;
     pub fn AXUIElementSetAttributeValue(
         element: AXUIElementRef,
         attribute: CFStringRef,
@@ -159,6 +160,17 @@ pub unsafe fn is_attribute_settable(element: AXUIElementRef, attr_name: &str) ->
     AXUIElementIsAttributeSettable(element, attr.as_concrete_TypeRef(), &mut settable)
         == kAXErrorSuccess
         && settable != 0
+}
+
+/// The process an AX element belongs to (`AXUIElementGetPid`), or `None` when
+/// the accessibility server cannot attribute it.
+///
+/// # Safety
+///
+/// `element` must be a valid, live `AXUIElementRef` for the duration of the call.
+pub unsafe fn element_pid(element: AXUIElementRef) -> Option<i32> {
+    let mut pid = 0;
+    (AXUIElementGetPid(element, &mut pid) == kAXErrorSuccess && pid > 0).then_some(pid)
 }
 
 /// Copy a string attribute from an AX element. Returns `None` on any error.

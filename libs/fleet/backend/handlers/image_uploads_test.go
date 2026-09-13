@@ -24,6 +24,22 @@ import (
 
 const imageUploadDigest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
+func TestImageDigestChecksumPreservesDecodeError(t *testing.T) {
+	_, err := imageDigestChecksum("sha256:z0")
+	var invalidByte hex.InvalidByteError
+	if !errors.As(err, &invalidByte) {
+		t.Fatalf("expected hex decode error, got %v", err)
+	}
+	_, err = imageDigestChecksum("sha256:0")
+	if !errors.Is(err, hex.ErrLength) {
+		t.Fatalf("expected hex length error, got %v", err)
+	}
+	_, err = imageDigestChecksum("sha256:00")
+	if err == nil || err.Error() != "invalid sha256 digest" {
+		t.Fatalf("expected digest size rejection, got %v", err)
+	}
+}
+
 type fakeImageObjectStore struct {
 	exists         bool
 	existsErr      error

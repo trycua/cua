@@ -62,6 +62,9 @@ var sandboxServicesAdmissionPolicy string
 //go:embed image_admission.rego
 var imageAdmissionPolicy string
 
+//go:embed image_rollout.rego
+var imageRolloutPolicy string
+
 // authzOwnershipPolicy is the namespace-ownership boundary. Like
 // pool_admission.rego it is not a surface — it is a conjunct several surfaces
 // carry — so it is registered by name below rather than through
@@ -398,6 +401,7 @@ func LoadOpa() {
 	RegisterPolicyModule("custom-resource-creation-admission", "custom_resource_creation_admission.rego", customResourceCreationAdmissionPolicy)
 	RegisterPolicyModule("sandbox-services-admission", "sandbox_services_admission.rego", sandboxServicesAdmissionPolicy)
 	RegisterPolicyModule("image-admission", "image_admission.rego", imageAdmissionPolicy)
+	RegisterPolicyModule("image-rollout", "image_rollout.rego", imageRolloutPolicy)
 	RegisterPolicyModule("authz-ownership", "authz_ownership.rego", authzOwnershipPolicy)
 	for name, module := range surfacePolicySources {
 		RegisterPolicyModule(name, module.filename, module.source)

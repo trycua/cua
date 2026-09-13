@@ -4534,6 +4534,16 @@ export type WindowStateOutput = {
     screenshotFrameValid?: boolean,
     windowBounds?: WindowBounds,
     /**
+     * The window's document URL (`AXDocument` on macOS). Absent when the app
+     * reports none.
+     */
+    documentPath?: string,
+    /**
+     * The app's own unsaved-changes flag for the window. Absent when the app
+     * reports it nowhere: absence is unknown, never "clean".
+     */
+    documentEdited?: boolean,
+    /**
      * Image content belongs to the MCP envelope, never structuredContent.
      */
     images: Array<SnapshotImage>
@@ -4583,6 +4593,8 @@ const FfiConverterTypeWindowStateOutput = (() => {
                 screenshotFilePath: FfiConverterOptionalString.read(from),
                 screenshotFrameValid: FfiConverterOptionalBoolean.read(from),
                 windowBounds: FfiConverterOptionalTypeWindowBounds.read(from),
+                documentPath: FfiConverterOptionalString.read(from),
+                documentEdited: FfiConverterOptionalBoolean.read(from),
                 images: FfiConverterSequenceTypeSnapshotImage.read(from)
             };
         }
@@ -4610,6 +4622,8 @@ const FfiConverterTypeWindowStateOutput = (() => {
             FfiConverterOptionalString.write(value.screenshotFilePath, into);
             FfiConverterOptionalBoolean.write(value.screenshotFrameValid, into);
             FfiConverterOptionalTypeWindowBounds.write(value.windowBounds, into);
+            FfiConverterOptionalString.write(value.documentPath, into);
+            FfiConverterOptionalBoolean.write(value.documentEdited, into);
             FfiConverterSequenceTypeSnapshotImage.write(value.images, into);
         }
         allocationSize(value: TypeName): number {
@@ -4636,6 +4650,8 @@ const FfiConverterTypeWindowStateOutput = (() => {
              FfiConverterOptionalString.allocationSize(value.screenshotFilePath) +
              FfiConverterOptionalBoolean.allocationSize(value.screenshotFrameValid) +
              FfiConverterOptionalTypeWindowBounds.allocationSize(value.windowBounds) +
+             FfiConverterOptionalString.allocationSize(value.documentPath) +
+             FfiConverterOptionalBoolean.allocationSize(value.documentEdited) +
              FfiConverterSequenceTypeSnapshotImage.allocationSize(value.images);
 
         }

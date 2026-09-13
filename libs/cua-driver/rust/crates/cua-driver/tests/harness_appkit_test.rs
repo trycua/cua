@@ -703,6 +703,17 @@ fn harness_appkit_app_menu_row_is_admitted_and_reported_unverifiable() {
             DriverRoute::MacosAxAction,
         ),
         |pid, wid, driver| {
+            let fronted = driver.call(
+                "bring_to_front",
+                serde_json::json!({ "pid": pid as i64, "window_id": wid }),
+            );
+            assert!(
+                !fronted.is_error(),
+                "harness window did not reach the foreground, so its Window menu \
+                 command stays disabled: {}",
+                fronted.text()
+            );
+            std::thread::sleep(Duration::from_millis(250));
             let snapshot = snapshot_elements(driver, pid, wid);
             let index = element_index_by_id(snapshot.tree_text(), "menu-window-arrange-left")
                 .unwrap_or_else(|| {

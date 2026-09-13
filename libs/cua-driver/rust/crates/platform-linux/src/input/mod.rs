@@ -2212,6 +2212,8 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
         };
 
         conn.send_event(false, window, EventMask::KEY_PRESS, &press)?;
+        // Start the hold interval after sending the press, not while it is buffered.
+        conn.flush()?;
         sleep(Duration::from_millis(KEY_DELAY_MS));
         conn.send_event(false, window, EventMask::KEY_RELEASE, &release)?;
         conn.flush()?;
@@ -2219,6 +2221,8 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
             sleep(Duration::from_millis(inter_char_ms));
         }
     }
+    // Deliver the final release before this short-lived connection closes.
+    conn.get_input_focus()?.reply()?;
     Ok(())
 }
 
@@ -2342,6 +2346,8 @@ pub fn send_key_xtest(key: &str, modifiers: &[&str]) -> Result<()> {
         conn.xtest_fake_input(KEY_PRESS_EVENT, sk, 0, x11rb::NONE, 0, 0, 0)?;
     }
     conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
+    // Flush modifiers and key-down before measuring the delivered hold interval.
+    conn.flush()?;
     sleep(Duration::from_millis(KEY_DELAY_MS));
     conn.xtest_fake_input(KEY_RELEASE_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
     if let Some(sk) = auto_shift_kc {
@@ -2423,9 +2429,9 @@ pub fn send_click_xtest_desktop_with_modifiers(
         for click_index in 0..count {
             let press =
                 conn.xtest_fake_input(BUTTON_PRESS_EVENT, button, 0, root, x as i16, y as i16, 0)?;
-            button_pressed = true;
             // Confirm delivery before sleeping; buffering both edges produces a zero-ms click.
             press.check()?;
+            button_pressed = true;
             sleep(Duration::from_millis(CLICK_DELAY_MS));
             conn.xtest_fake_input(BUTTON_RELEASE_EVENT, button, 0, root, x as i16, y as i16, 0)?
                 .check()?;
@@ -2438,8 +2444,7 @@ pub fn send_click_xtest_desktop_with_modifiers(
         Ok(())
     })();
 
-    // Attempt all releases after a partial failure, including a queued button
-    // down whose confirmation failed. Do not strand buttons or modifiers.
+    // Attempt all releases after a partial failure. Do not strand buttons or modifiers.
     let mut release_result: Result<()> = Ok(());
     if button_pressed {
         release_result = (|| -> Result<()> {
@@ -2457,11 +2462,16 @@ pub fn send_click_xtest_desktop_with_modifiers(
             }
         }
     }
-    // Complete queued modifier releases before the short-lived connection closes.
-    conn.get_input_focus()?.reply()?;
+    // Complete queued modifier releases before the short-lived connection closes,
+    // while preserving the primary gesture or cleanup error when one exists.
+    let completion_result = (|| -> Result<()> {
+        conn.get_input_focus()?.reply()?;
+        Ok(())
+    })();
     drop(guards);
     gesture_result?;
     release_result?;
+    completion_result?;
     Ok(())
 }
 
@@ -2651,6 +2661,8 @@ fn send_key_to_target(
     }
     let state = KeyButMask::from(state_bits);
     send_key_event(KEY_PRESS_EVENT, keycode, state, EventMask::KEY_PRESS)?;
+    // Otherwise X11 receives both transitions together after the sleep.
+    conn.flush()?;
     sleep(Duration::from_millis(KEY_DELAY_MS));
     send_key_event(KEY_RELEASE_EVENT, keycode, state, EventMask::KEY_RELEASE)?;
     for &(modifier_keycode, modifier_mask) in modifier_keycodes.iter().rev() {
@@ -2662,7 +2674,8 @@ fn send_key_to_target(
         )?;
         state_bits &= !u16::from(modifier_mask);
     }
-    conn.flush()?;
+    // Deliver releases before closing the connection, even without a key remap.
+    conn.get_input_focus()?.reply()?;
 
     // If we borrowed a spare keycode for this keysym, give the target client a
     // moment to translate the synthetic event under the temporary mapping before
@@ -2671,7 +2684,6 @@ fn send_key_to_target(
     // our queued requests have been processed) plus a short settle keeps that
     // race closed; the guard then reinstates the original keysyms on drop.
     if remap_guard.is_some() || !remap_guards.is_empty() {
-        let _ = conn.get_input_focus()?.reply();
         sleep(Duration::from_millis(KEY_DELAY_MS));
     }
     drop(remap_guard);

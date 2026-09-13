@@ -7,8 +7,15 @@ on:
       - "libs/cua-driver/rust/Cargo.toml"
       - "libs/cua-driver/rust/Cargo.lock"
       - "libs/lume/src/**"
+      - "libs/python/cua-sandbox/**"
+      - "libs/python/cua/pyproject.toml"
+      - "libs/python/computer-server/pyproject.toml"
+      - "libs/typescript/fleet/package.json"
+      - "libs/cua-driver/hyprland-plugin/packaging/release/profiles/omarchy-stable-20260910.json"
       - "docs/content/docs/reference/cua-driver/**"
       - "docs/content/docs/reference/lume/**"
+      - "docs/content/docs/reference/sandbox-sdk/runtime-support.mdx"
+      - "docs/content/docs/reference/sandbox-sdk/os-image-catalog.mdx"
       - "docs/package.json"
       - "docs/pnpm-lock.yaml"
       - "scripts/docs-generators/**"
@@ -37,6 +44,9 @@ jobs:
           - library: lume
             platform: macos
             os: macos-latest
+          - library: sandbox
+            platform: linux
+            os: ubuntu-latest
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -55,7 +65,7 @@ jobs:
       - name: Test generator routing and ownership
         run: |
           node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --test-routing
-          node docs/node_modules/tsx/dist/cli.mjs --test scripts/docs-generators/runner.test.ts scripts/docs-generators/cua-driver.test.ts scripts/docs-generators/cua-driver-platform.test.ts
+          node docs/node_modules/tsx/dist/cli.mjs --test scripts/docs-generators/runner.test.ts scripts/docs-generators/cua-driver.test.ts scripts/docs-generators/cua-driver-platform.test.ts scripts/docs-generators/sandbox.test.ts
       - name: Select affected generator
         id: scope
         env:
@@ -68,7 +78,7 @@ jobs:
             echo "selected=true" >> "$GITHUB_OUTPUT"
           fi
       - name: Install Linux build dependencies
-        if: steps.scope.outputs.selected == 'true' && matrix.platform == 'linux'
+        if: steps.scope.outputs.selected == 'true' && matrix.platform == 'linux' && matrix.library == 'cua-driver'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \

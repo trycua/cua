@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 
 NETWORKS = ("10.210.0.0/24", "10.211.0.0/16", "10.212.0.0/16")
 REQUIRED_COVERAGE = ("node_pod_cidrs", "service_cidrs", "outer_routes", "vpn_routes")
@@ -51,6 +52,7 @@ def kvm_probe():
         fds.append(vcpu)
         return {"api_version": version, "vm_created": True, "vcpu_created": True}
     except OSError as exc:
+        print("KVM probe failed (errno):", exc.errno, file=sys.stderr)
         return {"error": str(exc)}
     finally:
         for fd in reversed(fds):

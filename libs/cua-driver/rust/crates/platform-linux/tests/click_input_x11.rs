@@ -97,10 +97,12 @@ fn desktop_clicks_deliver_a_hold_and_release_modifiers() -> Result<()> {
                 let held_ms = pair[1].1.time.wrapping_sub(pair[0].1.time);
                 eprintln!("desktop count={count} modifiers={modifiers:?}: hold={held_ms} ms");
                 assert!(held_ms >= 30, "desktop click held only {held_ms} ms");
+                assert!(held_ms <= 200, "desktop click held too long: {held_ms} ms");
             }
             for adjacent in events.chunks_exact(2).collect::<Vec<_>>().windows(2) {
                 let gap_ms = adjacent[1][0].1.time.wrapping_sub(adjacent[0][1].1.time);
                 assert!(gap_ms >= 40, "multi-click gap was only {gap_ms} ms");
+                assert!(gap_ms <= 300, "multi-click gap was too long: {gap_ms} ms");
             }
             let pointer = conn.query_pointer(root)?.reply()?;
             assert!(!pointer

@@ -113,10 +113,16 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    static INITIALIZATION_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
+    static CONSTRUCTION_INITIALIZATION_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
+    static UNAVAILABLE_INITIALIZATION_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
+
+    fn construction_probe_context() -> Result<ClipboardContext, String> {
+        CONSTRUCTION_INITIALIZATION_ATTEMPTS.fetch_add(1, Ordering::SeqCst);
+        Err("construction unexpectedly initialized the clipboard".into())
+    }
 
     fn unavailable_context() -> Result<ClipboardContext, String> {
-        INITIALIZATION_ATTEMPTS.fetch_add(1, Ordering::SeqCst);
+        UNAVAILABLE_INITIALIZATION_ATTEMPTS.fetch_add(1, Ordering::SeqCst);
         Err("general pasteboard is unavailable".into())
     }
 
@@ -126,14 +132,17 @@ mod tests {
 
     #[test]
     fn construction_does_not_initialize_the_native_clipboard() {
-        INITIALIZATION_ATTEMPTS.store(0, Ordering::SeqCst);
-        let _backend = MacosClipboard::with_initializer(unavailable_context);
-        assert_eq!(INITIALIZATION_ATTEMPTS.load(Ordering::SeqCst), 0);
+        CONSTRUCTION_INITIALIZATION_ATTEMPTS.store(0, Ordering::SeqCst);
+        let _backend = MacosClipboard::with_initializer(construction_probe_context);
+        assert_eq!(
+            CONSTRUCTION_INITIALIZATION_ATTEMPTS.load(Ordering::SeqCst),
+            0
+        );
     }
 
     #[test]
     fn unavailable_initialization_is_retryable() {
-        INITIALIZATION_ATTEMPTS.store(0, Ordering::SeqCst);
+        UNAVAILABLE_INITIALIZATION_ATTEMPTS.store(0, Ordering::SeqCst);
         let backend = MacosClipboard::with_initializer(unavailable_context);
         for _ in 0..2 {
             assert!(backend
@@ -141,7 +150,10 @@ mod tests {
                 .unwrap_err()
                 .contains("general pasteboard is unavailable"));
         }
-        assert_eq!(INITIALIZATION_ATTEMPTS.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            UNAVAILABLE_INITIALIZATION_ATTEMPTS.load(Ordering::SeqCst),
+            2
+        );
     }
 
     #[test]

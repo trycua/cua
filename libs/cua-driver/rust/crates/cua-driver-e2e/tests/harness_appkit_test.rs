@@ -799,8 +799,6 @@ fn harness_appkit_text_input() {
                 "text_input value did not propagate to mirror; snapshot:\n{post_text}"
             );
 
-            // Exercise the real AX walk, not just the structured serializer.
-            // Empty/whitespace AXValue used to become the field's placeholder.
             for raw in ["", "\n", " \tΩ café\n"] {
                 let before = snapshot_elements(driver, pid, wid);
                 let set = driver.call(
@@ -825,7 +823,10 @@ fn harness_appkit_text_input() {
                     })
                     .expect("txt-input structured state");
                 assert_eq!(field["value"], raw, "AXValue must remain lossless");
-                assert_eq!(field["placeholder"], "Type here…");
+                assert_eq!(
+                    field["placeholder"], "Type here…",
+                    "placeholder must stay a hint, never the value"
+                );
             }
         },
     );

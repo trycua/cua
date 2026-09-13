@@ -158,8 +158,11 @@ jobs:
           xvfb_primary=$!
           Xvfb :99 -screen 0 1920x1080x24 -ac -noreset -nolisten tcp >xvfb-99.log 2>&1 &
           xvfb_secondary=$!
-          trap 'kill "$xvfb_primary" "$xvfb_secondary" 2>/dev/null || true' EXIT
-          for display in :98 :99; do
+          # DirectColor is visual class 5; the usual Xvfb default is TrueColor.
+          Xvfb :100 -screen 0 1920x1080x24 -cc 5 -ac -noreset -nolisten tcp >xvfb-100.log 2>&1 &
+          xvfb_directcolor=$!
+          trap 'kill "$xvfb_primary" "$xvfb_secondary" "$xvfb_directcolor" 2>/dev/null || true' EXIT
+          for display in :98 :99 :100; do
             ready=false
             for _ in $(seq 1 50); do
               if DISPLAY="$display" xdpyinfo >/dev/null 2>&1; then
@@ -176,18 +179,18 @@ jobs:
           source_sha=$(git rev-parse HEAD)
           {
             echo "source_sha=$source_sha"
-            DISPLAY=:98 CUA_X11_SECOND_DISPLAY=:99 CUA_X11_RESTART_DISPLAY=:100 \
+            DISPLAY=:98 CUA_X11_SECOND_DISPLAY=:99 CUA_X11_RESTART_DISPLAY=:101 \
               cargo test -p platform-linux \
               capture::tests::live_xshm_matches_xgetimage_across_resize_reconnect_and_repetition \
               --locked -- --ignored --exact --nocapture --test-threads=1
-            DISPLAY=:98 cargo test -p platform-linux \
+            DISPLAY=:100 cargo test -p platform-linux \
               capture::tests::live_directcolor_capture_tracks_window_colormap \
               --locked -- --ignored --exact --nocapture --test-threads=1
           } 2>&1 | tee x11-capture-evidence.log
-          kill "$xvfb_primary" "$xvfb_secondary" 2>/dev/null || true
-          wait "$xvfb_primary" "$xvfb_secondary" || true
+          kill "$xvfb_primary" "$xvfb_secondary" "$xvfb_directcolor" 2>/dev/null || true
+          wait "$xvfb_primary" "$xvfb_secondary" "$xvfb_directcolor" || true
           trap - EXIT
-          sha256sum x11-capture-evidence.log xvfb-98.log xvfb-99.log >x11-capture-evidence.sha256
+          sha256sum x11-capture-evidence.log xvfb-98.log xvfb-99.log xvfb-100.log >x11-capture-evidence.sha256
       - name: Upload X11 capture evidence
         if: always()
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
@@ -199,6 +202,7 @@ jobs:
             libs/cua-driver/rust/x11-capture-evidence.sha256
             libs/cua-driver/rust/xvfb-98.log
             libs/cua-driver/rust/xvfb-99.log
+            libs/cua-driver/rust/xvfb-100.log
       - name: Run real uinput device-name regression
         working-directory: libs/cua-driver/rust
         run: |

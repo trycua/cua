@@ -831,6 +831,25 @@ fn degradation_for(
     Degradation::None
 }
 
+fn derive_label(node: &crate::ax::tree::AXNode) -> Option<String> {
+    node.title
+        .clone()
+        .or_else(|| node.description.clone())
+        .or_else(|| {
+            node.value
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+        })
+        .or_else(|| {
+            node.placeholder
+                .clone()
+                .filter(|hint| !hint.trim().is_empty())
+        })
+        .or_else(|| node.identifier.clone())
+}
+
 /// Render the actionable nodes from the AX walk into the
 /// `structuredContent.elements` array shape described on the tool: one entry
 /// per node with an `element_index`, carrying role, label (built from
@@ -849,26 +868,7 @@ pub(crate) fn build_elements_array_with_token(
         .iter()
         .filter_map(|node| {
             let idx = node.element_index?;
-            // `label` is a best-effort human-readable string: title first,
-            // then description, nonblank value, placeholder, then identifier. Mirrors what
-            // a human reading the markdown row would call this element.
-            let label = node
-                .title
-                .clone()
-                .or_else(|| node.description.clone())
-                .or_else(|| {
-                    node.value
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                        .map(str::to_owned)
-                })
-                .or_else(|| {
-                    node.placeholder
-                        .clone()
-                        .filter(|hint| !hint.trim().is_empty())
-                })
-                .or_else(|| node.identifier.clone());
+            let label = derive_label(node);
             let frame = node
                 .frame
                 .map(|[x, y, w, h]| serde_json::json!({ "x": x, "y": y, "w": w, "h": h }));

@@ -54,7 +54,6 @@ pub struct AXNode {
     pub title: Option<String>,
     /// Raw string AXValue, including empty strings and whitespace.
     pub value: Option<String>,
-    /// AXPlaceholderValue is a hint, never the control's current value.
     pub placeholder: Option<String>,
     /// AXDescription — shown as `(description)` in the tree line.
     /// Kept separate from `title` so `_find_calc_button("2")` can find
@@ -617,8 +616,6 @@ fn format_node_line(node: &AXNode) -> String {
     }
     // AXValue -> a lossless JSON string.
     if let Some(v) = &node.value {
-        // Preserve raw text without letting a newline or quote create a
-        // fabricated tree row. JSON quoting keeps the representation lossless.
         parts.push_str(&format!(" = {}", serde_json::json!(v)));
     }
     if let Some(placeholder) = &node.placeholder {

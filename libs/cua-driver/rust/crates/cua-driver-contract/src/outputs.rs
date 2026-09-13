@@ -549,6 +549,11 @@ pub struct ActionResult {
     pub evidence: Option<Vec<ActionEvidence>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub escalation: Option<ActionEscalation>,
+    /// Value-setting actions only: whether the target application's own
+    /// editing pipeline accepted the written value. Absent when the action has
+    /// no commit step. `false` means unproven, not necessarily rejected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub committed: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -688,6 +693,7 @@ mod tests {
                 kind: ActionEvidenceKind::ValueReadback,
             }]),
             escalation: None,
+            committed: None,
         }
     }
 
@@ -700,7 +706,14 @@ mod tests {
         let properties = schema["properties"].as_object().expect("properties");
         assert_eq!(
             properties.keys().map(String::as_str).collect::<Vec<_>>(),
-            ["delivery", "effect", "escalation", "evidence", "route"]
+            [
+                "committed",
+                "delivery",
+                "effect",
+                "escalation",
+                "evidence",
+                "route"
+            ]
         );
         assert_eq!(
             properties["effect"]["enum"],

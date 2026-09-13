@@ -365,7 +365,13 @@ export type ActionResult = {
     route: ActionRoute,
     delivery?: ActionDelivery,
     evidence?: Array<ActionEvidence>,
-    escalation?: ActionEscalation
+    escalation?: ActionEscalation,
+    /**
+     * Value-setting actions only: whether the target application's own
+     * editing pipeline accepted the written value. Absent when the action has
+     * no commit step. `false` means unproven, not necessarily rejected.
+     */
+    committed?: boolean
 }
 
 /**
@@ -393,7 +399,8 @@ const FfiConverterTypeActionResult = (() => {
                 route: FfiConverterTypeActionRoute.read(from),
                 delivery: FfiConverterOptionalTypeActionDelivery.read(from),
                 evidence: FfiConverterOptionalSequenceTypeActionEvidence.read(from),
-                escalation: FfiConverterOptionalTypeActionEscalation.read(from)
+                escalation: FfiConverterOptionalTypeActionEscalation.read(from),
+                committed: FfiConverterOptionalBoolean.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -402,13 +409,15 @@ const FfiConverterTypeActionResult = (() => {
             FfiConverterOptionalTypeActionDelivery.write(value.delivery, into);
             FfiConverterOptionalSequenceTypeActionEvidence.write(value.evidence, into);
             FfiConverterOptionalTypeActionEscalation.write(value.escalation, into);
+            FfiConverterOptionalBoolean.write(value.committed, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypeActionEffect.allocationSize(value.effect) +
              FfiConverterTypeActionRoute.allocationSize(value.route) +
              FfiConverterOptionalTypeActionDelivery.allocationSize(value.delivery) +
              FfiConverterOptionalSequenceTypeActionEvidence.allocationSize(value.evidence) +
-             FfiConverterOptionalTypeActionEscalation.allocationSize(value.escalation);
+             FfiConverterOptionalTypeActionEscalation.allocationSize(value.escalation) +
+             FfiConverterOptionalBoolean.allocationSize(value.committed);
 
         }
     };
@@ -4690,6 +4699,9 @@ const FfiConverterOptionalSequenceTypeActionEvidence = new FfiConverterOptional(
 // FfiConverter for ActionEscalation | undefined
 const FfiConverterOptionalTypeActionEscalation = new FfiConverterOptional(FfiConverterTypeActionEscalation);
 
+// FfiConverter for boolean | undefined
+const FfiConverterOptionalBoolean = new FfiConverterOptional(FfiConverterBool);
+
 // FfiConverter for string | undefined
 const FfiConverterOptionalString = new FfiConverterOptional(FfiConverterString);
 
@@ -4713,9 +4725,6 @@ const FfiConverterOptionalUInt64 = new FfiConverterOptional(FfiConverterUInt64);
 
 // FfiConverter for Array<string> | undefined
 const FfiConverterOptionalSequenceString = new FfiConverterOptional(FfiConverterSequenceString);
-
-// FfiConverter for boolean | undefined
-const FfiConverterOptionalBoolean = new FfiConverterOptional(FfiConverterBool);
 
 // FfiConverter for CursorPointOutput | undefined
 const FfiConverterOptionalTypeCursorPointOutput = new FfiConverterOptional(FfiConverterTypeCursorPointOutput);

@@ -303,13 +303,16 @@ fn validate_history_app_signature(
             "installed Cua Driver signing identifier does not match the selected namespace"
         );
     }
-    if !requirement.contains("certificate leaf") {
+    if !requirement.contains("certificate leaf") && !requirement.contains("certificate root") {
         anyhow::bail!("installed Cua Driver signature is not certificate-backed");
     }
-    // A stable self-signed local-development certificate has a certificate-leaf
-    // designated requirement but no Apple TeamIdentifier. That leaf pins local
-    // history to the same signing identity across rebuilds. Production still
-    // requires the exact Apple team and device-protected Keychain entitlements.
+    // A stable self-signed local-development certificate pins one certificate
+    // but carries no Apple TeamIdentifier. codesign writes that pin as
+    // `certificate leaf` for an untrusted certificate and as `certificate root`
+    // for one the developer marked trusted in the keychain (it then evaluates
+    // as its own anchor); either way the pin survives rebuilds, which is what
+    // local history needs. Production still requires the exact Apple team and
+    // device-protected Keychain entitlements.
     if !require_release_entitlements {
         return Ok(());
     }
@@ -562,6 +565,17 @@ mod tests {
         validate_history_app_signature(
             "Identifier=com.trycua.driver.local\nTeamIdentifier=not set",
             "designated => identifier \"com.trycua.driver.local\" and certificate leaf = H\"d2badc24c61056ede3b61724c54c5a7d1649ce4d\"",
+            "",
+            "",
+            "com.trycua.driver.local",
+            false,
+        )
+        .unwrap();
+        // Same local certificate, marked trusted in the keychain: codesign
+        // evaluates it as its own anchor and pins it as `certificate root`.
+        validate_history_app_signature(
+            "Identifier=com.trycua.driver.local\nTeamIdentifier=not set",
+            "designated => identifier \"com.trycua.driver.local\" and certificate root = H\"662061ed4588ed82dd4c0999adaf5e8014abd46f\"",
             "",
             "",
             "com.trycua.driver.local",

@@ -117,9 +117,15 @@ designated_requirement() {
         | sed -n -e 's/^designated => //p' -e 's/^# designated => //p'
 }
 
+# codesign spells a certificate-backed designated requirement two ways. An
+# untrusted signing certificate is pinned as `certificate leaf = H"..."`. A
+# certificate the developer marked trusted in the keychain evaluates as its own
+# anchor, so codesign pins the very same certificate as `certificate root =
+# H"..."`. Both pin one certificate that outlives rebuilds — which is what TCC
+# grants need. Only a cdhash is rebuild-fragile.
 classify_designated_requirement() {
     case "$1" in
-        *"certificate leaf"*) printf '%s' "certificate-backed" ;;
+        *"certificate leaf"*|*"certificate root"*) printf '%s' "certificate-backed" ;;
         *cdhash*) printf '%s' "ad-hoc" ;;
         *) printf '%s' "unknown" ;;
     esac

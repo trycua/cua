@@ -106,6 +106,45 @@ def test_explicit_local_signing_identity_never_falls_back(tmp_path: Path) -> Non
     assert result.stdout == "-"
 
 
+def _classify(requirement: str) -> str:
+    result = subprocess.run(
+        [
+            "/bin/bash",
+            "-c",
+            f'. "{LOCAL_SIGNING}"; classify_designated_requirement "$1"',
+            "bash",
+            requirement,
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout
+
+
+def test_stable_signing_accepts_both_certificate_pin_spellings() -> None:
+    # An untrusted local signing certificate is pinned as the leaf.
+    assert (
+        _classify(
+            'identifier "com.trycua.driver.local" and certificate leaf = '
+            'H"71b7d45889593c1b77459fcb981d9460cc929431"'
+        )
+        == "certificate-backed"
+    )
+    # The same certificate, once trusted in the keychain, evaluates as its own
+    # anchor and codesign pins it as the root. Equally stable across rebuilds.
+    assert (
+        _classify(
+            'identifier "com.trycua.driver.local" and certificate root = '
+            'H"662061ed4588ed82dd4c0999adaf5e8014abd46f"'
+        )
+        == "certificate-backed"
+    )
+    # A cdhash pin is the rebuild-fragile case --require-stable-signing refuses.
+    assert _classify('cdhash H"1234"') == "ad-hoc"
+
+
 @pytest.mark.parametrize("relative_target", [False, True], ids=["absolute", "relative"])
 def test_installer_stages_binary_from_custom_cargo_target(
     tmp_path: Path, relative_target: bool

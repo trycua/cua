@@ -459,15 +459,19 @@ def test_real_security_accepts_the_scoped_authorization_command(tmp_path: Path) 
             ).returncode
             == 0
         )
-        assert (
-            run(
-                "openssl", "pkcs12", "-export", "-legacy",
-                "-inkey", str(tmp_path / "key.pem"), "-in", str(tmp_path / "cert.pem"),
-                "-out", str(tmp_path / "id.p12"), "-passout", "pass:p12",
-                "-name", GENERATED_LABEL,
-            ).returncode
-            == 0
-        )
+        # `-legacy` is what OpenSSL 3.x needs for `security import` to accept
+        # the bundle, and what OpenSSL 1.x/LibreSSL rejects outright. The
+        # installer tries both in that order; so does this.
+        export = [
+            "openssl", "pkcs12", "-export",
+            "-inkey", str(tmp_path / "key.pem"), "-in", str(tmp_path / "cert.pem"),
+            "-out", str(tmp_path / "id.p12"), "-passout", "pass:p12",
+            "-name", GENERATED_LABEL,
+        ]
+        exported = run(*export[:3], "-legacy", *export[3:])
+        if exported.returncode != 0:
+            exported = run(*export)
+        assert exported.returncode == 0, exported.stderr
         assert (
             run(
                 "security", "import", str(tmp_path / "id.p12"), "-k", str(keychain),

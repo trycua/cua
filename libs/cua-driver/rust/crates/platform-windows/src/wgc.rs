@@ -9,10 +9,11 @@
 //! Constraints:
 //! - Minimum OS: Windows 10 version 1903 (~April 2019). ~100% of users
 //!   today; we surface a structured error on older builds.
-//! - Cannot capture **minimized** windows. They have no rendered content.
-//!   `get_window_state` still returns the UIA tree for a minimized target
-//!   (the screenshot is reported unavailable). We surface this as an
-//!   error with the recommended fallback.
+//! - Minimized / cloaked windows can still fail to produce a frame on some
+//!   systems. We let WGC try them first and surface a structured timeout so
+//!   the caller can fall back cleanly. Higher-level capture paths must not
+//!   fall through to GDI or desktop-region capture for minimized windows,
+//!   because those paths can return misleading all-black pixels.
 //! - First call per process pays ~50ms for D3D11 device creation +
 //!   COM activation factory lookup. Subsequent calls don't cache the
 //!   device — could be optimized later, but a single-shot screenshot
@@ -54,15 +55,10 @@ pub fn screenshot_window_via_wgc(hwnd: u64) -> Result<(Vec<u8>, u32, u32)> {
 }
 
 unsafe fn wgc_capture_impl(hwnd: HWND) -> Result<(Vec<u8>, u32, u32)> {
-    if IsIconic(hwnd).as_bool() {
-        bail!(
-            "WGC cannot capture a minimized window (no rendered content). \
-             Call bring_to_front with this window_id to restore it first. \
-             `get_window_state` still returns the \
-             UIA tree for a minimized window (the screenshot is reported \
-             unavailable)."
-        );
-    }
+    // Do not reject iconic windows up front: some DWM configurations retain a
+    // compositor-owned frame that WGC can still return. Remember the state so
+    // a timeout can preserve upstream's actionable minimized-window guidance.
+    let is_minimized = IsIconic(hwnd).as_bool();
 
     // 1. D3D11 device — feature level 11.0 + BGRA support (required by WGC).
     let mut d3d_device: Option<ID3D11Device> = None;
@@ -172,11 +168,20 @@ unsafe fn wgc_capture_impl(hwnd: HWND) -> Result<(Vec<u8>, u32, u32)> {
         }
     }
     let frame = frame_opt.ok_or_else(|| {
-        anyhow::anyhow!(
-            "WGC TryGetNextFrame returned no frame within 1500 ms — \
-         DWM may not be compositing this window (cloaked / not actually \
-         rendered). Fall through to screen-region BitBlt."
-        )
+        if is_minimized {
+            anyhow::anyhow!(
+                "WGC returned no frame for the minimized window within 1500 ms. \
+                 Call bring_to_front with this window_id to restore it first. \
+                 `get_window_state` still returns the UIA tree (the screenshot \
+                 is reported unavailable)."
+            )
+        } else {
+            anyhow::anyhow!(
+                "WGC TryGetNextFrame returned no frame within 1500 ms — \
+                 DWM may not be compositing this window (cloaked / not actually \
+                 rendered). Fall through to screen-region BitBlt."
+            )
+        }
     })?;
 
     // 8. Pull the underlying ID3D11Texture2D out of the WinRT frame

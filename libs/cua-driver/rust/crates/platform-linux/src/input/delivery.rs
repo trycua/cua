@@ -115,7 +115,7 @@ impl BackgroundUnavailable {
             Self::WebKitSyntheticInput => "background_unavailable",
         }
     }
-    fn detail(self) -> &'static str {
+    pub(crate) fn detail(self) -> &'static str {
         match self {
             Self::NoLibeiBackend => {
                 "no libei input backend on this Wayland compositor (built without \

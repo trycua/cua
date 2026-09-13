@@ -45,8 +45,8 @@ fn tool_call(id: u64, name: &str, arguments: Value) -> Request {
 
 async fn dispatch(provider: &CaptureProvider, id: u64, name: &str, arguments: Value) {
     let request = tool_call(id, name, arguments);
-    let _ = handle_request_with_transport_session(request, json!(id), provider, "transport-1")
-        .await;
+    let _ =
+        handle_request_with_transport_session(request, json!(id), provider, "transport-1").await;
 }
 
 #[test]

@@ -6625,15 +6625,14 @@ impl Tool for DragTool {
             let steps = input.steps.unwrap_or(20).clamp(1, 200) as usize;
             let modifiers = input.modifier.unwrap_or_default();
             let wayland = crate::wayland::wayland_input_enabled();
+            if wayland && !modifiers.is_empty() {
+                return ToolResult::error(
+                    "modified drags are unavailable on native Wayland: the pointer route cannot carry keyboard modifier state",
+                );
+            }
             let path = if wayland { "wayland_desktop" } else { "xtest" };
             let result = tokio::task::spawn_blocking(move || {
                 if wayland {
-                    if !modifiers.is_empty() {
-                        anyhow::bail!(
-                            "modified desktop drags are unavailable on native Wayland: \
-                             the virtual-pointer route cannot carry keyboard modifier state"
-                        );
-                    }
                     crate::wayland::drag_desktop(
                         from_x.round() as i32,
                         from_y.round() as i32,

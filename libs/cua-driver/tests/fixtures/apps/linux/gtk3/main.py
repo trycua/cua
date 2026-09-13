@@ -228,7 +228,9 @@ class HarnessWindow(Gtk.Window):
 
     def on_click_target_press(self, _w, ev):
         if ev.button == 1:
-            self._drag_modifier_seen = False
+            self._drag_modifier_seen = bool(
+                ev.state & Gdk.ModifierType.CONTROL_MASK
+            )
         if ev.type == Gdk.EventType.DOUBLE_BUTTON_PRESS:
             self._double_click_pending = True
             self._last_action = "double_click"

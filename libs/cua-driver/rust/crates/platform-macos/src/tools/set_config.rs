@@ -29,7 +29,8 @@ fn def() -> &'static ToolDef {
             take effect on the next daemon restart (the PiP backend is \
             initialised once at startup).\n\nNote: capture_mode is a per-call \
             param (on get_window_state / click), not a stored setting. Capture \
-            scope is selected by start_session, not set_config.".into(),
+            modality is selected by each action's target; the old \
+            capture_scope config key is retired.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
@@ -78,12 +79,12 @@ impl Tool for SetConfigTool {
             || args.get("key").and_then(Value::as_str) == Some("capture_scope")
         {
             return ToolResult::error(
-                "config key 'capture_scope' is retired; pass capture_scope=auto|window|desktop to start_session",
+                "config key 'capture_scope' is retired; select a window or desktop target on each action",
             )
             .with_structured(serde_json::json!({
                 "code": "config_key_retired",
                 "key": "capture_scope",
-                "replacement": "start_session.capture_scope",
+                "replacement": "action.target",
             }));
         }
         // The daemon injects `_session_id` for non-anonymous MCP sessions.

@@ -120,15 +120,36 @@ These values are self-reported and normalized through allowlists. Unknown values
 
 ## Cua agent sessions
 
-A Cua agent session is a non-empty caller-declared `session` value. The value `default`, internal connection identities, and reserved fallback keys do not create agent-session events.
+A Cua agent session is one lifecycle episode owned by a trusted transport.
+It may have an optional public `session` label, but telemetry never sends that
+label or the runtime's private transport identity.
 
-The start event is emitted for a successful `start_session` declaration or the first known tool call that carries an explicit session. Repeated calls in the same live episode do not emit another start. Reusing an ID after explicit end or idle eviction creates a new episode with `revived=true`.
+The start event is emitted for a successful `start_session` or the first
+admitted session-requiring call on a transport. Its `declaration` is
+`start_session` or `implicit_first_action`. Repeated calls in the same live
+episode do not emit another start. Explicitly reviving an ended public label
+creates a new episode with `revived=true`.
 
-The end event is emitted for `end_session` and idle eviction. It contains aggregate counters and booleans. When the platform has a cursor entry for that session, it also includes bounded cursor categories: enabled state, built-in/default/custom icon class, automatic/custom color source, label presence, motion customization, and an active-cursor count bucket. `cursor_outcome_observed=false` distinguishes sessions with no readable cursor entry from a disabled or default cursor. Cua Driver uses the caller session string only as a process-local map key. The string, a hash of it, and a replacement join token are absent from telemetry payloads.
+The end event is emitted for explicit end, idle expiry, transport cleanup, and
+revocation. It contains aggregate counters and booleans. When the platform has
+a cursor entry, the event includes bounded cursor categories: enabled state,
+built-in/default/custom icon class, automatic/custom color source, label
+presence, motion customization, and an active-cursor count bucket.
+`cursor_outcome_observed=false` distinguishes a missing cursor entry from a
+disabled or default cursor.
 
-Both session events retain the episode's declared `capture_scope` (`window`, `desktop`, or `auto`) and its closed `client_kind` (`cli`, `direct`, `mcp`, `python_sdk`, or `typescript_sdk`). The Python and TypeScript package roots select their category automatically; applications cannot attach a free-form client label. `execution_mode` independently distinguishes `embedded` from `standalone` hosts.
+Both session events carry the closed `client_kind` (`cli`, `direct`, `mcp`,
+`python_sdk`, or `typescript_sdk`). The Python and TypeScript package roots
+select their category automatically; applications cannot attach a free-form
+client label. `execution_mode` independently distinguishes `embedded` from
+`standalone` hosts. The end event adds `used_window_modality` and
+`used_desktop_modality`, which are content-free booleans derived from admitted
+calls.
 
-For `capture_scope=auto`, the end event sets `auto_escalated_to_desktop=true` only after a successful `escalate_session`. Its reason is limited to `ax_tree_pixel_mismatch`, `background_delivery_failed`, `foreground_ineffective`, `no_window_target`, or `other`; sessions without a successful auto escalation use `not_applicable`. Free-form escalation detail is never observed or sent.
+`capture_scope`, `auto_escalated_to_desktop`, and `escalation_reason` remain
+bounded compatibility fields for legacy capture-scope sessions. New per-call
+targets do not mutate session capture state. Free-form escalation detail is
+never observed or sent.
 
 Computer-action success covers fixed pointer and keyboard capabilities, app launch and kill, window activation, state-changing `page` operations, and successful browser navigation, click, type, pointer, file-assignment, download, or dialog-resolution calls. A structured browser refusal does not count as a completed computer action. `get_browser_state` and `browser_dialog` inspection are reads for this classifier, and `browser_prepare` is tracked as browser use rather than a computer action because preparation may either reuse an endpoint or produce an approved visible side effect.
 

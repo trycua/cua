@@ -3,14 +3,15 @@
 
 use crate::{
     CursorAction, CursorSemantics, EndSessionInput, EndSessionOutput, EscalateSessionInput,
-    GetSessionStateInput, Platform, SchemaMode, SessionStateOutput, StartSessionInput,
-    StartSessionOutput, ToolAnnotations, ToolContract, ToolInput, ToolOutput,
+    GetSessionInput, GetSessionStateInput, ListSessionsInput, ListSessionsOutput, Platform,
+    SchemaMode, SessionOutput, SessionStateOutput, StartSessionInput, StartSessionOutput,
+    ToolAnnotations, ToolContract, ToolInput, ToolOutput,
 };
 
 const ALL_PLATFORMS: [Platform; 3] = [Platform::Macos, Platform::Windows, Platform::Linux];
 
 pub fn contracts() -> Vec<ToolContract> {
-    vec![start(), escalate(), get_state(), end()]
+    vec![start(), escalate(), get(), list(), get_state(), end()]
 }
 
 fn contract<I: ToolInput, O: ToolOutput>(
@@ -38,7 +39,7 @@ fn contract<I: ToolInput, O: ToolOutput>(
 fn start() -> ToolContract {
     contract::<StartSessionInput, StartSessionOutput>(
         "start_session",
-        "Declare a session — a named, color-coded identity for THIS agent run. Pass a stable `session` id and choose capture_scope=auto|window|desktop; the agent cursor, capture policy, per-session config, and recording all key on it, and it follows the run across any apps/windows. The cursor's color is derived from the id, so distinct runs are visually distinct. A cursor is shown only for a declared session — call this (or pass `session` on your first action) to opt in. Idempotent: re-calling with the same id just refreshes its idle-TTL. End it with `end_session` (or let the idle-TTL reclaim it). Concurrent runs/subagents each pass their own `session` to get their own cursor.",
+        "Optionally create or return a lifecycle session before acting. For multi-call work, prefer a short public `session` label and repeat it on every call that accepts it; an omitted value uses the authenticated transport lease's implicit session instead. This tool is optional because an ordinary action can create or reuse a named run directly. Use it to set the initial cursor theme before acting or to revive a public name after it has ended; ordinary actions never revive ended names. `capture_scope` is deprecated compatibility input; new callers select window or desktop modality per action. Idempotent.",
         &["session.lifecycle.start", "session.capture_scope"],
         ToolAnnotations {
             read_only: false,
@@ -52,7 +53,7 @@ fn start() -> ToolContract {
 fn escalate() -> ToolContract {
     contract::<EscalateSessionInput, SessionStateOutput>(
         "escalate_session",
-        "Unlock the desktop phase of an auto capture-scope session after the window action ladder has been exhausted and verified. Escalation is permanent for that session and disables window-scoped tools. To recover window scope, call end_session, then start_session with a new session id.",
+        "Deprecated compatibility tool for legacy capture-scope sessions. New callers select window or desktop modality on each action. No deescalate_session tool exists.",
         &["session.capture_scope.escalate"],
         ToolAnnotations {
             read_only: false,
@@ -66,8 +67,36 @@ fn escalate() -> ToolContract {
 fn get_state() -> ToolContract {
     contract::<GetSessionStateInput, SessionStateOutput>(
         "get_session_state",
-        "Read the live session's capture policy and effective scope.",
+        "Deprecated compatibility alias that reads a live legacy session's capture policy. Use get_session for lifecycle state.",
         &["session.capture_scope.read"],
+        ToolAnnotations {
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        },
+    )
+}
+
+fn get() -> ToolContract {
+    contract::<GetSessionInput, SessionOutput>(
+        "get_session",
+        "Read content-free lifecycle, cursor, recording, and idle status for one session visible to this authenticated transport. Omit `session` to inspect its implicit session.",
+        &["session.lifecycle.read"],
+        ToolAnnotations {
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        },
+    )
+}
+
+fn list() -> ToolContract {
+    contract::<ListSessionsInput, ListSessionsOutput>(
+        "list_sessions",
+        "List content-free lifecycle summaries attached to this authenticated transport lease. It does not enumerate other callers' sessions.",
+        &["session.lifecycle.list"],
         ToolAnnotations {
             read_only: true,
             destructive: false,
@@ -80,7 +109,7 @@ fn get_state() -> ToolContract {
 fn end() -> ToolContract {
     contract::<EndSessionInput, EndSessionOutput>(
         "end_session",
-        "End a session declared with `start_session`: removes its agent cursor, stops any recording it owns, and clears its per-session config. Call this when a run finishes so its cursor doesn't linger (otherwise the idle-TTL reclaims it after a period of inactivity). Idempotent.",
+        "End one visible lifecycle session and run its cursor, recording, configuration, and other cleanup hooks exactly once. Omit `session` to end the authenticated transport's implicit session. Idempotent.",
         &["session.lifecycle.end"],
         ToolAnnotations {
             read_only: false,
@@ -89,4 +118,19 @@ fn end() -> ToolContract {
             open_world: false,
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn start_description_explains_direct_naming_and_explicit_revival() {
+        let description = start().description;
+        assert!(description.contains("prefer a short public `session` label"));
+        assert!(description.contains("repeat it on every call that accepts it"));
+        assert!(description.contains("omitted value uses the authenticated transport"));
+        assert!(description.contains("revive a public name after it has ended"));
+        assert!(description.contains("ordinary actions never revive ended names"));
+    }
 }

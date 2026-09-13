@@ -55,6 +55,10 @@ public partial class MainWindow : Window
         // PostMessage actually arrived and was actionable.
         var source = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
         source?.AddHook(OnWindowMessage);
+        // Start with the deliberate decoy focused. Foreground element-addressed
+        // keyboard tests must move focus to their exact UIA target after the
+        // top-level activation; inheriting startup focus would hide that race.
+        Keyboard.Focus(TxtDeferredInput);
         PublishFixtureState();
     }
 

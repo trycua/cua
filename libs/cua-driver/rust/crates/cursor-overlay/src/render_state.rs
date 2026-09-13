@@ -991,6 +991,23 @@ mod session_badge_and_action_tests {
     use crate::{CursorConfig, DeliveryModifier, TargetModifier};
 
     #[test]
+    fn idle_hide_zero_keeps_a_positioned_session_cursor_visible() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.motion.idle_hide_ms = 0.0;
+        assert!(core.apply_command_base(
+            OverlayCommand::ClickPulse { x: 40.0, y: 60.0 },
+            false,
+            false,
+        ));
+
+        core.tick_motion(2.0);
+
+        assert!(core.cursor_is_revealed());
+        assert_eq!(core.pos, (40.0, 60.0));
+        assert_eq!(core.idle_alpha, 1.0);
+    }
+
+    #[test]
     fn session_badge_holds_then_fades_once() {
         let mut core = RenderStateCore::new(CursorConfig::default());
         assert_eq!(core.session_badge_alpha(), 0.0);

@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.5.3](https://github.com/trycua/cua/compare/lume-v0.5.2...lume-v0.5.3) (2026-08-11)
+
+
+### Bug Fixes
+
+* **lume:** handle reused OCI disk layer digests ([#3066](https://github.com/trycua/cua/issues/3066)) ([69a5e38](https://github.com/trycua/cua/commit/69a5e38caea9f29538a1bc57cc6b79617d9a8af1))
+
+## [0.5.2](https://github.com/trycua/cua/compare/lume-v0.5.1...lume-v0.5.2) (2026-08-11)
+
+
+### Bug Fixes
+
+* **lume:** bound stalled ARP lookups ([#2710](https://github.com/trycua/cua/issues/2710)) ([a410c7a](https://github.com/trycua/cua/commit/a410c7ab7e83a254604082628e705fa1580b5ca8))
+* **lume:** tolerate missing terminal capabilities ([#2186](https://github.com/trycua/cua/issues/2186)) ([d7b29a9](https://github.com/trycua/cua/commit/d7b29a9b9520ce5164a92e89935bd365e663acca))
+
 ## [0.5.1](https://github.com/trycua/cua/compare/lume-v0.5.0...lume-v0.5.1) (2026-07-31)
 
 

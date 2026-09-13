@@ -1,0 +1,88 @@
+{
+  "$schema": "./component.schema.json",
+  "schemaVersion": 1,
+  "sharedChangePaths": [
+    ".github/release-manifest.schema.json",
+    ".github/releases",
+    ".github/scripts/github_release.py",
+    ".github/scripts/release_channels.py",
+    ".github/workflows/nightly-component-plan.yml"
+  ],
+  "components": {
+    "cua-driver-rs": {
+      "releasePleasePath": "libs/cua-driver",
+      "displayName": "Cua Driver",
+      "stableTagPrefix": "cua-driver-rs-v",
+      "nightlyTagPrefix": "nightly-cua-driver-rs-v",
+      "versionAuthorityFile": "libs/cua-driver/rust/VERSION",
+      "changelog": "libs/cua-driver/rust/CHANGELOG.md",
+      "builderWorkflow": ".github/workflows/cd-rust-cua-driver.yml",
+      "changeDetectionPaths": [
+        "libs/cua-driver",
+        ".github/scripts/verify_cua_driver_release_archives.py",
+        ".github/workflows/cd-rust-cua-driver.yml",
+        ".github/workflows/nightly-cua-driver.yml"
+      ],
+      "buildVersionSites": [
+        {
+          "kind": "plain",
+          "path": "libs/cua-driver/rust/VERSION"
+        },
+        {
+          "kind": "regex",
+          "path": "libs/cua-driver/rust/Cargo.toml",
+          "pattern": "(?m)^(version = \")\\d+\\.\\d+\\.\\d+(\")$",
+          "replacement": "\\g<1>{version}\\g<2>",
+          "expectedMatches": 1
+        },
+        {
+          "kind": "cargo-workspace-lock",
+          "path": "libs/cua-driver/rust/Cargo.lock",
+          "manifestPath": "libs/cua-driver/rust/Cargo.toml"
+        },
+        {
+          "kind": "regex",
+          "path": "libs/cua-driver/rust/Skills/cua-driver/SKILL.md",
+          "pattern": "(?m)^(version: )\\d+\\.\\d+\\.\\d+( # x-release-please-version)$",
+          "replacement": "\\g<1>{version}\\g<2>",
+          "expectedMatches": 1
+        }
+      ],
+      "channels": {
+        "nightly": true,
+        "registries": []
+      }
+    },
+    "lume": {
+      "releasePleasePath": "libs/lume",
+      "displayName": "Lume",
+      "stableTagPrefix": "lume-v",
+      "nightlyTagPrefix": "nightly-lume-v",
+      "versionAuthorityFile": "libs/lume/VERSION",
+      "changelog": "libs/lume/CHANGELOG.md",
+      "builderWorkflow": ".github/workflows/cd-swift-lume.yml",
+      "changeDetectionPaths": [
+        "libs/lume",
+        ".github/workflows/cd-swift-lume.yml",
+        ".github/workflows/nightly-lume.yml"
+      ],
+      "buildVersionSites": [
+        {
+          "kind": "plain",
+          "path": "libs/lume/VERSION"
+        },
+        {
+          "kind": "regex",
+          "path": "libs/lume/src/Main.swift",
+          "pattern": "(?m)^(        static let current: String = \")\\d+\\.\\d+\\.\\d+(\" // x-release-please-version)$",
+          "replacement": "\\g<1>{version}\\g<2>",
+          "expectedMatches": 1
+        }
+      ],
+      "channels": {
+        "nightly": true,
+        "registries": []
+      }
+    }
+  }
+}

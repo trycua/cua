@@ -20,6 +20,9 @@ struct RunVMRequest: Codable {
     let nvramPath: String?
     let network: String?
     let clipboard: Bool?
+    /// "enabled" (default) or "disabled". Absent keeps the historic behavior of
+    /// always starting a VNC server.
+    let vnc: String?
 
     struct SharedDirectoryRequest: Codable {
         let hostPath: String
@@ -52,6 +55,31 @@ struct RunVMRequest: Codable {
             return nil
         }
         return try parseNetworkModeString(network)
+    }
+
+    func parseVNCPolicy() throws -> VNCPolicy {
+        guard let vnc else {
+            return .enabled
+        }
+        guard let policy = VNCPolicy(rawValue: vnc) else {
+            throw ValidationError(
+                "Invalid vnc policy '\(vnc)'. Expected 'enabled' or 'disabled'.")
+        }
+        return policy
+    }
+
+    func validatedVNCPolicy(noDisplayDefault: Bool) throws -> VNCPolicy {
+        let policy = try parseVNCPolicy()
+        let noDisplay = self.noDisplay ?? noDisplayDefault
+        if let option = VNCPolicy.conflictingOption(
+            policy: policy,
+            displayMode: noDisplay ? .none : .vnc,
+            vncPort: 0,
+            vncPassword: nil
+        ) {
+            throw VMError.vncDisabledConflict(option)
+        }
+        return policy
     }
 }
 

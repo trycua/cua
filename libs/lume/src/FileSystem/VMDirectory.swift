@@ -251,13 +251,55 @@ extension VMDirectory {
 
 // MARK: - VNC Session Management
 
+/// Marker written while a VM session is running.
+///
+/// Legacy markers carry only `url` and `sharedDirectories`; both still decode
+/// unchanged, and a VNC-backed session still encodes exactly those two fields.
+/// A VNC-disabled session has no URL, so it omits `url` and instead records the
+/// owning `lume run` process, which `get`/`list` verify against the config-file
+/// run lock. Older Lume binaries fail to decode that marker and therefore
+/// report the VM as stopped instead of acting on stale information.
 struct VNCSession: Codable {
-    let url: String
+    let url: String?
     let sharedDirectories: [SharedDirectory]?
-    
-    init(url: String, sharedDirectories: [SharedDirectory]? = nil) {
+    /// Absent on legacy markers, which always described a VNC-backed session.
+    let vncEnabled: Bool?
+    /// PID of the owning `lume run` process. Written only for VNC-disabled
+    /// sessions, which have no listening port to probe for liveness.
+    let pid: Int32?
+    /// Unix timestamp of when the session started.
+    let startedAt: Double?
+
+    /// A marker without `vncEnabled` predates the policy and described VNC.
+    var isVNCEnabled: Bool { vncEnabled ?? true }
+
+    init(
+        url: String?,
+        sharedDirectories: [SharedDirectory]? = nil,
+        vncEnabled: Bool? = nil,
+        pid: Int32? = nil,
+        startedAt: Double? = nil
+    ) {
         self.url = url
         self.sharedDirectories = sharedDirectories
+        self.vncEnabled = vncEnabled
+        self.pid = pid
+        self.startedAt = startedAt
+    }
+
+    /// Marker for a run started with `--vnc disabled`.
+    static func vncDisabled(
+        pid: Int32,
+        startedAt: Double,
+        sharedDirectories: [SharedDirectory]? = nil
+    ) -> VNCSession {
+        VNCSession(
+            url: nil,
+            sharedDirectories: sharedDirectories,
+            vncEnabled: false,
+            pid: pid,
+            startedAt: startedAt
+        )
     }
 }
 

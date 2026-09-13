@@ -70,7 +70,8 @@ impl CyclopsConfiguration {
     }
 }
 
-#[derive(Clone, Debug, uniffi::Record)]
+#[derive(Clone, Debug, uniffi::Record, uniffi_builder_derive::UniffiBuilder)]
+#[uniffi_builder(crate::SdkBuildError)]
 pub struct CyclopsTokenProviderConfiguration {
     pub base_url: String,
     pub pool_poll_interval_ms: u64,
@@ -165,7 +166,17 @@ where
     Option::<Vec<String>>::deserialize(deserializer).map(Option::unwrap_or_default)
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    uniffi::Record,
+    uniffi_builder_derive::UniffiBuilder,
+)]
+#[uniffi_builder(crate::SdkBuildError)]
 pub struct CreateUserApiKeyRequest {
     pub name: String,
     pub scope: Vec<String>,
@@ -192,6 +203,38 @@ pub struct Sandbox {
 }
 
 #[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    uniffi::Record,
+    uniffi_builder_derive::UniffiBuilder,
+)]
+#[uniffi_builder(crate::SdkBuildError)]
+pub struct CreateSignedServiceUrlRequest {
+    pub sandbox: Sandbox,
+    pub service: String,
+    pub label: Option<String>,
+    pub expires_in_seconds: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
+#[serde(rename_all = "camelCase")]
+pub struct SignedServiceUrl {
+    pub id: String,
+    pub namespace: String,
+    pub claim: String,
+    pub sandbox: String,
+    pub service: String,
+    pub label: Option<String>,
+    pub url: String,
+    pub created_at: String,
+    pub expires_at: String,
+    pub revoked_at: Option<String>,
+}
+
+#[derive(
     Clone, Debug, Serialize, Deserialize, uniffi::Record, uniffi_builder_derive::UniffiBuilder,
 )]
 #[uniffi_builder(crate::SdkBuildError)]
@@ -208,7 +251,10 @@ impl PartialEq for CreatePoolRequest {
 
 /// The `osgym.cua.ai/v1alpha1 OSGymSandboxTemplate` CR verbatim. Warm pools
 /// and claims reference one by name via `spec.sandboxTemplateRef.name`.
-#[derive(Clone, Debug, Serialize, Deserialize, uniffi::Record)]
+#[derive(
+    Clone, Debug, Serialize, Deserialize, uniffi::Record, uniffi_builder_derive::UniffiBuilder,
+)]
+#[uniffi_builder(crate::SdkBuildError)]
 #[serde(rename_all = "camelCase")]
 pub struct Template {
     pub api_version: String,
@@ -244,7 +290,10 @@ impl PartialEq for CreateTemplateRequest {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, uniffi::Record)]
+#[derive(
+    Clone, Debug, Serialize, Deserialize, uniffi::Record, uniffi_builder_derive::UniffiBuilder,
+)]
+#[uniffi_builder(crate::SdkBuildError)]
 pub struct CreateClaimRequest {
     pub pool: Pool,
     pub spec: Option<ClaimSpec>,
@@ -270,12 +319,33 @@ pub struct HttpHeader {
     pub value: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    uniffi::Record,
+    uniffi_builder_derive::UniffiBuilder,
+)]
+#[uniffi_builder(crate::SdkBuildError)]
 pub struct HttpRequest {
     pub method: String,
     pub url: String,
     pub headers: Vec<HttpHeader>,
     pub body: Option<Vec<u8>>,
+    /// Per-request timeout. Defaults to absent so callers written against the
+    /// pre-timeout record shape keep constructing requests unchanged; absent
+    /// falls back to the native client's 30-second default.
+    #[serde(default)]
+    #[uniffi(default = None)]
+    pub timeout_secs: Option<u64>,
+    /// Maximum bytes delivered in the response body. Absent preserves the
+    /// historical unbounded response behavior.
+    #[serde(default)]
+    #[uniffi(default = None)]
+    pub max_response_bytes: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]

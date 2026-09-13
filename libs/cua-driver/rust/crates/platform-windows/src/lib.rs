@@ -47,6 +47,9 @@ pub mod lparam;
 pub mod win32;
 
 #[cfg(target_os = "windows")]
+pub mod history;
+
+#[cfg(target_os = "windows")]
 pub mod browser_platform;
 
 #[cfg(target_os = "windows")]

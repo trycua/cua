@@ -374,10 +374,16 @@ pub(crate) async fn focus_by_pixel(
         // AXFocused is non-destructive: unlike a second real click, it keeps a
         // Cmd+A selection intact before a follow-up type_text or Cmd+V.
         tokio::time::sleep(std::time::Duration::from_millis(120)).await;
-        return Ok(());
-    }
-
-    if !foreground {
+        // A background focus-click is `effect:"unverifiable"` by construction:
+        // it cannot prove the renderer moved its first responder. Returning on
+        // "it didn't error" therefore skipped the real-click fallback below
+        // whenever the click was a silent no-op — advancing on transport
+        // success alone, which is exactly what the ladder forbids. Confirm the
+        // focus actually moved before claiming this rung worked.
+        if !foreground || pixel_focus_landed(pid, window_id, x, y).await {
+            return Ok(());
+        }
+    } else if !foreground {
         return Err(cua_driver_core::protocol::ToolResult::error(format!(
             "focus pixel-click at ({x:.0},{y:.0}) failed."
         )));
@@ -413,6 +419,51 @@ pub(crate) async fn focus_by_pixel(
     // Brief settle so the renderer registers focus before the keystrokes.
     tokio::time::sleep(std::time::Duration::from_millis(120)).await;
     Ok(())
+}
+
+/// Confirm that a focus pixel-click actually moved the application's focused
+/// element onto the clicked point.
+///
+/// The background focus-click reports `effect:"unverifiable"`, so this is the
+/// read-back that lets [`focus_by_pixel`] decide whether the cheap rung worked
+/// or the real-click fallback is still required. It reuses the same
+/// window-local-pixels → screen translation the click itself used, so the
+/// comparison is in one coordinate space.
+///
+/// Returns `false` whenever the answer cannot be established (no window id,
+/// untranslatable frame, unreadable focused element or rect). That is the
+/// conservative direction: an unprovable focus escalates to the stronger rung
+/// rather than being reported as success.
+async fn pixel_focus_landed(pid: i32, window_id: Option<u32>, x: f64, y: f64) -> bool {
+    let Some(wid) = window_id else {
+        return false;
+    };
+    tokio::task::spawn_blocking(move || {
+        let Ok(frame) = px_frame::resolve_window_px_frame(wid) else {
+            return false;
+        };
+        let (screen_x, screen_y, _, _) = frame.to_screen(x, y);
+        unsafe {
+            let Some(focused) = crate::ax::bindings::focused_element_of_pid(pid) else {
+                return false;
+            };
+            let rect = crate::ax::bindings::element_screen_rect(focused);
+            core_foundation::base::CFRelease(focused as core_foundation::base::CFTypeRef);
+            let Some(rect) = rect else {
+                return false;
+            };
+            point_within_rect(rect, screen_x, screen_y)
+        }
+    })
+    .await
+    .unwrap_or(false)
+}
+
+/// Whether `[x, y, width, height]` (screen coordinates, top-left origin)
+/// contains the point. A degenerate rect never contains anything, so an app
+/// reporting a zero-sized focused element escalates rather than false-confirms.
+fn point_within_rect([rx, ry, rw, rh]: [f64; 4], x: f64, y: f64) -> bool {
+    rw > 0.0 && rh > 0.0 && x >= rx && x < rx + rw && y >= ry && y < ry + rh
 }
 
 /// Thread-safe per-pid zoom context registry.
@@ -773,11 +824,13 @@ pub fn register_all(
                     Some(state) => cua_driver_core::session::bounded_cursor_outcome(
                         true,
                         state.config.enabled,
+                        crate::cursor::overlay::is_visible_for_session(session_id),
                         Some(state.config.theme_id.as_str()),
                         motion_customized,
                         active_cursor_count,
                     ),
                     None => cua_driver_core::session::bounded_cursor_outcome(
+                        false,
                         false,
                         false,
                         None,
@@ -826,6 +879,11 @@ pub fn register_all(
                 crate::cursor::overlay::remove_cursor(session_id.to_owned());
             });
         registry.retain_session_end_hook(registration);
+        let revive_registration =
+            cua_driver_core::session::register_scoped_session_revive_hook(move |session_id| {
+                crate::cursor::overlay::revive_cursor(session_id.to_owned());
+            });
+        registry.retain_session_revive_hook(revive_registration);
     }
 
     registry.register(Box::new(list_apps::ListAppsTool));
@@ -1111,6 +1169,43 @@ mod cursor_overlay_facility_tests {
 // macOS cursor sampler (CoreGraphics), so the start-guard test runs here in
 // platform-macos where build.rs links the frameworks — the core crate's test
 // binary has no CoreGraphics linkage.
+#[cfg(test)]
+mod pixel_focus_readback_tests {
+    use super::point_within_rect;
+
+    #[test]
+    fn confirms_a_point_inside_the_focused_element() {
+        let composer = [100.0, 800.0, 250.0, 24.0];
+        assert!(point_within_rect(composer, 220.0, 812.0));
+        assert!(
+            point_within_rect(composer, 100.0, 800.0),
+            "top-left is inside"
+        );
+    }
+
+    #[test]
+    fn rejects_a_point_outside_the_focused_element() {
+        // The WhatsApp case: the click targeted the composer but focus stayed on
+        // the transcript above it, so the clicked point is not inside the
+        // focused element's rect and the caller must escalate.
+        let transcript = [100.0, 100.0, 640.0, 690.0];
+        assert!(!point_within_rect(transcript, 220.0, 812.0));
+    }
+
+    #[test]
+    fn excludes_the_far_edges() {
+        let rect = [0.0, 0.0, 10.0, 10.0];
+        assert!(!point_within_rect(rect, 10.0, 5.0));
+        assert!(!point_within_rect(rect, 5.0, 10.0));
+    }
+
+    #[test]
+    fn a_degenerate_rect_never_confirms() {
+        assert!(!point_within_rect([5.0, 5.0, 0.0, 0.0], 5.0, 5.0));
+        assert!(!point_within_rect([5.0, 5.0, -3.0, 10.0], 5.0, 6.0));
+    }
+}
+
 #[cfg(test)]
 mod recording_start_guard_tests {
     use cua_driver_core::recording::RecordingSession;

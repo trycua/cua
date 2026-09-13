@@ -1,0 +1,36 @@
+---
+title: Meta
+description: Run Meta computer-use models locally with Cua Driver.
+icon: meta
+---
+
+Meta's Muse Glimmer 30B is an open-weight vision-language model designed for local agentic computer use. A runtime serves the model, an agent harness owns the loop, and Cua Driver supplies screenshots, accessibility state, and input actions.
+
+The tested Cua path uses:
+
+- Meta's Muse Glimmer 30B model
+- Unsloth's `UD-Q4_K_XL` GGUF
+- `llama.cpp` on Apple Silicon
+- Claude Code as the harness
+- Cua Driver running inside a macOS Lume guest
+
+Follow [Run a local model with Cua Driver](/how-to-guides/driver/run-with-local-model) for the complete setup, including the smaller tool surface used to control context growth.
+
+See Meta's [Muse Glimmer model card](https://huggingface.co/meta-models/Muse-Glimmer-30B) and Unsloth's [Muse Glimmer guide](https://unsloth.ai/docs/models/muse-glimmer) for the upstream model and quantization details.
+
+<div className="not-prose my-8 grid gap-5 md:grid-cols-2">
+  <VideoDemo
+    src="https://cuademo06261324.blob.core.windows.net/artifacts/demos/muse-glimmer/notes-editorial.mp4"
+    poster="https://cuademo06261324.blob.core.windows.net/artifacts/demos/muse-glimmer/notes-editorial-poster.jpg"
+    title="Create a checklist in Apple Notes"
+  >
+    Muse Glimmer runs locally and completes the task through Cua Driver.
+  </VideoDemo>
+  <VideoDemo
+    src="https://cuademo06261324.blob.core.windows.net/artifacts/demos/muse-glimmer/reminders-editorial.mp4"
+    poster="https://cuademo06261324.blob.core.windows.net/artifacts/demos/muse-glimmer/reminders-editorial-poster.jpg"
+    title="Schedule an Apple Reminder"
+  >
+    Muse Glimmer sets the reminder and verifies the final state.
+  </VideoDemo>
+</div>

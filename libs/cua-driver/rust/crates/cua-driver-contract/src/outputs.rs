@@ -38,6 +38,61 @@ pub fn refusal_envelope_schema() -> Value {
     })
 }
 
+/// Marker code for structured error envelopes that carry no tool-specific
+/// refusal shape.
+///
+/// The transport and daemon failure paths answer with diagnostics like
+/// `{"exit_code": 1}` rather than a tool refusal. That payload satisfies
+/// neither arm of [`advertised_output_schema`]: it is missing the success
+/// arm's required keys while carrying a key the success arm does not allow,
+/// and it has none of the refusal arm's marker keys. Strict MCP clients then
+/// reject the whole response, so the error text in `content` never reaches the
+/// agent.
+pub const TOOL_INVOCATION_FAILED_CODE: &str = "tool_invocation_failed";
+
+/// Keys that make a payload recognisable to the refusal arm of
+/// [`advertised_output_schema`].
+const REFUSAL_MARKER_KEYS: [&str; 3] = ["refusal", "status", "code"];
+
+/// Whether a payload already satisfies the refusal arm of
+/// [`advertised_output_schema`].
+pub fn is_refusal_envelope(value: &Value) -> bool {
+    value.as_object().is_some_and(has_refusal_marker)
+}
+
+fn has_refusal_marker(object: &Map<String, Value>) -> bool {
+    REFUSAL_MARKER_KEYS
+        .iter()
+        .any(|marker| object.contains_key(*marker))
+}
+
+/// Guarantee a structured error payload is recognisable as a refusal.
+///
+/// Inserts [`TOOL_INVOCATION_FAILED_CODE`] when the payload carries none of the
+/// refusal marker keys, so any diagnostic an error path invents still validates
+/// against the advertised `outputSchema`. Payloads that already carry a marker
+/// are returned untouched.
+pub fn conforming_error_envelope(structured: Value) -> Value {
+    // Both arms require `type: object`, so a non-object diagnostic is kept as a
+    // value inside the envelope rather than being emitted as the envelope.
+    let mut object = match structured {
+        Value::Object(object) => object,
+        Value::Null => Map::new(),
+        other => {
+            let mut object = Map::new();
+            object.insert("detail".into(), other);
+            object
+        }
+    };
+    if !has_refusal_marker(&object) {
+        object.insert(
+            "code".into(),
+            Value::String(TOOL_INVOCATION_FAILED_CODE.into()),
+        );
+    }
+    Value::Object(object)
+}
+
 /// Wrap a success schema into the shape advertised as the MCP `outputSchema`.
 ///
 /// MCP requires every `structuredContent` a tool emits to validate against its
@@ -55,7 +110,9 @@ pub fn advertised_output_schema(success: Value) -> Value {
     serde_json::json!({ "type": "object", "anyOf": [success, refusal_envelope_schema()] })
 }
 
-fn output_schema_with_additional_properties<T: JsonSchema>(additional_properties: bool) -> Value {
+pub(crate) fn output_schema_with_additional_properties<T: JsonSchema>(
+    additional_properties: bool,
+) -> Value {
     let mut settings = SchemaSettings::draft2020_12();
     settings.inline_subschemas = true;
     settings.meta_schema = None;
@@ -110,6 +167,11 @@ pub struct SessionStateOutput {
     pub session: String,
     pub capture_scope: CaptureScope,
     pub effective_scope: EffectiveScope,
+    /// Whether this session is authorized to use desktop-scope capture and
+    /// actions. This does not report the operating system's lock-screen state.
+    pub desktop_capture_authorized: bool,
+    /// Compatibility field: this reports whether this session has unlocked
+    /// desktop capture scope. It is not an operating-system lock-screen probe.
     pub desktop_unlocked: bool,
     #[schemars(required, schema_with = "nullable_escalation_reason_schema")]
     pub escalation_reason: Option<EscalationReason>,
@@ -118,6 +180,59 @@ pub struct SessionStateOutput {
 }
 
 impl ToolOutput for SessionStateOutput {}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionLifecycleState {
+    Active,
+    Ending,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionClientKindOutput {
+    Cli,
+    Direct,
+    Mcp,
+    PythonSdk,
+    TypescriptSdk,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionTransportOutput {
+    Cli,
+    Daemon,
+    McpStdio,
+    McpHttp,
+}
+
+/// Content-free lifecycle state safe for an ordinary agent transport.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+pub struct SessionOutput {
+    /// Sanitized public label, or null for an unnamed implicit session.
+    #[schemars(required, schema_with = "nullable_string_schema")]
+    pub session: Option<String>,
+    pub implicit: bool,
+    pub state: SessionLifecycleState,
+    pub client_kind: SessionClientKindOutput,
+    pub transport: SessionTransportOutput,
+    pub cursor_visible: bool,
+    pub recording_active: bool,
+    pub idle_seconds: u64,
+    pub expires_in_seconds: u64,
+}
+
+impl ToolOutput for SessionOutput {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+pub struct ListSessionsOutput {
+    pub sessions: Vec<SessionOutput>,
+    #[schemars(required, schema_with = "nullable_string_schema")]
+    pub next_cursor: Option<String>,
+}
+
+impl ToolOutput for ListSessionsOutput {}
 
 /// Successful structured result returned by `start_session`.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
@@ -755,5 +870,48 @@ mod tests {
         );
         result.evidence = None;
         assert_eq!(result.validate_invariants(), Ok(()));
+    }
+}
+
+#[cfg(test)]
+mod error_envelope_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn a_diagnostic_without_a_marker_gains_one() {
+        let envelope = conforming_error_envelope(json!({"exit_code": 1}));
+
+        assert_eq!(envelope["code"], TOOL_INVOCATION_FAILED_CODE);
+        assert_eq!(envelope["exit_code"], 1);
+    }
+
+    #[test]
+    fn each_existing_marker_is_left_alone() {
+        for marker in ["refusal", "status", "code"] {
+            let envelope = conforming_error_envelope(json!({marker: "already-named"}));
+
+            assert_eq!(
+                envelope,
+                json!({marker: "already-named"}),
+                "guard rewrote a payload that already carries `{marker}`"
+            );
+        }
+    }
+
+    #[test]
+    fn a_non_object_diagnostic_becomes_an_object() {
+        let envelope = conforming_error_envelope(json!("daemon transport closed"));
+
+        assert_eq!(envelope["code"], TOOL_INVOCATION_FAILED_CODE);
+        assert_eq!(envelope["detail"], "daemon transport closed");
+    }
+
+    #[test]
+    fn an_absent_diagnostic_still_produces_a_refusal() {
+        assert_eq!(
+            conforming_error_envelope(Value::Null),
+            json!({"code": TOOL_INVOCATION_FAILED_CODE})
+        );
     }
 }

@@ -181,6 +181,7 @@ enum VMError: Error, LocalizedError {
     case resizeTooSmall(current: UInt64, requested: UInt64)
     case vncNotConfigured
     case vncPortBindingFailed(requested: Int, actual: Int)
+    case vncDisabledConflict(String)
     case internalError(String)
     case unsupportedOS(String)
     case invalidDisplayResolution(String)
@@ -210,6 +211,8 @@ enum VMError: Error, LocalizedError {
                 return "Could not bind to VNC port \(requested) (port already in use). Try a different port or use port 0 for auto-assign."
             }
             return "Could not bind to VNC port \(requested) (port already in use). System assigned port \(actual) instead. Try a different port or use port 0 for auto-assign."
+        case .vncDisabledConflict(let option):
+            return "VNC is disabled for this run, so '\(option)' cannot be used."
         case .internalError(let message):
             return "Internal error: \(message)"
         case .unsupportedOS(let os):

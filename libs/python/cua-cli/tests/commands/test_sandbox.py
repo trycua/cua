@@ -118,6 +118,91 @@ class TestExecute:
         mock_error.assert_called()
 
 
+class TestCmdLsSurfacesFailures:
+    """A source that failed is not a source that was empty.
+
+    cmd_ls used to wrap both listings in `except Exception: pass`, so a user
+    hitting a real outage was told "No sandboxes found." and got exit 0.
+    """
+
+    def test_cloud_failure_is_reported_not_swallowed(self, args_namespace, mock_api_key):
+        args = args_namespace(json=False, local=False, all=False)
+        mock_sdk = MagicMock()
+        mock_sdk.Sandbox.list = AsyncMock(side_effect=ValueError("Expecting value"))
+
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sdk}):
+            with patch.object(sandbox, "print_error") as mock_error:
+                with patch.object(sandbox, "print_info") as mock_info:
+                    result = sandbox.cmd_ls(args)
+
+        assert result == 1, "a failed listing must not exit 0"
+        mock_info.assert_not_called(), "must not claim there are no sandboxes"
+        assert mock_error.call_count == 1
+        message = mock_error.call_args[0][0]
+        assert "cloud" in message
+        assert "Expecting value" in message
+
+    def test_local_failure_is_reported_not_swallowed(self, args_namespace):
+        args = args_namespace(json=False, local=True, all=False)
+        mock_sdk = MagicMock()
+        mock_sdk.Sandbox.list = AsyncMock(side_effect=RuntimeError("docker down"))
+
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sdk}):
+            with patch.object(sandbox, "print_error") as mock_error:
+                result = sandbox.cmd_ls(args)
+
+        assert result == 1
+        assert "local" in mock_error.call_args[0][0]
+        assert "docker down" in mock_error.call_args[0][0]
+
+    def test_partial_failure_still_shows_what_worked(self, args_namespace, mock_api_key):
+        """--all with a live local and a dead cloud shows the local rows and
+        still reports the cloud failure."""
+        args = args_namespace(json=False, local=False, all=True)
+        local_sandboxes = [SimpleNamespace(name="localbox", status="running", source="local")]
+        mock_sdk = MagicMock()
+        mock_sdk.Sandbox.list = AsyncMock(side_effect=[local_sandboxes, ValueError("boom")])
+
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sdk}):
+            with patch.object(sandbox, "print_table") as mock_table:
+                with patch.object(sandbox, "print_error") as mock_error:
+                    result = sandbox.cmd_ls(args)
+
+        assert result == 1
+        mock_table.assert_called_once()
+        assert mock_table.call_args[0][0] == [
+            {"name": "localbox", "status": "running", "source": "local"}
+        ]
+        assert "cloud" in mock_error.call_args[0][0]
+
+    def test_json_output_carries_the_errors(self, args_namespace, mock_api_key):
+        args = args_namespace(json=True, local=False, all=False)
+        mock_sdk = MagicMock()
+        mock_sdk.Sandbox.list = AsyncMock(side_effect=ValueError("boom"))
+
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sdk}):
+            with patch.object(sandbox, "print_json") as mock_json:
+                result = sandbox.cmd_ls(args)
+
+        assert result == 1
+        payload = mock_json.call_args[0][0]
+        assert payload["sandboxes"] == []
+        assert payload["errors"][0]["source"] == "cloud"
+        assert "boom" in payload["errors"][0]["error"]
+
+    def test_genuinely_empty_still_says_so(self, args_namespace, mock_api_key):
+        args = args_namespace(json=False, local=False, all=False)
+        mock_sdk = MagicMock()
+        mock_sdk.Sandbox.list = AsyncMock(return_value=[])
+
+        with patch.dict("sys.modules", {"cua_sandbox": mock_sdk}):
+            with patch.object(sandbox, "print_info") as mock_info:
+                result = sandbox.cmd_ls(args)
+
+        assert result == 0
+        mock_info.assert_called_once_with("No sandboxes found.")
+
+
 class TestCmdLs:
     """Tests for cmd_ls function."""
 
@@ -295,7 +380,8 @@ class TestCmdLaunch:
         )
         image = object()
         created = MagicMock(name="created")
-        created.name = "fleet-sandbox"
+        created.name = "bound-sandbox-resource"
+        created.claim_name = "fleet-sandbox"
         created.disconnect = AsyncMock()
         mock_create = AsyncMock(return_value=created)
         mock_sdk = MagicMock()
@@ -306,13 +392,14 @@ class TestCmdLaunch:
                 with patch.object(
                     sandbox, "get_access_token", new_callable=AsyncMock
                 ) as mock_token:
-                    with patch.object(sandbox, "print_success"):
+                    with patch.object(sandbox, "print_success") as mock_success:
                         result = sandbox.cmd_launch(args)
 
         assert result == 0
         mock_token.assert_not_awaited()
         mock_create.assert_awaited_once_with(image, name="fleet-sandbox")
         created.disconnect.assert_awaited_once_with()
+        mock_success.assert_called_once_with("Sandbox 'fleet-sandbox' is ready")
 
 
 class TestCmdInfo:

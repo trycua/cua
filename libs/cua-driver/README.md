@@ -2,6 +2,9 @@
 
 Background computer-use driver for any agents. Speaks MCP over stdio; drives native macOS apps without stealing focus.
 
+See [MCP protocol and skills](docs/mcp-protocol-and-skills.md) for the modern
+stdio profile, legacy compatibility, bundled skill resources, and HTTP limits.
+
 **[Documentation](https://cua.ai/docs/cua-driver)** - Installation, guides, and API reference.
 
 ## Integration surfaces
@@ -20,6 +23,21 @@ language-native MCP facade and have no `/sdk`, `/mcp`, or `/native` public
 suffix. MCP remains implemented by the `cua-driver` executable as the
 runtime-neutral agent boundary.
 
+## Computer History macOS preview
+
+Nightly macOS builds can provide an opt-in, encrypted history of actions
+performed through Cua Driver. The preview stores a strict metadata allowlist,
+stays local, and exposes permission-gated `history_status` and `history_query`
+tools for read-only agent hydration. It never stores screenshots, typed text,
+clipboard contents, raw arguments or results, accessibility trees, paths,
+window titles, or URLs.
+
+See [Try the Computer History macOS
+preview](docs/computer-history-preview.md) for installation, lifecycle,
+inspection, deletion, and stable-channel return instructions. The [architecture
+and staged plan](docs/computer-history-architecture.md) defines the format,
+security boundary, release gates, and later NVIDIA OpenShell integration.
+
 ## Permission modes
 
 `standard` is the promptless default for normal automation. `bounded` admits
@@ -27,10 +45,11 @@ only the tools and resources in a reviewed manifest. `unrestricted` requires
 `--dangerously-bypass-approvals`.
 
 The mode belongs to the process that owns the runtime and is fixed at launch:
-`cua-driver serve` takes the flags, `cua-driver mcp` and embedding hosts use the
-matching `CUA_DRIVER_PERMISSION_MODE`, `CUA_DRIVER_SESSION_POLICY_FILE`, and
-`CUA_DRIVER_SESSION_POLICY_APPROVED` variables. Choose it before starting the
-daemon; a running daemon must be restarted to change it.
+`cua-driver serve` takes the flags, while `cua-driver mcp` and embedding hosts
+use the matching `CUA_DRIVER_PERMISSION_MODE`,
+`CUA_DRIVER_CAPABILITY_MANIFEST_FILE`, and
+`CUA_DRIVER_CAPABILITY_MANIFEST_APPROVED` variables. Choose it before starting
+the daemon; a running daemon must be restarted to change it.
 
 Attaching to an existing logged-in Chromium profile remains explicit:
 

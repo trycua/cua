@@ -718,53 +718,24 @@ fn harness_wpf_type_text() {
             let snap = snapshot(driver, pid, wid);
             let idx = ax::element_index_by_id(snap.text(), "txt-input")
                 .expect("txt-input not in snapshot");
-
-            // WPF's TextBox needs *keyboard focus* for WM_CHAR delivery — and
-            // PostMessage(WM_LBUTTONDOWN) doesn't reliably transfer keyboard
-            // focus (WPF's input system treats posted events differently from
-            // real ones). Use delivery_mode:"foreground" → SendInput synthesizes
-            // an OS-level click that WPF treats identically to a user mouse,
-            // landing actual keyboard focus on the TextBox.
-            let _ = driver.call(
-                "bring_to_front",
-                serde_json::json!({
-                    "pid": pid as i64, "window_id": wid
-                }),
-            );
-            std::thread::sleep(Duration::from_millis(300));
             driver.start_behavior_recording();
 
-            let _ = driver.call(
-                "click",
-                serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": idx,
-                    "snapshot_id": snap.snapshot_id(),
-                    "delivery_mode": "foreground"
-                }),
-            );
-            std::thread::sleep(Duration::from_millis(400));
-
-            // SendInput's restore_foreground_polling_best_effort may yank
-            // foreground back from the harness window between click and
-            // type_text. Re-assert foreground so PostMessage WM_CHAR finds
-            // the TextBox with keyboard focus.
-            let _ = driver.call(
-                "bring_to_front",
-                serde_json::json!({
-                    "pid": pid as i64, "window_id": wid
-                }),
-            );
-            std::thread::sleep(Duration::from_millis(300));
-
+            // The fixture deliberately starts with txt-deferred-input focused.
+            // A single indexed type_text call must atomically activate the WPF
+            // window, focus txt-input, confirm that focus, and only then inject.
             let resp = driver.call(
                 "type_text",
                 serde_json::json!({
                     "pid": pid as i64,
+                    "window_id": wid,
+                    "element_index": idx,
+                    "snapshot_id": snap.snapshot_id(),
                     "text": "harness-typed",
                     "delivery_mode": "foreground"
                 }),
             );
             println!("type_text: {}", resp.text());
+            assert!(!resp.is_error(), "type_text failed: {}", resp.text());
             std::thread::sleep(Duration::from_millis(700));
 
             let post = snapshot(driver, pid, wid);
@@ -777,6 +748,20 @@ fn harness_wpf_type_text() {
                 text.contains("mirror=harness-typed"),
                 "TextBox mirror did not reflect typed text. Mirror/input lines: {:?}",
                 mirror_lines
+            );
+            let decoy_idx = ax::element_index_by_id(text, "txt-deferred-input")
+                .expect("txt-deferred-input not in post-action snapshot");
+            let decoy = post.structured()["elements"]
+                .as_array()
+                .and_then(|elements| {
+                    elements
+                        .iter()
+                        .find(|element| element["element_index"].as_u64() == Some(decoy_idx))
+                })
+                .expect("txt-deferred-input missing from structured elements");
+            assert!(
+                decoy["value"].as_str().unwrap_or_default().is_empty(),
+                "foreground type_text leaked into the pre-focused decoy: {decoy}"
             );
             println!("✅ harness_wpf_type_text: TextBox mirror advanced to 'harness-typed'");
             Vec::new()

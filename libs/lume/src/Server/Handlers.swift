@@ -428,11 +428,18 @@ extension Server {
 
         do {
             Logger.info("Creating VM controller and parsing request", metadata: ["name": name])
-            let request =
-                body.flatMap { try? JSONDecoder().decode(RunVMRequest.self, from: $0) }
-                ?? RunVMRequest(
+            let request: RunVMRequest
+            if let body {
+                do {
+                    request = try JSONDecoder().decode(RunVMRequest.self, from: body)
+                } catch {
+                    throw ValidationError("Invalid run request body")
+                }
+            } else {
+                request = RunVMRequest(
                     noDisplay: nil, sharedDirectories: nil, recoveryMode: nil, storage: nil,
-                    diskPath: nil, nvramPath: nil, network: nil, clipboard: nil)
+                    diskPath: nil, nvramPath: nil, network: nil, clipboard: nil, vnc: nil)
+            }
 
             // Record telemetry
             TelemetryClient.shared.record(event: TelemetryEvent.apiVMRun, properties: [
@@ -455,19 +462,22 @@ extension Server {
                 metadata: ["name": name, "count": "\(dirs.count)"])
 
             let networkMode = try request.parseNetworkMode()
+            let vncPolicy = try request.validatedVNCPolicy(noDisplayDefault: false)
+            let noDisplay = request.noDisplay ?? false
 
             // Start VM in background
             Logger.info("Starting VM in background", metadata: ["name": name])
             startVM(
                 name: name,
-                noDisplay: request.noDisplay ?? false,
+                noDisplay: noDisplay,
                 sharedDirectories: dirs,
                 recoveryMode: request.recoveryMode ?? false,
                 storage: request.storage,
                 diskPath: request.diskPath.map { Path($0) },
                 nvramPath: request.nvramPath.map { Path($0) },
                 networkMode: networkMode,
-                clipboard: request.clipboard ?? false
+                clipboard: request.clipboard ?? false,
+                vncPolicy: vncPolicy
             )
             Logger.info("VM start initiated in background", metadata: ["name": name])
 
@@ -947,7 +957,8 @@ extension Server {
         diskPath: Path? = nil,
         nvramPath: Path? = nil,
         networkMode: NetworkMode? = nil,
-        clipboard: Bool = false
+        clipboard: Bool = false,
+        vncPolicy: VNCPolicy = .enabled
     ) {
         Logger.info(
             "Starting VM in detached task",
@@ -957,6 +968,7 @@ extension Server {
                 "recoveryMode": "\(recoveryMode)",
                 "storage": String(describing: storage),
                 "networkMode": networkMode?.description ?? "vm-config",
+                "vncPolicy": vncPolicy.rawValue,
             ])
 
         Task.detached { @MainActor @Sendable in
@@ -981,6 +993,7 @@ extension Server {
                     nvramPath: nvramPath,
                     networkMode: networkMode,
                     clipboard: clipboard,
+                    vncPolicy: vncPolicy,
                     telemetryTransport: .http
                 )
                 Logger.info("VM started successfully in background task", metadata: ["name": name])

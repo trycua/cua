@@ -80,6 +80,33 @@ For the test layout and the distinction between unit tests, shared harnesses,
 and native harnesses, see
 `libs/cua-driver/docs/test-harnesses-guide.md`.
 
+## Native pacman update test
+
+The `Arch native pacman updates` job in `ci-rust-linux.yml` checks package
+ownership with real pacman in a disposable Arch container. It packages the
+candidate under `/usr/lib/cua-driver-pacman-test`, verifies CLI and MCP update
+guidance through the installed binary and a symlink, and checks that an
+unmanaged copy retains vendor updates and channel selection. A fake `pacman`
+on `PATH` must not change either result. The job removes only its fixture
+package and retains source, binary, toolchain, and test evidence.
+
+To reproduce it, build `cua-driver` and `release_channel_cli_test` with
+`--locked --features portal-input` in a disposable Arch guest/container. Run
+as root with Xvfb and a session bus:
+
+```bash
+CUA_E2E_SOURCE_SHA=FULL_COMMIT_SHA CUA_E2E_UNRESTRICTED_GUI=1 \
+  xvfb-run -a dbus-run-session -- env CUA_PACMAN_TEST_DISPOSABLE=1 \
+  bash scripts/ci/linux/test-pacman-updates.sh \
+    CANDIDATE_BINARY INTEGRATION_TEST_BINARY NEW_EVIDENCE_DIRECTORY
+```
+
+The runner rejects existing fixture packages and payload paths. Do not run it
+on a user's host. This is package-update validation, not a Hyprland or Omarchy
+desktop certification, and it does not replace the desktop matrix.
+
+## Desktop runners
+
 | Runner                          | Session                                                            | Canonical command |
 | ------------------------------- | ------------------------------------------------------------------ | ----------------- |
 | `linux/run-rust-e2e.sh`         | Existing Linux X11 or Wayland desktop                              | no selector       |
@@ -103,13 +130,48 @@ complete repo-local matrix.
 The maintainer-facing macOS command is
 `libs/cua-driver/tests/runners/macos-lume/run-all.sh`. It verifies the private
 Lume seed, installs the exact committed source, and then delegates to the thin
-`macos/run-rust-e2e.sh` matrix runner above. There is no GitHub-hosted macOS GUI
-job. Pass `--standalone-browser` to run the optional installed Chrome/Edge
-browser matrix after the canonical repo-local harness matrix.
+`macos/run-rust-e2e.sh` matrix runner above. Pass `--standalone-browser` to run
+the optional installed Chrome/Edge browser matrix after the canonical repo-local
+harness matrix.
+
+The manual `.github/workflows/e2e-rust-macos.yml` workflow first probes a fresh
+GitHub-hosted macOS 26 runner. It records the image, SIP state, desktop session,
+display geometry, and OCR-verified TextEdit window and display captures for one
+exact source SHA. Probe permission checks describe only the temporary probe
+process. Dispatch only a reviewed commit SHA; the selected source is executable
+test code and the bootstrap uses the hosted runner's passwordless sudo policy.
+
+After that prerequisite passes, three fresh hosted runners execute the shared,
+native, and capture partitions through `macos/run-hosted-rust-e2e.sh`. Each
+runner refuses unexpected hosts or pre-existing app state, creates a temporary
+certificate-backed identity and Keychain, installs the exact source as
+`CuaDriverLocal.app`, seeds only its Accessibility and Screen Capture TCC rows,
+records the app's separate `replayd` approval before its first direct capture,
+verifies the daemon-attributed permission result, and delegates to
+`macos/run-rust-e2e.sh`. GitHub's image-level approval covers the hosted runner
+agent, while the bundled driver is its own responsible ScreenCaptureKit client
+and would otherwise show the private-window-picker reminder over the headed
+test. The lane uploads bootstrap, structured result, log, and video evidence
+even on failure. Signing and trust operations have hard
+deadlines, and a sacrificial binary proves the temporary identity works before
+the release build begins. The certificate is trusted only on that ephemeral
+runner and its removal is attempted with a bounded cleanup. The lane is
+supplemental while the hosted image and temporary identity differ from the
+release-parity Lume seed; it does not replace the Lume gate. Hosted jobs omit the
+Lume-only encrypted history gate and `--experimental-history`; the desktop
+behavior matrix does not depend on them.
 
 Run the Wayland wrapper through `nix develop .#cua-driver-wayland-e2e`. It
 creates a pure Wayland session with Xwayland disabled and delegates every
 scenario to `run-rust-e2e.sh`.
+
+The manually dispatched `sway-xwayland` capture lane uses the same wrapper with
+XWayland forced on. Its capture contract places a real repo-owned GTK3 X11
+fixture on inactive workspace 98, keeps an unrelated Wayland sentinel on the
+active output, and requires `get_window_state` to return
+`surface_identity_unproven` without screenshot bytes or a file. Sway IPC and
+the fixture accessibility state are external focus, workspace, and mutation
+oracles for that targeted regression.
 
 Run the nested compositor wrapper through
 `nix develop .#cua-driver-inject-e2e`. This environment is experimental and

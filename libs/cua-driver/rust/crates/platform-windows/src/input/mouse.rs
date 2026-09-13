@@ -586,7 +586,7 @@ fn send_click_synthesized_mods_impl(
             );
         }
         let foreground_target = if activate {
-            match crate::win32::capture_post_action_foreground_target(target.0 as usize as u64) {
+            match crate::win32::capture_foreground_target(target.0 as usize as u64) {
                 Some(target) => Some(target),
                 None => bail!(
                     "foreground_unavailable: exact target HWND {:?} disappeared before mouse \
@@ -696,7 +696,7 @@ fn send_click_synthesized_mods_impl(
         }
         if activate {
             let actual = GetForegroundWindow();
-            if !crate::win32::post_action_foreground_matches(
+            if !crate::win32::foreground_matches_target_or_owned_window(
                 foreground_target.expect("foreground target captured before input"),
                 actual.0 as usize as u64,
             ) {

@@ -1,7 +1,13 @@
 package billing
 
 import (
+	"context"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"reflect"
 	"testing"
 
 	"github.com/stripe/stripe-go/v85"
@@ -113,10 +119,73 @@ func TestSetupSessionParamsCopyLatestCustomerGenerationToSetupIntent(t *testing.
 		SuccessURL:      "https://run.example.test/settings?setup=success",
 		CancelURL:       "https://run.example.test/settings?setup=cancelled",
 		SetupGeneration: "server-generated-token",
+		Subject:         "subject-1",
+		Source:          "spa",
+		IdentityClass:   "external",
 	})
 
 	if got := params.SetupIntentData.Metadata[MetadataSetupGeneration]; got != "server-generated-token" {
 		t.Fatalf("setup intent generation = %q, want server-generated-token", got)
+	}
+	if got := params.SetupIntentData.Metadata[MetadataSubject]; got != "subject-1" {
+		t.Fatalf("setup intent subject = %q, want subject-1", got)
+	}
+	if got := params.SetupIntentData.Metadata[MetadataSetupSource]; got != "spa" {
+		t.Fatalf("setup intent source = %q, want spa", got)
+	}
+	if got := params.SetupIntentData.Metadata[MetadataIdentityClass]; got != "external" {
+		t.Fatalf("setup intent identity class = %q, want external", got)
+	}
+}
+
+func TestRetrieveSetupSessionExpandsAndSanitizesSetupIntent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/checkout/sessions/cs_test_owned" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if expanded := r.URL.Query()["expand[0]"]; !reflect.DeepEqual(expanded, []string{"setup_intent"}) {
+			t.Fatalf("expand = %#v, want setup_intent", r.URL.Query())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{
+			"id":"cs_test_owned","object":"checkout.session","mode":"setup","status":"complete",
+			"customer":"cus_owned",
+			"setup_intent":{
+				"id":"seti_owned","object":"setup_intent","status":"succeeded",
+				"customer":"cus_owned","payment_method":"pm_card",
+				"metadata":{"purpose":"fleet_default_card","fleet_subject":"subject-123","fleet_source":"spa","fleet_identity_class":"external","fleet_setup_generation":"current"}
+			}
+		}`)
+	}))
+	defer server.Close()
+
+	backend := stripe.GetBackendWithConfig(stripe.APIBackend, &stripe.BackendConfig{URL: stripe.String(server.URL)})
+	client := stripe.NewClient("sk_test", stripe.WithBackends(&stripe.Backends{API: backend, Connect: backend, Uploads: backend, MeterEvents: backend}))
+	gateway := &StripeGateway{client: client}
+
+	got, err := gateway.RetrieveSetupSession(context.Background(), "cs_test_owned")
+	if err != nil {
+		t.Fatalf("RetrieveSetupSession() error = %v", err)
+	}
+	want := successfulSetupSession()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("session = %#v, want %#v", got, want)
+	}
+}
+
+func TestRetrieveSetupSessionMapsMissingStripeResource(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"error":{"code":"resource_missing","message":"No such checkout session","type":"invalid_request_error"}}`)
+	}))
+	defer server.Close()
+
+	backend := stripe.GetBackendWithConfig(stripe.APIBackend, &stripe.BackendConfig{URL: stripe.String(server.URL)})
+	client := stripe.NewClient("sk_test", stripe.WithBackends(&stripe.Backends{API: backend, Connect: backend, Uploads: backend, MeterEvents: backend}))
+	_, err := (&StripeGateway{client: client}).RetrieveSetupSession(context.Background(), "cs_test_missing")
+	if !errors.Is(err, ErrSetupSessionNotFound) {
+		t.Fatalf("error = %v, want %v", err, ErrSetupSessionNotFound)
 	}
 }
 
@@ -160,5 +229,49 @@ func TestCurrentSetupGenerationIgnoresDuplicateAfterMarkerConsumption(t *testing
 	metadata[MetadataSetupGeneration] = ""
 	if currentSetupGeneration(metadata, "current") {
 		t.Fatal("duplicate delivery must not match a consumed marker")
+	}
+}
+
+func TestListAttachedCardsFiltersAndPaginates(t *testing.T) {
+	var requests []url.Values
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/payment_methods" {
+			t.Fatalf("request = %s %s, want GET /v1/payment_methods", r.Method, r.URL.Path)
+		}
+		requests = append(requests, r.URL.Query())
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("starting_after") == "" {
+			_, _ = io.WriteString(w, `{"object":"list","data":[{"id":"pm_1","object":"payment_method","type":"card","card":{"brand":"visa","last4":"4242","exp_month":8,"exp_year":2026}}],"has_more":true,"url":"/v1/payment_methods"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"object":"list","data":[{"id":"pm_2","object":"payment_method","type":"card","card":{"brand":"mastercard","last4":"4444","exp_month":1,"exp_year":2027,"fingerprint":"must-not-leak"}}],"has_more":false,"url":"/v1/payment_methods"}`)
+	}))
+	defer server.Close()
+
+	backend := stripe.GetBackendWithConfig(stripe.APIBackend, &stripe.BackendConfig{URL: stripe.String(server.URL)})
+	client := stripe.NewClient("sk_test", stripe.WithBackends(&stripe.Backends{API: backend, Connect: backend, Uploads: backend, MeterEvents: backend}))
+	gateway := &StripeGateway{client: client}
+
+	cards, err := gateway.ListAttachedCards(context.Background(), "cus_owned")
+	if err != nil {
+		t.Fatalf("ListAttachedCards() error = %v", err)
+	}
+	want := []SavedCard{
+		{Brand: "visa", Last4: "4242", ExpMonth: 8, ExpYear: 2026},
+		{Brand: "mastercard", Last4: "4444", ExpMonth: 1, ExpYear: 2027},
+	}
+	if !reflect.DeepEqual(cards, want) {
+		t.Fatalf("cards = %#v, want %#v", cards, want)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("request count = %d, want 2", len(requests))
+	}
+	for i, query := range requests {
+		if query.Get("customer") != "cus_owned" || query.Get("type") != "card" {
+			t.Fatalf("request %d query = %v, want customer=cus_owned and type=card", i+1, query)
+		}
+	}
+	if got := requests[1].Get("starting_after"); got != "pm_1" {
+		t.Fatalf("second page starting_after = %q, want pm_1", got)
 	}
 }

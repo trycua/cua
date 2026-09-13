@@ -3,9 +3,8 @@
 //! Vision-only desktop capture: grabs the ENTIRE main display at native
 //! pixel size (no downscale) so screen-absolute pixel picks land exactly,
 //! then reports the true screen size + backing scale. No AX walk, no
-//! pid/window_id — this is the capture surface for `capture_scope="desktop"`
-//! GUI loops where the agent drives `click(x,y)` / `scroll(x,y)` against
-//! screen-absolute coordinates.
+//! pid/window_id. This is the capture surface for actions with a primary-display
+//! desktop target and screen-absolute coordinates.
 //!
 //! Mirrors `get_window_state.rs`'s vision ToolResult shape: an `image_png`
 //! content part (or a written-out file path), a text summary line, and a
@@ -29,16 +28,15 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "get_desktop_state".into(),
-        description: "Capture a full-display vision screenshot in true screen pixels \
-            (no downscale), for scope=\"desktop\" GUI loops where the agent then \
-            drives click(x,y, scope=\"desktop\") with no pid/window_id. Returns the PNG at native \
-            display resolution plus the true screen size and backing scale factor so \
-            screen-absolute pixel picks land exactly. Vision-only: no AX tree walk."
+        description: "Capture the full display in true screen pixels with no downscale. \
+            Use its native-size PNG as the coordinate source for actions whose target is \
+            {kind:\"desktop\",display_id:\"primary\"}. Returns the true screen size and \
+            backing scale factor. Vision-only: no AX tree walk."
             .into(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
-                "session": { "type": "string", "description": "Optional session id." },
+                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
                 "screenshot_out_file": { "type": "string", "description": "Write PNG here instead of base64." }
             },
             "additionalProperties": false

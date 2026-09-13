@@ -8,24 +8,31 @@ description: |-
 
 Creates an `OSGymSandboxWarmPool`, the `OSGymSandboxTemplate` it references (named `<pool>-template`), and their same-named namespace. Destroy removes all three. Import IDs are pool names.
 
+## Static pool
+
 ```terraform
-resource "fleets_pool" "linux" {
-  name                 = "training-linux"
+resource "fleets_pool" "linux_static" {
+  name                 = "training-linux-static"
   replicas             = 3
   cpu_cores            = 4
   memory               = "8Gi"
-  container_disk_image = "296062593712.dkr.ecr.us-west-2.amazonaws.com/osgym-workspace:latest"
+  container_disk_image = "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-e5d853a9"
+}
+```
+
+## Autoscaled pool
+
+```terraform
+resource "fleets_pool" "linux_autoscaled" {
+  name                 = "training-linux-autoscaled"
+  cpu_cores            = 4
+  memory               = "8Gi"
+  container_disk_image = "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-e5d853a9"
 
   autoscaling {
     min_pool_size     = 0
     initial_pool_size = 3
     max_pool_size     = 20
-  }
-
-  service {
-    name        = "ssh"
-    target_port = 22
-    protocol    = "TCP"
   }
 }
 ```
@@ -33,7 +40,7 @@ resource "fleets_pool" "linux" {
 ## Arguments
 
 - `name` - Pool and namespace DNS label. Changing it replaces the resource.
-- `replicas` - Desired warm pool size.
+- `replicas` - Static desired warm pool size. Exactly one of `replicas` or `autoscaling` must be configured. In autoscaling mode, do not configure it; after apply and refresh it reports the current pool target.
 - `cpu_cores` - Virtual CPUs per sandbox.
 - `memory` - Kubernetes memory quantity per sandbox.
 - `container_disk_image` - OCI containerDisk or runtime image.
@@ -42,11 +49,14 @@ resource "fleets_pool" "linux" {
 - `firmware` - `bios` or `efi`; defaults to `bios`.
 - `readiness_probe_json` / `liveness_probe_json` - Kubernetes probe objects encoded as JSON.
 - `service` - Repeatable service with `name`, `target_port`, and optional `protocol`.
-- `autoscaling` - Optional claim-driven autoscaling limits.
+- `autoscaling` - Claim-driven autoscaling limits. Exactly one of `replicas` or `autoscaling` is required.
+- `autoscaling.min_pool_size` - Minimum warm pool size while autoscaling is enabled.
+- `autoscaling.initial_pool_size` - Initial pool target when autoscaling starts.
+- `autoscaling.max_pool_size` - Maximum autoscaled pool size; defaults to `50` when omitted.
 
 ## Read-only Attributes
 
-`namespace` and `template_name` identify the objects Fleet created. `current_replicas` and `ready_replicas` are the warm pool's `status.replicas` and `status.readyReplicas`.
+`namespace` and `template_name` identify the objects Fleet created. In autoscaling mode, `replicas` reports the current pool target so scaling changes remain visible in Terraform state. `current_replicas` and `ready_replicas` report the number of current and ready sandboxes.
 
 ## Import
 

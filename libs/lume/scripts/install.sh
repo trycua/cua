@@ -43,12 +43,17 @@ INSTALL_AUTO_UPDATER=false
 UPDATE_ON_LOGIN=false
 
 # Release selection:
-#   LUME_VERSION=0.3.10 pins a specific `lume-v0.3.10` release.
+#   LUME_VERSION=0.3.10 pins a specific stable `lume-v0.3.10` release.
+#   LUME_VERSION=nightly-lume-v0.3.11-nightly.20260812.42 pins an exact
+#   immutable nightly release. Stable discovery never selects nightlies.
 #   LUME_BAKED_VERSION is updated in the release PR so the default
 #   installer path does not need a GitHub API call.
 LUME_VERSION="${LUME_VERSION:-}"
+LUME_HOME="${LUME_HOME:-$HOME/.lume}"
+LUME_CHANNEL=""
+LUME_CHANNEL_EXPLICIT=false
 # ~~~ BAKED_VERSION: auto-updated in the release PR — do not edit ~~~
-LUME_BAKED_VERSION="0.5.1" # x-release-please-version
+LUME_BAKED_VERSION="0.5.3" # x-release-please-version
 # ~~~ END_BAKED_VERSION ~~~
 
 # Default port for lume serve (default: 7777)
@@ -68,6 +73,16 @@ while [ "$#" -gt 0 ]; do
     --no-background-service)
       INSTALL_BACKGROUND_SERVICE=false
       ;;
+    --channel)
+      [ -n "${2:-}" ] || { echo "${RED}Error: --channel requires stable or nightly.${NORMAL}" >&2; exit 2; }
+      LUME_CHANNEL="$2"
+      LUME_CHANNEL_EXPLICIT=true
+      shift
+      ;;
+    --channel=*)
+      LUME_CHANNEL="${1#*=}"
+      LUME_CHANNEL_EXPLICIT=true
+      ;;
     --no-auto-updater)
       echo "${YELLOW}Warning: --no-auto-updater is deprecated; scheduled auto-updates are no longer installed.${NORMAL}"
       INSTALL_AUTO_UPDATER=false
@@ -84,6 +99,7 @@ while [ "$#" -gt 0 ]; do
       echo "  --install-dir DIR         Install to the specified directory (default: $DEFAULT_INSTALL_DIR)"
       echo "  --port PORT               Specify the port for lume serve (default: 7777)"
       echo "  --no-background-service   Do not setup the Lume background service (LaunchAgent)"
+      echo "  --channel CHANNEL         Persist and install the latest stable or nightly release"
       echo "  --no-auto-updater         Deprecated no-op; scheduled auto-updates are no longer installed"
       echo "  --update-on-login         Deprecated no-op; use 'lume update --apply'"
       echo "  --help                    Display this help message"
@@ -104,6 +120,32 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
+
+RELEASE_CHANNEL_PATH="$LUME_HOME/release-channel"
+if [ "$LUME_CHANNEL_EXPLICIT" = true ] && [ -n "$LUME_VERSION" ]; then
+  echo "${RED}Error: --channel cannot be combined with LUME_VERSION; exact pins do not change saved channel state.${NORMAL}" >&2
+  exit 2
+fi
+if [ "$LUME_CHANNEL_EXPLICIT" != true ]; then
+  if [ -n "$LUME_VERSION" ]; then
+    # Exact pins are one-shot and outrank persisted preference. Keep them
+    # usable as a recovery path even if the preference file is malformed.
+    LUME_CHANNEL="stable"
+  elif [ -f "$RELEASE_CHANNEL_PATH" ]; then
+    LUME_CHANNEL=$(tr -d '[:space:]' < "$RELEASE_CHANNEL_PATH")
+  else
+    LUME_CHANNEL="stable"
+  fi
+fi
+case "$LUME_CHANNEL" in
+  stable) LUME_TAG_PREFIX="lume-v" ;;
+  nightly) LUME_TAG_PREFIX="nightly-lume-v" ;;
+  *)
+    echo "${RED}Error: invalid release channel '$LUME_CHANNEL' in $RELEASE_CHANNEL_PATH; expected stable or nightly.${NORMAL}" >&2
+    echo "Repair with: lume channel set stable" >&2
+    exit 1
+    ;;
+esac
 
 echo "${BOLD}${BLUE}"
 echo "  ⠀⣀⣀⡀⠀⠀⠀⠀⢀⣀⣀⣀⡀⠘⠋⢉⠙⣷⠀⠀ ⠀"
@@ -176,15 +218,28 @@ create_temp_dir() {
 # Get the latest lume release tag
 get_latest_lume_tag() {
   if [ -n "$LUME_VERSION" ]; then
-    local pinned="${LUME_VERSION#lume-v}"
-    pinned="${pinned#v}"
-    echo "Using Lume release from LUME_VERSION: ${BOLD}lume-v$pinned${NORMAL}" >&2
-    echo "lume-v$pinned"
+    local selected=""
+    if [[ "$LUME_VERSION" =~ ^(lume-v|v)?([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+      selected="lume-v${BASH_REMATCH[2]}"
+    elif [[ "$LUME_VERSION" =~ ^nightly-lume-v([0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[1-9][0-9]*)$ ]]; then
+      selected="nightly-lume-v${BASH_REMATCH[1]}"
+    elif [[ "$LUME_VERSION" =~ ^([0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[1-9][0-9]*)$ ]]; then
+      selected="nightly-lume-v${BASH_REMATCH[1]}"
+    else
+      echo "${RED}Error: LUME_VERSION must be an exact x.y.z stable version or canonical nightly tag.${NORMAL}" >&2
+      return 1
+    fi
+    echo "Using Lume release from LUME_VERSION: ${BOLD}$selected${NORMAL}" >&2
+    echo "$selected"
     return 0
   fi
 
-  if [ -n "$LUME_BAKED_VERSION" ]; then
+  if [ "$LUME_CHANNEL" = "stable" ] && [ -n "$LUME_BAKED_VERSION" ]; then
     local baked="${LUME_BAKED_VERSION#v}"
+    if ! [[ "$baked" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      echo "${RED}Error: baked Lume version must be an exact stable x.y.z version.${NORMAL}" >&2
+      return 1
+    fi
     echo "Using baked Lume release: ${BOLD}lume-v$baked${NORMAL}" >&2
     echo "lume-v$baked"
     return 0
@@ -196,6 +251,7 @@ get_latest_lume_tag() {
   local per_page=100
   local max_pages=10  # Safety limit (1000 tags max)
   local LUME_TAG=""
+  local versions=""
 
   while [ $page -le $max_pages ]; do
     echo "Checking page $page..." >&2
@@ -212,22 +268,48 @@ get_latest_lume_tag() {
       fi
     fi
 
-    LUME_TAG=$(echo "$response" \
-      | grep -oE '"tag_name":\s*"lume-[^"]*"' \
-      | head -n 1 \
-      | cut -d '"' -f 4)
+    local page_versions
+    page_versions=$(printf '%s' "$response" | awk -v prefix="$LUME_TAG_PREFIX" -v channel="$LUME_CHANNEL" '
+      /"tag_name"[[:space:]]*:/ {
+        tag = $0
+        sub(/^.*"tag_name"[[:space:]]*:[[:space:]]*"/, "", tag)
+        sub(/".*$/, "", tag)
+        next
+      }
+      tag != "" && /"draft"[[:space:]]*:/ {
+        if ($0 ~ /"draft"[[:space:]]*:[[:space:]]*false/ &&
+            index(tag, prefix) == 1) {
+          version = substr(tag, length(prefix) + 1)
+          if ((channel == "stable" && version ~ /^[0-9]+\.[0-9]+\.[0-9]+$/) ||
+              (channel == "nightly" && version ~ /^[0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[1-9][0-9]*$/)) {
+            print version
+          }
+        }
+        tag = ""
+      }
+    ')
+    if [ -n "$page_versions" ]; then
+      versions="${versions}${versions:+$'\n'}${page_versions}"
+    fi
 
-    if [ -n "$LUME_TAG" ]; then
-      echo "Found latest Lume release: ${BOLD}$LUME_TAG${NORMAL}" >&2
-      echo "$LUME_TAG"
-      return 0
+    local page_count
+    page_count=$(printf '%s' "$response" | awk '{ count += gsub(/"tag_name"[[:space:]]*:/, "&") } END { print count + 0 }')
+    if [ "$page_count" -lt "$per_page" ]; then
+      break
     fi
 
     page=$((page + 1))
   done
 
-  echo "${RED}Error: Could not find any lume tags after checking $max_pages pages.${NORMAL}" >&2
-  exit 1
+  local latest
+  latest=$(printf '%s\n' "$versions" | sed '/^$/d' | sort -t. -k1,1nr -k2,2nr -k3,3nr -k4,4nr -k5,5nr | head -n 1)
+  if [ -z "$latest" ]; then
+    echo "${RED}Error: Could not find any published $LUME_CHANNEL Lume tags after checking $max_pages pages.${NORMAL}" >&2
+    return 1
+  fi
+  LUME_TAG="$LUME_TAG_PREFIX$latest"
+  echo "Found latest Lume release: ${BOLD}$LUME_TAG${NORMAL}" >&2
+  echo "$LUME_TAG"
 }
 
 # Download the latest release
@@ -276,6 +358,16 @@ download_release() {
   else
     echo "${RED}Error: curl is required but not installed.${NORMAL}"
     exit 1
+  fi
+}
+
+persist_release_channel() {
+  if [ "$LUME_CHANNEL_EXPLICIT" = true ]; then
+    mkdir -p "$LUME_HOME"
+    channel_tmp="$LUME_HOME/.release-channel.$$"
+    printf '%s\n' "$LUME_CHANNEL" > "$channel_tmp"
+    mv -f "$channel_tmp" "$RELEASE_CHANNEL_PATH"
+    echo "Saved release channel: ${BOLD}$LUME_CHANNEL${NORMAL}"
   fi
 }
 
@@ -423,6 +515,7 @@ main() {
   detect_platform
   create_temp_dir
   download_release
+  persist_release_channel
   install_binary
   record_installation_telemetry
 

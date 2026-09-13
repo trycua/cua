@@ -4,7 +4,8 @@ import Virtualization
 
 struct VMDisplayContext {
     let virtualMachine: VZVirtualMachine?
-    let vncURL: String
+    /// Nil when the run started with `--vnc disabled`, which has no listener.
+    let vncURL: String?
     let resolution: VMDisplayResolution
     let vmName: String
     let copyFromGuest: (@MainActor () async throws -> Void)?
@@ -14,7 +15,7 @@ struct VMDisplayContext {
 
     init(
         virtualMachine: VZVirtualMachine?,
-        vncURL: String,
+        vncURL: String?,
         resolution: VMDisplayResolution,
         vmName: String = "Lume VM",
         copyFromGuest: (@MainActor () async throws -> Void)? = nil,
@@ -60,7 +61,10 @@ final class VNCClientPresenter: VMDisplayPresenter {
     }
 
     func show(context: VMDisplayContext) async throws {
-        try await vncService.openClient(url: context.vncURL)
+        guard let vncURL = context.vncURL else {
+            throw VMError.vncNotConfigured
+        }
+        try await vncService.openClient(url: vncURL)
     }
 
     func hide() {}

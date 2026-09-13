@@ -18,6 +18,7 @@ fn worker_options() -> PrivateWorkerOptions {
                     SessionPermissionMode::Unrestricted,
                 ],
                 compatibility_mode: SessionPermissionMode::Standard,
+                compatibility_capability_manifest_path: None,
                 compatibility_bounded_manifest_path: None,
                 unrestricted_acknowledged: true,
                 max_session_ttl_seconds: 60,
@@ -50,6 +51,7 @@ async fn private_worker_owns_one_runtime_without_a_reconnect_endpoint() {
             mode: SessionPermissionMode::Standard,
             ttl_seconds: 60,
             idle_ttl_seconds: 30,
+            capability_manifest_path: None,
             bounded_manifest_path: None,
         })
         .unwrap();
@@ -127,6 +129,7 @@ async fn private_worker_inherits_the_interactive_linux_display_scope() {
             mode: SessionPermissionMode::Standard,
             ttl_seconds: 60,
             idle_ttl_seconds: 30,
+            capability_manifest_path: None,
             bounded_manifest_path: None,
         })
         .unwrap();
@@ -147,6 +150,7 @@ async fn private_worker_inherits_the_interactive_linux_display_scope() {
             mode: SessionPermissionMode::Unrestricted,
             ttl_seconds: 60,
             idle_ttl_seconds: 30,
+            capability_manifest_path: None,
             bounded_manifest_path: None,
         })
         .unwrap();
@@ -241,11 +245,14 @@ async fn embedded_service_binds_authority_to_the_original_host_connection() {
         startup_timeout_ms: Some(10_000),
         shutdown_timeout_ms: Some(2_000),
         permission_mode: Some(EmbeddedPermissionMode::Standard),
+        capability_manifest_path: None,
+        approve_capability_manifest: false,
         session_policy_path: None,
         approve_session_policy: false,
         dangerously_bypass_approvals: false,
         environment: Vec::<EmbeddedEnvironmentVariable>::new(),
         inherit_stderr: true,
+        no_overlay: false,
     })
     .unwrap();
     let connection = host.clone().start().await.unwrap();
@@ -257,6 +264,7 @@ async fn embedded_service_binds_authority_to_the_original_host_connection() {
             mode: SessionPermissionMode::Standard,
             ttl_seconds: 60,
             idle_ttl_seconds: 30,
+            capability_manifest_path: None,
             bounded_manifest_path: None,
         })
         .unwrap();
@@ -298,6 +306,7 @@ fn service_untrusted_child_probe() {
         mode: SessionPermissionMode::Standard,
         ttl_seconds: 60,
         idle_ttl_seconds: 30,
+        capability_manifest_path: None,
         bounded_manifest_path: None,
     });
     assert!(

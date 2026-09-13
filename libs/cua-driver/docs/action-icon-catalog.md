@@ -170,10 +170,12 @@ distinct resolved action IDs.
 
 | Public tool                | Resolved action keys                                  |
 | -------------------------- | ----------------------------------------------------- |
-| `start_session`            | `session.start.{auto\|window\|desktop}`               |
-| `escalate_session`         | `session.escalate.desktop`                            |
-| `get_session_state`        | `session.inspect`                                     |
+| `start_session`            | `session.start.{implicit\|named}`                     |
+| `get_session`              | `session.inspect.one`                                 |
+| `list_sessions`            | `session.inspect.list`                                |
 | `end_session`              | `session.end`                                         |
+| `escalate_session`         | `session.legacy.escalate.desktop`                     |
+| `get_session_state`        | `session.legacy.inspect_capture`                      |
 | `start_recording`          | `recording.start.trajectory`, `recording.start.video` |
 | `stop_recording`           | `recording.stop`                                      |
 | `get_recording_state`      | `recording.inspect`                                   |
@@ -215,7 +217,7 @@ public tool names.
 |  16 | `get_screen_size`          | Inspection                  | All                                   | Screen dimensions                                                     |
 |  17 | `get_desktop_state`        | Inspection                  | All                                   | Desktop capture                                                       |
 |  18 | `get_cursor_position`      | Inspection                  | All                                   | Cursor location                                                       |
-|  19 | `move_cursor`              | Pointer/overlay input       | All                                   | Agent-cursor move in window scope; real-pointer move in desktop scope |
+|  19 | `move_cursor`              | Pointer/overlay input       | All                                   | Agent-cursor or real-pointer move selected by the per-call target     |
 |  20 | `set_agent_cursor_enabled` | Agent cursor                | All                                   | Show/hide cursor                                                      |
 |  21 | `set_agent_cursor_motion`  | Agent cursor                | All                                   | Motion configuration                                                  |
 |  22 | `set_agent_cursor_theme`   | Agent cursor                | All                                   | Select an installed visual theme                                      |
@@ -241,16 +243,18 @@ public tool names.
 |  42 | `get_recording_state`      | Recording                   | All                                   | Recording inspect                                                     |
 |  43 | `replay_trajectory`        | Recording                   | All                                   | Replay                                                                |
 |  44 | `install_ffmpeg`           | Maintenance                 | Windows/Linux; no-op when unnecessary | Plan/install dependency                                               |
-|  45 | `start_session`            | Session lifecycle           | All                                   | Start session plus capture scope                                      |
-|  46 | `escalate_session`         | Session lifecycle           | All                                   | Escalate to desktop                                                   |
-|  47 | `get_session_state`        | Session lifecycle           | All                                   | Session inspect                                                       |
+|  45 | `start_session`            | Session lifecycle           | All                                   | Optional implicit or named lifecycle start                            |
+|  46 | `get_session`              | Session lifecycle           | All                                   | Inspect one visible lifecycle session                                 |
+|  47 | `list_sessions`            | Session lifecycle           | All                                   | List transport-visible lifecycle sessions                             |
 |  48 | `end_session`              | Session lifecycle           | All                                   | End session                                                           |
-|  49 | `check_for_update`         | Maintenance                 | All                                   | Update check                                                          |
-|  50 | `debug_window_info`        | Diagnostic                  | Windows only                          | Window diagnostic                                                     |
-|  51 | `mouse_button_down`        | Low-level pointer           | Linux only                            | Hold button                                                           |
-|  52 | `mouse_drag`               | Low-level pointer           | Linux only                            | Move held pointer                                                     |
-|  53 | `mouse_button_up`          | Low-level pointer           | Linux only                            | Release button                                                        |
-|  54 | `parallel_mouse_drag`      | Multi-pointer               | Linux only                            | Concurrent drags                                                      |
+|  49 | `escalate_session`         | Legacy session compatibility | All                                  | Deprecated capture-scope escalation                                   |
+|  50 | `get_session_state`        | Legacy session compatibility | All                                  | Deprecated capture-scope inspect                                      |
+|  51 | `check_for_update`         | Maintenance                 | All                                   | Update check                                                          |
+|  52 | `debug_window_info`        | Diagnostic                  | Windows only                          | Window diagnostic                                                     |
+|  53 | `mouse_button_down`        | Low-level pointer           | Linux only                            | Hold button                                                           |
+|  54 | `mouse_drag`               | Low-level pointer           | Linux only                            | Move held pointer                                                     |
+|  55 | `mouse_button_up`          | Low-level pointer           | Linux only                            | Release button                                                        |
+|  56 | `parallel_mouse_drag`      | Multi-pointer               | Linux only                            | Concurrent drags                                                      |
 
 ## Linux low-level pointer action keys
 

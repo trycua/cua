@@ -244,7 +244,7 @@ async def _register_sandbox_tools(server: "FastMCP", permissions: set[Permission
             if os_type == "macos":
                 image = Image.macos("26")
             elif os_type == "windows":
-                image = Image.windows("11")
+                image = Image.windows()
             else:
                 image = Image.linux("ubuntu", "24.04")
             sb = await Sandbox.create(image, api_key=await get_access_token(), region=region)

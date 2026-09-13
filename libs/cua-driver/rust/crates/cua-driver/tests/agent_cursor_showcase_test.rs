@@ -13,6 +13,9 @@ use image::RgbaImage;
 
 const CELL_ID: &str = "desktop-agent-cursor-showcase-px";
 const SESSION: &str = "Cursor showcase";
+// MoveTo offsets the cursor artwork by 16 points so its tip lands on the
+// requested coordinate. The session badge follows that artwork anchor.
+const MAX_CURSOR_ANCHOR_OFFSET: f64 = 16.0;
 
 #[test]
 #[ignore]
@@ -32,15 +35,11 @@ fn semantic_cursor_showcase_records_session_and_action_states() {
         let mut driver = spawn_driver();
         *evidence = recording_evidence(driver.recording_dir());
 
-        call_ok(
-            &mut driver,
-            "start_session",
-            serde_json::json!({
-                "session": SESSION,
-                "capture_scope": "auto"
-            }),
-        );
-
+        // Capture the empty desktop before declaring the explicit session.
+        // `start_session` may revive and materialize the session-owned overlay
+        // at the current pointer position, which can otherwise put the badge
+        // in both frames when a previous showcase left the pointer at this
+        // deterministic target.
         let (baseline_png, width, height) = capture_desktop_png(&mut driver);
         let baseline = image::load_from_memory(&baseline_png)
             .expect("decode baseline desktop screenshot")
@@ -48,6 +47,14 @@ fn semantic_cursor_showcase_records_session_and_action_states() {
         assert!(
             width >= 640.0 && height >= 480.0,
             "showcase requires a normal desktop, got {width}x{height}"
+        );
+
+        call_ok(
+            &mut driver,
+            "start_session",
+            serde_json::json!({
+                "session": SESSION
+            }),
         );
 
         call_ok(
@@ -81,14 +88,13 @@ fn semantic_cursor_showcase_records_session_and_action_states() {
                 "y": center_y - 80.0
             }),
         );
+        // move_cursor waits for the configured glide, but X11/Wayland capture
+        // still needs a compositor round-trip before the overlay is guaranteed
+        // to appear in the driver-owned screenshot. The badge remains fully
+        // visible for two seconds, so this settle stays inside that window.
         settle(900);
 
-        let (cursor_png, cursor_width, cursor_height) = capture_desktop_png(&mut driver);
-        assert_eq!(
-            (width, height),
-            (cursor_width, cursor_height),
-            "logical desktop dimensions changed while checking the cursor overlay"
-        );
+        let cursor_png = capture_cursor_oracle_png(&mut driver, width, height);
         let cursor_frame = image::load_from_memory(&cursor_png)
             .expect("decode cursor desktop screenshot")
             .to_rgba8();
@@ -109,20 +115,10 @@ fn semantic_cursor_showcase_records_session_and_action_states() {
 
         call_ok(
             &mut driver,
-            "escalate_session",
-            serde_json::json!({
-                "session": SESSION,
-                "reason": "foreground_ineffective",
-                "detail": "cursor showcase switches from overlay positioning to desktop actions"
-            }),
-        );
-
-        call_ok(
-            &mut driver,
             "click",
             serde_json::json!({
                 "session": SESSION,
-                "scope": "desktop",
+                "target": {"kind": "desktop", "display_id": "primary"},
                 "x": center_x,
                 "y": center_y,
                 "delivery_mode": "foreground"
@@ -135,7 +131,7 @@ fn semantic_cursor_showcase_records_session_and_action_states() {
             "type_text",
             serde_json::json!({
                 "session": SESSION,
-                "scope": "desktop",
+                "target": {"kind": "desktop", "display_id": "primary"},
                 "text": "cua",
                 "delivery_mode": "foreground"
             }),
@@ -147,7 +143,7 @@ fn semantic_cursor_showcase_records_session_and_action_states() {
             "scroll",
             serde_json::json!({
                 "session": SESSION,
-                "scope": "desktop",
+                "target": {"kind": "desktop", "display_id": "primary"},
                 "x": center_x,
                 "y": center_y,
                 "direction": "down",
@@ -162,7 +158,7 @@ fn semantic_cursor_showcase_records_session_and_action_states() {
             "drag",
             serde_json::json!({
                 "session": SESSION,
-                "scope": "desktop",
+                "target": {"kind": "desktop", "display_id": "primary"},
                 "from_x": center_x - 90.0,
                 "from_y": center_y + 80.0,
                 "to_x": center_x + 120.0,
@@ -215,8 +211,9 @@ fn assert_cursor_and_badge_pixels_changed(
     let badge_half_width = (f64::from(BADGE_MAX_WIDTH) * 0.5 * scale_x).ceil() as i64;
     let badge_cursor_exclusion = (34.0 * scale_x).ceil() as i64;
     let badge_top = center_y + (f64::from(BADGE_CURSOR_GAP) * scale_y).floor() as i64;
-    let badge_bottom =
-        center_y + (f64::from(BADGE_CURSOR_GAP + BADGE_HEIGHT) * scale_y).ceil() as i64;
+    let badge_bottom = center_y
+        + ((f64::from(BADGE_CURSOR_GAP + BADGE_HEIGHT) + MAX_CURSOR_ANCHOR_OFFSET) * scale_y).ceil()
+            as i64;
     // Ignore the center corridor where the pointer's lower edge or glow could
     // overlap the pill. Requiring changed pixels in the badge's outer wings
     // makes this an independent badge assertion.
@@ -240,7 +237,22 @@ fn assert_cursor_and_badge_pixels_changed(
         pointer_pixels >= 12 && badge_pixels >= 24,
         "agent cursor overlay was incomplete near ({logical_x:.0},{logical_y:.0}): \
          pointer region changed {pointer_pixels} pixels (minimum 12), \
-         badge region changed {badge_pixels} pixels (minimum 24)"
+         badge region changed {badge_pixels} pixels (minimum 24); \
+         image={}x{}, logical={}x{}, scale={scale_x:.3}x{scale_y:.3}, \
+         pointer_rect=({},{}..{},{}), badge_rect=({},{}..{},{}), \
+         badge_exclusion={badge_cursor_exclusion}",
+        baseline.width(),
+        baseline.height(),
+        logical_width,
+        logical_height,
+        center_x - pointer_radius_x,
+        center_y - pointer_radius_y,
+        center_x,
+        center_y + (f64::from(BADGE_CURSOR_GAP) * scale_y).floor() as i64,
+        center_x - badge_half_width,
+        badge_top,
+        center_x + badge_half_width,
+        badge_bottom,
     );
 }
 
@@ -303,6 +315,58 @@ fn capture_desktop_png(driver: &mut McpDriver) -> (Vec<u8>, f64, f64) {
     (png, width, height)
 }
 
+fn capture_cursor_oracle_png(driver: &mut McpDriver, width: f64, height: f64) -> Vec<u8> {
+    #[cfg(target_os = "linux")]
+    {
+        // Native Wayland has no X11 DISPLAY to hand to x11grab. The driver's
+        // display capture is the composed-screen oracle for that lane; keep
+        // ffmpeg only for the canonical X11 path where it is available.
+        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+            return capture_desktop_png(driver).0;
+        }
+        // XGetImage root reads can omit a shaped overlay client's pixels on a
+        // compositor-less X11 server. Capture the composed display exactly as
+        // the behavioral recording does so the oracle observes what a user sees.
+        let display = std::env::var("DISPLAY").expect("Linux cursor showcase requires DISPLAY");
+        let video_size = format!("{}x{}", width.round() as u32, height.round() as u32);
+        let output = std::process::Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "x11grab",
+                "-draw_mouse",
+                "0",
+                "-video_size",
+                &video_size,
+                "-i",
+                &display,
+                "-frames:v",
+                "1",
+                "-f",
+                "image2pipe",
+                "-vcodec",
+                "png",
+                "pipe:1",
+            ])
+            .output()
+            .expect("launch ffmpeg X11 display capture");
+        assert!(
+            output.status.success() && !output.stdout.is_empty(),
+            "ffmpeg X11 display capture failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output.stdout
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (width, height);
+        capture_desktop_png(driver).0
+    }
+}
+
 fn call_ok(driver: &mut McpDriver, tool: &str, arguments: serde_json::Value) {
     let response = driver.call(tool, arguments);
     assert!(!response.is_error(), "{tool} failed: {}", response.text());
@@ -328,6 +392,23 @@ mod pixel_oracle_tests {
         let mut overlay = baseline.clone();
         paint_changed_rect(&mut overlay, 196, 146, 200, 150);
         paint_changed_rect(&mut overlay, 150, 180, 156, 186);
+
+        assert_cursor_and_badge_pixels_changed(
+            &baseline,
+            &overlay,
+            CURSOR_X,
+            CURSOR_Y,
+            f64::from(WIDTH),
+            f64::from(HEIGHT),
+        );
+    }
+
+    #[test]
+    fn accepts_badge_at_shifted_cursor_artwork_anchor() {
+        let baseline = RgbaImage::new(WIDTH, HEIGHT);
+        let mut overlay = baseline.clone();
+        paint_changed_rect(&mut overlay, 196, 146, 200, 150);
+        paint_changed_rect(&mut overlay, 250, 204, 256, 210);
 
         assert_cursor_and_badge_pixels_changed(
             &baseline,

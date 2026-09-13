@@ -12,6 +12,7 @@ from typing import Any
 COMPONENT_PATHS = {
     "cua-driver-rs": "libs/cua-driver",
     "lume": "libs/lume",
+    "sandbox": "libs/python/cua-sandbox",
 }
 
 

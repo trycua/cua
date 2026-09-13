@@ -5,6 +5,7 @@ use std::time::Instant;
 use tracing::warn;
 
 use crate::authorization::authorize_tool_call;
+use crate::mcp_result::{conforming_tool_result, tool_error_result};
 use crate::protocol::{initialize_result, InitializeMetadata, Request, Response, ResponseBody};
 use crate::tool::ToolRegistry;
 
@@ -852,8 +853,65 @@ pub async fn handle_request(
     id: serde_json::Value,
     provider: &dyn ToolProvider,
 ) -> Response {
+    handle_request_inner(req, id, provider, None).await
+}
+
+/// Dispatch one MCP request with a transport identity proved by the local
+/// adapter rather than supplied by the MCP client.
+///
+/// The ordinary untrusted entry point above must continue to discard every
+/// reserved argument. Direct stdio and authenticated HTTP each own a transport
+/// lease, so their adapters pass that lease here after parsing the untrusted
+/// request. The inner boundary sanitizes caller claims first and then stamps
+/// this trusted owner onto both implicit and explicitly named lifecycle
+/// sessions.
+pub async fn handle_request_with_transport_session(
+    req: Request,
+    id: serde_json::Value,
+    provider: &dyn ToolProvider,
+    transport_session: &str,
+) -> Response {
+    handle_request_inner(req, id, provider, Some(transport_session)).await
+}
+
+async fn handle_request_inner(
+    req: Request,
+    id: serde_json::Value,
+    provider: &dyn ToolProvider,
+    transport_session: Option<&str>,
+) -> Response {
+    let era = match crate::mcp_wire::classify_request(&req) {
+        Ok(era) => era,
+        Err(response) => return response,
+    };
+    if req.method == "tools/call" {
+        if let Err(response) =
+            crate::mcp_wire::validate_tool_call(&req, id.clone(), era, &provider.tools_list())
+        {
+            return response;
+        }
+    }
+    let method = req.method.clone();
+    let response =
+        if let Some(response) = crate::mcp_wire::handle_metadata_request(&req, id.clone()) {
+            response
+        } else {
+            dispatch_request(req, id, provider, transport_session, era).await
+        };
+    crate::mcp_wire::finish_response(era, &method, response)
+}
+
+async fn dispatch_request(
+    req: Request,
+    id: serde_json::Value,
+    provider: &dyn ToolProvider,
+    transport_session: Option<&str>,
+    era: crate::mcp_wire::ProtocolEra,
+) -> Response {
     match req.method.as_str() {
-        "initialize" => Response::ok(id, initialize_result()),
+        "initialize" if era == crate::mcp_wire::ProtocolEra::Legacy => {
+            Response::ok(id, initialize_result())
+        }
 
         "tools/list" => Response::ok(id, provider.tools_list()),
 
@@ -864,9 +922,12 @@ pub async fn handle_request(
                 if let Err(error) = authorize_tool_call(&call.name, &call.args) {
                     return Response::ok(
                         id,
-                        tool_error_result(
-                            error.to_string(),
-                            serde_json::json!({"code": "permission_denied"}),
+                        conforming_tool_result(
+                            &call.name,
+                            tool_error_result(
+                                error.to_string(),
+                                serde_json::json!({"code": "permission_denied"}),
+                            ),
                         ),
                     );
                 }
@@ -877,23 +938,17 @@ pub async fn handle_request(
                     .and_then(serde_json::Value::as_str)
                     .filter(|session| !session.is_empty())
                     .map(str::to_owned);
-                if let (Some(arguments), Some(session)) =
-                    (call.args.as_object_mut(), public_session)
-                {
-                    arguments.insert(
-                        "_session_id".to_owned(),
-                        serde_json::Value::String(session.clone()),
-                    );
-                    arguments.insert(
-                        "_transport_session_id".to_owned(),
-                        serde_json::Value::String(session.clone()),
-                    );
-                }
-                if call.name == "browser_prepare" {
-                    if let Some(arguments) = call.args.as_object_mut() {
+                if let Some(arguments) = call.args.as_object_mut() {
+                    if let Some(session) = public_session.as_deref().or(transport_session) {
                         arguments.insert(
-                            crate::browser::approval::MCP_HOST_APPROVAL_ARG.to_owned(),
-                            serde_json::Value::Bool(true),
+                            "_session_id".to_owned(),
+                            serde_json::Value::String(session.to_owned()),
+                        );
+                    }
+                    if let Some(owner) = transport_session.or(public_session.as_deref()) {
+                        arguments.insert(
+                            "_transport_session_id".to_owned(),
+                            serde_json::Value::String(owner.to_owned()),
                         );
                     }
                 }
@@ -906,13 +961,14 @@ pub async fn handle_request(
                     }
                 }
 
-                match provider.invoke_tool(&call.name, call.args).await {
-                    Ok(result) => Response::ok(id, result),
-                    Err(error) => Response::ok(
-                        id,
-                        tool_error_result(error, serde_json::json!({"exit_code": 1})),
-                    ),
-                }
+                // Both arms answer through the shared boundary, so a tool
+                // payload and an invocation failure are held to the same
+                // advertised `outputSchema`.
+                let result = match provider.invoke_tool(&call.name, call.args).await {
+                    Ok(result) => result,
+                    Err(error) => tool_error_result(error, serde_json::json!({"exit_code": 1})),
+                };
+                Response::ok(id, conforming_tool_result(&call.name, result))
             }
         },
 
@@ -923,12 +979,158 @@ pub async fn handle_request(
     }
 }
 
-fn tool_error_result(message: String, structured: serde_json::Value) -> serde_json::Value {
-    serde_json::json!({
-        "content": [{"type": "text", "text": message}],
-        "isError": true,
-        "structuredContent": structured,
-    })
+#[cfg(test)]
+mod dispatch_contract_tests {
+    //! The boundary itself is unit-tested in `crate::mcp_result`; these pin
+    //! that `tools/call` dispatch actually routes through it, on the path a
+    //! strict MCP client exercises.
+
+    use super::*;
+    use cua_driver_contract::{advertised_tool_output_schema, TOOL_INVOCATION_FAILED_CODE};
+
+    struct NeverInvokeProvider;
+
+    #[async_trait::async_trait]
+    impl ToolProvider for NeverInvokeProvider {
+        fn tools_list(&self) -> serde_json::Value {
+            serde_json::json!({"tools": [{"name": "get_config"}]})
+        }
+
+        async fn invoke_tool(
+            &self,
+            _name: &str,
+            _arguments: serde_json::Value,
+        ) -> Result<serde_json::Value, String> {
+            panic!("invalid requests must not execute tools")
+        }
+    }
+
+    #[tokio::test]
+    async fn modern_invalid_requests_never_execute_tools() {
+        for (version, capabilities, name, arguments, expected_code) in [
+            (
+                "2026-07-28",
+                serde_json::json!({}),
+                "unknown",
+                serde_json::json!({}),
+                -32602,
+            ),
+            (
+                "2026-07-28",
+                serde_json::json!({}),
+                "get_config",
+                serde_json::json!([]),
+                -32602,
+            ),
+            (
+                "2026-07-28",
+                serde_json::Value::Null,
+                "get_config",
+                serde_json::json!({}),
+                -32602,
+            ),
+            (
+                "unknown",
+                serde_json::json!({}),
+                "get_config",
+                serde_json::json!({}),
+                -32022,
+            ),
+        ] {
+            let req = serde_json::from_value(serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": name, "arguments": arguments, "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": version,
+                    "io.modelcontextprotocol/clientCapabilities": capabilities
+                }}
+            }))
+            .unwrap();
+            let response = handle_request(req, serde_json::json!(1), &NeverInvokeProvider).await;
+            let wire = serde_json::to_value(response).unwrap();
+            assert_eq!(wire["error"]["code"], expected_code);
+        }
+    }
+
+    struct StubProvider(Result<serde_json::Value, String>);
+
+    #[async_trait::async_trait]
+    impl ToolProvider for StubProvider {
+        fn tools_list(&self) -> serde_json::Value {
+            serde_json::json!({"tools": []})
+        }
+
+        async fn invoke_tool(
+            &self,
+            _name: &str,
+            _arguments: serde_json::Value,
+        ) -> Result<serde_json::Value, String> {
+            self.0.clone()
+        }
+    }
+
+    fn call_request(name: &str) -> Request {
+        serde_json::from_value(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": { "name": name, "arguments": {} }
+        }))
+        .expect("request parses")
+    }
+
+    fn result_of(response: Response) -> serde_json::Value {
+        match response.body {
+            ResponseBody::Result { result } => result,
+            ResponseBody::Error { error } => panic!("expected a result, got {}", error.message),
+        }
+    }
+
+    #[track_caller]
+    fn assert_conforms(tool: &str, structured: &serde_json::Value) {
+        let schema = advertised_tool_output_schema(tool).expect("tool advertises a schema");
+        assert!(
+            jsonschema::validator_for(&schema)
+                .expect("schema compiles")
+                .is_valid(structured),
+            "advertised schema rejected {structured}"
+        );
+    }
+
+    /// Reverting the boundary call fails this with the bug as the message:
+    /// the advertised schema rejects the bare `{"exit_code": 1}` diagnostic.
+    #[tokio::test]
+    async fn an_invocation_failure_is_dispatched_as_a_conforming_refusal() {
+        let provider = StubProvider(Err("daemon transport closed".to_owned()));
+
+        let result =
+            result_of(handle_request(call_request("click"), serde_json::json!(1), &provider).await);
+
+        assert_conforms("click", &result["structuredContent"]);
+        // The diagnostic survives the normalization; only the marker is added.
+        assert_eq!(result["structuredContent"]["exit_code"], 1);
+        assert_eq!(
+            result["structuredContent"]["code"],
+            TOOL_INVOCATION_FAILED_CODE
+        );
+    }
+
+    /// The class of failure the two `exit_code` paths were only one instance
+    /// of: a provider result that is invalid under the advertised schema no
+    /// longer reaches the client as a success.
+    #[tokio::test]
+    async fn a_provider_success_that_violates_the_schema_is_replaced() {
+        let provider = StubProvider(Ok(serde_json::json!({"content": [], "isError": false})));
+
+        let result =
+            result_of(handle_request(call_request("click"), serde_json::json!(1), &provider).await);
+
+        assert_conforms("click", &result["structuredContent"]);
+        assert_eq!(result["isError"], true);
+        assert_eq!(
+            result["structuredContent"]["code"],
+            crate::mcp_result::TOOL_OUTPUT_INVALID_CODE
+        );
+    }
 }
 
 #[cfg(test)]
@@ -989,6 +1191,75 @@ mod observation_tests {
         assert_eq!(arguments["_transport_session_id"], "public");
         assert_eq!(arguments["_cua_browser_download_mcp_host_approved"], true);
         assert!(arguments.get("_protected_process_fingerprint").is_none());
+    }
+
+    #[tokio::test]
+    async fn trusted_transport_boundary_keeps_public_label_separate_from_owner() {
+        let provider = CapturingProvider {
+            arguments: Mutex::new(None),
+        };
+        let request: Request = serde_json::from_value(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "browser_download",
+                "arguments": {
+                    "session": "public",
+                    "_session_id": "forged-owner",
+                    "_transport_session_id": "forged-transport",
+                    "_cua_browser_download_mcp_host_approved": false,
+                    "_protected_process_fingerprint": {"pid": 1}
+                }
+            }
+        }))
+        .unwrap();
+        let response = handle_request_with_transport_session(
+            request,
+            serde_json::json!(1),
+            &provider,
+            "mcp-trusted-lease",
+        )
+        .await;
+        assert!(matches!(response.body, ResponseBody::Result { .. }));
+
+        let arguments = provider.arguments.lock().unwrap().clone().unwrap();
+        assert_eq!(arguments["_session_id"], "public");
+        assert_eq!(arguments["_transport_session_id"], "mcp-trusted-lease");
+        assert_eq!(arguments["_cua_browser_download_mcp_host_approved"], true);
+        assert!(arguments.get("_protected_process_fingerprint").is_none());
+    }
+
+    #[tokio::test]
+    async fn trusted_transport_boundary_mints_implicit_identity_from_lease() {
+        let provider = CapturingProvider {
+            arguments: Mutex::new(None),
+        };
+        let request: Request = serde_json::from_value(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "get_config",
+                "arguments": {
+                    "_session_id": "forged-owner",
+                    "_transport_session_id": "forged-transport"
+                }
+            }
+        }))
+        .unwrap();
+        let response = handle_request_with_transport_session(
+            request,
+            serde_json::json!(1),
+            &provider,
+            "mcp-trusted-lease",
+        )
+        .await;
+        assert!(matches!(response.body, ResponseBody::Result { .. }));
+
+        let arguments = provider.arguments.lock().unwrap().clone().unwrap();
+        assert_eq!(arguments["_session_id"], "mcp-trusted-lease");
+        assert_eq!(arguments["_transport_session_id"], "mcp-trusted-lease");
     }
 
     #[test]
@@ -1118,8 +1389,7 @@ mod observation_tests {
             (
                 "browser_prepare",
                 serde_json::json!({
-                    "strategy": {"kind": "existing_profile"},
-                    "approval_token": "private-token"
+                    "strategy": {"kind": "existing_profile"}
                 }),
                 ToolOperation::BrowserPrepareExistingProfile,
             ),

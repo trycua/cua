@@ -5,18 +5,17 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
-from uuid import uuid4
 
 from cua_driver import (
-    CaptureScope,
+    ActionTarget,
+    ActionResult,
     ClickButton,
     ClickInput,
+    ClickPosition,
     CuaDriver,
-    DesktopScope,
-    EndSessionInput,
     GetDesktopStateInput,
+    InputDeliveryMode,
     PressKeyInput,
-    StartSessionInput,
     ToolResult,
     TypeTextInput,
 )
@@ -26,40 +25,20 @@ T = TypeVar("T")
 
 
 class NativeDesktopTools:
-    """Own one in-process driver runtime and one desktop-scoped session."""
+    """Own one in-process runtime with one implicit lifecycle session."""
 
     def __init__(self, timeout: float = 30.0) -> None:
         self.driver = CuaDriver.create()
-        self.session = f"claude-native-{uuid4().hex[:12]}"
         self.timeout = timeout
-        self.started = False
-
-    async def start(self) -> None:
-        await self._bounded(
-            self.driver.start_session(
-                StartSessionInput(
-                    session=self.session,
-                    capture_scope=CaptureScope.DESKTOP,
-                )
-            )
-        )
-        self.started = True
 
     async def close(self) -> None:
-        try:
-            if self.started:
-                await self._bounded(
-                    self.driver.end_session(EndSessionInput(session=self.session))
-                )
-                self.started = False
-        finally:
-            await self.driver.shutdown()
+        await self.driver.shutdown()
 
     async def observe(self) -> dict[str, object]:
         result = await self._bounded(
             self.driver.get_desktop_state(
                 GetDesktopStateInput(
-                    session=self.session,
+                    session=None,
                     screenshot_out_file=None,
                 )
             )
@@ -70,10 +49,10 @@ class NativeDesktopTools:
         return await self._mutate_then_observe(
             lambda: self.driver.click(
                 ClickInput(
-                    x=x,
-                    y=y,
-                    scope=DesktopScope.DESKTOP,
-                    session=self.session,
+                    position=ClickPosition.COORDINATES(x=x, y=y),
+                    target=ActionTarget.DESKTOP(display_id="primary"),
+                    delivery_mode=InputDeliveryMode.FOREGROUND,
+                    session=None,
                     button=ClickButton.LEFT,
                     count=1,
                 )
@@ -85,8 +64,9 @@ class NativeDesktopTools:
             lambda: self.driver.type_text(
                 TypeTextInput(
                     text=text,
-                    scope=DesktopScope.DESKTOP,
-                    session=self.session,
+                    target=ActionTarget.DESKTOP(display_id="primary"),
+                    scope=None,
+                    session=None,
                 )
             )
         )
@@ -97,20 +77,21 @@ class NativeDesktopTools:
                 PressKeyInput(
                     key=key,
                     modifiers=None,
-                    scope=DesktopScope.DESKTOP,
-                    session=self.session,
+                    target=ActionTarget.DESKTOP(display_id="primary"),
+                    scope=None,
+                    session=None,
                 )
             )
         )
 
     async def _mutate_then_observe(
         self,
-        operation: Callable[[], Awaitable[ToolResult]],
+        operation: Callable[[], Awaitable[ToolResult | ActionResult]],
     ) -> dict[str, object]:
         unknown_detail: str | None = None
         try:
             result = await self._bounded(operation())
-            if result.is_error:
+            if isinstance(result, ToolResult) and result.is_error:
                 unknown_detail = (
                     f"Action reported an error and its outcome may be unknown "
                     f"({result.text}). A fresh observation follows. Do not retry "

@@ -182,6 +182,19 @@ fn focus_container(id: u64) -> bool {
         .is_ok_and(|status| status.success())
 }
 
+fn wait_for_container_focus(id: u64, timeout: std::time::Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if window_for_id(id).is_some_and(|window| window.focused) {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
 /// Briefly focus one compositor-attested container, run `body`, then restore
 /// the previously focused container. The caller must already have verified the
 /// target container's PID and id through [`window_for_id`].
@@ -197,8 +210,7 @@ pub fn with_focused_container<T>(
     if !focus_container(id) {
         anyhow::bail!("Sway refused to focus exact container {id}");
     }
-    std::thread::sleep(std::time::Duration::from_millis(80));
-    if !window_for_id(id).is_some_and(|window| window.focused) {
+    if !wait_for_container_focus(id, std::time::Duration::from_millis(500)) {
         anyhow::bail!("Sway did not confirm focus on exact container {id}");
     }
     let result = body();
@@ -208,8 +220,7 @@ pub fn with_focused_container<T>(
             if !focus_container(prior) {
                 anyhow::bail!("Sway could not restore prior container {prior}");
             }
-            std::thread::sleep(std::time::Duration::from_millis(80));
-            if !window_for_id(prior).is_some_and(|window| window.focused) {
+            if !wait_for_container_focus(prior, std::time::Duration::from_millis(500)) {
                 anyhow::bail!("Sway did not confirm restored container {prior}");
             }
             Ok(())

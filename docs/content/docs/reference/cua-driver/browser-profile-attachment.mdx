@@ -40,11 +40,6 @@ proves transport provenance, not approval to use an authenticated browser
 profile. A standalone standard-mode runtime without a launch grant or host
 callback fails closed.
 
-The old `browser-approve` file artifact is disabled by default. A trusted
-launcher can temporarily enable it with
-`--allow-legacy-existing-profile-approval`. The artifact is same-user writable
-and is not protected human consent.
-
 ## Success result
 
 A successful call returns `action: "attached_existing_profile"` and an
@@ -73,7 +68,7 @@ A successful call returns `action: "attached_existing_profile"` and an
 
 All fields are `false` when the endpoint was already available. The driver does
 not return the profile identity, endpoint address, port, connection generation,
-grant identifier, or approval artifact.
+grant identifier, or internal authorization details.
 
 A refusal after setup begins may include `detail.setup_side_effects`. This uses
 the same setup fields and adds `restored_remote_debugging` when the driver had
@@ -98,6 +93,41 @@ On refusal, `restored_remote_debugging: true` means the exact semantic checkbox,
 or the setup page's sole bounded pixel checkbox when web AX became unavailable,
 was proven off during cleanup. A false value means cleanup could not prove the
 state; callers must not infer that remote debugging is disabled.
+
+## Chrome 144+ auto-connect
+
+Chrome 144 and later can publish an agent auto-connect endpoint for its running
+profile after remote debugging is enabled. Cua Driver reads the endpoint from
+that browser process's `DevToolsActivePort` file, proves that the live loopback
+listener belongs to the approved process, and connects without restarting the
+browser. The profile keeps its current tabs, extensions, cookies, and sign-in
+state. See Chrome's
+[agent auto-connect guide](https://developer.chrome.com/docs/devtools/agents/use-cases/auto-connect).
+
+Endpoint discovery is provenance rather than authorization. A
+`DevToolsActivePort` file, custom user-data path, or process-owned socket never
+grants access to a standalone profile. The caller must complete
+`browser_prepare` for the exact PID, window, and session first.
+
+After binding, `get_browser_state` reports the non-sensitive connection class:
+
+| Field                   | Existing-profile value       | Meaning                                                        |
+| ----------------------- | ---------------------------- | -------------------------------------------------------------- |
+| `endpoint_transport`    | `dev_tools_active_port`      | Chrome published the endpoint through its auto-connect bridge. |
+| `endpoint_access_class` | `existing_profile_approved`  | A live existing-profile grant authorizes this connection.      |
+
+The result never exposes the port, WebSocket path, or profile path. Cua Driver
+also rejects CDP commands that add persistent scripts, intercept requests, or
+override browser identity on this connection.
+
+Ending the Cua session revokes its in-memory grant and closes its socket. It
+does not close Chrome or disable Chrome's remote-debugging preference. Disable
+that setting in Chrome when the profile should stop accepting local DevTools
+connections.
+
+This attachment route does not promise fewer CAPTCHAs or bypass site checks.
+Sites can still use network reputation, account history, browser state, and
+interaction patterns.
 
 ## Grant lifetime
 
@@ -150,8 +180,7 @@ for why Cua Driver uses CDP and which risks remain outside the driver.
 Host authorization events contain only bounded metadata and the structured
 outcome. They do not include browser screenshots or accessibility snapshots.
 Public results, recordings, and telemetry must not contain profile paths or
-hashes, endpoint URLs or ports, approval tokens, page content, tab URLs,
-cookies, or storage.
+hashes, endpoint URLs or ports, page content, tab URLs, cookies, or storage.
 The content-free browser operation and refusal fields are documented in
 [Telemetry and privacy](/reference/cua-driver/telemetry#structured-browser-refusals).
 
@@ -183,8 +212,10 @@ The setup adapters currently recognize the products' English accessibility
 labels. Other UI locales fail closed without toggling an unrecognized control.
 Safari, Firefox, Brave, Vivaldi, Opera, Arc, and Electron do not have an
 existing-profile setup descriptor and return a structured refusal. An already
-available endpoint may still use the ordinary exact browser binding route when
-the platform independently proves it.
+available endpoint does not bypass existing-profile authorization for a
+standalone consumer browser. Driver-owned profiles and supported embedded
+applications can still use their ordinary exact binding routes when the
+platform independently proves the endpoint.
 
 See [Drive a web page](/how-to-guides/driver/drive-a-web-page) for the task
 workflow and [Browser targeting and background delivery](/concepts/browser-targeting-and-background-delivery)

@@ -45,12 +45,11 @@ pub fn mark_browser_chrome_capture_coverage(
         },
         "recovery": {
             "when": "verified_window_action_ineffective",
-            "escalate": {
-                "tool": "escalate_session",
-                "reason": "foreground_ineffective"
-            },
             "inspect": "get_desktop_state",
-            "act_scope": "desktop",
+            "act_target": {
+                "kind": "desktop",
+                "display_id": "primary"
+            },
             "verify": "get_desktop_state"
         }
     });
@@ -92,16 +91,16 @@ mod tests {
             before["capture_coverage"]["recovery"]["when"],
             "verified_window_action_ineffective"
         );
-        assert_eq!(
-            before["capture_coverage"]["recovery"]["escalate"],
-            json!({
-                "tool": "escalate_session",
-                "reason": "foreground_ineffective"
-            })
-        );
+        assert!(before["capture_coverage"]["recovery"]
+            .get("escalate")
+            .is_none());
         assert_eq!(
             before["capture_coverage"]["recovery"]["inspect"],
             "get_desktop_state"
+        );
+        assert_eq!(
+            before["capture_coverage"]["recovery"]["act_target"],
+            json!({"kind": "desktop", "display_id": "primary"})
         );
         assert!(before.get("browser_chrome_prompt").is_none());
     }

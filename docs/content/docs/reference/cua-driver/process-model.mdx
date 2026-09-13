@@ -101,16 +101,22 @@ deliberately share one daemon across several MCP clients, start the daemon and
 give every client the same explicit `cua-driver mcp --socket <endpoint>`
 command. Do not rely on ambient daemon discovery.
 
-Session identity solves a narrower state problem. When a proxy starts, it mints a session identity and stamps forwarded calls with it. The daemon uses that identity to scope mutable state to one client lifetime. Recording ownership, per-session config overrides, and the agent-cursor overlay are all keyed by session.
+Session identity solves a narrower state problem. Each authenticated transport
+gets one private implicit lifecycle identity. The daemon uses it to scope
+mutable state to one client lifetime. Recording ownership, per-session config
+overrides, and the agent-cursor overlay are keyed by that lifecycle session.
+Callers may add a public label, but the label does not carry authority.
 
 For same-process SDK runtimes, Cua adds a private runtime generation behind the
 public session label. Two runtimes may therefore both use `research-1` without
-sharing capture scope, tombstones, cursor ownership, recording teardown,
+sharing lifecycle state, tombstones, cursor ownership, recording teardown,
 browser refs, or element tokens. The private generation is never serialized
 and is not a credential or same-process security boundary.
 
-`default` is the reserved anonymous fallback, not an isolated session label.
-Concurrent hosts should always declare an explicit session.
+Repeated unnamed calls on one transport reuse its implicit session. A
+different transport gets a different private identity. Callers need an
+explicit public session only when they want a stable human-readable label or
+explicit lifecycle control.
 
 <VideoDemo
   className="my-8"
@@ -123,7 +129,11 @@ Concurrent hosts should always declare an explicit session.
   four sessions still share the same desktop.
 </VideoDemo>
 
-Cleanup follows the proxy connection, not a final message. The proxy keeps a long-lived control connection open to the daemon. When the proxy exits, even from an ungraceful kill, the kernel closes that connection. The daemon sees EOF and removes state owned by that session. This prevents stale recordings, cursors, and temporary config overrides.
+Cleanup follows the proxy connection as well as explicit lifecycle calls. The
+proxy keeps a long-lived control connection open to the daemon. When the proxy
+exits, even from an ungraceful kill, the kernel closes that connection. The
+daemon sees EOF and runs the same cleanup hooks used by `end_session`. The
+five-minute idle TTL provides the same cleanup for abandoned live transports.
 
 ## Lifetimes and memory
 

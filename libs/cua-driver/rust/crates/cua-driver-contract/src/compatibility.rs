@@ -43,6 +43,14 @@ pub fn schema_subset_violations(portable: &Value, live: &Value) -> Vec<String> {
 }
 
 fn compare_schema(path: &str, portable: &Value, live: &Value, violations: &mut Vec<String>) {
+    // Exact schema equality is itself a proof of subset compatibility, even
+    // when the shared schema contains a construct (for example a generated
+    // tagged-union `anyOf`) that this intentionally small implication engine
+    // does not otherwise interpret.
+    if portable == live {
+        return;
+    }
+
     let Some(portable_object) = portable.as_object() else {
         violations.push(format!("{path}: portable schema must be an object"));
         return;
@@ -52,7 +60,18 @@ fn compare_schema(path: &str, portable: &Value, live: &Value, violations: &mut V
         return;
     };
 
-    check_keywords(path, "portable", portable_object.keys(), violations);
+    // A proof for the base schema also proves the subset for a conjunction
+    // with extra union constraints. Ignore only portable unions here: the
+    // base must independently imply every live constraint. Never discard a
+    // live union, which would broaden the schema we are proving against.
+    check_keywords(
+        path,
+        "portable",
+        portable_object
+            .keys()
+            .filter(|key| !matches!(key.as_str(), "anyOf" | "oneOf")),
+        violations,
+    );
     check_keywords(path, "live", live_object.keys(), violations);
 
     compare_type(path, portable, live, violations);
@@ -305,6 +324,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn portable_union_is_safe_only_when_base_schema_proves_subset() {
+        let portable = json!({"type":"object","properties":{"x":{"type":"number"}},"additionalProperties":false,
+            "anyOf":[{"required":["x"]}]});
+        let live = json!({"type":"object","properties":{"x":{"type":"number"}},"additionalProperties":false});
+        assert!(schema_subset_violations(&portable, &live).is_empty());
+        let mut requiring = live.clone();
+        requiring["required"] = json!(["x"]);
+        assert!(!schema_subset_violations(&portable, &requiring).is_empty());
+        assert!(!schema_subset_violations(&live, &portable).is_empty());
+        assert!(!schema_subset_violations(
+            &json!({"anyOf":[{"type":"number"}]}),
+            &json!({"type":"number"})
+        )
+        .is_empty());
+    }
+
+    #[test]
     fn narrower_portable_object_is_accepted() {
         let portable = json!({
             "type": "object",
@@ -368,6 +404,17 @@ mod tests {
         let violations = schema_subset_violations(&portable, &live);
         assert_eq!(violations.len(), 1);
         assert!(violations[0].contains("unsupported portable schema keyword `pattern`"));
+    }
+
+    #[test]
+    fn identical_unknown_schema_is_a_proven_subset() {
+        let schema = json!({
+            "anyOf": [
+                { "type": "string" },
+                { "type": "null" }
+            ]
+        });
+        assert!(schema_subset_violations(&schema, &schema).is_empty());
     }
 
     #[test]

@@ -239,6 +239,11 @@ async fn handle_request(
             .await
             .map_err(|error| error.to_string())
             .and_then(|json| serde_json::from_str(&json).map_err(|error| error.to_string())),
+        "sessions_list" => driver
+            .list_host_sessions_json()
+            .await
+            .map_err(|error| error.to_string())
+            .and_then(|json| serde_json::from_str(&json).map_err(|error| error.to_string())),
         "call" => {
             let name = request.name.as_deref().unwrap_or("");
             let arguments = request

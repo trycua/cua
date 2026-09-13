@@ -11,12 +11,99 @@ import pytest
 INSTALL_LOCAL = Path(__file__).resolve().parents[1] / "_install-local-rust.sh"
 LOCAL_SIGNING = INSTALL_LOCAL.with_name("_local-signing.sh")
 DISPATCHER = INSTALL_LOCAL.with_name("install-local.sh")
+WINDOWS_INSTALL_LOCAL = INSTALL_LOCAL.with_name("install-local.ps1")
+SKILL_PACK = INSTALL_LOCAL.parents[1] / "rust/Skills/cua-driver"
+
+
+def test_local_installers_stage_the_canonical_skill_pack() -> None:
+    windows = WINDOWS_INSTALL_LOCAL.read_text(encoding="utf-8")
+
+    assert 'Join-Path $RepoRoot "Skills\\cua-driver"' in windows
+    assert 'Join-Path $VersionedDir "Skills\\cua-driver"' in windows
+    assert "Skills\\cua-driver-rs" not in windows
+    assert "Skills/cua-driver-rs" not in INSTALL_LOCAL.read_text(encoding="utf-8")
+    assert {path.name for path in SKILL_PACK.iterdir()} >= {
+        "SKILL.md",
+        "BROWSER.md",
+        "MACOS.md",
+        "WINDOWS.md",
+        "LINUX.md",
+    }
 
 
 def _write_executable(path: Path, body: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f"#!/bin/sh\n{body}", encoding="utf-8")
     path.chmod(0o755)
+
+
+def test_explicit_local_signing_identity_is_selected_exactly(tmp_path: Path) -> None:
+    keychain = tmp_path / "signing.keychain-db"
+    keychain.touch()
+    fake_bin = tmp_path / "fake-bin"
+    _write_executable(fake_bin / "codesign", "exit 0\n")
+    wanted = "F2D26B5AFAAB910B340FBD8F480F88DF748D9D48"
+    other = "A" * 40
+    _write_executable(
+        fake_bin / "security",
+        f"printf '%s\\n' '  1) {wanted} \"Developer ID Application: Example\"' "
+        f"'  2) {other} \"Developer ID Application: Renewal\"'\n",
+    )
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN": str(keychain),
+            "CUA_DRIVER_LOCAL_SIGNING_IDENTITY": wanted.lower(),
+        }
+    )
+    result = subprocess.run(
+        [
+            "/bin/bash",
+            "-c",
+            f'OS=Darwin; . "{LOCAL_SIGNING}"; ensure_local_signing_identity',
+        ],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == wanted
+
+
+def test_explicit_local_signing_identity_never_falls_back(tmp_path: Path) -> None:
+    keychain = tmp_path / "signing.keychain-db"
+    keychain.touch()
+    fake_bin = tmp_path / "fake-bin"
+    _write_executable(fake_bin / "codesign", "exit 0\n")
+    _write_executable(
+        fake_bin / "security",
+        f"printf '%s\\n' '  1) {'A' * 40} \"Developer ID Application: Other\"'\n",
+    )
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN": str(keychain),
+            "CUA_DRIVER_LOCAL_SIGNING_IDENTITY": "B" * 40,
+        }
+    )
+    result = subprocess.run(
+        [
+            "/bin/bash",
+            "-c",
+            f'OS=Darwin; . "{LOCAL_SIGNING}"; ensure_local_signing_identity',
+        ],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "-"
 
 
 @pytest.mark.parametrize("relative_target", [False, True], ids=["absolute", "relative"])

@@ -150,7 +150,7 @@ A headless box has no `graphical-session.target`, so on those machines also chan
 
 ## Pin a permission mode
 
-`--permission-mode`, `--session-policy`, `--approve-session-policy`, and
+`--permission-mode`, `--capability-manifest`, `--approve-capability-manifest`, and
 `--dangerously-bypass-approvals` are read once, when the daemon starts. Put them
 in the autostart entry so an unattended restart comes back in the same mode
 instead of falling back to `standard`.
@@ -167,9 +167,9 @@ Add each flag as its own `<string>` inside `ProgramArguments`, after `serve`:
   <string>serve</string>
   <string>--permission-mode</string>
   <string>bounded</string>
-  <string>--session-policy</string>
+  <string>--capability-manifest</string>
   <string>/Users/you/cua-session.yaml</string>
-  <string>--approve-session-policy</string>
+  <string>--approve-capability-manifest</string>
 </array>
 ```
 
@@ -190,8 +190,8 @@ Scheduled Task inherits them at logon:
 
 ```powershell
 setx CUA_DRIVER_PERMISSION_MODE bounded
-setx CUA_DRIVER_SESSION_POLICY_FILE "$env:USERPROFILE\cua-session.yaml"
-setx CUA_DRIVER_SESSION_POLICY_APPROVED 1
+setx CUA_DRIVER_CAPABILITY_MANIFEST_FILE "$env:USERPROFILE\cua-capabilities.yaml"
+setx CUA_DRIVER_CAPABILITY_MANIFEST_APPROVED 1
 ```
 
 `setx` affects new processes only, so restart the daemon for the change to take
@@ -208,7 +208,7 @@ cua-driver autostart kick
 Extend `ExecStart` in `~/.config/systemd/user/cua-driver.service`:
 
 ```ini
-ExecStart=%h/.local/bin/cua-driver serve --permission-mode bounded --session-policy %h/cua-session.yaml --approve-session-policy
+ExecStart=%h/.local/bin/cua-driver serve --permission-mode bounded --capability-manifest %h/cua-session.yaml --approve-capability-manifest
 ```
 
 Then reload and restart the unit:

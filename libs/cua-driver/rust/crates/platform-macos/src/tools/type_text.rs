@@ -90,7 +90,7 @@ fn def() -> &'static ToolDef {
             "type": "object",
             "required": ["text"],
             "properties": {
-                "session": { "type": "string", "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less." },
+                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
                 "pid":  { "type": "integer", "description": "Target process ID." },
                 "text": { "type": "string",  "description": "Text to insert at the target's cursor." },
                 "window_id": {
@@ -751,6 +751,11 @@ fn web_readback_next_rung(is_electron: bool, used_pixel_focus: bool) -> Option<&
 const DELIVERY_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 const DELIVERY_DRAIN_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
 
+/// Pause before the single `AXFocused` re-apply in the foreground rung. Covers
+/// an app that installs its own first responder just after activation is
+/// observable, which would otherwise clobber the first write.
+const FOCUS_REAPPLY_DELAY: std::time::Duration = std::time::Duration::from_millis(30);
+
 /// Keyboard-rung policy for one window-addressed background insert, decided
 /// once by the pure exact-target core before any input is posted.
 #[derive(Clone, Debug)]
@@ -1019,20 +1024,29 @@ fn cgevent_type_verified(
     settle_ms: u64,
     window_id: Option<u32>,
 ) -> anyhow::Result<(bool, Option<usize>)> {
-    // Focus the target element first so the keystrokes land in IT. Critical in
+    // Focus the target element so the keystrokes land in IT. Critical in
     // foreground mode: a freshly-fronted window's keyboard focus may be on the
     // search box or nowhere, so without this the text goes into the void (or the
     // wrong field). AXFocused is best-effort — harmless when unsupported.
+    //
+    // Ordering matters as much as the write itself. `with_foreground_assist` has
+    // already waited for the activation to land, so AppKit has installed the
+    // window's remembered first responder by now and this write lands *after*
+    // it rather than being clobbered by it. Re-applying once on a failed
+    // read-back covers apps that install their responder slightly late.
     if let Some((ptr, _)) = element_ptr_and_idx {
         let _ = crate::input::ax_actions::focus_element(ptr);
+        if settle_ms > 0 && !crate::input::ax_actions::is_element_focused(pid, ptr) {
+            std::thread::sleep(FOCUS_REAPPLY_DELAY);
+            let _ = crate::input::ax_actions::focus_element(ptr);
+        }
     }
     // First-keystroke settle (foreground rung only — caller passes `settle_ms > 0`).
-    // After a window is fronted (with_foreground_assist) and the element focused,
-    // the surface isn't ready to accept input for a few tens of ms, so the FIRST
-    // synthesized character gets eaten: typing "i love u" rendered "love u" (the
-    // leading "i " was dropped). A short sleep here lets focus settle before the
-    // first key event. Background/terminal call sites pass 0 — they have no front
-    // transition and must not pay this latency.
+    // Even once the window is front and the element focused, the surface isn't
+    // ready to accept input for a few tens of ms, so the FIRST synthesized
+    // character gets eaten: typing "i love u" rendered "love u" (the leading
+    // "i " was dropped). A short sleep here covers that. Background/terminal call
+    // sites pass 0 — they have no front transition and must not pay this latency.
     if settle_ms > 0 {
         std::thread::sleep(std::time::Duration::from_millis(settle_ms));
     }

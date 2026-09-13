@@ -65,7 +65,8 @@ final class DefaultVNCService: VNCService {
     
     var url: String? {
         get {
-            return try? vmDirectory.loadSession().url
+            // A VNC-disabled marker has no URL, so this stays nil for those runs.
+            return (try? vmDirectory.loadSession())?.url
         }
     }
     

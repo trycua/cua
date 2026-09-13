@@ -36,6 +36,9 @@ class RuntimeInfo:
     environment: Optional[str] = None  # OS type hint for QMP transport
     agent_type: Optional[str] = None  # e.g. "osworld" for OSWorld Flask server
     guest_server_port: int = 8000  # Port the guest server listens on
+    # guest port -> host port for each Image.expose() port that was forwarded.
+    # Empty when the runtime cannot forward extra ports.
+    exposed_ports: Optional[dict] = None
     ssh_port: Optional[int] = None  # SSH port on the guest
     ssh_username: Optional[str] = None
     ssh_password: Optional[str] = None

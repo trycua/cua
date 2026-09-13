@@ -91,10 +91,11 @@ Next steps:
      • To use an existing logged-in Chrome or Edge profile in standard:
          {{BINARY}} mcp --grant existing-profile
        Add the same flag to `serve` when using a long-running daemon.
-     • Use bounded with a reviewed manifest to limit tools, apps, browser
-       profiles, origins, and file roots:
+     • Use a reviewed capability manifest to limit tools, apps, browser
+       profiles, origins, and file roots. Bounded requires one:
          {{BINARY}} serve --permission-mode bounded \
-           --session-policy ./cua-session.yaml --approve-session-policy
+           --capability-manifest ./cua-capabilities.yaml \
+           --approve-capability-manifest
      • unrestricted requires explicit risk acceptance:
          {{BINARY}} serve --permission-mode unrestricted \
            --dangerously-bypass-approvals

@@ -1,0 +1,19 @@
+---
+title: Ollama
+description: Serve a local model with Ollama and connect it to Cua Driver through an agent harness.
+icon: ollama
+---
+
+Ollama serves local models. It does not replace the agent harness or connect to Cua Driver by itself. Use an Ollama-supported harness for the agent loop, then register Cua Driver in that harness.
+
+For Muse Glimmer on Apple Silicon, the tested stack is:
+
+```text
+Muse Glimmer in Ollama → Claude Code → filtered Cua Driver MCP → desktop
+```
+
+Follow [Run a local model with Cua Driver](/how-to-guides/driver/run-with-local-model#path-1-use-ollama-on-apple-silicon) for the exact model, context, and Claude Code launch command.
+
+Local computer use consumes context quickly. Start with a model that supports images and tool calling, expose only the Cua Driver tools the task needs, and use a context window of at least 64K. The tested guide uses 128K.
+
+Upstream: [Ollama's Claude Code integration](https://docs.ollama.com/integrations/claude-code) and [tool-calling documentation](https://docs.ollama.com/capabilities/tool-calling).

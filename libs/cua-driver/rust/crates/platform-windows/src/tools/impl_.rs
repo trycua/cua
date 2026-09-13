@@ -1,6 +1,7 @@
 //! Real Windows tool implementations (compiled only on Windows).
 
 use async_trait::async_trait;
+use cua_driver_core::action_record::ActionTransport;
 
 /// Pin the agent-cursor overlay above `hwnd` in the z-order, normalising to
 /// the **root** ancestor so the pin lands on the window that actually appears
@@ -11,8 +12,8 @@ use async_trait::async_trait;
 /// the host appears in the z-order. `GA_ROOT` normalises both inputs to the
 /// host so the overlay sits at z+1 of whatever is actually painted on screen.
 ///
-/// No-op when the overlay is disabled or `key` is empty (anonymous, cursor-less
-/// run); the command is just dropped by the render thread in that case.
+/// No-op when the overlay is disabled or `key` is empty (a direct platform
+/// call without lifecycle metadata); the render thread drops the command.
 fn pin_overlay_above(key: &str, hwnd: u64) {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GA_ROOT};
@@ -242,8 +243,8 @@ fn screen_to_bitmap(hwnd: u64, sx: i32, sy: i32) -> (i32, i32) {
 /// `tokio::sleep(80..600 ms)` was racing the spring-physics glide).
 ///
 /// `key` is the session's cursor key (see [`resolve_cursor_key`]). An empty key
-/// (anonymous, no declared session) is cursor-less: every overlay op
-/// short-circuits, so the action runs with no visible cursor.
+/// is possible only for a direct platform call without lifecycle metadata; in
+/// that case every overlay operation short-circuits.
 async fn overlay_glide_to(key: &str, sx: f64, sy: f64) {
     if key.is_empty() {
         return;
@@ -316,14 +317,14 @@ async fn track_overlay_drag(
     crate::overlay::send_command(key, cursor_overlay::OverlayCommand::SetPressed(false));
 }
 use cua_driver_contract::{
-    ClickButton, ClickInput, DragInput, GetCursorPositionInput, GetDesktopStateInput,
-    GetScreenSizeInput, HotkeyInput, InvokeMenuInput, MoveCursorInput, PressKeyInput,
-    ScrollDirection, ScrollInput, TypeTextInput,
+    ClickButton, DragInput, GetCursorPositionInput, GetDesktopStateInput, GetScreenSizeInput,
+    HotkeyInput, InvokeMenuInput, MoveCursorInput, PressKeyInput, ScrollDirection, ScrollInput,
+    TypeTextInput,
 };
 use cua_driver_core::{
     protocol::ToolResult,
     tool::{Tool, ToolDef, ToolRegistry},
-    tool_args::{parse_typed_input, parse_typed_projection},
+    tool_args::{parse_legacy_click_input, parse_typed_input, parse_typed_projection},
     window_target::{PidOnlyWindowTargetGuard, WindowTargetCandidate, WindowTargetCandidates},
 };
 use serde_json::{json, Value};
@@ -465,23 +466,19 @@ fn pid_window_guarded<T: Tool + 'static>(
     })
 }
 
-/// The cursor key for an anonymous (cursor-less) call. A run opts into a cursor
-/// by declaring a `session`; without one, every cursor op short-circuits on
-/// this empty key (see `overlay::send_command` / `overlay_glide_to`).
+/// Cursor sentinel for a direct platform call without lifecycle metadata.
+/// Normal runtime dispatch supplies either a named or implicit session key.
 pub(crate) const NO_CURSOR: &str = "";
 
 /// Resolve the cursor key for a tool invocation, or [`NO_CURSOR`] (`""`) for an
 /// anonymous call.
 ///
-/// A cursor is tied to a **caller-declared session**, never to the MCP
-/// connection. Precedence: an explicit `session` arg, then its legacy alias
-/// `cursor_id`. We deliberately do NOT fall back to the connection-injected
-/// `_session_id` or to a seeded `"default"` cursor — `""` means "no session
-/// declared → no cursor", while the underlying action (click/type/…) still
-/// executes. Mirrors `platform_macos::tools::cursor_tools::resolve_cursor_key`
-/// so the two platforms key cursors identically.
+/// A cursor is tied to the lifecycle session selected at the trusted dispatch
+/// boundary. Precedence: explicit `session`, trusted implicit `_session_id`,
+/// then the legacy `cursor_id` alias. A direct platform invocation that has no
+/// lifecycle metadata remains cursor-less.
 pub(crate) fn resolve_cursor_key(args: &Value) -> String {
-    for key in ["session", "cursor_id"] {
+    for key in ["session", "_session_id", "cursor_id"] {
         if let Some(v) = args.get(key).and_then(|v| v.as_str()) {
             if !v.is_empty() {
                 return v.to_owned();
@@ -1066,7 +1063,120 @@ mod list_windows_z_index_tests {
     }
 }
 
+#[cfg(test)]
+mod get_window_state_actions_tests {
+    use super::*;
+    use crate::uia::UiaNode;
+
+    fn node(actions: Vec<String>) -> UiaNode {
+        UiaNode {
+            element_index: Some(1),
+            control_type: "Button".to_owned(),
+            name: Some("OK".to_owned()),
+            value: None,
+            automation_id: None,
+            help_text: None,
+            actions,
+            enabled: Some(true),
+            selected: None,
+            element_ptr: 0,
+            center_x: 0,
+            center_y: 0,
+            rect: None,
+            msaa_role: None,
+            depth: 0,
+            parent_element_index: None,
+            in_web_content: false,
+        }
+    }
+
+    #[test]
+    fn element_entry_includes_actions_when_present() {
+        let n = node(vec!["invoke".to_owned(), "toggle".to_owned()]);
+        let entry = build_element_entry(&n, None).unwrap();
+        assert_eq!(entry["actions"], json!(["invoke", "toggle"]));
+    }
+
+    #[test]
+    fn element_entry_omits_actions_when_empty() {
+        let n = node(Vec::new());
+        let entry = build_element_entry(&n, None).unwrap();
+        assert!(entry.get("actions").is_none());
+    }
+}
+
 // ── get_window_state ─────────────────────────────────────────────────────────
+
+/// Fold a per-call `max_dimension` cap with the configured
+/// `max_image_dimension` ceiling. `resize_png_if_needed` treats `0` as "no
+/// limit", so an unlimited ceiling defers to the per-call cap; otherwise the
+/// tighter (smaller, non-zero) of the two wins.
+fn fold_max_dimension(ceiling: u32, per_call: Option<u32>) -> u32 {
+    match per_call {
+        Some(md) if ceiling == 0 => md,
+        Some(md) => ceiling.min(md),
+        None => ceiling,
+    }
+}
+
+/// Build a single structured element entry for `get_window_state`.
+/// Returns `None` when the node has no `element_index` (non-actionable rows).
+fn build_element_entry(
+    n: &crate::uia::UiaNode,
+    snapshot_id: Option<u32>,
+) -> Option<serde_json::Value> {
+    let idx = n.element_index?;
+    // `label`: name → value → automation_id → help_text.
+    let label = n
+        .name
+        .clone()
+        .or_else(|| n.value.clone())
+        .or_else(|| n.automation_id.clone())
+        .or_else(|| n.help_text.clone());
+    let mut entry = json!({
+        "element_index": idx,
+        "role": n.control_type,
+        "depth": n.depth,
+    });
+    if let Some(snapshot_id) = snapshot_id {
+        entry["element_token"] = json!(cua_driver_core::element_token::token_for(snapshot_id, idx));
+    }
+    if n.in_web_content {
+        entry["in_web_content"] = json!(true);
+    }
+    if let Some(label) = label {
+        entry["label"] = json!(label);
+    }
+    // Surface the element's value separately from `label` (which collapses
+    // name→value→automation_id→help): a control with both a name AND text
+    // (a ValuePattern edit holding typed content) would otherwise hide the
+    // text from a caller reading the structured side. See the macOS
+    // get_window_state builder for the rationale.
+    if let Some(value) = n.value.clone().filter(|v| !v.is_empty()) {
+        entry["value"] = json!(value);
+    }
+    if let Some(enabled) = n.enabled {
+        entry["enabled"] = json!(enabled);
+    }
+    if let Some(selected) = n.selected {
+        entry["selected"] = json!(selected);
+    }
+    if !n.actions.is_empty() {
+        entry["actions"] = json!(n.actions);
+    }
+    if let Some(parent) = n.parent_element_index {
+        entry["parent_index"] = json!(parent);
+    }
+    if let Some((l, t, r, b)) = n.rect {
+        entry["frame"] = json!({
+            "x": l,
+            "y": t,
+            "w": (r - l).max(0),
+            "h": (b - t).max(0),
+        });
+    }
+    Some(entry)
+}
 
 pub struct GetWindowStateTool {
     state: Arc<ToolState>,
@@ -1093,7 +1203,8 @@ impl Tool for GetWindowStateTool {
                 the next snapshot of the same (pid, window_id).\n\n\
                 PREFERRED CONSUMERS read `structuredContent.elements` (one entry per \
                 indexed row with `element_index`, `role`, `label`, `value`, `enabled`, \
-                `selected`, `frame: {x,y,w,h}`, `parent_index`, `depth`). The markdown \
+                `selected`, `actions` (names of UIA patterns exposed as actions, \
+                omitted when empty), `frame: {x,y,w,h}`, `parent_index`, `depth`). The markdown \
                 `tree_markdown` stays available \
                 and unchanged in shape for existing text-parsing callers — but new \
                 fields will only be added to the structured side.\n\n\
@@ -1112,6 +1223,13 @@ impl Tool for GetWindowStateTool {
                 ACTION time: an element ax action (element_index/element_token → \
                 accessibility rung) or an element px action (x,y → pixel rung off this \
                 screenshot). capture_mode is deprecated and ignored.\n\n\
+                The mirror image: pass `include_accessibility_tree:false` to SKIP the \
+                UIA walk entirely and return just the screenshot plus window metadata \
+                (window_bounds, app_name, window_title) — the capture-only path for a \
+                live window preview / picture-in-picture. Setting BOTH \
+                `include_accessibility_tree:false` and `include_screenshot:false` is an \
+                error. Optional `max_dimension` caps the returned screenshot's long edge \
+                in pixels for a cheap thumbnail.\n\n\
                 Uses `IUIAutomationCacheRequest` to batch-fetch all element properties in a \
                 single COM call (Chrome's ~5000-element tree returns in ~2-3s instead of \
                 timing out at 4s with per-property RPCs).\n\n\
@@ -1134,11 +1252,13 @@ impl Tool for GetWindowStateTool {
                 "pid":{"type":"integer","description":"Process ID from `list_apps`."},
                 "window_id":{"type":"integer","description":"HWND of the target window. Must belong to `pid`. Enumerate via `list_windows` or read from `launch_app`'s `windows` array."},
                 "capture_mode": cua_driver_core::capture_mode::capture_mode_schema(),
+                "include_accessibility_tree":{"type":"boolean","description":"Default true — walk the UIA tree and return `elements` + `tree_markdown` alongside the screenshot. Set false to SKIP the UIA walk entirely and return just the screenshot plus window metadata (window_bounds, app_name, window_title) — the capture-only path for a live window preview / picture-in-picture. Mirrors include_screenshot. Setting BOTH include_accessibility_tree:false AND include_screenshot:false is an error (nothing to return)."},
                 "include_screenshot":{"type":"boolean","description":"Default true — returns a grounding screenshot alongside the tree. Set false to skip the grab and return tree only (the cheap path for re-indexing before an element ax action)."},
                 "screenshot_out_file":{"type":"string","description":"When set, write the PNG to this file path instead of embedding base64 in the response. The structured output will contain `screenshot_file_path` instead."},
                 "query":{"type":"string","description":"Optional case-insensitive substring. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count."},
                 "max_elements":{"type":"integer","minimum":1,"description":"Cap on the total number of UIA nodes walked. Truncates depth-first; markdown and structured elements truncate together. Omit for the default (5 000). Lower for Electron / large web apps that produce 10k+ element trees."},
-                "max_depth":{"type":"integer","minimum":1,"description":"Cap on the UIA-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower for deep menu / Electron trees."}
+                "max_depth":{"type":"integer","minimum":1,"description":"Cap on the UIA-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower for deep menu / Electron trees."},
+                "max_dimension":{"type":"integer","minimum":1,"description":"Optional cap on the returned screenshot's long edge, in pixels (aspect ratio preserved) — the cheap path for a small preview. Applied on top of the configured max_image_dimension ceiling; the tighter wins. Omit for the configured default."}
             },"additionalProperties":false}),
             // Swift annotation: idempotent: false (each call is a fresh snapshot).
             read_only: true, destructive: false, idempotent: false, open_world: false,
@@ -1181,11 +1301,34 @@ impl Tool for GetWindowStateTool {
                  {pid}}})` for candidates."
             ));
         }
+        // Window identity metadata (additive): title + on-screen rectangle from
+        // the enumeration we already did, plus the owning process's executable
+        // name. Names the surface on the capture-only path, where no UIA tree
+        // identifies it.
+        let win_geom = windows_for_pid
+            .iter()
+            .find(|w| w.hwnd == hwnd)
+            .map(|w| (w.title.clone(), w.x, w.y, w.width, w.height));
+        let app_name = tokio::task::spawn_blocking(move || {
+            crate::win32::list_processes()
+                .into_iter()
+                .find(|p| p.pid == pid)
+                .map(|p| p.name)
+        })
+        .await
+        .ok()
+        .flatten();
+        use cua_driver_core::tool_args::ArgsExt;
+        // Optional per-call cap on the returned screenshot's long edge, folded
+        // with the configured ceiling (the tighter wins).
+        let max_dimension = args
+            .get("max_dimension")
+            .and_then(|v| v.as_u64())
+            .map(|v| v.max(1) as u32);
         let max_dim = {
             let cfg = self.state.config.read().unwrap();
-            cfg.max_image_dimension
+            fold_max_dimension(cfg.max_image_dimension, max_dimension)
         };
-        use cua_driver_core::tool_args::ArgsExt;
         // `capture_mode` is DEPRECATED and ignored — get_window_state always
         // returns BOTH the UIA tree and a screenshot now, so the agent grounds on
         // both and cross-checks (the UIA tree lies often enough that a grounding
@@ -1221,8 +1364,21 @@ impl Tool for GetWindowStateTool {
             .get("_observation_only")
             .and_then(|value| value.as_bool())
             == Some(true);
-        let do_tree = true;
+        // `include_accessibility_tree` (default true) mirrors include_screenshot:
+        // set false to SKIP the UIA walk and return just the screenshot + window
+        // metadata (the capture-only / preview path).
+        let do_tree = args
+            .get("include_accessibility_tree")
+            .and_then(|v| v.as_bool())
+            != Some(false);
         let do_shot = include_screenshot != Some(false) || screenshot_out_file.is_some();
+        if !do_tree && !do_shot {
+            return ToolResult::error(
+                "Nothing to return: both include_accessibility_tree:false and \
+                 include_screenshot:false. Set at least one to true, or pass \
+                 screenshot_out_file to force a capture.",
+            );
+        }
 
         let state = self.state.clone();
         let q = query.clone();
@@ -1348,64 +1504,12 @@ impl Tool for GetWindowStateTool {
                     // Structured `elements` array — preferred consumption
                     // path. Shape matches the cross-platform spec:
                     // `{element_index, element_token, role, label, depth,
-                    // parent_index?, frame?: {x,y,w,h}}`. Frame is
+                    // actions?, parent_index?, frame?: {x,y,w,h}}`. Frame is
                     // included when UIA reported a usable BoundingRectangle.
                     let elements: Vec<serde_json::Value> = tr
                         .nodes
                         .iter()
-                        .filter_map(|n| {
-                            let idx = n.element_index?;
-                            // `label`: name → value → automation_id → help_text.
-                            let label = n
-                                .name
-                                .clone()
-                                .or_else(|| n.value.clone())
-                                .or_else(|| n.automation_id.clone())
-                                .or_else(|| n.help_text.clone());
-                            let mut entry = json!({
-                                "element_index": idx,
-                                "role": n.control_type,
-                                "depth": n.depth,
-                            });
-                            if let Some(snapshot_id) = snapshot_id {
-                                entry["element_token"] = json!(
-                                    cua_driver_core::element_token::token_for(snapshot_id, idx)
-                                );
-                            }
-                            if n.in_web_content {
-                                entry["in_web_content"] = json!(true);
-                            }
-                            if let Some(label) = label {
-                                entry["label"] = json!(label);
-                            }
-                            // Surface the element's value separately from `label`
-                            // (which collapses name→value→automation_id→help): a
-                            // control with both a name AND text (a ValuePattern
-                            // edit holding typed content) would otherwise hide the
-                            // text from a caller reading the structured side. See
-                            // the macOS get_window_state builder for the rationale.
-                            if let Some(value) = n.value.clone().filter(|v| !v.is_empty()) {
-                                entry["value"] = json!(value);
-                            }
-                            if let Some(enabled) = n.enabled {
-                                entry["enabled"] = json!(enabled);
-                            }
-                            if let Some(selected) = n.selected {
-                                entry["selected"] = json!(selected);
-                            }
-                            if let Some(parent) = n.parent_element_index {
-                                entry["parent_index"] = json!(parent);
-                            }
-                            if let Some((l, t, r, b)) = n.rect {
-                                entry["frame"] = json!({
-                                    "x": l,
-                                    "y": t,
-                                    "w": (r - l).max(0),
-                                    "h": (b - t).max(0),
-                                });
-                            }
-                            Some(entry)
-                        })
+                        .filter_map(|n| build_element_entry(n, snapshot_id))
                         .collect();
                     let elements = cua_driver_core::element_query::project_elements_for_query(
                         elements,
@@ -1474,9 +1578,15 @@ impl Tool for GetWindowStateTool {
                     }
                     // base64 is embedded only when no out_file was given (vision
                     // path). With `screenshot_out_file` the bytes went to disk and
-                    // we surface the path instead — never both.
+                    // we surface the path instead — never both. Keep a text content
+                    // part when the image went to disk so the response is never
+                    // empty on the capture-only path (which has no tree markdown).
                     if let Some(b64) = b64_opt {
                         content.push(cua_driver_core::protocol::Content::image_png(b64));
+                    } else if let Some(fp) = &file_path {
+                        content.push(cua_driver_core::protocol::Content::text(format!(
+                            "window_id={hwnd} pid={pid} size={w}x{h} screenshot written to {fp}"
+                        )));
                     }
                     structured["screenshot_width"] = json!(w);
                     structured["screenshot_height"] = json!(h);
@@ -1501,12 +1611,39 @@ impl Tool for GetWindowStateTool {
                     structured["screenshot_error"] = json!(err);
                 }
 
+                // Window identity metadata (additive): title + on-screen
+                // rectangle + owning process name for the requested window_id,
+                // useful on the capture-only path where no UIA tree names it.
+                if let Some((title, x, y, w, h)) = &win_geom {
+                    if !title.is_empty() {
+                        structured["window_title"] = json!(title);
+                    }
+                    structured["window_bounds"] =
+                        json!({ "x": x, "y": y, "width": w, "height": h });
+                }
+                if let Some(name) = app_name.as_deref().filter(|n| !n.is_empty()) {
+                    structured["app_name"] = json!(name);
+                }
+
                 cua_driver_core::window_inspection::mark_browser_chrome_capture_coverage(
                     &mut structured,
                     is_standalone_chromium_browser_process(pid).then_some(
                         cua_driver_core::window_inspection::BrowserChromeCaptureCoverage::NotObservable,
                     ),
                 );
+
+                // The capture-only path (include_accessibility_tree:false) leaves
+                // `content` empty if the screenshot was also unavailable. Return a
+                // structured error rather than a "successful" response with no
+                // content parts (consistent with the tree+screenshot path, which
+                // always carries at least the tree markdown).
+                if content.is_empty() {
+                    return ToolResult::error(format!(
+                        "No content produced for window_id {hwnd}: the accessibility tree was \
+                         skipped (include_accessibility_tree:false) and no screenshot was returned."
+                    ))
+                    .with_structured(structured);
+                }
 
                 ToolResult {
                     content,
@@ -2819,6 +2956,101 @@ fn posted_pixel_click_result(pid: u32, click_word: &str) -> ToolResult {
     }))
 }
 
+/// Only a completed miss permits another transport. A provider may finish an
+/// activation after the deadline, so errors must not replay the click.
+fn finish_pixel_uia_attempt(
+    outcome: crate::uia::windows_enum::PointInvokeOutcome,
+    pid: u32,
+    sx: i32,
+    sy: i32,
+) -> Option<ToolResult> {
+    use crate::uia::windows_enum::PointInvokeOutcome;
+    let status = match outcome {
+        PointInvokeOutcome::Miss => return None,
+        PointInvokeOutcome::Invoked => {
+            return Some(
+                ToolResult::text(format!(
+                    "✅ Performed UIA Invoke at ({sx},{sy}) for pid {pid}."
+                ))
+                .with_structured(json!({
+                    "path": "ax", "verified": false, "effect": "unverifiable"
+                })),
+            );
+        }
+        PointInvokeOutcome::Busy => "busy",
+        PointInvokeOutcome::Timeout => "timeout",
+        PointInvokeOutcome::Unavailable => "unavailable",
+    };
+    Some(
+        ToolResult::error(format!(
+            "UIA pixel click {status} for pid {pid}. No fallback input was sent. \
+         The click effect is unknown; inspect the target state before another action."
+        ))
+        .with_structured(json!({
+            "code": "background_unavailable",
+            "uia_status": status,
+            "path": "ax",
+            "verified": false,
+            "effect": "unverifiable"
+        })),
+    )
+}
+
+enum BackgroundElementClick {
+    Semantic {
+        message: String,
+        transport: ActionTransport,
+        failed_calls: Vec<ActionTransport>,
+    },
+    Inject {
+        x: i32,
+        y: i32,
+        failed_calls: Vec<ActionTransport>,
+    },
+    Post {
+        x: i32,
+        y: i32,
+        failed_calls: Vec<ActionTransport>,
+    },
+}
+
+fn background_element_click_result(
+    message: String,
+    transport: ActionTransport,
+    failed_calls: Vec<ActionTransport>,
+) -> ToolResult {
+    use cua_driver_core::action_record::{
+        ActionAttempt, ActionEffect, ActionExecutionRecord, ActionFallback, ActualDelivery,
+        RequestedDelivery,
+    };
+    let path = match transport {
+        ActionTransport::WindowsTargetedInjection => "pixel",
+        ActionTransport::WindowsPostMessage => "post_message",
+        _ => "ax",
+    };
+    let mut record = ActionExecutionRecord::new(
+        ActionEffect::Unverifiable,
+        transport,
+        RequestedDelivery::Background,
+    );
+    record.actual_delivery = Some(ActualDelivery::Background);
+    for (index, attempted) in failed_calls.iter().copied().enumerate() {
+        record.attempts.push(ActionAttempt {
+            transport: attempted,
+            delivery: ActualDelivery::Background,
+            detail: Some("UIA provider action returned an error".into()),
+        });
+        record.fallbacks.push(ActionFallback {
+            from: attempted,
+            to: failed_calls.get(index + 1).copied().unwrap_or(transport),
+            reason: "Previous UIA provider action failed".into(),
+        });
+    }
+    ToolResult::text(message)
+        .with_structured(json!({ "path": path, "verified": false, "effect": "unverifiable" }))
+        .with_action_record(record)
+}
+
 pub struct ClickTool {
     state: Arc<ToolState>,
 }
@@ -2905,7 +3137,7 @@ impl Tool for ClickTool {
         use cua_driver_core::tool_args::ArgsExt;
         let cursor_key = resolve_cursor_key(&args);
 
-        // ── Window-less screen-absolute branch (capture_scope="desktop") ──────
+        // ── Window-less screen-absolute branch (desktop target) ───────────────
         // When the caller gives x,y with NO pid/window_id, treat x,y as TRUE
         // SCREEN pixels. The core registry has already enforced the session's
         // effective capture scope; this local check validates the action form.
@@ -2924,7 +3156,7 @@ impl Tool for ClickTool {
                     "suggestion": "pass scope=desktop",
                 }));
             }
-            let input = match parse_typed_projection::<ClickInput>("click", &args) {
+            let input = match parse_legacy_click_input(&args) {
                 Ok(input) => input,
                 Err(result) => return result,
             };
@@ -3313,6 +3545,7 @@ impl Tool for ClickTool {
                 // ScrollViewers report a clipped item as on-screen because its
                 // stale rectangle is still inside the outer HWND. Ask the item
                 // to scroll itself into view before trusting that rectangle.
+                let recorded_center = (cx, cy);
                 let (cx, cy) = if !modifiers.is_empty() {
                     self.state
                         .element_cache
@@ -3347,6 +3580,9 @@ impl Tool for ClickTool {
                 let prev_fg_addr = unsafe {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
                 };
+                if (cx, cy) != recorded_center {
+                    crate::recording_hooks::capture_dispatch_click_target(hwnd, pid, cx, cy);
+                }
                 let send_result = tokio::task::spawn_blocking(move || {
                     let mod_refs: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
                     crate::input::send_click_synthesized_active_mods(
@@ -3398,15 +3634,14 @@ impl Tool for ClickTool {
                 })
                 .await;
                 return match posted {
-                    Ok(Ok(())) => ToolResult::text(format!(
-                        "✅ Posted click on Chromium element [{idx}] at screen ({cx},{cy}) \
+                    Ok(Ok(())) => background_element_click_result(
+                        format!(
+                            "✅ Posted click on Chromium element [{idx}] at screen ({cx},{cy}) \
                          (background, no foreground swap)."
-                    ))
-                    .with_structured(json!({
-                        "path": "post_message",
-                        "verified": false,
-                        "effect": "unverifiable"
-                    })),
+                        ),
+                        ActionTransport::WindowsPostMessage,
+                        vec![],
+                    ),
                     Ok(Err(error)) => ToolResult::error(error.to_string()),
                     Err(error) => ToolResult::error(format!("Task error: {error}")),
                 };
@@ -3423,7 +3658,8 @@ impl Tool for ClickTool {
             //     concept — PostMessage produces the actual WM_LBUTTONDBLCLK)
             let state_clone = self.state.clone();
             let use_uia_invoke = (btn == "left" || btn == "middle") && count == 1;
-            let result = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
+            let result = tokio::task::spawn_blocking(move || -> anyhow::Result<BackgroundElementClick> {
+                let mut failed_calls = Vec::new();
                 // Direct Chromium UIA Invoke can return S_OK without firing a
                 // DOM event while occluded. Try the honest coordinate actuator
                 // first: it lands while visible and reports occlusion without
@@ -3435,13 +3671,7 @@ impl Tool for ClickTool {
                         &state_clone.element_cache, pid, hwnd, idx, cx, cy, "clicking",
                     )
                     .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
-                    return crate::input::inject_click_screen(hwnd, cx, cy, count, &btn)
-                        .map(|()| format!(
-                            "✅ Injected click on [{idx}] (screen ({cx},{cy}), background, no foreground swap)."
-                        ))
-                        .map_err(|error| anyhow::anyhow!(
-                            "__CUA_BG_UNAVAILABLE_CLICK__{error}"
-                        ));
+                    return Ok(BackgroundElementClick::Inject { x: cx, y: cy, failed_calls });
                 }
                 if use_uia_invoke {
                     // Retain the element out of the cache (AddRef under the
@@ -3483,13 +3713,14 @@ impl Tool for ClickTool {
                                 match outcome {
                                     Ok(()) => {
                                         std::mem::forget(elem);
-                                        return Ok(format!(
+                                        return Ok(BackgroundElementClick::Semantic { message: format!(
                                             "✅ Performed UIA Invoke on [{idx}] (screen ({cx},{cy}))."
-                                        ));
+                                        ), transport: ActionTransport::WindowsUiaInvoke, failed_calls });
                                     }
                                     Err(e) => tracing::debug!(target: "click",
                                         "UIA Invoke on [{idx}]: {e}, trying Toggle"),
                                 }
+                                failed_calls.push(ActionTransport::WindowsUiaInvoke);
                             }
                         }
                         let toggle_result = unsafe { elem.GetCurrentPattern(UIA_TogglePatternId) };
@@ -3499,10 +3730,11 @@ impl Tool for ClickTool {
                                     hwnd as isize, || unsafe { tg.Toggle() });
                                 if outcome.is_ok() {
                                     std::mem::forget(elem);
-                                    return Ok(format!(
+                                    return Ok(BackgroundElementClick::Semantic { message: format!(
                                         "✅ Performed UIA Toggle on [{idx}] (screen ({cx},{cy}))."
-                                    ));
+                                    ), transport: ActionTransport::WindowsUiaToggle, failed_calls });
                                 }
+                                failed_calls.push(ActionTransport::WindowsUiaToggle);
                             }
                         }
                         let sel_result = unsafe { elem.GetCurrentPattern(UIA_SelectionItemPatternId) };
@@ -3512,10 +3744,11 @@ impl Tool for ClickTool {
                                     hwnd as isize, || unsafe { si.Select() });
                                 if outcome.is_ok() {
                                     std::mem::forget(elem);
-                                    return Ok(format!(
+                                    return Ok(BackgroundElementClick::Semantic { message: format!(
                                         "✅ Performed UIA SelectionItem.Select on [{idx}] (screen ({cx},{cy}))."
-                                    ));
+                                    ), transport: ActionTransport::WindowsUiaSelection, failed_calls });
                                 }
+                                failed_calls.push(ActionTransport::WindowsUiaSelection);
                             }
                         }
                         let exp_result = unsafe { elem.GetCurrentPattern(UIA_ExpandCollapsePatternId) };
@@ -3525,10 +3758,11 @@ impl Tool for ClickTool {
                                     hwnd as isize, || unsafe { ec.Expand() });
                                 if outcome.is_ok() {
                                     std::mem::forget(elem);
-                                    return Ok(format!(
+                                    return Ok(BackgroundElementClick::Semantic { message: format!(
                                         "✅ Performed UIA ExpandCollapse.Expand on [{idx}] (screen ({cx},{cy}))."
-                                    ));
+                                    ), transport: ActionTransport::WindowsUiaExpandCollapse, failed_calls });
                                 }
+                                failed_calls.push(ActionTransport::WindowsUiaExpandCollapse);
                             }
                         }
                         std::mem::forget(elem);
@@ -3550,43 +3784,67 @@ impl Tool for ClickTool {
                         "clicking",
                     )
                     .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
-                    return crate::input::inject_click_screen(hwnd, cx, cy, count, &btn)
-                        .map(|()| {
-                            format!(
-                                "✅ Injected click on [{idx}] (screen ({cx},{cy}), background, no foreground swap)."
-                            )
-                        })
-                        .map_err(|error| {
-                            anyhow::anyhow!("__CUA_BG_UNAVAILABLE_CLICK__{error}")
-                        });
+                    return Ok(BackgroundElementClick::Inject { x: cx, y: cy, failed_calls });
                 }
-                crate::input::post_click_screen(hwnd, cx, cy, count, &btn)?;
-                let action_name = match btn.as_str() {
-                    "right"  => "ShowMenu",
-                    _        => "PostMessage click",
-                };
-                Ok(format!("✅ Performed {action_name} on [{idx}] (screen ({cx},{cy}))."))
+                Ok(BackgroundElementClick::Post { x: cx, y: cy, failed_calls })
             }).await;
-            match result {
-                // UIA Invoke/Toggle/SelectionItem (or the PostMessage/injection
-                // fallback) dispatched, but none of these is driver-verifiable —
-                // UIA Invoke has no read-back. `effect: unverifiable`; the caller
-                // confirms via screenshot. (The would_be_silently_dropped surfaces
-                // are diverted to `background_unavailable` below before reaching
-                // here, so a success here always means a real dispatch.)
-                Ok(Ok(msg)) => ToolResult::text(msg).with_structured(
-                    json!({ "path": "ax", "verified": false, "effect": "unverifiable" }),
-                ),
-                Ok(Err(e)) if e.to_string().contains("__CUA_BG_UNAVAILABLE_CLICK__") => {
-                    let cause = e.to_string().replace("__CUA_BG_UNAVAILABLE_CLICK__", "");
+            let plan = match result {
+                Ok(Ok(plan)) => plan,
+                Ok(Err(e)) => return ToolResult::error(e.to_string()),
+                Err(e) => return ToolResult::error(format!("Task error: {e}")),
+            };
+            let (x, y, failed_calls, inject) = match plan {
+                BackgroundElementClick::Semantic {
+                    message,
+                    transport,
+                    failed_calls,
+                } => {
+                    return background_element_click_result(message, transport, failed_calls);
+                }
+                BackgroundElementClick::Inject { x, y, failed_calls } => (x, y, failed_calls, true),
+                BackgroundElementClick::Post { x, y, failed_calls } => (x, y, failed_calls, false),
+            };
+            // Return to the dispatch task before capturing: task-local recording
+            // context does not propagate into the blocking scroll resolver.
+            if (x, y) != (cx, cy) {
+                crate::recording_hooks::capture_dispatch_click_target(hwnd, pid, x, y);
+            }
+            let btn = button.clone();
+            let action_name = if btn == "right" {
+                "ShowMenu"
+            } else {
+                "PostMessage click"
+            };
+            let sent = tokio::task::spawn_blocking(move || {
+                if inject {
+                    crate::input::inject_click_screen(hwnd, x, y, count, &btn)
+                } else {
+                    crate::input::post_click_screen(hwnd, x, y, count, &btn)
+                }
+            })
+            .await;
+            match sent {
+                Ok(Ok(())) => {
+                    let (message, transport) = if inject {
+                        (format!("✅ Injected click on [{idx}] (screen ({x},{y}), background, no foreground swap)."),
+                            ActionTransport::WindowsTargetedInjection)
+                    } else {
+                        (
+                            format!("✅ Performed {action_name} on [{idx}] (screen ({x},{y}))."),
+                            ActionTransport::WindowsPostMessage,
+                        )
+                    };
+                    background_element_click_result(message, transport, failed_calls)
+                }
+                Ok(Err(error)) if inject => {
                     crate::input::delivery::background_unavailable_error_with_cause(
                         hwnd,
                         EventKind::MouseClick,
-                        cause,
+                        error.to_string(),
                     )
                 }
-                Ok(Err(e)) => ToolResult::error(e.to_string()),
-                Err(e) => ToolResult::error(format!("Task error: {e}")),
+                Ok(Err(error)) => ToolResult::error(error.to_string()),
+                Err(error) => ToolResult::error(format!("Task error: {error}")),
             }
         } else if let (Some(mut px), Some(mut py)) = (x, y) {
             let from_zoom = args
@@ -3632,7 +3890,7 @@ impl Tool for ClickTool {
             //      WebView2 / DirectComposition surfaces — those route
             //      input through `Windows.UI.Input`, not WM_LBUTTONDOWN.
             //
-            //   2. If UIA returns false (no Invokable element under the
+            //   2. If UIA completes with a miss (no Invokable element under the
             //      pixel inside `hwnd`, or `hwnd` has no useful UIA
             //      tree at all), fall through to
             //      `PostMessage(WM_LBUTTONDOWN/UP)` against the deepest
@@ -3750,7 +4008,7 @@ impl Tool for ClickTool {
             }
             let use_uia = (btn == "left" || btn == "middle") && count == 1;
             if use_uia {
-                let invoked = tokio::task::spawn_blocking(move || {
+                let outcome = tokio::task::spawn_blocking(move || {
                     crate::uia::windows_enum::try_invoke_in_window_at_point(
                         hwnd as isize,
                         sx as i32,
@@ -3758,18 +4016,13 @@ impl Tool for ClickTool {
                     )
                 })
                 .await
-                .unwrap_or(false);
-                if invoked {
-                    return ToolResult::text(format!(
-                        "✅ Performed UIA Invoke at ({sx},{sy}) for pid {pid}."
-                    ))
-                    .with_structured(
-                        json!({ "path": "ax", "verified": false, "effect": "unverifiable" }),
-                    );
+                .unwrap_or(crate::uia::windows_enum::PointInvokeOutcome::Unavailable);
+                if let Some(result) = finish_pixel_uia_attempt(outcome, pid, sx_i, sy_i) {
+                    return result;
                 }
             }
 
-            // UIA did not land. Known dropped surfaces other than direct
+            // UIA completed with a miss or was not applicable. Known dropped surfaces other than direct
             // Chromium (handled above) get one targeted injection attempt.
             if delivery == DeliveryMode::Background
                 && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
@@ -3794,8 +4047,8 @@ impl Tool for ClickTool {
             }
 
             // delivery_mode:"background", non-dropped + non-UIA click. This
-            // includes plain Win32 targets and embedded Chromium when its UIA
-            // provider is temporarily unavailable. Attempt PostMessage without a
+            // includes plain Win32 targets with no invokable UIA element.
+            // Attempt PostMessage without a
             // foreground swap; the caller must verify the resulting fixture state.
             // Foreground was handled at the top, and known dropped surfaces use
             // the targeted-injection path above.
@@ -3828,10 +4081,55 @@ impl Tool for ClickTool {
 
 #[cfg(test)]
 mod pixel_click_transport_tests {
-    use super::posted_pixel_click_result;
+    use super::{finish_pixel_uia_attempt, posted_pixel_click_result};
+    use crate::uia::windows_enum::PointInvokeOutcome;
     use cua_driver_core::action_record::{
         ActionExecutionRecord, ActionTransport, ActualDelivery, RequestedDelivery,
     };
+
+    #[test]
+    fn pixel_uia_only_completed_miss_reaches_fallback_transport() {
+        for (outcome, status) in [
+            (PointInvokeOutcome::Invoked, None),
+            (PointInvokeOutcome::Busy, Some("busy")),
+            (PointInvokeOutcome::Timeout, Some("timeout")),
+            (PointInvokeOutcome::Unavailable, Some("unavailable")),
+        ] {
+            // Exercise the same early-return boundary used before either
+            // targeted injection or PostMessage in the pixel click route.
+            let mut fallback_calls = 0;
+            let result = finish_pixel_uia_attempt(outcome, 42, 10, 20).unwrap_or_else(|| {
+                fallback_calls += 1;
+                posted_pixel_click_result(42, "click")
+            });
+            assert_eq!(fallback_calls, 0, "{outcome:?}");
+            assert_eq!(result.is_error.unwrap_or(false), status.is_some());
+            let data = result.structured_content.unwrap();
+            assert_eq!(data["path"], "ax");
+            assert_eq!(data["effect"], "unverifiable");
+            if let Some(status) = status {
+                assert_eq!(data["uia_status"], status);
+                assert_eq!(data["code"], "background_unavailable");
+            }
+            let record = ActionExecutionRecord::from_legacy(
+                "click",
+                &serde_json::json!({ "delivery_mode": "background" }),
+                &data,
+            )
+            .expect("UIA outcome should normalize into the public action contract");
+            let public = serde_json::to_value(record.public_result().expect("valid ActionResult"))
+                .expect("serialize ActionResult");
+            assert_eq!(public["effect"], "unverifiable");
+        }
+        let mut fallback_calls = 0;
+        let result =
+            finish_pixel_uia_attempt(PointInvokeOutcome::Miss, 42, 10, 20).unwrap_or_else(|| {
+                fallback_calls += 1;
+                posted_pixel_click_result(42, "click")
+            });
+        assert_eq!(fallback_calls, 1);
+        assert_eq!(result.structured_content.unwrap()["path"], "post_message");
+    }
 
     #[test]
     fn post_message_pixel_click_reports_synthetic_transport() {
@@ -3856,6 +4154,73 @@ mod pixel_click_transport_tests {
             .expect("serialize ActionResult");
         assert_eq!(public["route"], "synthetic_events");
         assert_eq!(public["delivery"]["mode"], "background");
+    }
+}
+
+#[cfg(test)]
+mod background_element_click_record_tests {
+    use super::{background_element_click_result, ActionTransport};
+
+    #[test]
+    fn raw_fallback_reports_its_physical_transport() {
+        for (transport, path) in [
+            (ActionTransport::WindowsTargetedInjection, "pixel"),
+            (ActionTransport::WindowsPostMessage, "post_message"),
+        ] {
+            let result = background_element_click_result(
+                "physical fallback".into(),
+                transport,
+                vec![ActionTransport::WindowsUiaInvoke],
+            );
+            assert_eq!(result.structured_content.as_ref().unwrap()["path"], path);
+            let record = result.action_record.unwrap();
+            assert_eq!(record.transport, transport);
+            let truth = record.debug_json();
+            assert_ne!(truth["route"], "accessibility");
+            assert_eq!(
+                record.attempts[0].transport,
+                ActionTransport::WindowsUiaInvoke
+            );
+            assert_eq!(record.fallbacks[0].to, transport);
+        }
+    }
+
+    #[test]
+    fn failed_provider_calls_disqualify_single_action_marker_exemption() {
+        let result = background_element_click_result(
+            "semantic success after provider failure".into(),
+            ActionTransport::WindowsUiaToggle,
+            vec![ActionTransport::WindowsUiaInvoke],
+        );
+        let record = result.action_record.unwrap();
+        assert_eq!(record.transport, ActionTransport::WindowsUiaToggle);
+        assert_eq!(record.attempts.len(), 1);
+        assert_eq!(record.fallbacks.len(), 1);
+        assert_eq!(record.fallbacks[0].from, ActionTransport::WindowsUiaInvoke);
+        assert_eq!(record.fallbacks[0].to, ActionTransport::WindowsUiaToggle);
+        // Point-free recording requires an empty fallback journal.
+        assert!(!record.debug_json()["fallbacks"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn single_provider_success_has_no_invented_attempts() {
+        for transport in [
+            ActionTransport::WindowsUiaInvoke,
+            ActionTransport::WindowsUiaToggle,
+            ActionTransport::WindowsUiaSelection,
+            ActionTransport::WindowsUiaExpandCollapse,
+        ] {
+            let result =
+                background_element_click_result("semantic success".into(), transport, vec![]);
+            assert_eq!(result.structured_content.as_ref().unwrap()["path"], "ax");
+            let record = result.action_record.unwrap();
+            assert_eq!(record.transport, transport);
+            assert!(record.attempts.is_empty());
+            assert!(record.fallbacks.is_empty());
+        }
     }
 }
 
@@ -3914,6 +4279,83 @@ async fn focus_by_pixel(
 
 pub struct TypeTextTool {
     state: Arc<ToolState>,
+}
+
+fn wait_for_cached_element_keyboard_focus(
+    state: &ToolState,
+    pid: u32,
+    hwnd: u64,
+    element_index: usize,
+    timeout: std::time::Duration,
+) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if state
+            .element_cache
+            .element_has_keyboard_focus(pid, hwnd, element_index)
+            == Some(true)
+        {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+/// Establish exact UIA child focus after the owning top-level HWND is already
+/// confirmed foreground. Chromium providers sometimes reject UIA `SetFocus`;
+/// in that case a real click at the accessibility-derived center is the
+/// bounded fallback. Both routes require `CurrentHasKeyboardFocus` read-back
+/// before any keyboard input is allowed to leave the driver.
+fn focus_cached_element_for_foreground(
+    state: &ToolState,
+    pid: u32,
+    hwnd: u64,
+    element_index: usize,
+    click_point: Option<(i32, i32)>,
+) -> anyhow::Result<()> {
+    // `fg_bypass` is a background-only shield: for Chromium it disables the
+    // top-level HWND while UIA runs so the provider cannot self-activate. A
+    // disabled foreground window immediately loses foreground on Windows,
+    // which would make the enclosing verify-before-SendInput transaction
+    // fail closed. The foreground route has already activated the exact HWND,
+    // so focus the cached element directly and verify it below.
+    let set_focus = state.element_cache.focus_element(pid, hwnd, element_index);
+    if set_focus.is_ok()
+        && wait_for_cached_element_keyboard_focus(
+            state,
+            pid,
+            hwnd,
+            element_index,
+            std::time::Duration::from_millis(350),
+        )
+    {
+        return Ok(());
+    }
+
+    if let Some((x, y)) = click_point {
+        crate::input::send_click_synthesized_active_mods(hwnd, x, y, 1, "left", &[])?;
+        if wait_for_cached_element_keyboard_focus(
+            state,
+            pid,
+            hwnd,
+            element_index,
+            std::time::Duration::from_millis(500),
+        ) {
+            return Ok(());
+        }
+    }
+
+    let detail = set_focus
+        .err()
+        .map(|error| format!("; UIA SetFocus failed: {error}"))
+        .unwrap_or_default();
+    anyhow::bail!(
+        "foreground_unavailable: Windows did not confirm keyboard focus on exact UIA element \
+         [{element_index}] in HWND 0x{hwnd:x}{detail}; no keyboard input was sent"
+    )
 }
 
 static TYPE_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
@@ -4174,12 +4616,10 @@ impl Tool for TypeTextTool {
         // rejected (daemon not at UIAccess integrity), it returns an error
         // rather than a false success.
         if delivery == DeliveryMode::Foreground {
-            // An indexed foreground type targets that element, not whichever
-            // child happened to retain focus in the top-level window. UIA
-            // SetFocus is not sufficient for Chromium renderer controls, so
-            // establish real system focus with the same foreground coordinate
-            // actuator used by an indexed click before sending Unicode input.
-            if let Some(idx) = elem_idx {
+            // Resolve the optional click fallback before entering the atomic
+            // activation/focus/input transaction. The focus itself happens
+            // only after exact top-level foreground is confirmed.
+            let focus_target = if let Some(idx) = elem_idx {
                 let (cx, cy) =
                     match self
                         .state
@@ -4205,25 +4645,19 @@ impl Tool for TypeTextTool {
                     Ok(point) => point,
                     Err(result) => return result,
                 };
-                let focus_result = tokio::task::spawn_blocking(move || {
-                    crate::input::send_click_synthesized_active_mods(hwnd, cx, cy, 1, "left", &[])
-                })
-                .await;
-                match focus_result {
-                    Ok(Ok(())) => {
-                        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
-                    }
-                    Ok(Err(error)) => return ToolResult::error(error.to_string()),
-                    Err(error) => {
-                        return ToolResult::error(format!(
-                            "foreground element-focus task failed: {error}"
-                        ))
-                    }
-                }
-            }
+                Some((idx as usize, (cx, cy)))
+            } else {
+                None
+            };
             let text_fg = text.clone();
+            let state = self.state.clone();
             let r = tokio::task::spawn_blocking(move || {
-                crate::input::send_text_synthesized(hwnd, &text_fg)
+                crate::input::send_text_synthesized_after_focus(hwnd, &text_fg, || {
+                    if let Some((idx, point)) = focus_target {
+                        focus_cached_element_for_foreground(&state, pid, hwnd, idx, Some(point))?;
+                    }
+                    Ok(())
+                })
             })
             .await;
             return match r {
@@ -4953,7 +5387,7 @@ impl Tool for PressKeyTool {
             {
                 return error;
             }
-        } else if let Some(idx) = elem_idx {
+        } else if let Some(idx) = elem_idx.filter(|_| delivery != DeliveryMode::Foreground) {
             let state = self.state.clone();
             let focused = tokio::task::spawn_blocking(move || {
                 crate::uia::fg_bypass::run_with_uwp_bypass(hwnd as isize, || {
@@ -4979,9 +5413,22 @@ impl Tool for PressKeyTool {
         // Skipped when px-focus already fronted/clicked the target — the key then
         // goes via the plain background post path below.
         if !px_focus && delivery == DeliveryMode::Foreground {
+            let focus_target = elem_idx.map(|idx| {
+                let point = self
+                    .state
+                    .element_cache
+                    .get_element_center(pid, hwnd, idx as usize);
+                (idx as usize, point)
+            });
+            let state = self.state.clone();
             let send_result = tokio::task::spawn_blocking(move || {
                 let m: Vec<&str> = mods.iter().map(String::as_str).collect();
-                crate::input::send_key_synthesized(hwnd, &key, &m)
+                crate::input::send_key_synthesized_after_focus(hwnd, &key, &m, || {
+                    if let Some((idx, point)) = focus_target {
+                        focus_cached_element_for_foreground(&state, pid, hwnd, idx, point)?;
+                    }
+                    Ok(())
+                })
             })
             .await;
             return match send_result {
@@ -5077,6 +5524,9 @@ impl Tool for HotkeyTool {
                     "pid":{"type":"integer","description":"Target process ID."},
                     "keys":{"type":"array","items":{"type":"string"},"minItems":2,
                         "description":"Modifier(s) and one non-modifier key, e.g. [\"ctrl\", \"c\"]."},
+                    "element_index": cua_driver_core::tool_schema::element_index_schema(),
+                    "element_token": cua_driver_core::tool_schema::element_token_schema(),
+                    "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                     "x":{"type":"number","description":"Window-local screenshot-pixel X — the element px action form: pixel-click there to focus, then send the combo (so e.g. Ctrl+V pastes into that field). Pass with y. Use for Chromium/Electron surfaces the background combo can't reach."},
                     "y":{"type":"number","description":"Window-local screenshot-pixel Y (see x)."},
                     "window_id":{"type":"integer","description":"Explicit HWND when the pid owns multiple windows."},
@@ -5176,12 +5626,41 @@ impl Tool for HotkeyTool {
         } else {
             return ToolResult::error("Missing required array field keys.");
         };
-        let hwnd_opt = args.opt_u64("window_id");
         let raw_pid = match args.require_i64("pid") {
             Ok(v) => v,
             Err(e) => return e,
         };
         let pid = raw_pid as u32;
+        let resolved = match cua_driver_core::element_token::resolve_element_args(
+            pid as i32,
+            args.opt_u64("element_index").map(|value| value as usize),
+            args.opt_str("element_token").as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
+            args.opt_u64("window_id").map(|value| value as u32),
+            "hotkey",
+        ) {
+            Ok(resolved) => resolved,
+            Err(error) => return error,
+        };
+        let elem_idx = match &resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } => {
+                Some(*element_index)
+            }
+            cua_driver_core::element_token::ResolvedElement::None => None,
+        };
+        let hwnd_opt = match &resolved {
+            cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => window_id
+                .map(|value| value as u64)
+                .or_else(|| args.opt_u64("window_id")),
+            cua_driver_core::element_token::ResolvedElement::None => args.opt_u64("window_id"),
+        };
+        if elem_idx.is_some() && hwnd_opt.is_none() {
+            return ToolResult::error(
+                "window_id is required when element_index is used — the element_index cache \
+                 is scoped per (pid, window_id). Pass the same window_id you used in \
+                 `get_window_state`.",
+            );
+        }
         let delivery = DeliveryMode::from_args(&args);
 
         // Resolve HWND: use window_id if given, else pick first window for pid.
@@ -5217,6 +5696,11 @@ impl Tool for HotkeyTool {
             let px = args.get("x").and_then(|v| v.as_f64());
             let py = args.get("y").and_then(|v| v.as_f64());
             if let (Some(cx), Some(cy)) = (px, py) {
+                if elem_idx.is_some() {
+                    return ToolResult::error(
+                        "Pass either element_index (ax) or x,y (px) to hotkey, not both.",
+                    );
+                }
                 let from_zoom = args
                     .get("from_zoom")
                     .and_then(|v| v.as_bool())
@@ -5338,10 +5822,20 @@ impl Tool for HotkeyTool {
         // global modifier state, so Chromium never observes Ctrl+Shift+H as a
         // chord even though the renderer control is focused.
         let use_send_input = delivery == DeliveryMode::Foreground;
+        let focus_target = elem_idx.map(|idx| {
+            let point = self.state.element_cache.get_element_center(pid, hwnd, idx);
+            (idx, point)
+        });
+        let state = self.state.clone();
         let result = tokio::task::spawn_blocking(move || {
             let m: Vec<&str> = mods.iter().map(String::as_str).collect();
             if use_send_input {
-                crate::input::send_key_synthesized(hwnd, &key, &m)
+                crate::input::send_key_synthesized_after_focus(hwnd, &key, &m, || {
+                    if let Some((idx, point)) = focus_target {
+                        focus_cached_element_for_foreground(&state, pid, hwnd, idx, point)?;
+                    }
+                    Ok(())
+                })
             } else {
                 crate::input::post_key(hwnd, &key, &m)
             }
@@ -5609,7 +6103,7 @@ impl Tool for ScrollTool {
     async fn invoke(&self, args: Value) -> ToolResult {
         use crate::input::delivery::{DeliveryMode, EventKind};
         use cua_driver_core::tool_args::ArgsExt;
-        // ── Window-less screen-absolute branch (capture_scope="desktop") ──────
+        // ── Window-less screen-absolute branch (desktop target) ───────────────
         // No pid/window_id + numeric x,y + desktop scope → synthesize a wheel
         // event at the screen point via SendInput. The wheel routes to whatever
         // window is under (x,y). up/down map to a vertical wheel (sign), and
@@ -6261,6 +6755,7 @@ impl Tool for DoubleClickTool {
                     ))
                 }
             };
+            let recorded_center = (cx, cy);
             let (cx, cy) = match resolve_onscreen_point_with_scroll(
                 &self.state.element_cache,
                 pid,
@@ -6302,6 +6797,9 @@ impl Tool for DoubleClickTool {
             // actuator (system input queue, NO foreground swap), exactly like
             // ClickTool, instead of refusing. Only error if injection can't
             // express this click (e.g. right/middle on such a target).
+            if (cx, cy) != recorded_center {
+                crate::recording_hooks::capture_dispatch_click_target(hwnd, pid, cx, cy);
+            }
             if delivery == DeliveryMode::Background
                 && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
@@ -6608,6 +7106,7 @@ impl Tool for RightClickTool {
                     ))
                 }
             };
+            let recorded_center = (cx, cy);
             let (cx, cy) = match resolve_onscreen_point_with_scroll(
                 &self.state.element_cache,
                 pid,
@@ -6644,6 +7143,9 @@ impl Tool for RightClickTool {
             // delivery_mode:"background" (default): try coordinate injection (no
             // foreground swap) for drop-prone targets (#1984); a right-click
             // injection that the actuator can't express falls back to the error.
+            if (cx, cy) != recorded_center {
+                crate::recording_hooks::capture_dispatch_click_target(hwnd, pid, cx, cy);
+            }
             if delivery == DeliveryMode::Background
                 && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
@@ -7251,9 +7753,8 @@ impl Tool for GetScreenSizeTool {
 /// Vision-only desktop capture: grabs the ENTIRE primary display at native
 /// physical-pixel size (no downscale) so screen-absolute pixel picks land
 /// exactly, then reports the true screen size. No UIA walk, no pid/window_id —
-/// this is the capture surface for `capture_scope="desktop"` GUI loops where
-/// the agent drives `click(x,y)` / `scroll(x,y)` against screen-absolute
-/// coordinates.
+/// this is the capture surface for actions with a primary-display desktop
+/// target and screen-absolute coordinates.
 ///
 /// Mirrors the `get_window_state` vision branch's ToolResult shape: an
 /// `image_png` content part (or a written-out file path), a text summary line,
@@ -7266,15 +7767,14 @@ impl Tool for GetDesktopStateTool {
     fn def(&self) -> &ToolDef {
         GDS_DEF.get_or_init(|| ToolDef {
             name: "get_desktop_state".into(),
-            description: "Capture a full-display vision screenshot in true screen pixels \
-                (no downscale), for capture_scope=\"desktop\" GUI loops where the agent then \
-                drives click(x,y)/scroll(x,y) with no pid/window_id. Returns the PNG at native \
-                display resolution plus the true screen size so screen-absolute pixel picks \
-                land exactly. Vision-only: no UIA tree walk.".into(),
+            description: "Capture the full display in true screen pixels with no downscale. \
+                Use its native-size PNG as the coordinate source for actions whose target is \
+                {kind:\"desktop\",display_id:\"primary\"}. Returns the true screen size. \
+                Vision-only: no UIA tree walk.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "session": { "type": "string", "description": "Optional session id." },
+                    "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
                     "screenshot_out_file": { "type": "string", "description": "Write PNG here instead of base64." }
                 },
                 "additionalProperties": false
@@ -7441,8 +7941,8 @@ impl Tool for MoveCursorTool {
         }
         let x = args.f64_or("x", 0.0);
         let y = args.f64_or("y", 0.0);
-        // Cursor key precedence: caller-declared `session` > legacy `cursor_id`
-        // > NO_CURSOR. An anonymous run (no session) has no cursor to move.
+        // The trusted dispatch boundary always supplies a lifecycle key,
+        // including for an unnamed implicit session.
         let cursor_key = resolve_cursor_key(&args);
         if !cursor_key.is_empty() {
             self.state
@@ -7452,14 +7952,9 @@ impl Tool for MoveCursorTool {
         // End pointing upper-left (45°) — matches Swift's
         // `AgentCursor.animateAndWait(endAngleDegrees: 45)` convention so
         // the cursor settles to the natural macOS-style pose.
-        crate::overlay::send_command(
-            cursor_key.clone(),
-            cursor_overlay::OverlayCommand::MoveTo {
-                x,
-                y,
-                end_heading_radians: std::f64::consts::FRAC_PI_4,
-            },
-        );
+        // Use the acknowledged animation path so a first-ever move seeds and
+        // displays the session cursor just as reliably as a coordinate click.
+        crate::overlay::animate_cursor_to(cursor_key.clone(), x, y).await;
         let shown = if cursor_key.is_empty() {
             "default"
         } else {
@@ -7977,12 +8472,12 @@ impl Tool for SetConfigTool {
             || args.get("key").and_then(Value::as_str) == Some("capture_scope")
         {
             return ToolResult::error(
-                "config key 'capture_scope' is retired; pass capture_scope=auto|window|desktop to start_session",
+                "config key 'capture_scope' is retired; select a window or desktop target on each action",
             )
             .with_structured(json!({
                 "code": "config_key_retired",
                 "key": "capture_scope",
-                "replacement": "start_session.capture_scope",
+                "replacement": "action.target",
             }));
         }
         let mut cfg = self.state.config.write().unwrap();
@@ -8551,6 +9046,41 @@ impl Tool for InvokeMenuTool {
 
 // ── set_window_frame ──────────────────────────────────────────────────────
 
+fn outer_frame_for_visible_request(
+    requested: (i32, i32, i32, i32),
+    outer_before: (i32, i32, i32, i32),
+    visible_before: (i32, i32, i32, i32),
+) -> Result<(i32, i32, i32, i32), String> {
+    let (requested_x, requested_y, requested_width, requested_height) = requested;
+    let (outer_x, outer_y, outer_width, outer_height) = outer_before;
+    let (visible_x, visible_y, visible_width, visible_height) = visible_before;
+    let left = i64::from(visible_x) - i64::from(outer_x);
+    let top = i64::from(visible_y) - i64::from(outer_y);
+    let right = i64::from(outer_x) + i64::from(outer_width)
+        - (i64::from(visible_x) + i64::from(visible_width));
+    let bottom = i64::from(outer_y) + i64::from(outer_height)
+        - (i64::from(visible_y) + i64::from(visible_height));
+    let adjusted = (
+        i64::from(requested_x) - left,
+        i64::from(requested_y) - top,
+        i64::from(requested_width) + left + right,
+        i64::from(requested_height) + top + bottom,
+    );
+    if adjusted.2 <= 0 || adjusted.3 <= 0 {
+        return Err("visible-frame adjustment produced a non-positive outer size".to_owned());
+    }
+    let to_i32 = |value: i64| {
+        i32::try_from(value)
+            .map_err(|_| "visible-frame adjustment exceeded Windows coordinate range".to_owned())
+    };
+    Ok((
+        to_i32(adjusted.0)?,
+        to_i32(adjusted.1)?,
+        to_i32(adjusted.2)?,
+        to_i32(adjusted.3)?,
+    ))
+}
+
 pub struct SetWindowFrameTool;
 
 static SET_WINDOW_FRAME_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
@@ -8588,6 +9118,7 @@ impl Tool for SetWindowFrameTool {
         let outcome = tokio::task::spawn_blocking(move || {
             use windows::Win32::{
                 Foundation::{HWND, RECT},
+                Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS},
                 UI::WindowsAndMessaging::{
                     GetWindowRect, GetWindowThreadProcessId, IsIconic, IsWindow, IsZoomed,
                     SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER,
@@ -8643,52 +9174,81 @@ impl Tool for SetWindowFrameTool {
                     input.window_id
                 ));
             }
-            let mut before = RECT::default();
-            unsafe { GetWindowRect(hwnd, &mut before) }
-                .map_err(|error| format!("could not read the current window frame: {error}"))?;
+            let read_frames = |hwnd: HWND| -> Result<
+                ((i32, i32, i32, i32), (i32, i32, i32, i32)),
+                String,
+            > {
+                let mut outer = RECT::default();
+                unsafe { GetWindowRect(hwnd, &mut outer) }
+                    .map_err(|error| format!("could not read the current window frame: {error}"))?;
+                let outer = (
+                    outer.left,
+                    outer.top,
+                    outer.right - outer.left,
+                    outer.bottom - outer.top,
+                );
+                let mut visible = RECT::default();
+                let visible = unsafe {
+                    DwmGetWindowAttribute(
+                        hwnd,
+                        DWMWA_EXTENDED_FRAME_BOUNDS,
+                        &mut visible as *mut RECT as *mut _,
+                        std::mem::size_of::<RECT>() as u32,
+                    )
+                }
+                .ok()
+                .map(|()| {
+                    (
+                        visible.left,
+                        visible.top,
+                        visible.right - visible.left,
+                        visible.bottom - visible.top,
+                    )
+                })
+                .filter(|(_, _, width, height)| *width > 0 && *height > 0)
+                .unwrap_or(outer);
+                Ok((outer, visible))
+            };
+            let (outer_before, before) = read_frames(hwnd)?;
+            let requested = (x, y, width, height);
+            let outer_requested =
+                outer_frame_for_visible_request(requested, outer_before, before)?;
             let mutation_error = unsafe {
                 SetWindowPos(
                     hwnd,
                     HWND::default(),
-                    x,
-                    y,
-                    width,
-                    height,
+                    outer_requested.0,
+                    outer_requested.1,
+                    outer_requested.2,
+                    outer_requested.3,
                     SWP_NOACTIVATE | SWP_NOZORDER,
                 )
             }
             .err()
             .map(|error| format!("SetWindowPos failed: {error}"));
 
-            let requested = (x, y, width, height);
             let mut observed = None;
             for _ in 0..6 {
-                let mut rect = RECT::default();
-                if unsafe { GetWindowRect(hwnd, &mut rect) }.is_ok() {
-                    observed = Some((
-                        rect.left,
-                        rect.top,
-                        rect.right - rect.left,
-                        rect.bottom - rect.top,
-                    ));
+                if let Ok((_, visible)) = read_frames(hwnd) {
+                    observed = Some(visible);
                     if observed == Some(requested) {
                         break;
                     }
                 }
                 std::thread::sleep(std::time::Duration::from_millis(40));
             }
-            let before = (
-                before.left,
-                before.top,
-                before.right - before.left,
-                before.bottom - before.top,
-            );
             let changed = observed.is_some_and(|observed| before != observed);
-            Ok((requested, observed, changed, mutation_error))
+            Ok((
+                requested,
+                outer_requested,
+                observed,
+                changed,
+                mutation_error,
+            ))
         })
         .await;
 
-        let (requested, observed, changed, mutation_error) = match outcome {
+        let (requested, outer_requested, observed, changed, mutation_error) = match outcome {
             Ok(Ok(outcome)) => outcome,
             Ok(Err(error)) => return ToolResult::error(format!("set_window_frame: {error}")),
             Err(error) => {
@@ -8706,15 +9266,15 @@ impl Tool for SetWindowFrameTool {
         )
         .actual_delivery(ActualDelivery::NotApplicable)
         .detail(format!(
-            "requested={requested:?} observed={observed:?} mutation_error={mutation_error:?}"
+            "requested_visible={requested:?} requested_outer={outer_requested:?} observed_visible={observed:?} mutation_error={mutation_error:?}"
         ));
         if observed.is_some() {
             record = record.evidence(ActionEvidence {
                 kind: EvidenceKind::ValueReadback,
                 detail: if confirmed {
-                    "GetWindowRect matched the requested frame".into()
+                    "DWM visible-frame bounds matched the requested frame".into()
                 } else {
-                    "GetWindowRect returned a frame that did not match the request".into()
+                    "DWM visible-frame bounds did not match the requested frame".into()
                 },
             });
         }
@@ -9362,11 +9922,13 @@ pub fn build_registry_with_provider(
                     Some(state) => cua_driver_core::session::bounded_cursor_outcome(
                         true,
                         state.config.enabled,
+                        crate::overlay::is_visible_for_session(session_id),
                         Some(state.config.theme_id.as_str()),
                         motion_customized,
                         active_cursor_count,
                     ),
                     None => cua_driver_core::session::bounded_cursor_outcome(
+                        false,
                         false,
                         false,
                         None,
@@ -9395,10 +9957,15 @@ pub fn build_registry_with_provider(
             cursor_registry.remove(session_id);
             crate::overlay::remove_cursor(session_id.to_owned());
         });
+    let session_revive_hook =
+        cua_driver_core::session::register_scoped_session_revive_hook(move |session_id| {
+            crate::overlay::revive_cursor(session_id.to_owned());
+        });
 
     let mut r = ToolRegistry::new_with_protected_consent_provider(provider);
     r.retain_cursor_outcome_reader(cursor_outcome_reader);
     r.retain_session_end_hook(session_end_hook);
+    r.retain_session_revive_hook(session_revive_hook);
     if let Some(runtime_scope) = cua_driver_core::tool::current_dispatch_runtime_scope() {
         let prefix = format!("__cua_runtime_{runtime_scope}:");
         let cursor_registry = state.cursor_registry.clone();
@@ -9576,15 +10143,15 @@ mod cursor_key_resolution_tests {
     use serde_json::json;
 
     #[test]
-    fn anonymous_resolves_to_no_cursor() {
+    fn direct_platform_call_without_lifecycle_resolves_to_no_cursor() {
         // No session/cursor_id → NO_CURSOR (""): the action still runs but no
-        // cursor is shown. The connection-injected `_session_id` is NOT a cursor
-        // source — it stays the recording/config lifecycle key.
+        // cursor is shown. Canonical core dispatch injects `_session_id` before
+        // real platform calls.
         assert_eq!(resolve_cursor_key(&json!({})), NO_CURSOR);
         assert_eq!(resolve_cursor_key(&json!({ "pid": 1 })), NO_CURSOR);
         assert_eq!(
             resolve_cursor_key(&json!({ "_session_id": "mcp-1-2" })),
-            NO_CURSOR
+            "mcp-1-2"
         );
     }
 
@@ -9605,6 +10172,10 @@ mod cursor_key_resolution_tests {
         assert_eq!(
             resolve_cursor_key(&json!({ "session": "s1", "cursor_id": "c1" })),
             "s1"
+        );
+        assert_eq!(
+            resolve_cursor_key(&json!({ "_session_id": "implicit", "cursor_id": "c1" })),
+            "implicit"
         );
     }
 
@@ -9906,6 +10477,37 @@ mod click_button_schema_tests {
         for need in ["left", "right", "middle"] {
             assert!(enum_vals.contains(&need), "missing {need} in button.enum");
         }
+    }
+}
+
+#[cfg(test)]
+mod set_window_frame_geometry_tests {
+    use super::outer_frame_for_visible_request;
+
+    #[test]
+    fn compensates_for_invisible_resize_borders() {
+        assert_eq!(
+            outer_frame_for_visible_request(
+                (65, 52, 872, 626),
+                (40, 40, 886, 633),
+                (47, 40, 872, 626),
+            )
+            .unwrap(),
+            (58, 52, 886, 633)
+        );
+    }
+
+    #[test]
+    fn leaves_outer_request_unchanged_when_dwm_bounds_are_unavailable() {
+        assert_eq!(
+            outer_frame_for_visible_request(
+                (-25, 10, 640, 480),
+                (20, 30, 800, 600),
+                (20, 30, 800, 600),
+            )
+            .unwrap(),
+            (-25, 10, 640, 480)
+        );
     }
 }
 

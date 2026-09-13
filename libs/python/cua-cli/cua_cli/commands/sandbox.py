@@ -49,6 +49,7 @@ def _parse_image(image_str: str, vm: bool = False):
         "macos:sequoia"   -> Image.macos("sequoia")
         "ubuntu:24.04"    -> Image.linux("ubuntu", "24.04")
         "linux"           -> Image.linux("ubuntu", "24.04")
+        "windows"         -> Image.windows("2022")
         "windows:11"      -> Image.windows("11")
         "android:14"      -> Image.android("14")
         "ghcr.io/org/img" -> Image.from_registry("ghcr.io/org/img")
@@ -80,7 +81,7 @@ def _parse_image(image_str: str, vm: bool = False):
         return Image.linux(distro, version, kind=kind)
 
     if base in _WINDOWS_ALIASES:
-        version = tag or "11"
+        version = tag or "2022"
         return Image.windows(version)
 
     if base in _ANDROID_ALIASES:
@@ -470,7 +471,8 @@ def cmd_launch(args: argparse.Namespace) -> int:
                 create_kwargs.update(await _cloud_auth_kwargs())
                 sb = await Sandbox.create(image, **create_kwargs)
 
-            name = sb.name
+            claim_name = getattr(sb, "claim_name", None)
+            name = claim_name if isinstance(claim_name, str) and claim_name else sb.name
             await sb.disconnect()
         except Exception as e:
             import traceback
@@ -498,6 +500,9 @@ def cmd_ls(args: argparse.Namespace) -> int:
         as_json = getattr(args, "json", False)
 
         results: list[dict] = []
+        # A source that failed is not a source that was empty. Swallowing these
+        # told anyone hitting an outage that they simply had no sandboxes.
+        errors: list[dict] = []
 
         if show_all or local:
             try:
@@ -510,8 +515,8 @@ def cmd_ls(args: argparse.Namespace) -> int:
                             "source": getattr(s, "source", "local"),
                         }
                     )
-            except Exception:
-                pass
+            except Exception as error:
+                errors.append({"source": "local", "error": f"{type(error).__name__}: {error}"})
 
         if show_all or not local:
             if get_fleets_token():
@@ -527,22 +532,25 @@ def cmd_ls(args: argparse.Namespace) -> int:
                             "source": "cloud",
                         }
                     )
-            except Exception:
-                pass
+            except Exception as error:
+                errors.append({"source": "cloud", "error": f"{type(error).__name__}: {error}"})
 
         if as_json:
-            print_json(results)
-            return 0
+            print_json({"sandboxes": results, "errors": errors} if errors else results)
+            return 1 if errors else 0
 
-        if not results:
+        for failure in errors:
+            print_error(f"Could not list {failure['source']} sandboxes: {failure['error']}")
+
+        if results:
+            print_table(
+                results,
+                [("name", "NAME"), ("status", "STATUS"), ("source", "SOURCE")],
+            )
+        elif not errors:
             print_info("No sandboxes found.")
-            return 0
 
-        print_table(
-            results,
-            [("name", "NAME"), ("status", "STATUS"), ("source", "SOURCE")],
-        )
-        return 0
+        return 1 if errors else 0
 
     return run_async(_run())
 

@@ -40,6 +40,62 @@ func sha256OfFile(at url: URL) throws -> String {
     return hash.map { String(format: "%02x", $0) }.joined()
 }
 
+private let sparseHoleGranularityBytes = 4 * 1024 * 1024
+private let sparseZeroChunk = Data(count: sparseHoleGranularityBytes)
+
+/// Gunzip-decompress a chunk and write it sparsely into an output file handle,
+/// skipping zero-filled 4 MiB blocks to create holes in the sparse file.
+func gunzipChunkAndWriteSparse(
+    inputPath: URL, outputHandle: FileHandle, startOffset: UInt64
+) throws -> UInt64 {
+    guard FileManager.default.fileExists(atPath: inputPath.path) else {
+        throw PullError.layerDownloadFailed(inputPath.lastPathComponent)
+    }
+
+    // Apple's Compression framework (.zlib) only handles raw DEFLATE, not
+    // gzip headers, so stream through the system gunzip executable first.
+    let decompressedPath = inputPath.appendingPathExtension("raw")
+    defer { try? FileManager.default.removeItem(at: decompressedPath) }
+
+    FileManager.default.createFile(atPath: decompressedPath.path, contents: nil)
+    let tempHandle = try FileHandle(forWritingTo: decompressedPath)
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/gunzip")
+    process.arguments = ["-c", inputPath.path]
+    process.standardOutput = tempHandle
+    try process.run()
+    process.waitUntilExit()
+    try tempHandle.close()
+
+    guard process.terminationStatus == 0 else {
+        throw PullError.layerDownloadFailed(inputPath.lastPathComponent)
+    }
+
+    let readHandle = try FileHandle(forReadingFrom: decompressedPath)
+    defer { try? readHandle.close() }
+
+    var currentWriteOffset = startOffset
+    var totalDecompressedBytes: UInt64 = 0
+
+    while true {
+        let decompressedData = readHandle.readData(ofLength: sparseHoleGranularityBytes)
+        if decompressedData.isEmpty { break }
+
+        if decompressedData.count == sparseHoleGranularityBytes
+            && decompressedData == sparseZeroChunk
+        {
+            currentWriteOffset += UInt64(decompressedData.count)
+        } else {
+            try outputHandle.seek(toOffset: currentWriteOffset)
+            try outputHandle.write(contentsOf: decompressedData)
+            currentWriteOffset += UInt64(decompressedData.count)
+        }
+        totalDecompressedBytes += UInt64(decompressedData.count)
+    }
+
+    return totalDecompressedBytes
+}
+
 // Push-related errors
 enum PushError: Error {
     case uploadInitiationFailed
@@ -102,11 +158,47 @@ struct OCIConfig: Codable {
     let annotations: Annotations?  // Optional annotations
 }
 
-struct Layer: Codable, Equatable {
+struct Layer: Codable, Equatable, Sendable {
     let mediaType: String
     let digest: String
     let size: Int
     let annotations: [String: String]?
+}
+
+struct OCIChunkReference: Equatable, Sendable {
+    let index: Int
+    let offset: UInt64
+}
+
+struct OCIChunkGroup: Equatable, Sendable {
+    let layer: Layer
+    var references: [OCIChunkReference]
+}
+
+/// Groups logical disk parts by their shared OCI blob while preserving the
+/// order in which each unique digest first appears in the manifest.
+func groupOCIChunksByDigest(_ layers: [Layer]) -> [OCIChunkGroup] {
+    var groups: [OCIChunkGroup] = []
+    var groupIndexByDigest: [String: Int] = [:]
+
+    for (index, layer) in layers.enumerated() {
+        let reference = OCIChunkReference(
+            index: index,
+            offset: UInt64(layer.annotations?[OCIAnnotation.partOffset] ?? "0") ?? 0)
+        if let groupIndex = groupIndexByDigest[layer.digest] {
+            groups[groupIndex].references.append(reference)
+        } else {
+            groupIndexByDigest[layer.digest] = groups.count
+            groups.append(OCIChunkGroup(layer: layer, references: [reference]))
+        }
+    }
+
+    return groups
+}
+
+func uniqueLayersByDigest(_ layers: [Layer]) -> [Layer] {
+    var seenDigests: Swift.Set<String> = []
+    return layers.filter { seenDigests.insert($0.digest).inserted }
 }
 
 struct Manifest: Codable {
@@ -3900,8 +3992,8 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         inputPath: String, outputHandle: FileHandle, startOffset: UInt64
     ) throws -> UInt64 {
         guard FileManager.default.fileExists(atPath: inputPath) else {
-            Logger.error("Compressed chunk not found at: \(inputPath)")
-            return 0  // Or throw an error
+            throw PullError.layerDownloadFailed(
+                URL(fileURLWithPath: inputPath).lastPathComponent)
         }
 
         let sourceData = try Data(
@@ -4096,62 +4188,6 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         guard process.terminationStatus == 0 else {
             throw PullError.layerDownloadFailed(inputPath.lastPathComponent)
         }
-    }
-
-    /// Gunzip-decompress a chunk and write it sparsely into an output file handle,
-    /// skipping zero-filled 4 MB blocks to create holes in the sparse file.
-    private func gunzipChunkAndWriteSparse(
-        inputPath: URL, outputHandle: FileHandle, startOffset: UInt64
-    ) throws -> UInt64 {
-        guard FileManager.default.fileExists(atPath: inputPath.path) else {
-            Logger.error("Compressed chunk not found at: \(inputPath.path)")
-            return 0
-        }
-
-        // Decompress gzip to a temp file via /usr/bin/gunzip, then read in
-        // granularity-sized blocks for sparse writing.  Apple's Compression
-        // framework (.zlib) only handles raw DEFLATE — not gzip headers.
-        let decompressedPath = inputPath.appendingPathExtension("raw")
-        defer { try? FileManager.default.removeItem(at: decompressedPath) }
-
-        FileManager.default.createFile(atPath: decompressedPath.path, contents: nil)
-        let tempHandle = try FileHandle(forWritingTo: decompressedPath)
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/gunzip")
-        process.arguments = ["-c", inputPath.path]
-        process.standardOutput = tempHandle
-        try process.run()
-        process.waitUntilExit()
-        try tempHandle.close()
-
-        guard process.terminationStatus == 0 else {
-            throw PullError.layerDownloadFailed(inputPath.lastPathComponent)
-        }
-
-        let readHandle = try FileHandle(forReadingFrom: decompressedPath)
-        defer { try? readHandle.close() }
-
-        var currentWriteOffset = startOffset
-        var totalDecompressedBytes: UInt64 = 0
-
-        while true {
-            let decompressedData = readHandle.readData(ofLength: Self.holeGranularityBytes)
-            if decompressedData.isEmpty { break }
-
-            if decompressedData.count == Self.holeGranularityBytes
-                && decompressedData == Self.zeroChunk
-            {
-                // Zero chunk — skip write, leave as sparse hole
-                currentWriteOffset += UInt64(decompressedData.count)
-            } else {
-                try outputHandle.seek(toOffset: currentWriteOffset)
-                try outputHandle.write(contentsOf: decompressedData)
-                currentWriteOffset += UInt64(decompressedData.count)
-            }
-            totalDecompressedBytes += UInt64(decompressedData.count)
-        }
-
-        return totalDecompressedBytes
     }
 
     /// Build the OCI config JSON blob from a VMConfig.
@@ -4702,6 +4738,54 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
         }
     }
 
+    private func downloadOCIChunkGroup(
+        _ chunkGroup: OCIChunkGroup,
+        repository: String,
+        token: String,
+        manifestId: String,
+        tempDir: URL,
+        pullProgress: LayerProgressDisplay
+    ) async throws -> (String, URL) {
+        for reference in chunkGroup.references {
+            await pullProgress.updateStatus(
+                id: "chunk-\(reference.index)", status: .downloading)
+        }
+
+        let chunk = chunkGroup.layer
+        let cachedChunkPath = cachingEnabled
+            ? getCachedLayerPath(manifestId: manifestId, digest: chunk.digest)
+            : nil
+        let blobDest = tempDir.appendingPathComponent(
+            chunk.digest.replacingOccurrences(of: ":", with: "_") + ".gz")
+
+        if let cached = cachedChunkPath,
+            FileManager.default.fileExists(atPath: cached.path)
+        {
+            Logger.info(
+                "Chunk found in cache, skipping download (\(chunk.digest.prefix(19))…)"
+            )
+            await downloadProgress.addProgress(Int64(chunk.size))
+            // Each pull gets its own path so the sibling `.raw` file created by
+            // sparse decompression cannot race with another Lume process.
+            try FileManager.default.copyItem(at: cached, to: blobDest)
+        } else {
+            try await downloadLayer(
+                repository: repository,
+                digest: chunk.digest,
+                mediaType: chunk.mediaType,
+                token: token,
+                to: blobDest,
+                maxRetries: 5,
+                progress: downloadProgress
+            )
+            if let cached = cachedChunkPath {
+                try? FileManager.default.copyItem(at: blobDest, to: cached)
+            }
+        }
+
+        return (chunk.digest, blobDest)
+    }
+
     /// Pull an OCI-compliant image (kubelet format) into `destination` as a Lume VM directory.
     private func pullOCI(
         manifest: Manifest,
@@ -4743,8 +4827,12 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
 
         // Set total download size so progress % is meaningful
         let allLayers = manifest.layers + (manifest.config.map { [$0] } ?? [])
-        let totalDownloadBytes = allLayers.reduce(Int64(0)) { $0 + Int64($1.size) }
-        let totalFiles = allLayers.filter { $0.mediaType != "application/vnd.oci.empty.v1+json" }.count
+        let downloadableLayers = uniqueLayersByDigest(
+            allLayers.filter { $0.mediaType != "application/vnd.oci.empty.v1+json" })
+        let totalDownloadBytes = downloadableLayers.reduce(Int64(0)) {
+            $0 + Int64($1.size)
+        }
+        let totalFiles = downloadableLayers.count
         await downloadProgress.setTotal(totalDownloadBytes, files: totalFiles)
 
         // ── Download config & aux (shared by both paths) ─────────────────────
@@ -4927,97 +5015,71 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
                     mode: .pull)
             }
 
-            // Download chunks in parallel (4 concurrent)
-            // Result tuple: (chunkIndex, blobPath, chunkOffset, isFromCache)
-            try await withThrowingTaskGroup(of: (Int, URL, UInt64, Bool).self) { group in
-                let maxConcurrent = 4
-                var enqueued = 0
+            let chunkGroups = groupOCIChunksByDigest(sortedChunks)
+            let chunkGroupsByDigest = Dictionary(
+                uniqueKeysWithValues: chunkGroups.map { ($0.layer.digest, $0) })
+            if chunkGroups.count < sortedChunks.count {
+                Logger.info(
+                    "Reusing \(chunkGroups.count) unique blobs across \(sortedChunks.count) disk parts"
+                )
+            }
 
-                for (idx, chunk) in sortedChunks.enumerated() {
-                    // Throttle: wait for one to complete before adding more
-                    if enqueued >= maxConcurrent {
-                        guard let result = try await group.next() else {
-                            Logger.error("Task group unexpectedly empty while throttling downloads")
-                            continue
-                        }
-                        let (completedIdx, completedPath, completedOffset, completedFromCache) =
-                            result
-                        await pullProgress.updateStatus(
-                            id: "chunk-\(completedIdx)", status: .decompressing)
-                        let handle = try FileHandle(forWritingTo: diskDest)
-                        let _ = try gunzipChunkAndWriteSparse(
-                            inputPath: completedPath, outputHandle: handle,
-                            startOffset: completedOffset)
-                        try handle.close()
-                        if !completedFromCache {
-                            try? FileManager.default.removeItem(at: completedPath)
-                        }
-                        await pullProgress.markDone(id: "chunk-\(completedIdx)")
-                    }
-
-                    let chunkOffset =
-                        UInt64(chunk.annotations?[OCIAnnotation.partOffset] ?? "0") ?? 0
-
+            // Download up to four unique blobs concurrently. As each blob
+            // arrives, write every logical part that references it before
+            // removing the per-pull copy.
+            try await withThrowingTaskGroup(of: (String, URL).self) { group in
+                let initialCount = min(4, chunkGroups.count)
+                for groupIndex in 0..<initialCount {
+                    let chunkGroup = chunkGroups[groupIndex]
                     group.addTask {
-                        let cachedChunkPath = self.cachingEnabled
-                            ? self.getCachedLayerPath(manifestId: manifestId, digest: chunk.digest)
-                            : nil
-                        let blobDest: URL
-                        if let cached = cachedChunkPath,
-                            FileManager.default.fileExists(atPath: cached.path)
-                        {
-                            await pullProgress.updateStatus(
-                                id: "chunk-\(idx)", status: .downloading)
-                            Logger.info(
-                                "Chunk \(idx) found in cache, skipping download (\(chunk.digest.prefix(19))…)"
-                            )
-                            await self.downloadProgress.addProgress(Int64(chunk.size))
-                            // Copy to a unique temp path to avoid sibling .raw race when
-                            // multiple pulls decompress the same cached file concurrently.
-                            let tmpCopy = tempDir.appendingPathComponent(
-                                UUID().uuidString + ".gz")
-                            try FileManager.default.copyItem(at: cached, to: tmpCopy)
-                            blobDest = tmpCopy
-                            return (idx, blobDest, chunkOffset, false)
-                        } else {
-                            blobDest = tempDir.appendingPathComponent(
-                                chunk.digest.replacingOccurrences(of: ":", with: "_"))
-                            await pullProgress.updateStatus(
-                                id: "chunk-\(idx)", status: .downloading)
-                            try await self.downloadLayer(
-                                repository: repository,
-                                digest: chunk.digest,
-                                mediaType: chunk.mediaType,
-                                token: token,
-                                to: blobDest,
-                                maxRetries: 5,
-                                progress: self.downloadProgress
-                            )
-                            // Save chunk to cache
-                            if let cached = cachedChunkPath {
-                                try? FileManager.default.copyItem(at: blobDest, to: cached)
-                            }
-                            return (idx, blobDest, chunkOffset, false)
-                        }
+                        try await self.downloadOCIChunkGroup(
+                            chunkGroup,
+                            repository: repository,
+                            token: token,
+                            manifestId: manifestId,
+                            tempDir: tempDir,
+                            pullProgress: pullProgress)
                     }
-                    enqueued += 1
                 }
 
-                // Drain remaining
-                for try await (completedIdx, completedPath, completedOffset, completedFromCache)
-                    in group
-                {
-                    await pullProgress.updateStatus(
-                        id: "chunk-\(completedIdx)", status: .decompressing)
-                    let handle = try FileHandle(forWritingTo: diskDest)
-                    let _ = try gunzipChunkAndWriteSparse(
-                        inputPath: completedPath, outputHandle: handle,
-                        startOffset: completedOffset)
-                    try handle.close()
-                    if !completedFromCache {
-                        try? FileManager.default.removeItem(at: completedPath)
+                var nextGroupIndex = initialCount
+                while let (completedDigest, completedPath) = try await group.next() {
+                    guard let completedGroup = chunkGroupsByDigest[completedDigest] else {
+                        throw PullError.reassemblyFailed(
+                            "Downloaded an unexpected OCI blob \(completedDigest)")
                     }
-                    await pullProgress.markDone(id: "chunk-\(completedIdx)")
+
+                    for reference in completedGroup.references {
+                        await pullProgress.updateStatus(
+                            id: "chunk-\(reference.index)", status: .decompressing)
+                        let handle = try FileHandle(forWritingTo: diskDest)
+                        do {
+                            let _ = try gunzipChunkAndWriteSparse(
+                                inputPath: completedPath,
+                                outputHandle: handle,
+                                startOffset: reference.offset)
+                            try handle.close()
+                        } catch {
+                            try? handle.close()
+                            throw error
+                        }
+                        await pullProgress.markDone(id: "chunk-\(reference.index)")
+                    }
+                    try? FileManager.default.removeItem(at: completedPath)
+
+                    if nextGroupIndex < chunkGroups.count {
+                        let chunkGroup = chunkGroups[nextGroupIndex]
+                        nextGroupIndex += 1
+                        group.addTask {
+                            try await self.downloadOCIChunkGroup(
+                                chunkGroup,
+                                repository: repository,
+                                token: token,
+                                manifestId: manifestId,
+                                tempDir: tempDir,
+                                pullProgress: pullProgress)
+                        }
+                    }
                 }
             }
 

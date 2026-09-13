@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use cyclops_sdk::{
     Claim, CreateClaimRequest, CreatePoolRequest, CyclopsClient, CyclopsConfiguration,
-    CyclopsCredentials, HttpClient, HttpError, HttpHeader, HttpRequest, HttpResponse, Pool,
-    ResourceMetadata, Sandbox, SdkError,
+    CyclopsCredentials, HttpClient, HttpError, HttpHeader, HttpRequest, HttpRequestBuilder,
+    HttpResponse, Pool, PreservedJson, ResourceMetadata, Sandbox, SdkError,
 };
 use cyclops_sdk_schema::{
     ClaimSpec, OSGymSandboxClaimStatus, OSGymSandboxWarmPoolSpec, OSGymSandboxWarmPoolStatus,
@@ -102,6 +102,28 @@ fn public_configuration_and_transport_are_constructible() {
 }
 
 #[test]
+fn public_image_api_uses_opaque_json() {
+    let client = CyclopsClient::connect(configuration(), Arc::new(RecordingHttpClient)).unwrap();
+    let manifest = PreservedJson::from_json(
+        r#"{"apiVersion":"images.cua.ai/v1alpha1","kind":"Image","metadata":{"namespace":"default","name":"image-demo"}}"#.into(),
+    )
+    .unwrap();
+
+    std::mem::drop(
+        client
+            .clone()
+            .get_image("default".into(), "image-demo".into()),
+    );
+    std::mem::drop(client.clone().create_image("default".into(), manifest));
+    std::mem::drop(
+        client
+            .clone()
+            .delete_image("default".into(), "image-demo".into()),
+    );
+    std::mem::drop(client.list_images("default".into()));
+}
+
+#[test]
 fn native_http_client_constructor_is_constructible_without_a_foreign_callback() {
     assert!(CyclopsClient::connect_with_native_http_client(configuration()).is_ok());
 }
@@ -176,6 +198,8 @@ async fn foreign_http_client_preserves_ordered_headers_and_byte_bodies() {
                 },
             ],
             body: Some(vec![0, 255]),
+            timeout_secs: None,
+            max_response_bytes: None,
         })
         .await
         .unwrap();
@@ -190,14 +214,69 @@ fn http_request_distinguishes_absent_and_empty_bodies() {
         url: "https://run.cua.ai/v1/pools".into(),
         headers: vec![],
         body: None,
+        timeout_secs: None,
+        max_response_bytes: None,
     };
     let empty = HttpRequest {
         body: Some(vec![]),
         ..absent.clone()
     };
+    let timed = HttpRequest {
+        timeout_secs: Some(75),
+        ..absent.clone()
+    };
 
     assert_ne!(absent, empty);
     assert_eq!(empty.body, Some(vec![]));
+    assert_ne!(absent, timed);
+    assert_eq!(timed.timeout_secs, Some(75));
+}
+
+#[test]
+fn http_request_builder_treats_optional_fields_as_skippable() {
+    let request = HttpRequestBuilder::new()
+        .method("GET".into())
+        .url("https://run.cua.ai/v1/pools".into())
+        .headers(vec![])
+        .build()
+        .unwrap();
+
+    assert_eq!(request.body, None);
+    assert_eq!(request.timeout_secs, None);
+    assert_eq!(request.max_response_bytes, None);
+
+    let bounded = HttpRequestBuilder::new()
+        .method("GET".into())
+        .url("https://run.cua.ai/v1/pools".into())
+        .headers(vec![])
+        .timeout_secs(30)
+        .max_response_bytes(4096)
+        .build()
+        .unwrap();
+
+    assert_eq!(bounded.timeout_secs, Some(30));
+    assert_eq!(bounded.max_response_bytes, Some(4096));
+
+    let missing = HttpRequestBuilder::new()
+        .method("GET".into())
+        .headers(vec![])
+        .build();
+
+    assert!(missing.is_err());
+}
+
+#[test]
+fn http_request_deserializes_without_optional_request_controls() {
+    let request: HttpRequest = serde_json::from_value(serde_json::json!({
+        "method": "GET",
+        "url": "https://run.cua.ai/v1/pools",
+        "headers": [],
+        "body": null,
+    }))
+    .unwrap();
+
+    assert_eq!(request.timeout_secs, None);
+    assert_eq!(request.max_response_bytes, None);
 }
 
 #[test]

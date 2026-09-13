@@ -203,6 +203,8 @@ pub enum ResponseBody {
 pub struct RpcError {
     pub code: i64,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<Value>,
 }
 
 impl Response {
@@ -215,6 +217,15 @@ impl Response {
     }
 
     pub fn error(id: Value, code: i64, message: impl Into<String>) -> Self {
+        Self::error_with_data(id, code, message, None)
+    }
+
+    pub fn error_with_data(
+        id: Value,
+        code: i64,
+        message: impl Into<String>,
+        data: Option<Value>,
+    ) -> Self {
         Self {
             jsonrpc: "2.0",
             id,
@@ -222,6 +233,7 @@ impl Response {
                 error: RpcError {
                     code,
                     message: message.into(),
+                    data,
                 },
             },
         }
@@ -331,7 +343,7 @@ impl ToolResult {
 pub fn initialize_result() -> Value {
     serde_json::json!({
         "protocolVersion": "2025-06-18",
-        "capabilities": { "tools": {} },
+        "capabilities": crate::mcp_wire::server_capabilities(),
         "serverInfo": { "name": "cua-driver", "version": env!("CARGO_PKG_VERSION") },
         "instructions": agent_instructions()
     })
@@ -357,7 +369,7 @@ fn agent_instructions() -> String {
     } else if cfg!(target_os = "windows") {
         (
             "UIA (UI Automation)",
-            "WINDOWS.md (UIA tree, UWP / ApplicationFrameHost hosting, Session 0 isolation)",
+            "WINDOWS.md (UIA tree, UWP/ApplicationFrameHost hosting, Session 0 isolation)",
         )
     } else {
         (
@@ -369,17 +381,19 @@ fn agent_instructions() -> String {
     format!(
         r#"cua-driver: cross-platform background computer-use automation.
 
-Before starting UI work, classify the desired postcondition. For a non-GUI outcome, prefer a client-provided app API/SDK, headless/background interface, CLI, or filesystem operation and read the result back in that semantic domain. This server has no shell.
+For non-GUI outcomes, prefer a client-provided app API/SDK, headless/background interface, CLI, or filesystem operation and read the result back in that semantic domain. This server has no shell.
 
-For an app or window outcome, use the narrowest semantic Cua route first: `set_window_frame` plus `list_windows` readback for geometry, typed browser tools for supported page content, and clipboard tools for clipboard state. Then climb through background `element_index` ({tree_kind}), background pixels, foreground delivery, and desktop fallback. Never advance on transport success alone.
+On continuation/recent-work, when available, call `history_status`; if ready, make one bounded initial `history_query` before broad discovery; otherwise continue.
+
+For app/window outcomes, use the narrowest semantic Cua route first: `set_window_frame` plus `list_windows` readback for geometry, typed browser tools for supported page content, and clipboard tools for clipboard state. Then climb through background `element_index` ({tree_kind}), background pixels, foreground delivery, and desktop fallback. Never advance on transport success alone.
 
 Workflow per turn:
-0. `start_session(session)` once; reuse that id and end it when done.
+0. `start_session` is optional. For multi-call work, prefer a short `session` label and repeat it on every call that accepts it. Unnamed calls use the transport's implicit session. Only `start_session` revives an ended name; `end_session` explicitly cleans up.
 1. `launch_app`, then `get_window_state(pid, window_id)` to refresh element indices.
 2. Act with the fresh index.
 3. `verify_state(pid, window_id, expect)` checks bounded postconditions. `unknown` is not success; `include_screenshot:true` lets the multimodal agent judge visual evidence.
 
-If the `cua-driver` skill is loaded, follow SKILL.md plus {platform_skill_pointer}."#
+Read `skill://cua-driver/SKILL.md` via `skills/get` or `resources/read`. Hosts control activation/consent. When activated, follow SKILL.md and {platform_skill_pointer}."#
     )
 }
 
@@ -465,7 +479,7 @@ mod action_record_wire_tests {
 
 #[cfg(test)]
 mod agent_instruction_tests {
-    use super::agent_instructions;
+    use super::{agent_instructions, initialize_result};
 
     #[test]
     fn instructions_route_structured_and_visual_verification_to_the_right_owner() {
@@ -489,6 +503,45 @@ mod agent_instruction_tests {
             instructions.split_whitespace().count() <= 200,
             "initialize instructions should stay within the documented context budget"
         );
+    }
+
+    #[test]
+    fn initialize_instructions_describe_implicit_session_lifecycle() {
+        let result = initialize_result();
+        let instructions = result["instructions"]
+            .as_str()
+            .expect("initialize result should carry agent instructions");
+
+        assert!(instructions.contains("`start_session` is optional"));
+        assert!(instructions.contains("prefer a short `session` label"));
+        assert!(instructions.contains("repeat it on every call that accepts it"));
+        assert!(instructions.contains("transport's implicit session"));
+        assert!(instructions.contains("Only `start_session` revives an ended name"));
+        assert!(instructions.contains("`end_session` explicitly cleans up"));
+        assert!(
+            !instructions.contains("`start_session(session)` once"),
+            "initialize instructions must not require explicit session setup"
+        );
+    }
+
+    #[test]
+    fn initialize_instructions_conditionally_consult_history_before_discovery() {
+        let instructions = initialize_result()["instructions"]
+            .as_str()
+            .expect("initialize result should carry agent instructions")
+            .to_owned();
+
+        assert!(instructions.contains("continuation/recent-work"));
+        let status = instructions.find("call `history_status`").unwrap();
+        let bounded_query = instructions
+            .find("one bounded initial `history_query`")
+            .unwrap();
+        let discovery = instructions.find("broad discovery").unwrap();
+        assert!(status < bounded_query);
+        assert!(bounded_query < discovery);
+        assert!(instructions.contains("if ready"));
+        assert!(instructions.contains("otherwise continue"));
+        assert!(instructions.split_whitespace().count() <= 200);
     }
 }
 

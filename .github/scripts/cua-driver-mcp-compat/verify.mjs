@@ -27,17 +27,24 @@ const EXPECTED_OUTPUT_SCHEMA_COUNT =
 const DRIVER_ARGS = [
   "mcp",
   "--direct",
-  "--dangerously-bypass-approvals",
 ];
 const PROBE_ENV = {
   ...process.env,
+  CUA_DRIVER_PERMISSION_MODE: "unrestricted",
+  CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS: "1",
   CUA_DRIVER_RS_TELEMETRY_ENABLED: "false",
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
   DISABLE_AUTOUPDATER: "1",
   NO_COLOR: "1",
 };
-const BIN_DIR = join(HERE, "node_modules", ".bin");
-const CODEX = join(BIN_DIR, process.platform === "win32" ? "codex.cmd" : "codex");
+const CODEX_SCRIPT = join(
+  HERE,
+  "node_modules",
+  "@openai",
+  "codex",
+  "bin",
+  "codex.js",
+);
 
 function claudeBinary() {
   const platform = process.platform === "darwin" ? "darwin" : process.platform;
@@ -250,14 +257,15 @@ async function claudeCodeProbe() {
 async function codexProbe() {
   const codexHome = await mkdtemp(join(tmpdir(), "cua-codex-mcp-"));
   const env = { ...PROBE_ENV, CODEX_HOME: codexHome };
-  const version = run(CODEX, ["--version"], { env });
+  const version = run(process.execPath, [CODEX_SCRIPT, "--version"], { env });
   assert.match(version.stdout, /0\.146\.1/);
 
   const commandConfig = `mcp_servers.cua_driver.command=${JSON.stringify(DRIVER)}`;
   const argsConfig = `mcp_servers.cua_driver.args=${JSON.stringify(DRIVER_ARGS)}`;
   const child = spawn(
-    CODEX,
+    process.execPath,
     [
+      CODEX_SCRIPT,
       "app-server",
       "--listen",
       "stdio://",

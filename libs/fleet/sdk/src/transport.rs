@@ -6,16 +6,39 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::Deserialize;
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::OnceLock;
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+use std::{sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 use url::Url;
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
 const TOKEN_EXPIRY_SKEW: Duration = Duration::from_secs(30);
 const AUTHENTICATED_REQUEST_OPERATION: &str = "authenticated request";
 const TOKEN_OPERATION: &str = "acquire OAuth token";
+const RESPONSE_BODY_LIMIT_ERROR: &str = "HTTP response exceeds configured size limit";
+
+fn append_response_chunk(
+    body: &mut Vec<u8>,
+    chunk: &[u8],
+    max_response_bytes: Option<u64>,
+) -> Result<(), HttpError> {
+    if let Some(limit) = max_response_bytes {
+        let current = u64::try_from(body.len()).unwrap_or(u64::MAX);
+        let chunk_len = u64::try_from(chunk.len()).unwrap_or(u64::MAX);
+        if current
+            .checked_add(chunk_len)
+            .is_none_or(|size| size > limit)
+        {
+            return Err(HttpError::Transport {
+                reason: RESPONSE_BODY_LIMIT_ERROR.into(),
+            });
+        }
+    }
+    body.extend_from_slice(chunk);
+    Ok(())
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AuthenticatedRequestClass {
@@ -58,17 +81,37 @@ impl NativeHttpClient {
         })
     }
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+fn apply_request_timeout(
+    request: reqwest::RequestBuilder,
+    timeout_secs: Option<u64>,
+) -> reqwest::RequestBuilder {
+    match timeout_secs {
+        Some(timeout_secs) => request.timeout(Duration::from_secs(timeout_secs)),
+        None => request,
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 #[async_trait::async_trait]
 impl HttpClient for NativeHttpClient {
     async fn execute(&self, request: HttpRequest) -> Result<HttpResponse, HttpError> {
-        let method = reqwest::Method::from_bytes(request.method.as_bytes()).map_err(|error| {
+        let HttpRequest {
+            method,
+            url,
+            headers: request_headers,
+            body,
+            timeout_secs,
+            max_response_bytes,
+        } = request;
+        let method = reqwest::Method::from_bytes(method.as_bytes()).map_err(|error| {
             HttpError::Transport {
                 reason: format!("invalid HTTP method: {error}"),
             }
         })?;
         let mut headers = reqwest::header::HeaderMap::new();
-        for header in request.headers {
+        for header in request_headers {
             let name = reqwest::header::HeaderName::from_bytes(header.name.as_bytes()).map_err(
                 |error| HttpError::Transport {
                     reason: format!("invalid HTTP header name: {error}"),
@@ -81,8 +124,11 @@ impl HttpClient for NativeHttpClient {
             })?;
             headers.append(name, value);
         }
-        let mut native = self.client.request(method, request.url).headers(headers);
-        if let Some(body) = request.body {
+        let mut native = apply_request_timeout(
+            self.client.request(method, url).headers(headers),
+            timeout_secs,
+        );
+        if let Some(body) = body {
             native = native.body(body);
         }
         native_http_runtime()
@@ -90,7 +136,7 @@ impl HttpClient for NativeHttpClient {
                 reason: format!("could not create native HTTP runtime: {reason}"),
             })?
             .spawn(async move {
-                let response = native.send().await.map_err(|error| HttpError::Transport {
+                let mut response = native.send().await.map_err(|error| HttpError::Transport {
                     reason: format!("native HTTP request failed: {error}"),
                 })?;
                 let status = response.status().as_u16();
@@ -111,16 +157,21 @@ impl HttpClient for NativeHttpClient {
                             })
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                let body = response
-                    .bytes()
-                    .await
-                    .map_err(|error| HttpError::Transport {
-                        reason: format!("could not read native HTTP response body: {error}"),
-                    })?;
+                let mut body = Vec::new();
+                while let Some(chunk) =
+                    response
+                        .chunk()
+                        .await
+                        .map_err(|error| HttpError::Transport {
+                            reason: format!("could not read native HTTP response body: {error}"),
+                        })?
+                {
+                    append_response_chunk(&mut body, &chunk, max_response_bytes)?;
+                }
                 Ok(HttpResponse {
                     status,
                     headers,
-                    body: body.to_vec(),
+                    body,
                 })
             })
             .await
@@ -134,11 +185,68 @@ impl HttpClient for NativeHttpClient {
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 pub trait HttpClient: Send + Sync {
+    /// Executes an HTTP request. Foreign implementations must enforce
+    /// `request.max_response_bytes` while streaming the response body.
+    /// Implementations must not follow redirects, retry requests, or add ambient
+    /// authentication/cookies. Send only the supplied headers and body; signed
+    /// upload requests also use this interface and must not leak credentials.
     async fn execute(&self, request: HttpRequest) -> Result<HttpResponse, HttpError>;
 }
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) struct BrowserHttpClient;
+
+#[cfg(any(test, target_arch = "wasm32"))]
+fn browser_timeout_millis(timeout_secs: Option<u64>) -> Result<Option<u32>, HttpError> {
+    timeout_secs
+        .map(|seconds| {
+            seconds
+                .checked_mul(1000)
+                .filter(|millis| *millis <= i32::MAX as u64)
+                .map(|millis| millis as u32)
+                .ok_or_else(|| HttpError::Transport {
+                    reason: "HTTP timeout exceeds browser timer limit".into(),
+                })
+        })
+        .transpose()
+}
+
+#[cfg(target_arch = "wasm32")]
+struct BrowserRequestDeadline {
+    controller: web_sys::AbortController,
+    _timer: gloo_timers::callback::Timeout,
+    completed: bool,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl BrowserRequestDeadline {
+    fn new(
+        timeout_secs: Option<u64>,
+        init: &web_sys::RequestInit,
+    ) -> Result<Option<Self>, HttpError> {
+        let Some(millis) = browser_timeout_millis(timeout_secs)? else {
+            return Ok(None);
+        };
+        let controller = web_sys::AbortController::new().map_err(browser_transport_error)?;
+        init.set_signal(Some(&controller.signal()));
+        let abort = controller.clone();
+        let timer = gloo_timers::callback::Timeout::new(millis, move || abort.abort());
+        Ok(Some(Self {
+            controller,
+            _timer: timer,
+            completed: false,
+        }))
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Drop for BrowserRequestDeadline {
+    fn drop(&mut self) {
+        if !self.completed {
+            self.controller.abort();
+        }
+    }
+}
 
 #[cfg(target_arch = "wasm32")]
 #[async_trait::async_trait(?Send)]
@@ -147,13 +255,17 @@ impl HttpClient for BrowserHttpClient {
         use wasm_bindgen::JsCast;
         use wasm_bindgen_futures::JsFuture;
 
+        let max_response_bytes = request.max_response_bytes;
         let init = web_sys::RequestInit::new();
         init.set_method(&request.method);
+        init.set_redirect(web_sys::RequestRedirect::Error);
+        init.set_credentials(web_sys::RequestCredentials::Omit);
         if let Some(body) = request.body {
             let body = js_sys::Uint8Array::from(body.as_slice());
             init.set_body(&body.into());
         }
 
+        let mut deadline = BrowserRequestDeadline::new(request.timeout_secs, &init)?;
         let browser_request = web_sys::Request::new_with_str_and_init(&request.url, &init)
             .map_err(browser_transport_error)?;
         let headers = browser_request.headers();
@@ -171,15 +283,59 @@ impl HttpClient for BrowserHttpClient {
             .map_err(browser_transport_error)?
             .dyn_into::<web_sys::Response>()
             .map_err(browser_transport_error)?;
-        let body = JsFuture::from(response.array_buffer().map_err(browser_transport_error)?)
-            .await
-            .map_err(browser_transport_error)?;
+        let body = read_browser_response_body(&response, max_response_bytes).await?;
+        if let Some(deadline) = &mut deadline {
+            deadline.completed = true;
+        }
 
         Ok(HttpResponse {
             status: response.status(),
             headers: vec![],
-            body: js_sys::Uint8Array::new(&body).to_vec(),
+            body,
         })
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn read_browser_response_body(
+    response: &web_sys::Response,
+    max_response_bytes: Option<u64>,
+) -> Result<Vec<u8>, HttpError> {
+    use wasm_bindgen::{JsCast, JsValue};
+    use wasm_bindgen_futures::JsFuture;
+
+    let Some(stream) = response.body() else {
+        return Ok(Vec::new());
+    };
+    let reader = stream
+        .get_reader()
+        .dyn_into::<web_sys::ReadableStreamDefaultReader>()
+        .map_err(|error| browser_transport_error(error.into()))?;
+    let mut body = Vec::new();
+    loop {
+        let result = match JsFuture::from(reader.read()).await {
+            Ok(result) => result,
+            Err(error) => {
+                reader.release_lock();
+                return Err(browser_transport_error(error));
+            }
+        };
+        let done = js_sys::Reflect::get(&result, &JsValue::from_str("done"))
+            .map_err(browser_transport_error)?
+            .as_bool()
+            .unwrap_or(false);
+        if done {
+            reader.release_lock();
+            return Ok(body);
+        }
+        let value = js_sys::Reflect::get(&result, &JsValue::from_str("value"))
+            .map_err(browser_transport_error)?;
+        let chunk = js_sys::Uint8Array::new(&value).to_vec();
+        if let Err(error) = append_response_chunk(&mut body, &chunk, max_response_bytes) {
+            let _ = JsFuture::from(reader.cancel()).await;
+            reader.release_lock();
+            return Err(error);
+        }
     }
 }
 
@@ -326,6 +482,24 @@ impl Transport {
             .await
     }
 
+    pub(crate) async fn execute_upload(&self, request: HttpRequest) -> Result<(), SdkError> {
+        let response =
+            self.http_client
+                .execute(request)
+                .await
+                .map_err(|_| SdkError::Transport {
+                    reason: "image upload request failed".into(),
+                })?;
+        if !matches!(response.status, 200 | 201 | 204) {
+            return Err(SdkError::Status {
+                operation: "upload image file".into(),
+                status: response.status,
+                body: String::new(),
+            });
+        }
+        Ok(())
+    }
+
     async fn execute_unchecked(&self, request: HttpRequest) -> Result<HttpResponse, SdkError> {
         self.http_client
             .execute(request)
@@ -462,6 +636,8 @@ impl Transport {
                     },
                 ],
                 body: Some(body),
+                timeout_secs: None,
+                max_response_bytes: None,
             })
             .await
             .map_err(map_http_error)?;
@@ -580,6 +756,57 @@ mod native_http_client_tests {
         String::from_utf8(bytes).unwrap()
     }
 
+    fn request(method: &str, url: String, max_response_bytes: Option<u64>) -> HttpRequest {
+        HttpRequest {
+            method: method.into(),
+            url,
+            headers: vec![],
+            body: None,
+            timeout_secs: None,
+            max_response_bytes,
+        }
+    }
+
+    async fn execute_response(
+        method: &str,
+        response: Vec<u8>,
+        max_response_bytes: Option<u64>,
+    ) -> Result<HttpResponse, HttpError> {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!(
+            "http://{}/sensitive-request?token=secret",
+            listener.local_addr().unwrap()
+        );
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            read_request(&mut stream);
+            stream.write_all(&response).unwrap();
+        });
+        let result = NativeHttpClient::new()
+            .unwrap()
+            .execute(request(method, url, max_response_bytes))
+            .await;
+        server.join().unwrap();
+        result
+    }
+
+    fn fixed_response(body: &[u8]) -> Vec<u8> {
+        let mut response = format!(
+            "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+            body.len()
+        )
+        .into_bytes();
+        response.extend_from_slice(body);
+        response
+    }
+
+    fn assert_limit_error(error: HttpError) {
+        let HttpError::Transport { reason } = error;
+        assert_eq!(reason, RESPONSE_BODY_LIMIT_ERROR);
+        assert!(!reason.contains("sensitive-request"));
+        assert!(!reason.contains("secret-response"));
+    }
+
     #[tokio::test]
     async fn native_transport_preserves_duplicate_headers_and_error_bodies() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -607,6 +834,8 @@ mod native_http_client_tests {
                     },
                 ],
                 body: None,
+                timeout_secs: None,
+                max_response_bytes: None,
             })
             .await
             .unwrap();
@@ -650,6 +879,8 @@ mod native_http_client_tests {
                     value: "Bearer intended-token".into(),
                 }],
                 body: None,
+                timeout_secs: None,
+                max_response_bytes: None,
             })
             .await
             .unwrap();
@@ -657,5 +888,162 @@ mod native_http_client_tests {
         thread::sleep(Duration::from_millis(50));
         assert_eq!(response.status, 302);
         assert!(matches!(redirected.accept(), Err(error) if error.kind() == ErrorKind::WouldBlock));
+    }
+
+    #[tokio::test]
+    async fn native_transport_does_not_redirect_signed_puts() {
+        let redirected = TcpListener::bind("127.0.0.1:0").unwrap();
+        redirected.set_nonblocking(true).unwrap();
+        let target = format!("http://{}/redirected", redirected.local_addr().unwrap());
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!(
+            "http://{}/signed?signature=secret",
+            listener.local_addr().unwrap()
+        );
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let request = read_request(&mut stream).to_ascii_lowercase();
+            assert!(request.starts_with("put /signed?signature=secret "));
+            assert!(request.contains("x-custom-signed: preserve exactly"));
+            assert!(request.contains("content-length: 3"));
+            assert!(!request.contains("authorization:"));
+            let response = format!(
+                "HTTP/1.1 307 Temporary Redirect\r\nlocation: {target}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+        let response = NativeHttpClient::new()
+            .unwrap()
+            .execute(HttpRequest {
+                method: "PUT".into(),
+                url,
+                headers: vec![HttpHeader {
+                    name: "x-custom-signed".into(),
+                    value: "preserve exactly".into(),
+                }],
+                body: Some(b"abc".to_vec()),
+                timeout_secs: Some(5),
+                max_response_bytes: Some(4096),
+            })
+            .await
+            .unwrap();
+        server.join().unwrap();
+        assert_eq!(response.status, 307);
+        assert!(matches!(redirected.accept(), Err(error) if error.kind() == ErrorKind::WouldBlock));
+    }
+
+    #[tokio::test]
+    async fn native_transport_enforces_limit_minus_one_exact_and_plus_one() {
+        let below = execute_response("GET", fixed_response(b"abc"), Some(4))
+            .await
+            .unwrap();
+        let exact = execute_response("GET", fixed_response(b"abcd"), Some(4))
+            .await
+            .unwrap();
+        let error = execute_response("GET", fixed_response(b"abcde"), Some(4))
+            .await
+            .unwrap_err();
+
+        assert_eq!(below.body, b"abc");
+        assert_eq!(exact.body, b"abcd");
+        assert_limit_error(error);
+    }
+
+    #[tokio::test]
+    async fn native_transport_allows_empty_but_rejects_nonempty_at_zero() {
+        let empty = execute_response("GET", fixed_response(b""), Some(0))
+            .await
+            .unwrap();
+        let error = execute_response("GET", fixed_response(b"secret-response"), Some(0))
+            .await
+            .unwrap_err();
+
+        assert!(empty.body.is_empty());
+        assert_limit_error(error);
+    }
+
+    #[tokio::test]
+    async fn native_transport_enforces_chunked_body_without_content_length() {
+        let response = b"HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\nconnection: close\r\n\r\n2\r\nab\r\n2\r\ncd\r\n0\r\n\r\n".to_vec();
+        let error = execute_response("GET", response, Some(3))
+            .await
+            .unwrap_err();
+
+        assert_limit_error(error);
+    }
+
+    #[tokio::test]
+    async fn native_transport_drops_an_oversized_stream_without_waiting_for_eof() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/stream", listener.local_addr().unwrap());
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            read_request(&mut stream);
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n2\r\nab\r\n")
+                .unwrap();
+            stream.flush().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut byte = [0; 1];
+            stream.read(&mut byte)
+        });
+
+        let error = NativeHttpClient::new()
+            .unwrap()
+            .execute(request("GET", url, Some(1)))
+            .await
+            .unwrap_err();
+
+        assert_limit_error(error);
+        assert_eq!(server.join().unwrap().unwrap(), 0);
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod native_tests {
+    use super::apply_request_timeout;
+    use std::time::Duration;
+
+    #[test]
+    fn applies_per_request_timeout_only_when_present() {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap();
+
+        let default_request = apply_request_timeout(client.get("https://example.com"), None)
+            .build()
+            .unwrap();
+        let overridden_request = apply_request_timeout(client.get("https://example.com"), Some(75))
+            .build()
+            .unwrap();
+
+        assert_eq!(default_request.timeout(), None);
+        assert_eq!(overridden_request.timeout(), Some(&Duration::from_secs(75)));
+    }
+}
+
+#[cfg(test)]
+mod browser_deadline_tests {
+    use super::browser_timeout_millis;
+
+    #[test]
+    fn browser_deadline_preserves_none_and_converts_explicit_seconds() {
+        assert_eq!(browser_timeout_millis(None).unwrap(), None);
+        assert_eq!(browser_timeout_millis(Some(0)).unwrap(), Some(0));
+        assert_eq!(browser_timeout_millis(Some(30)).unwrap(), Some(30_000));
+        assert_eq!(browser_timeout_millis(Some(300)).unwrap(), Some(300_000));
+    }
+
+    #[test]
+    fn browser_deadline_rejects_timer_overflow() {
+        assert_eq!(
+            browser_timeout_millis(Some(2_147_483)).unwrap(),
+            Some(2_147_483_000)
+        );
+        assert!(browser_timeout_millis(Some(2_147_484)).is_err());
+        assert!(browser_timeout_millis(Some(u64::MAX)).is_err());
     }
 }

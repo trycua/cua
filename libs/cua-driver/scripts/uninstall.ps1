@@ -1,4 +1,4 @@
-﻿# cua-driver-rs uninstaller (Windows) — removes the runtime installed by install.ps1
+# cua-driver-rs uninstaller (Windows) — removes the runtime installed by install.ps1
 # laid down: the Scheduled Task autostart entry, running daemon
 # processes, the directory junctions wiring the visible bin dir back to
 # a per-version release dir, the entire package home tree, and any skill
@@ -59,7 +59,7 @@
 #               working install. Inherited automatically by the elevated
 #               re-exec child (see Elevation below).
 #
-# Env (purge identity + preference):
+# Env (purge identity, preference, and encrypted Computer History):
 #   $env:CUA_DRIVER_RS_UNINSTALL_PURGE = '1'
 #               also delete the package home after removing the runtime.
 #
@@ -313,6 +313,33 @@ if ($running.Count -gt 0) {
     Write-Step "no running cua-driver.exe processes"
 }
 
+# Computer History purge must run while the exact installed helper still
+# exists. It destroys the namespace-scoped Windows Credential Manager key,
+# verifies its absence, and only then removes encrypted history state. Any
+# failure leaves the runtime and retryable ciphertext in place.
+$HistoryPurgeHelper = Join-Path $CurrentDir "cua-driver.exe"
+if ($Purge) {
+    if (-not (Test-Path -LiteralPath $HistoryPurgeHelper)) {
+        Write-ErrorStep "history_purge_incomplete: installed Cua Driver helper unavailable; preserved history state and runtime for retry"
+        exit 1
+    }
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $HistoryPurgeHelper history purge-offline --yes
+        $historyPurgeExit = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    if ($historyPurgeExit -ne 0) {
+        Write-ErrorStep "history_purge_incomplete: exact-namespace Windows Credential Manager key destruction was not verified; preserved history state and runtime for retry"
+        exit 1
+    }
+    Write-Step "cryptographically purged release Computer History key and local history state"
+} else {
+    Write-Step "preserved encrypted Computer History if present; reinstall to reopen it or purge explicitly"
+}
+
 # 3. Visible bin directory junction. Only remove when it's actually a
 #    reparse point — refuse to clobber a real directory the user might
 #    have at that path.
@@ -461,7 +488,7 @@ Write-Host ""
 Write-Host "cua-driver-rs uninstalled." -ForegroundColor Green
 Write-Host ""
 if (-not $Purge) {
-    Write-Host "Telemetry identity and preference were preserved for a future reinstall." -ForegroundColor Cyan
+    Write-Host "Telemetry identity, preference, and encrypted Computer History were preserved for a future reinstall." -ForegroundColor Cyan
     Write-Host "To delete them too, re-run with:"
     Write-Host ""
     Write-Host "  `$env:CUA_DRIVER_RS_UNINSTALL_PURGE = '1'"

@@ -94,6 +94,62 @@ def test_certificate_requirement_is_classified_as_stable() -> None:
     assert "stable local identity" in result.stdout
 
 
+def test_changed_ad_hoc_requirement_resets_only_local_driver_services() -> None:
+    result = run_signing_policy(
+        r"""
+        RED= YELLOW= NORMAL=
+        calls=""
+        tccutil() { calls="${calls}${1}:${2}:${3}"$'\n'; }
+        reset_local_tcc_after_ad_hoc_change \
+            'cdhash H"OLD"' 'cdhash H"NEW"'
+        printf '%s' "$calls"
+        """
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == (
+        "reset:Accessibility:com.trycua.driver.local\n"
+        "reset:ScreenCapture:com.trycua.driver.local\n"
+    )
+    assert "cleared stale Accessibility and Screen Recording rows" in result.stderr
+    assert "cua-driver-local permissions grant" in result.stderr
+
+
+def test_unchanged_or_certificate_requirements_preserve_tcc_rows() -> None:
+    result = run_signing_policy(
+        r"""
+        RED= YELLOW= NORMAL=
+        tccutil() { echo unexpected >&2; return 99; }
+        reset_local_tcc_after_ad_hoc_change '' 'cdhash H"FIRST"'
+        reset_local_tcc_after_ad_hoc_change \
+            'cdhash H"SAME"' 'cdhash H"SAME"'
+        reset_local_tcc_after_ad_hoc_change \
+            'certificate leaf = H"OLD"' 'certificate leaf = H"NEW"'
+        """
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "unexpected" not in result.stderr
+
+
+def test_ad_hoc_tcc_reset_failure_is_actionable_and_fails_closed() -> None:
+    result = run_signing_policy(
+        r"""
+        RED= YELLOW= NORMAL=
+        tccutil() { [ "$2" != ScreenCapture ]; }
+        if reset_local_tcc_after_ad_hoc_change \
+            'cdhash H"OLD"' 'cdhash H"NEW"'; then
+            exit 90
+        fi
+        """
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "could not reset these TCC services" in result.stderr
+    assert "tccutil reset Accessibility com.trycua.driver.local" in result.stderr
+    assert "tccutil reset ScreenCapture com.trycua.driver.local" in result.stderr
+
+
 def test_installer_verifies_the_copied_designated_requirement() -> None:
     script = (SCRIPTS_DIR / "_install-local-rust.sh").read_text()
 
@@ -101,6 +157,8 @@ def test_installer_verifies_the_copied_designated_requirement() -> None:
     assert '[ "$INSTALLED_REQUIREMENT" = "$STAGED_REQUIREMENT" ]' in script
     assert "verified installed designated requirement: certificate-backed" in script
     assert "verified installed designated requirement: ad-hoc cdhash" in script
+    assert 'PREVIOUS_REQUIREMENT="$(designated_requirement "$APP_DEST")"' in script
+    assert "reset_local_tcc_after_ad_hoc_change" in script
 
 
 def test_local_installer_uses_a_separate_macos_identity() -> None:

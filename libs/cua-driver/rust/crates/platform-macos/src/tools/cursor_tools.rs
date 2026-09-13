@@ -352,6 +352,10 @@ mod tests {
             })),
             "explicit"
         );
+        assert_eq!(
+            resolve_cursor_key(&json!({"_session_id": "implicit-lease"})),
+            "implicit-lease"
+        );
     }
 
     #[test]

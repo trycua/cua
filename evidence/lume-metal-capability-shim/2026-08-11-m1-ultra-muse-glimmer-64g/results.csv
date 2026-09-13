@@ -1,0 +1,3 @@
+runtime,workload,metric,unit,stock_guest,unlocked_guest,guest_ratio,stock_range,unlocked_range,stock_samples,unlocked_samples
+llama.cpp b10359,Muse Glimmer 30B Q4_K-M,pp512,tokens/s,25.8328,194.971,7.547420,25.7641-26.0987,194.565-195.331,"25.7641;26.0987;25.8328","194.971;194.565;195.331"
+llama.cpp b10359,Muse Glimmer 30B Q4_K-M,tg128,tokens/s,2.37551,21.0823,8.874852,2.14729-2.41391,21.0729-21.0954,"2.41391;2.14729;2.37551","21.0729;21.0823;21.0954"

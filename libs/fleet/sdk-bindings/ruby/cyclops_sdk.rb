@@ -6,6 +6,7 @@ module FleetSdk
     const_set(name, CyclopsSdkSchema.const_get(name)) unless const_defined?(name, false)
   end
   SCHEMA_ALLOC_METHODS = %i[
+    alloc_from_TypeClaimSpec
     alloc_from_TypeOSGymSandboxTemplateSpec
     alloc_from_TypeOSGymSandboxWarmPoolSpec
   ].freeze
@@ -22,6 +23,7 @@ module FleetSdk
     readTypeOSGymSandboxTemplateSpec
     readTypeOSGymSandboxWarmPoolSpec
     readTypeOSGymSandboxWarmPoolStatus
+    readTypePreservedJson
   ].freeze
   SCHEMA_WRITE_METHODS = %i[
     write_TypeClaimSpec
@@ -29,6 +31,7 @@ module FleetSdk
     write_TypeOSGymSandboxTemplateSpec
     write_TypeOSGymSandboxWarmPoolSpec
     write_TypeOSGymSandboxWarmPoolStatus
+    write_TypePreservedJson
   ].freeze
 
   schema_rust_buffer = CyclopsSdkSchema::RustBuffer

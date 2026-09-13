@@ -17,6 +17,22 @@ A **computer-use agent** is the running system around that model. It supplies th
 
 The distinction matters because a capable model alone does not provide a reliable agent. The surrounding system still has to deliver input to the intended application, preserve state between steps, recover from changed interfaces, and constrain consequential actions.
 
+An **agent harness** is the runtime that hosts this loop. A coding agent such as Claude Code or
+Codex can supply instructions, memory, and MCP connections while using either a hosted model or a
+model served on the same machine. Cua Driver is the UI tool layer connected to that harness; it does
+not select or run the model.
+
+```text
+model -> agent harness -> Cua Driver -> operating system and applications
+```
+
+This separation lets the same driver work with different models and harnesses. It also makes the
+cost of each layer visible. Local models often have less inference throughput and a tighter usable
+context budget, so tool schemas, screenshots, and accessibility trees can materially affect how
+long the agent can continue. A smaller tool surface and bounded state reads leave more context for
+the task itself. See [Run a local model with Cua Driver](/how-to-guides/driver/run-with-local-model)
+for one tested configuration.
+
 ## Three action surfaces
 
 On the **coding surface**, the agent writes and runs code as the action itself. This works especially well when the task is text-native, when the same operation must run more than once, or when a small program can cover a larger body of files and state than a human would want to touch by hand.
@@ -38,6 +54,29 @@ Computer use is useful when work spans interfaces that were designed for people 
 - reproducing a support issue on a real operating system and retaining the visual evidence needed to diagnose it.
 
 In each case, the agent must connect actions across changing application state. A script or API may still cover part of the work, while computer use covers the boundaries that those interfaces cannot reach.
+
+### Example: lay out a map and inspect the exported PDF
+
+<VideoDemo
+  src="https://github.com/user-attachments/assets/e133cb0a-9b70-4812-9d97-76fadd67317b"
+  poster="/media/workflow-demos/map-poster.jpg"
+  title="Map layout and exported-PDF inspection on macOS"
+  aspectRatio={8 / 5}
+  autoPlay={false}
+  loop={false}
+  preload="metadata"
+>
+  Selected map-layout and PDF-inspection steps show an agent moving between applications. The
+  excerpt does not show every export step.
+</VideoDemo>
+
+Recorded on macOS with GPT-6 Astra + Cua Driver. Selected gestures play at 1x;
+setup, waits, retries and intervening edits are cut. These examples include
+foreground/desktop input and fictional data. Clip duration is not task
+completion time.
+
+Follow [Build and inspect a map](/how-to-guides/recipes/build-and-inspect-a-map)
+for the starter files, prompt, and saved-output checks.
 
 ## Choosing a surface
 
@@ -74,7 +113,7 @@ You bring the agent, which already handles coding and tool-use on its own. Cua g
 
 **Cua Driver** drives the GUI of a real machine you already have, whether that machine runs macOS, Windows, or Linux. It is the right shape when the agent needs to work with local applications, signed-in accounts, existing files, or machine state that already lives on that computer.
 
-**Cua Sandbox** is a fresh isolated computer running on local Docker or VM infrastructure where the agent can run code and drive the GUI together. It is a full computer with all three action surfaces available inside the same environment rather than a remote desktop, which matters when the task needs both programmatic work and visible interaction without changing the host desktop. The agent brings the model and its reasoning; Cua provides the computer where that reasoning can turn into action.
+**Cua Sandbox** is a fresh isolated computer running on local infrastructure or Fleet where the agent can run code and drive the GUI together. It is a full computer with all three action surfaces available inside the same environment rather than a remote desktop, which matters when the task needs both programmatic work and visible interaction without changing the host desktop. The agent brings the model and its reasoning; Cua provides the computer where that reasoning can turn into action. Available guest operating systems and operations depend on the [runtime and image](/reference/sandbox-sdk/runtime-support).
 
 ## Safety and isolation
 
@@ -87,6 +126,6 @@ Cua Driver exposes [permission policies](/concepts/how-permission-policies-work)
 - **Learn it:** [Drive your first app with Cua Driver](/tutorials/drive-your-first-app) on an existing macOS, Windows, or Linux computer.
 - **Use it:** [Install Cua Driver](/how-to-guides/driver/install) and connect it to an agent you already use.
 - **Guide the agent:** [Install the Cua Driver agent skill](/how-to-guides/driver/install-agent-skill) to add cross-platform tool-selection and verification instructions.
-- **Isolate it:** [Start your first local sandbox](/tutorials/your-first-local-sandbox) for an isolated Linux computer.
+- **Isolate it:** [Create your first Cloud Fleet](/tutorials/your-first-cloud-fleet) for an isolated Linux computer.
 - **Understand delivery:** [Browser targeting and background delivery](/concepts/browser-targeting-and-background-delivery) explains how browser tabs map to native windows.
 - **Evaluate it:** [How we continuously validate Cua Driver](/concepts/how-cua-driver-is-validated) describes the evidence used to test desktop behavior.

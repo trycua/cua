@@ -31,6 +31,7 @@
 
 use std::collections::HashMap;
 use std::ffi::c_void;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -74,6 +75,11 @@ static CMD_TX: OnceLock<std::sync::mpsc::SyncSender<OverlayMsg>> = OnceLock::new
 // Single-consumer slot; receiver is moved into run_on_main_thread().
 static CMD_RX_CELL: Mutex<Option<std::sync::mpsc::Receiver<OverlayMsg>>> = Mutex::new(None);
 static RENDER: Mutex<Option<RenderMap>> = Mutex::new(None);
+static OVERLAY_WINDOW_ID: AtomicU32 = AtomicU32::new(0);
+
+pub(crate) fn is_overlay_window(window_id: u32) -> bool {
+    window_id != 0 && OVERLAY_WINDOW_ID.load(Ordering::Acquire) == window_id
+}
 
 /// The keyed, insertion-ordered collection of owned cursors that the render
 /// loop composites every frame. Insertion order = stable z-order (later keys
@@ -91,13 +97,13 @@ struct RenderMap {
     backing_scale: f64,
     /// Frozen launch-time config used as the template for lazily-created cursors.
     template: CursorConfig,
-    /// Render-side tombstone of permanently-ended session cursor keys. A `Cmd`
+    /// Render-side tombstone of ended session cursor keys. A `Cmd`
     /// for a key in here is dropped WITHOUT get-or-create, so an in-flight
     /// click/move from another task that lands AFTER the owning session's
     /// `Remove` can never resurrect the just-removed cursor (the ghost-cursor
-    /// resurrection race). Keyed on session_id, which is unique per session, so
-    /// a permanent tombstone is correct (no cursor_id reuse across a
-    /// session_end boundary). "default" is never tombstoned.
+    /// resurrection race). An explicit owner-checked `start_session` revival
+    /// clears this tombstone before the cursor is reused. "default" is never
+    /// tombstoned.
     ended: std::collections::HashSet<CursorKey>,
 }
 
@@ -114,7 +120,7 @@ fn render_state_for_key(template: &CursorConfig, key: &str) -> RenderState {
 /// unit-testable without AppKit.
 ///
 /// Returns the resolved cursor key for a `Cmd` (so the caller can track the
-/// last-active key for z-order pinning); `None` for a `Remove`.
+/// last-active key for z-order pinning); `None` for a lifecycle message.
 fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
     match msg {
         OverlayMsg::Remove(key) => {
@@ -131,6 +137,12 @@ fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
                 // (an animate/click racing the owning session's death) cannot
                 // re-create the just-removed cursor. Never tombstone "default".
                 map.ended.insert(key);
+            }
+            None
+        }
+        OverlayMsg::Revive(key) => {
+            if key != "default" {
+                map.ended.remove(&key);
             }
             None
         }
@@ -214,8 +226,8 @@ pub fn init(cfg: CursorConfig) {
 /// Send a keyed command from any thread (MCP tool, etc.).  Non-blocking; drops
 /// if the channel is full (old commands are less important than new ones).
 pub fn send_command(key: CursorKey, cmd: OverlayCommand) {
-    // Empty key is the explicit no-cursor sentinel → drop the command so a
-    // cursor-less run never paints.
+    // Empty key is the explicit no-cursor sentinel for direct platform calls
+    // that bypass lifecycle dispatch.
     if key.is_empty() {
         return;
     }
@@ -230,6 +242,22 @@ pub fn send_command_default(cmd: OverlayCommand) {
     send_command("default".to_owned(), cmd);
 }
 
+/// Truthful render acknowledgement for lifecycle inspection. This never falls
+/// back to the seeded default cursor: an absent, off-screen, disabled, or
+/// idle-faded session cursor is not reported as visible.
+pub fn is_visible_for_session(key: &str) -> bool {
+    RENDER
+        .lock()
+        .ok()
+        .and_then(|guard| {
+            guard
+                .as_ref()
+                .and_then(|map| map.cursors.get(key))
+                .map(cursor_is_externally_visible)
+        })
+        .unwrap_or(false)
+}
+
 /// Remove a session's owned cursor from the render collection (fired from the
 /// `session_end` hook). The `"default"` key is guarded against removal on the
 /// render side, so this is a no-op for it; removing an absent key (anonymous
@@ -240,6 +268,17 @@ pub fn remove_cursor(key: CursorKey) {
     }
     if let Some(tx) = CMD_TX.get() {
         let _ = tx.try_send(OverlayMsg::Remove(key));
+    }
+}
+
+/// Clear the render-side tombstone after a successful explicit session
+/// revival. Cursor recreation remains lazy until the next render command.
+pub fn revive_cursor(key: CursorKey) {
+    if key.is_empty() {
+        return;
+    }
+    if let Some(tx) = CMD_TX.get() {
+        let _ = tx.try_send(OverlayMsg::Revive(key));
     }
 }
 
@@ -565,16 +604,14 @@ unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     let win_h = screen_frame.size.height;
     // NSScreen.backingScaleFactor is the most direct source of truth — it's
     // what AppKit will use for the layer's native backing surface anyway.
-    // Fall back to the CG estimator (pixel mode width ÷ logical bounds) when
+    // Fall back to the CG estimator (current-mode pixels ÷ points) when
     // the AppKit call returns a non-positive value, since downstream paint
     // math divides by this and a 0.0 would zero out the cursor.
     let mut backing_scale: f64 = msg_send![main_screen, backingScaleFactor];
     if backing_scale.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
-        use core_graphics::display::{CGDisplayBounds, CGMainDisplayID};
+        use core_graphics::display::CGMainDisplayID;
         let display_id = CGMainDisplayID();
-        let bounds = CGDisplayBounds(display_id);
-        backing_scale =
-            crate::tools::get_screen_size::get_backing_scale(display_id, bounds.size.width as i64);
+        backing_scale = crate::tools::get_screen_size::get_backing_scale(display_id);
         if backing_scale.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
             backing_scale = 1.0;
         }
@@ -645,6 +682,9 @@ unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         }
     }
 
+    let window_number: isize = msg_send![win, windowNumber];
+    OVERLAY_WINDOW_ID.store(u32::try_from(window_number).unwrap_or(0), Ordering::Release);
+
     // ---- Show the window ----
     let _: () = msg_send![win, orderFrontRegardless];
 
@@ -657,6 +697,7 @@ unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
 
     // ---- NSApplication run loop (blocks until process exits) ----
     let _: () = msg_send![app, run];
+    OVERLAY_WINDOW_ID.store(0, Ordering::Release);
 }
 
 fn render_loop(
@@ -919,7 +960,7 @@ fn dispatch_set_layer_contents(layer_ptr: usize, pixmap: tiny_skia::Pixmap) {
     // symbol is `_dispatch_main_q`, a *struct* (not a pointer).
     // We declare it as `u8` (opaque placeholder) and take its ADDRESS to
     // obtain the `dispatch_queue_t` (pointer to the struct).
-    #[link(name = "dispatch", kind = "dylib")]
+    #[link(name = "System", kind = "framework")]
     extern "C" {
         // Opaque placeholder — we only ever take &_dispatch_main_q, never read it.
         static _dispatch_main_q: u8;
@@ -964,7 +1005,7 @@ fn dispatch_set_layer_contents(layer_ptr: usize, pixmap: tiny_skia::Pixmap) {
 fn dispatch_order_front(win_ptr: usize) {
     use std::ffi::c_void;
 
-    #[link(name = "dispatch", kind = "dylib")]
+    #[link(name = "System", kind = "framework")]
     extern "C" {
         static _dispatch_main_q: u8;
         fn dispatch_async_f(
@@ -1028,7 +1069,7 @@ fn target_is_frontmost_visible_window(
 fn dispatch_pin_above(win_ptr: usize, target_wid: u64) {
     use std::ffi::c_void;
 
-    #[link(name = "dispatch", kind = "dylib")]
+    #[link(name = "System", kind = "framework")]
     extern "C" {
         static _dispatch_main_q: u8;
         fn dispatch_async_f(
@@ -1382,6 +1423,22 @@ mod tests {
             1,
             "render map length must stay at default only"
         );
+    }
+
+    #[test]
+    fn explicit_revival_clears_tombstone_and_recreates_lazily() {
+        let mut map = empty_map();
+        apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
+        apply_msg(&mut map, OverlayMsg::Remove("sessA".to_owned()));
+        assert!(apply_msg(&mut map, move_msg("sessA", 20.0, 20.0)).is_none());
+
+        apply_msg(&mut map, OverlayMsg::Revive("sessA".to_owned()));
+        assert!(!map.cursors.contains_key("sessA"));
+        assert!(!map.ended.contains("sessA"));
+
+        let resolved = apply_msg(&mut map, move_msg("sessA", 30.0, 30.0));
+        assert_eq!(resolved.as_deref(), Some("sessA"));
+        assert!(map.cursors.contains_key("sessA"));
     }
 
     #[test]

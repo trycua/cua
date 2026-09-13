@@ -48,6 +48,11 @@ understand, reproduce, or continue the work.
   superseded;
 - use one issue or RFC as the problem/decision record and one isolated branch
   or worktree per implementation workstream;
+- when the authenticated GitHub account has write access, create and push the
+  work branch directly in the canonical repository. Do not default to a personal
+  fork merely because a fork remote exists. Use a fork only when write access is
+  unavailable or the maintainer explicitly requests one, and verify the pull
+  request head owner before reporting it;
 - keep the linked pull request description current with scope, progress,
   validation evidence, known gaps, and blockers instead of posting noisy
   periodic status comments;
@@ -136,13 +141,13 @@ at the time. They do not override the current commands and authority defined in
 ## Pull request titles and component releases
 
 Pull requests are squash-merged, so the pull request title becomes the commit
-subject on `main`. Release Please uses that subject to decide whether Cua Driver
-or Lume receives a release. Treat the live pull request title as release
+subject on `main`. Release Please uses that subject to decide whether Cua Driver,
+Lume, or Sandbox receives a release. Treat the live pull request title as release
 metadata, not as a cosmetic summary.
 
-- Use `fix(cua-driver): ...` or `fix(lume): ...` for user-visible corrections
+- Use `fix(cua-driver): ...`, `fix(lume): ...`, or `fix(sandbox): ...` for user-visible corrections
   that require a patch release.
-- Use `feat(cua-driver): ...` or `feat(lume): ...` for new capabilities that
+- Use `feat(cua-driver): ...`, `feat(lume): ...`, or `feat(sandbox): ...` for new capabilities that
   require a minor release. Add `!` before `:` for a breaking release.
 - `perf` and `revert` also produce releases. `test`, `docs`, `chore`, `ci`,
   `build`, `refactor`, and `style` do not.

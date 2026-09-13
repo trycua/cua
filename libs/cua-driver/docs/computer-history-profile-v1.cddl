@@ -1,0 +1,24 @@
+; Cua History Profile v1
+; The file is an RFC 8742 CBOR Sequence whose first item is history-header and
+; whose remaining items are tagged COSE_Encrypt0 records. The protected COSE
+; header is exactly {1: 24}; the unprotected header is exactly {5: nonce}.
+; For record position N, nonce is nonce-prefix || uint64_be(N), beginning at
+; zero. The COSE external AAD is the exact encoded history-header byte string.
+
+history-header = [
+  profile-version: 1,
+  algorithm: 24,             ; ChaCha20/Poly1305 (RFC 9053)
+  key-epoch: uint .gt 0,
+  key-reference: tstr .size (1..128),
+  stream-id: tstr .size (1..128),
+  chunk-id: tstr .size 32,   ; lower-case hexadecimal 128-bit identifier
+  nonce-prefix: bstr .size 4
+]
+
+history-record = #6.16([
+  protected: bstr,
+  unprotected: { 5 => bstr .size 12 }, ; COSE IV header
+  ciphertext: bstr
+])
+
+history-file = history-header, * history-record

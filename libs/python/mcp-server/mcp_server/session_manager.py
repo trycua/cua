@@ -13,7 +13,6 @@ import logging
 import os
 import time
 import uuid
-import weakref
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set

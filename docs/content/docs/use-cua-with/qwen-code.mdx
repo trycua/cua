@@ -1,0 +1,24 @@
+---
+title: Qwen Code
+description: Connect Qwen Code to Cua Driver over MCP.
+icon: BrainCircuit
+---
+
+Qwen Code supports local stdio MCP servers. Generate the current command with Cua Driver:
+
+```bash
+cua-driver mcp-config --client qwen
+```
+
+The generated command uses the absolute executable path:
+
+```bash
+qwen mcp add cua-driver /absolute/path/to/cua-driver mcp
+qwen mcp list
+```
+
+You can also add the generic `mcpServers` object to `~/.qwen/settings.json`. Restart Qwen Code after changing the configuration.
+
+Continue with [Connect your agent to Cua Driver](/how-to-guides/driver/connect-your-agent#other-supported-clients) for runtime and permission guidance.
+
+Upstream: [Qwen Code MCP documentation](https://qwenlm.github.io/qwen-code-docs/en/users/features/mcp/).

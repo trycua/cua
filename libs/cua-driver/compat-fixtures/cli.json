@@ -2,14 +2,12 @@
   "help_lines": [
     "cross-platform computer-use automation driver",
     "Usage: cua-driver [SUBCOMMAND] [OPTIONS]",
-    "Subcommands: mcp, list-tools, describe, call, serve, stop, revoke, status, config, telemetry, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, browser-approve, manifest"
+    "Subcommands: mcp, list-tools, describe, call, serve, stop, revoke, status, config, telemetry, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, manifest"
   ],
   "manifest": {
     "schema_version": "1",
     "binary_version_format": "semver",
-    "mcp_args": [
-      "mcp"
-    ],
+    "mcp_args": ["mcp"],
     "subcommands": {
       "mcp": [
         ["--socket", "string"],
@@ -23,6 +21,8 @@
         ["--permission-mode", "string"],
         ["--grant", "repeatable-string"],
         ["--dangerously-bypass-approvals", "flag"],
+        ["--capability-manifest", "string"],
+        ["--approve-capability-manifest", "flag"],
         ["--session-policy", "string"],
         ["--approve-session-policy", "flag"],
         ["--no-permissions-gate", "flag"],
@@ -35,9 +35,7 @@
         ["--screenshot-out-file", "string"],
         ["--socket", "string"]
       ],
-      "manifest": [
-        ["--pretty", "flag"]
-      ]
+      "manifest": [["--pretty", "flag"]]
     }
   }
 }

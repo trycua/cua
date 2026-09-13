@@ -7,6 +7,9 @@
 - **Implementation branch:** `codex/browser-tool-v1` (local only)
 - **Companion audit:** [Agentic Web Browsing with Cua Driver](agentic-web-browsing-audit.md)
 - **Architecture verdict:** Accept with major changes
+- **Current authority rule:** Endpoint ownership identifies the browser
+  process. A standalone consumer profile also requires an existing-profile
+  grant before any endpoint discovery or connection.
 
 The accepted roadmap now covers the five typed tools, strict endpoint ownership,
 session capabilities, exact-or-refused Chromium mutation, standalone Chromium
@@ -29,7 +32,7 @@ start_session
 list_apps
 list_windows
 get_browser_state
-browser_prepare       # only when get_browser_state reports requires_setup
+browser_prepare       # when get_browser_state reports requires_setup or consent_required
 get_browser_state
 browser_navigate / browser_click / browser_type
 get_browser_state     # verify

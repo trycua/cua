@@ -662,7 +662,7 @@ fn local_file_target(raw: &str) -> Option<PathBuf> {
     }
     if let Some(rest) = raw.strip_prefix("file://") {
         let path = rest.strip_prefix("localhost").unwrap_or(rest);
-        let decoded = percent_decode_path(path);
+        let decoded = crate::file_url::percent_decode(path);
         return Some(expand_tilde(&decoded));
     }
     let looks_like_url = raw.contains(':') && !raw.starts_with('/') && !raw.starts_with('~');
@@ -683,36 +683,6 @@ fn expand_tilde(path: &str) -> PathBuf {
         }
     }
     PathBuf::from(path)
-}
-
-fn percent_decode_path(path: &str) -> String {
-    let bytes = path.as_bytes();
-    let mut decoded = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let (Some(high), Some(low)) = (hex_value(bytes[i + 1]), hex_value(bytes[i + 2])) {
-                decoded.push((high << 4) | low);
-                i += 3;
-                continue;
-            }
-        }
-
-        decoded.push(bytes[i]);
-        i += 1;
-    }
-
-    String::from_utf8_lossy(&decoded).into_owned()
-}
-
-fn hex_value(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
 }
 
 #[cfg(test)]

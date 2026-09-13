@@ -70,13 +70,20 @@ impl Harness {
     }
 
     fn launch_with_oracles(command_oracle: Option<&Path>, pointer_oracle: Option<&Path>) -> Self {
-        Self::launch_with_options(command_oracle, pointer_oracle, false)
+        Self::launch_with_options(command_oracle, pointer_oracle, false, None)
+    }
+
+    /// Launch with `document_path` as the window's represented file, which also
+    /// enables the `cua-document-edited-{on,off}` value commands on txt-input.
+    fn launch_with_document(document_path: &Path) -> Self {
+        Self::launch_with_options(None, None, false, Some(document_path))
     }
 
     fn launch_with_options(
         command_oracle: Option<&Path>,
         pointer_oracle: Option<&Path>,
         keep_ordered_front: bool,
+        document_path: Option<&Path>,
     ) -> Self {
         let exe = harness_exe();
         assert!(
@@ -96,6 +103,9 @@ impl Harness {
         }
         if keep_ordered_front {
             command.env("CUA_APPKIT_KEEP_ORDERED_FRONT", "1");
+        }
+        if let Some(path) = document_path {
+            command.env("CUA_APPKIT_DOCUMENT_PATH", path);
         }
         let app = command
             .spawn()
@@ -190,6 +200,25 @@ fn run_case(
         if delivery != cua_driver_testkit::e2e::Delivery::Background {
             driver.start_behavior_recording();
         }
+        test(harness.pid, wid, &mut driver)
+    });
+}
+
+/// Document-window variant: AX reads and AX value writes only, so it runs
+/// against the source-built driver instead of the installed daemon.
+fn run_document_case(
+    case: cua_driver_testkit::e2e::CaseSpec,
+    document_path: &Path,
+    test: impl FnOnce(u32, u64, &mut McpDriver) -> Observation,
+) {
+    let cell_id = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_named(&cell_id).expect("start source-built driver");
+        *evidence = recording_evidence(driver.recording_dir());
+        let harness = Harness::launch_with_document(document_path);
+        let (wid, _) = driver
+            .find_window(harness.pid as i64, "CuaTestHarness AppKit")
+            .expect("AppKit main window not found");
         test(harness.pid, wid, &mut driver)
     });
 }
@@ -340,7 +369,7 @@ fn harness_appkit_exact_activation_refuses_competing_window() {
     .expecting_refusal(vec![RefusalCode::BringToFrontExactWindowUnverified]);
     case.oracles.push(OracleKind::Cursor);
     run_case(case, |pid, wid, driver| {
-        let competitor = Harness::launch_with_options(None, None, true);
+        let competitor = Harness::launch_with_options(None, None, true, None);
         let (competing_wid, _) = driver
             .find_window(competitor.pid as i64, "CuaTestHarness AppKit")
             .expect("find competing ordinary window");
@@ -550,6 +579,97 @@ fn harness_appkit_smoke() {
             Observation::delivered(vec![OracleKind::AxState], Evidence::default())
         },
     );
+}
+
+/// document: the represented file arrives percent-decoded, the dirty bit
+/// follows the app through false -> true -> false, and a snapshot taken
+/// without the accessibility tree carries neither key.
+#[test]
+#[ignore]
+fn harness_appkit_document_state_follows_the_window() {
+    let directory = tempfile::tempdir().expect("document fixture directory");
+    let document = directory.path().join("My Notes.txt");
+    std::fs::write(&document, "harness document\n").expect("write document fixture");
+
+    run_document_case(
+        native_readonly_case(
+            "appkit",
+            "document_state",
+            Targeting::Ax,
+            DriverRoute::AxRead,
+            vec![OracleKind::FixtureState],
+        ),
+        &document,
+        |pid, wid, driver| {
+            let expected_path = document.to_string_lossy().into_owned();
+            let clean = snapshot_elements(driver, pid, wid);
+            assert_eq!(
+                clean.structured()["document_path"].as_str(),
+                Some(expected_path.as_str()),
+                "document_path must be the decoded filesystem path: {}",
+                clean.structured()["document_path"]
+            );
+            assert_eq!(clean.structured()["document_edited"].as_bool(), Some(false));
+
+            set_document_edited(driver, pid, wid, true);
+            let dirty = snapshot_elements(driver, pid, wid);
+            assert_eq!(
+                dirty.structured()["document_edited"].as_bool(),
+                Some(true),
+                "dirty bit did not follow the app: {}",
+                dirty.structured()
+            );
+
+            set_document_edited(driver, pid, wid, false);
+            let saved = snapshot_elements(driver, pid, wid);
+            assert_eq!(saved.structured()["document_edited"].as_bool(), Some(false));
+
+            let without_tree = driver.call(
+                "get_window_state",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "include_accessibility_tree": false
+                }),
+            );
+            assert!(
+                without_tree.structured().get("document_path").is_none()
+                    && without_tree.structured().get("document_edited").is_none(),
+                "document state must come from the accessibility walk only: {}",
+                without_tree.structured()
+            );
+            Observation::delivered_with_fixture_state(vec![OracleKind::FixtureState])
+        },
+    );
+}
+
+/// Drive the fixture's dirty flag through an AX value write, which needs no
+/// window activation.
+fn set_document_edited(driver: &mut McpDriver, pid: u32, wid: u64, edited: bool) {
+    let snapshot = snapshot_elements(driver, pid, wid);
+    let index = element_index_by_id(snapshot.tree_text(), "txt-input")
+        .expect("txt-input element_index not found");
+    let command = if edited {
+        "cua-document-edited-on"
+    } else {
+        "cua-document-edited-off"
+    };
+    let response = driver.call(
+        "set_value",
+        serde_json::json!({
+            "pid": pid as i64,
+            "window_id": wid,
+            "element_index": index,
+            "snapshot_id": snapshot.snapshot_id(),
+            "value": command
+        }),
+    );
+    assert!(
+        !response.is_error(),
+        "fixture document command failed: {}",
+        response.text()
+    );
+    std::thread::sleep(Duration::from_millis(250));
 }
 
 #[test]

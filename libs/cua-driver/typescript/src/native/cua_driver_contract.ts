@@ -4533,14 +4533,9 @@ export type WindowStateOutput = {
     screenshotFilePath?: string,
     screenshotFrameValid?: boolean,
     windowBounds?: WindowBounds,
-    /**
-     * The window's document URL (`AXDocument` on macOS). Absent when the app
-     * reports none.
-     */
     documentPath?: string,
     /**
-     * The app's own unsaved-changes flag for the window. Absent when the app
-     * reports it nowhere: absence is unknown, never "clean".
+     * Absent when the app does not report a dirty flag: unknown, never "clean".
      */
     documentEdited?: boolean,
     /**

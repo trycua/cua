@@ -1748,7 +1748,7 @@ mod tests {
             nodes,
             truncated: false,
             window_scope: Some(crate::ax::WindowScope::Matched),
-            document: None,
+            document_path: None,
             document_edited: None,
         }
     }
@@ -1878,7 +1878,7 @@ mod tests {
             nodes: Vec::new(),
             truncated: true,
             window_scope: Some(crate::ax::WindowScope::Matched),
-            document: None,
+            document_path: None,
             document_edited: None,
         };
         assert!(

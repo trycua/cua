@@ -419,27 +419,29 @@ move is the px form of `type_text` — focus and type in one call.
 ### Document windows: is it dirty, and where does it live?
 
 `get_window_state` reports two optional per-window keys for the window
-you asked about:
+you asked about, both read during the accessibility walk (so
+`include_accessibility_tree:false` never carries them):
 
 | key | meaning |
 |---|---|
-| `document_path` | the window's `AXDocument` — the `file://` URL the document is backed by |
+| `document_path` | the local filesystem path behind the window's `AXDocument` file URL, percent-decoded (`My%20Notes.txt` arrives as `My Notes.txt`) |
 | `document_edited` | the app's own unsaved-changes flag (`NSWindow.isDocumentEdited`) |
 
-Both are **omitted when the app reports neither** — an absent key is
-*unknown*, not "clean". Only `document_edited:true` is positive
-evidence; `false` does **not** prove a durable save, because
+Each is **omitted when the app does not report it** — an absent key is
+*unknown*, not "clean" — and a document backed by a non-file URL (web
+content) reports no `document_path`. Only `document_edited:true` is
+positive evidence; `false` does **not** prove a durable save, because
 autosave-in-place apps (TextEdit, Preview) keep the flag clear while
 holding unsaved in-memory text.
 
-**`set_value` is non-durable in document apps.** An AXValue write
-never reaches disk, and because it bypasses the app's editing pipeline
-it is not even guaranteed to register as an edit: measured on TextEdit
-the text appeared in the AX tree while `isDocumentEdited` stayed
-`false`, the Edit menu still read a plain "Undo" (no undo entry), and
-the file was byte-identical before and after. Other AppKit editors do
-mark the document on an AXValue write — the flag is app-specific, the
-"nothing was written to disk" part is not. So:
+**`set_value` is not a save.** An AXValue write does not itself persist
+anything, and because it bypasses the app's editing pipeline it is not
+even guaranteed to register as an edit: measured on TextEdit the text
+appeared in the AX tree while `isDocumentEdited` stayed `false`, the
+Edit menu still read a plain "Undo" (no undo entry), and the file was
+byte-identical before and after. Other AppKit editors do mark the
+document on an AXValue write — the flag is app-specific, the "nothing
+was persisted by the write itself" part is not. So:
 
 1. Prefer `type_text` (real key events / text-system insertion) for
    content you intend to keep.

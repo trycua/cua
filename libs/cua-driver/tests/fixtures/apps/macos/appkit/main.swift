@@ -16,6 +16,8 @@
 //   scroll_target  — NSScrollView with a tall body and offset label
 //   ns_menubar     — main menu item with known title (Mac-specific)
 //   exit           — NSButton terminates the app
+//   document       — opt-in via CUA_APPKIT_DOCUMENT_PATH: representedURL plus a
+//                    Window > Toggle Document Edited item flipping isDocumentEdited
 //
 // AX identifiers (via `setAccessibilityIdentifier(_:)`) match the IDs in
 // scenarios.json. Window title is set to "CuaTestHarness AppKit" so the
@@ -54,6 +56,9 @@ let kMenuItemTitle = "Harness Test Item"
 let kSecondaryWindowTitle = "CuaTestHarness AppKit Secondary"
 let kSheetWindowTitle = "CuaTestHarness AppKit Sheet"
 let kFloatingWindowTitle = "CuaTestHarness AppKit Floating"
+let kToggleDocumentEditedTitle = "Toggle Document Edited"
+let kDocumentEditedOnCommand = "cua-document-edited-on"
+let kDocumentEditedOffCommand = "cua-document-edited-off"
 
 // MARK: - Controller
 
@@ -77,6 +82,7 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
     let accelCountLabel = NSTextField(labelWithString: "accel_fired=0")
     var accelCount = 0
     var keyMonitor: Any?
+    var documentAttached = false
 
     // Pinned content size — every launch MUST produce a byte-identical window
     // so screenshot dimensions (and the hardcoded pixel coords the harness tests
@@ -420,6 +426,36 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         menuActionLabel.stringValue = "menu_action=window_arrange_left"
     }
 
+    // document: an opt-in represented file plus commands that flip the AppKit
+    // dirty flag, so a test can drive false -> true -> false without touching
+    // window layout or the shared scenarios above.
+    func attachDocument(at path: String) {
+        window.representedURL = URL(fileURLWithPath: path)
+        window.isDocumentEdited = false
+        documentAttached = true
+    }
+
+    @objc func onToggleDocumentEdited(_ sender: NSMenuItem) {
+        setDocumentEdited(!window.isDocumentEdited)
+    }
+
+    // Background-deliverable twin of the menu command: an AX value write on
+    // txt-input flips the dirty flag, so the dirty-bit cell needs no window
+    // activation.
+    private func applyDocumentCommand(_ value: String) {
+        guard documentAttached else { return }
+        switch value {
+        case kDocumentEditedOnCommand: setDocumentEdited(true)
+        case kDocumentEditedOffCommand: setDocumentEdited(false)
+        default: break
+        }
+    }
+
+    private func setDocumentEdited(_ edited: Bool) {
+        window.isDocumentEdited = edited
+        menuActionLabel.stringValue = "menu_action=document_edited_\(edited)"
+    }
+
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(onArrangeLeft(_:)) {
             // Real macOS Window-menu commands are contextual: the application
@@ -435,6 +471,7 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         guard let field = obj.object as? NSTextField else { return }
         if field === textInput {
             textInputMirror.stringValue = field.stringValue
+            applyDocumentCommand(field.stringValue)
         }
     }
 
@@ -596,6 +633,16 @@ func installMenuBar(target: HarnessWindowController) {
     arrangeMenu.addItem(leftItem)
     arrangeItem.submenu = arrangeMenu
     windowMenu.addItem(arrangeItem)
+    if ProcessInfo.processInfo.environment["CUA_APPKIT_DOCUMENT_PATH"] != nil {
+        let toggleItem = NSMenuItem(
+            title: kToggleDocumentEditedTitle,
+            action: #selector(HarnessWindowController.onToggleDocumentEdited(_:)),
+            keyEquivalent: ""
+        )
+        toggleItem.target = target
+        toggleItem.setAccessibilityIdentifier("menu-window-toggle-document-edited")
+        windowMenu.addItem(toggleItem)
+    }
     windowItem.submenu = windowMenu
     main.addItem(windowItem)
     NSApp.mainMenu = main
@@ -650,6 +697,9 @@ struct CuaAppKitHarness {
         app.setActivationPolicy(.regular)
         let controller = HarnessWindowController()
         installMenuBar(target: controller)
+        if let documentPath = ProcessInfo.processInfo.environment["CUA_APPKIT_DOCUMENT_PATH"] {
+            controller.attachDocument(at: documentPath)
+        }
         controller.show()
         if ProcessInfo.processInfo.environment["CUA_APPKIT_KEEP_ORDERED_FRONT"] == "1" {
             _ = Timer.scheduledTimer(withTimeInterval: 0.01, repeats: true) { [weak window = controller.window] _ in

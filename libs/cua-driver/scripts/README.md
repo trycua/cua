@@ -54,29 +54,39 @@ The installer fails closed when that exact usable code-signing identity is not
 present in `CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN`.
 
 The first install creates `CuaDriver Local Signing (cua-driver-rs)` in that
-keychain and authorizes its private key for Apple's code-signing tools, which
-`security import` alone does not do: since macOS 10.12 an unauthorized key
-makes the first `codesign` prompt for a keychain password or fail with
-`errSecInternalComponent`. That step needs the keychain unlocked, and it
-touches only the key the installer imported. Every later install repeats it, so
-an install that failed while the keychain was locked is fixed by unlocking the
-keychain and running the installer again.
+keychain and then authorizes its private key for Apple's code-signing tools,
+which `security import` alone does not do: since macOS 10.12 an unauthorized
+key makes the first `codesign` prompt for a keychain password or fail with
+`errSecInternalComponent`.
 
-To authorize that key by hand, with the keychain unlocked:
+Whether that authorization needs the keychain password depends on the host. The
+installer tries without one first, and when the host insists it asks for the
+password on the terminal, uses it for that single `security` call and drops it
+immediately: nothing is exported, so no password reaches the build. With no
+terminal to ask on, such as a scripted install, the installer says the key is
+not authorized and prints the command to run; it does not claim to have
+authorized it. Later installs retry the passwordless form silently and never
+prompt, so a key that needed the password is authorized once, by hand:
 
 ```bash
+security unlock-keychain "$SIGNING_KEYCHAIN"
 security set-key-partition-list \
   -S apple-tool:,apple:,codesign: \
   -l 'CuaDriver Local Signing (cua-driver-rs)' -t private -s \
-  "$SIGNING_KEYCHAIN"
+  -k '<keychain-password>' "$SIGNING_KEYCHAIN"
 ```
 
 `-l` is what keeps the change to that one key; `-s` on its own matches every
-signing key in the keychain, including unrelated identities in a login
-keychain. An unlocked keychain needs no password for it, so no keychain
-password has to be typed, exported into the environment, or passed in `security`
-argv. Unlock with `security unlock-keychain "$SIGNING_KEYCHAIN"`, which prompts
-for it directly.
+signing key in the keychain, including unrelated identities in a login keychain.
+Drop `-k` if the host does not ask for the password.
+
+That command shape is covered by a test which is skipped by default because it
+touches a real keychain. On macOS, run it in a throwaway keychain with:
+
+```bash
+CUA_DRIVER_LOCAL_SIGNING_REAL_KEYCHAIN_TEST=1 \
+  python -m pytest libs/cua-driver/scripts/tests/test_install_local.py
+```
 
 Trusting the certificate in Keychain Access is optional. codesign then pins it
 as `certificate root` rather than `certificate leaf`; both are stable across

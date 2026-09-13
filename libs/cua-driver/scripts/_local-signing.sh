@@ -39,21 +39,46 @@ print_local_signing_bootstrap() {
 #
 # `-s` on its own matches every signing key in the resolved keychain, which on
 # a login keychain means unrelated identities, so the ACL change names the key
-# this script imported. An unlocked keychain needs no password for it, so none
-# is read, exported, or placed in security's argv; stdin is closed so a locked
-# keychain fails immediately instead of waiting on a password prompt. Opening
-# an already-open list is a no-op, which is what makes rerunning the installer
-# a working fix. Everything here goes to stderr: this function runs inside the
-# command substitution that captures the identity.
+# this script imported and nothing else.
+#
+# Whether that write needs the keychain password depends on the host: on some
+# an unlocked keychain is enough, on others security demands it even then. So
+# try without a password first, and only when that fails ask for one, on the
+# terminal, for exactly one `security` call, never through the environment and
+# never held past that call. With no terminal to ask on, say so instead of
+# claiming the key was authorized. $2 = "prompt" enables that question.
+#
+# Everything here goes to stderr: this function runs inside the command
+# substitution that captures the identity.
 authorize_generated_signing_key() {
-    local kc="$1"
-    security set-key-partition-list -S apple-tool:,apple:,codesign: \
-        -l "$CUA_LOCAL_SIGN_CN" -t private -s "$kc" >/dev/null 2>&1 </dev/null \
-        && return 0
-    echo "warning: could not authorize the generated local signing key in $kc." >&2
-    echo "codesign will prompt for a keychain password or fail with errSecInternalComponent. Unlock the keychain and rerun the installer, or run:" >&2
+    local kc="$1" mode="${2:-quiet}"
+
+    if security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -l "$CUA_LOCAL_SIGN_CN" -t private -s "$kc" >/dev/null 2>&1 </dev/null; then
+        return 0
+    fi
+    [ "$mode" = "prompt" ] || return 1
+
+    local password=""
+    if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+        printf '%s' "Keychain password for $kc (authorizes the new local signing key for codesign): " >/dev/tty
+        IFS= read -rs -t 120 password < /dev/tty || password=""
+        printf '\n' >/dev/tty
+        if [ -n "$password" ] \
+           && security set-key-partition-list -S apple-tool:,apple:,codesign: \
+                -l "$CUA_LOCAL_SIGN_CN" -t private -s -k "$password" "$kc" \
+                >/dev/null 2>&1 </dev/null; then
+            password=""
+            unset password
+            return 0
+        fi
+        password=""
+        unset password
+    fi
+    echo "warning: the local signing key in $kc is not authorized for codesign." >&2
+    echo "codesign will prompt for a keychain password or fail with errSecInternalComponent. Authorize it with:" >&2
     echo "  security unlock-keychain \"$kc\"" >&2
-    echo "  security set-key-partition-list -S apple-tool:,apple:,codesign: -l \"$CUA_LOCAL_SIGN_CN\" -t private -s \"$kc\"" >&2
+    echo "  security set-key-partition-list -S apple-tool:,apple:,codesign: -l \"$CUA_LOCAL_SIGN_CN\" -t private -s -k '<keychain-password>' \"$kc\"" >&2
     echo "See libs/cua-driver/scripts/README.md#stable-macos-local-signing" >&2
     return 1
 }
@@ -86,10 +111,13 @@ ensure_local_signing_identity() {
     fi
     identity="$(find_generated_signing_identity "$kc")"
     if [ -n "$identity" ]; then
-        # The key this script generated on some earlier run: authorize it here
-        # too, so a developer who unlocks the keychain and reruns the installer
-        # gets a usable key instead of the same opaque codesign failure.
-        authorize_generated_signing_key "$kc" || :
+        # The key this script generated on some earlier run. Repair it silently
+        # when that costs nothing: a host where the write needs no password
+        # then recovers from a keychain that was locked during the first
+        # install. Asking for a password here would ask on every install, so a
+        # key that still needs one is left to the command the creating install
+        # printed, which authorizes it once and for good.
+        authorize_generated_signing_key "$kc" quiet || :
         printf '%s' "$identity"
         return
     fi
@@ -108,7 +136,7 @@ ensure_local_signing_identity() {
        && security import "$tmp/id.p12" -k "$kc" -P "$pw" -A -T /usr/bin/codesign >/dev/null 2>&1; then
         identity="$(find_generated_signing_identity "$kc")"
         if [ -n "$identity" ]; then
-            authorize_generated_signing_key "$kc" || :
+            authorize_generated_signing_key "$kc" prompt || :
         fi
         rm -rf "$tmp"
         if [ -n "$identity" ]; then

@@ -12,6 +12,7 @@
 //! - Tree is walked depth-first; element_index is assigned in DFS order.
 
 use super::bindings::*;
+use super::document_state::{collect_within, Deadline, DocumentAttributes, DOCUMENT_STATE_BUDGET};
 use super::window_scope::{decide_window_scope, TopLevelCandidate, WindowScope};
 use core_foundation::base::{CFEqual, CFRelease, CFRetain, CFTypeRef};
 
@@ -288,9 +289,15 @@ pub fn walk_tree_bounded(
                 .map(|&index| top_level[index])
                 .collect();
             if let Some(index) = decision.requested_window_index(&candidates, wid) {
-                let window = top_level[index];
-                document_path = read_document_path(window);
-                document_edited = read_document_edited_via_window_or_close_button(window);
+                let state = collect_within(
+                    &AxWindowDocument {
+                        window: top_level[index],
+                    },
+                    DOCUMENT_STATE_BUDGET,
+                );
+                set_messaging_timeout(top_level[index]);
+                document_path = state.path;
+                document_edited = state.edited;
             }
             window_scope = Some(decision.scope);
             walk
@@ -350,21 +357,43 @@ pub fn walk_tree_bounded(
     }
 }
 
-unsafe fn read_document_path(window: AXUIElementRef) -> Option<String> {
-    let raw = copy_string_attr(window, "AXDocument")?;
-    let path = crate::file_url::local_path_from_file_url(&raw)?;
-    Some(path.to_string_lossy().into_owned())
+struct AxWindowDocument {
+    window: AXUIElementRef,
 }
 
-unsafe fn read_document_edited_via_window_or_close_button(window: AXUIElementRef) -> Option<bool> {
-    copy_bool_attr(window, "AXEdited").or_else(|| {
-        copy_element_attr(window, "AXCloseButton").and_then(|close_button| {
-            set_messaging_timeout(close_button);
-            let edited = copy_bool_attr(close_button, "AXEdited");
+impl AxWindowDocument {
+    unsafe fn budget(element: AXUIElementRef, deadline: &Deadline) -> Option<()> {
+        let left = deadline.remaining()?;
+        AXUIElementSetMessagingTimeout(element, left.as_secs_f32());
+        Some(())
+    }
+}
+
+impl DocumentAttributes for AxWindowDocument {
+    fn document_url(&self, deadline: &Deadline) -> Option<String> {
+        unsafe {
+            Self::budget(self.window, deadline)?;
+            copy_string_attr(self.window, "AXDocument")
+        }
+    }
+
+    fn edited_on_window(&self, deadline: &Deadline) -> Option<bool> {
+        unsafe {
+            Self::budget(self.window, deadline)?;
+            copy_bool_attr(self.window, "AXEdited")
+        }
+    }
+
+    fn edited_on_close_button(&self, deadline: &Deadline) -> Option<bool> {
+        unsafe {
+            Self::budget(self.window, deadline)?;
+            let close_button = copy_element_attr(self.window, "AXCloseButton")?;
+            let edited = Self::budget(close_button, deadline)
+                .and_then(|()| copy_bool_attr(close_button, "AXEdited"));
             CFRelease(close_button as CFTypeRef);
             edited
-        })
-    })
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

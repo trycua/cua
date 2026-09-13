@@ -16,8 +16,6 @@
 //   scroll_target  — NSScrollView with a tall body and offset label
 //   ns_menubar     — main menu item with known title (Mac-specific)
 //   exit           — NSButton terminates the app
-//   document       — opt-in via CUA_APPKIT_DOCUMENT_PATH: representedURL plus a
-//                    Window > Toggle Document Edited item flipping isDocumentEdited
 //
 // AX identifiers (via `setAccessibilityIdentifier(_:)`) match the IDs in
 // scenarios.json. Window title is set to "CuaTestHarness AppKit" so the
@@ -426,9 +424,6 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         menuActionLabel.stringValue = "menu_action=window_arrange_left"
     }
 
-    // document: an opt-in represented file plus commands that flip the AppKit
-    // dirty flag, so a test can drive false -> true -> false without touching
-    // window layout or the shared scenarios above.
     func attachDocument(at path: String) {
         window.representedURL = URL(fileURLWithPath: path)
         window.isDocumentEdited = false
@@ -439,9 +434,6 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         setDocumentEdited(!window.isDocumentEdited)
     }
 
-    // Background-deliverable twin of the menu command: an AX value write on
-    // txt-input flips the dirty flag, so the dirty-bit cell needs no window
-    // activation.
     private func applyDocumentCommand(_ value: String) {
         guard documentAttached else { return }
         switch value {

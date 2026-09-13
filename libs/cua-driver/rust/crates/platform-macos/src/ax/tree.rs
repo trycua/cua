@@ -2,12 +2,12 @@
 //!
 //! Format (matching libs/cua-driver exactly):
 //!   `INDENT- [N] AXRole "Title" [value="..." actions=[...]]`
-//!   `INDENT- AXStaticText = "value"`  (non-indexed)
+//!   `INDENT- AXStaticText = <JSON string>`  (non-indexed)
 //!
 //! Rules (from cua-driver reference):
 //! - An element is addressable (gets an index) when it has ≥1 action name or
 //!   exposes a writable AXValue control surface.
-//! - Non-actionable leaf nodes with a value are rendered as `AXRole = "value"`.
+//! - Non-actionable leaf nodes render their raw value as a JSON string.
 //! - AXStaticText with no title/value is omitted.
 //! - Tree is walked depth-first; element_index is assigned in DFS order.
 
@@ -615,7 +615,7 @@ fn format_node_line(node: &AXNode) -> String {
     if let Some(t) = &node.title {
         parts.push_str(&format!(" \"{}\"", t));
     }
-    // AXValue → = "value"
+    // AXValue -> a lossless JSON string.
     if let Some(v) = &node.value {
         // Preserve raw text without letting a newline or quote create a
         // fabricated tree row. JSON quoting keeps the representation lossless.

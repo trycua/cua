@@ -856,7 +856,13 @@ pub(crate) fn build_elements_array_with_token(
                 .title
                 .clone()
                 .or_else(|| node.description.clone())
-                .or_else(|| node.value.clone().filter(|value| !value.trim().is_empty()))
+                .or_else(|| {
+                    node.value
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_owned)
+                })
                 .or_else(|| {
                     node.placeholder
                         .clone()
@@ -1466,6 +1472,8 @@ mod tests {
             assert_eq!(entry["placeholder"], "Ask for follow-up changes");
             if raw.trim().is_empty() {
                 assert_eq!(entry["label"], "Ask for follow-up changes");
+            } else {
+                assert_eq!(entry["label"], raw.trim());
             }
         }
     }

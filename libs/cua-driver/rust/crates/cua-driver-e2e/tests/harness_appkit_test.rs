@@ -758,6 +758,57 @@ fn harness_appkit_invoke_menu_live_path() {
     );
 }
 
+#[test]
+#[ignore]
+fn harness_appkit_app_menu_row_is_admitted_and_reported_unverifiable() {
+    let mut case = native_background_case(
+        "appkit",
+        "app_menu_semantic_action",
+        Targeting::Ax,
+        DriverRoute::MacosAxAction,
+    );
+    case.oracles
+        .retain(|oracle| *oracle != OracleKind::FixtureState);
+    run_case(case, |pid, wid, driver| {
+        let (_, passed) = run_with_background_oracles(
+            driver,
+            TargetWindow {
+                pid,
+                native_id: wid,
+            },
+            |driver| {
+                let snapshot = snapshot_elements(driver, pid, wid);
+                let index = element_index_by_id(snapshot.tree_text(), "menu-window-arrange-left")
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "AppKit menu bar row is not in the window snapshot:\n{}",
+                            snapshot.tree_text()
+                        )
+                    });
+                let response = driver.call(
+                    "click",
+                    serde_json::json!({
+                        "pid": pid as i64,
+                        "window_id": wid,
+                        "element_index": index,
+                        "snapshot_id": snapshot.snapshot_id(),
+                    }),
+                );
+                println!("app menu row press: {}", response.text());
+                assert!(
+                    !response.is_error(),
+                    "application menu row refused: {}",
+                    response.text()
+                );
+                assert_eq!(response.structured()["effect"], "unverifiable");
+                assert_eq!(response.structured()["verified"], false);
+            },
+        )
+        .unwrap_or_else(|error| panic!("background desktop contract failed: {error}"));
+        Observation::delivered(passed, Evidence::default())
+    });
+}
+
 /// text_input: type_text into the NSTextField, verify the mirror label
 /// shows the typed string. Exercises the AX type_text path
 /// (AXSetAttribute on AXValue, or CGEvent fallback).

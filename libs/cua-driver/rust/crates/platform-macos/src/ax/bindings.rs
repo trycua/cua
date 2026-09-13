@@ -162,9 +162,6 @@ pub unsafe fn is_attribute_settable(element: AXUIElementRef, attr_name: &str) ->
         && settable != 0
 }
 
-/// The process an AX element belongs to (`AXUIElementGetPid`), or `None` when
-/// the accessibility server cannot attribute it.
-///
 /// # Safety
 ///
 /// `element` must be a valid, live `AXUIElementRef` for the duration of the call.

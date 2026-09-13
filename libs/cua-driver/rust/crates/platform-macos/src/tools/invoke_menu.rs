@@ -193,44 +193,26 @@ unsafe fn invoke_path(pid: i32, path: &[String]) -> Result<(), String> {
     result
 }
 
-/// Live WindowServer front-process attribution for one exact window.
-///
-/// `NSWorkspace.frontmostApplication` (`crate::apps::frontmost_pid`) is an
-/// AppKit cached property that only refreshes when the reading process services
-/// a run loop. The blocking menu path never does, so it cannot observe the
-/// activation it just requested and would poll a stale value until the
-/// deadline. `front_process_matches` asks WindowServer directly, exactly as
-/// `bring_to_front` does; the workspace value stays the fallback for targets
-/// whose process serial number cannot be resolved.
 fn select_frontmost_pid(
     front_process_matches: Option<bool>,
-    workspace_fallback: Option<i32>,
+    workspace_fallback: impl FnOnce() -> Option<i32>,
     pid: i32,
 ) -> Option<i32> {
     match front_process_matches {
         Some(true) => Some(pid),
         Some(false) => None,
-        None => workspace_fallback,
+        None => workspace_fallback(),
     }
 }
 
 fn live_frontmost_pid(pid: i32, window_id: u32) -> Option<i32> {
     select_frontmost_pid(
         crate::input::skylight::front_process_matches(pid, window_id),
-        crate::apps::frontmost_pid(),
+        crate::apps::frontmost_pid,
         pid,
     )
 }
 
-/// The application WindowServer currently fronts, identified through its
-/// topmost on-screen ordinary window.
-///
-/// Same reason as [`live_frontmost_pid`]: the workspace value this process
-/// caches may name whichever application was frontmost when it last serviced a
-/// run loop, and restoring against that would re-front the wrong application.
-/// Z-order alone is not enough either — a helper process can own the topmost
-/// on-screen window (completion popups, overlay panels) without being the front
-/// process — so each candidate is confirmed against WindowServer.
 fn live_frontmost_app() -> Option<i32> {
     crate::windows::visible_windows()
         .into_iter()
@@ -524,10 +506,21 @@ mod tests {
         assert!(!exact_window_is_ready(Some(7), 7, None, 42));
     }
 
+    fn workspace_frontmost_must_not_be_read() -> Option<i32> {
+        panic!("stale workspace state must not be consulted");
+    }
+
     #[test]
     fn windowserver_mismatch_never_falls_back_to_stale_workspace_state() {
-        assert_eq!(select_frontmost_pid(Some(true), Some(8), 7), Some(7));
-        assert_eq!(select_frontmost_pid(Some(false), Some(7), 7), None);
-        assert_eq!(select_frontmost_pid(None, Some(8), 7), Some(8));
+        assert_eq!(
+            select_frontmost_pid(Some(true), workspace_frontmost_must_not_be_read, 7),
+            Some(7)
+        );
+        assert_eq!(
+            select_frontmost_pid(Some(false), workspace_frontmost_must_not_be_read, 7),
+            None
+        );
+        assert_eq!(select_frontmost_pid(None, || Some(8), 7), Some(8));
+        assert_eq!(select_frontmost_pid(None, || None, 7), None);
     }
 }

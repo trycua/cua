@@ -1661,6 +1661,12 @@
                     "null"
                   ]
                 },
+                "placeholder": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "role": {
                   "type": "string"
                 },

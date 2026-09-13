@@ -4421,6 +4421,7 @@ export type WindowElement = {
     elementToken?: string,
     label?: string,
     value?: string,
+    placeholder?: string,
     valueDescription?: string,
     enabled?: boolean,
     selected?: boolean,
@@ -4459,6 +4460,7 @@ const FfiConverterTypeWindowElement = (() => {
                 elementToken: FfiConverterOptionalString.read(from),
                 label: FfiConverterOptionalString.read(from),
                 value: FfiConverterOptionalString.read(from),
+                placeholder: FfiConverterOptionalString.read(from),
                 valueDescription: FfiConverterOptionalString.read(from),
                 enabled: FfiConverterOptionalBoolean.read(from),
                 selected: FfiConverterOptionalBoolean.read(from),
@@ -4477,6 +4479,7 @@ const FfiConverterTypeWindowElement = (() => {
             FfiConverterOptionalString.write(value.elementToken, into);
             FfiConverterOptionalString.write(value.label, into);
             FfiConverterOptionalString.write(value.value, into);
+            FfiConverterOptionalString.write(value.placeholder, into);
             FfiConverterOptionalString.write(value.valueDescription, into);
             FfiConverterOptionalBoolean.write(value.enabled, into);
             FfiConverterOptionalBoolean.write(value.selected, into);
@@ -4494,6 +4497,7 @@ const FfiConverterTypeWindowElement = (() => {
              FfiConverterOptionalString.allocationSize(value.elementToken) +
              FfiConverterOptionalString.allocationSize(value.label) +
              FfiConverterOptionalString.allocationSize(value.value) +
+             FfiConverterOptionalString.allocationSize(value.placeholder) +
              FfiConverterOptionalString.allocationSize(value.valueDescription) +
              FfiConverterOptionalBoolean.allocationSize(value.enabled) +
              FfiConverterOptionalBoolean.allocationSize(value.selected) +

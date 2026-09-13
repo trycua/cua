@@ -732,6 +732,35 @@ fn harness_appkit_text_input() {
                 post_text.contains("hello-cua"),
                 "text_input value did not propagate to mirror; snapshot:\n{post_text}"
             );
+
+            // Exercise the real AX walk, not just the structured serializer.
+            // Empty/whitespace AXValue used to become the field's placeholder.
+            for raw in ["", "\n", " \tΩ café\n"] {
+                let before = snapshot_elements(driver, pid, wid);
+                let set = driver.call(
+                    "set_value",
+                    serde_json::json!({
+                        "pid": pid as i64,
+                        "window_id": wid,
+                        "element_token": element_token_by_id(&before, "txt-input"),
+                        "value": raw
+                    }),
+                );
+                assert!(!set.is_error(), "set_value failed: {}", set.text());
+                let after = snapshot_elements(driver, pid, wid);
+                let index = element_index_by_id(after.tree_text(), "txt-input")
+                    .expect("txt-input remains addressable");
+                let field = after.structured()["elements"]
+                    .as_array()
+                    .and_then(|elements| {
+                        elements
+                            .iter()
+                            .find(|element| element["element_index"].as_u64() == Some(index))
+                    })
+                    .expect("txt-input structured state");
+                assert_eq!(field["value"], raw, "AXValue must remain lossless");
+                assert_eq!(field["placeholder"], "Type here…");
+            }
         },
     );
 }

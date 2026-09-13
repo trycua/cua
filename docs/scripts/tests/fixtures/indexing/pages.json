@@ -1,0 +1,6 @@
+[
+  {"url":"https://example.com/docs/short", "title":"Short page", "markdown":"Tiny but searchable.", "path_info":{"category":"reference"}},
+  {"url":"https://example.com/docs/paragraphs", "title":"Paragraphs", "markdown":"First short paragraph.\n\nSecond short paragraph.\n\nThird short paragraph.", "path_info":{"category":"tutorials"}},
+  {"url":"https://example.com/docs/code", "title":"Code", "markdown":"# Example\n\n```python\nprint('searchable')\n```", "path_info":{"category":"reference"}},
+  {"url":"https://example.com/docs/empty", "title":"Image only", "markdown":"![Diagram](diagram.png)", "path_info":{"category":"reference"}}
+]

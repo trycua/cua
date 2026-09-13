@@ -55,11 +55,17 @@ export interface BillingUsage {
 async function billingRequest<T>(
 	path: string,
 	method: "GET" | "POST",
+	body?: unknown,
 ): Promise<T> {
 	const token = await getToken();
+	const headers: Record<string, string> = {
+		Authorization: token ? `Bearer ${token}` : "",
+	};
+	if (body !== undefined) headers["Content-Type"] = "application/json";
 	const response = await fetch(path, {
 		method,
-		headers: { Authorization: token ? `Bearer ${token}` : "" },
+		headers,
+		body: body === undefined ? undefined : JSON.stringify(body),
 	});
 	if (!response.ok)
 		throw new Error(`billing request failed: ${response.status}`);
@@ -81,6 +87,12 @@ export const billingApi = {
 					url: localVisualPreviewPath("/settings?billing=setup-preview"),
 				})
 			: billingRequest<{ url: string }>("/api/billing/setup-session", "POST"),
+	completeSetup: (sessionID: string) =>
+		billingRequest<{ applied: boolean }>(
+			"/api/billing/setup-session/complete",
+			"POST",
+			{ session_id: sessionID },
+		),
 	portal: () =>
 		isLocalVisualPreview()
 			? Promise.resolve({

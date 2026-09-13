@@ -27,6 +27,22 @@ fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefus
     BrowserRefusal::new(code, message)
 }
 
+fn hyprland_identity_matches(pid: u32, window_id: u64, owner_pid: u32, address: u64) -> bool {
+    pid != 0 && window_id != 0 && owner_pid == pid && address == window_id
+}
+
+fn hyprland_is_only_owned_window(
+    pid: u32,
+    window_id: u64,
+    identities: impl IntoIterator<Item = (u32, u64)>,
+) -> bool {
+    let mut owned = identities.into_iter().filter(|(owner, _)| *owner == pid);
+    let Some((owner, address)) = owned.next() else {
+        return false;
+    };
+    hyprland_identity_matches(pid, window_id, owner, address) && owned.next().is_none()
+}
+
 fn run_existing_profile_cleanup<T: Send + 'static>(
     cleanup: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T, BrowserRefusal> {
@@ -553,6 +569,46 @@ impl BrowserPlatform for LinuxBrowserPlatform {
             )
         })?;
         if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+            if crate::wayland::hyprland::is_session() {
+                let window = tokio::task::spawn_blocking(move || {
+                    crate::wayland::hyprland::window_for_address(window_id)
+                })
+                .await
+                .ok()
+                .flatten()
+                .ok_or_else(|| {
+                    refusal(
+                        BrowserRefusalCode::BrowserRouteUnavailable,
+                        "Hyprland could not attest the exact mapped browser window",
+                    )
+                })?;
+                if !hyprland_identity_matches(pid_u32, window_id, window.pid, window.address) {
+                    return Err(refusal(
+                        BrowserRefusalCode::BrowserWrongTargetRefused,
+                        "Hyprland browser window does not match the requested pid and full address",
+                    ));
+                }
+                return Ok(NativeWindowInfo {
+                    pid,
+                    window_id,
+                    title: window.title,
+                    bounds: Rect::new(
+                        f64::from(window.x),
+                        f64::from(window.y),
+                        f64::from(window.width),
+                        f64::from(window.height),
+                    ),
+                    geometry_exact: true,
+                    ownership: NativeOwnershipProof {
+                        method: NativeOwnershipMethod::WindowServerOwner,
+                        owner_pid: pid,
+                        detail: Some(
+                            "authenticated Hyprland IPC pid, full address, and mapped window rect"
+                                .to_owned(),
+                        ),
+                    },
+                });
+            }
             if let Some(window) = crate::wayland::sway_ipc::window_for_id(window_id) {
                 if window.pid != pid_u32 {
                     return Err(refusal(
@@ -686,6 +742,27 @@ impl BrowserPlatform for LinuxBrowserPlatform {
             )
         })?;
         if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+            if crate::wayland::hyprland::is_session() {
+                let windows = tokio::task::spawn_blocking(crate::wayland::hyprland::list_windows)
+                    .await
+                    .ok()
+                    .and_then(Result::ok)
+                    .ok_or_else(|| {
+                        refusal(
+                            BrowserRefusalCode::BrowserRouteUnavailable,
+                            "Hyprland could not attest browser window cardinality",
+                        )
+                    })?;
+                // Count every mapped client owned by the PID, including hidden
+                // and off-workspace clients; visibility cannot prove uniqueness.
+                return Ok(Some(hyprland_is_only_owned_window(
+                    pid_u32,
+                    window_id,
+                    windows
+                        .into_iter()
+                        .map(|window| (window.pid, window.address)),
+                )));
+            }
             let Some(windows) = crate::wayland::sway_ipc::list_windows() else {
                 if let Some(owned) =
                     crate::wayland::shell_helper::trusted_window_ids_for_pid(pid_u32)
@@ -1201,6 +1278,40 @@ impl BrowserPlatform for LinuxBrowserPlatform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hyprland_browser_identity_requires_exact_pid_and_full_native_address() {
+        let address = 0x1234_0000_0042;
+        assert!(hyprland_identity_matches(42, address, 42, address));
+        assert!(!hyprland_identity_matches(43, address, 42, address));
+        assert!(!hyprland_identity_matches(42, 0x42, 42, address));
+        assert!(!hyprland_identity_matches(42, address + 1, 42, address));
+        assert!(!hyprland_identity_matches(0, address, 0, address));
+        assert!(!hyprland_identity_matches(42, 0, 42, 0));
+    }
+
+    #[test]
+    fn hyprland_browser_cardinality_requires_one_exact_owned_surface() {
+        let address = 0x1234_0000_0042;
+        assert!(hyprland_is_only_owned_window(42, address, [(42, address)]));
+        assert!(hyprland_is_only_owned_window(
+            42,
+            address,
+            [(7, address + 1), (42, address)],
+        ));
+        for identities in [
+            vec![],
+            vec![(7, address)],
+            vec![(42, 0x42)],
+            vec![(42, address + 1)],
+            vec![(42, address), (42, address + 1)],
+            vec![(42, address), (42, address)],
+        ] {
+            assert!(!hyprland_is_only_owned_window(42, address, identities));
+        }
+        assert!(!hyprland_is_only_owned_window(0, address, [(0, address)]));
+        assert!(!hyprland_is_only_owned_window(42, 0, [(42, 0)]));
+    }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn existing_profile_cleanup_can_drive_atspi_runtime_from_async_session_teardown() {

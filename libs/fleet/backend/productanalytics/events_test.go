@@ -1,11 +1,65 @@
 package productanalytics
 
 import (
+	"context"
+	"os"
 	"strings"
 	"testing"
 
 	"cyclops-cs-backend/auth"
+	"github.com/trycua/cloud/pkg/featureflags"
 )
+
+func TestMain(m *testing.M) {
+	// External classification requires a successfully resolved empty admin set,
+	// not an unavailable provider. Keep tests local and deterministic.
+	if err := os.Setenv("CYCLOPS_CS_ADMIN_SUBS", `[]`); err != nil {
+		panic(err)
+	}
+	if err := featureflags.SetupProvider(context.Background(), "development", featureflags.AWSCredentials{}); err != nil {
+		panic(err)
+	}
+	os.Exit(m.Run())
+}
+
+func TestAdminIdentityUsesTrustedMembershipAcrossSources(t *testing.T) {
+	t.Setenv("CYCLOPS_CS_ADMIN_SUBS", `["admin-owner"]`)
+	auth.InvalidateFeatureFlags()
+	t.Cleanup(auth.InvalidateFeatureFlags)
+	for _, source := range []struct{ azp, principal string }{
+		{"cyclops-cs-spa", auth.PrincipalTypeUser},
+		{"cua-cli", auth.PrincipalTypeUser},
+		{"ukey-example", auth.PrincipalTypeUserKey},
+		{"github-oidc", auth.PrincipalTypeGitHubOIDC},
+	} {
+		user := &auth.User{ID: "admin-owner", AZP: source.azp, PrincipalType: source.principal}
+		if got := ClassifyIdentity(user); got != IdentityInternal {
+			t.Fatalf("admin owner via %s = %q", source.azp, got)
+		}
+	}
+	spoofed := &auth.User{ID: "external-owner", Claims: map[string]string{"is_admin": "true", "roles": "admin"}}
+	if got := ClassifyIdentity(spoofed); got != IdentityExternal {
+		t.Fatalf("untrusted role claim = %q", got)
+	}
+	// Membership refresh must work without recreating a token or restarting.
+	t.Setenv("CYCLOPS_CS_ADMIN_SUBS", `[]`)
+	auth.InvalidateFeatureFlags()
+	if got := ClassifyIdentity(&auth.User{ID: "admin-owner"}); got != IdentityExternal {
+		t.Fatalf("removed admin = %q", got)
+	}
+}
+
+func TestIdentityIsUnknownWhenAdminMembershipCannotBeResolved(t *testing.T) {
+	t.Setenv("CYCLOPS_CS_ADMIN_SUBS", `{"invalid":"not a list"}`)
+	auth.InvalidateFeatureFlags()
+	t.Cleanup(auth.InvalidateFeatureFlags)
+	if got := ClassifyIdentity(&auth.User{ID: "owner"}); got != IdentityUnknown {
+		t.Fatalf("unresolved membership = %q", got)
+	}
+	if got := ClassifyIdentity(&auth.User{ID: "staff", Email: "staff@trycua.com", EmailVerified: true}); got != IdentityInternal {
+		t.Fatalf("verified domain remains independent evidence = %q", got)
+	}
+}
 
 func TestSourceForUser(t *testing.T) {
 	tests := []struct {
@@ -130,6 +184,57 @@ func TestValidateEventRejectsUnsafeProperties(t *testing.T) {
 		if err := ValidateEvent(invalid); err == nil {
 			t.Fatalf("ValidateEvent() accepted attribution value %#v", value)
 		}
+	}
+}
+
+func TestQualificationLookupDiagnosticsRequireBoundedPairedValues(t *testing.T) {
+	valid := func() Event {
+		return Event{Name: EventQualificationRejected, DistinctID: "synthetic-subject", Properties: map[string]any{
+			"reason": "binding_lookup_failed", "qualification_lookup_stage": "claim", "qualification_error_class": "deadline_exceeded",
+		}}
+	}
+	for stage := range allowedQualificationLookupStages {
+		for class := range allowedQualificationErrorClasses {
+			event := valid()
+			event.Properties["qualification_lookup_stage"] = stage
+			event.Properties["qualification_error_class"] = class
+			if stage == "pool" {
+				event.Properties["reason"] = "pool_lookup_failed"
+			}
+			if err := ValidateEvent(event); err != nil {
+				t.Fatalf("bounded pair %s/%s rejected: %v", stage, class, err)
+			}
+		}
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*Event)
+	}{
+		{"raw error", func(e *Event) { e.Properties["qualification_error_class"] = "https://private.example.test/secret" }},
+		{"raw stage", func(e *Event) { e.Properties["qualification_lookup_stage"] = "person@example.test" }},
+		{"non-string", func(e *Event) { e.Properties["qualification_error_class"] = 403 }},
+		{"missing class", func(e *Event) { delete(e.Properties, "qualification_error_class") }},
+		{"missing stage", func(e *Event) { delete(e.Properties, "qualification_lookup_stage") }},
+		{"empty class", func(e *Event) { e.Properties["qualification_error_class"] = "" }},
+		{"wrong event", func(e *Event) { e.Name = EventQualifyingWorkload }},
+		{"wrong reason", func(e *Event) { e.Properties["reason"] = "claim_mismatch" }},
+		{"pool stage binding reason", func(e *Event) { e.Properties["qualification_lookup_stage"] = "pool" }},
+		{"binding stage pool reason", func(e *Event) { e.Properties["reason"] = "pool_lookup_failed" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			event := valid()
+			tc.mutate(&event)
+			if err := ValidateEvent(event); err == nil {
+				t.Fatal("invalid lookup diagnostic was accepted")
+			}
+		})
+	}
+	// Existing events without these optional diagnostics remain valid.
+	event := valid()
+	delete(event.Properties, "qualification_lookup_stage")
+	delete(event.Properties, "qualification_error_class")
+	if err := ValidateEvent(event); err != nil {
+		t.Fatalf("legacy rejection invalid: %v", err)
 	}
 }
 

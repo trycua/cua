@@ -176,12 +176,21 @@ jobs:
       # is bare. Install git + the build toolchain before anything else.
       - name: Install base tooling (container is bare)
         run: |
-          apt-get update
+          # Freeze bullseye indexes and packages together: the live security
+          # mirror can advertise packages it no longer serves. HTTP bootstraps
+          # ca-certificates; APT still verifies Debian signatures and hashes.
+          cat > /etc/apt/sources.list <<'EOF'
+          deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://snapshot.debian.org/archive/debian/20260901T000000Z/ bullseye main
+          deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://snapshot.debian.org/archive/debian/20260901T000000Z/ bullseye-updates main
+          deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://snapshot.debian.org/archive/debian-security/20260901T000000Z/ bullseye-security main
+          EOF
+          # Ignore any additional image-provided sources for this bootstrap.
+          apt-get -o Dir::Etc::sourceparts=- update
           # PipeWire ScreenCast capture remains Nix/modern-build only because
           # bullseye's 0.3.19 headers are too old for libspa-sys 0.8. Portal
           # RemoteDesktop/libei input is pure Rust plus libxkbcommon and ships
           # in these portable release binaries.
-          apt-get install -y --no-install-recommends \
+          apt-get -o Dir::Etc::sourceparts=- install -y --no-install-recommends \
             git ca-certificates curl python3 build-essential pkg-config \
             libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev \
             libxkbcommon-dev
@@ -907,6 +916,61 @@ jobs:
           path: libs/cua-driver/rust/release/cua-driver-rs-*-darwin-*.tar.gz
           if-no-files-found: error
 
+  # Source/build-kit assets only: native plugin certification is a separate gate.
+  # Nightly builds rewrite Cargo versions in the worktree, so they cannot supply
+  # a committed, stable-version source archive under the same provenance contract.
+  build-hyprland-plugin-source:
+    name: pinned Hyprland plugin source
+    needs: release-attribution-preflight
+    if: >-
+      inputs.channel != 'nightly' &&
+      (startsWith(github.ref, 'refs/tags/cua-driver-rs-v') ||
+       (github.event_name == 'workflow_dispatch' && inputs.publish == true))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.source_ref || github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Generate exact-tag plugin source assets
+        id: source
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
+          else
+            VERSION="$REQUESTED_VERSION"
+          fi
+          SHA=$(git rev-parse HEAD)
+          TAG_SHA=$(git rev-parse --verify "refs/tags/cua-driver-rs-v${VERSION}^{commit}")
+          test "$SHA" = "$TAG_SHA"
+          SOURCE_VERSION=$(git show "${SHA}:libs/cua-driver/rust/Cargo.toml" | \
+            python3 -c 'import sys, tomllib; print(tomllib.loads(sys.stdin.read())["workspace"]["package"]["version"])')
+          test "$VERSION" = "$SOURCE_VERSION"
+          # Historical tags predating the bundler retain Driver-only recovery.
+          # An existing helper that fails generation is never silently skipped.
+          if ! git cat-file -e "${SHA}:libs/cua-driver/hyprland-plugin/packaging/release/bundle.py"; then
+            echo "Legacy source has no plugin bundler; preserving Driver-only release."
+            exit 0
+          fi
+          # The generator requires tag SHA and committed Cargo version agreement.
+          python3 libs/cua-driver/hyprland-plugin/packaging/release/bundle.py \
+            --repo . --revision "$(git rev-parse HEAD)" \
+            --driver-version "$VERSION" --release-assets \
+            --output plugin-release-assets
+          echo "available=true" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        if: steps.source.outputs.available == 'true'
+        with:
+          name: cua-hyprland-plugin-source
+          path: plugin-release-assets/*.tar.gz
+          if-no-files-found: error
+
   # Verify the exact candidate archives before a release can publish. This is
   # intentionally separate from the build steps: artifact upload/download is
   # part of the release boundary, and checking only the staging directories
@@ -1017,7 +1081,7 @@ jobs:
   # evidence exists.
   release:
     needs:
-      [build-linux, build-windows, build-macos-universal, verify-windows-node-runtime, verify-release-artifacts, verify-mcp-client-discovery]
+      [build-linux, build-windows, build-macos-universal, verify-windows-node-runtime, verify-release-artifacts, verify-mcp-client-discovery, build-hyprland-plugin-source]
     if: github.event_name == 'workflow_dispatch' && inputs.publish == true
     runs-on: ubuntu-latest
     steps:
@@ -1128,13 +1192,41 @@ jobs:
           echo "Release files:"
           ls -lh release-upload/
 
+      # Match the source job's Python/zlib runtime for deterministic archives.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify staged plugin source assets
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          SHA="${{ steps.version.outputs.sha }}"
+          shopt -s nullglob
+          PLUGIN_ASSETS=(release-upload/cua-hyprland-plugin-*.tar.gz)
+          if git cat-file -e HEAD:libs/cua-driver/hyprland-plugin/packaging/release/bundle.py 2>/dev/null; then
+            test "${#PLUGIN_ASSETS[@]}" -eq 2
+            # Rebuild deterministic source assets from the exact tag. Missing,
+            # extra, misnamed, or changed downloads must fail before publication.
+            python3 libs/cua-driver/hyprland-plugin/packaging/release/bundle.py \
+              --repo . --revision "$SHA" --driver-version "$VERSION" \
+              --release-assets --output plugin-release-expected
+            for EXPECTED in plugin-release-expected/*.tar.gz; do
+              cmp "$EXPECTED" "release-upload/$(basename "$EXPECTED")"
+            done
+          else
+            # Legacy tag recovery has no plugin source job or plugin assets.
+            test "${#PLUGIN_ASSETS[@]}" -eq 0
+          fi
+
       - name: Generate SHA256 checksums
         run: |
           cd release-upload
           {
             echo "## SHA256 Checksums"
             echo '```'
-            shasum -a 256 cua-driver-rs-*.{tar.gz,zip} 2>/dev/null | sort
+            shopt -s nullglob
+            shasum -a 256 cua-driver-rs-*.{tar.gz,zip} cua-hyprland-plugin-*.tar.gz 2>/dev/null | sort
             echo '```'
           } > checksums.txt
 

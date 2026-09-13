@@ -236,7 +236,9 @@ function ShellLayout({
         <TopNavigation
           identity={{
             href: "#/",
-            title: "Cua Fleets",
+            title: import.meta.env.VITE_CYCLOPS_DEV_BUILD_LABEL
+              ? `Cua Fleets · ${import.meta.env.VITE_CYCLOPS_DEV_BUILD_LABEL}`
+              : "Cua Fleets",
             logo: { src: cuaMark, alt: "Cua" },
           }}
           utilities={[

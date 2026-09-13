@@ -5,7 +5,7 @@ from typing import Optional, Tuple
 
 from computer_server.diorama.base import BaseDioramaHandler
 
-from ..backend_policy import VNCUnavailableHandler, configured_backend
+from ..backend_policy import VNCUnavailableHandler, configured_backend, vnc_force_caps
 from ..utils.helpers import get_current_os
 from .base import (
     BaseAccessibilityHandler,
@@ -60,11 +60,17 @@ class HandlerFactory:
 
             vnc_port = int(os.environ.get("CUA_VNC_PORT", "5900"))
             vnc_password = os.environ.get("CUA_VNC_PASSWORD", "")
+            force_caps = vnc_force_caps()
             unavailable = VNCUnavailableHandler()
-            logger.info(f"Using VNC backend → {vnc_host}:{vnc_port}")
+            logger.info(f"Using VNC backend → {vnc_host}:{vnc_port} (force_caps={force_caps})")
             return (
                 VNCAccessibilityHandler(),
-                VNCAutomationHandler(host=vnc_host, port=vnc_port, password=vnc_password),
+                VNCAutomationHandler(
+                    host=vnc_host,
+                    port=vnc_port,
+                    password=vnc_password,
+                    force_caps=force_caps,
+                ),
                 BaseDioramaHandler(),
                 unavailable,
                 unavailable,

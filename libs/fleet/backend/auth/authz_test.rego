@@ -32,9 +32,10 @@ test_is_admin_false_no_flags if {
 # once. That is the point of the shared vocabulary, and the reason it is worth
 # testing directly rather than only through the surfaces that happen to use it.
 
-test_interactive_clients_are_exactly_two if {
+test_interactive_clients_are_exactly_three if {
 	authz.is_interactive_client with input as {"user": {"azp": "cyclops-cs-spa"}}
 	authz.is_interactive_client with input as {"user": {"azp": "cua-cli"}}
+	authz.is_interactive_client with input as {"user": {"azp": "cua-desktop"}}
 	not authz.is_interactive_client with input as {"user": {"azp": "kubernetes"}}
 	not authz.is_interactive_client with input as {"user": {"azp": ""}}
 }

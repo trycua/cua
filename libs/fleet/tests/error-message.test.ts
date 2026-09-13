@@ -92,6 +92,21 @@ test("keeps unrelated pool create errors unchanged", () => {
   )
 })
 
+// The card-admission gate denies pool creation through the same
+// PoolAccessDenied variant, but its message is the actionable one — telling
+// the user to pick a different name would send them down the wrong path.
+test("preserves policy denials that are not name conflicts", () => {
+  const denial =
+    "A payment method is required to create this resource. Add one in Billing and try again."
+  const error = uniffiError("PoolAccessDenied", {
+    operation: "create pool",
+    namespace: "demo",
+    status: 403,
+    body: JSON.stringify({ error: denial }),
+  })
+  assert.equal(poolCreateErrorMessage(error, "demo"), denial)
+})
+
 test("surfaces reason-only variants like Transport", () => {
   const error = uniffiError("Transport", { reason: "dns lookup failed" })
   assert.equal(errorMessage(error), "dns lookup failed")

@@ -71,6 +71,10 @@ is_interactive_client {
 	input.user.azp == "cua-cli"
 }
 
+is_interactive_client {
+	input.user.azp == "cua-desktop"
+}
+
 # Per-key clients are Keycloak service accounts bound to one namespace by a
 # hardcoded `namespace` claim. Their sub owns nothing on its own, so every
 # surface that accepts them checks that claim against the route's parameters.

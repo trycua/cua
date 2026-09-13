@@ -1,0 +1,9 @@
+station_id,location_name,longitude,latitude,flow_lpm,days_since_check
+R01,North garden,0.00150,0.00440,2.00,30
+R02,Upper walk,0.00340,0.00440,2.00,12
+R03,East grove,0.00650,0.00430,2.80,30
+R04,West court,0.00140,0.00310,3.10,7
+R05,Middle walk,0.00350,0.00280,1.90,10
+R06,East court,0.00665,0.00300,2.60,31
+R07,South garden,0.00200,0.00140,1.50,45
+R08,Lower walk,0.00450,0.00135,1.99,30

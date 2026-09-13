@@ -16,6 +16,9 @@ Usage:
 
     # Via env vars
     CUA_VNC_HOST=192.168.64.1 CUA_VNC_PORT=5900 CUA_VNC_PASSWORD=secret python -m computer_server
+
+    # Against a server that does not synthesise Shift for shifted punctuation
+    python -m computer_server --vnc-host 127.0.0.1 --vnc-force-caps
 """
 
 import asyncio
@@ -92,13 +95,26 @@ class _VNCConnection:
     asyncio.to_thread to avoid blocking the event loop.
     """
 
-    def __init__(self, host: str, port: int, password: str = ""):
+    def __init__(self, host: str, port: int, password: str = "", force_caps: bool = False):
         self._host = host
         self._port = port
         self._password = password
+        self._force_caps = force_caps
         # Track cursor position locally
         self._cursor_x: int = 0
         self._cursor_y: int = 0
+
+    def _build_factory(self):
+        """Build the vncdotool factory that configures every connection."""
+
+        from vncdotool.client import VNCDoToolFactory
+
+        factory = VNCDoToolFactory()
+        factory.password = self._password or None
+        # Non-compliant servers (notably QEMU) do not synthesise Shift for
+        # shifted keysyms, so ask vncdotool to send `shift-<key>` instead.
+        factory.force_caps = self._force_caps
+        return factory
 
     def _with_client(self, fn):
         """Execute fn(client) with a fresh VNC connection via the global Twisted reactor.
@@ -110,15 +126,13 @@ class _VNCConnection:
         import threading
 
         from twisted.internet import defer, reactor
-        from vncdotool.client import VNCDoToolFactory
 
         result_holder: list = [None]
         error_holder: list = [None]
         done_event = threading.Event()
 
         def _work():
-            factory = VNCDoToolFactory()
-            factory.password = self._password or None
+            factory = self._build_factory()
 
             @defer.inlineCallbacks
             def _do():
@@ -320,7 +334,12 @@ class _VNCConnection:
         self._with_client(lambda c: c.keyUp(_translate_key(key)))
 
     def type_text(self, text: str):
-        """Type text character by character, handling shift for uppercase/symbols."""
+        """Type text character by character.
+
+        Each character is sent as its own keysym, which is what RFB prescribes:
+        the server is responsible for pressing Shift when the keysym needs it.
+        Servers that only do this for letters (QEMU) need ``force_caps``.
+        """
         from twisted.internet import defer
 
         @defer.inlineCallbacks
@@ -385,8 +404,9 @@ class VNCAutomationHandler(BaseAutomationHandler):
         host: str = "127.0.0.1",
         port: int = 5900,
         password: str = "",
+        force_caps: bool = False,
     ):
-        self._conn = _VNCConnection(host, port, password)
+        self._conn = _VNCConnection(host, port, password, force_caps=force_caps)
 
     def _resolve_coords(self, x: Optional[int], y: Optional[int]) -> Tuple[int, int]:
         if x is not None and y is not None:

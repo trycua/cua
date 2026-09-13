@@ -62,6 +62,52 @@ test("first touch survives a Keycloak round trip and only binds validated public
   ])
 })
 
+test("GitHub README CTA preserves all four fields through a simulated Keycloak bind", async () => {
+  const cta = "https://run.cua.ai/?utm_source=github&utm_medium=referral&utm_campaign=fleet_activation&content_id=repo_readme"
+  const firstTouch = 1_700_000_000_000
+  const expected = {
+    version: 1,
+    capturedAt: firstTouch,
+    values: {
+      content_id: "repo_readme",
+      utm_source: "github",
+      utm_medium: "referral",
+      utm_campaign: "fleet_activation",
+    },
+  }
+
+  for (const href of [
+    cta,
+    `${cta}&utm_content=ignored&email=person%40example.test&identity=raw-subject&url=https%3A%2F%2Fexample.test`,
+  ]) {
+    const storage = memoryStorage()
+    captureFleetAttribution(href, { storage, now: () => firstTouch })
+    assert.deepEqual(JSON.parse(storage.getItem(ATTRIBUTION_STORAGE_KEY) ?? "null"), expected)
+
+    captureFleetAttribution(
+      "https://run.cua.ai/?code=oidc-code&state=opaque&utm_source=overwrite&content_id=overwrite",
+      { storage, now: () => firstTouch + 1_000 },
+    )
+    assert.deepEqual(JSON.parse(storage.getItem(ATTRIBUTION_STORAGE_KEY) ?? "null"), expected)
+
+    const bound: unknown[] = []
+    await bindStoredFleetAttribution({
+      bind: async (record, accessToken) => {
+        assert.equal(accessToken, "access-token")
+        bound.push(record)
+      },
+    }, {
+      storage,
+      now: () => firstTouch + 2_000,
+      getAccessToken: async () => "access-token",
+    })
+
+    // Exact records exclude the raw URL, email, identity, and unknown utm_content.
+    assert.deepEqual(bound, [expected])
+    assert.equal(storage.getItem(ATTRIBUTION_STORAGE_KEY), null)
+  }
+})
+
 test("invalid, malformed, empty, oversized, and expired records never reach a binder", async () => {
   const now = 1_700_000_000_000
   const invalidStoredRecords = [

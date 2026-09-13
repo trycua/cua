@@ -140,8 +140,9 @@ The documentation database contains crawled pages from cua.ai/docs covering:
 
 === CODE DATABASE ===
 
-The code database contains versioned source code indexed across all git tags.
-Components include: agent, computer, mcp-server, som, etc.
+The code database contains Python, TypeScript, and JavaScript files from indexed git tags.
+Enumerate code_files for serving component, version, and language coverage.
+Component names identify tag families, not complete standalone product coverage.
 
 === WORKFLOW EXAMPLES ===
 
@@ -167,28 +168,9 @@ model = get_registry().get("sentence-transformers").create(name="all-MiniLM-L6-v
 # Eagerly initialize database connections at startup to reduce first-request latency
 print("Initializing database connections...")
 
-# Docs LanceDB
-_docs_lance_db = None
-_docs_lance_table = None
-docs_db_path = Path(DOCS_DB_PATH)
-if docs_db_path.exists():
-    try:
-        _docs_lance_db = lancedb.connect(docs_db_path)
-        _docs_lance_table = _docs_lance_db.open_table("docs")
-        print(f"  Docs LanceDB loaded from {docs_db_path}")
-    except Exception as e:
-        print(f"  Warning: Could not load docs LanceDB: {e}")
+from docs_index import GenerationReader
 
-# Docs SQLite
-_docs_sqlite_conn = None
-sqlite_path = Path(DOCS_DB_PATH) / "docs.sqlite"
-if sqlite_path.exists():
-    try:
-        _docs_sqlite_conn = sqlite3.connect(f"file:{sqlite_path}?mode=ro", uri=True)
-        _docs_sqlite_conn.row_factory = sqlite3.Row
-        print(f"  Docs SQLite loaded from {sqlite_path}")
-    except Exception as e:
-        print(f"  Warning: Could not load docs SQLite: {e}")
+docs_reader = GenerationReader(DOCS_DB_PATH)
 
 # Code LanceDB
 _code_lance_db = None
@@ -217,21 +199,13 @@ print("Database initialization complete.")
 
 
 def get_lance_table():
-    """Get LanceDB connection for docs (eagerly loaded)"""
-    if _docs_lance_table is None:
-        raise RuntimeError(
-            "Database not found. Ensure the docs database is mounted at DOCS_DB_PATH."
-        )
-    return _docs_lance_table
+    """Get the vector half of the verified active docs generation."""
+    return docs_reader.get()[1]
 
 
 def get_sqlite_conn():
-    """Get read-only SQLite connection for docs (eagerly loaded)"""
-    if _docs_sqlite_conn is None:
-        raise RuntimeError(
-            "SQLite database not found. Ensure docs.sqlite is present in DOCS_DB_PATH."
-        )
-    return _docs_sqlite_conn
+    """Get the SQLite half of the verified active docs generation."""
+    return docs_reader.get()[0]
 
 
 def get_code_lance_table():
@@ -267,7 +241,8 @@ def query_docs_db(sql: str) -> list[dict]:
     - id INTEGER PRIMARY KEY AUTOINCREMENT
     - url TEXT NOT NULL UNIQUE         -- Full URL of the documentation page
     - title TEXT NOT NULL              -- Page title
-    - category TEXT NOT NULL           -- Category (e.g., 'cua', 'cuabench', 'llms.txt')
+    - category TEXT NOT NULL           -- URL category (e.g., 'reference', 'tutorials')
+    - build_id TEXT NOT NULL           -- Verified paired-generation identifier
     - content TEXT NOT NULL            -- Plain text content (markdown stripped)
 
     Virtual Table: pages_fts (FTS5 full-text search)
@@ -322,13 +297,14 @@ def query_docs_vectors(
     - vector VECTOR       -- Embedding vector (all-MiniLM-L6-v2, 384 dimensions)
     - url TEXT            -- Source URL
     - title TEXT          -- Document title
-    - category TEXT       -- Category (e.g., 'cua', 'cuabench')
+    - category TEXT       -- URL category (e.g., 'reference', 'tutorials')
+    - build_id TEXT       -- Verified paired-generation identifier
     - chunk_index INT     -- Index of chunk within document
 
     Args:
         query: Natural language query to embed and search for
         limit: Maximum number of results (default: 10, max: 100)
-        where: Optional SQL-like filter (e.g., "category = 'cua'")
+        where: Optional SQL-like filter (e.g., "category = 'reference'")
         select: Optional list of columns to return (default: all except vector)
 
     Returns:

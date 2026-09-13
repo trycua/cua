@@ -179,26 +179,18 @@ impl ToolDef {
             "capabilities": caps,
             "risk": risk,
         });
-        let output_schema = if crate::action_record::is_action_tool(&self.name) {
-            Some(
-                <cua_driver_contract::ActionResult as cua_driver_contract::ToolOutput>::output_schema(
-                ),
-            )
-        } else {
-            cua_driver_contract::tool_success_output_schema(&self.name)
-        };
-        if let Some(output_schema) = output_schema {
-            // Advertise the refusal envelope alongside the success shape. MCP
-            // holds every `structuredContent` we emit — refusals included — to
-            // the advertised schema, and a success-only schema made strict
-            // clients discard our refusal message in favour of a schema error.
+        // Advertise the refusal envelope alongside the success shape. MCP
+        // holds every `structuredContent` we emit — refusals included — to
+        // the advertised schema, and a success-only schema made strict
+        // clients discard our refusal message in favour of a schema error.
+        // The `tools/call` boundary answers from the same lookup, so what a
+        // client is promised and what it is held to cannot drift.
+        if let Some(output_schema) = cua_driver_contract::advertised_tool_output_schema(&self.name)
+        {
             entry
                 .as_object_mut()
                 .expect("tool list entry is an object")
-                .insert(
-                    "outputSchema".into(),
-                    cua_driver_contract::advertised_output_schema(output_schema),
-                );
+                .insert("outputSchema".into(), output_schema);
         }
         entry
     }
@@ -506,6 +498,15 @@ pub enum ProtectedResourceOwnership {
 #[async_trait]
 pub trait Tool: Send + Sync {
     fn def(&self) -> &ToolDef;
+
+    /// Implementation-attested routing that cannot touch the primary input
+    /// lane. The adapter must serialize its own lifecycle and fail closed if
+    /// that independent route is unavailable; it must never fall back to
+    /// global input. Caller fields alone cannot establish this guarantee.
+    /// Existing platform routes conservatively retain global coordination.
+    fn has_independent_input_lane(&self, _args: &Value) -> bool {
+        false
+    }
 
     /// Trusted implementation-side provenance for prompt-light disposable
     /// resources. The default is deliberately conservative: caller arguments
@@ -947,7 +948,7 @@ impl ToolRegistry {
                 .await;
         }
         let context = match crate::session_authorization::configured_registry()
-            .and_then(crate::session_authorization::SessionAuthorizationRegistry::legacy_context)
+            .and_then(|registry| registry.legacy_context())
         {
             Ok(context) => context,
             Err(error) => {
@@ -965,7 +966,7 @@ impl ToolRegistry {
     pub async fn invoke_from_trusted_adapter(&self, name: &str, mut args: Value) -> ToolResult {
         let evidence = TrustedInvocationEvidence::extract_from_adapter_args(&mut args);
         let context = match crate::session_authorization::configured_registry()
-            .and_then(crate::session_authorization::SessionAuthorizationRegistry::legacy_context)
+            .and_then(|registry| registry.legacy_context())
         {
             Ok(context) => context,
             Err(error) => {
@@ -1496,7 +1497,11 @@ impl ToolRegistry {
                 "start_recording" | "stop_recording" | "get_recording_state" | "replay_trajectory"
             );
         let private_consent_turn = is_existing_profile_prepare(resolved_name, &args);
-        let _desktop_action = if is_physical_desktop_action(resolved_name) {
+        let _desktop_action = if requires_desktop_coordination(
+            resolved_name,
+            &args,
+            tool.has_independent_input_lane(&args),
+        ) {
             let coordinator = desktop_action_coordinator();
             // Avoid yielding the dispatch task when the process-wide input
             // lane is uncontended. On Windows, that yield creates a window in
@@ -1522,7 +1527,11 @@ impl ToolRegistry {
             })
             .flatten();
 
-        let mut result = tool.invoke(args.clone()).await;
+        let mut result = crate::recording::scope_dispatch_click_capture(
+            pending_turn.as_ref(),
+            tool.invoke(args.clone()),
+        )
+        .await;
         drop(lifecycle_dispatch);
         // The platform worker has exited, so another text operation for this
         // pid may now start even while result projection and evidence capture
@@ -1584,10 +1593,11 @@ impl ToolRegistry {
         if result.is_error != Some(true) && crate::action_record::is_action_tool(resolved_name) {
             if let Err(error) = publish_action_result(&mut result) {
                 result = ToolResult::error(format!(
-                    "internal action outcome mismatch for {resolved_name}: {error}"
+                    "internal action outcome mismatch for {resolved_name}: {error}; the tool may have executed. Verify state before retrying."
                 ))
                 .with_structured(serde_json::json!({
                     "code": "action_outcome_mismatch",
+                    "execution_state": "unknown",
                     "tool": resolved_name,
                     "detail": error,
                 }));
@@ -1599,10 +1609,11 @@ impl ToolRegistry {
                     cua_driver_contract::validate_success_output(resolved_name, structured)
                 {
                     result = ToolResult::error(format!(
-                        "internal typed output mismatch for {resolved_name}: {error}"
+                        "internal typed output mismatch for {resolved_name}: {error}; the tool may have executed. Verify state before retrying."
                     ))
                     .with_structured(serde_json::json!({
                         "code": "typed_output_mismatch",
+                        "execution_state": "unknown",
                         "tool": resolved_name,
                         "detail": error,
                     }));
@@ -2561,6 +2572,21 @@ fn is_physical_desktop_action(tool: &str) -> bool {
     )
 }
 
+fn requires_desktop_coordination(tool: &str, args: &Value, independent_lane: bool) -> bool {
+    if !is_physical_desktop_action(tool) {
+        return false;
+    }
+    // Only an implementation-attested, exact-window background route can
+    // leave the shared lane. Explicit desktop and foreground calls never do.
+    let exact_background_window = args["pid"].as_u64().is_some_and(|pid| pid > 0)
+        && args["window_id"].as_u64().is_some_and(|id| id > 0)
+        && args["scope"] != "desktop"
+        && args.pointer("/target/kind").and_then(Value::as_str) != Some("desktop")
+        && args["delivery_mode"] != "foreground"
+        && args["dispatch"] != "foreground";
+    !(independent_lane && exact_background_window)
+}
+
 /// Bucket that owns the processes a call is allowed to terminate.
 ///
 /// A call that declares a session keys its launches to that session, so
@@ -2905,10 +2931,13 @@ mod runtime_isolation_tests {
             &self.def
         }
 
-        async fn invoke(&self, _args: serde_json::Value) -> crate::protocol::ToolResult {
+        async fn invoke(&self, args: serde_json::Value) -> crate::protocol::ToolResult {
             self.hits.fetch_add(1, Ordering::SeqCst);
-            crate::protocol::ToolResult::text("private state")
-                .with_structured(serde_json::json!({"snapshot_id": 1}))
+            crate::protocol::ToolResult::text("private state").with_structured(serde_json::json!({
+                "pid": args["pid"].as_u64().unwrap_or(42),
+                "window_id": args["window_id"].as_u64().unwrap_or(7),
+                "snapshot_id": "synthetic-snapshot", "elements": []
+            }))
         }
     }
 
@@ -3004,6 +3033,18 @@ mod runtime_isolation_tests {
         Arc::new(registry)
     }
 
+    // Use the same canonical spelling as manifest loading, including Windows'
+    // drive and extended-length prefix. This is an identity fixture only.
+    fn fixture_executable() -> String {
+        std::env::current_exe()
+            .unwrap()
+            .canonicalize()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned()
+    }
+
     fn attested_registry(
         name: &str,
         provider: Option<Arc<dyn ProtectedConsentProvider>>,
@@ -3017,7 +3058,7 @@ mod runtime_isolation_tests {
                 "fingerprint": {
                     "pid": 424242,
                     "start_time": 7,
-                    "executable": "/synthetic/fixture"
+                    "executable": fixture_executable()
                 }
             }),
             "get_window_state" => serde_json::json!({
@@ -3027,7 +3068,7 @@ mod runtime_isolation_tests {
                 "fingerprint": {
                     "pid": 424242,
                     "start_time": 7,
-                    "executable": "/synthetic/fixture"
+                    "executable": fixture_executable()
                 }
             }),
             _ => serde_json::json!({
@@ -3244,7 +3285,7 @@ mod runtime_isolation_tests {
     async fn bounded_observation_uses_only_the_manifest_without_a_protected_host() {
         let hits = Arc::new(AtomicUsize::new(0));
         let registry = attested_registry("get_window_state", None, hits.clone(), false);
-        let context = bounded_context(
+        let context = bounded_context(&format!(
             r#"
 version: 2
 mode: bounded
@@ -3254,12 +3295,13 @@ allow:
   tools: [get_window_state]
 resources:
   apps:
-    - executable: /synthetic/fixture
+    - executable: {executable}
       launch: false
       windows: all
       terminate: deny
 "#,
-        );
+            executable = serde_json::to_string(&fixture_executable()).unwrap()
+        ));
         let result = registry
             .invoke_with_context(
                 "get_window_state",
@@ -3279,15 +3321,18 @@ resources:
             let registry = attested_registry("get_window_state", None, allowed_hits.clone(), false);
             let allowed = manifest_context(
                 mode,
-                r#"
+                &format!(
+                    r#"
 version: 3
 allow:
   tools: [get_window_state]
 resources:
   apps:
-    - executable: /synthetic/fixture
+    - executable: {executable}
       windows: all
 "#,
+                    executable = serde_json::to_string(&fixture_executable()).unwrap()
+                ),
             );
             let result = registry
                 .invoke_with_context(
@@ -3303,15 +3348,22 @@ resources:
             let registry = attested_registry("get_window_state", None, denied_hits.clone(), false);
             let denied = manifest_context(
                 mode,
-                r#"
+                &format!(
+                    r#"
 version: 3
 allow:
   tools: [get_window_state]
 resources:
   apps:
-    - executable: /another/application
+    - executable: {executable}
       windows: all
 "#,
+                    executable = serde_json::to_string(
+                        &std::path::Path::new(&fixture_executable())
+                            .with_file_name("another-application.exe")
+                    )
+                    .unwrap()
+                ),
             );
             let result = registry
                 .invoke_with_context(
@@ -3614,6 +3666,74 @@ resources:
         }
         assert_eq!(hits.load(Ordering::SeqCst), 3);
         assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn background_input_rechecks_manifest_before_every_adapter_dispatch() {
+        // The adapter may retain a native connection after a successful call.
+        // Reusing its public session label must not reuse resource authority.
+        for mode in [
+            PermissionMode::Standard,
+            PermissionMode::Bounded,
+            PermissionMode::Unrestricted,
+        ] {
+            let hits = Arc::new(AtomicUsize::new(0));
+            let registry = input_registry(None, hits.clone());
+            let context = manifest_context(
+                mode,
+                r#"
+version: 3
+expires_after: 1h
+idle_timeout: 30m
+allow:
+  tools: [click]
+resources:
+  desktop:
+    windows:
+      - pid: 42
+        window_id: 7
+"#,
+            );
+            for (window, expected_calls) in [(7, 1), (8, 1), (7, 2), (9, 2)] {
+                let result = registry.invoke_with_context("click", serde_json::json!({
+                    "pid": 42, "window_id": window, "x": 10, "y": 20,
+                    "delivery_mode": "background", "session": "persistent-native-connection",
+                    "_session_id": "forged-authority", "_lane": 0,
+                }), context.clone()).await;
+                assert_eq!(
+                    result.is_error == Some(true),
+                    window != 7,
+                    "{mode:?}: window {window}"
+                );
+                assert_eq!(
+                    hits.load(Ordering::SeqCst),
+                    expected_calls,
+                    "denied input must never enter the adapter"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn background_input_without_manifest_uses_existing_promptless_modes() {
+        for context in [standard_context(), unrestricted_context()] {
+            let hits = Arc::new(AtomicUsize::new(0));
+            let registry = input_registry(None, hits.clone());
+            for window in [7, 8] {
+                let result = registry
+                    .invoke_with_context(
+                        "click",
+                        serde_json::json!({
+                            "pid": 42, "window_id": window, "x": 10, "y": 20,
+                            "delivery_mode": "background", "session": "ordinary-desktop-input",
+                        }),
+                        context.clone(),
+                    )
+                    .await;
+                assert_ne!(result.is_error, Some(true));
+            }
+            assert_eq!(hits.load(Ordering::SeqCst), 2);
+        }
     }
 
     #[tokio::test]
@@ -3927,7 +4047,7 @@ resources:
                 crate::browser::ProcessFingerprint {
                     pid: 424242,
                     start_time: Some(7),
-                    executable: Some("/synthetic/fixture".to_owned()),
+                    executable: Some(fixture_executable()),
                 },
             );
 
@@ -3955,7 +4075,7 @@ resources:
                 crate::browser::ProcessFingerprint {
                     pid: 424242,
                     start_time: Some(7),
-                    executable: Some("/synthetic/fixture".to_owned()),
+                    executable: Some(fixture_executable()),
                 },
             );
 
@@ -3985,7 +4105,7 @@ resources:
                 crate::browser::ProcessFingerprint {
                     pid: 424242,
                     start_time: Some(7),
-                    executable: Some("/synthetic/fixture".to_owned()),
+                    executable: Some(fixture_executable()),
                 },
             );
 
@@ -4088,7 +4208,7 @@ resources:
                 crate::browser::ProcessFingerprint {
                     pid: 424242,
                     start_time: Some(7),
-                    executable: Some("/synthetic/fixture".to_owned()),
+                    executable: Some(fixture_executable()),
                 },
             );
 
@@ -4492,6 +4612,33 @@ resources:
             task.await.unwrap();
         }
         assert_eq!(max_active.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn independent_input_requires_adapter_attestation_and_an_exact_background_window() {
+        use super::requires_desktop_coordination;
+        let exact = serde_json::json!({"pid": 10, "window_id": 20, "delivery_mode": "background"});
+        assert!(requires_desktop_coordination("drag", &exact, false));
+        assert!(!requires_desktop_coordination("drag", &exact, true));
+        for fields in [
+            serde_json::json!({"scope": "desktop"}),
+            serde_json::json!({"target": {"kind": "desktop"}}),
+            serde_json::json!({"delivery_mode": "foreground"}),
+            serde_json::json!({"dispatch": "foreground"}),
+            serde_json::json!({"pid": 0}),
+            serde_json::json!({"window_id": null}),
+        ] {
+            let mut args = exact.clone();
+            args.as_object_mut()
+                .unwrap()
+                .extend(fields.as_object().unwrap().clone());
+            assert!(requires_desktop_coordination("drag", &args, true), "{args}");
+        }
+        assert!(requires_desktop_coordination(
+            "drag",
+            &serde_json::json!({"independent_input_lane": true}),
+            false
+        ));
     }
 
     #[test]

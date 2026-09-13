@@ -162,6 +162,12 @@
       "success_output_schema": {
         "additionalProperties": false,
         "properties": {
+          "committed": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "delivery": {
             "additionalProperties": false,
             "properties": {
@@ -565,6 +571,12 @@
       "success_output_schema": {
         "additionalProperties": false,
         "properties": {
+          "committed": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "delivery": {
             "additionalProperties": false,
             "properties": {
@@ -1946,6 +1958,12 @@
       "success_output_schema": {
         "additionalProperties": false,
         "properties": {
+          "committed": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "delivery": {
             "additionalProperties": false,
             "properties": {
@@ -2117,6 +2135,12 @@
       "success_output_schema": {
         "additionalProperties": false,
         "properties": {
+          "committed": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "delivery": {
             "additionalProperties": false,
             "properties": {
@@ -2720,6 +2744,12 @@
       "success_output_schema": {
         "additionalProperties": false,
         "properties": {
+          "committed": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "delivery": {
             "additionalProperties": false,
             "properties": {
@@ -2937,6 +2967,12 @@
       "success_output_schema": {
         "additionalProperties": false,
         "properties": {
+          "committed": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "delivery": {
             "additionalProperties": false,
             "properties": {
@@ -3174,6 +3210,12 @@
       "success_output_schema": {
         "additionalProperties": false,
         "properties": {
+          "committed": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "delivery": {
             "additionalProperties": false,
             "properties": {
@@ -3658,6 +3700,12 @@
       "success_output_schema": {
         "additionalProperties": false,
         "properties": {
+          "committed": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "delivery": {
             "additionalProperties": false,
             "properties": {
@@ -4011,6 +4059,12 @@
       "success_output_schema": {
         "additionalProperties": false,
         "properties": {
+          "committed": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "delivery": {
             "additionalProperties": false,
             "properties": {

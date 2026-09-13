@@ -5739,7 +5739,7 @@ export type WindowStateOutput = {
     windowBounds?: WindowBounds,
     documentPath?: string,
     /**
-     * Absent when the app does not report a dirty flag: unknown, never "clean".
+     * macOS only. Absent when the app does not report a dirty flag: unknown, never "clean".
      */
     documentEdited?: boolean,
     /**

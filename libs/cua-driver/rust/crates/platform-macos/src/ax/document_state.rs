@@ -59,6 +59,8 @@ mod tests {
     use super::*;
     use std::cell::RefCell;
 
+    const STALL: Duration = Duration::from_millis(120);
+
     #[derive(Default)]
     struct FakeApp {
         url: Option<String>,
@@ -69,29 +71,29 @@ mod tests {
     }
 
     impl FakeApp {
-        fn record(&self, attribute: &'static str, deadline: &Deadline) {
+        fn record(&self, attribute: &'static str) {
             self.calls.borrow_mut().push(attribute);
             if self.stalls {
-                // A hung app answers nothing: the AX request burns exactly the
-                // messaging timeout it was given, which is the remaining budget.
-                std::thread::sleep(deadline.remaining().unwrap_or_default());
+                // A request to a hung app costs the same wall clock every time,
+                // whatever the caller thinks its remaining budget is.
+                std::thread::sleep(STALL);
             }
         }
     }
 
     impl DocumentAttributes for FakeApp {
-        fn document_url(&self, deadline: &Deadline) -> Option<String> {
-            self.record("AXDocument", deadline);
+        fn document_url(&self, _deadline: &Deadline) -> Option<String> {
+            self.record("AXDocument");
             self.url.clone()
         }
 
-        fn edited_on_window(&self, deadline: &Deadline) -> Option<bool> {
-            self.record("AXEdited", deadline);
+        fn edited_on_window(&self, _deadline: &Deadline) -> Option<bool> {
+            self.record("AXEdited");
             self.window_edited
         }
 
-        fn edited_on_close_button(&self, deadline: &Deadline) -> Option<bool> {
-            self.record("AXCloseButton/AXEdited", deadline);
+        fn edited_on_close_button(&self, _deadline: &Deadline) -> Option<bool> {
+            self.record("AXCloseButton/AXEdited");
             self.close_button_edited
         }
     }
@@ -102,21 +104,24 @@ mod tests {
             stalls: true,
             ..FakeApp::default()
         };
-        let budget = Duration::from_millis(200);
+        // Smaller than one request, so the deadline is already gone when the
+        // first one returns: a shape that retried every attribute would record
+        // three calls and cost three stalls.
+        let budget = STALL / 2;
 
         let started = Instant::now();
         let state = collect_within(&hung, budget);
         let elapsed = started.elapsed();
 
         assert_eq!(state, DocumentState::default());
-        assert!(
-            elapsed < budget * 2,
-            "probe overran its budget: {elapsed:?} for a {budget:?} budget"
-        );
         assert_eq!(
             hung.calls.borrow().as_slice(),
             ["AXDocument"],
             "reads after the deadline must be skipped"
+        );
+        assert!(
+            elapsed < STALL * 2,
+            "probe cost more than the one request already in flight: {elapsed:?}"
         );
     }
 

@@ -92,5 +92,105 @@ is mutable; pin a resolved digest when you need a reproducible image.
 | ----- | ---------------------- | ------------ | ------- | -------------------------------------------------------- |
 | Linux | Ubuntu 24.04           | amd64, arm64 | XFCE    | `public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:docker-latest` |
 
-The NixOS family listed above publishes VM containerDisks only; it does not
-publish runnable Docker desktop variants.
+### NixOS desktop Docker builds
+
+Each NixOS desktop definition has independent VM and native Docker outputs.
+The Docker image is built from the NixOS system closure using Nix-native container
+layers, not by converting or embedding the VM disk.
+
+The following 43 Linux/amd64 Docker profiles passed build and actual-container
+boot, desktop, keyboard, pointer, reconnection, computer-server and Cua Driver
+checks at source revision
+`60395ad7603bda8bc77a1bb2f3f59266e5ce4be0`.
+These changes are merged in cloud revision
+`0d1436d9825486fe6ea0a827e18486e3f00b38e5`.
+
+**Registry publication is pending.** These are verified source-build outputs,
+not published Docker registry references. Do not use the VM digests above with
+`docker run`. Docker publication uses separate `docker-git-<source-sha>` tags;
+no NixOS Docker `latest` tag or SDK built-in image selector is implied.
+
+| Desktop / window manager | Display server | Docker build output |
+| --- | --- | --- |
+| Awesome | X11 | `nixos-workspace-awesome-docker` |
+| berry | X11 | `nixos-workspace-berry-docker` |
+| bspwm | X11 | `nixos-workspace-bspwm-docker` |
+| Budgie | Wayland | `nixos-workspace-budgie-docker` |
+| CDE | X11 | `nixos-workspace-cde-docker` |
+| Cinnamon | X11 | `nixos-workspace-cinnamon-docker` |
+| CLFSWM | X11 | `nixos-workspace-clfswm-docker` |
+| dk | X11 | `nixos-workspace-dk-docker` |
+| dwl | Wayland | `nixos-workspace-dwl-docker` |
+| dwm | X11 | `nixos-workspace-dwm-docker` |
+| Fluxbox | X11 | `nixos-workspace-fluxbox-docker` |
+| FVWM 2 | X11 | `nixos-workspace-fvwm2-docker` |
+| FVWM 3 | X11 | `nixos-workspace-fvwm3-docker` |
+| Hackedbox | X11 | `nixos-workspace-hackedbox-docker` |
+| herbstluftwm | X11 | `nixos-workspace-herbstluftwm-docker` |
+| i3 | X11 | `nixos-workspace-i3-docker` |
+| IceWM | X11 | `nixos-workspace-icewm-docker` |
+| JWM | X11 | `nixos-workspace-jwm-docker` |
+| katriawm | X11 | `nixos-workspace-katriawm-docker` |
+| KDE Plasma 6 | X11 | `nixos-workspace-plasma-docker` |
+| lwm | X11 | `nixos-workspace-lwm-docker` |
+| LXQt | X11 | `nixos-workspace-lxqt-docker` |
+| MATE | X11 | `nixos-workspace-mate-docker` |
+| Metacity | X11 | `nixos-workspace-metacity-docker` |
+| MLVWM | X11 | `nixos-workspace-mlvwm-docker` |
+| Motif Window Manager | X11 | `nixos-workspace-mwm-docker` |
+| Nimdow | X11 | `nixos-workspace-nimdow-docker` |
+| Notion | X11 | `nixos-workspace-notion-docker` |
+| Openbox | X11 | `nixos-workspace-openbox-docker` |
+| oxwm | X11 | `nixos-workspace-oxwm-docker` |
+| PekWM | X11 | `nixos-workspace-pekwm-docker` |
+| Qtile | X11 | `nixos-workspace-qtile-docker` |
+| Ratpoison | X11 | `nixos-workspace-ratpoison-docker` |
+| River | Wayland | `nixos-workspace-river-docker` |
+| Sawfish | X11 | `nixos-workspace-sawfish-docker` |
+| smallwm | X11 | `nixos-workspace-smallwm-docker` |
+| StumpWM | X11 | `nixos-workspace-stumpwm-docker` |
+| Sway | Wayland | `nixos-workspace-sway-docker` |
+| Wayfire | Wayland | `nixos-workspace-wayfire-docker` |
+| Window Maker | X11 | `nixos-workspace-windowmaker-docker` |
+| wmderland | X11 | `nixos-workspace-wmderland-docker` |
+| wmii | X11 | `nixos-workspace-wmii-docker` |
+| XFCE | X11 | `nixos-workspace-xfce-docker` |
+
+Hyprland and cwm are intentionally excluded: their Docker runtime checks did
+not pass. Hyprland failed graphics initialization; cwm failed exact screenshot
+text recognition. The 24 previously blocked catalog definitions are also not
+listed. Docker qualification is independent of VM qualification: a desktop can
+have a working VM image without a qualified Docker variant, or vice versa.
+
+These are **systemd-based containers requiring rootful Docker, `--privileged`
+and a private cgroup namespace on an isolated, disposable Linux host**. They are
+not a tenant isolation boundary or a drop-in replacement for an unprivileged
+container. Rootless Docker, gVisor and Modal compatibility is not established.
+Never expose the Docker socket or bind host PID/network/cgroup namespaces.
+
+To build a listed profile from the tested cloud source, with Git, Nix and
+Docker installed:
+
+```bash
+git clone https://github.com/trycua/cloud.git
+cd cloud
+git checkout 60395ad7603bda8bc77a1bb2f3f59266e5ce4be0
+python3 nixos/desktop-workspace/docker.py build \
+  --profile xfce --output /tmp/nixos-xfce-docker
+```
+
+The cloud source repository requires appropriate repository access. The build
+loads the local image `cua-nixos-xfce:docker-dev`; substitute another listed
+profile ID to build its image. On the isolated Docker host:
+
+```bash
+docker run --rm --name nixos-xfce --privileged --cgroupns=private \
+  --tmpfs /run --tmpfs /tmp:mode=1777 --shm-size=512m \
+  --memory=4g --cpus=2 \
+  -p 127.0.0.1:6080:6080 -p 127.0.0.1:8000:8000 -p 127.0.0.1:3000:3000 \
+  cua-nixos-xfce:docker-dev
+```
+
+Computer-server listens on port 8000 and Cua Driver MCP on port 3000. StumpWM
+also provides Lisp MCP on port 3001. Bind any published service ports only to
+loopback and use authenticated access; raw VNC on port 5900 stays private.

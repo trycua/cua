@@ -5624,6 +5624,8 @@ export type WindowElement = {
     depth: number,
     elementToken?: string,
     label?: string,
+    description?: string,
+    help?: string,
     value?: string,
     placeholder?: string,
     valueDescription?: string,
@@ -5663,6 +5665,8 @@ const FfiConverterTypeWindowElement = (() => {
                 depth: FfiConverterUInt32.read(from),
                 elementToken: FfiConverterOptionalString.read(from),
                 label: FfiConverterOptionalString.read(from),
+                description: FfiConverterOptionalString.read(from),
+                help: FfiConverterOptionalString.read(from),
                 value: FfiConverterOptionalString.read(from),
                 placeholder: FfiConverterOptionalString.read(from),
                 valueDescription: FfiConverterOptionalString.read(from),
@@ -5682,6 +5686,8 @@ const FfiConverterTypeWindowElement = (() => {
             FfiConverterUInt32.write(value.depth, into);
             FfiConverterOptionalString.write(value.elementToken, into);
             FfiConverterOptionalString.write(value.label, into);
+            FfiConverterOptionalString.write(value.description, into);
+            FfiConverterOptionalString.write(value.help, into);
             FfiConverterOptionalString.write(value.value, into);
             FfiConverterOptionalString.write(value.placeholder, into);
             FfiConverterOptionalString.write(value.valueDescription, into);
@@ -5700,6 +5706,8 @@ const FfiConverterTypeWindowElement = (() => {
              FfiConverterUInt32.allocationSize(value.depth) +
              FfiConverterOptionalString.allocationSize(value.elementToken) +
              FfiConverterOptionalString.allocationSize(value.label) +
+             FfiConverterOptionalString.allocationSize(value.description) +
+             FfiConverterOptionalString.allocationSize(value.help) +
              FfiConverterOptionalString.allocationSize(value.value) +
              FfiConverterOptionalString.allocationSize(value.placeholder) +
              FfiConverterOptionalString.allocationSize(value.valueDescription) +

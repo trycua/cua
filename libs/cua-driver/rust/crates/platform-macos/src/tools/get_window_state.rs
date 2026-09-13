@@ -38,9 +38,12 @@ fn def() -> &'static ToolDef {
             indexed row with `element_index`, `role`, `label`, `value` (the \
             element's text/AXValue when present — use it to verify what a field \
             holds, preserving empty strings and whitespace), optional `placeholder` \
-            (a separate hint, never the value), `actions` (names of AX actions \
-            exposed by the element, omitted when empty), `frame: {x,y,w,h}`, \
-            `parent_index`, `depth`). The markdown \
+            (a separate hint, never the value), `description` (AXDescription, \
+            omitted when it is already the label) and `help` (AXHelp — the \
+            tooltip, which is where apps put an element's semantics: which \
+            calendar an event belongs to, what a toggle does), `actions` (names \
+            of AX actions exposed by the element, omitted when empty), \
+            `frame: {x,y,w,h}`, `parent_index`, `depth`). The markdown \
             `tree_markdown` stays available for text consumers, with raw string \
             values quoted and escaped and placeholders identified separately.\n\n\
             Always returns BOTH the element tree AND a screenshot — ground on \
@@ -900,6 +903,17 @@ pub(crate) fn build_elements_array_with_token(
                 entry["element_token"] =
                     serde_json::json!(cua_driver_core::element_token::token_for(sid, idx));
             }
+            if let Some(description) = node
+                .description
+                .as_deref()
+                .filter(|description| !description.trim().is_empty())
+                .filter(|description| label.as_deref() != Some(description))
+            {
+                entry["description"] = serde_json::Value::String(description.to_owned());
+            }
+            if let Some(help) = &node.help {
+                entry["help"] = serde_json::Value::String(help.clone());
+            }
             if let Some(label) = label {
                 entry["label"] = serde_json::Value::String(label);
             }
@@ -1261,6 +1275,27 @@ mod tests {
             entry["value"], "i love u",
             "value must be surfaced separately"
         );
+    }
+
+    #[test]
+    fn structured_rows_carry_help_and_a_distinct_description() {
+        let mut event = node(Some(0), "AXButton", Some("Standup"), 1, None, None, vec![]);
+        event.help = Some("Calendar: Bench".into());
+        event.description = Some("all-day event".into());
+        let entry = &build_elements_array_with_token(&[event], None)[0];
+        assert_eq!(entry["label"], "Standup");
+        assert_eq!(entry["help"], "Calendar: Bench");
+        assert_eq!(entry["description"], "all-day event");
+    }
+
+    #[test]
+    fn a_description_that_is_already_the_label_is_not_repeated() {
+        let mut digit = node(Some(0), "AXButton", None, 1, None, None, vec![]);
+        digit.description = Some("2".into());
+        let entry = &build_elements_array_with_token(&[digit], None)[0];
+        assert_eq!(entry["label"], "2", "description still supplies the label");
+        assert!(entry.get("description").is_none());
+        assert!(entry.get("help").is_none());
     }
 
     #[test]

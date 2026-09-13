@@ -12,6 +12,7 @@ const nativeWayland = process.platform === 'linux' && Boolean(process.env.WAYLAN
 const customCuaCompositor = process.env.CUA_E2E_WAYLAND_SESSION === 'cua-compositor';
 const fixtureJournalUrl = process.env.CUA_E2E_FIXTURE_JOURNAL_URL || '';
 const sentinelJournalPath = process.env.CUA_E2E_SENTINEL_JOURNAL || '';
+const sentinelControlPath = process.env.CUA_E2E_SENTINEL_CONTROL || '';
 if (process.env.CUA_E2E_USER_DATA_DIR) {
   app.setPath('userData', process.env.CUA_E2E_USER_DATA_DIR);
 }
@@ -59,6 +60,7 @@ ipcMain.on('cua-e2e-sentinel-event', (_event, entry) => {
 
 let mainWindow;
 let sentinelHeartbeatTimer;
+let sentinelSetupToken;
 
 function createWindow() {
   const fixedTitle = sentinelMode
@@ -144,6 +146,17 @@ function createWindow() {
           if (!sentinelHeartbeatTimer) {
             sentinelHeartbeatTimer = setInterval(() => {
               if (mainWindow && !mainWindow.isDestroyed()) {
+                if (process.platform === 'win32' && sentinelControlPath) {
+                  // A partially written request is retried on the next tick.
+                  let request;
+                  try {
+                    request = JSON.parse(fs.readFileSync(sentinelControlPath, 'utf8'));
+                  } catch {}
+                  if (typeof request?.token === 'string' && request.token !== sentinelSetupToken) {
+                    sentinelSetupToken = request.token;
+                    mainWindow.webContents.send('cua-e2e-sentinel-arm-setup-click', request.token);
+                  }
+                }
                 mainWindow.webContents.send('cua-e2e-sentinel-heartbeat-probe');
               }
             }, 100);

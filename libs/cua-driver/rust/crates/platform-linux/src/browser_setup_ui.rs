@@ -491,10 +491,11 @@ pub fn abort_pending(pid: u32, window_id: u64, error: BrowserRefusal) -> Browser
     }
 }
 
-pub fn enable(
+fn set_remote_debugging(
     pid: u32,
     window_id: u64,
     descriptor: &'static BrowserSetupDescriptor,
+    desired_enabled: bool,
 ) -> Result<SetupUiHandle, BrowserRefusal> {
     let initial = window_scoped_tree(pid, window_id)?;
     let initial_checkbox = exact_setup_checkbox(&initial.nodes, descriptor, false)?;
@@ -546,13 +547,15 @@ pub fn enable(
         };
         match exact_setup_checkbox(&tree.nodes, descriptor, handle.trusted_setup_navigation) {
             Ok(Some(node)) => match node.checked {
-                Some(true) => {
-                    if handle.enable_attempted {
+                Some(state) if state == desired_enabled => {
+                    if desired_enabled && handle.enable_attempted {
                         handle.enabled_remote_debugging = true;
+                    } else if !desired_enabled {
+                        handle.enabled_remote_debugging = false;
                     }
                     return Ok(handle);
                 }
-                Some(false) if !handle.enable_attempted => {
+                Some(_) if !handle.enable_attempted => {
                     let index = node.element_index.expect("actionable checkbox index");
                     if let Err(error) = crate::atspi::perform_action(pid, index) {
                         return Err(handle.abort(refusal(
@@ -562,7 +565,7 @@ pub fn enable(
                     }
                     handle.enable_attempted = true;
                 }
-                Some(false)
+                Some(_)
                     if descriptor.product == BrowserProduct::MicrosoftEdge
                         && !handle.trusted_checkbox_fallback_attempted =>
                 {
@@ -583,10 +586,10 @@ pub fn enable(
                                 "the exact Microsoft Edge remote-debugging checkbox became stale before the trusted click"
                             )
                         })?;
-                        if checkbox.checked == Some(true) {
+                        if checkbox.checked == Some(desired_enabled) {
                             return Ok(false);
                         }
-                        if checkbox.checked != Some(false) {
+                        if checkbox.checked != Some(!desired_enabled) {
                             anyhow::bail!(
                                 "the exact Microsoft Edge remote-debugging checkbox had an unknown state before the trusted click"
                             );
@@ -623,7 +626,7 @@ pub fn enable(
                         }
                     }
                 }
-                Some(false) => {}
+                Some(_) => {}
                 None => {
                     return Err(handle.abort(refusal(
                         BrowserRefusalCode::BrowserWrongTargetRefused,
@@ -642,6 +645,23 @@ pub fn enable(
         }
         std::thread::sleep(Duration::from_millis(100));
     }
+}
+
+pub fn enable(
+    pid: u32,
+    window_id: u64,
+    descriptor: &'static BrowserSetupDescriptor,
+) -> Result<SetupUiHandle, BrowserRefusal> {
+    set_remote_debugging(pid, window_id, descriptor, true)
+}
+
+pub fn disable(
+    pid: u32,
+    window_id: u64,
+    descriptor: &'static BrowserSetupDescriptor,
+) -> Result<bool, BrowserRefusal> {
+    let handle = set_remote_debugging(pid, window_id, descriptor, false)?;
+    Ok(handle.close().unwrap_or(false))
 }
 
 #[cfg(test)]

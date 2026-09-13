@@ -101,6 +101,7 @@ pub fn resize_png_if_needed(png_bytes: &[u8], max_dim: u32) -> Result<Vec<u8>> {
 /// env-var name on Windows).
 pub fn write_crosshair_png(png_bytes: &[u8], cx: f64, cy: f64, path: &str) -> Result<()> {
     let mut img = decode_png_to_rgba8(png_bytes)?;
+    validate_crosshair_point(&img, cx, cy)?;
     draw_crosshair(&mut img, cx, cy);
 
     let path = if let Some(rest) = path.strip_prefix('~') {
@@ -127,12 +128,30 @@ pub fn write_crosshair_png(png_bytes: &[u8], cx: f64, cy: f64, path: &str) -> Re
 /// `click.png` without a temp file.
 pub fn crosshair_png_bytes(png_bytes: &[u8], cx: f64, cy: f64) -> Result<Vec<u8>> {
     let mut img = decode_png_to_rgba8(png_bytes)?;
+    validate_crosshair_point(&img, cx, cy)?;
     draw_crosshair(&mut img, cx, cy);
 
     let mut out = Vec::new();
     DynamicImage::ImageRgba8(img)
         .write_to(&mut std::io::Cursor::new(&mut out), ImageFormat::Png)?;
     Ok(out)
+}
+
+fn validate_crosshair_point(
+    img: &ImageBuffer<image::Rgba<u8>, Vec<u8>>,
+    cx: f64,
+    cy: f64,
+) -> Result<()> {
+    if !cx.is_finite()
+        || !cy.is_finite()
+        || cx < 0.0
+        || cy < 0.0
+        || cx >= f64::from(img.width())
+        || cy >= f64::from(img.height())
+    {
+        bail!("click point is outside the retained image");
+    }
+    Ok(())
 }
 
 /// Internal: decode PNG to a mutable RGBA8 image buffer.
@@ -335,6 +354,23 @@ mod tests {
         let marked = crosshair_png_bytes(&png, 20.0, 20.0).unwrap();
         let (w, h) = png_dimensions(&marked).unwrap();
         assert_eq!((w, h), (40, 40));
+    }
+
+    #[test]
+    fn crosshair_rejects_invalid_centers_instead_of_clamping_to_an_edge() {
+        let png = encode_rgba_to_png(&vec![0u8; 40 * 40 * 4], 40, 40).unwrap();
+        for point in [
+            (-1.0, 20.0),
+            (20.0, -1.0),
+            (40.0, 20.0),
+            (20.0, 40.0),
+            (f64::NAN, 20.0),
+            (20.0, f64::INFINITY),
+        ] {
+            assert!(crosshair_png_bytes(&png, point.0, point.1).is_err());
+        }
+        assert!(crosshair_png_bytes(&png, 0.0, 0.0).is_ok());
+        assert!(crosshair_png_bytes(&png, 39.0, 39.0).is_ok());
     }
 
     #[test]

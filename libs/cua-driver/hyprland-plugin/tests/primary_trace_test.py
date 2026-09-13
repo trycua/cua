@@ -1,0 +1,172 @@
+import unittest
+import copy
+from unittest.mock import Mock, patch
+from primary_trace import Trace, analyze
+
+
+def trace(*events):
+    rows = [[i + 1, i * 1_000_000, kind, x, y, actor, state]
+            for i, (kind, x, y, actor, state) in enumerate(events)]
+    return dict(hook=True, active=False, overflow=False, timed_out=False,
+                count=len(rows), events=rows)
+
+
+START = ('start', 100, 200, 0, 0)
+STOP = ('stop', 100, 200, 0, 0)
+
+
+class TraceTest(unittest.TestCase):
+    def collect_pages(self, pages):
+        connection = Trace.__new__(Trace)
+        connection.exchange = Mock(side_effect=pages)
+        result = connection.collect()
+        return result, [call.args[0] for call in connection.exchange.call_args_list]
+
+    def pages(self, *, active=True):
+        data = trace(START, *(('cursor', 100 + i, 200, 0, 0) for i in range(20)))
+        data.update(ok=True, active=active)
+        return data
+
+    def test_active_trace_collects_exact_initial_prefix_while_appending(self):
+        data = self.pages()
+        first = {**data, 'count': 12, 'events': data['events'][:8]}
+        second = {**data, 'count': 18, 'events': data['events'][8:16]}
+        anchor = {**data, 'events': data['events'][:8]}
+        result, calls = self.collect_pages([first, second, anchor])
+        self.assertEqual(result['events'], data['events'][:12])
+        self.assertEqual(result['count'], 12)
+        self.assertTrue(result['active'])
+        self.assertEqual(calls, ['TRACE_READ 0', 'TRACE_READ 8', 'TRACE_READ 0'])
+        self.assertEqual(len(first['events']), 8, 'collector must not mutate replies')
+
+    def test_stopped_trace_is_complete_and_unchanged(self):
+        data = trace(START, *(('cursor', 100, 200, 0, 0) for _ in range(10)), STOP)
+        data['ok'] = True
+        result, _ = self.collect_pages([{**data, 'events': data['events'][:8]},
+            {**data, 'events': data['events'][8:]}, {**data, 'events': data['events'][:8]}])
+        self.assertEqual(result, data)
+        self.assertEqual(analyze(result)['result'], 'passed')
+
+    def test_live_failures_are_never_hidden_by_initial_healthy_flags(self):
+        data = self.pages()
+        first = {**data, 'count': 12, 'events': data['events'][:8]}
+        for key, value in (('overflow', True), ('timed_out', True), ('hook', False)):
+            with self.subTest(key=key):
+                second = {**data, key: value, 'events': data['events'][8:16]}
+                result, _ = self.collect_pages([first, second, {**data, 'events': data['events'][:8]}])
+                self.assertEqual(result[key], value)
+                self.assertEqual(analyze(result)['result'], 'inconclusive')
+
+    def test_reset_with_regrown_count_is_rejected_by_start_identity(self):
+        data = self.pages()
+        first = {**data, 'count': 12, 'events': data['events'][:8]}
+        anchor = copy.deepcopy({**data, 'events': data['events'][:8]})
+        anchor['events'][0][1] += 1
+        with self.assertRaisesRegex(RuntimeError, 'epoch'):
+            self.collect_pages([first, {**data, 'events': data['events'][8:16]}, anchor])
+
+    def test_count_regression_is_rejected_even_if_above_prefix_limit(self):
+        data = self.pages()
+        with self.assertRaisesRegex(RuntimeError, 'regressed'):
+            self.collect_pages([{**data, 'count': 12, 'events': data['events'][:8]},
+                {**data, 'events': data['events'][8:16]},
+                {**data, 'count': 20, 'events': data['events'][:8]}])
+
+    def test_malformed_or_missing_rows_fail(self):
+        data = self.pages()
+        first = {**data, 'count': 12, 'events': data['events'][:8]}
+        valid = {**data, 'events': data['events'][8:16]}
+        changes = [{'events': []}, {'count': True}, {'count': 32769}, {'active': 1},
+                   {'events': [[], *valid['events'][1:]]},
+                   {'events': [[99, *valid['events'][0][1:]], *valid['events'][1:]]}]
+        for change in changes:
+            with self.subTest(change=change), self.assertRaises(RuntimeError):
+                self.collect_pages([first, {**valid, **change}])
+
+    def test_stopped_trace_cannot_resume_during_collection(self):
+        data = self.pages(active=False)
+        with self.assertRaisesRegex(RuntimeError, 'stopped trace changed'):
+            self.collect_pages([{**data, 'count': 12, 'events': data['events'][:8]},
+                                {**data, 'active': True, 'events': data['events'][8:16]}])
+
+    def test_handshake_is_sent_once_and_retained_for_version_validation(self):
+        peer = Mock()
+        peer.recv.return_value = b'{"ok":true,"protocol":3}'
+        with patch('primary_trace.socket.socket', return_value=peer):
+            connection = Trace('/synthetic/cua-input-v3.sock')
+            self.assertEqual(connection.hello['protocol'], 3)
+            peer.sendall.assert_called_once_with(b'HELLO')
+            connection.close()
+
+    def test_warp_and_return_is_not_hidden_by_equal_endpoints(self):
+        result = analyze(trace(START, ('cursor', 140, 230, 0, 0), ('cursor', 100, 200, 0, 0), STOP))
+        self.assertEqual(result['result'], 'failed')
+        self.assertEqual(result['max_primary_displacement_px'], 50)
+        self.assertEqual(result['uncommanded_motion_events'], 1)
+
+    def test_synthetic_events_do_not_count_as_foreground_leakage(self):
+        result = analyze(trace(START, ('pointer_button', 100, 200, 1, 0),
+                               ('keyboard_key', 100, 200, 2, 1), STOP))
+        self.assertEqual(result['result'], 'passed')
+
+    def test_surface_coordinates_are_separate_from_primary_coordinates(self):
+        data = trace(START, ('pointer_motion', 100, 200, 1, 0), STOP)
+        data['events'][1].extend([400, 300])
+        result = analyze(data)
+        self.assertEqual(result['result'], 'passed')
+        self.assertEqual(result['max_primary_displacement_px'], 0)
+        for change in ([400], [400, float('nan')], [True, 300], [400, 300, 500]):
+            bad = {**data, 'events': [data['events'][0], data['events'][1][:7] + change, data['events'][2]]}
+            self.assertEqual(analyze(bad)['result'], 'inconclusive')
+        data['events'][1][5] = 0
+        self.assertEqual(analyze(data)['result'], 'inconclusive')
+
+    def test_v3_admission_marker_is_recognized_but_unknown_events_stay_inconclusive(self):
+        self.assertEqual(analyze(trace(START, ('agent_admitted', 100, 200, 1, 0), STOP))['result'], 'passed')
+        self.assertEqual(analyze(trace(START, ('unknown', 100, 200, 1, 0), STOP))['result'], 'inconclusive')
+
+    def test_missing_or_dropped_telemetry_is_inconclusive(self):
+        for change in ({'hook': False}, {'overflow': True}, {'timed_out': True},
+                       {'active': True}, {'count': 9}, {'events': []}):
+            self.assertEqual(analyze({**trace(START, STOP), **change})['result'], 'inconclusive')
+        broken = trace(START, STOP)
+        broken['events'][1][0] = 3
+        self.assertEqual(analyze(broken)['result'], 'inconclusive')
+        for row in ([], [1], [1, 1, 'cursor', 'bad', 0, 0, 0],
+                    [1, 1, 'cursor', float('nan'), 0, 0, 0]):
+            bad = trace(START, STOP)
+            bad['events'][0] = row
+            self.assertEqual(analyze(bad)['result'], 'inconclusive')
+
+    def test_primary_focus_keys_and_releases_fail(self):
+        for kind in ('pointer_focus', 'keyboard_enter', 'keyboard_key', 'pointer_button'):
+            self.assertEqual(analyze(trace(START, (kind, 100, 200, 0, 0), STOP))['result'], 'failed')
+
+    def test_real_overlap_is_measured_from_dispatch_not_animation(self):
+        result = analyze(trace(START, ('agent_drag_start', 100, 200, 1, 0),
+                               ('agent_drag_start', 100, 200, 2, 0),
+                               ('agent_drag_end', 100, 200, 1, 0),
+                               ('agent_drag_end', 100, 200, 2, 0), STOP))
+        self.assertEqual(result['agent_drag_overlap_ms'], 1)
+
+    def test_controlled_motion_must_match_every_command_in_order(self):
+        data = trace(START, ('cursor', 120, 200, 0, 0), ('cursor', 100, 200, 0, 0), STOP)
+        self.assertEqual(analyze(data, expected_motion=[[120, 200], [100, 200]])['result'], 'passed')
+        self.assertEqual(analyze(data, expected_motion=[[100, 200]])['result'], 'failed')
+
+    def test_controlled_motion_reconciles_all_observed_positions(self):
+        moved = ('cursor', 120, 200, 0, 0)
+        stopped = ('stop', 120, 200, 0, 0)
+        for events in ((START, moved, STOP),
+                       (START, moved, ('pointer_motion', 140, 200, 0, 0), stopped),
+                       (START, moved, ('agent_action_end', 140, 200, 1, 0), stopped)):
+            with self.subTest(events=events):
+                result = analyze(trace(*events), expected_motion=[[120, 200]])
+                self.assertEqual(result['result'], 'inconclusive')
+                self.assertEqual(result['reason'], 'position_changed_without_motion_event')
+        self.assertEqual(analyze(trace(START, moved, ('pointer_motion', 120, 200, 0, 0), stopped),
+                                 expected_motion=[[120, 200]])['result'], 'passed')
+
+
+if __name__ == '__main__':
+    unittest.main()

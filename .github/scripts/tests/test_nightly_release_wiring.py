@@ -40,7 +40,7 @@ def test_driver_nightly_reuses_builder_without_stable_state_mutation():
     assert "Collect PR-first attribution and render nightly body" in nightly
     assert "GH_TOKEN: ${{ github.token }}" in nightly
     assert "needs.plan.outputs.attribution_base_tag" in nightly
-    assert "issues: read" in nightly
+    assert "issues: write" in nightly
     assert "pull-requests: read" in nightly
     assert "release_channels.py apply-version" not in nightly
     assert "release_channels.py stage-versioned-tree" in nightly
@@ -60,7 +60,7 @@ def test_lume_nightly_reuses_notarized_builder_and_never_becomes_latest():
     assert "Collect PR-first attribution and render nightly body" in nightly
     assert "GH_TOKEN: ${{ github.token }}" in nightly
     assert "needs.plan.outputs.attribution_base_tag" in nightly
-    assert "issues: read" in nightly
+    assert "issues: write" in nightly
     assert "pull-requests: read" in nightly
     assert builder.index("- name: Set version") < builder.index(
         "- name: Stage nightly artifact version"
@@ -82,6 +82,11 @@ def test_planner_requires_main_ancestry_and_preserves_immutable_evidence():
     assert "fetch-depth: 0" in planner
     assert "nightly-plan-${{ inputs.component }}" in planner
     assert "attribution_base_tag" in planner
+    assert "attribution_issues" in planner
+    assert "--attribution-config .github/release-attribution-config.json" in planner
+    assert "needs.plan.outputs.reason == 'held-attribution'" in planner
+    assert "gh issue create" in planner
+    assert "gh issue edit" in planner
     assert "cancel-in-progress: false" in source("nightly-cua-driver.yml")
     assert "cancel-in-progress: false" in source("nightly-lume.yml")
 

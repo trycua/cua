@@ -19,6 +19,20 @@ cua-driver mcp-config --client claude
 
 Restart Claude Code or open a fresh session after adding the server. On macOS, the Cua Driver app identity that owns the runtime needs Accessibility and Screen Recording permission.
 
+Cua Driver 0.28.0 serves a release-matched skill through MCP resources. As of
+Claude Code 2.1.268, it can list and read those resources explicitly, but
+it does not add the remote skill to its native startup skill catalog. Install
+the filesystem skill when you want native Claude Code skill activation:
+
+```bash
+mkdir -p ~/.claude/skills
+cua-driver skills install
+cua-driver skills status
+```
+
+Claude Code's MCP permission policy remains separate from Cua Driver's
+permission mode. Both layers must allow a mutating desktop action.
+
 Continue with [Connect your agent to Cua Driver](/how-to-guides/driver/connect-your-agent#claude-code) for permission modes, the computer-use compatibility profile, and local-model setup.
 
 <VideoDemo

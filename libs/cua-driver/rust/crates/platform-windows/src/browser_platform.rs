@@ -28,8 +28,8 @@ use windows::Win32::Foundation::{
     CloseHandle, ERROR_INSUFFICIENT_BUFFER, E_ACCESSDENIED, FILETIME, HWND, NO_ERROR, RECT,
 };
 use windows::Win32::NetworkManagement::IpHelper::{
-    GetExtendedTcpTable, MIB_TCP6ROW_OWNER_PID, MIB_TCPROW_OWNER_PID, MIB_TCP_STATE_LISTEN,
-    TCP_TABLE_OWNER_PID_LISTENER,
+    GetExtendedTcpTable, MIB_TCP6ROW_OWNER_PID, MIB_TCP6TABLE_OWNER_PID, MIB_TCPROW_OWNER_PID,
+    MIB_TCPTABLE_OWNER_PID, MIB_TCP_STATE_LISTEN, TCP_TABLE_OWNER_PID_LISTENER,
 };
 use windows::Win32::Networking::WinSock::{AF_INET, AF_INET6};
 use windows::Win32::Storage::FileSystem::{
@@ -787,7 +787,12 @@ fn select_loopback_listeners(rows: &[TcpOwnerRow], allowed_pids: &[u32]) -> Vec<
 /// # Safety
 ///
 /// `R` must be a Windows owner-table row whose every bit pattern is valid.
-unsafe fn decode_owner_table<R: Copy>(bytes: &[u8]) -> Result<Vec<R>, BrowserRefusal> {
+/// `row_offset` must identify the first row in the table; invalid offsets are
+/// bounds-checked and refused rather than read.
+unsafe fn decode_owner_table<R: Copy>(
+    bytes: &[u8],
+    row_offset: usize,
+) -> Result<Vec<R>, BrowserRefusal> {
     let count_bytes: [u8; 4] = bytes
         .get(..4)
         .and_then(|part| part.try_into().ok())
@@ -799,9 +804,15 @@ unsafe fn decode_owner_table<R: Copy>(bytes: &[u8]) -> Result<Vec<R>, BrowserRef
         })?;
     let count = u32::from_ne_bytes(count_bytes) as usize;
     let row_size = std::mem::size_of::<R>();
+    if row_offset < count_bytes.len() || row_size == 0 {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            "Windows returned an invalid TCP owner table layout",
+        ));
+    }
     let required = count
         .checked_mul(row_size)
-        .and_then(|rows| rows.checked_add(4))
+        .and_then(|rows| rows.checked_add(row_offset))
         .filter(|required| *required <= bytes.len())
         .ok_or_else(|| {
             refusal(
@@ -811,7 +822,7 @@ unsafe fn decode_owner_table<R: Copy>(bytes: &[u8]) -> Result<Vec<R>, BrowserRef
         })?;
 
     let mut rows = Vec::with_capacity(count);
-    let mut offset = 4;
+    let mut offset = row_offset;
     while offset < required {
         rows.push(unsafe { std::ptr::read_unaligned(bytes.as_ptr().add(offset).cast::<R>()) });
         offset += row_size;
@@ -889,22 +900,64 @@ fn query_tcp_owner_table(address_family: u32) -> Result<Vec<u8>, BrowserRefusal>
     })
 }
 
-fn windows_loopback_listeners(allowed_pids: &[u32]) -> Result<Vec<(u16, u32)>, BrowserRefusal> {
-    let ipv4 = query_tcp_owner_table(u32::from(AF_INET.0))?;
-    let ipv6 = query_tcp_owner_table(u32::from(AF_INET6.0))?;
+fn windows_loopback_listeners_with(
+    allowed_pids: &[u32],
+    mut query: impl FnMut(u32) -> Result<Vec<u8>, BrowserRefusal>,
+) -> Result<Vec<(u16, u32)>, BrowserRefusal> {
+    let ipv4 = query(u32::from(AF_INET.0));
+    let ipv6 = query(u32::from(AF_INET6.0));
+    if let (Err(ipv4), Err(ipv6)) = (&ipv4, &ipv6) {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            format!(
+                "could not inspect either Windows TCP owner table: IPv4: {}; IPv6: {}",
+                ipv4.message, ipv6.message
+            ),
+        ));
+    }
+    if let Err(error) = &ipv4 {
+        tracing::warn!(
+            code = ?error.code,
+            message = %error.message,
+            "continuing Windows listener discovery without the IPv4 owner table"
+        );
+    }
+    if let Err(error) = &ipv6 {
+        tracing::warn!(
+            code = ?error.code,
+            message = %error.message,
+            "continuing Windows listener discovery without the IPv6 owner table"
+        );
+    }
+
     // These Win32 rows contain only integer fields and byte arrays, so every
     // bit pattern returned by the operating system is a valid Rust value.
-    let mut rows = unsafe { decode_owner_table::<MIB_TCPROW_OWNER_PID>(&ipv4) }?
-        .into_iter()
-        .map(|row| TcpOwnerRow {
-            local_ip: IpAddr::V4(Ipv4Addr::from(u32::from_be(row.dwLocalAddr))),
-            local_port: network_port(row.dwLocalPort),
-            state: row.dwState,
-            owner_pid: row.dwOwningPid,
-        })
-        .collect::<Vec<_>>();
-    rows.extend(
-        unsafe { decode_owner_table::<MIB_TCP6ROW_OWNER_PID>(&ipv6) }?
+    let mut rows = Vec::new();
+    if let Ok(ipv4) = ipv4 {
+        rows.extend(
+            unsafe {
+                decode_owner_table::<MIB_TCPROW_OWNER_PID>(
+                    &ipv4,
+                    std::mem::offset_of!(MIB_TCPTABLE_OWNER_PID, table),
+                )
+            }?
+            .into_iter()
+            .map(|row| TcpOwnerRow {
+                local_ip: IpAddr::V4(Ipv4Addr::from(u32::from_be(row.dwLocalAddr))),
+                local_port: network_port(row.dwLocalPort),
+                state: row.dwState,
+                owner_pid: row.dwOwningPid,
+            }),
+        );
+    }
+    if let Ok(ipv6) = ipv6 {
+        rows.extend(
+            unsafe {
+                decode_owner_table::<MIB_TCP6ROW_OWNER_PID>(
+                    &ipv6,
+                    std::mem::offset_of!(MIB_TCP6TABLE_OWNER_PID, table),
+                )
+            }?
             .into_iter()
             .map(|row| TcpOwnerRow {
                 local_ip: IpAddr::V6(Ipv6Addr::from(row.ucLocalAddr)),
@@ -912,8 +965,13 @@ fn windows_loopback_listeners(allowed_pids: &[u32]) -> Result<Vec<(u16, u32)>, B
                 state: row.dwState,
                 owner_pid: row.dwOwningPid,
             }),
-    );
+        );
+    }
     Ok(select_loopback_listeners(&rows, allowed_pids))
+}
+
+fn windows_loopback_listeners(allowed_pids: &[u32]) -> Result<Vec<(u16, u32)>, BrowserRefusal> {
+    windows_loopback_listeners_with(allowed_pids, query_tcp_owner_table)
 }
 
 fn system_directory_path() -> Result<PathBuf, BrowserRefusal> {
@@ -2359,14 +2417,115 @@ mod tests {
         assert_eq!(network_port(0x0000_0624), 9222);
     }
 
+    fn owner_table_bytes<R: Copy>(row_offset: usize, rows: &[R]) -> Vec<u8> {
+        // The Win32 owner rows used by these tests contain no padding.
+        let mut bytes = vec![0; row_offset + std::mem::size_of_val(rows)];
+        bytes[..4].copy_from_slice(&(rows.len() as u32).to_ne_bytes());
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                rows.as_ptr().cast::<u8>(),
+                bytes.as_mut_ptr().add(row_offset),
+                std::mem::size_of_val(rows),
+            );
+        }
+        bytes
+    }
+
     #[test]
     fn native_owner_table_decoder_rejects_truncated_and_invalid_counts() {
-        let truncated = unsafe { decode_owner_table::<u32>(&[0, 0, 0]) }.unwrap_err();
+        let truncated = unsafe { decode_owner_table::<u32>(&[0, 0, 0], 4) }.unwrap_err();
         assert!(truncated.message.contains("truncated TCP owner table"));
 
+        let invalid_offset = unsafe { decode_owner_table::<u32>(&[0; 8], 3) }.unwrap_err();
+        assert!(invalid_offset
+            .message
+            .contains("invalid TCP owner table layout"));
+
         let impossible_count = u32::MAX.to_ne_bytes();
-        let invalid = unsafe { decode_owner_table::<u32>(&impossible_count) }.unwrap_err();
+        let invalid = unsafe { decode_owner_table::<u32>(&impossible_count, 4) }.unwrap_err();
         assert!(invalid.message.contains("invalid TCP owner table length"));
+    }
+
+    #[test]
+    fn native_owner_table_decoder_uses_the_real_ipv4_and_ipv6_layouts() {
+        let ipv4_offset = std::mem::offset_of!(MIB_TCPTABLE_OWNER_PID, table);
+        assert_eq!(ipv4_offset, 4);
+        assert_eq!(std::mem::size_of::<MIB_TCPROW_OWNER_PID>(), 24);
+        let ipv4_row = MIB_TCPROW_OWNER_PID {
+            dwState: MIB_TCP_STATE_LISTEN.0 as u32,
+            dwLocalAddr: u32::from_ne_bytes(Ipv4Addr::LOCALHOST.octets()),
+            dwLocalPort: 0x0000_0624,
+            dwRemoteAddr: 0,
+            dwRemotePort: 0,
+            dwOwningPid: 42,
+        };
+        let ipv4_bytes = owner_table_bytes(ipv4_offset, &[ipv4_row]);
+        let decoded_ipv4 =
+            unsafe { decode_owner_table::<MIB_TCPROW_OWNER_PID>(&ipv4_bytes, ipv4_offset) }
+                .unwrap();
+        assert_eq!(decoded_ipv4, vec![ipv4_row]);
+
+        let ipv6_offset = std::mem::offset_of!(MIB_TCP6TABLE_OWNER_PID, table);
+        assert_eq!(ipv6_offset, 4);
+        assert_eq!(std::mem::size_of::<MIB_TCP6ROW_OWNER_PID>(), 56);
+        let ipv6_row = MIB_TCP6ROW_OWNER_PID {
+            ucLocalAddr: Ipv6Addr::LOCALHOST.octets(),
+            dwLocalScopeId: 0,
+            dwLocalPort: 0x0000_0624,
+            ucRemoteAddr: Ipv6Addr::UNSPECIFIED.octets(),
+            dwRemoteScopeId: 0,
+            dwRemotePort: 0,
+            dwState: MIB_TCP_STATE_LISTEN.0 as u32,
+            dwOwningPid: 43,
+        };
+        let ipv6_bytes = owner_table_bytes(ipv6_offset, &[ipv6_row]);
+        let decoded_ipv6 =
+            unsafe { decode_owner_table::<MIB_TCP6ROW_OWNER_PID>(&ipv6_bytes, ipv6_offset) }
+                .unwrap();
+        assert_eq!(decoded_ipv6, vec![ipv6_row]);
+    }
+
+    #[test]
+    fn native_listener_discovery_keeps_ipv4_when_ipv6_is_unavailable() {
+        let ipv4_offset = std::mem::offset_of!(MIB_TCPTABLE_OWNER_PID, table);
+        let ipv4 = owner_table_bytes(
+            ipv4_offset,
+            &[MIB_TCPROW_OWNER_PID {
+                dwState: MIB_TCP_STATE_LISTEN.0 as u32,
+                dwLocalAddr: u32::from_ne_bytes(Ipv4Addr::LOCALHOST.octets()),
+                dwLocalPort: 0x0000_0624,
+                dwRemoteAddr: 0,
+                dwRemotePort: 0,
+                dwOwningPid: 42,
+            }],
+        );
+
+        let listeners = windows_loopback_listeners_with(&[42], |family| {
+            if family == u32::from(AF_INET.0) {
+                Ok(ipv4.clone())
+            } else {
+                Err(refusal(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    "IPv6 owner table is unsupported",
+                ))
+            }
+        })
+        .unwrap();
+        assert_eq!(listeners, vec![(9222, 42)]);
+    }
+
+    #[test]
+    fn native_listener_discovery_refuses_when_both_families_fail() {
+        let error = windows_loopback_listeners_with(&[42], |family| {
+            Err(refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("family {family} unavailable"),
+            ))
+        })
+        .unwrap_err();
+        assert!(error.message.contains("either Windows TCP owner table"));
+        assert!(error.message.contains("IPv4:"));
+        assert!(error.message.contains("IPv6:"));
     }
 
     #[test]

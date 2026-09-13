@@ -60,14 +60,15 @@ fn def() -> &'static ToolDef {
              For free-form text entry into web inputs, prefer `type_text_chars` \
              which synthesises key events — AXValue writes are ignored by WebKit.\n\
              \n\
-             NON-DURABLE in document apps: an AXValue write never reaches disk, \
-             and because it bypasses the app's editing pipeline it is not \
-             guaranteed to register as an edit at all — measured on TextEdit the \
-             new text appeared in the AX tree while the document stayed unmarked, \
-             with no undo entry and a byte-identical file. Read `document_edited` \
-             from get_window_state to see whether the app registered it, and make \
-             the change durable with the app's own save action (`press_key` cmd+s, \
-             or `invoke_menu` File > Save) before treating the text as written."
+             NOT a save in document apps: an AXValue write does not itself \
+             persist anything, and because it bypasses the app's editing \
+             pipeline it is not guaranteed to register as an edit at all — \
+             measured on TextEdit the new text appeared in the AX tree while the \
+             document stayed unmarked, with no undo entry and a byte-identical \
+             file. Read `document_edited` from get_window_state to see whether \
+             the app registered it, and make the change durable with the app's \
+             own save action (`press_key` cmd+s, or `invoke_menu` File > Save) \
+             before treating the text as written."
             .into(),
         input_schema: serde_json::json!({
             "type": "object",

@@ -99,6 +99,23 @@ pub struct ScopeDecision {
     pub walk: Vec<usize>,
 }
 
+impl ScopeDecision {
+    /// Index of the requested window itself among the walked candidates.
+    ///
+    /// `None` for every non-`Matched` scope, so a refused window never has
+    /// per-window attributes read off some other top-level element.
+    pub fn requested_window_index(
+        &self,
+        candidates: &[TopLevelCandidate],
+        requested: u32,
+    ) -> Option<usize> {
+        self.walk
+            .iter()
+            .copied()
+            .find(|&index| candidates[index].ax_window_id == Some(requested))
+    }
+}
+
 /// The scope conclusion reachable from CGWindowList alone, before any AX work.
 ///
 /// `None` means the window exists under the requested pid, so only the AX walk
@@ -204,6 +221,28 @@ mod tests {
         let d = decide_window_scope(&candidates, 22, never_called);
         assert_eq!(d.scope, WindowScope::Matched);
         assert_eq!(d.walk, vec![0, 2], "menu bar + requested window only");
+    }
+
+    #[test]
+    fn requested_window_index_points_at_the_requested_window_not_the_menu_bar() {
+        let candidates = [
+            TopLevelCandidate::new("AXMenuBar", None),
+            TopLevelCandidate::new("AXWindow", Some(11)),
+            TopLevelCandidate::new("AXWindow", Some(22)),
+        ];
+        let d = decide_window_scope(&candidates, 22, never_called);
+        assert_eq!(d.requested_window_index(&candidates, 22), Some(2));
+    }
+
+    #[test]
+    fn a_refused_window_has_no_index_to_read_per_window_state_from() {
+        let candidates = [
+            TopLevelCandidate::new("AXMenuBar", None),
+            TopLevelCandidate::new("AXWindow", Some(11)),
+        ];
+        let d = decide_window_scope(&candidates, 22, panel_service_owner);
+        assert_ne!(d.scope, WindowScope::Matched);
+        assert_eq!(d.requested_window_index(&candidates, 22), None);
     }
 
     #[test]

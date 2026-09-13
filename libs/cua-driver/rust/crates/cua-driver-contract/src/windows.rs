@@ -317,12 +317,9 @@ pub struct WindowStateOutput {
     pub screenshot_frame_valid: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub window_bounds: Option<WindowBounds>,
-    /// The window's document URL (`AXDocument` on macOS). Absent when the app
-    /// reports none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub document_path: Option<String>,
-    /// The app's own unsaved-changes flag for the window. Absent when the app
-    /// reports it nowhere: absence is unknown, never "clean".
+    /// Absent when the app does not report a dirty flag: unknown, never "clean".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub document_edited: Option<bool>,
     /// Image content belongs to the MCP envelope, never structuredContent.

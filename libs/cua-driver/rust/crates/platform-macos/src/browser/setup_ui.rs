@@ -1845,7 +1845,7 @@ mod tests {
             truncated: false,
             walk: cua_driver_core::walk_budget::WalkBudget::nodes_only(0).outcome(),
             window_scope: Some(crate::ax::WindowScope::Matched),
-            document: None,
+            document_path: None,
             document_edited: None,
         }
     }
@@ -2045,7 +2045,7 @@ mod tests {
                 std::time::Duration::from_millis(1000),
             ),
             window_scope: Some(crate::ax::WindowScope::Matched),
-            document: None,
+            document_path: None,
             document_edited: None,
         };
         assert!(

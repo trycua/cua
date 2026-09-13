@@ -306,10 +306,9 @@ pub trait BrowserPlatform: Send + Sync {
     }
 
     /// Best-effort, visual-only feedback for an authorized browser action.
-    /// Implementations without an agent-cursor overlay must explicitly opt out
-    /// with a no-op. Implementations must not deliver input or alter focus or
-    /// z-order; failures are intentionally not part of browser results.
-    async fn visualize_browser_action(&self, action: BrowserVisualAction);
+    /// Implementations must not deliver input or alter focus or z-order;
+    /// failures are intentionally not part of browser results.
+    async fn visualize_browser_action(&self, _action: BrowserVisualAction) {}
 
     /// Classify `pid`: is it a browser, which engine family, can it do
     /// CDP at all. Must not have side effects.

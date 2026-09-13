@@ -36,10 +36,12 @@ import ai.cua.cyclops.sdk.schema.FfiConverterTypeOSGymSandboxClaimStatus
 import ai.cua.cyclops.sdk.schema.FfiConverterTypeOSGymSandboxTemplateSpec
 import ai.cua.cyclops.sdk.schema.FfiConverterTypeOSGymSandboxWarmPoolSpec
 import ai.cua.cyclops.sdk.schema.FfiConverterTypeOSGymSandboxWarmPoolStatus
+import ai.cua.cyclops.sdk.schema.FfiConverterTypePreservedJson
 import ai.cua.cyclops.sdk.schema.OsGymSandboxClaimStatus
 import ai.cua.cyclops.sdk.schema.OsGymSandboxTemplateSpec
 import ai.cua.cyclops.sdk.schema.OsGymSandboxWarmPoolSpec
 import ai.cua.cyclops.sdk.schema.OsGymSandboxWarmPoolStatus
+import ai.cua.cyclops.sdk.schema.PreservedJson
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 import kotlinx.coroutines.CancellableContinuation
@@ -53,6 +55,7 @@ import ai.cua.cyclops.sdk.schema.RustBuffer as RustBufferOSGymSandboxClaimStatus
 import ai.cua.cyclops.sdk.schema.RustBuffer as RustBufferOSGymSandboxTemplateSpec
 import ai.cua.cyclops.sdk.schema.RustBuffer as RustBufferOSGymSandboxWarmPoolSpec
 import ai.cua.cyclops.sdk.schema.RustBuffer as RustBufferOSGymSandboxWarmPoolStatus
+import ai.cua.cyclops.sdk.schema.RustBuffer as RustBufferPreservedJson
 
 // This is a helper for safely working with byte buffers returned from the Rust code.
 // A rust-owned buffer is represented by its capacity, its current length, and a
@@ -702,6 +705,16 @@ internal object IntegrityCheckingUniffiLib {
         uniffiCheckContractApiVersion(this)
         uniffiCheckApiChecksums(this)
     }
+    external fun uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_func_pool_display_status(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_func_removed_pool_display_status(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_func_terminating_pool_display_status(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_func_unknown_pool_display_status(
+    ): Short
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim(
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim(
@@ -713,6 +726,18 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim(
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_presign_image_uploads(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_upload_image_file(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_image(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_image(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_image(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_images(
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace(
     ): Short
@@ -735,6 +760,12 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_pool(
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_signed_service_url(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_signed_service_urls(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_revoke_signed_service_url(
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_template(
     ): Short
@@ -772,6 +803,16 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_spec(
     ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_build(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_expires_in_seconds(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_label(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_sandbox(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_service(
+    ): Short
     external fun uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_build(
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_name(
@@ -803,6 +844,8 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_cyclops_sdk_checksum_method_httprequestbuilder_build(
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_httprequestbuilder_headers(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_httprequestbuilder_max_response_bytes(
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_httprequestbuilder_method(
     ): Short
@@ -837,6 +880,8 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_cyclops_sdk_checksum_constructor_createclaimrequestbuilder_new(
     ): Short
     external fun uniffi_cyclops_sdk_checksum_constructor_createpoolrequestbuilder_new(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_constructor_createsignedserviceurlrequestbuilder_new(
     ): Short
     external fun uniffi_cyclops_sdk_checksum_constructor_createtemplaterequestbuilder_new(
     ): Short
@@ -901,6 +946,18 @@ external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_renew_claim(`ptr`: Long,
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim(`ptr`: Long,`claim`: RustBuffer.ByValue,
 ): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_presign_image_uploads(`ptr`: Long,`request`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_upload_image_file(`ptr`: Long,`namespace`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,`contents`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_create_image(`ptr`: Long,`namespace`: RustBuffer.ByValue,`manifest`: Long,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_image(`ptr`: Long,`namespace`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_get_image(`ptr`: Long,`namespace`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_list_images(`ptr`: Long,`namespace`: RustBuffer.ByValue,
+): Long
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_create_namespace(`ptr`: Long,`name`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_namespace(`ptr`: Long,`name`: RustBuffer.ByValue,
@@ -922,6 +979,12 @@ external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_pool(`ptr`: Lo
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_update_pool(`ptr`: Long,`pool`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_service_request(`ptr`: Long,`sandbox`: RustBuffer.ByValue,`service`: RustBuffer.ByValue,`path`: RustBuffer.ByValue,`request`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_create_signed_service_url(`ptr`: Long,`request`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_list_signed_service_urls(`ptr`: Long,`sandbox`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_revoke_signed_service_url(`ptr`: Long,`signedServiceUrl`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_create_template(`ptr`: Long,`request`: RustBuffer.ByValue,
 ): Long
@@ -982,6 +1045,22 @@ external fun uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_build(`ptr`: 
 external fun uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_namespace(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_spec(`ptr`: Long,`value`: RustBufferOSGymSandboxWarmPoolSpec.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_fn_clone_createsignedserviceurlrequestbuilder(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_fn_free_createsignedserviceurlrequestbuilder(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Unit
+external fun uniffi_cyclops_sdk_fn_constructor_createsignedserviceurlrequestbuilder_new(uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_build(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_expires_in_seconds(`ptr`: Long,`value`: Int,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_label(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_sandbox(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_service(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): Long
 external fun uniffi_cyclops_sdk_fn_clone_createtemplaterequestbuilder(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
 ): Long
@@ -1045,6 +1124,8 @@ external fun uniffi_cyclops_sdk_fn_method_httprequestbuilder_build(`ptr`: Long,u
 ): RustBuffer.ByValue
 external fun uniffi_cyclops_sdk_fn_method_httprequestbuilder_headers(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): Long
+external fun uniffi_cyclops_sdk_fn_method_httprequestbuilder_max_response_bytes(`ptr`: Long,`value`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Long
 external fun uniffi_cyclops_sdk_fn_method_httprequestbuilder_method(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_httprequestbuilder_timeout_secs(`ptr`: Long,`value`: Long,uniffi_out_err: UniffiRustCallStatus,
@@ -1067,6 +1148,16 @@ external fun uniffi_cyclops_sdk_fn_method_templatebuilder_metadata(`ptr`: Long,`
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_templatebuilder_spec(`ptr`: Long,`value`: RustBufferOSGymSandboxTemplateSpec.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): Long
+external fun uniffi_cyclops_sdk_fn_func_healthy_pool_display_status(uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun uniffi_cyclops_sdk_fn_func_pool_display_status(`pool`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun uniffi_cyclops_sdk_fn_func_removed_pool_display_status(uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun uniffi_cyclops_sdk_fn_func_terminating_pool_display_status(uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun uniffi_cyclops_sdk_fn_func_unknown_pool_display_status(uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
 external fun ffi_cyclops_sdk_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
 external fun ffi_cyclops_sdk_rustbuffer_from_bytes(`bytes`: ForeignBytes.ByValue,uniffi_out_err: UniffiRustCallStatus,
@@ -1186,6 +1277,21 @@ private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
 }
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
+    if (lib.uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status() != 3094.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_func_pool_display_status() != 8587.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_func_removed_pool_display_status() != 48761.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_func_terminating_pool_display_status() != 41320.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_func_unknown_pool_display_status() != 39929.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim() != 23330.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1202,6 +1308,24 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim() != 18984.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_presign_image_uploads() != 53280.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_upload_image_file() != 14212.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_image() != 51053.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_image() != 24680.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_image() != 56969.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_images() != 31215.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace() != 38049.toShort()) {
@@ -1237,6 +1361,15 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request() != 46699.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_signed_service_url() != 17810.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_signed_service_urls() != 31479.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_revoke_signed_service_url() != 59989.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_template() != 13689.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1267,7 +1400,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token() != 1180.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cyclops_sdk_checksum_method_httpclient_execute() != 38803.toShort()) {
+    if (lib.uniffi_cyclops_sdk_checksum_method_httpclient_execute() != 57947.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_build() != 10518.toShort()) {
@@ -1289,6 +1422,21 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_spec() != 7566.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_build() != 4255.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_expires_in_seconds() != 30769.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_label() != 1753.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_sandbox() != 1132.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_service() != 62938.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_build() != 46749.toShort()) {
@@ -1337,6 +1485,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_httprequestbuilder_headers() != 19982.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_httprequestbuilder_max_response_bytes() != 42011.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_httprequestbuilder_method() != 4078.toShort()) {
@@ -1388,6 +1539,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_constructor_createpoolrequestbuilder_new() != 33658.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_constructor_createsignedserviceurlrequestbuilder_new() != 16004.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_constructor_createtemplaterequestbuilder_new() != 6787.toShort()) {
@@ -2918,6 +3072,325 @@ public object FfiConverterTypeCreatePoolRequestBuilder: FfiConverter<CreatePoolR
 //
 
 
+public interface CreateSignedServiceUrlRequestBuilderInterface {
+
+    fun `build`(): CreateSignedServiceUrlRequest
+
+    fun `expiresInSeconds`(`value`: kotlin.UInt): CreateSignedServiceUrlRequestBuilder
+
+    fun `label`(`value`: kotlin.String): CreateSignedServiceUrlRequestBuilder
+
+    fun `sandbox`(`value`: Sandbox): CreateSignedServiceUrlRequestBuilder
+
+    fun `service`(`value`: kotlin.String): CreateSignedServiceUrlRequestBuilder
+
+    companion object
+}
+
+open class CreateSignedServiceUrlRequestBuilder: Disposable, AutoCloseable, CreateSignedServiceUrlRequestBuilderInterface
+{
+
+    @Suppress("UNUSED_PARAMETER")
+    /**
+     * @suppress
+     */
+    constructor(withHandle: UniffiWithHandle, handle: Long) {
+        this.handle = handle
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(handle))
+    }
+
+    /**
+     * @suppress
+     *
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    constructor(noHandle: NoHandle) {
+        this.handle = 0
+        this.cleanable = null
+    }
+    constructor() :
+        this(UniffiWithHandle,
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_constructor_createsignedserviceurlrequestbuilder_new(
+
+        _status)
+}
+    )
+
+    protected val handle: Long
+    protected val cleanable: UniffiCleaner.Cleanable?
+
+    private val wasDestroyed = AtomicBoolean(false)
+    private val callCounter = AtomicLong(1)
+
+    override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    @Synchronized
+    override fun close() {
+        this.destroy()
+    }
+
+    internal inline fun <R> callWithHandle(block: (handle: Long) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.get()
+            if (c == 0L) {
+                throw IllegalStateException("${this.javaClass.simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this.javaClass.simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the handle being freed concurrently.
+        try {
+            return block(this.uniffiCloneHandle())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiCleanAction(private val handle: Long) : Runnable {
+        override fun run() {
+            if (handle == 0.toLong()) {
+                // Fake object created with `NoHandle`, don't try to free.
+                return;
+            }
+            uniffiRustCall { status ->
+                UniffiLib.uniffi_cyclops_sdk_fn_free_createsignedserviceurlrequestbuilder(handle, status)
+            }
+        }
+    }
+
+    /**
+     * @suppress
+     */
+    fun uniffiCloneHandle(): Long {
+        if (handle == 0.toLong()) {
+            throw InternalException("uniffiCloneHandle() called on NoHandle object");
+        }
+        return uniffiRustCall() { status ->
+            UniffiLib.uniffi_cyclops_sdk_fn_clone_createsignedserviceurlrequestbuilder(handle, status)
+        }
+    }
+
+
+    @Throws(SdkBuildException::class)override fun `build`(): CreateSignedServiceUrlRequest {
+            return FfiConverterTypeCreateSignedServiceUrlRequest.lift(
+    callWithHandle {
+    uniffiRustCallWithError(SdkBuildException) { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_build(
+        it,
+        _status)
+}
+    }
+    )
+    }
+
+
+    override fun `expiresInSeconds`(`value`: kotlin.UInt): CreateSignedServiceUrlRequestBuilder {
+            return FfiConverterTypeCreateSignedServiceUrlRequestBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_expires_in_seconds(
+        it,
+        FfiConverterUInt.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+    override fun `label`(`value`: kotlin.String): CreateSignedServiceUrlRequestBuilder {
+            return FfiConverterTypeCreateSignedServiceUrlRequestBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_label(
+        it,
+        FfiConverterString.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+    override fun `sandbox`(`value`: Sandbox): CreateSignedServiceUrlRequestBuilder {
+            return FfiConverterTypeCreateSignedServiceUrlRequestBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_sandbox(
+        it,
+        FfiConverterTypeSandbox.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+    override fun `service`(`value`: kotlin.String): CreateSignedServiceUrlRequestBuilder {
+            return FfiConverterTypeCreateSignedServiceUrlRequestBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_service(
+        it,
+        FfiConverterString.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+
+
+
+
+
+
+
+    /**
+     * @suppress
+     */
+    companion object
+
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeCreateSignedServiceUrlRequestBuilder: FfiConverter<CreateSignedServiceUrlRequestBuilder, Long> {
+    override fun lower(value: CreateSignedServiceUrlRequestBuilder): Long {
+        return value.uniffiCloneHandle()
+    }
+
+    override fun lift(value: Long): CreateSignedServiceUrlRequestBuilder {
+        return CreateSignedServiceUrlRequestBuilder(UniffiWithHandle, value)
+    }
+
+    override fun read(buf: ByteBuffer): CreateSignedServiceUrlRequestBuilder {
+        return lift(buf.getLong())
+    }
+
+    override fun allocationSize(value: CreateSignedServiceUrlRequestBuilder) = 8UL
+
+    override fun write(value: CreateSignedServiceUrlRequestBuilder, buf: ByteBuffer) {
+        buf.putLong(lower(value))
+    }
+}
+
+
+// This template implements a class for working with a Rust struct via a handle
+// to the live Rust struct on the other side of the FFI.
+//
+// There's some subtlety here, because we have to be careful not to operate on a Rust
+// struct after it has been dropped, and because we must expose a public API for freeing
+// theq Kotlin wrapper object in lieu of reliable finalizers. The core requirements are:
+//
+//   * Each instance holds an opaque handle to the underlying Rust struct.
+//     Method calls need to read this handle from the object's state and pass it in to
+//     the Rust FFI.
+//
+//   * When an instance is no longer needed, its handle should be passed to a
+//     special destructor function provided by the Rust FFI, which will drop the
+//     underlying Rust struct.
+//
+//   * Given an instance, calling code is expected to call the special
+//     `destroy` method in order to free it after use, either by calling it explicitly
+//     or by using a higher-level helper like the `use` method. Failing to do so risks
+//     leaking the underlying Rust struct.
+//
+//   * We can't assume that calling code will do the right thing, and must be prepared
+//     to handle Kotlin method calls executing concurrently with or even after a call to
+//     `destroy`, and to handle multiple (possibly concurrent!) calls to `destroy`.
+//
+//   * We must never allow Rust code to operate on the underlying Rust struct after
+//     the destructor has been called, and must never call the destructor more than once.
+//     Doing so may trigger memory unsafety.
+//
+//   * To mitigate many of the risks of leaking memory and use-after-free unsafety, a `Cleaner`
+//     is implemented to call the destructor when the Kotlin object becomes unreachable.
+//     This is done in a background thread. This is not a panacea, and client code should be aware that
+//      1. the thread may starve if some there are objects that have poorly performing
+//     `drop` methods or do significant work in their `drop` methods.
+//      2. the thread is shared across the whole library. This can be tuned by using `android_cleaner = true`,
+//         or `android = true` in the [`kotlin` section of the `uniffi.toml` file](https://mozilla.github.io/uniffi-rs/kotlin/configuration.html).
+//
+// If we try to implement this with mutual exclusion on access to the handle, there is the
+// possibility of a race between a method call and a concurrent call to `destroy`:
+//
+//    * Thread A starts a method call, reads the value of the handle, but is interrupted
+//      before it can pass the handle over the FFI to Rust.
+//    * Thread B calls `destroy` and frees the underlying Rust struct.
+//    * Thread A resumes, passing the already-read handle value to Rust and triggering
+//      a use-after-free.
+//
+// One possible solution would be to use a `ReadWriteLock`, with each method call taking
+// a read lock (and thus allowed to run concurrently) and the special `destroy` method
+// taking a write lock (and thus blocking on live method calls). However, we aim not to
+// generate methods with any hidden blocking semantics, and a `destroy` method that might
+// block if called incorrectly seems to meet that bar.
+//
+// So, we achieve our goals by giving each instance an associated `AtomicLong` counter to track
+// the number of in-flight method calls, and an `AtomicBoolean` flag to indicate whether `destroy`
+// has been called. These are updated according to the following rules:
+//
+//    * The initial value of the counter is 1, indicating a live object with no in-flight calls.
+//      The initial value for the flag is false.
+//
+//    * At the start of each method call, we atomically check the counter.
+//      If it is 0 then the underlying Rust struct has already been destroyed and the call is aborted.
+//      If it is nonzero them we atomically increment it by 1 and proceed with the method call.
+//
+//    * At the end of each method call, we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+//    * When `destroy` is called, we atomically flip the flag from false to true.
+//      If the flag was already true we silently fail.
+//      Otherwise we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+// Astute readers may observe that this all sounds very similar to the way that Rust's `Arc<T>` works,
+// and indeed it is, with the addition of a flag to guard against multiple calls to `destroy`.
+//
+// The overall effect is that the underlying Rust struct is destroyed only when `destroy` has been
+// called *and* all in-flight method calls have completed, avoiding violating any of the expectations
+// of the underlying Rust code.
+//
+// This makes a cleaner a better alternative to _not_ calling `destroy()` as
+// and when the object is finished with, but the abstraction is not perfect: if the Rust object's `drop`
+// method is slow, and/or there are many objects to cleanup, and it's on a low end Android device, then the cleaner
+// thread may be starved, and the app will leak memory.
+//
+// In this case, `destroy`ing manually may be a better solution.
+//
+// The cleaner can live side by side with the manual calling of `destroy`. In the order of responsiveness, uniffi objects
+// with Rust peers are reclaimed:
+//
+// 1. By calling the `destroy` method of the object, which calls `rustObject.free()`. If that doesn't happen:
+// 2. When the object becomes unreachable, AND the Cleaner thread gets to call `rustObject.free()`. If the thread is starved then:
+// 3. The memory is reclaimed when the process terminates.
+//
+// [1] https://stackoverflow.com/questions/24376768/can-java-finalize-an-object-when-it-is-still-in-scope/24380219
+//
+
+
 public interface CreateTemplateRequestBuilderInterface {
 
     fun `build`(): CreateTemplateRequest
@@ -3533,6 +4006,23 @@ public interface CyclopsClientInterface {
 
     suspend fun `waitClaim`(`claim`: Claim): Sandbox
 
+    suspend fun `presignImageUploads`(`request`: ImageUploadRequest): ImageUploadResponse
+
+    /**
+     * Hash and upload one file, or reuse a matching existing object.
+     * Returns only the bound digest, size, and tenant reference, never a signed URL.
+     * This does not create an Image or attest to object versioning/encryption.
+     */
+    suspend fun `uploadImageFile`(`namespace`: kotlin.String, `name`: kotlin.String, `contents`: kotlin.ByteArray): ImageUploadInstruction
+
+    suspend fun `createImage`(`namespace`: kotlin.String, `manifest`: PreservedJson): PreservedJson
+
+    suspend fun `deleteImage`(`namespace`: kotlin.String, `name`: kotlin.String)
+
+    suspend fun `getImage`(`namespace`: kotlin.String, `name`: kotlin.String): PreservedJson
+
+    suspend fun `listImages`(`namespace`: kotlin.String): List<PreservedJson>
+
     suspend fun `createNamespace`(`name`: kotlin.String): Namespace
 
     suspend fun `deleteNamespace`(`name`: kotlin.String)
@@ -3554,6 +4044,12 @@ public interface CyclopsClientInterface {
     suspend fun `updatePool`(`pool`: Pool): Pool
 
     suspend fun `serviceRequest`(`sandbox`: Sandbox, `service`: kotlin.String, `path`: kotlin.String, `request`: HttpRequest): HttpResponse
+
+    suspend fun `createSignedServiceUrl`(`request`: CreateSignedServiceUrlRequest): SignedServiceUrl
+
+    suspend fun `listSignedServiceUrls`(`sandbox`: Sandbox): List<SignedServiceUrl>
+
+    suspend fun `revokeSignedServiceUrl`(`signedServiceUrl`: SignedServiceUrl)
 
     suspend fun `createTemplate`(`request`: CreateTemplateRequest): Template
 
@@ -3810,6 +4306,138 @@ open class CyclopsClient: Disposable, AutoCloseable, CyclopsClientInterface
 
     @Throws(SdkException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `presignImageUploads`(`request`: ImageUploadRequest) : ImageUploadResponse {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_presign_image_uploads(
+                uniffiHandle,
+                FfiConverterTypeImageUploadRequest.lower(`request`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeImageUploadResponse.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * Hash and upload one file, or reuse a matching existing object.
+     * Returns only the bound digest, size, and tenant reference, never a signed URL.
+     * This does not create an Image or attest to object versioning/encryption.
+     */
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `uploadImageFile`(`namespace`: kotlin.String, `name`: kotlin.String, `contents`: kotlin.ByteArray) : ImageUploadInstruction {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_upload_image_file(
+                uniffiHandle,
+                FfiConverterString.lower(`namespace`),FfiConverterString.lower(`name`),FfiConverterByteArray.lower(`contents`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeImageUploadInstruction.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `createImage`(`namespace`: kotlin.String, `manifest`: PreservedJson) : PreservedJson {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_image(
+                uniffiHandle,
+                FfiConverterString.lower(`namespace`),FfiConverterTypePreservedJson.lower(`manifest`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_u64(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_u64(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_u64(future) },
+        // lift function
+        { FfiConverterTypePreservedJson.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `deleteImage`(`namespace`: kotlin.String, `name`: kotlin.String) {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_image(
+                uniffiHandle,
+                FfiConverterString.lower(`namespace`),FfiConverterString.lower(`name`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_void(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_void(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_void(future) },
+        // lift function
+        { Unit },
+
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `getImage`(`namespace`: kotlin.String, `name`: kotlin.String) : PreservedJson {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_image(
+                uniffiHandle,
+                FfiConverterString.lower(`namespace`),FfiConverterString.lower(`name`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_u64(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_u64(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_u64(future) },
+        // lift function
+        { FfiConverterTypePreservedJson.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `listImages`(`namespace`: kotlin.String) : List<PreservedJson> {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_images(
+                uniffiHandle,
+                FfiConverterString.lower(`namespace`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterSequenceTypePreservedJson.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
     override suspend fun `createNamespace`(`name`: kotlin.String) : Namespace {
         return uniffiRustCallAsync(
         callWithHandle { uniffiHandle ->
@@ -4035,6 +4663,70 @@ open class CyclopsClient: Disposable, AutoCloseable, CyclopsClientInterface
         { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeHttpResponse.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `createSignedServiceUrl`(`request`: CreateSignedServiceUrlRequest) : SignedServiceUrl {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_signed_service_url(
+                uniffiHandle,
+                FfiConverterTypeCreateSignedServiceUrlRequest.lower(`request`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeSignedServiceUrl.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `listSignedServiceUrls`(`sandbox`: Sandbox) : List<SignedServiceUrl> {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_signed_service_urls(
+                uniffiHandle,
+                FfiConverterTypeSandbox.lower(`sandbox`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterSequenceTypeSignedServiceUrl.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `revokeSignedServiceUrl`(`signedServiceUrl`: SignedServiceUrl) {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_revoke_signed_service_url(
+                uniffiHandle,
+                FfiConverterTypeSignedServiceUrl.lower(`signedServiceUrl`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_void(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_void(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_void(future) },
+        // lift function
+        { Unit },
+
         // Error FFI converter
         SdkException.ErrorHandler,
     )
@@ -5026,6 +5718,13 @@ public object FfiConverterTypeCyclopsTokenProviderConfigurationBuilder: FfiConve
 
 public interface HttpClient {
 
+    /**
+     * Executes an HTTP request. Foreign implementations must enforce
+     * `request.max_response_bytes` while streaming the response body.
+     * Implementations must not follow redirects, retry requests, or add ambient
+     * authentication/cookies. Send only the supplied headers and body; signed
+     * upload requests also use this interface and must not leak credentials.
+     */
     suspend fun `execute`(`request`: HttpRequest): HttpResponse
 
     companion object
@@ -5128,6 +5827,13 @@ open class HttpClientImpl: Disposable, AutoCloseable, HttpClient
     }
 
 
+    /**
+     * Executes an HTTP request. Foreign implementations must enforce
+     * `request.max_response_bytes` while streaming the response body.
+     * Implementations must not follow redirects, retry requests, or add ambient
+     * authentication/cookies. Send only the supplied headers and body; signed
+     * upload requests also use this interface and must not leak credentials.
+     */
     @Throws(HttpException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
     override suspend fun `execute`(`request`: HttpRequest) : HttpResponse {
@@ -5368,6 +6074,8 @@ public interface HttpRequestBuilderInterface {
 
     fun `headers`(`value`: List<HttpHeader>): HttpRequestBuilder
 
+    fun `maxResponseBytes`(`value`: kotlin.ULong): HttpRequestBuilder
+
     fun `method`(`value`: kotlin.String): HttpRequestBuilder
 
     fun `timeoutSecs`(`value`: kotlin.ULong): HttpRequestBuilder
@@ -5515,6 +6223,19 @@ open class HttpRequestBuilder: Disposable, AutoCloseable, HttpRequestBuilderInte
     UniffiLib.uniffi_cyclops_sdk_fn_method_httprequestbuilder_headers(
         it,
         FfiConverterSequenceTypeHttpHeader.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+    override fun `maxResponseBytes`(`value`: kotlin.ULong): HttpRequestBuilder {
+            return FfiConverterTypeHttpRequestBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_method_httprequestbuilder_max_response_bytes(
+        it,
+        FfiConverterULong.lower(`value`),_status)
 }
     }
     )
@@ -6058,6 +6779,54 @@ public object FfiConverterTypeCreatePoolRequest: FfiConverterRustBuffer<CreatePo
 
 
 
+data class CreateSignedServiceUrlRequest (
+    var `sandbox`: Sandbox
+    ,
+    var `service`: kotlin.String
+    ,
+    var `label`: kotlin.String?
+    ,
+    var `expiresInSeconds`: kotlin.UInt
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeCreateSignedServiceUrlRequest: FfiConverterRustBuffer<CreateSignedServiceUrlRequest> {
+    override fun read(buf: ByteBuffer): CreateSignedServiceUrlRequest {
+        return CreateSignedServiceUrlRequest(
+            FfiConverterTypeSandbox.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterUInt.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: CreateSignedServiceUrlRequest) = (
+            FfiConverterTypeSandbox.allocationSize(value.`sandbox`) +
+            FfiConverterString.allocationSize(value.`service`) +
+            FfiConverterOptionalString.allocationSize(value.`label`) +
+            FfiConverterUInt.allocationSize(value.`expiresInSeconds`)
+    )
+
+    override fun write(value: CreateSignedServiceUrlRequest, buf: ByteBuffer) {
+            FfiConverterTypeSandbox.write(value.`sandbox`, buf)
+            FfiConverterString.write(value.`service`, buf)
+            FfiConverterOptionalString.write(value.`label`, buf)
+            FfiConverterUInt.write(value.`expiresInSeconds`, buf)
+    }
+}
+
+
+
 data class CreateTemplateRequest (
     var `namespace`: kotlin.String
     ,
@@ -6322,6 +7091,12 @@ data class HttpRequest (
      * falls back to the native client's 30-second default.
      */
     var `timeoutSecs`: kotlin.ULong? = null
+    ,
+    /**
+     * Maximum bytes delivered in the response body. Absent preserves the
+     * historical unbounded response behavior.
+     */
+    var `maxResponseBytes`: kotlin.ULong? = null
 
 ){
 
@@ -6343,6 +7118,7 @@ public object FfiConverterTypeHttpRequest: FfiConverterRustBuffer<HttpRequest> {
             FfiConverterSequenceTypeHttpHeader.read(buf),
             FfiConverterOptionalByteArray.read(buf),
             FfiConverterOptionalULong.read(buf),
+            FfiConverterOptionalULong.read(buf),
         )
     }
 
@@ -6351,7 +7127,8 @@ public object FfiConverterTypeHttpRequest: FfiConverterRustBuffer<HttpRequest> {
             FfiConverterString.allocationSize(value.`url`) +
             FfiConverterSequenceTypeHttpHeader.allocationSize(value.`headers`) +
             FfiConverterOptionalByteArray.allocationSize(value.`body`) +
-            FfiConverterOptionalULong.allocationSize(value.`timeoutSecs`)
+            FfiConverterOptionalULong.allocationSize(value.`timeoutSecs`) +
+            FfiConverterOptionalULong.allocationSize(value.`maxResponseBytes`)
     )
 
     override fun write(value: HttpRequest, buf: ByteBuffer) {
@@ -6360,6 +7137,7 @@ public object FfiConverterTypeHttpRequest: FfiConverterRustBuffer<HttpRequest> {
             FfiConverterSequenceTypeHttpHeader.write(value.`headers`, buf)
             FfiConverterOptionalByteArray.write(value.`body`, buf)
             FfiConverterOptionalULong.write(value.`timeoutSecs`, buf)
+            FfiConverterOptionalULong.write(value.`maxResponseBytes`, buf)
     }
 }
 
@@ -6403,6 +7181,168 @@ public object FfiConverterTypeHttpResponse: FfiConverterRustBuffer<HttpResponse>
             FfiConverterUShort.write(value.`status`, buf)
             FfiConverterSequenceTypeHttpHeader.write(value.`headers`, buf)
             FfiConverterByteArray.write(value.`body`, buf)
+    }
+}
+
+
+
+data class ImageUploadFileRequest (
+    var `digest`: kotlin.String
+    ,
+    var `sizeBytes`: kotlin.ULong
+    ,
+    var `name`: kotlin.String
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeImageUploadFileRequest: FfiConverterRustBuffer<ImageUploadFileRequest> {
+    override fun read(buf: ByteBuffer): ImageUploadFileRequest {
+        return ImageUploadFileRequest(
+            FfiConverterString.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ImageUploadFileRequest) = (
+            FfiConverterString.allocationSize(value.`digest`) +
+            FfiConverterULong.allocationSize(value.`sizeBytes`) +
+            FfiConverterString.allocationSize(value.`name`)
+    )
+
+    override fun write(value: ImageUploadFileRequest, buf: ByteBuffer) {
+            FfiConverterString.write(value.`digest`, buf)
+            FfiConverterULong.write(value.`sizeBytes`, buf)
+            FfiConverterString.write(value.`name`, buf)
+    }
+}
+
+
+
+data class ImageUploadInstruction (
+    var `digest`: kotlin.String
+    ,
+    var `sizeBytes`: kotlin.ULong
+    ,
+    var `reference`: kotlin.String
+    ,
+    var `upload`: PresignedPut?
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeImageUploadInstruction: FfiConverterRustBuffer<ImageUploadInstruction> {
+    override fun read(buf: ByteBuffer): ImageUploadInstruction {
+        return ImageUploadInstruction(
+            FfiConverterString.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalTypePresignedPut.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ImageUploadInstruction) = (
+            FfiConverterString.allocationSize(value.`digest`) +
+            FfiConverterULong.allocationSize(value.`sizeBytes`) +
+            FfiConverterString.allocationSize(value.`reference`) +
+            FfiConverterOptionalTypePresignedPut.allocationSize(value.`upload`)
+    )
+
+    override fun write(value: ImageUploadInstruction, buf: ByteBuffer) {
+            FfiConverterString.write(value.`digest`, buf)
+            FfiConverterULong.write(value.`sizeBytes`, buf)
+            FfiConverterString.write(value.`reference`, buf)
+            FfiConverterOptionalTypePresignedPut.write(value.`upload`, buf)
+    }
+}
+
+
+
+data class ImageUploadRequest (
+    var `namespace`: kotlin.String
+    ,
+    var `files`: List<ImageUploadFileRequest>
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeImageUploadRequest: FfiConverterRustBuffer<ImageUploadRequest> {
+    override fun read(buf: ByteBuffer): ImageUploadRequest {
+        return ImageUploadRequest(
+            FfiConverterString.read(buf),
+            FfiConverterSequenceTypeImageUploadFileRequest.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ImageUploadRequest) = (
+            FfiConverterString.allocationSize(value.`namespace`) +
+            FfiConverterSequenceTypeImageUploadFileRequest.allocationSize(value.`files`)
+    )
+
+    override fun write(value: ImageUploadRequest, buf: ByteBuffer) {
+            FfiConverterString.write(value.`namespace`, buf)
+            FfiConverterSequenceTypeImageUploadFileRequest.write(value.`files`, buf)
+    }
+}
+
+
+
+data class ImageUploadResponse (
+    var `files`: List<ImageUploadInstruction>
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeImageUploadResponse: FfiConverterRustBuffer<ImageUploadResponse> {
+    override fun read(buf: ByteBuffer): ImageUploadResponse {
+        return ImageUploadResponse(
+            FfiConverterSequenceTypeImageUploadInstruction.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ImageUploadResponse) = (
+            FfiConverterSequenceTypeImageUploadInstruction.allocationSize(value.`files`)
+    )
+
+    override fun write(value: ImageUploadResponse, buf: ByteBuffer) {
+            FfiConverterSequenceTypeImageUploadInstruction.write(value.`files`, buf)
     }
 }
 
@@ -6571,6 +7511,92 @@ public object FfiConverterTypePool: FfiConverterRustBuffer<Pool> {
 
 
 
+data class PoolDisplayStatus (
+    var `kind`: PoolDisplayStatusKind
+    ,
+    var `label`: kotlin.String
+    ,
+    var `indicator`: kotlin.String
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypePoolDisplayStatus: FfiConverterRustBuffer<PoolDisplayStatus> {
+    override fun read(buf: ByteBuffer): PoolDisplayStatus {
+        return PoolDisplayStatus(
+            FfiConverterTypePoolDisplayStatusKind.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: PoolDisplayStatus) = (
+            FfiConverterTypePoolDisplayStatusKind.allocationSize(value.`kind`) +
+            FfiConverterString.allocationSize(value.`label`) +
+            FfiConverterString.allocationSize(value.`indicator`)
+    )
+
+    override fun write(value: PoolDisplayStatus, buf: ByteBuffer) {
+            FfiConverterTypePoolDisplayStatusKind.write(value.`kind`, buf)
+            FfiConverterString.write(value.`label`, buf)
+            FfiConverterString.write(value.`indicator`, buf)
+    }
+}
+
+
+
+data class PresignedPut (
+    var `method`: kotlin.String
+    ,
+    var `url`: kotlin.String
+    ,
+    var `headers`: Map<kotlin.String, kotlin.String>
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypePresignedPut: FfiConverterRustBuffer<PresignedPut> {
+    override fun read(buf: ByteBuffer): PresignedPut {
+        return PresignedPut(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterMapStringString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: PresignedPut) = (
+            FfiConverterString.allocationSize(value.`method`) +
+            FfiConverterString.allocationSize(value.`url`) +
+            FfiConverterMapStringString.allocationSize(value.`headers`)
+    )
+
+    override fun write(value: PresignedPut, buf: ByteBuffer) {
+            FfiConverterString.write(value.`method`, buf)
+            FfiConverterString.write(value.`url`, buf)
+            FfiConverterMapStringString.write(value.`headers`, buf)
+    }
+}
+
+
+
 data class ResourceMetadata (
     var `namespace`: kotlin.String
     ,
@@ -6662,6 +7688,84 @@ public object FfiConverterTypeSandbox: FfiConverterRustBuffer<Sandbox> {
             FfiConverterString.write(value.`claim`, buf)
             FfiConverterString.write(value.`name`, buf)
             FfiConverterSequenceString.write(value.`services`, buf)
+    }
+}
+
+
+
+data class SignedServiceUrl (
+    var `id`: kotlin.String
+    ,
+    var `namespace`: kotlin.String
+    ,
+    var `claim`: kotlin.String
+    ,
+    var `sandbox`: kotlin.String
+    ,
+    var `service`: kotlin.String
+    ,
+    var `label`: kotlin.String?
+    ,
+    var `url`: kotlin.String
+    ,
+    var `createdAt`: kotlin.String
+    ,
+    var `expiresAt`: kotlin.String
+    ,
+    var `revokedAt`: kotlin.String?
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSignedServiceUrl: FfiConverterRustBuffer<SignedServiceUrl> {
+    override fun read(buf: ByteBuffer): SignedServiceUrl {
+        return SignedServiceUrl(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: SignedServiceUrl) = (
+            FfiConverterString.allocationSize(value.`id`) +
+            FfiConverterString.allocationSize(value.`namespace`) +
+            FfiConverterString.allocationSize(value.`claim`) +
+            FfiConverterString.allocationSize(value.`sandbox`) +
+            FfiConverterString.allocationSize(value.`service`) +
+            FfiConverterOptionalString.allocationSize(value.`label`) +
+            FfiConverterString.allocationSize(value.`url`) +
+            FfiConverterString.allocationSize(value.`createdAt`) +
+            FfiConverterString.allocationSize(value.`expiresAt`) +
+            FfiConverterOptionalString.allocationSize(value.`revokedAt`)
+    )
+
+    override fun write(value: SignedServiceUrl, buf: ByteBuffer) {
+            FfiConverterString.write(value.`id`, buf)
+            FfiConverterString.write(value.`namespace`, buf)
+            FfiConverterString.write(value.`claim`, buf)
+            FfiConverterString.write(value.`sandbox`, buf)
+            FfiConverterString.write(value.`service`, buf)
+            FfiConverterOptionalString.write(value.`label`, buf)
+            FfiConverterString.write(value.`url`, buf)
+            FfiConverterString.write(value.`createdAt`, buf)
+            FfiConverterString.write(value.`expiresAt`, buf)
+            FfiConverterOptionalString.write(value.`revokedAt`, buf)
     }
 }
 
@@ -6892,6 +7996,43 @@ public object FfiConverterTypeHttpError : FfiConverterRustBuffer<HttpException> 
 
 
 
+enum class PoolDisplayStatusKind {
+
+    HEALTHY,
+    SCALED_TO_ZERO,
+    REMOVED,
+    TERMINATING,
+    UNKNOWN;
+
+
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypePoolDisplayStatusKind: FfiConverterRustBuffer<PoolDisplayStatusKind> {
+    override fun read(buf: ByteBuffer) = try {
+        PoolDisplayStatusKind.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: PoolDisplayStatusKind) = 4UL
+
+    override fun write(value: PoolDisplayStatusKind, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+
 
 sealed class SdkBuildException: kotlin.Exception() {
 
@@ -7018,6 +8159,12 @@ sealed class SdkException: kotlin.Exception() {
             get() = "operation=${ `operation` }, status=${ `status` }, body=${ `body` }"
     }
 
+    class SignedServiceUrlsUnavailable(
+        ) : SdkException() {
+        override val message
+            get() = ""
+    }
+
     class UnknownService(
 
         val `requested`: kotlin.String,
@@ -7107,19 +8254,20 @@ public object FfiConverterTypeSdkError : FfiConverterRustBuffer<SdkException> {
                 FfiConverterUShort.read(buf),
                 FfiConverterString.read(buf),
                 )
-            7 -> SdkException.UnknownService(
+            7 -> SdkException.SignedServiceUrlsUnavailable()
+            8 -> SdkException.UnknownService(
                 FfiConverterString.read(buf),
                 FfiConverterSequenceString.read(buf),
                 )
-            8 -> SdkException.InvalidServicePath(
+            9 -> SdkException.InvalidServicePath(
                 FfiConverterString.read(buf),
                 )
-            9 -> SdkException.ClaimFailed(
+            10 -> SdkException.ClaimFailed(
                 FfiConverterString.read(buf),
                 FfiConverterString.read(buf),
                 )
-            10 -> SdkException.ClaimTimeout()
-            11 -> SdkException.PoolAccessDenied(
+            11 -> SdkException.ClaimTimeout()
+            12 -> SdkException.PoolAccessDenied(
                 FfiConverterString.read(buf),
                 FfiConverterString.read(buf),
                 FfiConverterUShort.read(buf),
@@ -7164,6 +8312,10 @@ public object FfiConverterTypeSdkError : FfiConverterRustBuffer<SdkException> {
                 + FfiConverterString.allocationSize(value.`operation`)
                 + FfiConverterUShort.allocationSize(value.`status`)
                 + FfiConverterString.allocationSize(value.`body`)
+            )
+            is SdkException.SignedServiceUrlsUnavailable -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
             )
             is SdkException.UnknownService -> (
                 // Add the size for the Int that specifies the variant plus the size needed for all fields
@@ -7233,29 +8385,33 @@ public object FfiConverterTypeSdkError : FfiConverterRustBuffer<SdkException> {
                 FfiConverterString.write(value.`body`, buf)
                 Unit
             }
-            is SdkException.UnknownService -> {
+            is SdkException.SignedServiceUrlsUnavailable -> {
                 buf.putInt(7)
+                Unit
+            }
+            is SdkException.UnknownService -> {
+                buf.putInt(8)
                 FfiConverterString.write(value.`requested`, buf)
                 FfiConverterSequenceString.write(value.`available`, buf)
                 Unit
             }
             is SdkException.InvalidServicePath -> {
-                buf.putInt(8)
+                buf.putInt(9)
                 FfiConverterString.write(value.`path`, buf)
                 Unit
             }
             is SdkException.ClaimFailed -> {
-                buf.putInt(9)
+                buf.putInt(10)
                 FfiConverterString.write(value.`phase`, buf)
                 FfiConverterString.write(value.`status`, buf)
                 Unit
             }
             is SdkException.ClaimTimeout -> {
-                buf.putInt(10)
+                buf.putInt(11)
                 Unit
             }
             is SdkException.PoolAccessDenied -> {
-                buf.putInt(11)
+                buf.putInt(12)
                 FfiConverterString.write(value.`operation`, buf)
                 FfiConverterString.write(value.`namespace`, buf)
                 FfiConverterUShort.write(value.`status`, buf)
@@ -7359,6 +8515,38 @@ public object FfiConverterOptionalByteArray: FfiConverterRustBuffer<kotlin.ByteA
         } else {
             buf.put(1)
             FfiConverterByteArray.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypePresignedPut: FfiConverterRustBuffer<PresignedPut?> {
+    override fun read(buf: ByteBuffer): PresignedPut? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypePresignedPut.read(buf)
+    }
+
+    override fun allocationSize(value: PresignedPut?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypePresignedPut.allocationSize(value)
+        }
+    }
+
+    override fun write(value: PresignedPut?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypePresignedPut.write(value, buf)
         }
     }
 }
@@ -7525,6 +8713,34 @@ public object FfiConverterSequenceString: FfiConverterRustBuffer<List<kotlin.Str
 /**
  * @suppress
  */
+public object FfiConverterSequenceTypePreservedJson: FfiConverterRustBuffer<List<PreservedJson>> {
+    override fun read(buf: ByteBuffer): List<PreservedJson> {
+        val len = buf.getInt()
+        return List<PreservedJson>(len) {
+            FfiConverterTypePreservedJson.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<PreservedJson>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypePreservedJson.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<PreservedJson>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypePreservedJson.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypeClaim: FfiConverterRustBuffer<List<Claim>> {
     override fun read(buf: ByteBuffer): List<Claim> {
         val len = buf.getInt()
@@ -7581,6 +8797,62 @@ public object FfiConverterSequenceTypeHttpHeader: FfiConverterRustBuffer<List<Ht
 /**
  * @suppress
  */
+public object FfiConverterSequenceTypeImageUploadFileRequest: FfiConverterRustBuffer<List<ImageUploadFileRequest>> {
+    override fun read(buf: ByteBuffer): List<ImageUploadFileRequest> {
+        val len = buf.getInt()
+        return List<ImageUploadFileRequest>(len) {
+            FfiConverterTypeImageUploadFileRequest.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<ImageUploadFileRequest>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeImageUploadFileRequest.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<ImageUploadFileRequest>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeImageUploadFileRequest.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeImageUploadInstruction: FfiConverterRustBuffer<List<ImageUploadInstruction>> {
+    override fun read(buf: ByteBuffer): List<ImageUploadInstruction> {
+        val len = buf.getInt()
+        return List<ImageUploadInstruction>(len) {
+            FfiConverterTypeImageUploadInstruction.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<ImageUploadInstruction>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeImageUploadInstruction.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<ImageUploadInstruction>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeImageUploadInstruction.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypeNamespace: FfiConverterRustBuffer<List<Namespace>> {
     override fun read(buf: ByteBuffer): List<Namespace> {
         val len = buf.getInt()
@@ -7627,6 +8899,34 @@ public object FfiConverterSequenceTypePool: FfiConverterRustBuffer<List<Pool>> {
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypePool.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeSignedServiceUrl: FfiConverterRustBuffer<List<SignedServiceUrl>> {
+    override fun read(buf: ByteBuffer): List<SignedServiceUrl> {
+        val len = buf.getInt()
+        return List<SignedServiceUrl>(len) {
+            FfiConverterTypeSignedServiceUrl.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<SignedServiceUrl>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeSignedServiceUrl.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<SignedServiceUrl>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeSignedServiceUrl.write(it, buf)
         }
     }
 }
@@ -7725,3 +9025,71 @@ public object FfiConverterMapStringString: FfiConverterRustBuffer<Map<kotlin.Str
         }
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ fun `healthyPoolDisplayStatus`(): PoolDisplayStatus {
+            return FfiConverterTypePoolDisplayStatus.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_func_healthy_pool_display_status(
+
+        _status)
+}
+    )
+    }
+
+ fun `poolDisplayStatus`(`pool`: Pool): PoolDisplayStatus {
+            return FfiConverterTypePoolDisplayStatus.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_func_pool_display_status(
+
+        FfiConverterTypePool.lower(`pool`),_status)
+}
+    )
+    }
+
+ fun `removedPoolDisplayStatus`(): PoolDisplayStatus {
+            return FfiConverterTypePoolDisplayStatus.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_func_removed_pool_display_status(
+
+        _status)
+}
+    )
+    }
+
+ fun `terminatingPoolDisplayStatus`(): PoolDisplayStatus {
+            return FfiConverterTypePoolDisplayStatus.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_func_terminating_pool_display_status(
+
+        _status)
+}
+    )
+    }
+
+ fun `unknownPoolDisplayStatus`(): PoolDisplayStatus {
+            return FfiConverterTypePoolDisplayStatus.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_func_unknown_pool_display_status(
+
+        _status)
+}
+    )
+    }

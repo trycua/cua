@@ -13,6 +13,55 @@ Install from the Cua wheel index when resolving dependencies with pip:
 pip install --extra-index-url https://wheels.cua.ai/simple cua-sandbox
 ```
 
+For typed desktop control of a Fleet sandbox through `sb.driver.connect()`,
+install the optional Driver SDK:
+
+```bash
+pip install --extra-index-url https://wheels.cua.ai/simple 'cua-sandbox[driver]'
+```
+
+The `driver` extra pins `cua-driver==0.27.0`, which provides the typed-window API
+and compatible remote channel bridge. It requires that version to be published
+for your platform.
+The sandbox image must also run a compatible Driver service.
+
+### Optional MCP envelope carrier
+
+The SDK can carry the same typed Driver interface through a named
+MCP service. This requires the guest's explicit typed-envelope extension, not
+just an ordinary MCP tools endpoint:
+
+```python
+from cua_driver import GetScreenSizeInput
+
+
+async def observe_guest(pool):
+    async with pool.claim() as sb:
+        async with sb.driver.connect(service="mcp", transport="mcp") as driver:
+            # This is the generated cua_driver.CuaDriver, not an MCP facade.
+            result = await driver.get_screen_size(GetScreenSizeInput(session=None))
+        return result
+```
+
+`sb.driver.connect()` and `sb.driver.connect(service="driver")` keep the existing
+envelope HTTP path. `CuaDriver.connect(socket_path)` is unchanged. Shell, files,
+terminals, existing Sandbox desktop calls, and claim/pool lifecycle still use
+their existing interfaces; this option affects only `sb.driver`.
+
+MCP selection performs initialization and verifies
+`capabilities.experimental["ai.cua.driver.envelopes"].version == 1` before
+opening a receiver. An old tools-only image fails before a desktop action.
+The connection preserves the receiver's generation, host-selected permissions,
+and cancellation. It does not reconnect, replay actions, or fall back to the
+local desktop. On exit, the SDK attempts bounded receiver and MCP-session
+cleanup. An unconfirmed cleanup warns; it is not proof of rollback or guest
+deletion.
+
+See the [wire and launcher contract](../../cua-driver/docs/mcp-envelope-carrier.md)
+for the opt-in and limits. Test the exact image and matching bindings/native
+library before advertising support; use the pinned optional extra and a
+compatible guest runtime.
+
 ## Ephemeral sandbox
 
 Created on enter, destroyed on exit.
@@ -89,12 +138,27 @@ async with Localhost.connect() as host:
     await host.screenshot()
 ```
 
-
 ## Cloud sandbox
 
 Fleet is the OAuth cloud backend. Configure OAuth credentials once; Fleet uses `https://run.cua.ai` by default and can be overridden with `configure(fleet_base_url=...)` or `CUA_FLEET_BASE_URL`. The legacy API-key VM API continues to use `https://api.cua.ai`. Cloud images must use a registry reference; `expose()` declares additional Fleet services.
 
 Fleet does not support snapshots or custom disks, and currently supports only `us-east-1`. `await sb.tunnel.forward(3000)` returns the authenticated Fleet service URL for an exposed port; it does not open a local SSH tunnel.
+
+Fleet sandboxes can also create time-limited, revocable public URLs for an
+exposed service. Treat each URL as a bearer credential and revoke it as soon as
+the recipient no longer needs access.
+
+```python
+signed_url = await sb.services.create_signed_url(
+    "mcp",
+    label="Customer demo",
+    expires_in_seconds=3600,
+)
+print(signed_url.url)
+
+active_urls = await sb.services.list_signed_urls()
+await sb.services.revoke_signed_url(signed_url)
+```
 
 ## Fleet pools and durable claims
 

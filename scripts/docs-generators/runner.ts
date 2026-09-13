@@ -16,6 +16,7 @@
 import { execSync, spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import { parseArgs } from 'node:util';
 
 // ============================================================================
 // Types
@@ -53,16 +54,14 @@ interface Config {
 
 const ROOT_DIR = path.resolve(__dirname, '../..');
 const CONFIG_PATH = path.join(__dirname, 'config.json');
-const DOCS_TSX_PATH = path.join(
-  ROOT_DIR,
-  'docs',
-  'node_modules',
-  '.bin',
-  process.platform === 'win32' ? 'tsx.cmd' : 'tsx'
-);
+const DOCS_TSX_PATH = path.join(ROOT_DIR, 'docs', 'node_modules', 'tsx', 'dist', 'cli.mjs');
 const SHARED_GENERATOR_FILES = new Set([
   'scripts/docs-generators/runner.ts',
   'scripts/docs-generators/config.json',
+  '.github/workflows/ci-check-docs.yml',
+  '.gitattributes',
+  'docs/package.json',
+  'docs/pnpm-lock.yaml',
 ]);
 
 // ============================================================================
@@ -70,18 +69,34 @@ const SHARED_GENERATOR_FILES = new Set([
 // ============================================================================
 
 async function main() {
-  const args = process.argv.slice(2);
+  const { values } = parseArgs({
+    options: {
+      help: { type: 'boolean' },
+      list: { type: 'boolean' },
+      library: { type: 'string' },
+      check: { type: 'boolean' },
+      'check-only': { type: 'boolean' },
+      changed: { type: 'boolean' },
+      'changed-files-file': { type: 'string' },
+      'test-routing': { type: 'boolean' },
+    },
+  });
+  if (values.help) {
+    console.log(`Usage: pnpm --dir docs docs:generate [options]
 
-  // Parse arguments
-  const checkOnly = args.includes('--check') || args.includes('--check-only');
-  const listOnly = args.includes('--list');
-  const changedOnly = args.includes('--changed');
-  const changedFilesFileIndex = args.indexOf('--changed-files-file');
-  const changedFilesFile =
-    changedFilesFileIndex !== -1 ? args[changedFilesFileIndex + 1] : undefined;
-  const testRouting = args.includes('--test-routing');
-  const libraryIndex = args.indexOf('--library');
-  const specificLibrary = libraryIndex !== -1 ? args[libraryIndex + 1] : null;
+  --help                       Show this help without running generators
+  --list                       List configured generators
+  --library <name>             Run one configured generator
+  --check, --check-only         Check for documentation drift
+  --changed                    Select generators from changed files
+  --changed-files-file <path>   Print generators selected by a changed-file list
+  --test-routing               Verify generator routing`);
+    return;
+  }
+
+  const checkOnly = Boolean(values.check || values['check-only']);
+  const changedFilesFile = values['changed-files-file'];
+  const specificLibrary = values.library;
 
   // Load config
   if (!fs.existsSync(CONFIG_PATH)) {
@@ -91,12 +106,12 @@ async function main() {
 
   const config: Config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
 
-  if (testRouting) {
+  if (values['test-routing']) {
     testGeneratorRouting(config);
     return;
   }
 
-  if (changedFilesFile) {
+  if (changedFilesFile !== undefined) {
     if (!fs.existsSync(changedFilesFile)) {
       console.error(`Changed-files input not found: ${changedFilesFile}`);
       process.exit(1);
@@ -110,7 +125,7 @@ async function main() {
   console.log('==================================\n');
 
   // List mode
-  if (listOnly) {
+  if (values.list) {
     listGenerators(config);
     return;
   }
@@ -118,14 +133,14 @@ async function main() {
   // Determine which generators to run
   let generatorsToRun: string[] = [];
 
-  if (specificLibrary) {
+  if (specificLibrary !== undefined) {
     if (!config.generators[specificLibrary]) {
       console.error(`❌ Unknown library: ${specificLibrary}`);
       console.log('\nAvailable libraries:', Object.keys(config.generators).join(', '));
       process.exit(1);
     }
     generatorsToRun = [specificLibrary];
-  } else if (changedOnly) {
+  } else if (values.changed) {
     generatorsToRun = getChangedGenerators(config);
     if (generatorsToRun.length === 0) {
       console.log('✅ No documentation-related changes detected.');
@@ -204,7 +219,7 @@ async function runGenerator(
     // Use the docs app's lockfile-installed tsx; never fall back to npx downloads.
     requireDocsTsx();
     const args = checkOnly ? ['--check'] : [];
-    const result = spawnSync(DOCS_TSX_PATH, [generatorPath, ...args], {
+    const result = spawnSync(process.execPath, [DOCS_TSX_PATH, generatorPath, ...args], {
       cwd: ROOT_DIR,
       stdio: 'inherit',
       encoding: 'utf-8',
@@ -312,6 +327,7 @@ function testGeneratorRouting(config: Config): void {
     [
       'docs/content/docs/use-cua-with/hermes.mdx',
       'docs/content/docs/reference/cua-driver/macos-permissions.mdx',
+      'docs/content/docs/reference/cua-driver/mcp-tool-notes.mdx',
     ],
     []
   );
@@ -333,8 +349,20 @@ function testGeneratorRouting(config: Config): void {
     ],
     ['lume']
   );
-  assertSelection(config, ['scripts/docs-generators/runner.ts'], ['cua-driver', 'lume']);
-  assertSelection(config, ['scripts/docs-generators/config.json'], ['cua-driver', 'lume']);
+  assertSelection(
+    config,
+    [
+      'libs/python/cua-sandbox/cua_sandbox/image.py',
+      'docs/content/docs/reference/sandbox-sdk/os-image-catalog.mdx',
+      'scripts/docs-generators/sandbox-facts.json',
+    ],
+    ['sandbox']
+  );
+  for (const file of ['mcp-tools.mdx', 'mcp-tools-linux.mdx', 'mcp-tools-windows.mdx']) {
+    assertSelection(config, [`docs/content/docs/reference/cua-driver/${file}`], ['cua-driver']);
+  }
+  assertSelection(config, ['scripts/docs-generators/runner.ts'], ['cua-driver', 'lume', 'sandbox']);
+  assertSelection(config, ['scripts/docs-generators/config.json'], ['cua-driver', 'lume', 'sandbox']);
 
   console.log(`Generator routing assertions passed with pinned tsx ${tsxVersion}`);
 }

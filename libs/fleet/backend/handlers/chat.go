@@ -15,16 +15,21 @@ import (
 )
 
 const (
-	chatTurnBodyMaxBytes = 256 << 10
-	chatMessageMaxBytes  = 128 << 10
-	chatHistoryMaxBytes  = 1 << 20
-	chatHistoryMaxCount  = 256
+	chatTurnBodyMaxBytes               = 256 << 10
+	chatConversationUpdateBodyMaxBytes = 4 << 10
+	chatMessageMaxBytes                = 128 << 10
+	chatHistoryMaxBytes                = 1 << 20
+	chatHistoryMaxCount                = 256
 )
 
 var errChatTurnTooLarge = errors.New("chat turn is too large")
 
 type TurnRequest struct {
 	Messages []chat.Message `json:"messages"`
+}
+
+type ArchiveConversationRequest struct {
+	Archived *bool `json:"archived" binding:"required"`
 }
 
 type turnEvent struct {
@@ -34,10 +39,6 @@ type turnEvent struct {
 }
 
 func (h Handlers) chatUser(w http.ResponseWriter, r *http.Request) *auth.User {
-	if !h.ChatAccess.Enabled() {
-		writeErr(w, http.StatusNotFound, "chat is disabled")
-		return nil
-	}
 	user := currentUser(r)
 	if user == nil || user.ID == "" {
 		writeErr(w, http.StatusUnauthorized, "missing user")
@@ -93,7 +94,9 @@ func (h Handlers) CreateConversation(w http.ResponseWriter, r *http.Request) {
 // @Summary      List the calling user's chat conversations
 // @Tags         chat
 // @Produce      json
+// @Param        archived query bool false "Whether to list archived conversations"
 // @Success      200 {array} chat.ConversationSummary
+// @Failure      400 {object} ErrorResponse
 // @Failure      401 {object} ErrorResponse
 // @Failure      404 {object} ErrorResponse
 // @Failure      503 {object} ErrorResponse
@@ -104,7 +107,22 @@ func (h Handlers) ListConversations(w http.ResponseWriter, r *http.Request) {
 	if user == nil {
 		return
 	}
-	conversations, err := h.Conversations.List(r.Context(), user.ID)
+	archived := false
+	if values, present := r.URL.Query()["archived"]; present {
+		if len(values) != 1 {
+			writeErr(w, http.StatusBadRequest, "invalid archived query value")
+			return
+		}
+		switch values[0] {
+		case "false":
+		case "true":
+			archived = true
+		default:
+			writeErr(w, http.StatusBadRequest, "invalid archived query value")
+			return
+		}
+	}
+	conversations, err := h.Conversations.List(r.Context(), user.ID, archived)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "list chat conversations", "err", err, "user", user.ID)
 		writeErr(w, http.StatusInternalServerError, "failed to list conversations")
@@ -143,6 +161,56 @@ func (h Handlers) GetConversation(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, conversation)
 }
 
+// UpdateConversation godoc
+//
+// @Summary      Archive or restore a chat conversation
+// @Tags         chat
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Conversation ID"
+// @Param        body body ArchiveConversationRequest true "Archive state"
+// @Success      200 {object} chat.Conversation
+// @Failure      400 {object} ErrorResponse
+// @Failure      401 {object} ErrorResponse
+// @Failure      404 {object} ErrorResponse
+// @Failure      413 {object} ErrorResponse
+// @Failure      503 {object} ErrorResponse
+// @Security     BearerAuth
+// @Router       /api/chat/conversations/{id} [patch]
+func (h Handlers) UpdateConversation(w http.ResponseWriter, r *http.Request) {
+	user := h.chatUser(w, r)
+	if user == nil {
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, chatConversationUpdateBodyMaxBytes)
+	request, err := decodeArchiveConversationRequest(r.Body)
+	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeErr(w, http.StatusRequestEntityTooLarge, "conversation update body is too large")
+		} else {
+			writeErr(w, http.StatusBadRequest, "invalid body")
+		}
+		return
+	}
+
+	conversationID := chatConversationID(r)
+	unlock := h.lockConversation(conversationID)
+	defer unlock()
+	conversation, err := h.Conversations.SetArchived(r.Context(), user.ID, conversationID, *request.Archived)
+	if errors.Is(err, chat.ErrConversationNotFound) {
+		writeErr(w, http.StatusNotFound, "conversation not found")
+		return
+	}
+	if err != nil {
+		slog.ErrorContext(r.Context(), "update chat conversation archive state", "err", err, "user", user.ID)
+		writeErr(w, http.StatusInternalServerError, "failed to update conversation")
+		return
+	}
+	writeJSON(w, http.StatusOK, conversation)
+}
+
 // CreateTurn godoc
 //
 // @Summary      Send a chat turn and stream the assistant response
@@ -155,6 +223,7 @@ func (h Handlers) GetConversation(w http.ResponseWriter, r *http.Request) {
 // @Failure      400 {object} ErrorResponse
 // @Failure      401 {object} ErrorResponse
 // @Failure      404 {object} ErrorResponse
+// @Failure      409 {object} ErrorResponse
 // @Failure      503 {object} ErrorResponse
 // @Security     BearerAuth
 // @Router       /api/chat/conversations/{id}/turns [post]
@@ -193,6 +262,10 @@ func (h Handlers) CreateTurn(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "failed to get conversation")
 		return
 	}
+	if conversation.ArchivedAt != nil {
+		writeErr(w, http.StatusConflict, "conversation is archived")
+		return
+	}
 	request.Messages = recoverAbandonedToolCalls(conversation.Messages, request.Messages)
 	if err := validateTurn(conversation.Messages, request.Messages); err != nil {
 		if errors.Is(err, errChatTurnTooLarge) {
@@ -204,6 +277,10 @@ func (h Handlers) CreateTurn(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(request.Messages) > 0 {
 		if err := h.Conversations.Append(r.Context(), user.ID, conversationID, request.Messages...); err != nil {
+			if errors.Is(err, chat.ErrConversationArchived) {
+				writeErr(w, http.StatusConflict, "conversation is archived")
+				return
+			}
 			if errors.Is(err, chat.ErrConversationLimit) {
 				writeErr(w, http.StatusRequestEntityTooLarge, "conversation storage limit reached")
 				return
@@ -319,7 +396,8 @@ func validateTurn(history, messages []chat.Message) error {
 			return errors.New("invalid tool message")
 		}
 		if err := validateBashToolResult(message.Content); err != nil {
-			return errors.New("invalid tool result")
+			return errors.Join(errors.New("invalid tool result"), err)
+
 		}
 	}
 
@@ -384,6 +462,22 @@ func chatConversationID(r *http.Request) string {
 	return strings.TrimSuffix(path, "/turns")
 }
 
+func decodeArchiveConversationRequest(body io.Reader) (ArchiveConversationRequest, error) {
+	var request ArchiveConversationRequest
+	decoder := json.NewDecoder(body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		return ArchiveConversationRequest{}, err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return ArchiveConversationRequest{}, errors.New("multiple JSON values")
+	}
+	if request.Archived == nil {
+		return ArchiveConversationRequest{}, errors.New("archived is required")
+	}
+	return request, nil
+}
+
 func decodeTurnRequest(body io.Reader) (TurnRequest, error) {
 	var raw struct {
 		Messages *json.RawMessage `json:"messages"`
@@ -402,7 +496,8 @@ func decodeTurnRequest(body io.Reader) (TurnRequest, error) {
 	}
 	var rawMessages []json.RawMessage
 	if err := json.Unmarshal(*raw.Messages, &rawMessages); err != nil || rawMessages == nil {
-		return TurnRequest{}, errors.New("messages must be an array")
+		return TurnRequest{}, errors.Join(errors.New("messages must be an array"), err)
+
 	}
 
 	request := TurnRequest{Messages: make([]chat.Message, 0, len(rawMessages))}

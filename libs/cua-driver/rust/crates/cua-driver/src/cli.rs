@@ -1726,11 +1726,21 @@ where
         on_startup(daemon, true);
     }
 
+    run_mcp_runtime(crate::proxy::run_proxy(socket_path))
+}
+
+pub(crate) fn run_mcp_runtime<T>(future: impl std::future::Future<Output = T>) -> T {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("tokio runtime");
-    rt.block_on(crate::proxy::run_proxy(socket_path))
+    let result = rt.block_on(future);
+    // Tokio stdin uses an uncancellable blocking read. After control loss the
+    // MCP client can still hold stdin open; waiting for that read during Drop
+    // would keep the failed proxy process alive and prevent client recovery.
+    // run_proxy has already dropped its scoped daemon control connection.
+    rt.shutdown_background();
+    result
 }
 
 /// Emit a stable, machine-readable JSON description of the cua-driver CLI
@@ -2984,6 +2994,13 @@ fn run_recording_render(args: &[String]) {
 /// installer script — see [`crate::updater`] for why we go through the script
 /// instead of re-implementing the asset resolution + atomic swap + GC in Rust.
 pub fn run_update_cmd(apply: bool, json: bool) {
+    if crate::updater::is_pacman_managed() {
+        print_check_update_state(
+            crate::version_check::check_update_state_with_ownership(false, true),
+            json,
+        );
+        return;
+    }
     if apply && crate::bundle::is_local_installation() {
         eprintln!(
             "cua-driver-local is managed by scripts/install-local.sh (or install-local.ps1); \
@@ -3274,6 +3291,7 @@ fn run_permissions_status(json: bool) {
     let cap = structured
         .get("screen_recording_capturable")
         .and_then(|v| v.as_bool());
+    let direct_capture_verification = structured.get("direct_capture_verification");
     let attribution = structured
         .get("source")
         .and_then(|s| s.get("attribution"))
@@ -3298,9 +3316,27 @@ fn run_permissions_status(json: bool) {
                 );
             }
         }
-        None => println!(
-            "Direct Capture:     ❓ not checked (status is read-only; run `{cli_name} permissions grant`)"
-        ),
+        None => {
+            if let Some(verification) = direct_capture_verification {
+                let source = verification["source"].as_str().unwrap_or("unknown source");
+                let verified_at = verification["verified_at"]
+                    .as_str()
+                    .unwrap_or("unknown time");
+                let bundle_id = verification["bundle_id"]
+                    .as_str()
+                    .unwrap_or("unknown identity");
+                println!(
+                    "Direct Capture:     ✅ previously verified ({source}, {verified_at}, {bundle_id})"
+                );
+                println!(
+                    "  ℹ️  historical observation; this read-only status did not run a live probe."
+                );
+            } else {
+                println!(
+                    "Direct Capture:     ❓ not checked (status is read-only; run `{cli_name} permissions grant`)"
+                );
+            }
+        }
     }
     println!("Source: {attribution}");
     if !(ax && sr) {
@@ -3319,6 +3355,12 @@ fn permission_grant_is_ready(structured: &serde_json::Value) -> bool {
     permission_flag(structured, "accessibility")
         && permission_flag(structured, "screen_recording")
         && permission_flag(structured, "screen_recording_capturable")
+        && structured
+            .get("direct_capture_verification_error")
+            .is_none()
+        && structured
+            .get("direct_capture_verification")
+            .is_some_and(serde_json::Value::is_object)
 }
 
 fn permission_grant_needs_direct_capture(structured: &serde_json::Value) -> bool {
@@ -3623,12 +3665,34 @@ fn run_permissions_grant() {
         println!("Choose Allow to request and verify direct capture now…");
 
         let direct_status = request_permissions_via_launchservices(true).ok();
+        if let Some((status, error)) = direct_status.as_ref().and_then(|status| {
+            status
+                .get("direct_capture_verification_error")
+                .and_then(|error| error.get("message"))
+                .and_then(serde_json::Value::as_str)
+                .map(|error| (status, error))
+        }) {
+            if permission_flag(status, "screen_recording_capturable") {
+                eprintln!(
+                    "\n❌ Direct capture worked, but its verification could not be recorded: {error}"
+                );
+            } else {
+                eprintln!(
+                    "\n❌ Direct capture failed, and the previous verification could not be cleared: {error}"
+                );
+            }
+            process::exit(1);
+        }
+
         if direct_status
             .as_ref()
             .is_some_and(permission_grant_is_ready)
         {
             println!(
                 "\n✅ {app_name} has Accessibility, Screen Recording, and direct capture access. You're set."
+            );
+            println!(
+                "macOS verified the explicit request but does not report whether consent was newly granted or already present."
             );
             return;
         }
@@ -3676,6 +3740,10 @@ fn run_permissions_grant() {
 /// the payload.
 pub fn run_check_update_cmd(json: bool, no_cache: bool) {
     let state = crate::version_check::check_update_state(no_cache);
+    print_check_update_state(state, json);
+}
+
+fn print_check_update_state(state: crate::version_check::UpdateState, json: bool) {
     crate::version_check::capture_update_state(&state, crate::telemetry::UpdateCheckSource::Cli);
 
     if json {
@@ -3701,7 +3769,7 @@ pub fn run_check_update_cmd(json: bool, no_cache: bool) {
             (None, Some(err)) => {
                 println!("Latest:  <unavailable>");
                 println!();
-                println!("Could not reach GitHub: {err}");
+                println!("Update check unavailable: {err}");
             }
             (None, None) => {
                 // Network failed AND no cache existed — `error` should be set;
@@ -3719,6 +3787,24 @@ pub fn run_check_update_cmd(json: bool, no_cache: bool) {
 /// Inspect or persist the release channel. Selection never installs by itself;
 /// replacement remains explicit through `cua-driver update --apply`.
 pub fn run_channel_cmd(subcommand: &str, value: Option<&str>, json: bool) {
+    if crate::updater::is_pacman_managed() {
+        if json {
+            let current =
+                crate::release_channel::ReleaseChannel::from_version(env!("CARGO_PKG_VERSION"));
+            println!(
+                "{}",
+                serde_json::json!({
+                    "selected_channel": null,
+                    "current_channel": current.map(|channel| channel.as_str()),
+                    "current_version": env!("CARGO_PKG_VERSION"),
+                    "error": crate::updater::PACMAN_UPDATE_GUIDANCE,
+                })
+            );
+        } else {
+            eprintln!("{}", crate::updater::PACMAN_UPDATE_GUIDANCE);
+        }
+        process::exit(1);
+    }
     let result = match subcommand {
         "status" => crate::release_channel::selected(),
         "set" => {
@@ -4910,11 +4996,28 @@ mod tests {
         let ready = serde_json::json!({
             "accessibility": true,
             "screen_recording": true,
-            "screen_recording_capturable": true
+            "screen_recording_capturable": true,
+            "direct_capture_verification": {}
         });
 
         assert!(permission_grant_is_ready(&ready));
         assert!(!permission_grant_needs_direct_capture(&ready));
+    }
+
+    #[test]
+    fn permission_grant_rejects_verification_errors_with_stale_evidence() {
+        let failed = serde_json::json!({
+            "accessibility": true,
+            "screen_recording": true,
+            "screen_recording_capturable": true,
+            "direct_capture_verification": {},
+            "direct_capture_verification_error": {
+                "code": "direct_capture_verification_store_failed",
+                "message": "read-only evidence store"
+            }
+        });
+
+        assert!(!permission_grant_is_ready(&failed));
     }
 
     #[test]

@@ -44,6 +44,7 @@ impl CyclopsClient {
             sandbox_template_ref: pool.spec.sandbox_template_ref.clone(),
             warmpool: None,
             bind_deadline: Some(DEFAULT_CLAIM_BIND_DEADLINE_SECONDS),
+            ttl_seconds_after_created: None,
             lifecycle: None,
         });
         if spec.bind_deadline.is_none() {
@@ -282,6 +283,7 @@ fn json_request(method: &str, url: Url, body: Option<Vec<u8>>) -> HttpRequest {
         ],
         body,
         timeout_secs: None,
+        max_response_bytes: None,
     }
 }
 

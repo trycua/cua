@@ -369,6 +369,7 @@ func uniffiCheckChecksums() {
 		// If this happens try cleaning and rebuilding your project
 		panic("cyclops_sdk_schema: UniFFI contract version mismatch")
 	}
+
 	{
 		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
 			return C.uniffi_cyclops_sdk_schema_checksum_method_preservedjson_to_json()
@@ -378,6 +379,7 @@ func uniffiCheckChecksums() {
 			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_method_preservedjson_to_json: UniFFI API checksum mismatch")
 		}
 	}
+
 	{
 		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
 			return C.uniffi_cyclops_sdk_schema_checksum_constructor_preservedjson_from_json()
@@ -387,6 +389,7 @@ func uniffiCheckChecksums() {
 			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_constructor_preservedjson_from_json: UniFFI API checksum mismatch")
 		}
 	}
+
 }
 
 type FfiConverterUint16 struct{}
@@ -722,10 +725,11 @@ func (_ FfiDestroyerClaimLifecycle) Destroy(value ClaimLifecycle) {
 }
 
 type ClaimSpec struct {
-	SandboxTemplateRef SandboxTemplateRef
-	Warmpool           *string
-	BindDeadline       *uint32
-	Lifecycle          *ClaimLifecycle
+	SandboxTemplateRef     SandboxTemplateRef
+	Warmpool               *string
+	BindDeadline           *uint32
+	Lifecycle              *ClaimLifecycle
+	TtlSecondsAfterCreated *uint32
 }
 
 func (r *ClaimSpec) Destroy() {
@@ -733,6 +737,7 @@ func (r *ClaimSpec) Destroy() {
 	FfiDestroyerOptionalString{}.Destroy(r.Warmpool)
 	FfiDestroyerOptionalUint32{}.Destroy(r.BindDeadline)
 	FfiDestroyerOptionalClaimLifecycle{}.Destroy(r.Lifecycle)
+	FfiDestroyerOptionalUint32{}.Destroy(r.TtlSecondsAfterCreated)
 }
 
 type FfiConverterClaimSpec struct{}
@@ -749,6 +754,7 @@ func (c FfiConverterClaimSpec) Read(reader io.Reader) ClaimSpec {
 		FfiConverterOptionalStringINSTANCE.Read(reader),
 		FfiConverterOptionalUint32INSTANCE.Read(reader),
 		FfiConverterOptionalClaimLifecycleINSTANCE.Read(reader),
+		FfiConverterOptionalUint32INSTANCE.Read(reader),
 	}
 }
 
@@ -765,6 +771,7 @@ func (c FfiConverterClaimSpec) Write(writer io.Writer, value ClaimSpec) {
 	FfiConverterOptionalStringINSTANCE.Write(writer, value.Warmpool)
 	FfiConverterOptionalUint32INSTANCE.Write(writer, value.BindDeadline)
 	FfiConverterOptionalClaimLifecycleINSTANCE.Write(writer, value.Lifecycle)
+	FfiConverterOptionalUint32INSTANCE.Write(writer, value.TtlSecondsAfterCreated)
 }
 
 type FfiDestroyerClaimSpec struct{}
@@ -1070,15 +1077,17 @@ func (_ FfiDestroyerOsGymSandboxTemplateSpec) Destroy(value OsGymSandboxTemplate
 }
 
 type OsGymSandboxWarmPoolSpec struct {
-	Replicas           uint32
-	SandboxTemplateRef SandboxTemplateRef
-	Autoscaling        *WarmPoolAutoscaling
+	Replicas               uint32
+	SandboxTemplateRef     SandboxTemplateRef
+	Autoscaling            *WarmPoolAutoscaling
+	TtlSecondsAfterCreated *uint32
 }
 
 func (r *OsGymSandboxWarmPoolSpec) Destroy() {
 	FfiDestroyerUint32{}.Destroy(r.Replicas)
 	FfiDestroyerSandboxTemplateRef{}.Destroy(r.SandboxTemplateRef)
 	FfiDestroyerOptionalWarmPoolAutoscaling{}.Destroy(r.Autoscaling)
+	FfiDestroyerOptionalUint32{}.Destroy(r.TtlSecondsAfterCreated)
 }
 
 type FfiConverterOsGymSandboxWarmPoolSpec struct{}
@@ -1094,6 +1103,7 @@ func (c FfiConverterOsGymSandboxWarmPoolSpec) Read(reader io.Reader) OsGymSandbo
 		FfiConverterUint32INSTANCE.Read(reader),
 		FfiConverterSandboxTemplateRefINSTANCE.Read(reader),
 		FfiConverterOptionalWarmPoolAutoscalingINSTANCE.Read(reader),
+		FfiConverterOptionalUint32INSTANCE.Read(reader),
 	}
 }
 
@@ -1109,6 +1119,7 @@ func (c FfiConverterOsGymSandboxWarmPoolSpec) Write(writer io.Writer, value OsGy
 	FfiConverterUint32INSTANCE.Write(writer, value.Replicas)
 	FfiConverterSandboxTemplateRefINSTANCE.Write(writer, value.SandboxTemplateRef)
 	FfiConverterOptionalWarmPoolAutoscalingINSTANCE.Write(writer, value.Autoscaling)
+	FfiConverterOptionalUint32INSTANCE.Write(writer, value.TtlSecondsAfterCreated)
 }
 
 type FfiDestroyerOsGymSandboxWarmPoolSpec struct{}
@@ -1667,6 +1678,121 @@ func (FfiConverterRuntimeKind) Write(writer io.Writer, value RuntimeKind) {
 type FfiDestroyerRuntimeKind struct{}
 
 func (_ FfiDestroyerRuntimeKind) Destroy(value RuntimeKind) {
+}
+
+type SchemaBuildError struct {
+	err error
+}
+
+// Convenience method to turn *SchemaBuildError into error
+// Avoiding treating nil pointer as non nil error interface
+func (err *SchemaBuildError) AsError() error {
+	if err == nil {
+		return nil
+	} else {
+		return err
+	}
+}
+
+func (err SchemaBuildError) Error() string {
+	return fmt.Sprintf("SchemaBuildError: %s", err.err.Error())
+}
+
+func (err SchemaBuildError) Unwrap() error {
+	return err.err
+}
+
+// Err* are used for checking error type with `errors.Is`
+var ErrSchemaBuildErrorMissingRequiredField = fmt.Errorf("SchemaBuildErrorMissingRequiredField")
+
+// Variant structs
+type SchemaBuildErrorMissingRequiredField struct {
+	RecordType string
+	Field      string
+}
+
+func NewSchemaBuildErrorMissingRequiredField(
+	recordType string,
+	field string,
+) *SchemaBuildError {
+	return &SchemaBuildError{err: &SchemaBuildErrorMissingRequiredField{
+		RecordType: recordType,
+		Field:      field}}
+}
+
+func (e SchemaBuildErrorMissingRequiredField) destroy() {
+	FfiDestroyerString{}.Destroy(e.RecordType)
+	FfiDestroyerString{}.Destroy(e.Field)
+}
+
+func (err SchemaBuildErrorMissingRequiredField) Error() string {
+	return fmt.Sprint("MissingRequiredField",
+		": ",
+
+		"RecordType=",
+		err.RecordType,
+		", ",
+		"Field=",
+		err.Field,
+	)
+}
+
+func (self SchemaBuildErrorMissingRequiredField) Is(target error) bool {
+	return target == ErrSchemaBuildErrorMissingRequiredField
+}
+
+type FfiConverterSchemaBuildError struct{}
+
+var FfiConverterSchemaBuildErrorINSTANCE = FfiConverterSchemaBuildError{}
+
+func (c FfiConverterSchemaBuildError) Lift(eb RustBufferI) *SchemaBuildError {
+	return LiftFromRustBuffer[*SchemaBuildError](c, eb)
+}
+
+func (c FfiConverterSchemaBuildError) Lower(value *SchemaBuildError) C.RustBuffer {
+	return LowerIntoRustBuffer[*SchemaBuildError](c, value)
+}
+
+func (c FfiConverterSchemaBuildError) LowerExternal(value *SchemaBuildError) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[*SchemaBuildError](c, value))
+}
+
+func (c FfiConverterSchemaBuildError) Read(reader io.Reader) *SchemaBuildError {
+	errorID := readUint32(reader)
+
+	switch errorID {
+	case 1:
+		return &SchemaBuildError{&SchemaBuildErrorMissingRequiredField{
+			RecordType: FfiConverterStringINSTANCE.Read(reader),
+			Field:      FfiConverterStringINSTANCE.Read(reader),
+		}}
+	default:
+		panic(fmt.Sprintf("Unknown error code %d in FfiConverterSchemaBuildError.Read()", errorID))
+	}
+}
+
+func (c FfiConverterSchemaBuildError) Write(writer io.Writer, value *SchemaBuildError) {
+	switch variantValue := value.err.(type) {
+	case *SchemaBuildErrorMissingRequiredField:
+		writeInt32(writer, 1)
+		FfiConverterStringINSTANCE.Write(writer, variantValue.RecordType)
+		FfiConverterStringINSTANCE.Write(writer, variantValue.Field)
+	default:
+		_ = variantValue
+		panic(fmt.Sprintf("invalid error value `%v` in FfiConverterSchemaBuildError.Write", value))
+	}
+}
+
+type FfiDestroyerSchemaBuildError struct{}
+
+func (_ FfiDestroyerSchemaBuildError) Destroy(value *SchemaBuildError) {
+	switch variantValue := value.err.(type) {
+	case SchemaBuildErrorMissingRequiredField:
+		variantValue.destroy()
+	default:
+		_ = variantValue
+		panic(fmt.Sprintf("invalid error value `%v` in FfiDestroyerSchemaBuildError.Destroy", value))
+	}
 }
 
 type ServiceProtocol uint

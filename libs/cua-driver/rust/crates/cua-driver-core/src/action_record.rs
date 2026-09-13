@@ -86,6 +86,8 @@ pub enum ActionTransport {
     LinuxLibei,
     LinuxWaylandVirtualPointer,
     LinuxCuaCompositorInject,
+    LinuxHyprlandIsolatedInput,
+    LinuxHyprlandForegroundInput,
     LinuxX11ConfigureWindow,
     BrowserCdpInputMouse,
     BrowserCdpInputKey,
@@ -122,6 +124,8 @@ impl ActionTransport {
         Self::LinuxLibei,
         Self::LinuxWaylandVirtualPointer,
         Self::LinuxCuaCompositorInject,
+        Self::LinuxHyprlandIsolatedInput,
+        Self::LinuxHyprlandForegroundInput,
         Self::LinuxX11ConfigureWindow,
         Self::BrowserCdpInputMouse,
         Self::BrowserCdpInputKey,
@@ -147,7 +151,8 @@ impl ActionTransport {
             Self::MacosCgEventPid
             | Self::WindowsPostMessage
             | Self::LinuxPty
-            | Self::LinuxXSendEvent => ActionRoute::SyntheticEvents,
+            | Self::LinuxXSendEvent
+            | Self::LinuxHyprlandIsolatedInput => ActionRoute::SyntheticEvents,
             Self::MacosCgEventHid
             | Self::WindowsTargetedInjection
             | Self::WindowsSendInput
@@ -156,6 +161,7 @@ impl ActionTransport {
             | Self::LinuxXTest
             | Self::LinuxLibei
             | Self::LinuxWaylandVirtualPointer
+            | Self::LinuxHyprlandForegroundInput
             | Self::LinuxCuaCompositorInject => ActionRoute::GlobalInput,
             Self::WindowsSetWindowPos | Self::LinuxX11ConfigureWindow => ActionRoute::SystemApi,
             Self::BrowserCdpRuntimeFunction => ActionRoute::Dom,
@@ -1026,6 +1032,8 @@ fn transport_name(transport: ActionTransport) -> &'static str {
         ActionTransport::LinuxLibei => "linux_libei",
         ActionTransport::LinuxWaylandVirtualPointer => "linux_wayland_virtual_pointer",
         ActionTransport::LinuxCuaCompositorInject => "linux_cua_compositor_inject",
+        ActionTransport::LinuxHyprlandIsolatedInput => "linux_hyprland_isolated_input",
+        ActionTransport::LinuxHyprlandForegroundInput => "linux_hyprland_foreground_input",
         ActionTransport::LinuxX11ConfigureWindow => "linux_x11_configure_window",
         ActionTransport::BrowserCdpInputMouse => "browser_cdp_input_mouse",
         ActionTransport::BrowserCdpInputKey => "browser_cdp_input_key",
@@ -1188,6 +1196,30 @@ mod tests {
         assert!(routes.contains(&ActionRoute::SystemApi));
         assert!(routes.contains(&ActionRoute::Dom));
         assert!(routes.contains(&ActionRoute::TrustedInput));
+    }
+
+    #[test]
+    fn hyprland_foreground_does_not_claim_isolated_background_delivery() {
+        let record = ActionExecutionRecord::builder(
+            ActionEffect::Unverifiable,
+            ActionTransport::LinuxHyprlandForegroundInput,
+            RequestedDelivery::Foreground,
+        )
+        .actual_delivery(ActualDelivery::Foreground)
+        .build()
+        .unwrap();
+        assert_eq!(
+            record.stable_projection().unwrap().route,
+            ActionRoute::GlobalInput
+        );
+        assert_eq!(
+            ActionTransport::LinuxHyprlandIsolatedInput.route(),
+            ActionRoute::SyntheticEvents
+        );
+        assert_eq!(
+            transport_name(ActionTransport::LinuxHyprlandForegroundInput),
+            "linux_hyprland_foreground_input"
+        );
     }
 
     #[test]

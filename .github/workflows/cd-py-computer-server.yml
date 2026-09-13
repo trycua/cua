@@ -25,42 +25,33 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: computer-server-publish
+  cancel-in-progress: false
+
 jobs:
   prepare:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.get-version.outputs.version }}
+      sha: ${{ steps.get-version.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Determine version
-        id: get-version
-        run: |
-          # Check inputs.version first (set by workflow_call)
-          if [ -n "${{ inputs.version }}" ]; then
-            VERSION=${{ inputs.version }}
-          elif [ "${{ github.event_name }}" == "push" ]; then
-            # Extract version from tag (for package-specific tags)
-            if [[ "${{ github.ref }}" =~ ^refs/tags/computer-server-v([0-9]+\.[0-9]+\.[0-9]+) ]]; then
-              VERSION=${BASH_REMATCH[1]}
-            else
-              echo "Invalid tag format for computer-server"
-              exit 1
-            fi
-          elif [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            # Use version from workflow dispatch
-            VERSION=${{ github.event.inputs.version }}
-          else
-            echo "No version provided"
-            exit 1
-          fi
-          echo "VERSION=$VERSION"
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.12"
+
+      - name: Resolve immutable release source
+        id: get-version
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_REF: ${{ github.ref }}
+        run: python .github/scripts/resolve_computer_server_release.py
 
   publish:
     needs: prepare
@@ -70,6 +61,8 @@ jobs:
       package_dir: "libs/python/computer-server"
       version: ${{ needs.prepare.outputs.version }}
       base_package_name: "cua-computer-server"
+      source_sha: ${{ needs.prepare.outputs.sha }}
+      python_version: "3.12"
     secrets:
       PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
 
@@ -89,6 +82,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -137,6 +133,7 @@ jobs:
     with:
       tag_name: "computer-server-v${{ needs.prepare.outputs.version }}"
       release_name: "cua-computer-server v${{ needs.prepare.outputs.version }}"
+      source_sha: ${{ needs.prepare.outputs.sha }}
       module_path: "libs/python/computer-server"
       body: ""
       attach_artifacts: true

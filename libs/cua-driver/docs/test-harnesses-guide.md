@@ -50,6 +50,95 @@ Historical `*-plan.md`, `*-journal.md`, and release evidence documents record
 what was run at that time. They are not current execution instructions and do
 not override this guide or `scripts/ci/README.md`.
 
+### Hyprland validation decision (2026-09-07)
+
+[PR #3572](https://github.com/trycua/cua/pull/3572) is the dated, exact-source
+result record for the input v3 candidate. It distinguishes ordinary CI, the
+complete hosted X11, Sway, and Windows harnesses, native Hyprland acceptance,
+and bounded app evidence. A native behavioral pass with a failed wrapper or
+source-provenance check is not an accepted run. Use that record for results;
+the coverage requirements below do not assert a passing result or add macOS
+certification.
+
+The maintainer selects the same canonical Linux Rust harness for native
+Hyprland: run `scripts/ci/linux/run-rust-e2e.sh` with its complete `all` suite
+in the prepared native Hyprland desktop at the exact candidate SHA. Preserve
+the runner's required cells, assertions, and evidence checks. Record compositor
+and backend provenance; an X11 run does not establish native Hyprland coverage.
+Environment failures and failed cells remain failures, not permission to skip
+tests or change expected results.
+
+Before launching the native Hyprland harness, apply this map-time rule in the
+disposable desktop's Lua configuration and reload it:
+
+```lua
+hl.window_rule({
+    name = "cua-canonical-sentinel-animation",
+    match = {title = "^CuaTestHarness Sentinel \\[cdp=[0-9]+\\]$"},
+    no_anim = true,
+})
+```
+
+The preflight independently verifies `no_anim` for the exact sentinel, then
+waits for mapped fullscreen readiness before its first Driver activation.
+`hyprctl clients` reports geometry goals, not animated surface bounds; repeated
+equal goals alone cannot establish animation completion. This rule changes
+only the test sentinel's animation, not its placement or the product's geometry
+guard. Restore the original configuration after the run. It is a deterministic
+fixture requirement, not an Omarchy user configuration requirement.
+
+This is fixture regression coverage. For background `TARGET` input, the production compatibility gate in
+`platform-linux/src/wayland/hyprland_compatibility.rs` admits only the qualified
+native Calc `26.2.5-3` and Inkscape `1.4.4-6` packages. Ordinary GTK, Electron,
+and Tauri fixtures do not qualify for v3 background raw input. Their declared refusals
+can prove refusal behavior, but cannot prove plugin delivery or isolation.
+Do not widen background production admission or add a test bypass to make them qualify.
+
+The [accepted foreground extension](https://github.com/trycua/cua/issues/3550#issuecomment-5564996417)
+adds a separate production `FOREGROUND_TARGET` route for ordinary native
+top-level surfaces, advertised by `HELLO` with `foreground_target:true`.
+It does not apply the Calc/Inkscape background package gate. The existing
+complete suite covers defined native GTK3, Electron, and Tauri foreground
+cases. Acceptance requires those cases to pass. Preserve the runner and tests.
+Foreground activation and primary-cursor movement are intentional, with no
+restoration promise. Verify exact-target delivery and refusals for held
+keys/buttons, grabs, constraints, and drag-and-drop before primary takeover.
+Foreground drag cancellation on primary-input/focus transitions requires
+review and native evidence. No background refusal may escalate to this route.
+
+Retain a short real-app production smoke and instrumented isolation proof on
+both qualified apps as supporting compatibility evidence. Verify actual app
+effects, plugin transport attribution, primary-seat isolation, and cleanup;
+the uninstrumented smoke alone cannot establish those trace-based claims.
+The retained proof at source `f180e8828b8f31cc153e3c44eaa89a9c13c5bc68`
+includes 20 instrumented actions, nine pointer effects, and six observation
+intervals, plus an uninstrumented six-action smoke. Saved outputs confirm Calc
+cell A1 contains `a` and the Inkscape object's x-coordinate changes from 40 to
+42 while y remains 60. The plugin tree and uninstrumented module hash are
+unchanged at `1133a06e4f205cf80188a7ac9e41102f37611fea`. This is bounded
+supporting evidence, not a complete app matrix or release-byte proof. Raw
+background qualification remains native Calc from `libreoffice-fresh 26.2.5-3`,
+Inkscape `1.4.4-6`, the plain compiled `evdev`/`pc105`/`us` keymap, and two
+seats. Chromium, Electron, and XWayland raw background input remain unqualified;
+semantic AT-SPI actions are separate.
+See [production proof preparation](../hyprland-plugin/tests/production-proof.md)
+for the bounded plans and their limits.
+
+The explicit [Inkscape-only qualification profile](../hyprland-plugin/tests/production-inkscape-profile.md)
+supports a bounded packaging candidate using exact Inkscape `1.4.4-6`, with
+independent native clients, two app lanes, separate SVG oracles, and third-owner
+capacity refusal. It preserves the default Calc/Inkscape profile and the native
+all-suite gate. Product, harness, kit, and mapped module identities remain
+separate; adding the profile records no new native passing result and does not
+let diagnostic trace evidence certify trace-disabled package bytes.
+
+Three complete repetitions of the long Python Calc/Inkscape plan, including
+the 34 policy cases across both apps, are no longer a merge requirement.
+Extended Python stress runs remain diagnostics for specific unresolved
+failures. This decision changes test strategy, records no new passing result,
+and does not waive the affected CI, native evidence, or release gates in
+[RFC 3550](../../../rfcs/3550-hyprland-isolated-input.md).
+
 ## Repository Map
 
 ```text
@@ -192,7 +281,11 @@ background delivery is tested.
 
 ### macOS
 
-Runner: `libs/cua-driver/tests/runners/macos-lume/run-all.sh`
+Canonical runner: `libs/cua-driver/tests/runners/macos-lume/run-all.sh`
+
+Supplemental hosted runner: manually dispatch
+`.github/workflows/e2e-rust-macos.yml` with an exact 40-character source SHA.
+Its probe must pass before independent shared, native, and capture jobs run.
 
 | Runner area               | Rust test                              | Real harness or app                     |
 | ------------------------- | -------------------------------------- | --------------------------------------- |
@@ -212,6 +305,25 @@ canonical logged-in macOS lane, but they do not replace repo-local fixtures.
 The maintainer wrapper provisions the exact source build and verifies the
 private Lume seed's TCC/signing contract before delegating the behavior matrix
 to `scripts/ci/macos/run-rust-e2e.sh`.
+
+The hosted wrapper uses the same behavior matrix on fresh `macos-26` runners.
+It requires the GitHub-hosted Aqua session and SIP-off VirtualMac environment,
+creates a temporary code-signing Keychain, installs a certificate-signed local
+app, seeds only Accessibility and Screen Capture for that app's exact csreq, and
+verifies that permission status is attributed to the driver daemon before any
+test begins. The temporary certificate trust is removed during job cleanup.
+Hosted results remain supplemental until the image and signing
+identity provide the same release-parity guarantees as the maintained Lume
+seed.
+
+Workers cloned from a granted private seed verify and reuse its app-owned TCC
+identity. A disposable SIP-disabled Lume worker without inherited grants must
+use `tests/runners/macos-lume/seed-tcc.sh` after installing the exact candidate
+as a certificate-signed `CuaDriverLocal.app`. The guarded helper is the only
+supported automated path: it verifies `VirtualMac*`, disabled SIP, the expected
+bundle identity, and the signed requirement before seeding only Accessibility
+and Screen Recording. Never hand-edit `TCC.db`. Restart the app afterward and
+prove live capture and input; database rows alone do not certify the desktop.
 
 ### Linux
 

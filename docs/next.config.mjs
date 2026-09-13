@@ -86,6 +86,16 @@ const config = {
         permanent: true,
       },
       {
+        source: '/how-to-guides/sandbox/create-pool-with-python',
+        destination: '/how-to-guides/sandbox/create-fleet-capacity',
+        permanent: true,
+      },
+      {
+        source: '/how-to-guides/sandbox/create-pool-with-typescript',
+        destination: '/how-to-guides/sandbox/create-fleet-capacity',
+        permanent: true,
+      },
+      {
         source: '/how-to-guides/skills/record-a-demonstration',
         destination: '/how-to-guides',
         permanent: true,

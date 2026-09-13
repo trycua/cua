@@ -62,12 +62,14 @@ wayland-protocols = { version = "0.32", features = ["client", "staging", "unstab
 # xdg-desktop-portal client: display-screenshot tier
 # (org.freedesktop.portal.Screenshot), per-window ScreenCast
 # (org.freedesktop.portal.ScreenCast), and the libei input session
-# (org.freedesktop.portal.RemoteDesktop.ConnectToEIS). `tokio` shares the
-# driver's async runtime.
+# (org.freedesktop.portal.RemoteDesktop.ConnectToEIS). ashpd allows exactly
+# one async backend, and gpui's Linux port selects `async-io` through oo7,
+# so an app embedding both must use it here too; zbus keeps running on
+# tokio when both of its backends are enabled.
 #
 # ashpd's RemoteDesktop feature is pure Rust. Only our ScreenCast frame reader
 # pulls pipewire-rs/libspa, whose headers are newer than Debian bullseye.
-ashpd = { version = "0.13", default-features = false, features = ["tokio", "screenshot"] }
+ashpd = { version = "0.13", default-features = false, features = ["async-io", "screenshot"] }
 # zbus is pulled transitively via ashpd + atspi but declared directly so
 # the portal-probe path in wayland::portal_screenshot can talk to the
 # session bus without going through ashpd's higher-level builders.

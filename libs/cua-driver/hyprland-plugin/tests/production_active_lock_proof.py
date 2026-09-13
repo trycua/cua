@@ -17,6 +17,7 @@ No native setup, authentication, product changes, or full-matrix certification.
 Portable tests exercise orchestration and failure oracles, not native behavior.
 """
 import argparse
+from production_app_smoke import add_provenance_arguments
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
@@ -37,19 +38,26 @@ import production_pointer_grounding as pointer_grounding
 from production_realapp_proof import (PRIMARY_LIFETIME_MS, capacity_lane,
     check_response, primary_acknowledgement, provenance, require_primary_active,
     trace_interval)
-from production_session_fault_proof import connect_trace, lanes, power, production_status
-from production_desktop_fault_proof import idle_lanes
+from production_session_fault_proof import (connect_trace, lanes, power, production_status,
+    validate_fault_options, verify_held_gate)
+from production_desktop_fault_proof import idle_lanes, pointer_cleanup, poll_fault_active, verify_retained_inert
 from realapp_proof import cleanup_all, released_synthetic_input
 
 
 def validate_plan(plan):
-    assert plan['purpose'] == 'active_lock' and plan['fault'] == {'kind': 'lock'}
-    assert plan['recovery'] == {'pointer_stages': ['click_a1', 'click_b2']}
-    lock_plan({**plan, 'purpose': 'lock_refusal', 'recovery': {'pointer_stage': 'click_b2'}})
+    assert plan['purpose'] == 'active_lock' and plan['fault']['kind'] == 'lock'
+    validate_fault_options(plan['fault'])
+    stages = ['scroll_down', 'scroll_up'] if plan.get('app_profile') == 'inkscape-only' else ['click_a1', 'click_b2']
+    assert plan['recovery'] == {'pointer_stages': stages}
+    lock_plan({**plan, 'purpose': 'lock_refusal', 'recovery': {'pointer_stage': stages[0]},
+               'fault': {k: v for k, v in plan['fault'].items() if k != 'min_motion_px'}})
 
 
-def recovery_stage(snapshot):
-    """Choose one newly grounded click, never retry a sent action."""
+def recovery_stage(snapshot, app='calc'):
+    """Choose a fresh Calc click or visible Inkscape scroll, never retry input."""
+    if app == 'inkscape':
+        return pointer_grounding.visible_inkscape_scroll_stage(snapshot, pointer_grounding.read_pixels(snapshot['proof_image']))
+    assert app == 'calc'
     return ('click_a1' if pointer_grounding.calc_formula_selection(
         snapshot, pointer_grounding.rows(snapshot), 'B2') else 'click_b2')
 
@@ -58,10 +66,10 @@ def prepare_recovery(client, spec, allowed_stages):
     before = grounded_snapshot(client, spec['target'], spec)
     prepared_ns = before['proof_observation_started_ns']
     assert type(prepared_ns) is int and 0 < prepared_ns <= time.monotonic_ns(), 'invalid observation timestamp'
-    stage = recovery_stage(before)
+    stage = recovery_stage(before, spec['app'])
     assert stage in allowed_stages
     arguments, oracle = pointer_grounding.action(
-        before, pointer_grounding.read_pixels(before['proof_image']), 'calc', stage)
+        before, pointer_grounding.read_pixels(before['proof_image']), spec['app'], stage)
     return {'snapshot': before, 'arguments': arguments, 'oracle': oracle,
             'stage': stage, 'prepared_ns': prepared_ns}
 
@@ -81,8 +89,11 @@ def held_status(status, lane):
             assert row.get('reserved') is False, 'unowned lane is reserved'
 
 
-def cancelled_status(before, after):
-    old, new = lanes(before), lanes(after, cleared=True)
+def cancelled_status(before, after, policy='cleared', lane=None):
+    pointer_cleanup({'pointer_cleanup': policy})
+    old, new = lanes(before), lanes(after, cleared=True, allow_passive=policy == 'retained_inert')
+    if policy == 'retained_inert':
+        verify_retained_inert(before, after, lane)
     assert set(old) == set(new) == {0, 1}
     for lane in old:
         assert old[lane]['epoch'] == new[lane]['epoch'], 'compositor lane replaced'
@@ -117,17 +128,24 @@ class ActiveLockFixture(LockFixture):
         self.check_binary()
         self.check_running_binary()
         power(self.config, True)
-        first, _ = poll_active(trace, initial, None, [pending], timeout=1)
+        motion = self.config.get('min_motion_px')
+        if motion is not None:
+            first, _ = poll_fault_active(trace, initial, pending, motion, timeout=1)
+        else:
+            first, _ = poll_active(trace, initial, None, [pending], timeout=1)
         status_started = time.monotonic_ns()
         gate = production_status(self.config)
-        page, active = poll_active(trace, first, None, [pending], timeout=0.25)
+        if motion is not None:
+            page, active = poll_fault_active(trace, first, pending, motion, timeout=0.25)
+        else:
+            page, active = poll_active(trace, first, None, [pending], timeout=0.25)
         lane = next(iter(active))
         held_status(gate, lane)
         for key, row in lanes(self.record['before']).items():
             assert all(row[field] == lanes(gate)[key][field]
                        for field in ('epoch', 'desktop_generation', 'dispatches')), 'desktop changed before LOCK'
         self.record.update(gate_status=gate, status_started_ns=status_started,
-                           prefix=page, lane=lane)
+                           gate_first=first, prefix=page, lane=lane)
         isolation = analyze(stopped_prefix(page))
         self.record['pre_request_isolation'] = isolation
         assert isolation['result'] == 'passed', isolation
@@ -137,6 +155,8 @@ class ActiveLockFixture(LockFixture):
         assert 0 <= requested - status_started <= 250_000_000, 'stale held-input status'
         assert 0 <= requested - self.record['ready']['observed_ns'] < 2_500_000_000, 'fixture ready window expired'
         self.record['requested_ns'] = requested
+        if motion is not None or pointer_cleanup(self.config) == 'retained_inert':
+            verify_held_gate(self.record)
         self.deadline_ns = requested + LOCK_MS * 1_000_000
         self.record['deadline_ns'] = self.deadline_ns
         self.requested = True  # A lost acknowledgement may still mean lock ownership.
@@ -145,7 +165,7 @@ class ActiveLockFixture(LockFixture):
         self.record['ack'] = self.event('locked')
         assert requested <= self.record['ack']['observed_ns'] < self.deadline_ns
         self.record.update(after=production_status(self.config), observed_ns=time.monotonic_ns())
-        cancelled_status(gate, self.record['after'])
+        cancelled_status(gate, self.record['after'], pointer_cleanup(self.config), lane)
         self.locked()
         self.record['result'] = 'acknowledged'
         return lane
@@ -181,6 +201,9 @@ def transition_evidence(page, *, stopped=False):
 
 def verify_cancelled(boundary, record, action):
     assert record['result'] == 'acknowledged'
+    policy = pointer_cleanup(record)
+    if policy == 'retained_inert' or 'min_motion_px' in record:
+        verify_held_gate(record)
     prefix, lane = record['prefix'], record['lane']
     assert set(active_drags(prefix)) == {lane}
     assert all(row[5] in (0, lane) for row in prefix['events']), 'unowned synthetic activity'
@@ -205,11 +228,13 @@ def verify_cancelled(boundary, record, action):
                           'pointer_motion', 'pointer_enter') for row in synthetic), 'extra action or false completion'
     assert not any(row[2] in ('pointer_motion', 'pointer_enter') and row[0] > cancel[0]
                    for row in synthetic), 'input continued after cancellation'
+    if policy == 'retained_inert':
+        assert not any(row[2] in ('pointer_enter', 'pointer_leave') for row in synthetic), 'retained pointer left or retargeted'
     releases = [row for row in synthetic if row[2] == 'pointer_button']
     assert len(releases) == 1 and releases[0][6] == 0 and releases[0][0] > cancel[0], 'missing own-seat release'
     assert releases[0][1] <= record['observed_ns'] < deadline, 'release was not observed before cleared lock status'
     released_synthetic_input(boundary)
-    cancelled_status(record['gate_status'], record['after'])
+    cancelled_status(record['gate_status'], record['after'], policy, lane)
     # A transport-unknown response cannot establish the production reason.
     assert action['outcome'] == 'response' and action['replayed'] is False, 'unknown drag outcome; no replay'
     check_response(action['response'], {'kind': 'partial'})
@@ -267,11 +292,12 @@ def run(args):
         save('plan.json', plan)
         validate_plan(plan)
         fixture = ActiveLockFixture(plan, args)
+        policy = pointer_cleanup(fixture.config)
         origin = provenance(args, plan)
         for name in (Path(__file__).name, 'production_active_lock_proof_test.py',
                      'production_lock_refusal_proof.py', 'production_lock_refusal_proof_test.py',
                      'session_lock_fixture.c', 'production_session_fault_proof.py',
-                     'production_cancel_proof.py', 'desktop_faults.py'):
+                     'production_desktop_fault_proof.py', 'production_cancel_proof.py', 'desktop_faults.py'):
             path = Path(__file__).with_name(name)
             origin['files'][name] = {'path': str(path.resolve()), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
         origin['lock_fixture'] = plan['lock_fixture']
@@ -300,7 +326,7 @@ def run(args):
         # Do not close the actor to manufacture a release before this oracle.
         close_owned(actor)
         settle_locked(fixture)
-        stable_status(fixture.record['after'], production_status(fixture.config))
+        stable_status(fixture.record['after'], production_status(fixture.config), policy=policy)
         quiet = trace.collect()
         save('locked-quiescent-prefix.json', quiet)
         assert not any(row[5] in (1, 2) for row in trace_interval(boundary, quiet)), 'input after cancellation'
@@ -335,7 +361,7 @@ def run(args):
         setup.update(after=primary, observed_ns=time.monotonic_ns())
         save('foreground-setup.json', setup)
         fixture.check_targets()
-        stable_status(restoration['after'], production_status(fixture.config))
+        stable_status(restoration['after'], production_status(fixture.config), policy=policy)
         phase = 'recovery'
         initial = start_trace()
         fresh = launch('recovery')
@@ -349,7 +375,8 @@ def run(args):
         recovery['stage'] = spec['pointer_stage'] = grounding['stage']
         save('recovery-grounding.json', grounding)
         require_primary_active(grab, deadline)
-        recovery['action'] = {'outcome': 'unknown', 'replayed': False, 'prepared_ns': prepared_ns}
+        recovery['action'] = {'outcome': 'unknown', 'replayed': False, 'prepared_ns': prepared_ns,
+                              'tool': pointer_grounding.STAGES[spec['app']][spec['pointer_stage']]}
         response = click_once(fresh, {**arguments, **spec['target'], 'session': spec['name'],
             'delivery_mode': 'background'}, recovery['action'], save, 'recovery-action.json')
         check_response(response, {'kind': 'dispatched'})
@@ -358,7 +385,8 @@ def run(args):
         recovery['app_effect'] = pointer_grounding.verify(after, pointer_grounding.read_pixels(after['proof_image']), oracle)
         prefix = trace.collect()
         save('recovery-trace-prefix.json', prefix)
-        recovery['trace'] = verify_recovery_trace(initial, prefix, capacity_lane(initial, prefix, 'click'), 'click')
+        tool = recovery['action']['tool']
+        recovery['trace'] = verify_recovery_trace(initial, prefix, capacity_lane(initial, prefix, tool), tool)
         close_owned(fresh)
         trace.exchange('TRACE_STOP')
         stopped = trace.collect()
@@ -373,7 +401,8 @@ def run(args):
         fixture.check_targets()
         final = production_status(fixture.config)
         save('final-status.json', final)
-        old, new = lanes(restoration['after'], cleared=True), lanes(final, cleared=True, allow_passive=True)
+        old = lanes(restoration['after'], cleared=True, allow_passive=policy == 'retained_inert')
+        new = lanes(final, cleared=True, allow_passive=True)
         assert set(old) == set(new) == {0, 1}
         assert sum(new[k]['dispatches'] - old[k]['dispatches'] for k in old) == 1
         for key in old:
@@ -429,5 +458,5 @@ if __name__ == '__main__':
     for name in ('driver', 'plugin', 'source', 'primary-grab', 'plan', 'evidence',
                  'foreground-journal', 'trace-socket', 'lock-fixture'):
         parser.add_argument('--' + name, required=True, type=Path)
-    parser.add_argument('--source-sha', required=True)
+    add_provenance_arguments(parser)
     raise SystemExit(run(parser.parse_args()))

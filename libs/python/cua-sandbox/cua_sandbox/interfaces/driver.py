@@ -10,7 +10,7 @@ import re
 import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator, Literal
 
 from cua_sandbox.transport.fleet import FleetTransport
 
@@ -29,14 +29,15 @@ def _consume_result(done: asyncio.Future) -> None:
         done.exception()
 
 
-async def _bounded_cleanup(awaitable: Any) -> bool:
+async def _bounded_cleanup(awaitable: Any, *, cancel_on_timeout: bool = True) -> bool:
     """Bound best-effort cleanup, including callbacks that ignore cancellation."""
     task = asyncio.ensure_future(awaitable)
 
     task.add_done_callback(_consume_result)
     done, _ = await asyncio.wait({task}, timeout=_CLEANUP_TIMEOUT)
     if task not in done:
-        task.cancel()
+        if cancel_on_timeout:
+            task.cancel()
         logger.warning("Driver cleanup timed out; remote session cleanup is unconfirmed")
         return False
     if task.cancelled() or task.exception() is not None:
@@ -102,9 +103,18 @@ class Driver:
         raise DriverConnectionError("Driver connection is inactive or belongs to another sandbox")
 
     @asynccontextmanager
-    async def connect(self, *, service: str = "driver") -> AsyncIterator[CuaDriver]:
-        """Yield the canonical ``cua_driver.CuaDriver`` and close its session on exit."""
+    async def connect(
+        self, *, service: str = "driver", transport: Literal["envelope", "mcp"] = "envelope"
+    ) -> AsyncIterator[CuaDriver]:
+        """Yield the canonical Driver; MCP requires an explicitly enabled receiver.
+
+        The default preserves the existing private envelope HTTP carrier.
+        ``service="mcp", transport="mcp"`` uses the existing named MCP service,
+        provided it advertises the typed envelope extension. No fallback occurs.
+        """
         self._check_loop()
+        if transport not in ("envelope", "mcp"):
+            raise DriverConnectionError("Driver transport must be 'envelope' or 'mcp'")
         self._loop = asyncio.get_running_loop()
         async with self._lock:
             if self._closed:
@@ -118,7 +128,12 @@ class Driver:
                     "Fleet sandbox does not expose the requested Driver service"
                 )
             sdk = _sdk()
-            channel = _channel(sdk, self._transport, service, self._principal)
+            if transport == "mcp":
+                from cua_sandbox.interfaces._driver_mcp import shared_channel
+
+                channel = shared_channel(sdk, self._transport, service, self._principal)
+            else:
+                channel = _channel(sdk, self._transport, service, self._principal)
 
             async def open_channel():
                 try:
@@ -137,7 +152,9 @@ class Driver:
             async with self._lock:
                 if self._closed or channel.closed:
                     raise DriverConnectionError("Sandbox Driver accessor is disconnected")
-                driver = sdk.connect_remote_channel(channel)
+                driver = (
+                    channel.driver() if transport == "mcp" else sdk.connect_remote_channel(channel)
+                )
                 self._connections[channel] = driver
             yield driver
         finally:
@@ -153,6 +170,9 @@ class Driver:
                 channel.closed = True
 
                 async def cleanup():
+                    if getattr(channel, "shared_mcp", False):
+                        await channel.close()
+                        return
                     if not opening.done():
                         await _bounded_cleanup(opening)
                     await channel.close()
@@ -196,6 +216,7 @@ def _channel(sdk: Any, transport: FleetTransport, service: str, principal: str) 
             self.cleanup_confirmed = False
             self._close_task = None
             self.cancelled: set[str] = set()
+            self._exchanges: dict[str, asyncio.Task] = {}
 
         def fail(self, reason: str):
             return sdk.ForeignDriverChannelError.Failed(reason)
@@ -314,6 +335,8 @@ def _channel(sdk: Any, transport: FleetTransport, service: str, principal: str) 
             if timeout <= 0:
                 raise self.fail("Driver request deadline has expired")
             exchange = asyncio.create_task(self.request("POST", "/exchange", body, timeout=timeout))
+            self._exchanges[request.request_id] = exchange
+            exchange.add_done_callback(lambda done: self._exchanges.pop(request.request_id, None))
             exchange.add_done_callback(_consume_result)
             try:
                 done, _ = await asyncio.wait({exchange}, timeout=timeout)
@@ -387,8 +410,11 @@ def _channel(sdk: Any, transport: FleetTransport, service: str, principal: str) 
             if self._close_task is None:
 
                 async def cleanup():
+                    receiver_closed = self.connection_id is None
                     if self.connection_id is not None:
-                        self.cleanup_confirmed = await _bounded_cleanup(self.request("DELETE"))
+                        receiver_close = asyncio.create_task(self.request("DELETE"))
+                        receiver_closed = await _bounded_cleanup(receiver_close)
+                    self.cleanup_confirmed = receiver_closed
 
                 self._close_task = asyncio.create_task(cleanup())
             await asyncio.shield(self._close_task)

@@ -3,7 +3,7 @@ title: Image reference
 description: "API reference for the Image class: the immutable, chainable image specification used to configure sandbox environments."
 ---
 
-`Image` is an immutable, chainable image specification in `cua-sandbox` 0.4.3.
+`Image` is an immutable, chainable image specification in `cua-sandbox` 0.7.0.
 Each builder method returns a new `Image` instance; the original is unchanged.
 Import it from `cua_sandbox`:
 
@@ -19,7 +19,7 @@ environment variables, copied files, snapshot sources, or local disk paths.
 Exposed service ports are accepted. An OCI reference for Fleet must identify a
 compatible container disk; an arbitrary application container is not a VM disk.
 
-In 0.4.3, the built-in registry mappings are `Image.linux()` with Ubuntu 24.04
+In 0.7.0, the built-in registry mappings are `Image.linux()` with Ubuntu 24.04
 and `kind='vm'`, and `Image.windows()` with version `'2022'` and `kind='vm'`.
 Other descriptors require an explicit compatible registry image for Fleet.
 These mappings describe client image selection, not deployment certification.

@@ -14,6 +14,10 @@ use serde_json::Value;
 pub trait ToolInput: Serialize + DeserializeOwned + JsonSchema {
     const TOOL_NAME: &'static str;
 
+    fn validate(&self) -> Result<(), String> {
+        Ok(())
+    }
+
     fn input_schema() -> Value {
         let settings = schemars::generate::SchemaSettings::draft2020_12().with(|settings| {
             settings.meta_schema = None;
@@ -560,9 +564,9 @@ impl ToolInput for MoveCursorInput {
     const TOOL_NAME: &'static str = "move_cursor";
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
-pub struct ClickInput {
+pub struct LegacyClickInput {
     #[schemars(schema_with = "number_schema")]
     pub x: f64,
     #[schemars(schema_with = "number_schema")]
@@ -586,8 +590,139 @@ pub struct ClickInput {
     pub count: Option<u32>,
 }
 
+impl ToolInput for LegacyClickInput {
+    const TOOL_NAME: &'static str = "click";
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
+#[serde(rename_all = "snake_case")]
+pub enum InputDeliveryMode {
+    Background,
+    Foreground,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Enum)]
+#[serde(untagged)]
+pub enum ClickPosition {
+    Coordinates { x: f64, y: f64 },
+    Element { element_token: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, uniffi::Record)]
+#[serde(try_from = "ClickWireInput")]
+pub struct ClickInput {
+    pub target: ActionTarget,
+    #[serde(flatten)]
+    pub position: ClickPosition,
+    pub delivery_mode: InputDeliveryMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub button: Option<ClickButton>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub count: Option<u32>,
+}
+
+// Parse the flat wire shape before constructing the sum type: an untagged
+// serde enum alone would silently accept mixed coordinate and element fields.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ClickWireInput {
+    target: ActionTarget,
+    delivery_mode: InputDeliveryMode,
+    #[serde(default, deserialize_with = "present_click_field")]
+    #[schemars(schema_with = "number_schema")]
+    x: Option<f64>,
+    #[serde(default, deserialize_with = "present_click_field")]
+    #[schemars(schema_with = "number_schema")]
+    y: Option<f64>,
+    #[serde(default, deserialize_with = "present_click_field")]
+    #[schemars(schema_with = "string_schema")]
+    element_token: Option<String>,
+    /// For multi-call work, prefer a short public session label and repeat it on every call that
+    /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+    #[serde(default)]
+    #[schemars(schema_with = "string_schema")]
+    session: Option<String>,
+    #[serde(default)]
+    #[schemars(schema_with = "click_button_schema")]
+    button: Option<ClickButton>,
+    #[serde(default)]
+    #[schemars(schema_with = "click_count_schema")]
+    count: Option<u32>,
+}
+
+fn present_click_field<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
+
+impl TryFrom<ClickWireInput> for ClickInput {
+    type Error = String;
+    fn try_from(wire: ClickWireInput) -> Result<Self, Self::Error> {
+        let position = match (wire.x, wire.y, wire.element_token) {
+            (Some(x), Some(y), None) => ClickPosition::Coordinates { x, y },
+            (None, None, Some(element_token)) => ClickPosition::Element { element_token },
+            _ => return Err("click requires exactly x and y, or element_token".into()),
+        };
+        let input = Self {
+            target: wire.target,
+            position,
+            delivery_mode: wire.delivery_mode,
+            session: wire.session,
+            button: wire.button,
+            count: wire.count,
+        };
+        input.validate()?;
+        Ok(input)
+    }
+}
+
+impl JsonSchema for ClickInput {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "ClickInput".into()
+    }
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        let mut schema = ClickWireInput::json_schema(generator);
+        schema.insert("oneOf".into(), serde_json::json!([
+            {"required":["x","y"], "not":{"required":["element_token"]}},
+            {"required":["element_token"], "not":{"anyOf":[{"required":["x"]},{"required":["y"]}]}}
+        ]));
+        schema
+    }
+}
+
 impl ToolInput for ClickInput {
     const TOOL_NAME: &'static str = "click";
+    fn validate(&self) -> Result<(), String> {
+        match &self.position {
+            ClickPosition::Coordinates { x, y } if !x.is_finite() || !y.is_finite() => {
+                return Err("click coordinates must be finite".into())
+            }
+            ClickPosition::Element { element_token } if element_token.trim().is_empty() => {
+                return Err("element_token must not be empty".into())
+            }
+            _ => {}
+        }
+        if let ActionTarget::Desktop { display_id } = &self.target {
+            if display_id != "primary" {
+                return Err("portable desktop target must be primary".into());
+            }
+            if self.delivery_mode != InputDeliveryMode::Foreground {
+                return Err("desktop clicks require foreground delivery".into());
+            }
+            if matches!(self.position, ClickPosition::Element { .. }) {
+                return Err("element clicks require an exact window target".into());
+            }
+        }
+        if self.count.is_some_and(|count| !(1..=3).contains(&count)) {
+            return Err("click count must be between 1 and 3".into());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
@@ -779,8 +914,71 @@ mod tests {
     use super::*;
 
     #[test]
-    fn generated_click_schema_matches_driver_dialect() {
+    fn typed_click_round_trips_flat_native_wire_and_exact_window_id() {
+        for position in [json!({"x":-1.5,"y":2.0}), json!({"element_token":"s1:0"})] {
+            let mut wire = json!({"target":{"kind":"window","pid":7,"window_id":9007199254740993_u64},"delivery_mode":"background"});
+            wire.as_object_mut()
+                .unwrap()
+                .extend(position.as_object().unwrap().clone());
+            let input: ClickInput = serde_json::from_value(wire.clone()).unwrap();
+            assert_eq!(serde_json::to_value(input).unwrap(), wire);
+        }
         let schema = ClickInput::input_schema();
+        assert_eq!(schema["required"], json!(["target", "delivery_mode"]));
+        assert!(schema["oneOf"].is_array());
+        assert!(schema["properties"].get("position").is_none());
+    }
+
+    #[test]
+    fn typed_click_rejects_ambiguous_missing_or_invalid_positions() {
+        for position in [
+            json!({}),
+            json!({"x":1}),
+            json!({"y":2}),
+            json!({"x":1,"y":2,"element_token":"s1:0"}),
+            json!({"x":1,"element_token":"s1:0"}),
+            json!({"x":null,"element_token":"s1:0"}),
+            json!({"element_token":"  "}),
+            json!({"x":1,"y":2,"unknown":true}),
+        ] {
+            let mut wire = json!({"target":{"kind":"window","pid":7,"window_id":9},"delivery_mode":"background"});
+            wire.as_object_mut()
+                .unwrap()
+                .extend(position.as_object().unwrap().clone());
+            assert!(
+                serde_json::from_value::<ClickInput>(wire.clone()).is_err(),
+                "{wire}"
+            );
+        }
+        assert!(serde_json::from_value::<ClickInput>(json!({"x":1,"y":2})).is_err());
+        let mut input = ClickInput {
+            target: ActionTarget::Desktop {
+                display_id: "primary".into(),
+            },
+            position: ClickPosition::Coordinates { x: 1.0, y: 2.0 },
+            delivery_mode: InputDeliveryMode::Foreground,
+            session: None,
+            button: None,
+            count: None,
+        };
+        assert!(input.validate().is_ok());
+        input.position = ClickPosition::Coordinates {
+            x: f64::NAN,
+            y: 2.0,
+        };
+        assert!(input.validate().is_err());
+        input.position = ClickPosition::Element {
+            element_token: "s1:0".into(),
+        };
+        assert!(input.validate().is_err());
+        input.position = ClickPosition::Coordinates { x: 1.0, y: 2.0 };
+        input.delivery_mode = InputDeliveryMode::Background;
+        assert!(input.validate().is_err());
+    }
+
+    #[test]
+    fn legacy_click_schema_matches_coordinate_driver_dialect() {
+        let schema = LegacyClickInput::input_schema();
         assert_eq!(schema["type"], "object");
         assert_eq!(schema["additionalProperties"], false);
         assert_eq!(schema["required"], json!(["x", "y"]));
@@ -812,7 +1010,7 @@ mod tests {
 
     #[test]
     fn serde_and_schema_reject_unknown_fields() {
-        let error = serde_json::from_value::<ClickInput>(json!({
+        let error = serde_json::from_value::<LegacyClickInput>(json!({
             "x": 1,
             "y": 2,
             "pid": 3

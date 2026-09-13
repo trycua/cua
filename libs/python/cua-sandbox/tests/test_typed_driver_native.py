@@ -43,10 +43,26 @@ class NativeTransport(Transport):
         )
 
     async def request_service(
-        self, name, *, method, path, json_body=None, headers=None, timeout=None
+        self,
+        name,
+        *,
+        method,
+        path,
+        json_body=None,
+        body=None,
+        headers=None,
+        timeout=None,
+        max_response_bytes=None,
     ):
         response = await super().request_service(
-            name, method=method, path=path, json_body=json_body, headers=headers, timeout=timeout
+            name,
+            method=method,
+            path=path,
+            json_body=json_body,
+            body=body,
+            headers=headers,
+            timeout=timeout,
+            max_response_bytes=max_response_bytes,
         )
         if path.endswith("/exchange"):
             self.exchange_timeouts.append(timeout)
@@ -106,23 +122,26 @@ async def test_real_canonical_action_target_serializes_over_fleet(
     await sandbox._connect()
     try:
         async with sandbox.driver.connect() as driver:
-            await driver.click(
-                sdk.ClickInput(
-                    x=12.5,
-                    y=34.5,
-                    target=getattr(sdk.ActionTarget, variant)(**fields),
-                    scope=None,
-                    session=sandbox.driver.session_name(driver),
-                    button=None,
-                    count=None,
+            with pytest.raises(sdk.DriverError.Tool) as error:
+                await driver.click(
+                    sdk.ClickInput(
+                        position=sdk.ClickPosition.COORDINATES(x=12.5, y=34.5),
+                        target=getattr(sdk.ActionTarget, variant)(**fields),
+                        delivery_mode=sdk.InputDeliveryMode.FOREGROUND,
+                        session=sandbox.driver.session_name(driver),
+                        button=None,
+                        count=None,
+                    )
                 )
-            )
+            assert error.value.tool == "click"
+            assert error.value.error_code == "foreground_required"
             request = transport.events[-1][3]
             assert request["name"] == "click"
             assert request["arguments"] == {
                 "x": 12.5,
                 "y": 34.5,
                 "target": expected,
+                "delivery_mode": "foreground",
                 "session": "session-1",
             }
     finally:

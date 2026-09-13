@@ -1072,6 +1072,12 @@ pub async fn run_serve(
                         ).await;
 
                         match req.method.as_str() {
+                            "mcp_envelope_stream" if control_session_id.is_none() && trusted_session.is_none() => {
+                                // Existing local-peer authentication already passed.
+                                // Registry and session lifetime belong to this stream.
+                                let _ = crate::mcp_envelope::accept(reg.clone(), lines.into_inner(), writer).await;
+                                return;
+                            }
                             "metadata" => {
                                 let resp = daemon_metadata_response();
                                 let _ = writer.write_all(
@@ -1825,6 +1831,11 @@ pub async fn run_serve(
                         ).await;
 
                         match req.method.as_str() {
+                            "mcp_envelope_stream" if control_session_id.is_none() && trusted_session.is_none() => {
+                                // Same transport-owned receiver as the Unix branch.
+                                let _ = crate::mcp_envelope::accept(reg.clone(), lines.into_inner(), writer).await;
+                                return;
+                            }
                             "metadata" => {
                                 let resp = daemon_metadata_response();
                                 let _ = writer.write_all(

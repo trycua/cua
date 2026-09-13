@@ -11,6 +11,11 @@ Each document is an existing suite cua-smoke-calc.ods in a private directory;
 each profile is that document's sibling calc-profile. Both processes must have
 the suite's exact launch argv. The controller prepares both before this run.
 
+Opt-in app_profile=inkscape-only uses move_rectangle for the victim and
+click_rectangle on an unselected replacement. Each spec includes document,
+app_id_tag and owned={document:{path,device,inode,uid,sha256}}. Distinct reviewed
+tags bind exact /usr/bin/inkscape --app-id-tag=<tag> <document> launch argv.
+
 Only normal Driver MCP sends application input. This runner sends one SIGKILL
 through a revalidated pidfd, only after held-drag trace AND status gates. Saved
 bytes are archived before injection. A destroyed client cannot acknowledge a
@@ -22,14 +27,20 @@ click on the separately prepared process with a new runtime and screenshot.
 Same-client recovery, relaunch, PID/address reuse, active sibling cancellation,
 full desktop certification and physical hardware are explicitly unproven.
 No app launches, signer material, policy changes, production edits or replay.
+Immediate cleanup accepts either boolean capacity-reservation state because
+Driver drops its input connection after partial delivery. A separate bounded
+gate requires all reservations released before recovery; input authority and
+held input must be gone in every cleanup sample.
 """
 import argparse
+from production_app_smoke import add_provenance_arguments
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import os
 from pathlib import Path
 import platform
+import re
 import select
 import signal
 import stat
@@ -55,16 +66,21 @@ from realapp_proof import cleanup_all
 
 
 def validate_owned(spec):
-    assert spec['app'] == 'calc' and spec['drag'] == {}
+    assert spec['app'] in ('calc', 'inkscape') and spec['drag'] == {}
     owned = spec['owned']
-    assert set(owned) == {'document', 'profile'}
+    assert set(owned) == ({'document'} if spec['app'] == 'inkscape' else {'document', 'profile'})
     document = owned['document']
     assert set(document) == {'path', 'device', 'inode', 'uid', 'sha256'}
     path = Path(document['path'])
-    assert path.is_absolute() and path.name == 'cua-smoke-calc.ods'
+    assert path.is_absolute() and path.name == ('cua-smoke-inkscape.svg' if spec['app'] == 'inkscape' else 'cua-smoke-calc.ods')
     assert all(type(document[k]) is int and document[k] >= 0 for k in ('device', 'inode', 'uid'))
     assert len(document['sha256']) == 64 and all(c in '0123456789abcdef' for c in document['sha256'])
-    assert Path(owned['profile']) == path.parent / 'calc-profile'
+    if spec['app'] == 'inkscape':
+        assert spec['document'] == str(path), 'owned SVG must be the reviewed target document'
+        assert isinstance(spec.get('app_id_tag'), str) and re.fullmatch(r'cua-profile-[A-Za-z0-9-]{1,64}', spec['app_id_tag']), \
+            'reviewed synthetic Inkscape app-id tag required'
+    else:
+        assert Path(owned['profile']) == path.parent / 'calc-profile'
 
 
 def validate_plan(plan):
@@ -74,14 +90,16 @@ def validate_plan(plan):
     assert set(recovery) == {'mode', 'agent', 'identity'}
     assert recovery['mode'] == 'prepared_distinct_process'
     fresh = recovery['agent']
-    assert fresh['pointer_stage'] in ('click_a1', 'click_b2')
+    inkscape = plan.get('app_profile') == 'inkscape-only'
+    assert fresh['pointer_stage'] in (('click_rectangle',) if inkscape else ('click_a1', 'click_b2'))
+    recovery_stage = 'scroll_down' if inkscape else 'click_b2'
     base = {k: v for k, v in plan.items() if k != 'fault'}
     primary_plan({**base, 'purpose': 'primary_conflict', 'case': 'initial_refusal',
-                  'recovery': {'pointer_stage': 'click_b2'}})
+                  'recovery': {'pointer_stage': recovery_stage}})
     primary_plan({**base, 'purpose': 'primary_conflict', 'case': 'initial_refusal',
-                  'agents': [{**fresh, 'pointer_stage': 'select_range'}],
+                  'agents': [{**fresh, 'pointer_stage': 'move_rectangle' if inkscape else 'select_range'}],
                   'processes': {**plan['processes'], 'target': recovery['identity']},
-                  'recovery': {'pointer_stage': 'click_b2'}})
+                  'recovery': {'pointer_stage': recovery_stage}})
     old = plan['agents'][0]
     for spec in (old, fresh):
         validate_owned(spec)
@@ -89,7 +107,11 @@ def validate_plan(plan):
     identities = [*plan['processes'].values(), recovery['identity'], plan['compositor']]
     assert len({p['pid'] for p in identities}) == 4, 'recovery must be a distinct process'
     assert len({s['window_id'] for s in (old['target'], fresh['target'], plan['foreground'])}) == 3
-    assert old['name'] != fresh['name'] and old['owned']['profile'] != fresh['owned']['profile']
+    assert old['name'] != fresh['name']
+    if not inkscape:
+        assert old['owned']['profile'] != fresh['owned']['profile']
+    else:
+        assert old['app_id_tag'] != fresh['app_id_tag'], 'distinct Inkscape application instances required'
     assert old['owned']['document']['path'] != fresh['owned']['document']['path']
 
 
@@ -128,6 +150,17 @@ def check_calc(spec, identity):
     assert [x.decode() for x in argv] == expected, 'not the exact dedicated suite Calc launch'
 
 
+def check_app(spec, identity):
+    if spec['app'] == 'calc':
+        return check_calc(spec, identity)
+    assert spec['app'] == 'inkscape' and identity['exe'] == '/usr/bin/inkscape'
+    assert _identity(identity['pid']) == identity and identity['uid'] == os.getuid(), 'Inkscape process identity changed'
+    saved_document(spec)
+    argv = Path(f'/proc/{identity["pid"]}/cmdline').read_bytes().rstrip(b'\0').split(b'\0')
+    assert [word.decode() for word in argv] == [identity['exe'], '--app-id-tag=' + spec['app_id_tag'], spec['document']], \
+        'not the exact dedicated suite Inkscape launch'
+
+
 class TargetLifetime(ExactDesktop):
     """No PID-name matching, shell signals, fallback kills, relaunch or retries."""
     def __init__(self, plan):
@@ -139,8 +172,8 @@ class TargetLifetime(ExactDesktop):
         assert subprocess.run(['systemd-detect-virt', '--vm', '--quiet'], timeout=2).returncode == 0
         self.guard()
         for spec, identity in ((self.spec, plan['processes']['target']), (self.fresh, plan['recovery']['identity'])):
-            app_process_identity('calc', identity['pid'])
-            check_calc(spec, identity)
+            app_process_identity(spec['app'], identity['pid'])
+            check_app(spec, identity)
             saved_document(spec)
         self.fd = os.pidfd_open(self.spec['target']['pid'])
         try:
@@ -169,8 +202,8 @@ class TargetLifetime(ExactDesktop):
             window = selected[0]
             assert int(window['address'], 16) == target['window_id'] and window.get('xwayland') is False
             if spec:
-                check_calc(spec, identity)
-                assert 'cua-smoke-calc.ods' in window.get('title', '')
+                check_app(spec, identity)
+                assert Path(spec['owned']['document']['path']).name in window.get('title', '')
                 assert window_bounds(window) == spec['bounds'], 'reviewed bounds changed'
         return windows
 
@@ -243,9 +276,25 @@ def verify_cleared(before, after, lane):
             assert {k: v for k, v in old[key].items() if k not in resources} == {
                 k: v for k, v in new[key].items() if k not in resources}, 'idle sibling lane changed'
         else:
-            assert new[key]['reserved'] is True, 'target loss unexpectedly lost runtime reservation'
+            assert type(new[key]['reserved']) is bool, 'invalid target-loss reservation state'
             assert all(type(new[key][k]) is int and new[key][k] < old[key][k]
                        for k in resources), 'destroyed resources not pruned'
+
+
+def verify_terminal_cleared(before, after, lane):
+    verify_cleared(before, after, lane)
+    assert all(row['reserved'] is False for row in lanes(after).values()), 'terminal connection retained capacity'
+    return {'result': 'verified', 'unreserved': True, 'input_authority': False}
+
+
+def await_connection_retirement(fault, before, lane):
+    def sample():
+        current = fault.status()
+        verify_cleared(before, current, lane)
+        return current if all(row['reserved'] is False for row in lanes(current).values()) else None
+    current = wait_for(sample, timeout=3)
+    return {'status': current, 'verification': verify_terminal_cleared(before, current, lane),
+            'observed_ns': time.monotonic_ns()}
 
 
 def isolation(page, *, stopped=False):
@@ -300,6 +349,42 @@ def cleanup_trace(before, after, *, stopped=False):
     return isolation(after, stopped=stopped)
 
 
+def verify_recovery_retirement(before, after, lane, *, retired=True):
+    """EOF releases capacity, preserving only the captured inert recovery hover."""
+    assert type(lane) is int and lane in (1, 2), 'invalid traced recovery lane'
+    old = lanes(before, cleared=True, allow_passive=True)
+    new = lanes(after, cleared=True, allow_passive=True)
+    assert set(old) == set(new) == {0, 1}
+    for key, row in old.items():
+        assert row['reserved'] is (key == lane - 1), 'unexpected recovery reservation'
+        assert all(type(row.get(k)) is int and row[k] >= 0
+                   for k in ('seat_resources', 'pointer_resources', 'keyboard_resources'))
+        assert all(type(new[key].get(k)) is int and new[key][k] >= 0
+                   for k in ('seat_resources', 'pointer_resources', 'keyboard_resources'))
+        if key != lane - 1:
+            assert row['pointer_focus'] is False, 'unexpected recovery pointer lane'
+        assert type(new[key]['reserved']) is bool, 'invalid retirement reservation'
+        expected = dict(row)
+        if key == lane - 1:
+            expected['reserved'] = False if retired else new[key]['reserved']
+        assert new[key] == expected, 'recovery cleanup changed lane state or retained capacity'
+    return {'result': 'verified', 'lane': lane, 'unreserved': retired,
+            'input_authority': False, 'parked_pointer_focus': old[lane - 1]['pointer_focus'],
+            'lane_state': 'unchanged_except_released_recovery_reservation'}
+
+
+def await_recovery_retirement(fault, recovery, runtimes):
+    assert recovery['result'] == 'verified', 'recovery was not verified'
+    assert runtimes and all(c.process.poll() is not None for c in runtimes), 'runtime still alive'
+    def sample():
+        current = fault.status()
+        verify_recovery_retirement(recovery['status'], current, recovery['lane'], retired=False)
+        return current if all(row['reserved'] is False for row in lanes(current).values()) else None
+    current = wait_for(sample, timeout=3)
+    return {'status': current, 'all_runtimes_closed': True, 'observed_ns': time.monotonic_ns(),
+            'verification': verify_recovery_retirement(recovery['status'], current, recovery['lane'])}
+
+
 def recover(client, observer, victim, fault, trace, boundary, lane, guard, save, result):
     assert fault.destroyed and victim.process.poll() is not None
     assert victim.process.pid not in assert_distinct_runtimes([client, observer])
@@ -344,7 +429,8 @@ def recover(client, observer, victim, fault, trace, boundary, lane, guard, save,
     assert all(r[2] in ('agent_admitted', 'agent_approved', 'agent_action_end', 'pointer_enter',
                         'pointer_motion', 'pointer_button', 'pointer_leave', 'keyboard_leave') for r in synthetic)
     assert [r[6] for r in synthetic if r[2] == 'pointer_button'] == [1, 0]
-    recovered = lanes(fault.status())
+    recovery_status = fault.status()
+    recovered = lanes(recovery_status, cleared=True, allow_passive=True)
     for key, row in recovered.items():
         assert row['held_button'] == row['held_keys'] == 0
         assert all(row[k] is False for k in ('drag_active', 'lease_active', 'keyboard_focus'))
@@ -353,6 +439,8 @@ def recover(client, observer, victim, fault, trace, boundary, lane, guard, save,
             assert row['pointer_focus'] is False
     result['continuous_isolation'] = isolation(page)
     guard()
+    result.update(status=recovery_status, lane=lane)
+    save('recovery-status.json', recovery_status)
     result['result'] = 'verified'
     return page
 
@@ -384,9 +472,9 @@ def run(args):
             origin['files'][name] = {'path': str(path.resolve()), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
         save('provenance.json', origin)
         for name, spec in (('target', fault.spec), ('replacement', fault.fresh)):
-            (args.evidence / (name + '-saved-before.ods')).write_bytes(saved_document(spec))
+            (args.evidence / (name + '-saved-before' + Path(spec['owned']['document']['path']).suffix)).write_bytes(saved_document(spec))
         save('prepared-app-identities.json', {
-            name: app_process_identity('calc', spec['target']['pid'])
+            name: app_process_identity(spec['app'], spec['target']['pid'])
             for name, spec in (('target', fault.spec), ('replacement', fault.fresh))})
         def launch(name):
             directory = args.evidence / name
@@ -435,9 +523,12 @@ def run(args):
         save('fault-prefix.json', boundary)
         report['fault'] = verify_fault(boundary, fault.record, action)
         for name, spec in (('target', fault.spec), ('replacement', fault.fresh)):
-            (args.evidence / (name + '-saved-after.ods')).write_bytes(saved_document(spec))
+            (args.evidence / (name + '-saved-after' + Path(spec['owned']['document']['path']).suffix)).write_bytes(saved_document(spec))
         report['saved_output'] = 'identity_and_bytes_unchanged; archived_before_and_after'
         close_owned(clients[0])
+        report['connection_retirement'] = await_connection_retirement(fault, fault.record['gate_status'], lane)
+        save('connection-retirement.json', report['connection_retirement'])
+        guard()
         teardown = trace.collect()
         cleanup_trace(boundary, teardown)
         save('pre-recovery-prefix.json', teardown)
@@ -455,12 +546,20 @@ def run(args):
             operations.append(('shutdown_pool', lambda: pool.shutdown(wait=False, cancel_futures=True)))
         if fault:
             operations.append(('preserve_fault', lambda: save('fault.json', fault.record)))
+        if observer:
+            operations.append(('close_observer', lambda: close_owned(observer)))
         if trace:
             def finish():
-                trace.exchange('TRACE_STOP')
-                stopped = trace.collect()
-                save('trace.json', stopped)
-                report['continuous_isolation'] = cleanup_trace(prefix, stopped, stopped=True) if prefix else isolation(stopped, stopped=True)
+                try:
+                    if report['recovery']['result'] == 'verified':
+                        report['recovery_cleanup'] = await_recovery_retirement(fault, report['recovery'],
+                                                                              [*clients, observer])
+                        save('recovery-cleanup.json', report['recovery_cleanup'])
+                finally:
+                    trace.exchange('TRACE_STOP')
+                    stopped = trace.collect()
+                    save('trace.json', stopped)
+                    report['continuous_isolation'] = cleanup_trace(prefix, stopped, stopped=True) if prefix else isolation(stopped, stopped=True)
                 guard()
                 primary_after = wm()
                 assert primary_after == primary_before
@@ -469,7 +568,10 @@ def run(args):
                 save('final-primary.json', {'primary': primary_after, 'foreground': current})
                 final = fault.status()
                 save('final-status.json', final)
-                assert all(r['reserved'] is False for r in lanes(final, cleared=True).values())
+                if report['recovery']['result'] == 'verified':
+                    verify_recovery_retirement(report['recovery']['status'], final, report['recovery']['lane'])
+                else:
+                    assert all(r['reserved'] is False for r in lanes(final, cleared=True).values())
             operations.extend([('finish_trace', finish), ('close_trace', trace.close)])
         if fault:
             operations.append(('close_pidfd', fault.close))
@@ -480,8 +582,6 @@ def run(args):
                 stop_process(grab)
                 wait_for(lambda: not state(args.foreground_journal)['held'], timeout=3)
         operations.append(('release_primary', release))
-        if observer:
-            operations.append(('close_observer', lambda: close_owned(observer)))
         errors = cleanup_all(operations)
         save('cleanup.json', {'errors': errors})
         if errors:
@@ -495,5 +595,5 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('driver', 'plugin', 'source', 'primary-grab', 'plan', 'evidence', 'foreground-journal', 'trace-socket'):
         parser.add_argument('--' + name, required=True, type=Path)
-    parser.add_argument('--source-sha', required=True)
+    add_provenance_arguments(parser)
     raise SystemExit(run(parser.parse_args()))

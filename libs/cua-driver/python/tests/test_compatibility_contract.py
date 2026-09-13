@@ -61,6 +61,24 @@ def _functions(module: ast.Module) -> dict[str, ast.FunctionDef | ast.AsyncFunct
     }
 
 
+def test_current_native_window_methods_have_typed_outputs() -> None:
+    module = _module(PACKAGE_ROOT / "src" / "cua_driver" / "_native.py")
+    driver = next(
+        node for node in module.body if isinstance(node, ast.ClassDef) and node.name == "CuaDriver"
+    )
+    methods = _functions(driver)
+    for name, input_type, output_type in [
+        ("list_apps", "ListAppsInput", "ListAppsOutput"),
+        ("list_windows", "ListWindowsInput", "ListWindowsOutput"),
+        ("get_window_state", "GetWindowStateInput", "WindowStateOutput"),
+        ("click", "ClickInput", "ActionResult"),
+    ]:
+        assert _signature(methods[name]) == (
+            f"async {name}(self, input: cua_driver._native_contract.{input_type})"
+            f" -> cua_driver._native_contract.{output_type}"
+        )
+
+
 def test_released_python_exports_and_signatures_remain_available() -> None:
     expected = json.loads(FIXTURE.read_text(encoding="utf-8"))
     package_module = _module(PACKAGE_ROOT / "src" / "cua_driver" / "__init__.py")

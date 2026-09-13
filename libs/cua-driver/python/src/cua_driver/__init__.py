@@ -4,7 +4,7 @@ Agents should configure the bundled ``cua-driver mcp`` executable directly
 through their runtime's MCP client instead of importing a language MCP facade.
 """
 
-__version__ = "0.25.0"  # x-release-please-version
+__version__ = "0.28.1"  # x-release-please-version
 
 from ._native import (
     ActionCompletion,
@@ -25,6 +25,12 @@ from ._native import (
     DriverExecutionMode,
     DriverMetadata,
     DriverOptions,
+    DriverServiceHeader,
+    DriverServiceRequest,
+    DriverServiceResponse,
+    DriverServiceTransport,
+    DriverServiceTransportError,
+    McpDriverChannel,
     ForeignDriverChannelCapabilities,
     ForeignDriverBoundChannel,
     ForeignDriverChannelError,
@@ -52,12 +58,28 @@ from ._native import (
     TrustedSessionOptions,
     create_trusted_session,
     connect_remote_channel,
+    open_mcp_driver_channel,
     create_remote_trusted_session,
     current_mac_os_permission_status,
     open_mac_os_screen_recording_settings,
     request_mac_os_permissions,
 )
 from ._native_contract import (
+    AppInfo,
+    ClickPosition,
+    ElementFrame,
+    GetWindowStateInput,
+    InputDeliveryMode,
+    ListAppsInput,
+    ListAppsOutput,
+    ListWindowsInput,
+    ListWindowsOutput,
+    SnapshotImage,
+    WindowBounds,
+    WindowElement,
+    WindowInfo,
+    WindowStateOutput,
+
     ActionDelivery,
     ActionDeliveryMode,
     ActionEffect,
@@ -180,6 +202,21 @@ _NativeCuaDriver.create_private_worker = classmethod(_create_private_worker_pyth
 CuaDriver = _NativeCuaDriver
 
 __all__ = [
+    "AppInfo",
+    "ClickPosition",
+    "ElementFrame",
+    "GetWindowStateInput",
+    "InputDeliveryMode",
+    "ListAppsInput",
+    "ListAppsOutput",
+    "ListWindowsInput",
+    "ListWindowsOutput",
+    "SnapshotImage",
+    "WindowBounds",
+    "WindowElement",
+    "WindowInfo",
+    "WindowStateOutput",
+
     "ActionCompletion",
     "ActionDelivery",
     "ActionDeliveryMode",
@@ -220,6 +257,13 @@ __all__ = [
     "DriverExecutionMode",
     "DriverMetadata",
     "DriverOptions",
+    "DriverServiceHeader",
+    "DriverServiceRequest",
+    "DriverServiceResponse",
+    "DriverServiceTransport",
+    "DriverServiceTransportError",
+    "McpDriverChannel",
+    "open_mcp_driver_channel",
     "ForeignDriverChannelCapabilities",
     "ForeignDriverBoundChannel",
     "ForeignDriverChannelError",

@@ -822,6 +822,9 @@ fi
         ci_workflow = self.read(
             ".github/workflows/ci-cua-driver-contract-clients.yml"
         )
+        compatibility_probe = self.read(
+            ".github/scripts/cua-driver-mcp-compat/verify.mjs"
+        )
         package = json.loads(
             self.read(
                 ".github/scripts/cua-driver-mcp-compat/package.json"
@@ -841,6 +844,15 @@ fi
         self.assertIn("npm run verify", workflow)
         self.assertIn("MCP discovery in pinned clients", ci_workflow)
         self.assertIn("Verify discovery without model or account calls", ci_workflow)
+        self.assertNotIn("codex.cmd", compatibility_probe)
+        self.assertIn(
+            'run(process.execPath, [CODEX_SCRIPT, "--version"]',
+            compatibility_probe,
+        )
+        self.assertIn(
+            "const child = spawn(\n    process.execPath,\n    [\n      CODEX_SCRIPT,",
+            compatibility_probe,
+        )
         self.assertEqual(
             package["dependencies"],
             {
@@ -858,7 +870,7 @@ fi
         self.assertEqual(len(expected["baseTools"]), 56)
         self.assertEqual(
             expected["outputSchemaCountByPlatform"],
-            {"darwin": 32, "linux": 36, "win32": 32},
+            {"darwin": 34, "linux": 38, "win32": 34},
         )
         self.assertEqual(
             expected["platformTools"],
@@ -868,7 +880,8 @@ fi
                     "mouse_button_up",
                     "mouse_drag",
                     "parallel_mouse_drag",
-                ]
+                ],
+                "win32": ["debug_window_info"],
             },
         )
 
@@ -911,7 +924,6 @@ fi
     def test_lume_uses_the_same_draft_finalizer(self) -> None:
         workflow = self.read(".github/workflows/cd-swift-lume.yml")
 
-        self.assertIn("--make-latest", workflow)
         self.assertIn("github_release.py", workflow)
         self.assertNotIn("softprops/action-gh-release", workflow)
         self.assertNotIn("bake-lume-version", workflow)

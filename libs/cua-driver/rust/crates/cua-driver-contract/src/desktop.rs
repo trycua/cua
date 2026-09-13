@@ -10,16 +10,20 @@
 use crate::{
     ActionResult, ClickInput, ClipboardReadInput, ClipboardReadOutput, ClipboardWriteInput,
     ClipboardWriteOutput, CursorAction, CursorPositionOutput, CursorSemantics, DesktopStateOutput,
-    DragInput, GetCursorPositionInput, GetDesktopStateInput, GetScreenSizeInput, HotkeyInput,
-    InvokeMenuInput, MoveCursorInput, Platform, PressKeyInput, SchemaMode, ScreenSizeOutput,
-    ScrollInput, SetWindowFrameInput, ToolAnnotations, ToolContract, ToolInput, ToolOutput,
-    TypeTextInput,
+    DragInput, GetCursorPositionInput, GetDesktopStateInput, GetScreenSizeInput,
+    GetWindowStateInput, HotkeyInput, InvokeMenuInput, ListAppsInput, ListAppsOutput,
+    ListWindowsInput, ListWindowsOutput, MoveCursorInput, Platform, PressKeyInput, SchemaMode,
+    ScreenSizeOutput, ScrollInput, SetWindowFrameInput, ToolAnnotations, ToolContract, ToolInput,
+    ToolOutput, TypeTextInput, WindowStateOutput,
 };
 
 const ALL_PLATFORMS: [Platform; 3] = [Platform::Macos, Platform::Windows, Platform::Linux];
 
 pub fn contracts() -> Vec<ToolContract> {
     vec![
+        list_apps(),
+        list_windows(),
+        get_window_state(),
         get_desktop_state(),
         get_screen_size(),
         get_cursor_position(),
@@ -37,52 +41,57 @@ pub fn contracts() -> Vec<ToolContract> {
     ]
 }
 
-const Z_INDEX_DESCRIPTION: &str = "Higher values are closer to the front. Null means the provider cannot observe stacking order; callers must not infer an order from array position or treat null as zero.";
-
-// Keep this schema deliberately narrow: platform window records have additive
-// fields and are still converging, while z_index has one portable meaning that
-// consumers need in order to sort safely. This runtime schema intentionally
-// stays outside the typed SDK manifest until that broader shape converges.
-pub(crate) fn list_windows_success_output_schema() -> serde_json::Value {
-    serde_json::json!({
-            "type": "object",
-            "properties": {
-                "windows": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "z_index": {
-                                "type": ["integer", "null"],
-                                "description": Z_INDEX_DESCRIPTION
-                            }
-                        },
-                        "required": ["z_index"],
-                        "additionalProperties": true
-                    }
-                }
-            },
-            "required": ["windows"],
-            "additionalProperties": true
-    })
+fn list_apps() -> ToolContract {
+    contract::<ListAppsInput, ListAppsOutput>(
+        "list_apps",
+        "Discover installed and running native applications.",
+        &["app.list"],
+        ToolAnnotations {
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        },
+        CursorAction::Observe,
+    )
 }
 
-pub(crate) fn validate_list_windows_output(value: serde_json::Value) -> Result<(), String> {
-    let windows = value
-        .get("windows")
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| "windows must be an array".to_owned())?;
-    for (index, window) in windows.iter().enumerate() {
-        let z_index = window
-            .get("z_index")
-            .ok_or_else(|| format!("windows[{index}].z_index is required"))?;
-        if !(z_index.is_null() || z_index.is_u64() || z_index.is_i64()) {
-            return Err(format!(
-                "windows[{index}].z_index must be an integer or null"
-            ));
-        }
-    }
-    Ok(())
+fn list_windows() -> ToolContract {
+    contract::<ListWindowsInput, ListWindowsOutput>(
+        "list_windows",
+        "Discover exact native windows and observable bounds and stacking order.",
+        &["window.list"],
+        ToolAnnotations {
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        },
+        CursorAction::Observe,
+    )
+}
+
+fn get_window_state() -> ToolContract {
+    contract::<GetWindowStateInput, WindowStateOutput>(
+        "get_window_state",
+        "Observe an exact native window with snapshot-bound elements and optional screenshots.",
+        &[
+            "accessibility.window_state",
+            "accessibility.tree",
+            "accessibility.tree.structured",
+            "accessibility.tree.bounded",
+            "accessibility.element_tokens",
+            "screen.capture",
+            "screen.capture.window",
+        ],
+        ToolAnnotations {
+            read_only: true,
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        },
+        CursorAction::Observe,
+    )
 }
 
 fn clipboard_read() -> ToolContract {
@@ -235,11 +244,12 @@ fn invoke_menu() -> ToolContract {
 fn click() -> ToolContract {
     contract::<ClickInput, ActionResult>(
         "click",
-        "Click an absolute point in get_desktop_state coordinates without targeting a window.",
+        "Click coordinates or a snapshot-bound element with an explicit target and delivery mode.",
         &[
             "input.pointer.click",
             "input.pointer.click.left",
             "accessibility.element_tokens",
+            "input.delivery_mode",
         ],
         ToolAnnotations {
             read_only: false,

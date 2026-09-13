@@ -13,7 +13,7 @@ For hosted execution, follow [Choose a Fleet image](/how-to-guides/sandbox/choos
 The local builder steps below do not publish a Fleet artifact or run during a claim.
 
 <Callout type="warn">
-  **SDK builder customization is local-only in `cua-sandbox` 0.4.3.** `apt_install()`,
+  **SDK builder customization is local-only in `cua-sandbox` 0.7.0.** `apt_install()`,
   `pip_install()`, `env()`, `run()`, `copy()` and the other builder methods are applied when you
   boot the image locally (`local=True`). Fleet runs a prebuilt registry artifact and rejects a
   customized one with `NotImplementedError: Fleet cloud supports registry images with optional
@@ -150,7 +150,7 @@ Image.linux().expose(8080).expose(5432)
 ```
 
 <Callout type="warn">
-  In 0.4.3, bare-metal QEMU forwards exposed ports at startup and reports their host ports in
+  In 0.7.0, bare-metal QEMU forwards exposed ports at startup and reports their host ports in
   `sb.exposed_ports`. Other local backends can differ. Fleet creates named services instead.
   `expose()` does not make `tunnel.forward()` available on every transport; see [ports and
   transports](/reference/sandbox-sdk/runtime-support#ports-and-transports).

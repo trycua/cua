@@ -490,6 +490,8 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_func_open_mac_os_screen_recording_settings() != 6663:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_func_open_mcp_driver_channel() != 952:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_func_request_mac_os_permissions() != 61823:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_constructor_cuadriver_connect() != 60859:
@@ -522,7 +524,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_cuadriver_call_tool() != 24493:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_driver_sdk_checksum_method_cuadriver_click() != 56077:
+    if lib.uniffi_cua_driver_sdk_checksum_method_cuadriver_click() != 22807:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_cuadriver_clipboard_read() != 58238:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -548,17 +550,23 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_cuadriver_get_session_state() != 49966:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_method_cuadriver_get_window_state() != 62142:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_cuadriver_hotkey() != 53333:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_cuadriver_invoke_menu() != 13118:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_cuadriver_is_available() != 42961:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_method_cuadriver_list_apps() != 35505:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_cuadriver_list_host_sessions_json() != 13193:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_cuadriver_list_sessions() != 40131:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_cuadriver_list_tools_json() != 33039:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_method_cuadriver_list_windows() != 52601:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_cuadriver_metadata() != 55026:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -590,7 +598,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_call_tool() != 52859:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_click() != 22303:
+    if lib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_click() != 50816:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_clipboard_read() != 23560:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -616,11 +624,17 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_get_session_state() != 55370:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_get_window_state() != 21266:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_hotkey() != 12820:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_invoke_menu() != 2742:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_list_apps() != 51520:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_list_sessions() != 32840:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_list_windows() != 20571:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_move_cursor() != 35768:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -645,6 +659,8 @@ def _uniffi_check_api_checksums(lib):
     if lib.uniffi_cua_driver_sdk_checksum_method_driveractivityobserver_on_activity() != 9786:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_driverauthorizationhost_authorize() != 10089:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_method_driverservicetransport_send() != 53285:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_constructor_embeddedcuadriverhost_new() != 10108:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -673,6 +689,14 @@ def _uniffi_check_api_checksums(lib):
     if lib.uniffi_cua_driver_sdk_checksum_method_foreigndriverenvelopechannel_cancel() != 60148:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_foreigndriverenvelopechannel_close() != 42601:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_method_mcpdriverchannel_close() != 59055:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_method_mcpdriverchannel_driver() != 6660:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_method_mcpdriverchannel_open() != 13274:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_method_mcpdriverchannel_public_session() != 15027:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
 
 # A ctypes library to expose the extern-C FFI definitions.
@@ -977,6 +1001,16 @@ _UniffiLib.uniffi_cua_driver_sdk_fn_free_driverauthorizationhost.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_driver_sdk_fn_free_driverauthorizationhost.restype = None
+_UniffiLib.uniffi_cua_driver_sdk_fn_clone_driverservicetransport.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_clone_driverservicetransport.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_driver_sdk_fn_free_driverservicetransport.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_free_driverservicetransport.restype = None
 _UniffiLib.uniffi_cua_driver_sdk_fn_clone_embeddedcuadriverhost.argtypes = (
     ctypes.c_uint64,
     ctypes.POINTER(_UniffiRustCallStatus),
@@ -997,6 +1031,16 @@ _UniffiLib.uniffi_cua_driver_sdk_fn_free_foreigndriverenvelopechannel.argtypes =
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_driver_sdk_fn_free_foreigndriverenvelopechannel.restype = None
+_UniffiLib.uniffi_cua_driver_sdk_fn_clone_mcpdriverchannel.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_clone_mcpdriverchannel.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_driver_sdk_fn_free_mcpdriverchannel.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_free_mcpdriverchannel.restype = None
 _UNIFFI_CALLBACK_INTERFACE_CUA_DRIVER_SDK_DRIVER_ACTIVITY_OBSERVER_METHOD0 = ctypes.CFUNCTYPE(None,ctypes.c_uint64,_UniffiRustBuffer,ctypes.c_void_p,
     ctypes.POINTER(_UniffiRustCallStatus),
 )
@@ -1037,6 +1081,22 @@ _UniffiLib.uniffi_cua_driver_sdk_fn_init_callback_vtable_driverauthorizationhost
     ctypes.POINTER(_UniffiVTableCallbackInterfaceCuaDriverSdkDriverAuthorizationHost),
 )
 _UniffiLib.uniffi_cua_driver_sdk_fn_init_callback_vtable_driverauthorizationhost.restype = None
+_UNIFFI_CALLBACK_INTERFACE_CUA_DRIVER_SDK_DRIVER_SERVICE_TRANSPORT_METHOD0 = ctypes.CFUNCTYPE(None,ctypes.c_uint64,_UniffiRustBuffer,_UNIFFI_FOREIGN_FUTURE_COMPLETERUST_BUFFER,ctypes.c_uint64,ctypes.POINTER(_UniffiForeignFutureDroppedCallbackStruct),
+)
+_UNIFFI_CALLBACK_INTERFACE_CLONE_CUA_DRIVER_SDK_DRIVER_SERVICE_TRANSPORT = ctypes.CFUNCTYPE(ctypes.c_uint64,ctypes.c_uint64,
+)
+_UNIFFI_CALLBACK_INTERFACE_FREE_CUA_DRIVER_SDK_DRIVER_SERVICE_TRANSPORT = ctypes.CFUNCTYPE(None,ctypes.c_uint64,
+)
+class _UniffiVTableCallbackInterfaceCuaDriverSdkDriverServiceTransport(ctypes.Structure):
+    _fields_ = [
+        ("uniffi_free", _UNIFFI_CALLBACK_INTERFACE_FREE_CUA_DRIVER_SDK_DRIVER_SERVICE_TRANSPORT),
+        ("uniffi_clone", _UNIFFI_CALLBACK_INTERFACE_CLONE_CUA_DRIVER_SDK_DRIVER_SERVICE_TRANSPORT),
+        ("send", _UNIFFI_CALLBACK_INTERFACE_CUA_DRIVER_SDK_DRIVER_SERVICE_TRANSPORT_METHOD0),
+    ]
+_UniffiLib.uniffi_cua_driver_sdk_fn_init_callback_vtable_driverservicetransport.argtypes = (
+    ctypes.POINTER(_UniffiVTableCallbackInterfaceCuaDriverSdkDriverServiceTransport),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_init_callback_vtable_driverservicetransport.restype = None
 _UNIFFI_CALLBACK_INTERFACE_CUA_DRIVER_SDK_FOREIGN_DRIVER_ENVELOPE_CHANNEL_METHOD0 = ctypes.CFUNCTYPE(None,ctypes.c_uint64,ctypes.POINTER(_UniffiRustBuffer),
     ctypes.POINTER(_UniffiRustCallStatus),
 )
@@ -1099,6 +1159,12 @@ _UniffiLib.uniffi_cua_driver_sdk_fn_func_open_mac_os_screen_recording_settings.a
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_driver_sdk_fn_func_open_mac_os_screen_recording_settings.restype = None
+_UniffiLib.uniffi_cua_driver_sdk_fn_func_open_mcp_driver_channel.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_func_open_mcp_driver_channel.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_driver_sdk_fn_func_request_mac_os_permissions.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
@@ -1259,6 +1325,11 @@ _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriver_get_session_state.argtypes 
     cua_driver._native_contract._UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriver_get_session_state.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriver_get_window_state.argtypes = (
+    ctypes.c_uint64,
+    cua_driver._native_contract._UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriver_get_window_state.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriver_hotkey.argtypes = (
     ctypes.c_uint64,
     cua_driver._native_contract._UniffiRustBuffer,
@@ -1274,6 +1345,11 @@ _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriver_is_available.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriver_is_available.restype = ctypes.c_int8
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriver_list_apps.argtypes = (
+    ctypes.c_uint64,
+    cua_driver._native_contract._UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriver_list_apps.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriver_list_host_sessions_json.argtypes = (
     ctypes.c_uint64,
 )
@@ -1287,6 +1363,11 @@ _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriver_list_tools_json.argtypes = 
     ctypes.c_uint64,
 )
 _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriver_list_tools_json.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriver_list_windows.argtypes = (
+    ctypes.c_uint64,
+    cua_driver._native_contract._UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriver_list_windows.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriver_metadata.argtypes = (
     ctypes.c_uint64,
 )
@@ -1426,6 +1507,11 @@ _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriversession_get_session_state.ar
     cua_driver._native_contract._UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriversession_get_session_state.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriversession_get_window_state.argtypes = (
+    ctypes.c_uint64,
+    cua_driver._native_contract._UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriversession_get_window_state.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriversession_hotkey.argtypes = (
     ctypes.c_uint64,
     cua_driver._native_contract._UniffiRustBuffer,
@@ -1436,11 +1522,21 @@ _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriversession_invoke_menu.argtypes
     cua_driver._native_contract._UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriversession_invoke_menu.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriversession_list_apps.argtypes = (
+    ctypes.c_uint64,
+    cua_driver._native_contract._UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriversession_list_apps.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriversession_list_sessions.argtypes = (
     ctypes.c_uint64,
     cua_driver._native_contract._UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriversession_list_sessions.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriversession_list_windows.argtypes = (
+    ctypes.c_uint64,
+    cua_driver._native_contract._UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriversession_list_windows.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriversession_move_cursor.argtypes = (
     ctypes.c_uint64,
     cua_driver._native_contract._UniffiRustBuffer,
@@ -1502,6 +1598,11 @@ _UniffiLib.uniffi_cua_driver_sdk_fn_method_driverauthorizationhost_authorize.arg
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_driver_sdk_fn_method_driverauthorizationhost_authorize.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_driverservicetransport_send.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_driverservicetransport_send.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_driver_sdk_fn_constructor_embeddedcuadriverhost_new.argtypes = (
     _UniffiRustBuffer,
     _UniffiRustBuffer,
@@ -1568,6 +1669,24 @@ _UniffiLib.uniffi_cua_driver_sdk_fn_method_foreigndriverenvelopechannel_close.ar
     ctypes.c_uint64,
 )
 _UniffiLib.uniffi_cua_driver_sdk_fn_method_foreigndriverenvelopechannel_close.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_mcpdriverchannel_close.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_mcpdriverchannel_close.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_mcpdriverchannel_driver.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_mcpdriverchannel_driver.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_mcpdriverchannel_open.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_mcpdriverchannel_open.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_mcpdriverchannel_public_session.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_mcpdriverchannel_public_session.restype = _UniffiRustBuffer
 _UniffiLib.ffi_cua_driver_sdk_uniffi_contract_version.argtypes = (
 )
 _UniffiLib.ffi_cua_driver_sdk_uniffi_contract_version.restype = ctypes.c_uint32
@@ -1586,6 +1705,9 @@ _UniffiLib.uniffi_cua_driver_sdk_checksum_func_current_mac_os_permission_status.
 _UniffiLib.uniffi_cua_driver_sdk_checksum_func_open_mac_os_screen_recording_settings.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_func_open_mac_os_screen_recording_settings.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_func_open_mcp_driver_channel.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_func_open_mcp_driver_channel.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_driver_sdk_checksum_func_request_mac_os_permissions.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_func_request_mac_os_permissions.restype = ctypes.c_uint16
@@ -1673,6 +1795,9 @@ _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriver_get_session.restype =
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriver_get_session_state.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriver_get_session_state.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriver_get_window_state.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriver_get_window_state.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriver_hotkey.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriver_hotkey.restype = ctypes.c_uint16
@@ -1682,6 +1807,9 @@ _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriver_invoke_menu.restype =
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriver_is_available.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriver_is_available.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriver_list_apps.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriver_list_apps.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriver_list_host_sessions_json.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriver_list_host_sessions_json.restype = ctypes.c_uint16
@@ -1691,6 +1819,9 @@ _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriver_list_sessions.restype
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriver_list_tools_json.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriver_list_tools_json.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriver_list_windows.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriver_list_windows.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriver_metadata.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriver_metadata.restype = ctypes.c_uint16
@@ -1775,15 +1906,24 @@ _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_get_session.re
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_get_session_state.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_get_session_state.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_get_window_state.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_get_window_state.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_hotkey.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_hotkey.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_invoke_menu.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_invoke_menu.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_list_apps.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_list_apps.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_list_sessions.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_list_sessions.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_list_windows.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_list_windows.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_move_cursor.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_move_cursor.restype = ctypes.c_uint16
@@ -1820,6 +1960,9 @@ _UniffiLib.uniffi_cua_driver_sdk_checksum_method_driveractivityobserver_on_activ
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_driverauthorizationhost_authorize.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_driverauthorizationhost_authorize.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_driverservicetransport_send.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_driverservicetransport_send.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_driver_sdk_checksum_constructor_embeddedcuadriverhost_new.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_constructor_embeddedcuadriverhost_new.restype = ctypes.c_uint16
@@ -1862,6 +2005,18 @@ _UniffiLib.uniffi_cua_driver_sdk_checksum_method_foreigndriverenvelopechannel_ca
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_foreigndriverenvelopechannel_close.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_foreigndriverenvelopechannel_close.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_mcpdriverchannel_close.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_mcpdriverchannel_close.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_mcpdriverchannel_driver.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_mcpdriverchannel_driver.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_mcpdriverchannel_open.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_mcpdriverchannel_open.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_mcpdriverchannel_public_session.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_mcpdriverchannel_public_session.restype = ctypes.c_uint16
 
 _uniffi_check_contract_api_version(_UniffiLib)
 # _uniffi_check_api_checksums(_UniffiLib)
@@ -2815,6 +2970,194 @@ class _UniffiFfiConverterTypeDriverOptions(_UniffiConverterRustBuffer):
     @staticmethod
     def write(value, buf):
         _UniffiFfiConverterBoolean.write(value.claude_code_compatibility, buf)
+
+@dataclass
+class DriverServiceHeader:
+    def __init__(self, *, name:str, value:str):
+        self.name = name
+        self.value = value
+
+
+
+
+    def __str__(self):
+        return "DriverServiceHeader(name={}, value={})".format(self.name, self.value)
+    def __eq__(self, other):
+        if self.name != other.name:
+            return False
+        if self.value != other.value:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeDriverServiceHeader(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return DriverServiceHeader(
+            name=_UniffiFfiConverterString.read(buf),
+            value=_UniffiFfiConverterString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.name)
+        _UniffiFfiConverterString.check_lower(value.value)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.name, buf)
+        _UniffiFfiConverterString.write(value.value, buf)
+
+class _UniffiFfiConverterSequenceTypeDriverServiceHeader(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterTypeDriverServiceHeader.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterTypeDriverServiceHeader.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterTypeDriverServiceHeader.read(buf) for i in range(count)
+        ]
+
+class _UniffiFfiConverterBytes(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        size = buf.read_i32()
+        if size < 0:
+            raise InternalError("Unexpected negative byte string length")
+        return buf.read(size)
+
+    @staticmethod
+    def check_lower(value):
+        try:
+            memoryview(value)
+        except TypeError:
+            raise TypeError("a bytes-like object is required, not {!r}".format(type(value).__name__))
+
+    @staticmethod
+    def write(value, buf):
+        buf.write_i32(len(value))
+        buf.write(value)
+
+@dataclass
+class DriverServiceRequest:
+    def __init__(self, *, method:str, path:str, headers:typing.List[DriverServiceHeader], body:bytes, timeout_ms:int):
+        self.method = method
+        self.path = path
+        self.headers = headers
+        self.body = body
+        self.timeout_ms = timeout_ms
+
+
+
+
+    def __str__(self):
+        return "DriverServiceRequest(method={}, path={}, headers={}, body={}, timeout_ms={})".format(self.method, self.path, self.headers, self.body, self.timeout_ms)
+    def __eq__(self, other):
+        if self.method != other.method:
+            return False
+        if self.path != other.path:
+            return False
+        if self.headers != other.headers:
+            return False
+        if self.body != other.body:
+            return False
+        if self.timeout_ms != other.timeout_ms:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeDriverServiceRequest(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return DriverServiceRequest(
+            method=_UniffiFfiConverterString.read(buf),
+            path=_UniffiFfiConverterString.read(buf),
+            headers=_UniffiFfiConverterSequenceTypeDriverServiceHeader.read(buf),
+            body=_UniffiFfiConverterBytes.read(buf),
+            timeout_ms=_UniffiFfiConverterUInt64.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.method)
+        _UniffiFfiConverterString.check_lower(value.path)
+        _UniffiFfiConverterSequenceTypeDriverServiceHeader.check_lower(value.headers)
+        _UniffiFfiConverterBytes.check_lower(value.body)
+        _UniffiFfiConverterUInt64.check_lower(value.timeout_ms)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.method, buf)
+        _UniffiFfiConverterString.write(value.path, buf)
+        _UniffiFfiConverterSequenceTypeDriverServiceHeader.write(value.headers, buf)
+        _UniffiFfiConverterBytes.write(value.body, buf)
+        _UniffiFfiConverterUInt64.write(value.timeout_ms, buf)
+
+class _UniffiFfiConverterUInt16(_UniffiConverterPrimitiveInt):
+    CLASS_NAME = "u16"
+    VALUE_MIN = 0
+    VALUE_MAX = 2**16
+
+    @staticmethod
+    def read(buf):
+        return buf.read_u16()
+
+    @staticmethod
+    def write(value, buf):
+        buf.write_u16(value)
+
+@dataclass
+class DriverServiceResponse:
+    def __init__(self, *, status:int, headers:typing.List[DriverServiceHeader], body:bytes):
+        self.status = status
+        self.headers = headers
+        self.body = body
+
+
+
+
+    def __str__(self):
+        return "DriverServiceResponse(status={}, headers={}, body={})".format(self.status, self.headers, self.body)
+    def __eq__(self, other):
+        if self.status != other.status:
+            return False
+        if self.headers != other.headers:
+            return False
+        if self.body != other.body:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeDriverServiceResponse(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return DriverServiceResponse(
+            status=_UniffiFfiConverterUInt16.read(buf),
+            headers=_UniffiFfiConverterSequenceTypeDriverServiceHeader.read(buf),
+            body=_UniffiFfiConverterBytes.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterUInt16.check_lower(value.status)
+        _UniffiFfiConverterSequenceTypeDriverServiceHeader.check_lower(value.headers)
+        _UniffiFfiConverterBytes.check_lower(value.body)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterUInt16.write(value.status, buf)
+        _UniffiFfiConverterSequenceTypeDriverServiceHeader.write(value.headers, buf)
+        _UniffiFfiConverterBytes.write(value.body, buf)
 
 @dataclass
 class EmbeddedEnvironmentVariable:
@@ -4784,6 +5127,59 @@ class _UniffiFfiConverterTypeDriverExecutionMode(_UniffiConverterRustBuffer):
 
 
 
+# DriverServiceTransportError
+# We want to define each variant as a nested class that's also a subclass,
+# which is tricky in Python.  To accomplish this we're going to create each
+# class separately, then manually add the child classes to the base class's
+# __dict__.  All of this happens in dummy class to avoid polluting the module
+# namespace.
+class DriverServiceTransportError(Exception):
+    pass
+
+_UniffiTempDriverServiceTransportError = DriverServiceTransportError
+
+class DriverServiceTransportError:  # type: ignore
+
+    class Failed(_UniffiTempDriverServiceTransportError):
+
+        def __init__(self, reason):
+            super().__init__(", ".join([
+                "reason={!r}".format(reason),
+            ]))
+            self.reason = reason
+
+        def __repr__(self):
+            return "DriverServiceTransportError.Failed({})".format(str(self))
+    _UniffiTempDriverServiceTransportError.Failed = Failed # type: ignore
+
+DriverServiceTransportError = _UniffiTempDriverServiceTransportError # type: ignore
+del _UniffiTempDriverServiceTransportError
+
+
+class _UniffiFfiConverterTypeDriverServiceTransportError(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return DriverServiceTransportError.Failed(
+                _UniffiFfiConverterString.read(buf),
+            )
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if isinstance(value, DriverServiceTransportError.Failed):
+            _UniffiFfiConverterString.check_lower(value.reason)
+            return
+
+    @staticmethod
+    def write(value, buf):
+        if isinstance(value, DriverServiceTransportError.Failed):
+            buf.write_i32(1)
+            _UniffiFfiConverterString.write(value.reason, buf)
+
+
+
 # EmbeddedDriverError
 # We want to define each variant as a nested class that's also a subclass,
 # which is tricky in Python.  To accomplish this we're going to create each
@@ -5148,6 +5544,18 @@ class _UniffiFfiConverterTypeSdkClientKind(_UniffiConverterRustBuffer):
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 class CuaDriverProtocol(typing.Protocol):
 
     async def call_tool(self, name: str,arguments_json: str) -> ToolResult:
@@ -5157,7 +5565,7 @@ class CuaDriverProtocol(typing.Protocol):
         remain downstream of the same public SDK runtime.
 """
         raise NotImplementedError
-    async def click(self, input: cua_driver._native_contract.ClickInput) -> ToolResult:
+    async def click(self, input: cua_driver._native_contract.ClickInput) -> cua_driver._native_contract.ActionResult:
         raise NotImplementedError
     async def clipboard_read(self, input: cua_driver._native_contract.ClipboardReadInput) -> ToolResult:
         raise NotImplementedError
@@ -5183,11 +5591,15 @@ class CuaDriverProtocol(typing.Protocol):
         raise NotImplementedError
     async def get_session_state(self, input: cua_driver._native_contract.GetSessionStateInput) -> cua_driver._native_contract.SessionStateOutput:
         raise NotImplementedError
+    async def get_window_state(self, input: cua_driver._native_contract.GetWindowStateInput) -> cua_driver._native_contract.WindowStateOutput:
+        raise NotImplementedError
     async def hotkey(self, input: cua_driver._native_contract.HotkeyInput) -> ToolResult:
         raise NotImplementedError
     async def invoke_menu(self, input: cua_driver._native_contract.InvokeMenuInput) -> ToolResult:
         raise NotImplementedError
     def is_available(self, ) -> bool:
+        raise NotImplementedError
+    async def list_apps(self, input: cua_driver._native_contract.ListAppsInput) -> cua_driver._native_contract.ListAppsOutput:
         raise NotImplementedError
     async def list_host_sessions_json(self, ) -> str:
         """
@@ -5202,6 +5614,8 @@ class CuaDriverProtocol(typing.Protocol):
         """
         Canonical tool inventory for MCP and other protocol adapters.
 """
+        raise NotImplementedError
+    async def list_windows(self, input: cua_driver._native_contract.ListWindowsInput) -> cua_driver._native_contract.ListWindowsOutput:
         raise NotImplementedError
     async def metadata(self, ) -> DriverMetadata:
         raise NotImplementedError
@@ -5604,14 +6018,14 @@ class CuaDriver(CuaDriverProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
-    async def click(self, input: cua_driver._native_contract.ClickInput) -> ToolResult:
+    async def click(self, input: cua_driver._native_contract.ClickInput) -> cua_driver._native_contract.ActionResult:
 
         cua_driver._native_contract._UniffiFfiConverterTypeClickInput.check_lower(input)
         _uniffi_lowered_args = (
             self._uniffi_clone_handle(),
             cua_driver._native_contract._UniffiFfiConverterTypeClickInput.lower(input),
         )
-        _uniffi_lift_return = _UniffiFfiConverterTypeToolResult.lift
+        _uniffi_lift_return = cua_driver._native_contract._UniffiFfiConverterTypeActionResult.lift
         _uniffi_error_converter = _UniffiFfiConverterTypeDriverError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriver_click(*_uniffi_lowered_args),
@@ -5820,6 +6234,23 @@ class CuaDriver(CuaDriverProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
+    async def get_window_state(self, input: cua_driver._native_contract.GetWindowStateInput) -> cua_driver._native_contract.WindowStateOutput:
+
+        cua_driver._native_contract._UniffiFfiConverterTypeGetWindowStateInput.check_lower(input)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            cua_driver._native_contract._UniffiFfiConverterTypeGetWindowStateInput.lower(input),
+        )
+        _uniffi_lift_return = cua_driver._native_contract._UniffiFfiConverterTypeWindowStateOutput.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeDriverError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriver_get_window_state(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
     async def hotkey(self, input: cua_driver._native_contract.HotkeyInput) -> ToolResult:
 
         cua_driver._native_contract._UniffiFfiConverterTypeHotkeyInput.check_lower(input)
@@ -5866,6 +6297,23 @@ class CuaDriver(CuaDriverProtocol):
             *_uniffi_lowered_args,
         )
         return _uniffi_lift_return(_uniffi_ffi_result)
+    async def list_apps(self, input: cua_driver._native_contract.ListAppsInput) -> cua_driver._native_contract.ListAppsOutput:
+
+        cua_driver._native_contract._UniffiFfiConverterTypeListAppsInput.check_lower(input)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            cua_driver._native_contract._UniffiFfiConverterTypeListAppsInput.lower(input),
+        )
+        _uniffi_lift_return = cua_driver._native_contract._UniffiFfiConverterTypeListAppsOutput.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeDriverError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriver_list_apps(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
     async def list_host_sessions_json(self, ) -> str:
         """
         Content-free lifecycle summaries for the trusted host's runtime or
@@ -5913,6 +6361,23 @@ class CuaDriver(CuaDriverProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeDriverError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriver_list_tools_json(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def list_windows(self, input: cua_driver._native_contract.ListWindowsInput) -> cua_driver._native_contract.ListWindowsOutput:
+
+        cua_driver._native_contract._UniffiFfiConverterTypeListWindowsInput.check_lower(input)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            cua_driver._native_contract._UniffiFfiConverterTypeListWindowsInput.lower(input),
+        )
+        _uniffi_lift_return = cua_driver._native_contract._UniffiFfiConverterTypeListWindowsOutput.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeDriverError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriver_list_windows(*_uniffi_lowered_args),
             _UniffiLib.ffi_cua_driver_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cua_driver_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cua_driver_sdk_rust_future_free_rust_buffer,
@@ -6184,7 +6649,7 @@ class CuaDriverSessionProtocol(typing.Protocol):
 
     async def call_tool(self, name: str,arguments_json: str) -> ToolResult:
         raise NotImplementedError
-    async def click(self, input: cua_driver._native_contract.ClickInput) -> ToolResult:
+    async def click(self, input: cua_driver._native_contract.ClickInput) -> cua_driver._native_contract.ActionResult:
         raise NotImplementedError
     async def clipboard_read(self, input: cua_driver._native_contract.ClipboardReadInput) -> ToolResult:
         raise NotImplementedError
@@ -6216,11 +6681,17 @@ class CuaDriverSessionProtocol(typing.Protocol):
         raise NotImplementedError
     async def get_session_state(self, input: cua_driver._native_contract.GetSessionStateInput) -> cua_driver._native_contract.SessionStateOutput:
         raise NotImplementedError
+    async def get_window_state(self, input: cua_driver._native_contract.GetWindowStateInput) -> cua_driver._native_contract.WindowStateOutput:
+        raise NotImplementedError
     async def hotkey(self, input: cua_driver._native_contract.HotkeyInput) -> ToolResult:
         raise NotImplementedError
     async def invoke_menu(self, input: cua_driver._native_contract.InvokeMenuInput) -> ToolResult:
         raise NotImplementedError
+    async def list_apps(self, input: cua_driver._native_contract.ListAppsInput) -> cua_driver._native_contract.ListAppsOutput:
+        raise NotImplementedError
     async def list_sessions(self, input: cua_driver._native_contract.ListSessionsInput) -> cua_driver._native_contract.ListSessionsOutput:
+        raise NotImplementedError
+    async def list_windows(self, input: cua_driver._native_contract.ListWindowsInput) -> cua_driver._native_contract.ListWindowsOutput:
         raise NotImplementedError
     async def move_cursor(self, input: cua_driver._native_contract.MoveCursorInput) -> ToolResult:
         raise NotImplementedError
@@ -6287,14 +6758,14 @@ class CuaDriverSession(CuaDriverSessionProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
-    async def click(self, input: cua_driver._native_contract.ClickInput) -> ToolResult:
+    async def click(self, input: cua_driver._native_contract.ClickInput) -> cua_driver._native_contract.ActionResult:
 
         cua_driver._native_contract._UniffiFfiConverterTypeClickInput.check_lower(input)
         _uniffi_lowered_args = (
             self._uniffi_clone_handle(),
             cua_driver._native_contract._UniffiFfiConverterTypeClickInput.lower(input),
         )
-        _uniffi_lift_return = _UniffiFfiConverterTypeToolResult.lift
+        _uniffi_lift_return = cua_driver._native_contract._UniffiFfiConverterTypeActionResult.lift
         _uniffi_error_converter = _UniffiFfiConverterTypeDriverError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriversession_click(*_uniffi_lowered_args),
@@ -6509,6 +6980,23 @@ class CuaDriverSession(CuaDriverSessionProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
+    async def get_window_state(self, input: cua_driver._native_contract.GetWindowStateInput) -> cua_driver._native_contract.WindowStateOutput:
+
+        cua_driver._native_contract._UniffiFfiConverterTypeGetWindowStateInput.check_lower(input)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            cua_driver._native_contract._UniffiFfiConverterTypeGetWindowStateInput.lower(input),
+        )
+        _uniffi_lift_return = cua_driver._native_contract._UniffiFfiConverterTypeWindowStateOutput.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeDriverError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriversession_get_window_state(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
     async def hotkey(self, input: cua_driver._native_contract.HotkeyInput) -> ToolResult:
 
         cua_driver._native_contract._UniffiFfiConverterTypeHotkeyInput.check_lower(input)
@@ -6543,6 +7031,23 @@ class CuaDriverSession(CuaDriverSessionProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
+    async def list_apps(self, input: cua_driver._native_contract.ListAppsInput) -> cua_driver._native_contract.ListAppsOutput:
+
+        cua_driver._native_contract._UniffiFfiConverterTypeListAppsInput.check_lower(input)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            cua_driver._native_contract._UniffiFfiConverterTypeListAppsInput.lower(input),
+        )
+        _uniffi_lift_return = cua_driver._native_contract._UniffiFfiConverterTypeListAppsOutput.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeDriverError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriversession_list_apps(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
     async def list_sessions(self, input: cua_driver._native_contract.ListSessionsInput) -> cua_driver._native_contract.ListSessionsOutput:
 
         cua_driver._native_contract._UniffiFfiConverterTypeListSessionsInput.check_lower(input)
@@ -6554,6 +7059,23 @@ class CuaDriverSession(CuaDriverSessionProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeDriverError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriversession_list_sessions(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def list_windows(self, input: cua_driver._native_contract.ListWindowsInput) -> cua_driver._native_contract.ListWindowsOutput:
+
+        cua_driver._native_contract._UniffiFfiConverterTypeListWindowsInput.check_lower(input)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            cua_driver._native_contract._UniffiFfiConverterTypeListWindowsInput.lower(input),
+        )
+        _uniffi_lift_return = cua_driver._native_contract._UniffiFfiConverterTypeListWindowsOutput.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeDriverError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriversession_list_windows(*_uniffi_lowered_args),
             _UniffiLib.ffi_cua_driver_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cua_driver_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cua_driver_sdk_rust_future_free_rust_buffer,
@@ -7064,6 +7586,175 @@ class _UniffiFfiConverterTypeDriverAuthorizationHost:
     def write(cls, value: DriverAuthorizationHost, buf: _UniffiRustBuffer):
         buf.write_u64(cls.lower(value))
 
+
+class DriverServiceTransport():
+    """
+    A host-bound named service, never a guest-selected URL or authority.
+    The transport must enforce `timeout_ms` and bound buffered response bytes to
+    16 MiB. Rust bounds caller waits independently but deliberately never aborts
+    an active response stream during receiver teardown.
+"""
+
+    async def send(self, request: DriverServiceRequest) -> DriverServiceResponse:
+        raise NotImplementedError
+
+class DriverServiceTransportImpl(DriverServiceTransport):
+    """
+    A host-bound named service, never a guest-selected URL or authority.
+    The transport must enforce `timeout_ms` and bound buffered response bytes to
+    16 MiB. Rust bounds caller waits independently but deliberately never aborts
+    an active response stream during receiver teardown.
+"""
+
+    _handle: ctypes.c_uint64
+
+    def __init__(self, *args, **kwargs):
+        raise ValueError("This class has no default constructor")
+
+    def __del__(self):
+        # In case of partial initialization of instances.
+        handle = getattr(self, "_handle", None)
+        if handle is not None:
+            _uniffi_rust_call(_UniffiLib.uniffi_cua_driver_sdk_fn_free_driverservicetransport, handle)
+
+    def _uniffi_clone_handle(self):
+        return _uniffi_rust_call(_UniffiLib.uniffi_cua_driver_sdk_fn_clone_driverservicetransport, self._handle)
+
+    # Used by alternative constructors or any methods which return this type.
+    @classmethod
+    def _uniffi_make_instance(cls, handle):
+        # Lightly yucky way to bypass the usual __init__ logic
+        # and just create a new instance with the required handle.
+        inst = cls.__new__(cls)
+        inst._handle = handle
+        return inst
+    async def send(self, request: DriverServiceRequest) -> DriverServiceResponse:
+
+        _UniffiFfiConverterTypeDriverServiceRequest.check_lower(request)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterTypeDriverServiceRequest.lower(request),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeDriverServiceResponse.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeDriverServiceTransportError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_driver_sdk_fn_method_driverservicetransport_send(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+
+
+
+
+# Put all the bits inside a class to keep the top-level namespace clean
+class _UniffiTraitImplDriverServiceTransportImpl:
+    # For each method, generate a callback function to pass to Rust
+
+    @_UNIFFI_CALLBACK_INTERFACE_CUA_DRIVER_SDK_DRIVER_SERVICE_TRANSPORT_METHOD0
+    def send(
+            uniffi_handle,
+            request,
+            uniffi_future_callback,
+            uniffi_callback_data,
+            uniffi_out_dropped_callback,
+        ):
+        uniffi_obj = _UniffiFfiConverterTypeDriverServiceTransport._handle_map.get(uniffi_handle)
+        def make_call():
+            uniffi_args = (_UniffiFfiConverterTypeDriverServiceRequest.lift(request), )
+            uniffi_method = uniffi_obj.send
+            return uniffi_method(*uniffi_args)
+        def handle_success(return_value):
+            uniffi_future_callback(
+                uniffi_callback_data,
+                _UniffiForeignFutureResultRustBuffer(
+                    _UniffiFfiConverterTypeDriverServiceResponse.lower(return_value),
+                    _UniffiRustCallStatus.default()
+                )
+            )
+
+        def handle_error(status_code, rust_buffer):
+            uniffi_future_callback(
+                uniffi_callback_data,
+                _UniffiForeignFutureResultRustBuffer(
+                    _UniffiRustBuffer.default(),
+                    _UniffiRustCallStatus(status_code, rust_buffer),
+                )
+            )
+        _uniffi_remote_channel_call_async(
+            uniffi_obj._uniffi_foreign_driver_event_loop,
+            make_call,
+            uniffi_out_dropped_callback,
+            handle_success,
+            handle_error,
+            DriverServiceTransportError,
+            _UniffiFfiConverterTypeDriverServiceTransportError.lower,
+        )
+
+    @_UNIFFI_CALLBACK_INTERFACE_FREE_CUA_DRIVER_SDK_DRIVER_SERVICE_TRANSPORT
+    def _uniffi_free(uniffi_handle):
+        _UniffiFfiConverterTypeDriverServiceTransport._handle_map.remove(uniffi_handle)
+
+    @_UNIFFI_CALLBACK_INTERFACE_CLONE_CUA_DRIVER_SDK_DRIVER_SERVICE_TRANSPORT
+    def _uniffi_clone(uniffi_handle):
+        return _UniffiFfiConverterTypeDriverServiceTransport._handle_map.clone(uniffi_handle)
+
+    # Generate the FFI VTable.  This has a field for each callback interface method.
+    _uniffi_vtable = _UniffiVTableCallbackInterfaceCuaDriverSdkDriverServiceTransport(
+        _uniffi_free,
+        _uniffi_clone,
+        send,
+    )
+    # Send Rust a pointer to the VTable.  Note: this means we need to keep the struct alive forever,
+    # or else bad things will happen when Rust tries to access it.
+    _UniffiLib.uniffi_cua_driver_sdk_fn_init_callback_vtable_driverservicetransport(ctypes.byref(_uniffi_vtable))
+
+class _UniffiFfiConverterTypeDriverServiceTransport:
+    _handle_map = _UniffiHandleMap()
+
+    @staticmethod
+    def lift(value: int):
+        if (value & 1) == 0:
+            # Rust-generated handle, construct a new class that uses the handle to implement the
+            # interface
+            return DriverServiceTransportImpl._uniffi_make_instance(value)
+        else:
+            # Python-generated handle, get the object from the handle map
+            return _UniffiFfiConverterTypeDriverServiceTransport._handle_map.remove(value)
+
+    @staticmethod
+    def check_lower(value: DriverServiceTransport):
+        if not isinstance(value, DriverServiceTransport):
+            raise TypeError("Expected DriverServiceTransport subclass, {} found".format(type(value).__name__))
+
+    @staticmethod
+    def lower(value: DriverServiceTransport):
+         if isinstance(value, DriverServiceTransportImpl):
+            # Rust-implementated object.  Clone the handle and return it
+            return value._uniffi_clone_handle()
+         else:
+            # Python-implementated object, generate a new vtable handle and return that.
+            eventloop = asyncio.get_running_loop()
+            with _UNIFFI_REMOTE_CHANNEL_LOOP_LOCK:
+                owner = getattr(value, "_uniffi_foreign_driver_event_loop", eventloop)
+                if owner is not eventloop:
+                    raise RuntimeError("Driver service transport belongs to a different asyncio event loop")
+                value._uniffi_foreign_driver_event_loop = eventloop
+            return _UniffiFfiConverterTypeDriverServiceTransport._handle_map.insert(value)
+
+    @classmethod
+    def read(cls, buf: _UniffiRustBuffer):
+        ptr = buf.read_u64()
+        if ptr == 0:
+            raise InternalError("Raw handle value was null")
+        return cls.lift(ptr)
+
+    @classmethod
+    def write(cls, value: DriverServiceTransport, buf: _UniffiRustBuffer):
+        buf.write_u64(cls.lower(value))
+
 class _UniffiFfiConverterOptionalTypeEmbeddedDriverConnection(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
@@ -7271,6 +7962,124 @@ class _UniffiFfiConverterTypeEmbeddedCuaDriverHost:
     def write(cls, value: EmbeddedCuaDriverHost, buf: _UniffiRustBuffer):
         buf.write_u64(cls.lower(value))
 
+
+class McpDriverChannelProtocol(typing.Protocol):
+
+    async def close(self, ) -> None:
+        raise NotImplementedError
+    def driver(self, ) -> CuaDriver:
+        raise NotImplementedError
+    async def open(self, ) -> None:
+        raise NotImplementedError
+    def public_session(self, ) -> str:
+        raise NotImplementedError
+
+class McpDriverChannel(McpDriverChannelProtocol):
+
+    _handle: ctypes.c_uint64
+
+    def __init__(self, *args, **kwargs):
+        raise ValueError("This class has no default constructor")
+
+    def __del__(self):
+        # In case of partial initialization of instances.
+        handle = getattr(self, "_handle", None)
+        if handle is not None:
+            _uniffi_rust_call(_UniffiLib.uniffi_cua_driver_sdk_fn_free_mcpdriverchannel, handle)
+
+    def _uniffi_clone_handle(self):
+        return _uniffi_rust_call(_UniffiLib.uniffi_cua_driver_sdk_fn_clone_mcpdriverchannel, self._handle)
+
+    # Used by alternative constructors or any methods which return this type.
+    @classmethod
+    def _uniffi_make_instance(cls, handle):
+        # Lightly yucky way to bypass the usual __init__ logic
+        # and just create a new instance with the required handle.
+        inst = cls.__new__(cls)
+        inst._handle = handle
+        return inst
+    async def close(self, ) -> None:
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = lambda val: None
+        _uniffi_error_converter = _UniffiFfiConverterTypeDriverError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_driver_sdk_fn_method_mcpdriverchannel_close(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_poll_void,
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_complete_void,
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_free_void,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    def driver(self, ) -> CuaDriver:
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeCuaDriver.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeDriverError
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cua_driver_sdk_fn_method_mcpdriverchannel_driver,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    async def open(self, ) -> None:
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = lambda val: None
+        _uniffi_error_converter = _UniffiFfiConverterTypeDriverError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_driver_sdk_fn_method_mcpdriverchannel_open(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_poll_void,
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_complete_void,
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_free_void,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    def public_session(self, ) -> str:
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterString.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeDriverError
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cua_driver_sdk_fn_method_mcpdriverchannel_public_session,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+
+
+
+
+
+class _UniffiFfiConverterTypeMcpDriverChannel:
+    @staticmethod
+    def lift(value: int) -> McpDriverChannel:
+        return McpDriverChannel._uniffi_make_instance(value)
+
+    @staticmethod
+    def check_lower(value: McpDriverChannel):
+        if not isinstance(value, McpDriverChannel):
+            raise TypeError("Expected McpDriverChannel instance, {} found".format(type(value).__name__))
+
+    @staticmethod
+    def lower(value: McpDriverChannel) -> ctypes.c_uint64:
+        return value._uniffi_clone_handle()
+
+    @classmethod
+    def read(cls, buf: _UniffiRustBuffer) -> McpDriverChannel:
+        ptr = buf.read_u64()
+        if ptr == 0:
+            raise InternalError("Raw handle value was null")
+        return cls.lift(ptr)
+
+    @classmethod
+    def write(cls, value: McpDriverChannel, buf: _UniffiRustBuffer):
+        buf.write_u64(cls.lower(value))
+
 class _UniffiFfiConverterUInt8(_UniffiConverterPrimitiveInt):
     CLASS_NAME = "u8"
     VALUE_MIN = 0
@@ -7393,6 +8202,26 @@ def open_mac_os_screen_recording_settings() -> None:
         *_uniffi_lowered_args,
     )
     return _uniffi_lift_return(_uniffi_ffi_result)
+def open_mcp_driver_channel(transport: DriverServiceTransport,authenticated_principal: str) -> McpDriverChannel:
+    """
+    Construct before opening so the owner can invalidate an in-flight initialize.
+"""
+
+    _UniffiFfiConverterTypeDriverServiceTransport.check_lower(transport)
+
+    _UniffiFfiConverterString.check_lower(authenticated_principal)
+    _uniffi_lowered_args = (
+        _UniffiFfiConverterTypeDriverServiceTransport.lower(transport),
+        _UniffiFfiConverterString.lower(authenticated_principal),
+    )
+    _uniffi_lift_return = _UniffiFfiConverterTypeMcpDriverChannel.lift
+    _uniffi_error_converter = _UniffiFfiConverterTypeDriverError
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cua_driver_sdk_fn_func_open_mcp_driver_channel,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
 def request_mac_os_permissions() -> MacOsPermissionStatus:
     _uniffi_lowered_args = (
     )
@@ -7416,6 +8245,7 @@ __all__ = [
     "DriverAuthorizationHostError",
     "DriverError",
     "DriverExecutionMode",
+    "DriverServiceTransportError",
     "EmbeddedDriverError",
     "EmbeddedDriverHostState",
     "SdkClientKind",
@@ -7426,6 +8256,9 @@ __all__ = [
     "DriverAuthorizationRequest",
     "DriverMetadata",
     "DriverOptions",
+    "DriverServiceHeader",
+    "DriverServiceRequest",
+    "DriverServiceResponse",
     "EmbeddedEnvironmentVariable",
     "EmbeddedMcpConfiguration",
     "EmbeddedDriverConnection",
@@ -7446,6 +8279,7 @@ __all__ = [
     "create_trusted_session",
     "current_mac_os_permission_status",
     "open_mac_os_screen_recording_settings",
+    "open_mcp_driver_channel",
     "request_mac_os_permissions",
     "ForeignDriverEnvelopeChannelImpl",
     "ForeignDriverEnvelopeChannel",
@@ -7457,6 +8291,10 @@ __all__ = [
     "DriverActivityObserver",
     "DriverAuthorizationHostImpl",
     "DriverAuthorizationHost",
+    "DriverServiceTransportImpl",
+    "DriverServiceTransport",
     "EmbeddedCuaDriverHost",
     "EmbeddedCuaDriverHostProtocol",
+    "McpDriverChannel",
+    "McpDriverChannelProtocol",
 ]

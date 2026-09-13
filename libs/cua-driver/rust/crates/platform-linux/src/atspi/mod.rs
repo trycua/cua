@@ -60,7 +60,13 @@ pub struct AtspiTreeResult {
     /// snapshot of a multi-window app carries every window's controls; callers
     /// that act on behalf of an exact native window must require this.
     pub window_scoped: bool,
+    /// `None` when the walk enumerated every child of every node in the
+    /// snapshot's scope, so a control missing from `nodes` is missing from the
+    /// window. `Some(reason)` names what the observation gave up instead.
+    pub truncation: Option<WalkStopReason>,
 }
+
+pub use native::WalkStopReason;
 
 /// Walk the AT-SPI tree for a window identified by (pid, xid).
 /// Falls back to a minimal X11 property tree if AT-SPI is unavailable.
@@ -89,6 +95,7 @@ pub(crate) fn walk_tree_for_recording(
                 trusted: true,
                 degraded_reason: None,
                 window_scoped: walked.window_scoped,
+                truncation: walked.truncation,
             };
         }
     }
@@ -137,6 +144,7 @@ pub fn walk_tree_bounded(
                         trusted: true,
                         degraded_reason: None,
                         window_scoped: walked.window_scoped,
+                        truncation: walked.truncation,
                     };
                 }
             }
@@ -278,6 +286,7 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
                 trusted: false,
                 degraded_reason: None,
                 window_scoped: false,
+                truncation: Some(WalkStopReason::AccessibilityUnavailable),
             }
         }
     };
@@ -339,6 +348,7 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
         // proving anything a caller acts on.
         window_scoped: true,
         degraded_reason: None,
+        truncation: Some(WalkStopReason::AccessibilityUnavailable),
     }
 }
 

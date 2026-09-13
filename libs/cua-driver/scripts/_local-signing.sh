@@ -30,6 +30,30 @@ print_local_signing_bootstrap() {
     echo "  libs/cua-driver/scripts/README.md#stable-macos-local-signing" >&2
 }
 
+# Since macOS 10.12 a private key's usability is gated by a partition list that
+# `security import -A -T /usr/bin/codesign` does NOT populate. Without this the
+# first codesign against a freshly imported key either raises a GUI keychain
+# password prompt or, in a non-interactive shell, fails with
+# errSecInternalComponent — and `sign_staged_local_app` then reports "no usable
+# certificate-backed identity" for a certificate that was just created.
+# Opening the list needs the KEYCHAIN password, which only the developer has,
+# so honour it when supplied and otherwise print the exact command instead of
+# letting codesign die opaquely. Everything here goes to stderr: this function
+# runs inside the command substitution that captures the identity.
+open_codesign_partition_list() {
+    local kc="$1"
+    if [ -n "${CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN_PASSWORD:-}" ]; then
+        security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN_PASSWORD" "$kc" >/dev/null 2>&1 \
+            && return 0
+        echo "warning: could not authorize the new signing key for codesign in $kc." >&2
+    fi
+    echo "note: a local signing certificate was created in $kc." >&2
+    echo "If codesign prompts for a keychain password or fails with errSecInternalComponent, run:" >&2
+    echo "  security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k <keychain-password> \"$kc\"" >&2
+    echo "or export CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN_PASSWORD before rerunning the installer." >&2
+}
+
 # Echoes the `codesign --sign` argument: a matching identity's SHA-1 when
 # available, or "-" when it cannot be created or found.
 ensure_local_signing_identity() {
@@ -70,6 +94,7 @@ ensure_local_signing_identity() {
             || openssl pkcs12 -export -inkey "$tmp/key.pem" -in "$tmp/cert.pem" \
                 -out "$tmp/id.p12" -passout pass:"$pw" -name "$CUA_LOCAL_SIGN_CN" >/dev/null 2>&1; } \
        && security import "$tmp/id.p12" -k "$kc" -P "$pw" -A -T /usr/bin/codesign >/dev/null 2>&1; then
+        open_codesign_partition_list "$kc"
         identity="$(security find-identity -p codesigning "$kc" 2>/dev/null \
             | awk -v cn="$CUA_LOCAL_SIGN_CN" 'index($0, "\"" cn "\"") { print $2; exit }')"
         rm -rf "$tmp"

@@ -54,17 +54,33 @@ The installer fails closed when that exact usable code-signing identity is not
 present in `CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN`.
 
 The first install creates `CuaDriver Local Signing (cua-driver-rs)` in that
-keychain. If `codesign` cannot use its private key non-interactively, unlock
-the keychain, trust the certificate in Keychain Access, and authorize Apple
-code-signing tools:
+keychain and authorizes its private key for Apple's code-signing tools, which
+`security import` alone does not do: since macOS 10.12 an unauthorized key
+makes the first `codesign` prompt for a keychain password or fail with
+`errSecInternalComponent`. That step needs the keychain unlocked, and it
+touches only the key the installer imported. Every later install repeats it, so
+an install that failed while the keychain was locked is fixed by unlocking the
+keychain and running the installer again.
+
+To authorize that key by hand, with the keychain unlocked:
 
 ```bash
-read -r -s -p 'Keychain password: ' KEYCHAIN_PASSWORD; echo
 security set-key-partition-list \
-  -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" \
+  -S apple-tool:,apple:,codesign: \
+  -l 'CuaDriver Local Signing (cua-driver-rs)' -t private -s \
   "$SIGNING_KEYCHAIN"
-unset KEYCHAIN_PASSWORD
 ```
+
+`-l` is what keeps the change to that one key; `-s` on its own matches every
+signing key in the keychain, including unrelated identities in a login
+keychain. An unlocked keychain needs no password for it, so no keychain
+password has to be typed, exported into the environment, or passed in `security`
+argv. Unlock with `security unlock-keychain "$SIGNING_KEYCHAIN"`, which prompts
+for it directly.
+
+Trusting the certificate in Keychain Access is optional. codesign then pins it
+as `certificate root` rather than `certificate leaf`; both are stable across
+rebuilds and both are accepted.
 
 Then rerun the strict installer and grant Accessibility and Screen Recording
 once. When the dedicated default keychain above exists, the installer prefers

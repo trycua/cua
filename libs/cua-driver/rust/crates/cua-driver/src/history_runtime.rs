@@ -303,16 +303,9 @@ fn validate_history_app_signature(
             "installed Cua Driver signing identifier does not match the selected namespace"
         );
     }
-    if !requirement.contains("certificate leaf") && !requirement.contains("certificate root") {
+    if !pins_a_certificate(requirement) {
         anyhow::bail!("installed Cua Driver signature is not certificate-backed");
     }
-    // A stable self-signed local-development certificate pins one certificate
-    // but carries no Apple TeamIdentifier. codesign writes that pin as
-    // `certificate leaf` for an untrusted certificate and as `certificate root`
-    // for one the developer marked trusted in the keychain (it then evaluates
-    // as its own anchor); either way the pin survives rebuilds, which is what
-    // local history needs. Production still requires the exact Apple team and
-    // device-protected Keychain entitlements.
     if !require_release_entitlements {
         return Ok(());
     }
@@ -342,6 +335,52 @@ fn validate_history_app_signature(
         );
     }
     Ok(())
+}
+
+/// Whether a designated requirement pins a certificate that outlives rebuilds,
+/// which is what a TCC grant and local history admission both key on.
+///
+/// codesign writes such a pin three ways: `certificate leaf = H"<sha1>"` for an
+/// untrusted local development certificate, `certificate root = H"<sha1>"` for
+/// the very same certificate once the developer marked it trusted in the
+/// keychain (it then evaluates as its own anchor), and
+/// `certificate leaf[subject.OU] = <team>` for an Apple-issued identity.
+/// Production additionally requires the exact Apple team, Apple's trust anchor
+/// and the device-protected Keychain entitlements.
+///
+/// Neighbouring text is not a pin: `certificate root trusted` names a trust
+/// setting, and a `cdhash` clause makes the requirement rebuild-fragile however
+/// many certificates it also names.
+#[cfg(target_os = "macos")]
+fn pins_a_certificate(requirement: &str) -> bool {
+    if requirement.contains("cdhash") {
+        return false;
+    }
+    if requirement.contains("certificate leaf[subject.OU] =") {
+        return true;
+    }
+    ["certificate leaf", "certificate root"]
+        .iter()
+        .any(|clause| {
+            requirement
+                .match_indices(clause)
+                .any(|(start, _)| is_sha1_pin(&requirement[start + clause.len()..]))
+        })
+}
+
+/// `= H"<40 hex digits>"`, the only shape codesign uses for a certificate hash.
+#[cfg(target_os = "macos")]
+fn is_sha1_pin(after_clause: &str) -> bool {
+    let Some(rest) = after_clause.trim_start().strip_prefix('=') else {
+        return false;
+    };
+    let Some(rest) = rest.trim_start().strip_prefix("H\"") else {
+        return false;
+    };
+    let Some((hash, _)) = rest.split_once('"') else {
+        return false;
+    };
+    hash.len() == 40 && hash.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -582,6 +621,37 @@ mod tests {
             false,
         )
         .unwrap();
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn history_admission_requires_a_certificate_pin_not_certificate_text() {
+        let local = |requirement: &str| {
+            validate_history_app_signature(
+                "Identifier=com.trycua.driver.local\nTeamIdentifier=not set",
+                requirement,
+                "",
+                "",
+                "com.trycua.driver.local",
+                false,
+            )
+        };
+        // A trust setting names a certificate without pinning one.
+        assert!(local(
+            "designated => identifier \"com.trycua.driver.local\" and certificate root trusted"
+        )
+        .is_err());
+        // A cdhash clause is rebuild-fragile however many certificates the
+        // requirement also pins, so the grant does not survive a rebuild.
+        assert!(
+            local("designated => cdhash H\"d2badc24c61056ede3b61724c54c5a7d1649ce4d\" and certificate root = H\"662061ed4588ed82dd4c0999adaf5e8014abd46f\"")
+                .is_err()
+        );
+        // Truncated hashes are not what codesign writes.
+        assert!(local(
+            "designated => identifier \"com.trycua.driver.local\" and certificate leaf = H\"1234\""
+        )
+        .is_err());
     }
 
     #[test]

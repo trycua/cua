@@ -123,7 +123,7 @@ def _classify(requirement: str) -> str:
     return result.stdout
 
 
-def test_stable_signing_accepts_both_certificate_pin_spellings() -> None:
+def test_stable_signing_accepts_every_certificate_pin_spelling() -> None:
     # An untrusted local signing certificate is pinned as the leaf.
     assert (
         _classify(
@@ -141,12 +141,43 @@ def test_stable_signing_accepts_both_certificate_pin_spellings() -> None:
         )
         == "certificate-backed"
     )
-    # A cdhash pin is the rebuild-fragile case --require-stable-signing refuses.
+    # An Apple-issued identity pins its team instead of a certificate hash.
+    assert (
+        _classify(
+            'anchor apple generic and identifier "com.trycua.driver.local" and '
+            "certificate leaf[subject.OU] = YCK386LBJ7"
+        )
+        == "certificate-backed"
+    )
+    # A cdhash pin is the rebuild-fragile case --require-stable-signing refuses,
+    # and stays rebuild-fragile when the requirement also pins a certificate.
     assert _classify('cdhash H"1234"') == "ad-hoc"
+    assert (
+        _classify(
+            'cdhash H"71b7d45889593c1b77459fcb981d9460cc929431" and certificate '
+            'root = H"662061ed4588ed82dd4c0999adaf5e8014abd46f"'
+        )
+        == "ad-hoc"
+    )
+    # Certificate text that pins nothing must not read as stable.
+    assert (
+        _classify('identifier "com.trycua.driver.local" and certificate root trusted')
+        == "unknown"
+    )
 
 
-def _generated_identity_env(tmp_path: Path) -> tuple[dict[str, str], Path]:
-    """Env whose fake `security` forces the certificate-creation branch."""
+GENERATED_IDENTITY = "71B7D45889593C1B77459FCB981D9460CC929431"
+GENERATED_LABEL = "CuaDriver Local Signing (cua-driver-rs)"
+
+
+def _generated_identity_env(
+    tmp_path: Path, authorize_exit: int = 0
+) -> tuple[dict[str, str], Path]:
+    """Env whose fake `security` forces the certificate-creation branch.
+
+    Calls are logged one pipe-delimited argument list per line, so a test can
+    assert the exact argv the script passes to `security`.
+    """
     keychain = tmp_path / "signing.keychain-db"
     keychain.touch()
     log = tmp_path / "security-calls.log"
@@ -154,15 +185,15 @@ def _generated_identity_env(tmp_path: Path) -> tuple[dict[str, str], Path]:
     _write_executable(fake_bin / "codesign", "exit 0\n")
     _write_executable(
         fake_bin / "security",
-        f'printf "%s\\n" "$*" >> "{log}"\n'
+        f'printf "%s|" "$@" >> "{log}"; printf "\\n" >> "{log}"\n'
         'case "$1" in\n'
         "  find-identity)\n"
         # Empty until the certificate exists, then the created identity.
         f'    [ -f "{log}.imported" ] && printf "%s\\n" '
-        "'  1) 71B7D45889593C1B77459FCB981D9460CC929431 "
-        '"CuaDriver Local Signing (cua-driver-rs)"\'\n'
+        f"'  1) {GENERATED_IDENTITY} \"{GENERATED_LABEL}\"'\n"
         "    ;;\n"
         f'  import) : > "{log}.imported" ;;\n'
+        f"  set-key-partition-list) exit {authorize_exit} ;;\n"
         "esac\n"
         "exit 0\n",
     )
@@ -191,36 +222,102 @@ def _ensure_identity(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_generated_signing_key_is_authorized_for_codesign(tmp_path: Path) -> None:
+def _authorize_calls(log: Path) -> list[list[str]]:
+    return [
+        line.rstrip("|").split("|")
+        for line in log.read_text(encoding="utf-8").splitlines()
+        if line.startswith("set-key-partition-list|")
+    ]
+
+
+def test_generated_signing_key_is_authorized_by_exact_label(tmp_path: Path) -> None:
     # `security import -A -T /usr/bin/codesign` leaves the key's partition list
     # closed, so the first codesign prompts for a keychain password or fails
-    # with errSecInternalComponent. Supplying the keychain password must open it.
+    # with errSecInternalComponent. Opening it must name the key this script
+    # imported: `-s` alone matches every signing key in the keychain, which on a
+    # login keychain means unrelated identities.
     env, log = _generated_identity_env(tmp_path)
-    env["CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN_PASSWORD"] = "hunter2"
 
     result = _ensure_identity(env)
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout == "71B7D45889593C1B77459FCB981D9460CC929431"
-    calls = log.read_text(encoding="utf-8")
-    assert (
-        "set-key-partition-list -S apple-tool:,apple:,codesign: -s -k hunter2" in calls
-    )
+    assert result.stdout == GENERATED_IDENTITY
+    # The argv is exact: scoped to the imported private key by label, and with
+    # no password in it, because an unlocked keychain does not need one.
+    assert _authorize_calls(log) == [
+        [
+            "set-key-partition-list",
+            "-S",
+            "apple-tool:,apple:,codesign:",
+            "-l",
+            GENERATED_LABEL,
+            "-t",
+            "private",
+            "-s",
+            env["CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN"],
+        ]
+    ]
 
 
-def test_generated_signing_key_without_password_says_how_to_authorize(
-    tmp_path: Path,
-) -> None:
+def test_existing_generated_key_is_authorized_on_a_later_run(tmp_path: Path) -> None:
+    # Authorizing only in the creation branch makes the printed retry
+    # instruction a no-op: the second run finds the identity and returns it
+    # before any partition-list call.
     env, log = _generated_identity_env(tmp_path)
-    env.pop("CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN_PASSWORD", None)
+
+    first = _ensure_identity(env)
+    second = _ensure_identity(env)
+
+    assert first.stdout == GENERATED_IDENTITY
+    assert second.stdout == GENERATED_IDENTITY
+    imports = [
+        line
+        for line in log.read_text(encoding="utf-8").splitlines()
+        if line.startswith("import|")
+    ]
+    assert len(imports) == 1
+    assert len(_authorize_calls(log)) == 2
+
+
+def test_unauthorizable_generated_key_says_how_to_authorize(tmp_path: Path) -> None:
+    env, log = _generated_identity_env(tmp_path, authorize_exit=1)
 
     result = _ensure_identity(env)
 
     # The identity still goes to stdout; the guidance must not pollute it.
-    assert result.stdout == "71B7D45889593C1B77459FCB981D9460CC929431"
-    assert "set-key-partition-list" not in log.read_text(encoding="utf-8")
-    assert "set-key-partition-list" in result.stderr
+    assert result.stdout == GENERATED_IDENTITY
+    assert "set-key-partition-list|" in log.read_text(encoding="utf-8")
+    assert "unlock-keychain" in result.stderr
+    assert f'-l "{GENERATED_LABEL}" -t private -s' in result.stderr
     assert "errSecInternalComponent" in result.stderr
+
+
+def test_explicit_signing_identity_is_never_authorized(tmp_path: Path) -> None:
+    # An identity the developer named is not the script's to modify.
+    keychain = tmp_path / "signing.keychain-db"
+    keychain.touch()
+    log = tmp_path / "security-calls.log"
+    fake_bin = tmp_path / "fake-bin"
+    _write_executable(fake_bin / "codesign", "exit 0\n")
+    wanted = "F2D26B5AFAAB910B340FBD8F480F88DF748D9D48"
+    _write_executable(
+        fake_bin / "security",
+        f'printf "%s|" "$@" >> "{log}"; printf "\\n" >> "{log}"\n'
+        f"printf '%s\\n' '  1) {wanted} \"Developer ID Application: Example\"'\n",
+    )
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN": str(keychain),
+            "CUA_DRIVER_LOCAL_SIGNING_IDENTITY": wanted,
+        }
+    )
+
+    result = _ensure_identity(env)
+
+    assert result.stdout == wanted
+    assert "set-key-partition-list" not in log.read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("relative_target", [False, True], ids=["absolute", "relative"])

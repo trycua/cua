@@ -34,13 +34,13 @@ fi
 grep -Fq 'do not run the Cua Driver uninstaller with sudo' "$FIXTURE/root-error.log"
 reject_root_invocation 501
 purge_macos_history "$APP" "$HELPER" 1 "$FIXTURE/codesign"
-[[ "$(sed -n '1p' "$LOG")" == "stop" ]]
-[[ "$(sed -n '2p' "$LOG")" == "history purge-offline --yes" ]]
+[[ "$(sed -n '1p' "$LOG")" == "history purge-offline --yes" ]]
+[[ "$(wc -l < "$LOG")" == "1" ]]
 
 : > "$LOG"
 purge_linux_history "$HELPER" 1
-[[ "$(sed -n '1p' "$LOG")" == "stop" ]]
-[[ "$(sed -n '2p' "$LOG")" == "history purge-offline --yes" ]]
+[[ "$(sed -n '1p' "$LOG")" == "history purge-offline --yes" ]]
+[[ "$(wc -l < "$LOG")" == "1" ]]
 
 export UNINSTALL_FIXTURE_FAIL=1
 if purge_macos_history "$APP" "$HELPER" 1 "$FIXTURE/codesign" 2> "$FIXTURE/error.log"; then

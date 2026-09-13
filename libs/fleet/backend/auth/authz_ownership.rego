@@ -41,6 +41,21 @@ default probe_eligible = false
 
 default rbac_allow = false
 
+image_proxy_request {
+	input.route == "/api/k8s/{path...}"
+	parts := split(input.params.path, "/")
+	count(parts) >= 6
+	parts[0] == "apis"
+	parts[1] == "images.cua.ai"
+	parts[2] == "v1alpha1"
+	parts[3] == "namespaces"
+	parts[5] == "images"
+}
+
+applies {
+	image_proxy_request
+}
+
 # ── Where the boundary applies ──────────────────────────────────────────────
 #
 # These are exactly the remaining call sites requireNamespaceAccess had. The
@@ -64,6 +79,16 @@ applies {
 	input.method == "GET"
 }
 
+# Signed service URL management uses the backend service account, so it must
+# prove namespace ownership here before the handler acts.
+applies {
+	input.route == "/api/signed-service-urls/{namespace}"
+}
+
+applies {
+	input.route == "/api/signed-service-urls/{namespace}/{id}"
+}
+
 # target_namespace is the namespace this request is about: /api/svc names it
 # {namespace}, /api/namespaces/{name} names it {name}. Keyed
 # off which parameter the route bound rather than off the route itself, so the
@@ -75,11 +100,18 @@ applies {
 # `not` in the second is false. Every rule below requires a non-empty namespace,
 # so the empty case denies rather than falling through to {name}.
 target_namespace = input.params.namespace {
+	not image_proxy_request
 	input.params.namespace
 }
 
 target_namespace = input.params.name {
+	not image_proxy_request
 	not input.params.namespace
+}
+
+target_namespace = namespace {
+	image_proxy_request
+	namespace := split(input.params.path, "/")[4]
 }
 
 # ── The three cases ─────────────────────────────────────────────────────────
@@ -119,6 +151,7 @@ probe_eligible {
 	applies
 	not is_github_principal
 	not authz.is_per_key_client
+	not authz.is_legacy_per_key_client
 	target_namespace != ""
 }
 

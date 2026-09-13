@@ -141,13 +141,13 @@ at the time. They do not override the current commands and authority defined in
 ## Pull request titles and component releases
 
 Pull requests are squash-merged, so the pull request title becomes the commit
-subject on `main`. Release Please uses that subject to decide whether Cua Driver
-or Lume receives a release. Treat the live pull request title as release
+subject on `main`. Release Please uses that subject to decide whether Cua Driver,
+Lume, or Sandbox receives a release. Treat the live pull request title as release
 metadata, not as a cosmetic summary.
 
-- Use `fix(cua-driver): ...` or `fix(lume): ...` for user-visible corrections
+- Use `fix(cua-driver): ...`, `fix(lume): ...`, or `fix(sandbox): ...` for user-visible corrections
   that require a patch release.
-- Use `feat(cua-driver): ...` or `feat(lume): ...` for new capabilities that
+- Use `feat(cua-driver): ...`, `feat(lume): ...`, or `feat(sandbox): ...` for new capabilities that
   require a minor release. Add `!` before `:` for a breaking release.
 - `perf` and `revert` also produce releases. `test`, `docs`, `chore`, `ci`,
   `build`, `refactor`, and `style` do not.

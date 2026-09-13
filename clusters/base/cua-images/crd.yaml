@@ -1,0 +1,335 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: images.images.cua.ai
+spec:
+  group: images.cua.ai
+  names:
+    kind: Image
+    listKind: ImageList
+    plural: images
+    shortNames:
+      - cuaimg
+    singular: image
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      additionalPrinterColumns:
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Ready
+          type: string
+          jsonPath: .status.conditions[?(@.type=="Ready")].status
+        - name: Generation
+          type: integer
+          format: int64
+          jsonPath: .status.observedGeneration
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      subresources:
+        status: {}
+      schema:
+        openAPIV3Schema:
+          title: ImageResource
+          type: object
+          required:
+            - spec
+          properties:
+            apiVersion:
+              type: string
+              enum:
+                - images.cua.ai/v1alpha1
+            kind:
+              type: string
+              enum:
+                - Image
+            metadata:
+              type: object
+            spec:
+              title: ImageSpec
+              type: object
+              required:
+                - recipe
+              properties:
+                recipe:
+                  title: ImageRecipe
+                  type: object
+                  required:
+                    - osType
+                    - distro
+                    - version
+                    - kind
+                    - layers
+                  properties:
+                    osType:
+                      type: string
+                      enum:
+                        - linux
+                    distro:
+                      type: string
+                      minLength: 1
+                      maxLength: 64
+                    version:
+                      type: string
+                      minLength: 1
+                      maxLength: 64
+                    kind:
+                      type: string
+                      enum:
+                        - vm
+                    layers:
+                      type: array
+                      maxItems: 128
+                      items:
+                        title: ImageLayer
+                        type: object
+                        required:
+                          - type
+                        properties:
+                          type:
+                            type: string
+                            enum:
+                              - apt_install
+                              - pip_install
+                              - uv_install
+                              - app_install
+                              - run
+                          packages:
+                            type: array
+                            minItems: 1
+                            maxItems: 256
+                            items:
+                              type: string
+                              minLength: 1
+                              maxLength: 256
+                          appId:
+                            type: string
+                            minLength: 1
+                            maxLength: 256
+                          command:
+                            type: string
+                            minLength: 1
+                            maxLength: 16384
+                        oneOf:
+                          - properties:
+                              type:
+                                enum:
+                                  - apt_install
+                                  - pip_install
+                                  - uv_install
+                            required:
+                              - packages
+                            not:
+                              anyOf:
+                                - required:
+                                    - appId
+                                - required:
+                                    - command
+                          - properties:
+                              type:
+                                enum:
+                                  - app_install
+                            required:
+                              - appId
+                            not:
+                              anyOf:
+                                - required:
+                                    - packages
+                                - required:
+                                    - command
+                          - properties:
+                              type:
+                                enum:
+                                  - run
+                            required:
+                              - command
+                            not:
+                              anyOf:
+                                - required:
+                                    - packages
+                                - required:
+                                    - appId
+                    env:
+                      type: object
+                      maxProperties: 128
+                      additionalProperties:
+                        type: string
+                        maxLength: 8192
+                    ports:
+                      type: array
+                      maxItems: 32
+                      x-kubernetes-list-type: set
+                      items:
+                        type: integer
+                        minimum: 1
+                        maximum: 65535
+                    files:
+                      type: array
+                      maxItems: 128
+                      items:
+                        title: ImageFile
+                        type: object
+                        required:
+                          - source
+                          - destination
+                        properties:
+                          source:
+                            title: ImageFileReference
+                            type: object
+                            required:
+                              - reference
+                              - digest
+                              - sizeBytes
+                            properties:
+                              reference:
+                                type: string
+                                minLength: 1
+                                maxLength: 2048
+                                pattern: ^uploads/[a-z0-9]([-a-z0-9]*[a-z0-9])?/[A-Za-z0-9_-]+$
+                              digest:
+                                type: string
+                                pattern: ^sha256:[0-9a-f]{64}$
+                              sizeBytes:
+                                type: integer
+                                format: int64
+                                minimum: 0
+                                maximum: 9223372036854775807
+                          destination:
+                            type: string
+                            pattern: ^/.*
+                            maxLength: 4096
+                metadata:
+                  title: ImageUserMetadata
+                  type: object
+                  properties:
+                    tags:
+                      type: object
+                      maxProperties: 32
+                      additionalProperties:
+                        type: string
+                        maxLength: 256
+                build:
+                  title: ImageBuildOptions
+                  type: object
+                  properties:
+                    timeoutSeconds:
+                      type: integer
+                      minimum: 60
+                      maximum: 86400
+                      default: 7200
+                    diskSize:
+                      type: string
+                      pattern: ^[1-9][0-9]*(Gi|Ti)$
+                      default: 40Gi
+            status:
+              title: ImageStatus
+              type: object
+              properties:
+                observedGeneration:
+                  type: integer
+                  format: int64
+                  minimum: 0
+                phase:
+                  type: string
+                  enum:
+                    - Pending
+                    - Validating
+                    - Building
+                    - PushingOCI
+                    - Importing
+                    - Quiescing
+                    - Snapshotting
+                    - Ready
+                    - Failed
+                    - Cancelling
+                buildIdentity:
+                  type: string
+                  maxLength: 63
+                recipeDigest:
+                  type: string
+                  pattern: ^sha256:[0-9a-f]{64}$
+                artifacts:
+                  title: ImageArtifacts
+                  type: object
+                  properties:
+                    oci:
+                      title: ImageOciArtifact
+                      type: object
+                      required:
+                        - reference
+                        - digest
+                      properties:
+                        reference:
+                          type: string
+                          minLength: 1
+                          maxLength: 2048
+                        digest:
+                          type: string
+                          pattern: ^sha256:[0-9a-f]{64}$
+                    volumeSnapshot:
+                      title: ImageVolumeSnapshotArtifact
+                      type: object
+                      required:
+                        - namespace
+                        - name
+                      properties:
+                        namespace:
+                          type: string
+                          minLength: 1
+                          maxLength: 63
+                        name:
+                          type: string
+                          minLength: 1
+                          maxLength: 253
+                logs:
+                  title: ImageLogs
+                  type: object
+                  properties:
+                    livePodName:
+                      type: string
+                      maxLength: 253
+                    retainedReference:
+                      type: string
+                      maxLength: 2048
+                conditions:
+                  type: array
+                  x-kubernetes-list-type: map
+                  x-kubernetes-list-map-keys:
+                    - type
+                  items:
+                    title: ImageCondition
+                    type: object
+                    required:
+                      - type
+                      - status
+                      - reason
+                      - lastTransitionTime
+                    properties:
+                      type:
+                        type: string
+                        minLength: 1
+                        maxLength: 64
+                      status:
+                        type: string
+                        enum:
+                          - "True"
+                          - "False"
+                          - Unknown
+                      reason:
+                        type: string
+                        minLength: 1
+                        maxLength: 128
+                      message:
+                        type: string
+                        maxLength: 32768
+                      observedGeneration:
+                        type: integer
+                        format: int64
+                        minimum: 0
+                      lastTransitionTime:
+                        type: string
+                        format: date-time

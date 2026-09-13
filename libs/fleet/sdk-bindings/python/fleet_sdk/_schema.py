@@ -494,6 +494,8 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref() != 7198:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created() != 44516:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_schema_checksum_constructor_preservedjson_from_json() != 24064:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_schema_checksum_method_preservedjson_to_json() != 8252:
@@ -933,6 +935,12 @@ _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_s
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created.argtypes = (
+    ctypes.c_uint64,
+    ctypes.c_uint32,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_schema_fn_constructor_preservedjson_from_json.argtypes = (
     _UniffiRustBuffer,
     ctypes.POINTER(_UniffiRustCallStatus),
@@ -1138,6 +1146,9 @@ _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbui
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_constructor_preservedjson_from_json.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_constructor_preservedjson_from_json.restype = ctypes.c_uint16
@@ -1483,17 +1494,21 @@ class _UniffiFfiConverterOptionalTypeClaimLifecycle(_UniffiConverterRustBuffer):
 
 @dataclass
 class ClaimSpec:
-    def __init__(self, *, sandbox_template_ref:SandboxTemplateRef, warmpool:typing.Optional[str], bind_deadline:typing.Optional[int], lifecycle:typing.Optional[ClaimLifecycle]):
+    def __init__(self, *, sandbox_template_ref:SandboxTemplateRef, warmpool:typing.Optional[str], bind_deadline:typing.Optional[int], lifecycle:typing.Optional[ClaimLifecycle], ttl_seconds_after_created:typing.Optional[int] = _DEFAULT):
         self.sandbox_template_ref = sandbox_template_ref
         self.warmpool = warmpool
         self.bind_deadline = bind_deadline
         self.lifecycle = lifecycle
+        if ttl_seconds_after_created is _DEFAULT:
+            self.ttl_seconds_after_created = None
+        else:
+            self.ttl_seconds_after_created = ttl_seconds_after_created
 
 
 
 
     def __str__(self):
-        return "ClaimSpec(sandbox_template_ref={}, warmpool={}, bind_deadline={}, lifecycle={})".format(self.sandbox_template_ref, self.warmpool, self.bind_deadline, self.lifecycle)
+        return "ClaimSpec(sandbox_template_ref={}, warmpool={}, bind_deadline={}, lifecycle={}, ttl_seconds_after_created={})".format(self.sandbox_template_ref, self.warmpool, self.bind_deadline, self.lifecycle, self.ttl_seconds_after_created)
     def __eq__(self, other):
         if self.sandbox_template_ref != other.sandbox_template_ref:
             return False
@@ -1502,6 +1517,8 @@ class ClaimSpec:
         if self.bind_deadline != other.bind_deadline:
             return False
         if self.lifecycle != other.lifecycle:
+            return False
+        if self.ttl_seconds_after_created != other.ttl_seconds_after_created:
             return False
         return True
 
@@ -1513,6 +1530,7 @@ class _UniffiFfiConverterTypeClaimSpec(_UniffiConverterRustBuffer):
             warmpool=_UniffiFfiConverterOptionalString.read(buf),
             bind_deadline=_UniffiFfiConverterOptionalUInt32.read(buf),
             lifecycle=_UniffiFfiConverterOptionalTypeClaimLifecycle.read(buf),
+            ttl_seconds_after_created=_UniffiFfiConverterOptionalUInt32.read(buf),
         )
 
     @staticmethod
@@ -1521,6 +1539,7 @@ class _UniffiFfiConverterTypeClaimSpec(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.check_lower(value.warmpool)
         _UniffiFfiConverterOptionalUInt32.check_lower(value.bind_deadline)
         _UniffiFfiConverterOptionalTypeClaimLifecycle.check_lower(value.lifecycle)
+        _UniffiFfiConverterOptionalUInt32.check_lower(value.ttl_seconds_after_created)
 
     @staticmethod
     def write(value, buf):
@@ -1528,6 +1547,7 @@ class _UniffiFfiConverterTypeClaimSpec(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.write(value.warmpool, buf)
         _UniffiFfiConverterOptionalUInt32.write(value.bind_deadline, buf)
         _UniffiFfiConverterOptionalTypeClaimLifecycle.write(value.lifecycle, buf)
+        _UniffiFfiConverterOptionalUInt32.write(value.ttl_seconds_after_created, buf)
 
 @dataclass
 class OsGymSandboxClaimCondition:
@@ -2771,22 +2791,28 @@ class _UniffiFfiConverterOptionalTypeWarmPoolAutoscaling(_UniffiConverterRustBuf
 
 @dataclass
 class OsGymSandboxWarmPoolSpec:
-    def __init__(self, *, replicas:int, sandbox_template_ref:SandboxTemplateRef, autoscaling:typing.Optional[WarmPoolAutoscaling]):
+    def __init__(self, *, replicas:int, sandbox_template_ref:SandboxTemplateRef, autoscaling:typing.Optional[WarmPoolAutoscaling], ttl_seconds_after_created:typing.Optional[int] = _DEFAULT):
         self.replicas = replicas
         self.sandbox_template_ref = sandbox_template_ref
         self.autoscaling = autoscaling
+        if ttl_seconds_after_created is _DEFAULT:
+            self.ttl_seconds_after_created = None
+        else:
+            self.ttl_seconds_after_created = ttl_seconds_after_created
 
 
 
 
     def __str__(self):
-        return "OsGymSandboxWarmPoolSpec(replicas={}, sandbox_template_ref={}, autoscaling={})".format(self.replicas, self.sandbox_template_ref, self.autoscaling)
+        return "OsGymSandboxWarmPoolSpec(replicas={}, sandbox_template_ref={}, autoscaling={}, ttl_seconds_after_created={})".format(self.replicas, self.sandbox_template_ref, self.autoscaling, self.ttl_seconds_after_created)
     def __eq__(self, other):
         if self.replicas != other.replicas:
             return False
         if self.sandbox_template_ref != other.sandbox_template_ref:
             return False
         if self.autoscaling != other.autoscaling:
+            return False
+        if self.ttl_seconds_after_created != other.ttl_seconds_after_created:
             return False
         return True
 
@@ -2797,6 +2823,7 @@ class _UniffiFfiConverterTypeOSGymSandboxWarmPoolSpec(_UniffiConverterRustBuffer
             replicas=_UniffiFfiConverterUInt32.read(buf),
             sandbox_template_ref=_UniffiFfiConverterTypeSandboxTemplateRef.read(buf),
             autoscaling=_UniffiFfiConverterOptionalTypeWarmPoolAutoscaling.read(buf),
+            ttl_seconds_after_created=_UniffiFfiConverterOptionalUInt32.read(buf),
         )
 
     @staticmethod
@@ -2804,12 +2831,14 @@ class _UniffiFfiConverterTypeOSGymSandboxWarmPoolSpec(_UniffiConverterRustBuffer
         _UniffiFfiConverterUInt32.check_lower(value.replicas)
         _UniffiFfiConverterTypeSandboxTemplateRef.check_lower(value.sandbox_template_ref)
         _UniffiFfiConverterOptionalTypeWarmPoolAutoscaling.check_lower(value.autoscaling)
+        _UniffiFfiConverterOptionalUInt32.check_lower(value.ttl_seconds_after_created)
 
     @staticmethod
     def write(value, buf):
         _UniffiFfiConverterUInt32.write(value.replicas, buf)
         _UniffiFfiConverterTypeSandboxTemplateRef.write(value.sandbox_template_ref, buf)
         _UniffiFfiConverterOptionalTypeWarmPoolAutoscaling.write(value.autoscaling, buf)
+        _UniffiFfiConverterOptionalUInt32.write(value.ttl_seconds_after_created, buf)
 
 @dataclass
 class OsGymSandboxWarmPoolStatus:
@@ -3072,6 +3101,8 @@ class OsGymSandboxWarmPoolSpecBuilderProtocol(typing.Protocol):
         raise NotImplementedError
     def sandbox_template_ref(self, value: SandboxTemplateRef) -> OsGymSandboxWarmPoolSpecBuilder:
         raise NotImplementedError
+    def ttl_seconds_after_created(self, value: int) -> OsGymSandboxWarmPoolSpecBuilder:
+        raise NotImplementedError
 
 class OsGymSandboxWarmPoolSpecBuilder(OsGymSandboxWarmPoolSpecBuilderProtocol):
 
@@ -3159,6 +3190,21 @@ class OsGymSandboxWarmPoolSpecBuilder(OsGymSandboxWarmPoolSpecBuilderProtocol):
         _uniffi_ffi_result = _uniffi_rust_call_with_error(
             _uniffi_error_converter,
             _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def ttl_seconds_after_created(self, value: int) -> OsGymSandboxWarmPoolSpecBuilder:
+
+        _UniffiFfiConverterUInt32.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterUInt32.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeOSGymSandboxWarmPoolSpecBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created,
             *_uniffi_lowered_args,
         )
         return _uniffi_lift_return(_uniffi_ffi_result)

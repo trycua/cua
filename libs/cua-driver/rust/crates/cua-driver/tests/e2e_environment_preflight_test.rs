@@ -150,6 +150,61 @@ fn preflight_state_ready(response: &cua_driver_testkit::ToolResponse, ax_marker:
     )
 }
 
+fn extract_last_video_frame(
+    video: &std::path::Path,
+    frame: &std::path::Path,
+) -> Result<(), String> {
+    // Preserve evidence and prevent stale output from hiding a frameless decode.
+    if frame
+        .try_exists()
+        .map_err(|error| format!("could not check preflight frame: {error}"))?
+    {
+        return Err("preflight frame already exists".to_owned());
+    }
+    // A VFR recording's final frame can precede its duration by more than a seek
+    // offset. Decode in order and overwrite one image to retain the last frame.
+    let extracted = Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-nostdin",
+            "-xerror",
+            "-y",
+            "-i",
+        ])
+        .arg(video)
+        .args([
+            "-map",
+            "0:v:0",
+            "-fps_mode",
+            "passthrough",
+            "-enc_time_base",
+            "demux",
+            "-f",
+            "image2",
+            "-update",
+            "1",
+        ])
+        .arg(frame)
+        .stdout(Stdio::null())
+        .output()
+        .map_err(|error| format!("ffmpeg is required for canonical E2E: {error}"))?;
+    let has_output = std::fs::metadata(frame)
+        .map(|metadata| metadata.is_file() && metadata.len() > 0)
+        .unwrap_or(false);
+    if !extracted.status.success() || !has_output {
+        let stderr = String::from_utf8_lossy(&extracted.stderr);
+        let diagnostic: String = stderr.chars().take(4096).collect();
+        return Err(format!(
+            "could not extract preflight video frame (status {}; output missing/empty: {}): {diagnostic}",
+            extracted.status,
+            !has_output,
+        ));
+    }
+    Ok(())
+}
+
 fn run_preflight() {
     let expected_sha = std::env::var("CUA_E2E_SOURCE_SHA").ok();
     if let Some(expected_sha) = expected_sha.as_deref() {
@@ -372,19 +427,7 @@ fn run_preflight() {
     assert!(probe.success(), "ffprobe rejected the preflight video");
 
     let frame = recording_dir.join("preflight-frame.png");
-    let extracted = Command::new("ffmpeg")
-        .args(["-y", "-sseof", "-0.2", "-i"])
-        .arg(&video)
-        .args(["-frames:v", "1"])
-        .arg(&frame)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .expect("ffmpeg is required for canonical E2E");
-    assert!(
-        extracted.success(),
-        "could not extract preflight video frame"
-    );
+    extract_last_video_frame(&video, &frame).unwrap_or_else(|error| panic!("{error}"));
     let frame = image::open(&frame)
         .expect("preflight video frame is not a readable image")
         .to_rgb8();
@@ -418,6 +461,102 @@ fn readiness_requires_nonempty_ax_marker_and_screenshot_together() {
     assert!(!readiness_contract(false, 1, false, true));
     assert!(!readiness_contract(false, 1, true, false));
     assert!(!readiness_contract(true, 1, true, true));
+}
+
+#[test]
+fn last_frame_extraction_rejects_existing_output() {
+    let directory = tempfile::tempdir().unwrap();
+    let frame = directory.path().join("frame.png");
+    std::fs::write(&frame, b"existing evidence").unwrap();
+    let error =
+        extract_last_video_frame(&directory.path().join("missing.mp4"), &frame).unwrap_err();
+    assert!(error.contains("already exists"), "{error}");
+    assert_eq!(std::fs::read(frame).unwrap(), b"existing evidence");
+}
+
+#[test]
+#[ignore = "requires ffmpeg with lavfi and the mpeg4 encoder; no GUI required"]
+fn last_frame_extraction_handles_long_final_duration_and_invalid_input() {
+    let directory = tempfile::tempdir().unwrap();
+    let video = directory.path().join("two-colors.mp4");
+    let generated = Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-nostdin",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=red:s=32x32:r=2:d=1.5",
+            "-vf",
+            "drawbox=color=blue:t=fill:enable='gte(t,1)',setpts='if(eq(N,2),4,N)'",
+            "-fps_mode",
+            "passthrough",
+            "-c:v",
+            "mpeg4",
+        ])
+        .arg(&video)
+        .output()
+        .expect("ffmpeg is required for this regression test");
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+
+    // VFR timestamps are 0s, 0.5s, and 2s; the last (blue) frame lasts to 2.5s.
+    // Seeking to 2.3s reproduces a successful exit without emitting a frame.
+    let old_frame = directory.path().join("old-frame.png");
+    let old = Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-nostdin",
+            "-y",
+            "-sseof",
+            "-0.2",
+            "-i",
+        ])
+        .arg(&video)
+        .args(["-frames:v", "1"])
+        .arg(&old_frame)
+        .output()
+        .unwrap();
+    assert!(
+        old.status.success(),
+        "{}",
+        String::from_utf8_lossy(&old.stderr)
+    );
+    assert!(
+        !old_frame.exists(),
+        "fixture must reproduce the frameless seek"
+    );
+
+    let frame = directory.path().join("last-frame.png");
+    extract_last_video_frame(&video, &frame).unwrap();
+    let decoded = image::open(&frame).unwrap().to_rgb8();
+    assert_eq!(decoded.dimensions(), (32, 32));
+    assert!(
+        decoded
+            .pixels()
+            .all(|pixel| pixel[2] > 200 && pixel[0] < 30 && pixel[1] < 30),
+        "must retain the last blue frame, not the first red frame"
+    );
+
+    let invalid = directory.path().join("invalid.mp4");
+    std::fs::write(&invalid, b"not an MP4").unwrap();
+    for input in [invalid, directory.path().join("missing.mp4")] {
+        let output = directory.path().join("failed-frame.png");
+        let error = extract_last_video_frame(&input, &output).unwrap_err();
+        assert!(
+            error.contains("could not extract preflight video frame"),
+            "{error}"
+        );
+        assert!(!output.exists());
+    }
 }
 
 #[test]

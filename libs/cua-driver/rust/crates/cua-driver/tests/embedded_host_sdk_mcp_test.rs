@@ -60,7 +60,18 @@ fn write_test_shell_script(path: &std::path::Path, body: &str) {
             })
         })
         .expect("test environment must provide a shell");
-    std::fs::write(path, format!("#!{}\n{body}\n", shell.display())).unwrap();
+    let script = format!("#!{}\n{body}\n", shell.display());
+    let status = std::process::Command::new(&shell)
+        .args([
+            std::ffi::OsStr::new("-c"),
+            std::ffi::OsStr::new("umask 077; printf '%s' \"$1\" > \"$2\""),
+            std::ffi::OsStr::new("cua-driver-test-fixture-writer"),
+        ])
+        .arg(script)
+        .arg(path)
+        .status()
+        .expect("spawn test fixture writer");
+    assert!(status.success(), "test fixture writer failed: {status}");
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
 }
 

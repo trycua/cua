@@ -10,6 +10,8 @@ allowed_image := "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:latest"
 
 osworld_v2_digest := "296062593712.dkr.ecr.us-west-2.amazonaws.com/osworld-v2-ubuntu-x86@sha256:6f981825c5970027df510006fcfc1ef7a502d2911f69ed9884f7f217007931dd"
 
+omarchy_digest := "296062593712.dkr.ecr.us-west-2.amazonaws.com/omarchy-workspace@sha256:c9cdba09d8cd2f742b9e9fa3818ca29dbcb66ee40edd057621e2987098226950"
+
 non_admin := {"sub": "user-1"}
 
 non_admin_flags := {"admin_subs": []}
@@ -73,6 +75,16 @@ test_ecr_secret_osworld_v2_digest_allowed {
 		"method": "POST",
 		"params": {"path": legacy_path},
 		"body": sprintf(`{"spec":{"template":{"containerDiskImage":%q,"imagePullSecret":"ecr-credentials"}}}`, [osworld_v2_digest]),
+		"user": non_admin,
+		"flags": non_admin_flags,
+	}
+}
+
+test_ecr_secret_omarchy_digest_allowed {
+	pool_admission.allow with input as {
+		"method": "POST",
+		"params": {"path": native_path},
+		"body": sprintf(`{"spec":{"vmTemplate":{"containerDiskImage":%q,"imagePullSecret":"ecr-credentials"}}}`, [omarchy_digest]),
 		"user": non_admin,
 		"flags": non_admin_flags,
 	}

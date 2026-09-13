@@ -1157,6 +1157,38 @@ fn wait_for_pid_windows_to_close(driver: &mut McpDriver, pid: u32) {
     }
 }
 
+fn devtools_active_port(profile: &Path) -> Option<u16> {
+    std::fs::read_to_string(profile.join("DevToolsActivePort"))
+        .ok()?
+        .lines()
+        .next()?
+        .trim()
+        .parse()
+        .ok()
+}
+
+fn wait_for_devtools_listener_to_close(profile: &Path, port: u16) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let listener_closed = TcpStream::connect_timeout(
+            &format!("127.0.0.1:{port}")
+                .parse()
+                .expect("loopback socket"),
+            Duration::from_millis(100),
+        )
+        .is_err();
+        if listener_closed {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "existing-profile DevTools listener {port} remained reachable after end_session; active-port-file={:?}",
+            devtools_active_port(profile)
+        );
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
 fn spawn_browser_command(
     driver: &mut McpDriver,
     spec: &BrowserSpec,
@@ -1461,6 +1493,18 @@ fn case(browser: &str, action: &str) -> CaseSpec {
         DriverRoute::Cdp,
         oracles,
     )
+}
+
+fn prepare_isolated_case(browser: &str) -> CaseSpec {
+    let case = case(browser, "browser_prepare_isolated_launch");
+    if cfg!(target_os = "windows")
+        && std::env::var("CUA_E2E_WINDOWS_BROWSER_LIMITATION").as_deref()
+            == Ok("hosted_runner_token")
+    {
+        case.expecting_refusal(vec![RefusalCode::BrowserRouteUnavailable])
+    } else {
+        case
+    }
 }
 
 fn refusal_case(browser: &str, action: &str, code: RefusalCode) -> CaseSpec {
@@ -2205,19 +2249,70 @@ fn run_prepare_isolated_launch(spec: &BrowserSpec) {
         std::env::consts::OS,
         spec.name
     );
-    execute_case(
-        case(&spec.name, "browser_prepare_isolated_launch"),
-        |evidence| {
-            let target_server = BrowserFixtureServer::start(&standalone_fixture_html());
-            let driver_profiles = driver_profile_root();
-            let profiles_before = profile_entries(&driver_profiles);
-            let mut driver = spawn_driver(&scenario);
-            *evidence = recording_evidence(driver.recording_dir());
+    execute_case(prepare_isolated_case(&spec.name), |evidence| {
+        let target_server = BrowserFixtureServer::start(&standalone_fixture_html());
+        let driver_profiles = driver_profile_root();
+        let profiles_before = profile_entries(&driver_profiles);
+        let mut driver = spawn_driver(&scenario);
+        *evidence = recording_evidence(driver.recording_dir());
 
-            let session = format!("standalone-prepare-{}", spec.name);
-            let started = driver.call("start_session", serde_json::json!({ "session": session }));
-            assert!(!started.is_error(), "start_session failed: {}", started.raw);
-            driver.start_behavior_recording();
+        let session = format!("standalone-prepare-{}", spec.name);
+        let started = driver.call("start_session", serde_json::json!({ "session": session }));
+        assert!(!started.is_error(), "start_session failed: {}", started.raw);
+        driver.start_behavior_recording();
+
+        if cfg!(target_os = "windows")
+            && std::env::var("CUA_E2E_WINDOWS_BROWSER_LIMITATION").as_deref()
+                == Ok("hosted_runner_token")
+        {
+            let sentinel = ForegroundSentinel::launch(&mut driver);
+            let (prepared, passed) = sentinel
+                .observe_desktop(|| {
+                    driver.call(
+                        "browser_prepare",
+                        serde_json::json!({
+                            "session": session,
+                            "allow_launch": true,
+                            "profile": {"mode": "isolated_new"},
+                        }),
+                    )
+                })
+                .expect("observe hosted Windows browser limitation");
+            assert_eq!(
+                prepared.structured()["status"],
+                "refused",
+                "{}",
+                prepared.raw
+            );
+            assert_eq!(
+                prepared.structured()["refusal"]["code"],
+                "browser_route_unavailable",
+                "{}",
+                prepared.raw
+            );
+            assert!(
+                prepared.structured()["action"].is_null()
+                    && prepared.structured()["prepared_pid"].is_null()
+                    && prepared.structured()["side_effects"].is_null(),
+                "hosted Windows refusal must precede browser setup: {}",
+                prepared.raw
+            );
+            assert_eq!(
+                profile_entries(&driver_profiles),
+                profiles_before,
+                "hosted Windows refusal must not create an isolated profile"
+            );
+            let ended = driver.call("end_session", serde_json::json!({ "session": session }));
+            assert!(!ended.is_error(), "end_session failed: {}", ended.raw);
+            let mut observation = Observation::refused(
+                RefusalCode::BrowserRouteUnavailable,
+                vec![OracleKind::FixtureState],
+                prepared.text(),
+                Evidence::default(),
+            );
+            observation.passed_oracles.extend(passed);
+            observation
+        } else {
             let prepared = driver.call(
                 "browser_prepare",
                 serde_json::json!({
@@ -2335,8 +2430,8 @@ fn run_prepare_isolated_launch(spec: &BrowserSpec) {
                 thread::sleep(Duration::from_millis(100));
             }
             observation
-        },
-    );
+        }
+    });
 }
 
 #[test]
@@ -2690,6 +2785,12 @@ fn run_existing_profile_setup(spec: &BrowserSpec) {
                 prepared.structured()["side_effects"]["created_profile"],
                 false
             );
+            let setup_port = devtools_active_port(fixture._profile.path()).unwrap_or_else(|| {
+                panic!(
+                    "existing-profile setup exposed no DevToolsActivePort in {}",
+                    fixture._profile.path().display()
+                )
+            });
 
             let public_result = prepared.raw.to_string();
             assert!(!public_result.contains("ws://"), "{}", prepared.raw);
@@ -2699,7 +2800,7 @@ fn run_existing_profile_setup(spec: &BrowserSpec) {
                 prepared.raw
             );
 
-            run_with_background_oracles(&mut fixture, |fixture| {
+            let observation = run_with_background_oracles(&mut fixture, |fixture| {
                 let state = fixture.driver.call(
                     "get_browser_state",
                     serde_json::json!({
@@ -2761,25 +2862,52 @@ fn run_existing_profile_setup(spec: &BrowserSpec) {
                     clicked.raw
                 );
                 wait_for_text(&fixture.server, "lbl-counter", "counter=1");
-
-                let ended = fixture
-                    .driver
-                    .call("end_session", serde_json::json!({ "session": session }));
-                assert!(!ended.is_error(), "end_session failed: {}", ended.raw);
-                let windows = fixture
-                    .driver
-                    .call("list_windows", serde_json::json!({"pid": fixture.pid}));
-                assert!(
-                    windows.structured()["windows"]
-                        .as_array()
-                        .is_some_and(|windows| windows.iter().any(|window| {
-                            window["window_id"].as_u64() == Some(fixture.window_id)
-                        })),
-                    "ending the setup grant must not close the user-owned browser: {}",
-                    windows.raw
-                );
                 Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
-            })
+            });
+
+            // Linux must foreground Chromium briefly to navigate its browser-owned
+            // setup surface: Chromium rejects background XSendEvent keystrokes and
+            // does not expose an AT-SPI editable-text setter for the omnibox. Keep
+            // that bounded native cleanup outside the CDP background-input oracle,
+            // then prove its externally visible result exactly on every platform.
+            let ended = fixture
+                .driver
+                .call("end_session", serde_json::json!({ "session": session }));
+            assert!(!ended.is_error(), "end_session failed: {}", ended.raw);
+            wait_for_devtools_listener_to_close(fixture._profile.path(), setup_port);
+            let native = fixture.driver.call(
+                "get_window_state",
+                serde_json::json!({
+                    "pid": fixture.pid as i64,
+                    "window_id": fixture.window_id,
+                }),
+            );
+            assert!(
+                !native.is_error(),
+                "post-cleanup native state failed: {}",
+                native.raw
+            );
+            assert!(
+                !native
+                    .tree_text()
+                    .to_ascii_lowercase()
+                    .contains("allow remote debugging"),
+                "ending the setup grant left browser-owned consent UI visible: {}",
+                native.raw
+            );
+            let windows = fixture
+                .driver
+                .call("list_windows", serde_json::json!({"pid": fixture.pid}));
+            assert!(
+                windows.structured()["windows"]
+                    .as_array()
+                    .is_some_and(|windows| windows
+                        .iter()
+                        .any(|window| { window["window_id"].as_u64() == Some(fixture.window_id) })),
+                "ending the setup grant must not close the user-owned browser: {}",
+                windows.raw
+            );
+            observation
         },
     );
 }

@@ -505,9 +505,10 @@ pub fn abort_pending(hwnd: u64, error: BrowserRefusal) -> BrowserRefusal {
     }
 }
 
-pub fn enable(
+fn set_remote_debugging(
     hwnd: u64,
     descriptor: &'static BrowserSetupDescriptor,
+    desired_enabled: bool,
 ) -> Result<SetupUiHandle, BrowserRefusal> {
     let initial = crate::uia::walk_tree(hwnd, None);
     let initial_checkbox = exact_setup_checkbox(&initial.nodes, descriptor);
@@ -658,16 +659,16 @@ pub fn enable(
             Ok(Some(element)) => {
                 let state = unsafe { checkbox_state(element) };
                 let outcome = match state {
-                    Ok(CheckboxState::On) => {
-                        if handle.enable_attempted {
+                    Ok(state) if (state == CheckboxState::On) == desired_enabled => {
+                        if desired_enabled && handle.enable_attempted {
                             handle.enabled_remote_debugging = true;
+                        } else if !desired_enabled {
+                            handle.enabled_remote_debugging = false;
                         }
                         Ok(true)
                     }
-                    Ok(CheckboxState::Off) if !handle.enable_attempted => unsafe {
-                        toggle(element).map(|_| false)
-                    },
-                    Ok(CheckboxState::Off) => Ok(false),
+                    Ok(_) if !handle.enable_attempted => unsafe { toggle(element).map(|_| false) },
+                    Ok(_) => Ok(false),
                     Err(error) => Err(error),
                 };
                 release_nodes(&tree.nodes);
@@ -694,6 +695,21 @@ pub fn enable(
         }
         std::thread::sleep(Duration::from_millis(100));
     }
+}
+
+pub fn enable(
+    hwnd: u64,
+    descriptor: &'static BrowserSetupDescriptor,
+) -> Result<SetupUiHandle, BrowserRefusal> {
+    set_remote_debugging(hwnd, descriptor, true)
+}
+
+pub fn disable(
+    hwnd: u64,
+    descriptor: &'static BrowserSetupDescriptor,
+) -> Result<bool, BrowserRefusal> {
+    let handle = set_remote_debugging(hwnd, descriptor, false)?;
+    Ok(handle.close().unwrap_or(false))
 }
 
 #[cfg(test)]

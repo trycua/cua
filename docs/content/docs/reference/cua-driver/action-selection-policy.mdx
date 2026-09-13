@@ -93,7 +93,7 @@ click({ pid, window_id, element_index: 12 })
 // → { effect: "suspected_noop", escalation: { recommended: "px", reason: "..." } }
 ```
 
-**Wayland exception.** On a native Wayland session, raw keyboard input has no universal background path. When an AX keyboard action no-ops there, prefer an accessible field action or run the app under XWayland; otherwise escalate only that action to foreground. See [Known limits](/reference/cua-driver/limits#native-wayland-apps-cant-receive-synthetic-keystrokes).
+**Wayland exception.** On a native Wayland session, raw keyboard input has no universal background path. When an AX keyboard action no-ops there, prefer an accessible field action or run the app under XWayland; otherwise escalate only that action to foreground. See [Known limits](/reference/cua-driver/limits#native-wayland-background-keyboard-input-is-focus-bound).
 
 ## Use a desktop target only for screen-absolute work
 
@@ -133,7 +133,7 @@ exact window target, or use
 `target: {kind: "desktop", display_id: "primary"}` for screen-absolute work.
 
 **Problem: keystrokes don't land on a Linux app.**
-On native Wayland, raw keys have no background path. Type into accessible fields with `type_text`, drive controls by `element_index`, or run the app under XWayland. See [Known limits](/reference/cua-driver/limits#native-wayland-apps-cant-receive-synthetic-keystrokes).
+On native Wayland, raw keys have no background path. Type into accessible fields with `type_text`, drive controls by `element_index`, or run the app under XWayland. See [Known limits](/reference/cua-driver/limits#native-wayland-background-keyboard-input-is-focus-bound).
 
 ## Related
 

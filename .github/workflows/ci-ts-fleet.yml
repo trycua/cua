@@ -1,0 +1,18 @@
+name: "CI: @trycua/fleet"
+
+on:
+  pull_request:
+    paths:
+      - "libs/typescript/fleet/**"
+      - "libs/typescript/pnpm-lock.yaml"
+      - "libs/typescript/pnpm-workspace.yaml"
+      - ".github/workflows/ci-ts-fleet.yml"
+      - ".github/workflows/ts-reusable-build.yml"
+
+jobs:
+  build:
+    uses: ./.github/workflows/ts-reusable-build.yml
+    with:
+      package_name: "fleet"
+      package_dir: "libs/typescript/fleet"
+      package_manager: "pnpm"

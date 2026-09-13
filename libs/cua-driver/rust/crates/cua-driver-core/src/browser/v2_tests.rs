@@ -2438,7 +2438,6 @@ async fn keystrokes_use_char_events_for_text_delivery() {
     assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
 }
 
-
 // ---- window-less page targets (trycua/cua#3540) ------------------------------------------
 //
 // Chromium exposes page targets that live in no browser window — an extension
@@ -2472,16 +2471,22 @@ async fn windowless_side_panel_target_is_skipped_and_bind_stays_exact() {
     assert_eq!(s["status"], "ok", "bind must succeed: {s}");
     assert_eq!(s["binding_quality"], "exact");
     let tabs = s["tabs"].as_array().expect("tabs");
-    assert_eq!(tabs.len(), 1, "the side panel is not a tab of the bound window: {s}");
+    assert_eq!(
+        tabs.len(),
+        1,
+        "the side panel is not a tab of the bound window: {s}"
+    );
     assert_eq!(tabs[0]["url"], "https://fixture.test/");
     // The window-less target was asked for its window (and skipped), never attached to.
     let st = f.state.lock().unwrap();
-    assert!(st.calls.iter().any(|(_, m, p)| {
-        m == "Browser.getWindowForTarget" && p["targetId"] == "T_SIDEPANEL"
-    }));
-    assert!(!st.calls.iter().any(|(_, m, p)| {
-        m == "Target.attachToTarget" && p["targetId"] == "T_SIDEPANEL"
-    }));
+    assert!(st
+        .calls
+        .iter()
+        .any(|(_, m, p)| { m == "Browser.getWindowForTarget" && p["targetId"] == "T_SIDEPANEL" }));
+    assert!(!st
+        .calls
+        .iter()
+        .any(|(_, m, p)| { m == "Target.attachToTarget" && p["targetId"] == "T_SIDEPANEL" }));
 }
 
 #[tokio::test]
@@ -2523,7 +2528,8 @@ async fn method_unsupported_keeps_the_electron_none_path() {
     // None geometry and the proof continues on the existing path — it must not
     // become a route failure because of the window-less skip.
     let f = fixture_with(|st| {
-        st.primary_window_error = Some((-32601, "'Browser.getWindowForTarget' wasn't found".into()));
+        st.primary_window_error =
+            Some((-32601, "'Browser.getWindowForTarget' wasn't found".into()));
     })
     .await;
     let s = bind_result(&f).await;

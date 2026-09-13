@@ -58,7 +58,9 @@ pub fn list_running_apps() -> Vec<AppInfo> {
 ///   apps) run as `Accessory`, never enter the standalone list, and would
 ///   otherwise surface as `running = false / pid = 0` while windows and the
 ///   accessibility tree see the live process (#3060).
-fn enumerate_running_apps() -> (Vec<AppInfo>, std::collections::HashMap<String, (i32, bool)>) {
+type RunningAppStates = std::collections::HashMap<String, Vec<(i32, bool, Option<String>)>>;
+
+fn enumerate_running_apps() -> (Vec<AppInfo>, RunningAppStates) {
     use objc2_app_kit::{NSApplicationActivationPolicy, NSWorkspace};
 
     let mut standalone = Vec::new();
@@ -76,9 +78,17 @@ fn enumerate_running_apps() -> (Vec<AppInfo>, std::collections::HashMap<String, 
                 continue;
             }
             let bundle_id = app.bundleIdentifier().map(|value| value.to_string());
+            let launch_path = app
+                .bundleURL()
+                .and_then(|url| url.path())
+                .map(|path| path.to_string());
             if let Some(bid) = bundle_id.as_deref() {
                 if !bid.is_empty() {
-                    states.insert(bid.to_owned(), (pid, app.isActive()));
+                    states.entry(bid.to_owned()).or_insert_with(Vec::new).push((
+                        pid,
+                        app.isActive(),
+                        launch_path.clone(),
+                    ));
                 }
             }
             if app.activationPolicy() != NSApplicationActivationPolicy::Regular {
@@ -96,7 +106,7 @@ fn enumerate_running_apps() -> (Vec<AppInfo>, std::collections::HashMap<String, 
                 bundle_id,
                 running: true,
                 active: app.isActive(),
-                launch_path: None,
+                launch_path,
                 kind: Some("desktop".to_owned()),
                 last_used: None,
             });
@@ -461,19 +471,18 @@ pub fn list_all_apps() -> Vec<AppInfo> {
 /// * standalone entries keep the `Regular`-only contract of
 ///   [`list_running_apps`] (helpers and UI agents stay out of the list);
 /// * installed entries resolve `running` / `pid` / `active` against the
-///   all-policies running-state map by bundle id, so an installed `.app`
+///   all-policies running-state map by bundle id and bundle path, so an installed `.app`
 ///   whose process runs as an accessory reports its live state instead
-///   of the `pid = 0` scan defaults (#3060). When several live instances
-///   share one bundle id the map keeps the last enumerated — the upgrade
-///   reports one of them, unspecified which, while standalone `Regular`
-///   instances each keep their own entry as before;
+///   of the `pid = 0` scan defaults (#3060). Exact bundle paths distinguish
+///   installed copies that share an identifier. Bundle-id-only fallback is
+///   allowed only when the installed copy is unambiguous;
 /// * installed entries already covered by a standalone running entry are
 ///   dropped — the standalone entry wins and is backfilled with the
 ///   `launch_path` / `last_used` the installed scan resolved.
 pub(crate) fn merge_app_lists(
     mut running: Vec<AppInfo>,
     mut installed: Vec<AppInfo>,
-    running_states: &std::collections::HashMap<String, (i32, bool)>,
+    running_states: &RunningAppStates,
 ) -> Vec<AppInfo> {
     // Lookup: bundle_id → (launch_path, last_used) from the installed scan.
     let installed_by_bundle: std::collections::HashMap<String, (Option<String>, Option<String>)> =
@@ -499,10 +508,38 @@ pub(crate) fn merge_app_lists(
         }
     }
 
-    // Upgrade installed entries whose live process runs outside the
-    // Regular list (accessory / LSUIElement apps) to their real state.
+    let installed_bundle_counts = installed
+        .iter()
+        .filter_map(|app| app.bundle_id.clone())
+        .fold(
+            std::collections::HashMap::<String, usize>::new(),
+            |mut counts, bundle| {
+                *counts.entry(bundle).or_default() += 1;
+                counts
+            },
+        );
+
+    // Upgrade installed entries whose live process runs outside the Regular
+    // list. Prefer the exact bundle path so duplicate debug/release copies do
+    // not all inherit one process's live state.
     for app in installed.iter_mut() {
-        if let Some(&(pid, active)) = app.bundle_id.as_deref().and_then(|b| running_states.get(b)) {
+        let Some(bundle_id) = app.bundle_id.as_deref() else {
+            continue;
+        };
+        let Some(candidates) = running_states.get(bundle_id) else {
+            continue;
+        };
+        let exact = app.launch_path.as_deref().and_then(|installed_path| {
+            candidates
+                .iter()
+                .find(|(_, _, live_path)| live_path.as_deref() == Some(installed_path))
+        });
+        let selected = exact.or_else(|| {
+            (installed_bundle_counts.get(bundle_id) == Some(&1))
+                .then(|| candidates.last())
+                .flatten()
+        });
+        if let Some(&(pid, active, _)) = selected {
             app.running = true;
             app.pid = pid;
             app.active = active;
@@ -787,11 +824,18 @@ mod tests {
         }
     }
 
-    fn states(pairs: &[(&str, i32, bool)]) -> std::collections::HashMap<String, (i32, bool)> {
-        pairs
-            .iter()
-            .map(|(bundle, pid, active)| ((*bundle).to_owned(), (*pid, *active)))
-            .collect()
+    fn states(pairs: &[(&str, i32, bool, Option<&str>)]) -> super::RunningAppStates {
+        pairs.iter().fold(
+            super::RunningAppStates::new(),
+            |mut states, (bundle, pid, active, path)| {
+                states.entry((*bundle).to_owned()).or_default().push((
+                    *pid,
+                    *active,
+                    path.map(str::to_owned),
+                ));
+                states
+            },
+        )
     }
 
     #[test]
@@ -803,7 +847,12 @@ mod tests {
         let merged = merge_app_lists(
             vec![],
             vec![entry],
-            &states(&[("com.trycua.driver", 31438, false)]),
+            &states(&[(
+                "com.trycua.driver",
+                31438,
+                false,
+                Some("/Applications/CuaDriver.app"),
+            )]),
         );
         assert_eq!(merged.len(), 1);
         assert!(merged[0].running);
@@ -838,7 +887,12 @@ mod tests {
         let merged = merge_app_lists(
             running,
             installed,
-            &states(&[("com.apple.Safari", 100, true)]),
+            &states(&[(
+                "com.apple.Safari",
+                100,
+                true,
+                Some("/Applications/Safari.app"),
+            )]),
         );
         assert_eq!(merged.len(), 1);
         assert!(merged[0].running);
@@ -853,8 +907,36 @@ mod tests {
     fn accessory_process_without_installed_bundle_adds_no_entry() {
         // A background helper with a bundle id but no installed .app must not
         // materialize a row just because it appears in the states map.
-        let merged = merge_app_lists(vec![], vec![], &states(&[("dev.helper.agent", 9, false)]));
+        let merged = merge_app_lists(
+            vec![],
+            vec![],
+            &states(&[("dev.helper.agent", 9, false, None)]),
+        );
         assert!(merged.is_empty());
+    }
+
+    #[test]
+    fn duplicate_bundle_ids_upgrade_only_the_live_bundle_path() {
+        let mut release = app("Cua Driver", 0, Some("com.trycua.driver"), false);
+        release.launch_path = Some("/Applications/CuaDriver.app".to_owned());
+        let mut debug = app("Cua Driver", 0, Some("com.trycua.driver"), false);
+        debug.launch_path = Some("/Users/test/CuaDriver.app".to_owned());
+
+        let merged = merge_app_lists(
+            vec![],
+            vec![release, debug],
+            &states(&[(
+                "com.trycua.driver",
+                42,
+                false,
+                Some("/Users/test/CuaDriver.app"),
+            )]),
+        );
+
+        assert!(!merged[0].running);
+        assert_eq!(merged[0].pid, 0);
+        assert!(merged[1].running);
+        assert_eq!(merged[1].pid, 42);
     }
 
     #[test]

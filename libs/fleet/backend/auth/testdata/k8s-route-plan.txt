@@ -3,6 +3,7 @@ All
   Because reason="creating or modifying Kubernetes Services directly is not supported. Declare the port under spec.vmTemplate.services on the pool template, or PATCH spec.vmTemplate.services on your bound OSGymSandbox to expose it on a running sandbox; the matching Service is created for you."
     Leaf query=data.authz_k8s.not_direct_service_write source=multi["registered:authz","registered:authz-k8s"]
   Leaf query=data.authz_k8s.allow source=multi["registered:authz","registered:authz-k8s"]
+  Leaf query=data.image_rollout.allow source=multi["registered:authz","registered:image-rollout"]
   Any
     Leaf query=data.authz_ownership.claim_allow source=multi["registered:authz","registered:authz-ownership"]
     All

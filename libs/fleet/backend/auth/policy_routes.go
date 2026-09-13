@@ -188,7 +188,14 @@ func AccountLookupRoutePolicy() Node {
 // ImageUploadsRoutePolicy guards bounded image upload signing. Namespace ownership
 // is evaluated by the handler because the namespace is carried in the JSON body.
 func ImageUploadsRoutePolicy() Node {
-	return All(BasePolicy(), surfaceLeaf("authz-image-uploads", "data.authz_image_uploads.allow"))
+	return All(BasePolicy(), surfaceLeaf("authz-image-uploads", "data.authz_image_uploads.allow"), ImageRolloutPolicy())
+}
+
+func ImageRolloutPolicy() Node {
+	return Policy(
+		Modules(Registered("authz"), Registered("image-rollout")),
+		Query("data.image_rollout.allow"),
+	)
 }
 
 // K8sRoutePolicy guards /api/k8s/{path...}. It is the same base + surface shape
@@ -248,6 +255,7 @@ func K8sRoutePolicy() Node {
 			ServiceWriteNotSupportedMessage,
 		),
 		surfaceLeaf("authz-k8s", "data.authz_k8s.allow"),
+		ImageRolloutPolicy(),
 		NamespaceOwnershipPolicy(),
 		Because(CustomResourceCreationAdmissionPolicy(), BillingSetupRequiredMessage),
 		Policy(

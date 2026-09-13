@@ -5737,6 +5737,9 @@ export type WindowStateOutput = {
     screenshotFilePath?: string,
     screenshotFrameValid?: boolean,
     windowBounds?: WindowBounds,
+    /**
+     * macOS only. Absent unless the window is backed by a local file.
+     */
     documentPath?: string,
     /**
      * macOS only. Absent when the app does not report a dirty flag: unknown, never "clean".

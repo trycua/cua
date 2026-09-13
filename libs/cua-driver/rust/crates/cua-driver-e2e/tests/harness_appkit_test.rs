@@ -205,14 +205,15 @@ fn run_case(
     });
 }
 
-fn run_document_case_on_source_built_driver(
+fn run_document_case(
     case: cua_driver_testkit::e2e::CaseSpec,
     document_path: &Path,
     test: impl FnOnce(u32, u64, &mut McpDriver) -> Observation,
 ) {
     let cell_id = case.cell_id.clone();
     execute_case(case, |evidence| {
-        let mut driver = McpDriver::spawn_named(&cell_id).expect("start source-built driver");
+        let mut driver = McpDriver::spawn_macos_daemon_proxy_named(&cell_id)
+            .expect("start installed macOS daemon proxy");
         *evidence = recording_evidence(driver.recording_dir());
         let harness = Harness::launch_with_document(document_path);
         let (wid, _) = driver
@@ -587,7 +588,7 @@ fn harness_appkit_document_state_follows_the_window() {
     let document = directory.path().join("My Notes.txt");
     std::fs::write(&document, "harness document\n").expect("write document fixture");
 
-    run_document_case_on_source_built_driver(
+    run_document_case(
         native_readonly_case(
             "appkit",
             "document_state",

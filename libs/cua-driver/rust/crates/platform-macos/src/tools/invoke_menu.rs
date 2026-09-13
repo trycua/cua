@@ -202,12 +202,24 @@ unsafe fn invoke_path(pid: i32, path: &[String]) -> Result<(), String> {
 /// deadline. `front_process_matches` asks WindowServer directly, exactly as
 /// `bring_to_front` does; the workspace value stays the fallback for targets
 /// whose process serial number cannot be resolved.
-fn live_frontmost_pid(pid: i32, window_id: u32) -> Option<i32> {
-    match crate::input::skylight::front_process_matches(pid, window_id) {
+fn select_frontmost_pid(
+    front_process_matches: Option<bool>,
+    workspace_fallback: Option<i32>,
+    pid: i32,
+) -> Option<i32> {
+    match front_process_matches {
         Some(true) => Some(pid),
         Some(false) => None,
-        None => crate::apps::frontmost_pid(),
+        None => workspace_fallback,
     }
+}
+
+fn live_frontmost_pid(pid: i32, window_id: u32) -> Option<i32> {
+    select_frontmost_pid(
+        crate::input::skylight::front_process_matches(pid, window_id),
+        crate::apps::frontmost_pid(),
+        pid,
+    )
 }
 
 /// The application WindowServer currently fronts, identified through its
@@ -220,9 +232,7 @@ fn live_frontmost_pid(pid: i32, window_id: u32) -> Option<i32> {
 /// on-screen window (completion popups, overlay panels) without being the front
 /// process — so each candidate is confirmed against WindowServer.
 fn live_frontmost_app() -> Option<i32> {
-    let mut windows = crate::windows::visible_windows();
-    windows.sort_by_key(|window| std::cmp::Reverse(window.z_index));
-    windows
+    crate::windows::visible_windows()
         .into_iter()
         .find(|window| {
             crate::input::skylight::front_process_matches(window.pid, window.window_id)
@@ -512,5 +522,12 @@ mod tests {
         assert!(!exact_window_is_ready(Some(8), 7, Some(42), 42));
         assert!(!exact_window_is_ready(Some(7), 7, Some(41), 42));
         assert!(!exact_window_is_ready(Some(7), 7, None, 42));
+    }
+
+    #[test]
+    fn windowserver_mismatch_never_falls_back_to_stale_workspace_state() {
+        assert_eq!(select_frontmost_pid(Some(true), Some(8), 7), Some(7));
+        assert_eq!(select_frontmost_pid(Some(false), Some(7), 7), None);
+        assert_eq!(select_frontmost_pid(None, Some(8), 7), Some(8));
     }
 }

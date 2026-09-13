@@ -55,8 +55,6 @@ let kSecondaryWindowTitle = "CuaTestHarness AppKit Secondary"
 let kSheetWindowTitle = "CuaTestHarness AppKit Sheet"
 let kFloatingWindowTitle = "CuaTestHarness AppKit Floating"
 let kToggleDocumentEditedTitle = "Toggle Document Edited"
-let kDocumentEditedOnCommand = "cua-document-edited-on"
-let kDocumentEditedOffCommand = "cua-document-edited-off"
 
 // MARK: - Controller
 
@@ -394,6 +392,12 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
 
     @objc private func onCheckbox(_ sender: NSButton) {
         checkStateLabel.stringValue = "agreed=\(sender.state == .on)"
+        // With a document attached, the same press also carries the dirty bit,
+        // so a test can flip it through a real AX action that needs no window
+        // activation and no new control in the pinned layout.
+        if documentAttached {
+            setDocumentEdited(sender.state == .on)
+        }
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int {
@@ -434,15 +438,6 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         setDocumentEdited(!window.isDocumentEdited)
     }
 
-    private func applyDocumentCommand(_ value: String) {
-        guard documentAttached else { return }
-        switch value {
-        case kDocumentEditedOnCommand: setDocumentEdited(true)
-        case kDocumentEditedOffCommand: setDocumentEdited(false)
-        default: break
-        }
-    }
-
     private func setDocumentEdited(_ edited: Bool) {
         window.isDocumentEdited = edited
         menuActionLabel.stringValue = "menu_action=document_edited_\(edited)"
@@ -463,7 +458,6 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         guard let field = obj.object as? NSTextField else { return }
         if field === textInput {
             textInputMirror.stringValue = field.stringValue
-            applyDocumentCommand(field.stringValue)
         }
     }
 

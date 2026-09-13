@@ -1813,6 +1813,7 @@ mod tests {
             role: role.to_owned(),
             title: title.map(str::to_owned),
             value: value.map(str::to_owned),
+            placeholder: None,
             description: None,
             identifier: None,
             help: None,

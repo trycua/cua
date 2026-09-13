@@ -1,0 +1,100 @@
+---
+title: Redact and annotate a PDF
+description: Use Preview and LibreOffice Writer with Cua Driver to prepare a fictional review copy and check the saved redactions.
+---
+
+Remove four fictional production details from a two-page PDF in Preview, add a
+review annotation, and create an editable handoff in LibreOffice Writer. Verify
+the saved review copy by inspecting both pages and checking extracted text.
+
+The clip shows selected redaction and annotation steps in Preview. The prompt
+below also includes the handoff and saved-file checks.
+
+<VideoDemo
+  src="https://github.com/user-attachments/assets/5ef3bec8-70a5-45f5-8eb3-930a345b9019"
+  poster="/media/workflow-demos/pdf-poster.jpg"
+  title="Redact and annotate a vendor proof in Preview"
+  aspectRatio={8 / 5}
+  autoPlay={false}
+  loop={false}
+  preload="metadata"
+>
+  Recorded on macOS with GPT-6 Astra + Cua Driver. Selected gestures play at 1x; setup, waits,
+  retries and intervening edits are cut. These examples include foreground/desktop input and
+  fictional data. Clip duration is not task completion time.
+</VideoDemo>
+
+## Prepare the apps and source file
+
+Use a Mac with Preview and LibreOffice Writer installed. Follow
+[Install Cua Driver](/how-to-guides/driver/install),
+grant the required [macOS permissions](/reference/cua-driver/macos-permissions), and
+[connect your agent](/how-to-guides/driver/connect-your-agent). Keep the desktop
+available while the agent works.
+
+Download the [fictional vendor proof (PDF)](/media/workflow-demos/pdf/willowfen-vendor-proof-SOURCE.pdf)
+into a working folder. The two A4 pages contain invented workshop details and four
+marked redaction targets. All organizations, figures, and contacts are fictional;
+the addresses use the reserved `.invalid` domain. The source is intentionally
+unredacted so you can practice on a duplicate.
+
+## Ask the agent to prepare a review copy
+
+Give the agent the working folder and this task:
+
+```text
+Use Cua Driver to prepare a local review copy of willowfen-vendor-proof-SOURCE.pdf
+in Preview. Preserve the original. Duplicate it before editing, and confirm that
+the active document is the copy before applying any irreversible redaction.
+
+Use Preview's actual Redact tool to remove the complete line below each marker:
+- Page 1, R1: Supplier cost.
+- Page 1, R2: Internal reference.
+- Page 2, R3: Supplier contact.
+- Page 2, R4: Internal contingency.
+The R1-R4 markers may remain. Do not substitute shapes or highlights for Redact.
+If Redact is unavailable, stop and report the limitation.
+
+Keep the title, date, time, location, participant count, public fee, materials,
+booking address, schedule, access notes, and complete room diagram. Add REVIEW
+COPY in page 1's outlined annotation area without covering other text. Save as
+willowfen-vendor-proof-REVIEW.pdf, then close and reopen it in Preview.
+
+In LibreOffice Writer, create a one-page handoff with the workshop title,
+review-only status, source and review filenames, the four removed categories
+without their values, retained public facts, page count, and verification results.
+Save willowfen-release-handoff.odt and export willowfen-release-handoff.pdf.
+
+Inspect both review PDF pages and the handoff PDF in Preview. Report the files
+and the checks that passed. If extraction has not been checked, state that it
+remains unverified. Keep all outputs local; do not send or publish them.
+```
+
+## Verify removal and the handoff
+
+Check the saved PDF itself before treating the review copy as complete:
+
+1. Compare the original file's hash before and after the task to confirm that the
+   source is unchanged. Confirm that the review PDF still has two A4 pages.
+2. Reopen the review PDF in Preview and inspect both pages at readable zoom. The
+   four complete target lines must be absent, while the public facts, room diagram,
+   and `REVIEW COPY` annotation remain legible.
+3. Extract text from the saved review PDF with a PDF inspection tool, such as
+   Poppler's `pdftotext`. Search for each original target line and its value from
+   the source. Any remaining target text is a failed redaction check.
+4. Inspect the handoff ODT and PDF. Confirm one page, correct filenames, and the
+   four removed categories without their values. Record unperformed or failed
+   checks accurately.
+
+Text extraction is one check, not proof by itself: image content can remain
+visible without appearing in extracted text. A black rectangle can also hide
+text while leaving it recoverable. Use actual redaction, inspect rendered pages,
+and check extraction together. For documents beyond this synthetic exercise,
+also inspect metadata, annotations, and attachments for information that should
+not be shared.
+
+## Related workflows
+
+- [Build a report in a native app](/how-to-guides/recipes/build-a-report-in-a-native-app)
+- [Prepare an exhibition panel](/how-to-guides/recipes/prepare-an-exhibition-panel)
+- [Drive your first app](/tutorials/drive-your-first-app)

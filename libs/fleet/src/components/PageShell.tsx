@@ -10,6 +10,7 @@ export interface PageShellProps {
   actions?: ReactNode
   secondaryActions?: ReactNode
   primaryAction?: ReactNode
+  className?: string
   children: ReactNode
 }
 
@@ -21,10 +22,12 @@ export function PageShell({
   actions,
   secondaryActions,
   primaryAction,
+  className,
   children,
 }: PageShellProps) {
   return (
     <ContentLayout
+      className={className}
       disableOverlap
       header={
         <div className="cua-pagehead">

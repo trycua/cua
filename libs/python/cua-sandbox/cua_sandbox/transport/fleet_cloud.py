@@ -337,6 +337,72 @@ class _FleetClient:
     ) -> Any:
         return await self._client.service_request(sandbox, service, path, request)
 
+    async def create_signed_service_url(
+        self,
+        sandbox: Any,
+        service: str,
+        *,
+        label: str | None,
+        expires_in_seconds: int,
+    ) -> Any:
+        try:
+            from fleet_sdk import CreateSignedServiceUrlRequestBuilder
+        except ImportError as error:
+            raise RuntimeError(
+                "Signed service URLs require a cua-fleet release with signed URL support"
+            ) from error
+
+        builder = (
+            CreateSignedServiceUrlRequestBuilder()
+            .sandbox(sandbox)
+            .service(service)
+            .expires_in_seconds(expires_in_seconds)
+        )
+        if label is not None:
+            builder = builder.label(label)
+        method = getattr(self._client, "create_signed_service_url", None)
+        if method is None:
+            raise RuntimeError(
+                "Signed service URLs require a cua-fleet release with signed URL support"
+            )
+        return await method(builder.build())
+
+    async def list_signed_service_urls(self, sandbox: Any) -> list[Any]:
+        method = getattr(self._client, "list_signed_service_urls", None)
+        if method is None:
+            raise RuntimeError(
+                "Signed service URLs require a cua-fleet release with signed URL support"
+            )
+        return await method(sandbox)
+
+    async def revoke_signed_service_url(self, signed_service_url: Any) -> None:
+        try:
+            from fleet_sdk import SignedServiceUrl
+        except ImportError as error:
+            raise RuntimeError(
+                "Signed service URLs require a cua-fleet release with signed URL support"
+            ) from error
+
+        method = getattr(self._client, "revoke_signed_service_url", None)
+        if method is None:
+            raise RuntimeError(
+                "Signed service URLs require a cua-fleet release with signed URL support"
+            )
+        await method(
+            SignedServiceUrl(
+                id=signed_service_url.id,
+                namespace=signed_service_url.namespace,
+                claim=signed_service_url.claim,
+                sandbox=signed_service_url.sandbox,
+                service=signed_service_url.service,
+                label=signed_service_url.label,
+                url=signed_service_url.url,
+                created_at=signed_service_url.created_at,
+                expires_at=signed_service_url.expires_at,
+                revoked_at=signed_service_url.revoked_at,
+            )
+        )
+
     async def get_pool(self, name: str) -> Any:
         return await self._client.get_pool(name)
 

@@ -31,7 +31,23 @@ pnpm docs:check:cua-driver
 pnpm docs:check:lume
 ```
 
-`pnpm docs:check` is the explicit full Cua Driver and Lume audit.
+`pnpm docs:generate:cua-driver` regenerates the shared CLI reference and only the
+host's native reference: `mcp-tools-linux.mdx` on Linux, `mcp-tools.mdx` on macOS,
+and `mcp-tools-windows.mdx` on Windows. The existing macOS URL and anchors are preserved.
+The corresponding check compares those same two files without writing them.
+Shared guidance stays in the hand-maintained `mcp-tool-notes.mdx`. Use the native
+reference for the machine running the driver, not the agent's machine.
+The generator omits `CUA_DRIVER_POLICY_FILE` and `CUA_DRIVER_MANAGED_POLICY_FILE`
+only from its finite `dump-docs` child process so the reference includes every
+registered native tool. It does not change policy files, the parent environment,
+normal tool discovery, or action authorization.
+
+Native generation requires Rust and the component's native build dependencies.
+Lume generation and checking require macOS. `pnpm docs:check` remains the
+explicit full Cua Driver and Lume audit, not a portable curated-page check.
+On Windows, install the Rust MSVC toolchain and Visual Studio C++ Build Tools
+with a Windows SDK and MSVC Spectre-mitigated libraries. These commands work from PowerShell or Command Prompt;
+Git Bash is not required.
 
 ## Docs conventions
 

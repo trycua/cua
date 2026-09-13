@@ -6,10 +6,7 @@
 // @ts-nocheck
 
 // Structs and function types for calling back into Typescript from Rust.
-export type UniffiRustFutureContinuationCallback = (
-  data: bigint,
-  pollResult: number,
-) => void;
+export type UniffiRustFutureContinuationCallback = (data: bigint, pollResult: number) => void;
 export type UniffiForeignFutureDroppedCallback = (handle: bigint) => void;
 export type UniffiForeignFutureDroppedCallbackStruct = {
   handle: bigint;

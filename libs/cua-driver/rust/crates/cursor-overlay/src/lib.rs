@@ -390,9 +390,52 @@ pub fn track_pointer_command(x: f64, y: f64) -> OverlayCommand {
     }
 }
 
+/// Balance one cursor's visual press even if its action future is dropped.
+///
+/// The adapter binds `send` to its own cursor. This only resets artwork; it
+/// does not release native input, cancel a worker, or prove gesture cleanup.
+#[must_use = "keep the guard alive for the visual press interval"]
+pub struct PressedVisualGuard<F: Fn(OverlayCommand)> {
+    send: F,
+}
+
+impl<F: Fn(OverlayCommand)> PressedVisualGuard<F> {
+    pub fn new(send: F) -> Self {
+        send(OverlayCommand::SetPressed(true));
+        Self { send }
+    }
+}
+
+impl<F: Fn(OverlayCommand)> Drop for PressedVisualGuard<F> {
+    fn drop(&mut self) {
+        (self.send)(OverlayCommand::SetPressed(false));
+    }
+}
+
 #[cfg(test)]
 mod pointer_tracking_tests {
     use super::*;
+
+    #[test]
+    fn visual_press_guard_releases_only_its_bound_cursor() {
+        use std::cell::Cell;
+        let first = Cell::new(false);
+        let sibling = Cell::new(false);
+        let send = |state: &Cell<bool>, command| {
+            let OverlayCommand::SetPressed(pressed) = command else {
+                panic!("visual press guard must only change pressed artwork");
+            };
+            state.set(pressed);
+        };
+        let first_guard = PressedVisualGuard::new(|command| send(&first, command));
+        let sibling_guard = PressedVisualGuard::new(|command| send(&sibling, command));
+        assert!(first.get() && sibling.get());
+        drop(first_guard);
+        assert!(!first.get());
+        assert!(sibling.get());
+        drop(sibling_guard);
+        assert!(!sibling.get());
+    }
 
     #[test]
     fn tracked_artwork_keeps_its_tip_on_the_native_pointer() {
@@ -406,5 +449,23 @@ mod pointer_tracking_tests {
         };
         assert!((x - (120.0 + heading.cos() * 16.0)).abs() < f64::EPSILON);
         assert!((y - (80.0 + heading.sin() * 16.0)).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn session_cleanup_removes_named_cursor_but_preserves_anonymous_default() {
+        let registry = CursorRegistry::new();
+        registry.update_position("session-a", 12.0, 34.0);
+        registry.update_position("default", 56.0, 78.0);
+
+        registry.remove("session-a");
+        registry.remove("default");
+
+        assert!(registry.get("session-a").is_none());
+        assert_eq!(
+            registry
+                .get("default")
+                .and_then(|cursor| cursor.x.zip(cursor.y)),
+            Some((56.0, 78.0))
+        );
     }
 }

@@ -57,12 +57,22 @@ const config = {
       },
       {
         source: '/tutorials/your-first-cloud-sandbox',
-        destination: '/tutorials/your-first-local-sandbox',
+        destination: '/tutorials/your-first-cloud-fleet',
+        permanent: true,
+      },
+      {
+        source: '/tutorials/your-first-local-sandbox',
+        destination: '/tutorials/your-first-cloud-fleet',
         permanent: true,
       },
       {
         source: '/how-to-guides/sandbox/snapshots',
         destination: '/how-to-guides/sandbox/images',
+        permanent: true,
+      },
+      {
+        source: '/how-to-guides/sandbox/lifecycle',
+        destination: '/concepts/sandbox-lifecycle',
         permanent: true,
       },
       {
@@ -73,6 +83,16 @@ const config = {
       {
         source: '/how-to-guides/(fleets)/configure-run-cua-fleets',
         destination: '/how-to-guides/sandbox/configure-pool-with-terraform',
+        permanent: true,
+      },
+      {
+        source: '/how-to-guides/sandbox/create-pool-with-python',
+        destination: '/how-to-guides/sandbox/create-fleet-capacity',
+        permanent: true,
+      },
+      {
+        source: '/how-to-guides/sandbox/create-pool-with-typescript',
+        destination: '/how-to-guides/sandbox/create-fleet-capacity',
         permanent: true,
       },
       {

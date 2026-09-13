@@ -638,3 +638,30 @@ def test_pr_2805_coauthor_resolves_through_trusted_identity_override():
     ]
     assert issues == []
     assert visual_requested is False
+
+
+def test_pr_3266_squash_coauthor_resolves_through_verified_identity_override():
+    config = json.loads((REPO_ROOT / ".github/release-attribution-config.json").read_text())
+    commit = CommitRecord(
+        "2fd8bfc6dd5d7d67d00a4151c1159e665abb9ef0",
+        "test(cua-driver): seed macOS Lume TCC grants (#3266)",
+        "Co-authored-by: jf-mac-mini <jf-mac-mini@jf-mac-mini-4.local>",
+    )
+    pull = {
+        "user": {"login": "0xjohnnydev"},
+        "author_association": "CONTRIBUTOR",
+        "body": "",
+        "labels": [],
+    }
+
+    contributors, _, _ = _change_contributors(
+        pull,
+        commit,
+        FakeGitHub(commit.sha),
+        "trycua/cua",
+        config,
+    )
+    assert contributors == [
+        {"login": "0xjohnnydev", "role": "author", "external": True},
+        {"login": "0xjohnnydev", "role": "coauthor", "external": True},
+    ]

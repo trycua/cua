@@ -73,20 +73,64 @@ pub(crate) fn main_screen_size() -> Option<(i64, i64, f64)> {
         return None;
     }
 
-    let scale = get_backing_scale(display_id, w);
+    let scale = get_backing_scale(display_id);
     Some((w, h, scale))
 }
 
-/// Estimate backing scale by comparing the display's pixel mode width to its
-/// logical (CoreGraphics) bounds width.
-pub(crate) fn get_backing_scale(display_id: u32, logical_w: i64) -> f64 {
-    use core_graphics::display::CGDisplayPixelsWide;
-    let pixel_w = unsafe { CGDisplayPixelsWide(display_id) } as i64;
-    if pixel_w > 0 && logical_w > 0 {
-        let ratio = pixel_w as f64 / logical_w as f64;
-        // Round to nearest 0.5 to avoid floating point noise.
-        (ratio * 2.0).round() / 2.0
-    } else {
-        1.0
+/// Return the current display mode's backing-pixel to point ratio.
+pub(crate) fn get_backing_scale(display_id: u32) -> f64 {
+    use core_graphics::display::CGDisplay;
+
+    let Some(mode) = CGDisplay::new(display_id).display_mode() else {
+        return 1.0;
+    };
+    backing_scale_from_widths(mode.width(), mode.pixel_width())
+}
+
+fn backing_scale_from_widths(point_width: u64, pixel_width: u64) -> f64 {
+    if point_width == 0 || pixel_width == 0 {
+        return 1.0;
+    }
+    let ratio = pixel_width as f64 / point_width as f64;
+    // Round to nearest 0.5 to avoid floating point noise.
+    (ratio * 2.0).round() / 2.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core_graphics::display::CGDisplay;
+
+    #[test]
+    #[ignore = "requires an attached macOS display; run explicitly on a native Retina host"]
+    fn main_display_scale_matches_current_mode() {
+        let display = CGDisplay::main();
+        let mode = display
+            .display_mode()
+            .expect("main display should expose its current mode");
+        let point_width = mode.width();
+        let pixel_width = mode.pixel_width();
+        assert!(point_width > 0, "display mode should have a point width");
+        assert!(pixel_width > 0, "display mode should have a pixel width");
+        assert!(
+            pixel_width > point_width,
+            "native Retina validation requires more backing pixels than points; got {pixel_width}px for {point_width}pt"
+        );
+
+        let expected = ((pixel_width as f64 / point_width as f64) * 2.0).round() / 2.0;
+        let actual = get_backing_scale(display.id);
+
+        assert_eq!(
+            actual, expected,
+            "backing scale should use the current mode's pixel and point widths"
+        );
+    }
+
+    #[test]
+    fn display_mode_widths_preserve_rounding_and_fallbacks() {
+        assert_eq!(backing_scale_from_widths(1920, 3840), 2.0);
+        assert_eq!(backing_scale_from_widths(1920, 2880), 1.5);
+        assert_eq!(backing_scale_from_widths(0, 3840), 1.0);
+        assert_eq!(backing_scale_from_widths(1920, 0), 1.0);
     }
 }

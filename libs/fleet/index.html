@@ -3,19 +3,87 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#000000" />
-    <style>html { background: #000000; }</style>
+    <meta name="theme-color" content="#07080a" />
+    <style>
+      html,
+      body {
+        min-height: 100%;
+        margin: 0;
+        background:
+          radial-gradient(ellipse 90% 70% at 6% 104%, #173249 0%, #111d2a 38%, #07080a 74%),
+          #07080a;
+      }
+
+      #cua-boot {
+        position: fixed;
+        z-index: 9999;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        box-sizing: border-box;
+        padding: 32px;
+        background:
+          radial-gradient(ellipse 90% 70% at 6% 104%, #173249 0%, #111d2a 38%, #07080a 74%),
+          #07080a;
+        color: #f6f8fb;
+        font-family: "Urbanist", -apple-system, BlinkMacSystemFont, sans-serif;
+      }
+
+      .cua-boot__content {
+        display: grid;
+        justify-items: center;
+        text-align: center;
+        opacity: 0;
+        visibility: hidden;
+        animation: cua-boot-reveal 0s linear 350ms forwards;
+      }
+
+      .cua-boot__mark {
+        width: 42px;
+        height: 42px;
+        margin-bottom: 24px;
+      }
+
+      .cua-boot__title {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 650;
+        letter-spacing: 0.01em;
+        line-height: 1.4;
+      }
+
+      .cua-boot__detail {
+        margin: 7px 0 0;
+        color: rgba(224, 230, 238, 0.68);
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
+      @keyframes cua-boot-reveal {
+        to {
+          opacity: 1;
+          visibility: visible;
+        }
+      }
+    </style>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" sizes="any" />
     <link rel="icon" href="/favicon.ico" sizes="32x32" />
     <link rel="icon" href="/favicon.png" type="image/png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <title>Pools</title>
+    <title>Cua</title>
   </head>
   <body>
     <!-- Runtime config injected by nginx envsubst (see nginx.conf
          /config.js block). Loaded before the bundle so AuthProvider can
          read window.__CYCLOPS_CS_CFG__ on first render. -->
     <script src="/config.js"></script>
+    <div id="cua-boot" role="status" aria-live="polite">
+      <div class="cua-boot__content">
+        <img class="cua-boot__mark" src="/favicon.svg" alt="" aria-hidden="true" />
+        <p class="cua-boot__title">Signing you in</p>
+        <p class="cua-boot__detail">Continuing to auth.cua.ai</p>
+      </div>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

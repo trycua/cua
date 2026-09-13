@@ -698,7 +698,8 @@ fn process_identity(pid: u32) -> Result<(u64, Option<String>), BrowserRefusal> {
     }
     .ok()
     .filter(|_| path_len > 0)
-    .map(|_| String::from_utf16_lossy(&path_buf[..path_len as usize]));
+    .map(|_| String::from_utf16_lossy(&path_buf[..path_len as usize]))
+    .map(canonical_process_executable);
     let _ = unsafe { CloseHandle(handle) };
     times.map_err(|error| {
         refusal(
@@ -708,6 +709,14 @@ fn process_identity(pid: u32) -> Result<(u64, Option<String>), BrowserRefusal> {
     })?;
     let started = (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime);
     Ok((started, path))
+}
+
+fn canonical_process_executable(path: String) -> String {
+    // Manifest executable grants use `canonicalize` too. Normalize the Windows
+    // process evidence at collection time so shared authorization stays exact.
+    std::fs::canonicalize(&path)
+        .map(|canonical| canonical.to_string_lossy().into_owned())
+        .unwrap_or(path)
 }
 
 fn cdp_comparable_window_bounds(window_id: u64) -> Result<Rect, BrowserRefusal> {
@@ -1953,6 +1962,31 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         })?
     }
 
+    fn cleanup_existing_profile_setup(
+        &self,
+        request: ExistingProfileSetupRequest,
+    ) -> Result<bool, BrowserRefusal> {
+        let descriptor = existing_profile_setup_descriptor(request.browser).ok_or_else(|| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!(
+                    "existing-profile cleanup is not implemented for {:?}",
+                    request.browser
+                ),
+            )
+        })?;
+        let pid = u32::try_from(request.pid).map_err(|_| {
+            refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the approved browser pid is outside the Windows process-id range",
+            )
+        })?;
+        let dismissed_before = crate::browser_consent_ui::dismiss(pid, request.window_id)?;
+        let closed_setup_page = crate::browser_setup_ui::disable(request.window_id, descriptor)?;
+        let dismissed_after = crate::browser_consent_ui::dismiss(pid, request.window_id)?;
+        Ok(dismissed_before || closed_setup_page || dismissed_after)
+    }
+
     async fn abort_existing_profile_setup(
         &self,
         request: ExistingProfileSetupRequest,
@@ -2030,6 +2064,55 @@ impl BrowserPlatform for WindowsBrowserPlatform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn process_fingerprint_uses_manifest_canonical_executable_path() {
+        let (_started, executable) =
+            process_identity(std::process::id()).expect("current process fingerprint");
+        let expected = std::fs::canonicalize(std::env::current_exe().expect("current executable"))
+            .expect("canonical current executable")
+            .to_string_lossy()
+            .into_owned();
+
+        assert_eq!(executable.as_deref(), Some(expected.as_str()));
+    }
+
+    #[tokio::test]
+    async fn live_executable_grant_matches_without_installed_app_identity() {
+        use cua_driver_core::session_manifest::load_manifest;
+        use std::io::Write;
+
+        let pid = i64::from(std::process::id());
+        let fingerprint = WindowsBrowserPlatform::default()
+            .process_fingerprint(pid)
+            .await
+            .expect("live Windows process identity");
+        let directory = tempfile::tempdir().unwrap();
+        for (executable, allowed) in [
+            (std::env::current_exe().unwrap(), true),
+            (directory.path().join("ungranted-application.exe"), false),
+        ] {
+            let mut file = tempfile::NamedTempFile::new().unwrap();
+            write!(file, "version: 3\nallow:\n  tools: [get_window_state, click]\nresources:\n  apps:\n    - executable: {}\n      windows: all\n",
+                serde_json::to_string(&executable).unwrap()).unwrap();
+            let manifest = load_manifest(file.path()).unwrap();
+            for (adapter, kind) in [
+                ("private_observation", "window"),
+                ("desktop_input", "window_input"),
+            ] {
+                let resource = serde_json::json!({
+                    "kind": kind,
+                    "pid": pid,
+                    "window_id": 7,
+                    "fingerprint": fingerprint,
+                    "bundle_id": null,
+                    "launch_path": null,
+                });
+                assert_eq!(manifest.authorize_protected_resource(adapter, &resource).is_ok(), allowed,
+                    "{adapter} must use the live executable fingerprint even without an installed-app match");
+            }
+        }
+    }
 
     #[test]
     fn isolated_browser_candidates_are_vendor_attested_protected_installs() {

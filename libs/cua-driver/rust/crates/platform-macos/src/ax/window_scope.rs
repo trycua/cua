@@ -100,10 +100,6 @@ pub struct ScopeDecision {
 }
 
 impl ScopeDecision {
-    /// Index of the requested window itself among the walked candidates.
-    ///
-    /// `None` for every non-`Matched` scope, so a refused window never has
-    /// per-window attributes read off some other top-level element.
     pub fn requested_window_index(
         &self,
         candidates: &[TopLevelCandidate],

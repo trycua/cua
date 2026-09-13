@@ -76,8 +76,6 @@ impl Harness {
         Self::launch_with_options(command_oracle, pointer_oracle, false, None)
     }
 
-    /// Launch with `document_path` as the window's represented file, which also
-    /// enables the `cua-document-edited-{on,off}` value commands on txt-input.
     fn launch_with_document(document_path: &Path) -> Self {
         Self::launch_with_options(None, None, false, Some(document_path))
     }
@@ -207,9 +205,7 @@ fn run_case(
     });
 }
 
-/// Document-window variant: AX reads and AX value writes only, so it runs
-/// against the source-built driver instead of the installed daemon.
-fn run_document_case(
+fn run_document_case_on_source_built_driver(
     case: cua_driver_testkit::e2e::CaseSpec,
     document_path: &Path,
     test: impl FnOnce(u32, u64, &mut McpDriver) -> Observation,
@@ -584,9 +580,6 @@ fn harness_appkit_smoke() {
     );
 }
 
-/// document: the represented file arrives percent-decoded, the dirty bit
-/// follows the app through false -> true -> false, and a snapshot taken
-/// without the accessibility tree carries neither key.
 #[test]
 #[ignore]
 fn harness_appkit_document_state_follows_the_window() {
@@ -594,7 +587,7 @@ fn harness_appkit_document_state_follows_the_window() {
     let document = directory.path().join("My Notes.txt");
     std::fs::write(&document, "harness document\n").expect("write document fixture");
 
-    run_document_case(
+    run_document_case_on_source_built_driver(
         native_readonly_case(
             "appkit",
             "document_state",
@@ -646,8 +639,6 @@ fn harness_appkit_document_state_follows_the_window() {
     );
 }
 
-/// Drive the fixture's dirty flag through an AX value write, which needs no
-/// window activation.
 fn set_document_edited(driver: &mut McpDriver, pid: u32, wid: u64, edited: bool) {
     let snapshot = snapshot_elements(driver, pid, wid);
     let index = element_index_by_id(snapshot.tree_text(), "txt-input")

@@ -607,6 +607,36 @@ def test_retry_attempts_default_to_one() -> None:
     assert fields["attempts"] == "1"
 
 
+def test_appkit_single_cell_is_routed_to_the_native_lane() -> None:
+    fields = _parse(
+        ["--retry-cell", "macos-appkit-ax-tree-ax-not-applicable", "--retry-only"]
+    )
+    assert fields["status"] == "0"
+    assert fields["harness"] == "appkit"
+    assert fields["lane"] == "native"
+    assert fields["attempts"] == "1"
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--retry-cell", "macos-appkit-ax-tree-ax-not-applicable"],
+        [
+            "--retry-cell", "macos-appkit-ax-tree-ax-not-applicable",
+            "--retry-only", "--retry-harness", "swiftui",
+        ],
+        [
+            "--retry-cell", "macos-swiftui-left-click-ax-background",
+            "--retry-only", "--retry-harness", "appkit",
+        ],
+    ],
+)
+def test_appkit_selection_cannot_change_harness_or_retry_a_full_matrix(
+    args: list[str],
+) -> None:
+    assert _parse(args)["status"] == "2"
+
+
 def test_swiftui_retry_is_routed_to_the_native_lane() -> None:
     fields = _parse(
         [
@@ -639,6 +669,67 @@ def test_swiftui_retry_is_routed_to_the_native_lane() -> None:
 )
 def test_swiftui_retry_cell_and_harness_must_agree(args: list[str]) -> None:
     assert _parse(args)["status"] == "2"
+
+
+@pytest.mark.parametrize(
+    ("cell", "test_name"),
+    [
+        ("macos-appkit-ax-tree-ax-not-applicable", "harness_appkit_smoke"),
+        (
+            "macos-appkit-snapshot-publication-ax-foreground",
+            "snapshot_publication::harness_appkit_pending_snapshot_cannot_retarget_token",
+        ),
+    ],
+)
+def test_appkit_selection_invokes_only_the_exact_native_test(
+    tmp_path: Path, cell: str, test_name: str
+) -> None:
+    cargo = tmp_path / "bin/cargo"
+    commands = tmp_path / "commands.txt"
+    _write_executable(cargo, 'printf "%s\\n" "$*" >> "$CUA_TEST_NATIVE_COMMANDS"\n')
+    completed = _run(
+        RUN_RUST_E2E,
+        'ARTIFACT_DIR="$CUA_TEST_ARTIFACTS"\nNATIVE_FILTER_MATCHES=0\nrun_appkit_cells\n',
+        env={
+            "PATH": f"{cargo.parent}:{os.environ['PATH']}",
+            "CUA_TEST_NATIVE_COMMANDS": str(commands),
+            "CUA_TEST_ARTIFACTS": str(tmp_path),
+            "CUA_E2E_HARNESS_FILTER": "appkit",
+            "CUA_E2E_CELL_FILTER": cell,
+        },
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert commands.read_text().splitlines() == [
+        f"test -p cua-driver --test harness_appkit_test -- --ignored --exact {test_name} "
+        "--nocapture --test-threads=1"
+    ]
+
+
+@pytest.mark.parametrize(
+    "harness,cell,expected_count",
+    [("", "", 22), ("appkit", "unknown-cell", 0), ("swiftui", "", 0)],
+)
+def test_appkit_dispatch_preserves_full_scope_and_never_falls_back_on_no_match(
+    tmp_path: Path, harness: str, cell: str, expected_count: int
+) -> None:
+    cargo = tmp_path / "bin/cargo"
+    commands = tmp_path / "commands.txt"
+    _write_executable(cargo, 'printf "%s\\n" "$*" >> "$CUA_TEST_NATIVE_COMMANDS"\n')
+    completed = _run(
+        RUN_RUST_E2E,
+        'ARTIFACT_DIR="$CUA_TEST_ARTIFACTS"\nNATIVE_FILTER_MATCHES=0\nrun_appkit_cells\n',
+        env={
+            "PATH": f"{cargo.parent}:{os.environ['PATH']}",
+            "CUA_TEST_NATIVE_COMMANDS": str(commands),
+            "CUA_TEST_ARTIFACTS": str(tmp_path),
+            "CUA_E2E_HARNESS_FILTER": harness,
+            "CUA_E2E_CELL_FILTER": cell,
+        },
+    )
+    assert completed.returncode == 0, completed.stderr
+    calls = commands.read_text().splitlines() if commands.exists() else []
+    assert len(calls) == expected_count
+    assert len(set(calls)) == expected_count
 
 
 def test_native_swiftui_selector_matches_exactly_one_owned_cell() -> None:

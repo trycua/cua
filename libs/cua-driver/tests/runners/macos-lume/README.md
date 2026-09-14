@@ -477,8 +477,9 @@ After a failing full matrix the runner retries only when all of these hold:
 Otherwise it prints why the retry was refused and exits with the matrix's
 failure. Shared web-action cells and the five typed SwiftUI cells are retryable.
 The runner routes a `macos-swiftui-*` selection to the native lane and invokes
-only the test that owns that exact cell. Reproduce other native, capture, or
-embedded-browser failures with a full rerun.
+only the test that owns that exact cell. AppKit supports the explicit single-cell
+mode below, not automatic retries after a full-matrix failure. Reproduce other
+native, capture, or embedded-browser failures with a full rerun.
 
 To rerun just that cell later in the same booted worker after the first run
 already restored standard mode, use `--retry-only`. It reinstalls the exact
@@ -547,6 +548,29 @@ domain in which to start the daemon. The runner records
 place so macOS loads it in standard mode at the next GUI login. This is the only
 deferred restoration case; a live GUI session that cannot return to standard
 mode still fails the run.
+
+## Focused AppKit development
+
+For a native red/green iteration, run one registered AppKit cell from the same
+logged-in guest Terminal and with the same signing prerequisites:
+
+```bash
+libs/cua-driver/tests/runners/macos-lume/run-all.sh \
+  --retry-cell macos-appkit-ax-tree-ax-not-applicable \
+  --retry-harness appkit --retry-only --retry-attempts 1
+```
+
+The single-attempt invocation preserves exact-source installation, unrestricted
+daemon preflight, native oracles, evidence validation, and standard-daemon
+restoration. It is focused evidence, not full-matrix certification. A failure
+remains a failure; this command does not automatically retry it.
+
+`scripts/ci/macos/appkit-cells.tsv` maps each AppKit cell ID to its exact Rust test
+name, separated by a tab. The full native lane and single-cell selection consume
+the same list. Add a row there when registering a new AppKit case. Unknown cells
+or an incorrect harness cannot fall back to running the full suite. AppKit
+selection requires `--retry-only`; full-matrix automatic retry eligibility is
+unchanged.
 
 ## Test the runner itself
 

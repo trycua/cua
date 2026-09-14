@@ -102,6 +102,7 @@ fn harness_appkit_native_geometry_mismatch_refuses_pixel_without_side_effects() 
         let toggle = driver.call(
             "click",
             serde_json::json!({
+                "pid": harness.pid, "window_id": wid,
                 "element_token": element_token_by_id(&before_toggle, "geometry-mismatch")
             }),
         );
@@ -152,6 +153,7 @@ fn harness_appkit_native_geometry_mismatch_refuses_pixel_without_side_effects() 
             let increment = driver.call(
                 "click",
                 serde_json::json!({
+                    "pid": harness.pid, "window_id": wid,
                     "element_token": element_token_by_id(&snapshot, "geometry-increment")
                 }),
             );

@@ -138,6 +138,15 @@ impl Tool for DoubleClickTool {
 
             // Thread the resolved session cursor key into the blocking AX path
             // so its ClickPulse lands on THIS session's cursor, not "default".
+            // The AX path paints no glide of its own: hide the cursor up front
+            // for background delivery to an off-Space target so the pulse does
+            // not float over the foreground app (issue #3801).
+            if cua_driver_core::cursor_visibility::suppress_agent_cursor_for_background_target(
+                !delivery_mode.is_foreground(),
+                crate::cursor::overlay::target_on_current_space(wid),
+            ) {
+                crate::cursor::overlay::set_cursor_background_hidden(&cursor_key, true);
+            }
             let ck = cursor_key.clone();
             let result = tokio::task::spawn_blocking(move || {
                 ax_double_click(
@@ -227,15 +236,16 @@ impl Tool for DoubleClickTool {
             None
         };
 
-        // Pin overlay above the target window before animating.
-        if let Some(wid) = window_id {
-            crate::cursor::overlay::send_command(
-                cursor_key.clone(),
-                cursor_overlay::OverlayCommand::PinAbove(wid as u64),
-            );
-        }
-        // Animate cursor to the click point; wait for arrival before firing.
-        crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), screen_x, screen_y).await;
+        // Pin overlay above the target window before animating — hidden
+        // instead for background delivery to an off-Space target (issue #3801).
+        crate::cursor::overlay::pin_and_animate_window_action(
+            cursor_key.clone(),
+            window_id,
+            !delivery_mode.is_foreground(),
+            screen_x,
+            screen_y,
+        )
+        .await;
         crate::cursor::overlay::send_command(
             cursor_key.clone(),
             cursor_overlay::OverlayCommand::ClickPulse {

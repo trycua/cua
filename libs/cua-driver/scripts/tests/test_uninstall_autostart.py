@@ -19,9 +19,12 @@ def _write_executable(path: Path, body: str) -> None:
 def _sandbox(tmp_path: Path, os_name: str) -> tuple[Path, Path, dict[str, str]]:
     home = tmp_path / "home"
     fake_bin = tmp_path / "bin"
+    host_bin = tmp_path / "host-bin"
     calls = tmp_path / "calls.log"
     home.mkdir()
     fake_bin.mkdir()
+    host_bin.mkdir()
+    _write_executable(host_bin / "pgrep", "exit 2\n")
 
     _write_executable(fake_bin / "uname", f"printf '%s\\n' '{os_name}'\n")
     for command in ("launchctl", "systemctl", "tccutil", "sudo"):
@@ -57,7 +60,7 @@ done
     env.update(
         {
             "HOME": str(home),
-            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "PATH": f"{fake_bin}:{host_bin}:/usr/bin:/bin",
         }
     )
     env.pop("CUA_DRIVER_HOME", None)
@@ -67,7 +70,7 @@ done
 
 def _run_uninstall(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(
-        ["/bin/bash", str(UNINSTALL)],
+        ["/bin/bash", str(UNINSTALL), "--keep-tcc"],
         cwd=REPO_ROOT,
         env=env,
         text=True,

@@ -755,7 +755,8 @@ async fn collect_visited_bounded<'a>(
     };
 
     let mut stack: Vec<(RawObjectRef, usize, bool, usize)> = seeds
-        .into_iter()
+        .iter()
+        .cloned()
         .enumerate()
         .map(|(ordinal, r)| (r, 0usize, false, ordinal))
         .rev()

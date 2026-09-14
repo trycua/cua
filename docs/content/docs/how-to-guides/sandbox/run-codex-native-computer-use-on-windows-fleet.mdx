@@ -299,6 +299,8 @@ Install the official native plugin:
 
 ```powershell
 & $Codex plugin add computer-use@openai-bundled --json
+```
+
 The desktop app generated a configuration containing:
 
 ```toml
@@ -464,9 +466,6 @@ Our gateway run omitted a requested trailing period. The UI interaction worked, 
 Known warnings: the gateway’s OpenAI-style /models response produced a nonfatal “missing field models” warning in this CLI version. Explicit model selection still worked.
 
 Fleet cleanup: release the claim when finished and disable/delete unused warm capacity. Do not leave a warm pool replenishing VMs after the test.
-
-
-```
 
 ## 4. Reach the desktop service
 

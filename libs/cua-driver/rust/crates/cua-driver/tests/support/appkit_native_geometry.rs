@@ -185,6 +185,31 @@ fn harness_appkit_native_geometry_mismatch_refuses_pixel_without_side_effects() 
             );
             assert_eq!(response.action_effect(), Some("refused"));
             assert_eq!(response.action_delivery_mode(), None);
+            let scroll = driver.call(
+                "scroll",
+                serde_json::json!({
+                    "pid": harness.pid, "window_id": wid,
+                    "element_token": element_token_by_id(&snapshot, "geometry-increment"),
+                    "direction": "down", "amount": 1
+                }),
+            );
+            save_response(&directory, "scroll-refusal.json", &scroll);
+            assert_eq!(
+                scroll.structured()["code"],
+                "native_window_geometry_mismatch"
+            );
+            assert_eq!(scroll.action_effect(), Some("refused"));
+            assert_eq!(scroll.action_delivery_mode(), None);
+            let after_scroll = fixture_state(&directory, |state| state["counter"] == 1);
+            std::fs::write(
+                directory.join("after-scroll.json"),
+                serde_json::to_vec_pretty(&after_scroll).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                after_scroll["reveals"], 0,
+                "refused wheel fallback revealed its element"
+            );
             std::thread::sleep(Duration::from_millis(750));
             response
         })

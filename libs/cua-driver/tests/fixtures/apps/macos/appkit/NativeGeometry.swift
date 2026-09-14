@@ -32,11 +32,28 @@ final class NativeGeometryWindow: NSWindow {
     }
 }
 
+final class NativeGeometryButton: NSButton {
+    var onReveal: (() -> Void)?
+
+    override func accessibilityActionNames() -> [NSAccessibility.Action] {
+        super.accessibilityActionNames() + [NSAccessibility.Action(rawValue: "AXScrollToVisible")]
+    }
+
+    override func accessibilityPerformAction(_ action: NSAccessibility.Action) {
+        if action.rawValue == "AXScrollToVisible" {
+            onReveal?()
+        } else {
+            super.accessibilityPerformAction(action)
+        }
+    }
+}
+
 final class NativeGeometryFixture: NSObject {
     let window: NativeGeometryWindow
     private let directory: URL
     private let counterLabel = NSTextField(labelWithString: "geometry_count=0")
     private var counter = 0
+    private var reveals = 0
 
     init(directory: URL) {
         self.directory = directory
@@ -51,7 +68,12 @@ final class NativeGeometryFixture: NSObject {
         window.setFrameAutosaveName("")
         window.setAccessibilityIdentifier("geometry-window")
         let content = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 240))
-        let increment = NSButton(title: "Increment", target: self, action: #selector(increment))
+        let increment = NativeGeometryButton(title: "Increment", target: self, action: #selector(increment))
+        increment.onReveal = { [weak self] in
+            guard let self else { return }
+            self.reveals += 1
+            self.publish()
+        }
         increment.frame = NSRect(x: 20, y: 170, width: 160, height: 36)
         increment.setAccessibilityIdentifier("geometry-increment")
         content.addSubview(increment)
@@ -92,6 +114,7 @@ final class NativeGeometryFixture: NSObject {
                 "reported_width": window.accessibilityFrame().width,
                 "mismatched": window.reportsMismatch,
                 "counter": counter,
+                "reveals": reveals,
                 "input_events": window.inputEvents
             ], options: [.sortedKeys])
             try data.write(to: directory.appendingPathComponent("state.json"), options: .atomic)

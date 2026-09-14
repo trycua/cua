@@ -249,9 +249,9 @@ pub struct ActionExecutionRecord {
     pub escalation: Option<ActionEscalation>,
     pub delivered_count: Option<u32>,
     pub detail: Option<String>,
-    /// Value-setting actions only: whether the app's own editing pipeline
-    /// accepted the written value.
-    pub committed: Option<bool>,
+    /// Value-setting actions only: what was observed of the app's own
+    /// end-of-edit for the written value.
+    pub committed: Option<cua_driver_contract::ActionCommit>,
 }
 
 impl ActionExecutionRecord {
@@ -462,7 +462,8 @@ impl ActionExecutionRecord {
             .and_then(|count| u32::try_from(count).ok());
         record.committed = structured
             .get("committed")
-            .and_then(serde_json::Value::as_bool);
+            .and_then(serde_json::Value::as_str)
+            .and_then(cua_driver_contract::ActionCommit::from_wire);
 
         if legacy_has_publishable_readback(tool_name, structured) {
             record.evidence.push(ActionEvidence {
@@ -1545,6 +1546,43 @@ mod tests {
         assert!(!rendered.contains("\"window_id\""));
         assert!(!rendered.contains("\"x\""));
         assert!(!rendered.contains("\"y\""));
+    }
+
+    /// The verdict is the only signal a caller has for "did the app take the
+    /// value", so it has to reach the public result unchanged — and a stale
+    /// boolean spelling must not be read as a claim.
+    #[test]
+    fn legacy_commit_verdict_reaches_the_public_result() {
+        use cua_driver_contract::ActionCommit;
+        let args = serde_json::json!({ "pid": 42, "window_id": 77 });
+        for (raw, expected) in [
+            (
+                serde_json::json!("committed"),
+                Some(ActionCommit::Committed),
+            ),
+            (
+                serde_json::json!("not_committed"),
+                Some(ActionCommit::NotCommitted),
+            ),
+            (serde_json::json!("unproven"), Some(ActionCommit::Unproven)),
+            (serde_json::json!(true), None),
+            (serde_json::json!("yes"), None),
+        ] {
+            let structured = serde_json::json!({
+                "path": "key_events",
+                "verified": true,
+                "verify": "confirmed",
+                "effect": "confirmed",
+                "committed": raw,
+            });
+            let record = ActionExecutionRecord::from_legacy("set_value", &args, &structured)
+                .expect("legacy set_value should normalize");
+            assert_eq!(record.committed, expected, "{structured}");
+            assert_eq!(
+                record.public_result().expect("public result").committed,
+                expected
+            );
+        }
     }
 
     #[test]

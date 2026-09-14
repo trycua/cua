@@ -1344,32 +1344,75 @@ class _UniffiFfiConverterOptionalTypeActionEscalation(_UniffiConverterRustBuffer
         else:
             raise InternalError("Unexpected flag byte for optional type")
 
-class _UniffiFfiConverterBoolean:
-    @classmethod
-    def check_lower(cls, value):
-        return not not value
 
-    @classmethod
-    def lower(cls, value):
-        return 1 if value else 0
+
+
+
+
+class ActionCommit(enum.Enum):
+    """
+    What the driver observed of the target application's own end-of-edit after
+    a value-setting action.
+"""
+
+    COMMITTED = 0
+    """
+    The edit session was observed to end with the written value in place.
+"""
+
+    NOT_COMMITTED = 1
+    """
+    The commit gesture could not be dispatched, or the application replaced
+    the written value at its end-of-edit.
+"""
+
+    UNPROVEN = 2
+    """
+    The value survived the gesture, but the only evidence is an
+    accessibility read-back. A control whose value is a binding target
+    echoes that read-back whether or not the application took the value.
+"""
+
+
+
+class _UniffiFfiConverterTypeActionCommit(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return ActionCommit.COMMITTED
+        if variant == 2:
+            return ActionCommit.NOT_COMMITTED
+        if variant == 3:
+            return ActionCommit.UNPROVEN
+        raise InternalError("Raw enum value doesn't match any cases")
 
     @staticmethod
-    def lift(value):
-        return value != 0
+    def check_lower(value):
+        if value == ActionCommit.COMMITTED:
+            return
+        if value == ActionCommit.NOT_COMMITTED:
+            return
+        if value == ActionCommit.UNPROVEN:
+            return
+        raise ValueError(value)
 
-    @classmethod
-    def read(cls, buf):
-        return cls.lift(buf.read_u8())
+    @staticmethod
+    def write(value, buf):
+        if value == ActionCommit.COMMITTED:
+            buf.write_i32(1)
+        if value == ActionCommit.NOT_COMMITTED:
+            buf.write_i32(2)
+        if value == ActionCommit.UNPROVEN:
+            buf.write_i32(3)
 
-    @classmethod
-    def write(cls, value, buf):
-        buf.write_u8(value)
 
-class _UniffiFfiConverterOptionalBoolean(_UniffiConverterRustBuffer):
+
+class _UniffiFfiConverterOptionalTypeActionCommit(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
         if value is not None:
-            _UniffiFfiConverterBoolean.check_lower(value)
+            _UniffiFfiConverterTypeActionCommit.check_lower(value)
 
     @classmethod
     def write(cls, value, buf):
@@ -1378,7 +1421,7 @@ class _UniffiFfiConverterOptionalBoolean(_UniffiConverterRustBuffer):
             return
 
         buf.write_u8(1)
-        _UniffiFfiConverterBoolean.write(value, buf)
+        _UniffiFfiConverterTypeActionCommit.write(value, buf)
 
     @classmethod
     def read(cls, buf):
@@ -1386,13 +1429,13 @@ class _UniffiFfiConverterOptionalBoolean(_UniffiConverterRustBuffer):
         if flag == 0:
             return None
         elif flag == 1:
-            return _UniffiFfiConverterBoolean.read(buf)
+            return _UniffiFfiConverterTypeActionCommit.read(buf)
         else:
             raise InternalError("Unexpected flag byte for optional type")
 
 @dataclass
 class ActionResult:
-    def __init__(self, *, effect:ActionEffect, route:ActionRoute, delivery:typing.Optional[ActionDelivery], evidence:typing.Optional[typing.List[ActionEvidence]], escalation:typing.Optional[ActionEscalation], committed:typing.Optional[bool]):
+    def __init__(self, *, effect:ActionEffect, route:ActionRoute, delivery:typing.Optional[ActionDelivery], evidence:typing.Optional[typing.List[ActionEvidence]], escalation:typing.Optional[ActionEscalation], committed:typing.Optional[ActionCommit]):
         self.effect = effect
         self.route = route
         self.delivery = delivery
@@ -1429,7 +1472,7 @@ class _UniffiFfiConverterTypeActionResult(_UniffiConverterRustBuffer):
             delivery=_UniffiFfiConverterOptionalTypeActionDelivery.read(buf),
             evidence=_UniffiFfiConverterOptionalSequenceTypeActionEvidence.read(buf),
             escalation=_UniffiFfiConverterOptionalTypeActionEscalation.read(buf),
-            committed=_UniffiFfiConverterOptionalBoolean.read(buf),
+            committed=_UniffiFfiConverterOptionalTypeActionCommit.read(buf),
         )
 
     @staticmethod
@@ -1439,7 +1482,7 @@ class _UniffiFfiConverterTypeActionResult(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalTypeActionDelivery.check_lower(value.delivery)
         _UniffiFfiConverterOptionalSequenceTypeActionEvidence.check_lower(value.evidence)
         _UniffiFfiConverterOptionalTypeActionEscalation.check_lower(value.escalation)
-        _UniffiFfiConverterOptionalBoolean.check_lower(value.committed)
+        _UniffiFfiConverterOptionalTypeActionCommit.check_lower(value.committed)
 
     @staticmethod
     def write(value, buf):
@@ -1448,7 +1491,7 @@ class _UniffiFfiConverterTypeActionResult(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalTypeActionDelivery.write(value.delivery, buf)
         _UniffiFfiConverterOptionalSequenceTypeActionEvidence.write(value.evidence, buf)
         _UniffiFfiConverterOptionalTypeActionEscalation.write(value.escalation, buf)
-        _UniffiFfiConverterOptionalBoolean.write(value.committed, buf)
+        _UniffiFfiConverterOptionalTypeActionCommit.write(value.committed, buf)
 
 class _UniffiFfiConverterString:
     @staticmethod
@@ -1481,6 +1524,27 @@ class _UniffiFfiConverterString:
         with _UniffiRustBuffer.alloc_with_builder() as builder:
             builder.write(value.encode("utf-8"))
             return builder.finalize()
+
+class _UniffiFfiConverterBoolean:
+    @classmethod
+    def check_lower(cls, value):
+        return not not value
+
+    @classmethod
+    def lower(cls, value):
+        return 1 if value else 0
+
+    @staticmethod
+    def lift(value):
+        return value != 0
+
+    @classmethod
+    def read(cls, buf):
+        return cls.lift(buf.read_u8())
+
+    @classmethod
+    def write(cls, value, buf):
+        buf.write_u8(value)
 
 class _UniffiFfiConverterOptionalString(_UniffiConverterRustBuffer):
     @classmethod
@@ -3060,6 +3124,31 @@ class _UniffiFfiConverterTypeElementSelector(_UniffiConverterRustBuffer):
     def write(value, buf):
         _UniffiFfiConverterOptionalString.write(value.role, buf)
         _UniffiFfiConverterOptionalString.write(value.label_contains, buf)
+
+class _UniffiFfiConverterOptionalBoolean(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterBoolean.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterBoolean.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterBoolean.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
 
 @dataclass
 class ElementPredicate:
@@ -6550,6 +6639,7 @@ __all__ = [
     "ActionEvidenceKind",
     "ActionEffect",
     "ActionRoute",
+    "ActionCommit",
     "ActionTarget",
     "ClickPosition",
     "InputDeliveryMode",

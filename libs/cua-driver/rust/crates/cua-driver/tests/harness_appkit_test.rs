@@ -815,8 +815,8 @@ fn harness_appkit_set_value_commits_the_edit() {
             assert!(!set.is_error(), "set_value failed: {}", set.text());
             assert_eq!(
                 set.structured()["committed"],
-                serde_json::json!(true),
-                "set_value did not report a committed write: {}",
+                serde_json::json!("unproven"),
+                "an AXValue write judged only by its own read-back cannot claim a commit: {}",
                 set.raw
             );
 
@@ -855,6 +855,15 @@ fn harness_appkit_element_foreground_press_key_commits_edit() {
                 }),
             );
             assert!(!typed.is_error(), "type_text failed: {}", typed.text());
+            // The fixture is still `committed=none` at this point, so a
+            // read-back that shows the text must not read as an accepted
+            // value: type_text delivers no end-of-edit.
+            assert_eq!(
+                typed.structured()["committed"],
+                serde_json::json!("unproven"),
+                "type_text implied the app had taken the value: {}",
+                typed.raw
+            );
 
             let second = snapshot_elements(driver, pid, wid);
             assert!(

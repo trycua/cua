@@ -12,6 +12,7 @@
 //!   text fields that expose a settable AXValue).
 
 use async_trait::async_trait;
+use cua_driver_contract::ActionCommit;
 use cua_driver_core::{
     protocol::ToolResult,
     tool::{Tool, ToolDef},
@@ -64,9 +65,12 @@ fn def() -> &'static ToolDef {
              the element's own AXConfirm action runs, or — when it advertises \
              none — the element is focused and a tab/return keystroke ends the \
              edit, so the app's editing pipeline sees the value instead of only \
-             the AX tree. `committed` reports whether the value survived that \
-             gesture; false means unproven, and the app may still hold its \
-             pre-edit value. Web content is never committed this way (the \
+             the AX tree. `committed` reports what was observed of that \
+             end-of-edit: `not_committed` when the gesture was refused or the \
+             app replaced the value, and `unproven` when the value survived \
+             but the only evidence is an accessibility read-back, which a \
+             bound control echoes whether or not the app took the value. Web \
+             content is never committed this way (the \
              renderer never observes an AXValue write), and a multi-line \
              AXTextArea has no end-of-edit gesture.\n\
              \n\
@@ -247,7 +251,7 @@ impl Tool for SetValueTool {
                     "effect": if verified { "confirmed" } else { "unverifiable" },
                 });
                 if let Some(committed) = committed {
-                    structured["committed"] = serde_json::json!(committed);
+                    structured["committed"] = serde_json::json!(committed.as_wire());
                 }
                 if ax_echo_surface {
                     structured["escalation"] = serde_json::json!({
@@ -280,6 +284,13 @@ enum CommitPlan {
 
 /// Settle time between the commit gesture and the read-back that judges it.
 const COMMIT_SETTLE: std::time::Duration = std::time::Duration::from_millis(120);
+
+/// Native single-line text roles whose value AppKit carries in a field editor
+/// and hands to the app's own model only when the editing session ends.
+/// `AXSearchField` is deliberately absent: its `AXConfirm` is the commit.
+pub(super) fn is_binding_target_role(role: &str, subrole: &str) -> bool {
+    matches!(role, "AXTextField" | "AXSecureTextField") && subrole != "AXSearchField"
+}
 
 fn commit_gesture(role: &str, advertised: &[String]) -> CommitPlan {
     match role {
@@ -357,57 +368,70 @@ fn keystroke_refusal_reason(refusal: &ToolResult) -> String {
     }
 }
 
-/// Run the commit gesture and report whether the written value survived it.
+/// Run the commit gesture and report what was observed of the app's own
+/// end-of-edit.
 fn commit_write(
     element: AXUIElementRef,
     pid: i32,
     requested: &str,
     numeric: bool,
     commit: CommitPlan,
-) -> (Option<bool>, String) {
+) -> (Option<ActionCommit>, String) {
     match commit {
         CommitPlan::NotText => (None, String::new()),
-        CommitPlan::Blocked(reason) => (Some(false), format!(" Not committed: {reason}.")),
+        CommitPlan::Blocked(reason) => (
+            Some(ActionCommit::NotCommitted),
+            format!(" Not committed: {reason}."),
+        ),
         CommitPlan::Confirm => {
             let dispatched = unsafe { perform_action(element, "AXConfirm") } == kAXErrorSuccess;
-            judge_commit(element, requested, numeric, dispatched, "AXConfirm")
+            let survived = dispatched && value_survived(element, requested, numeric);
+            judge_commit(dispatched, survived, "AXConfirm")
         }
         CommitPlan::Key(key) => {
             let dispatched = crate::input::ax_actions::focus_element(element as usize).is_ok()
                 && crate::input::keyboard::press_key(pid, key, &[]).is_ok();
-            judge_commit(element, requested, numeric, dispatched, key)
+            let survived = dispatched && value_survived(element, requested, numeric);
+            judge_commit(dispatched, survived, key)
         }
     }
 }
 
-fn judge_commit(
-    element: AXUIElementRef,
-    requested: &str,
-    numeric: bool,
-    dispatched: bool,
-    gesture: &str,
-) -> (Option<bool>, String) {
+/// Whether the written value is still in place once the gesture has had time
+/// to land.
+fn value_survived(element: AXUIElementRef, requested: &str, numeric: bool) -> bool {
+    std::thread::sleep(COMMIT_SETTLE);
+    let after = unsafe { copy_string_attr(element, "AXValue") };
+    value_matches(after.as_deref(), requested, numeric)
+}
+
+/// An `AXValue` write reaches `unproven` at best. Nothing on this route
+/// observes the application's own model, and a control whose value is a
+/// binding target echoes the accessibility read-back whether or not the
+/// application took the value.
+fn judge_commit(dispatched: bool, survived: bool, gesture: &str) -> (Option<ActionCommit>, String) {
     if !dispatched {
         return (
-            Some(false),
+            Some(ActionCommit::NotCommitted),
             format!(" Not committed: the {gesture} commit gesture could not be dispatched."),
         );
     }
-    std::thread::sleep(COMMIT_SETTLE);
-    let after = unsafe { copy_string_attr(element, "AXValue") };
-    if value_matches(after.as_deref(), requested, numeric) {
-        (
-            Some(true),
-            format!(" Committed via {gesture}: the app's editing pipeline holds the value."),
-        )
-    } else {
-        (
-            Some(false),
+    if !survived {
+        return (
+            Some(ActionCommit::NotCommitted),
             " Not committed: the value did not survive the app's end-of-edit, so the app \
              still holds its own value."
                 .to_owned(),
-        )
+        );
     }
+    (
+        Some(ActionCommit::Unproven),
+        format!(
+            " Commit unproven: the value survived {gesture}, but the app's own model was not \
+             observed — an accessibility read-back is echoed by a bound control whether or not \
+             the app took the value. Check the app's own output."
+        ),
+    )
 }
 
 // ── Blocking implementation (runs on spawn_blocking thread) ─────────────────
@@ -427,9 +451,9 @@ struct SetValueOutcome {
     /// `Some(false)` when the element already held the requested value, so the
     /// write was a no-op. Lets callers distinguish "idempotent" from "applied".
     changed: Option<bool>,
-    /// Whether the app's own end-of-edit gesture kept the value. `None` for
-    /// paths that have no commit gesture (menu selection, non-text controls).
-    committed: Option<bool>,
+    /// What was observed of the app's own end-of-edit. `None` for paths that
+    /// have no commit gesture (menu selection, non-text controls).
+    committed: Option<ActionCommit>,
 }
 
 fn apply_surface_trust(outcome: &mut SetValueOutcome, ax_echo_surface: bool) {
@@ -855,8 +879,9 @@ fn hex_digit(n: u8) -> char {
 mod tests {
     use super::{
         apply_surface_trust, apply_verification_label, classify_write, commit_gesture,
-        commit_write, CommitPlan, SetValueOutcome,
+        commit_write, is_binding_target_role, judge_commit, CommitPlan, SetValueOutcome,
     };
+    use cua_driver_contract::ActionCommit;
 
     #[test]
     fn single_line_text_fields_commit_by_ending_the_edit() {
@@ -892,8 +917,36 @@ mod tests {
         let plan = commit_gesture("AXTextArea", &[]);
         assert!(matches!(plan, CommitPlan::Blocked(_)), "{plan:?}");
         let (committed, detail) = commit_write(std::ptr::null_mut(), 0, "value", false, plan);
-        assert_eq!(committed, Some(false));
+        assert_eq!(committed, Some(ActionCommit::NotCommitted));
         assert!(detail.contains("Not committed"), "{detail}");
+    }
+
+    /// An `AXValue` write plus a commit gesture cannot distinguish "the app
+    /// took the value" from "the control echoed what was written", so the
+    /// surviving read-back must not be published as a commit.
+    #[test]
+    fn a_surviving_ax_write_is_unproven_not_committed() {
+        let (committed, detail) = judge_commit(true, true, "tab");
+        assert_eq!(committed, Some(ActionCommit::Unproven));
+        assert!(detail.contains("Commit unproven"), "{detail}");
+        assert_eq!(
+            judge_commit(true, false, "tab").0,
+            Some(ActionCommit::NotCommitted),
+            "a value the app replaced is a rejection, not an unproven write"
+        );
+        assert_eq!(
+            judge_commit(false, false, "AXConfirm").0,
+            Some(ActionCommit::NotCommitted),
+            "a gesture that never dispatched cannot have committed"
+        );
+    }
+
+    #[test]
+    fn a_search_field_is_not_a_binding_target() {
+        assert!(is_binding_target_role("AXTextField", ""));
+        assert!(is_binding_target_role("AXSecureTextField", ""));
+        assert!(!is_binding_target_role("AXTextField", "AXSearchField"));
+        assert!(!is_binding_target_role("AXTextArea", ""));
     }
 
     #[test]
@@ -964,7 +1017,7 @@ mod tests {
             detail: "Set value.".to_owned(),
             verified: Some(true),
             changed: Some(true),
-            committed: Some(true),
+            committed: Some(ActionCommit::Unproven),
         };
         apply_surface_trust(&mut outcome, true);
         assert_eq!(outcome.verified, Some(false));
@@ -978,7 +1031,7 @@ mod tests {
             detail: "Set value.".to_owned(),
             verified: Some(true),
             changed: Some(true),
-            committed: Some(true),
+            committed: Some(ActionCommit::Unproven),
         };
         apply_surface_trust(&mut outcome, false);
         assert_eq!(outcome.verified, Some(true));
@@ -992,7 +1045,7 @@ mod tests {
             detail: "✅ Set AXValue on [4] AXTextField.".to_owned(),
             verified: Some(false),
             changed: Some(false),
-            committed: Some(false),
+            committed: Some(ActionCommit::NotCommitted),
         };
         apply_verification_label(&mut outcome);
         assert_eq!(

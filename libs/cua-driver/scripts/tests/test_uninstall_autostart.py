@@ -28,6 +28,7 @@ def _sandbox(tmp_path: Path, os_name: str) -> tuple[Path, Path, dict[str, str]]:
         assert executable is not None, f"missing fixture utility: {command}"
         (fake_bin / command).symlink_to(executable)
 
+    _write_executable(fake_bin / "pgrep", "exit 1\n")
     _write_executable(fake_bin / "ps", "exit 2\n")
     _write_executable(fake_bin / "uname", f"printf '%s\\n' '{os_name}'\n")
     for command in ("launchctl", "systemctl", "tccutil", "sudo"):

@@ -376,6 +376,17 @@ class CallbackHttpClient(fleet_sdk.HttpClient):
                     "sandboxTemplateRef": {"name": "default"},
                 },
             }
+        elif request.url.endswith("/api/k8s/apis/images.cua.ai/v1alpha1/namespaces/default/images"):
+            body = {
+                "apiVersion": "images.cua.ai/v1alpha1",
+                "kind": "Image",
+                "metadata": {
+                    "namespace": "default",
+                    "name": "offline-image",
+                    "uid": "image-uid",
+                    "generation": 1,
+                },
+            }
         else:
             raise AssertionError(f"unexpected callback request: {request.method} {request.url}")
         return fleet_sdk.HttpResponse(status=201, headers=[], body=json.dumps(body).encode())
@@ -404,6 +415,15 @@ async def smoke_create_pool():
     pool = await client.create_pool(request)
     assert pool.metadata.name == "offline-pool"
     assert any(request.url.endswith("/osgymsandboxwarmpools") for request in transport.requests)
+
+    manifest = fleet_sdk.PreservedJson.from_json(json.dumps({
+        "apiVersion": "images.cua.ai/v1alpha1",
+        "kind": "Image",
+        "metadata": {"namespace": "default", "name": "offline-image"},
+    }))
+    image = await client.create_image("default", manifest)
+    assert json.loads(image.to_json())["metadata"]["uid"] == "image-uid"
+    assert any(request.url.endswith("/images") for request in transport.requests)
 
 asyncio.run(smoke_create_pool())
 PYTHON_SMOKE

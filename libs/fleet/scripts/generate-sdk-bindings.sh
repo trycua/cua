@@ -285,13 +285,17 @@ PYTHON_FACADE_HEADER
     fi
     case "$symbol" in
       _UniffiFfiConverterType*)
-        cat >> "$converter_adapters" <<PYTHON_CONVERTER_ADAPTER
+        if grep -Fq "class $symbol(_UniffiConverterRustBuffer):" "$schema_file"; then
+          cat >> "$converter_adapters" <<PYTHON_CONVERTER_ADAPTER
 class $symbol(_sdk_component._UniffiConverterRustBuffer):
     check_lower = staticmethod(_schema_component.$symbol.check_lower)
     read = staticmethod(_schema_component.$symbol.read)
     write = staticmethod(_schema_component.$symbol.write)
 
 PYTHON_CONVERTER_ADAPTER
+        else
+          printf '%s = _schema_component.%s\n' "$symbol" "$symbol" >> "$converter_adapters"
+        fi
         ;;
       *) printf '%s = _schema_component.%s\n' "$symbol" "$symbol" >> "$facade_file" ;;
     esac

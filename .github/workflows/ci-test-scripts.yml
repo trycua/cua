@@ -58,9 +58,6 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@1.97.1
-
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip

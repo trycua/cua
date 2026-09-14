@@ -144,6 +144,12 @@ struct CGSizeValue {
     height: f64,
 }
 
+#[repr(C)]
+struct CFRangeValue {
+    location: isize,
+    length: isize,
+}
+
 // ── Helper functions ──────────────────────────────────────────────────────────
 
 use core_foundation::{array::CFArray, base::TCFType, string::CFString as CFStr};
@@ -652,6 +658,32 @@ pub unsafe fn set_size_attr(
     let value = AXValueCreate(
         kAXValueCGSizeType,
         &size as *const CGSizeValue as *const c_void,
+    );
+    if value.is_null() {
+        return kAXErrorFailure;
+    }
+    let result =
+        AXUIElementSetAttributeValue(element, attr.as_concrete_TypeRef(), value as CFTypeRef);
+    CFRelease(value as CFTypeRef);
+    result
+}
+
+/// Set an AX CFRange attribute such as `AXSelectedTextRange`.
+///
+/// # Safety
+///
+/// `element` must be a valid, live `AXUIElementRef` for the duration of the call.
+pub unsafe fn set_range_attr(
+    element: AXUIElementRef,
+    attr_name: &str,
+    location: isize,
+    length: isize,
+) -> AXError {
+    let attr = CFStr::new(attr_name);
+    let range = CFRangeValue { location, length };
+    let value = AXValueCreate(
+        kAXValueCFRangeType,
+        &range as *const CFRangeValue as *const c_void,
     );
     if value.is_null() {
         return kAXErrorFailure;

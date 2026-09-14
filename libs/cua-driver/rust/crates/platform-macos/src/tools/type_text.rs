@@ -1147,6 +1147,20 @@ fn cgevent_type_verified(
     if settle_ms > 0 {
         std::thread::sleep(std::time::Duration::from_millis(settle_ms));
     }
+    type_and_drain(pid, text, delay_ms, before, element_ptr_and_idx, window_id)
+}
+
+/// Post the keystrokes and wait for the target's read-back to settle. Shared
+/// with `set_value`, which establishes focus and the replaced selection itself
+/// and must not have either re-applied underneath it.
+pub(super) fn type_and_drain(
+    pid: i32,
+    text: &str,
+    delay_ms: u64,
+    before: Option<&str>,
+    element_ptr_and_idx: Option<(usize, Option<usize>)>,
+    window_id: Option<u32>,
+) -> anyhow::Result<(bool, Option<usize>)> {
     crate::input::keyboard::type_text_with_delay(pid, text, delay_ms)?;
 
     // CGEvent posting is asynchronous with respect to the renderer. In

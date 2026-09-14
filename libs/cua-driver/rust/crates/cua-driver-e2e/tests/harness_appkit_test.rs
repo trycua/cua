@@ -803,14 +803,16 @@ fn harness_appkit_text_input() {
 }
 
 /// set_value must reach the app's own editing pipeline, not just the AX tree.
-/// The fixture publishes `committed=<value>` from `controlTextDidEndEditing`,
-/// so this reads the app's state rather than the value the write echoes back.
+/// The fixture publishes `committed=<value>` from `controlTextDidEndEditing`
+/// and mirrors `controlTextDidChange` into `lbl-input-mirror`. AppKit raises
+/// neither notification for a programmatic `setStringValue:`, so the mirror is
+/// what separates a write the editor processed from an `AXValue` echo.
 #[test]
 #[ignore]
 fn harness_appkit_set_value_commits_the_edit() {
     run_background_case(
         "set_value_commit",
-        DriverRoute::MacosAxValue,
+        DriverRoute::MacosCgEventPid,
         |pid, wid, driver| {
             let before = snapshot_elements(driver, pid, wid);
             assert!(
@@ -830,8 +832,14 @@ fn harness_appkit_set_value_commits_the_edit() {
             assert!(!set.is_error(), "set_value failed: {}", set.text());
             assert_eq!(
                 set.structured()["committed"],
-                serde_json::json!("unproven"),
-                "an AXValue write judged only by its own read-back cannot claim a commit: {}",
+                serde_json::json!("committed"),
+                "set_value did not report a committed write: {}",
+                set.raw
+            );
+            assert_eq!(
+                set.action_route(),
+                Some("synthetic_events"),
+                "a bound field must be written through the keystroke rung: {}",
                 set.raw
             );
 
@@ -840,6 +848,15 @@ fn harness_appkit_set_value_commits_the_edit() {
             assert!(
                 after.tree_text().contains("committed=commit-cua"),
                 "the app never registered the write:\n{}",
+                after.tree_text()
+            );
+            // Labels carry no accessibility identifier in the published tree,
+            // so the mirror is read as the static-text row holding the typed
+            // value. `committed=commit-cua` is the commit label; a bare
+            // `commit-cua` static text can only be the mirror.
+            assert!(
+                after.tree_text().contains("AXStaticText = \"commit-cua\""),
+                "controlTextDidChange never fired, so the value was echoed rather than typed:\n{}",
                 after.tree_text()
             );
         },

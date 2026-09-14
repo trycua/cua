@@ -4,6 +4,10 @@ on:
   pull_request:
     paths:
       - ".github/scripts/**"
+      - "TESTING.md"
+      - "libs/cua-driver/rust/README.md"
+      - "libs/cua-driver/rust/**/Cargo.toml"
+      - "libs/cua-driver/rust/crates/*/tests/**"
       - ".github/release-attribution-config.json"
       - ".github/release-manifest.schema.json"
       - ".github/release-backfill/**"
@@ -53,6 +57,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
 
       - name: Install dependencies
         run: |

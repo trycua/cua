@@ -322,18 +322,32 @@ impl Tool for HotkeyTool {
             .await
             .unwrap_or(true);
             if is_web {
-                tokio::task::spawn_blocking(move || unsafe {
-                    let (screen_x, screen_y) = crate::ax::bindings::element_screen_center(
+                let target = tokio::task::spawn_blocking(move || unsafe {
+                    let Some((screen_x, screen_y)) = crate::ax::bindings::element_screen_center(
                         guard.as_ptr() as crate::ax::bindings::AXUIElementRef,
-                    )?;
-                    let frame = super::px_frame::resolve_window_px_frame(wid).ok()?;
-                    Some((
+                    ) else {
+                        return Ok(None);
+                    };
+                    let frame = match super::px_frame::resolve_window_px_frame(pid, wid) {
+                        Ok(frame) => frame,
+                        Err(
+                            error @ super::px_frame::PxFrameError::NativeGeometryMismatch { .. },
+                        ) => return Err(error),
+                        Err(_) => return Ok(None),
+                    };
+                    Ok(Some((
                         (screen_x - frame.bounds.x) * frame.scale,
                         (screen_y - frame.bounds.y) * frame.scale,
-                    ))
+                    )))
                 })
-                .await
-                .unwrap_or(None)
+                .await;
+                match target {
+                    Ok(Ok(target)) => target,
+                    Ok(Err(error)) => return super::px_frame::refusal(&error),
+                    Err(error) => {
+                        return ToolResult::error(format!("Native focus lookup failed: {error}"))
+                    }
+                }
             } else {
                 None
             }

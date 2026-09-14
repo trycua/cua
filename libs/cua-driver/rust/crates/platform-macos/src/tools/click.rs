@@ -470,6 +470,17 @@ impl Tool for ClickTool {
             // close, autoscroll, etc.). If we can't resolve a center, error rather
             // than silently degrade to AXPress.
             if button_str == "middle" {
+                match tokio::task::spawn_blocking(move || {
+                    super::px_frame::verify_native_geometry(pid, wid)
+                })
+                .await
+                {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => return super::px_frame::refusal(&error),
+                    Err(error) => {
+                        return ToolResult::error(format!("Native geometry lookup failed: {error}"))
+                    }
+                }
                 let (cx, cy) = match center {
                     Some(c) => c,
                     None => {
@@ -553,27 +564,36 @@ impl Tool for ClickTool {
             };
             let mut selection_pixel = if selection_candidate {
                 if let Some((cx, cy)) = center {
-                    super::px_frame::resolve_or_refuse(wid)
-                        .await
-                        .ok()
-                        .map(|frame| SelectionPixelTarget {
+                    match tokio::task::spawn_blocking(move || {
+                        super::px_frame::resolve_window_px_frame(pid, wid)
+                    })
+                    .await
+                    {
+                        Ok(Ok(frame)) => Ok(Some(SelectionPixelTarget {
                             screen_x: cx,
                             screen_y: cy,
                             window_x: cx - frame.bounds.x,
                             window_y: cy - frame.bounds.y,
-                        })
+                        })),
+                        Ok(Err(
+                            error @ super::px_frame::PxFrameError::NativeGeometryMismatch { .. },
+                        )) => Err(error),
+                        _ => Ok(None),
+                    }
                 } else {
-                    None
+                    Ok(None)
                 }
             } else {
-                None
+                Ok(None)
             };
             // The selection fallback delivers a routed window-local pixel
             // click — a stricter (WindowPointer) rung than the semantic gate
             // above. In background, drop the fallback rather than silently
             // escalate when the pointer rung would refuse (e.g. a
             // minimized/hidden target); the semantic path still runs.
-            if selection_pixel.is_some()
+            if selection_pixel
+                .as_ref()
+                .is_ok_and(|target| target.is_some())
                 && !delivery_mode.is_foreground()
                 && _mutation_lease
                     .as_ref()
@@ -586,7 +606,7 @@ impl Tool for ClickTool {
                     .await
                     .is_err()
             {
-                selection_pixel = None;
+                selection_pixel = Ok(None);
             }
 
             // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
@@ -737,7 +757,7 @@ impl Tool for ClickTool {
                     }
                     ToolResult::text(msg).with_structured(structured)
                 }
-                Ok(Err(e)) => ToolResult::error(format!("AX action failed: {e}")),
+                Ok(Err(e)) => super::px_frame::action_error(e.context("AX action failed")),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             }
         } else if let (Some(mut cx), Some(mut cy)) = (x, y) {
@@ -817,7 +837,7 @@ impl Tool for ClickTool {
             // win_local_x/y: window-local logical-pixel coords needed for
             // CGEventSetWindowLocation in the Chromium recipe.
             let (screen_x, screen_y, win_local_x, win_local_y) = if let Some(wid) = window_id {
-                match super::px_frame::resolve_or_refuse(wid).await {
+                match super::px_frame::resolve_or_refuse(pid, wid).await {
                     Ok(frame) => {
                         let (sx, sy, lx, ly) = frame.to_screen(cx, cy);
                         // A window-local point outside the live frame would
@@ -1191,7 +1211,7 @@ fn perform_ax_click(
     window_id: u32,
     action_str: &str,
     cursor_key: &str,
-    selection_pixel: Option<SelectionPixelTarget>,
+    selection_pixel: Result<Option<SelectionPixelTarget>, super::px_frame::PxFrameError>,
     modifiers: &[String],
     foreground: bool,
 ) -> anyhow::Result<(String, bool, bool, bool, bool)> {
@@ -1234,7 +1254,7 @@ fn perform_ax_click(
         }
 
         if let (Some(target), Some(selection)) = (
-            selection_pixel,
+            selection_pixel?,
             crate::input::ax_actions::capture_nearest_container_selection(element_ptr),
         ) {
             let selected_role = selection.role().to_owned();

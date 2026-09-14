@@ -6259,6 +6259,225 @@ class _UniffiFfiConverterOptionalSequenceTypeWindowElement(_UniffiConverterRustB
         else:
             raise InternalError("Unexpected flag byte for optional type")
 
+
+
+
+
+
+class NativeWindowGeometry:
+    def __init__(self):
+        raise RuntimeError("NativeWindowGeometry cannot be instantiated directly")
+
+    # Each enum variant is a nested class of the enum itself.
+    @dataclass
+    class ALIGNED:
+
+        def __init__(self, logical:WindowBounds, compositor:WindowBounds):
+            self.logical = logical
+
+
+            self.compositor = compositor
+
+
+            pass
+
+
+
+
+
+        def __str__(self):
+            return "NativeWindowGeometry.ALIGNED(logical={}, compositor={})".format(self.logical, self.compositor)
+        def __eq__(self, other):
+            if not isinstance(other, NativeWindowGeometry):
+                return NotImplemented
+            if not other.is_ALIGNED():
+                return False
+            if self.logical != other.logical:
+                return False
+            if self.compositor != other.compositor:
+                return False
+            return True
+
+    @dataclass
+    class MISMATCHED:
+
+        def __init__(self, logical:WindowBounds, compositor:WindowBounds):
+            self.logical = logical
+
+
+            self.compositor = compositor
+
+
+            pass
+
+
+
+
+
+        def __str__(self):
+            return "NativeWindowGeometry.MISMATCHED(logical={}, compositor={})".format(self.logical, self.compositor)
+        def __eq__(self, other):
+            if not isinstance(other, NativeWindowGeometry):
+                return NotImplemented
+            if not other.is_MISMATCHED():
+                return False
+            if self.logical != other.logical:
+                return False
+            if self.compositor != other.compositor:
+                return False
+            return True
+
+    @dataclass
+    class UNSTABLE:
+
+        def __init__(self, ):
+            pass
+
+
+
+
+
+        def __str__(self):
+            return "NativeWindowGeometry.UNSTABLE()".format()
+        def __eq__(self, other):
+            if not isinstance(other, NativeWindowGeometry):
+                return NotImplemented
+            if not other.is_UNSTABLE():
+                return False
+            return True
+
+    @dataclass
+    class UNAVAILABLE:
+
+        def __init__(self, ):
+            pass
+
+
+
+
+
+        def __str__(self):
+            return "NativeWindowGeometry.UNAVAILABLE()".format()
+        def __eq__(self, other):
+            if not isinstance(other, NativeWindowGeometry):
+                return NotImplemented
+            if not other.is_UNAVAILABLE():
+                return False
+            return True
+
+
+
+    # For each variant, we have `is_NAME` and `is_name` methods for easily checking
+    # whether an instance is that variant.
+    def is_ALIGNED(self) -> bool:
+        return isinstance(self, NativeWindowGeometry.ALIGNED)
+    def is_aligned(self) -> bool:
+        return isinstance(self, NativeWindowGeometry.ALIGNED)
+    def is_MISMATCHED(self) -> bool:
+        return isinstance(self, NativeWindowGeometry.MISMATCHED)
+    def is_mismatched(self) -> bool:
+        return isinstance(self, NativeWindowGeometry.MISMATCHED)
+    def is_UNSTABLE(self) -> bool:
+        return isinstance(self, NativeWindowGeometry.UNSTABLE)
+    def is_unstable(self) -> bool:
+        return isinstance(self, NativeWindowGeometry.UNSTABLE)
+    def is_UNAVAILABLE(self) -> bool:
+        return isinstance(self, NativeWindowGeometry.UNAVAILABLE)
+    def is_unavailable(self) -> bool:
+        return isinstance(self, NativeWindowGeometry.UNAVAILABLE)
+
+
+# Now, a little trick - we make each nested variant class be a subclass of the main
+# enum class, so that method calls and instance checks etc will work intuitively.
+# We might be able to do this a little more neatly with a metaclass, but this'll do.
+NativeWindowGeometry.ALIGNED = type("NativeWindowGeometry.ALIGNED", (NativeWindowGeometry.ALIGNED, NativeWindowGeometry,), {})  # type: ignore
+NativeWindowGeometry.MISMATCHED = type("NativeWindowGeometry.MISMATCHED", (NativeWindowGeometry.MISMATCHED, NativeWindowGeometry,), {})  # type: ignore
+NativeWindowGeometry.UNSTABLE = type("NativeWindowGeometry.UNSTABLE", (NativeWindowGeometry.UNSTABLE, NativeWindowGeometry,), {})  # type: ignore
+NativeWindowGeometry.UNAVAILABLE = type("NativeWindowGeometry.UNAVAILABLE", (NativeWindowGeometry.UNAVAILABLE, NativeWindowGeometry,), {})  # type: ignore
+
+
+
+
+class _UniffiFfiConverterTypeNativeWindowGeometry(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return NativeWindowGeometry.ALIGNED(
+                _UniffiFfiConverterTypeWindowBounds.read(buf),
+                _UniffiFfiConverterTypeWindowBounds.read(buf),
+            )
+        if variant == 2:
+            return NativeWindowGeometry.MISMATCHED(
+                _UniffiFfiConverterTypeWindowBounds.read(buf),
+                _UniffiFfiConverterTypeWindowBounds.read(buf),
+            )
+        if variant == 3:
+            return NativeWindowGeometry.UNSTABLE(
+            )
+        if variant == 4:
+            return NativeWindowGeometry.UNAVAILABLE(
+            )
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if value.is_ALIGNED():
+            _UniffiFfiConverterTypeWindowBounds.check_lower(value.logical)
+            _UniffiFfiConverterTypeWindowBounds.check_lower(value.compositor)
+            return
+        if value.is_MISMATCHED():
+            _UniffiFfiConverterTypeWindowBounds.check_lower(value.logical)
+            _UniffiFfiConverterTypeWindowBounds.check_lower(value.compositor)
+            return
+        if value.is_UNSTABLE():
+            return
+        if value.is_UNAVAILABLE():
+            return
+        raise ValueError(value)
+
+    @staticmethod
+    def write(value, buf):
+        if value.is_ALIGNED():
+            buf.write_i32(1)
+            _UniffiFfiConverterTypeWindowBounds.write(value.logical, buf)
+            _UniffiFfiConverterTypeWindowBounds.write(value.compositor, buf)
+        if value.is_MISMATCHED():
+            buf.write_i32(2)
+            _UniffiFfiConverterTypeWindowBounds.write(value.logical, buf)
+            _UniffiFfiConverterTypeWindowBounds.write(value.compositor, buf)
+        if value.is_UNSTABLE():
+            buf.write_i32(3)
+        if value.is_UNAVAILABLE():
+            buf.write_i32(4)
+
+
+
+class _UniffiFfiConverterOptionalTypeNativeWindowGeometry(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeNativeWindowGeometry.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeNativeWindowGeometry.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeNativeWindowGeometry.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
 class _UniffiFfiConverterOptionalTypeWindowBounds(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
@@ -6309,7 +6528,7 @@ class _UniffiFfiConverterSequenceTypeSnapshotImage(_UniffiConverterRustBuffer):
 
 @dataclass
 class WindowStateOutput:
-    def __init__(self, *, pid:int, window_id:int, snapshot_id:typing.Optional[str], app_name:typing.Optional[str], window_title:typing.Optional[str], tree_markdown:typing.Optional[str], elements:typing.Optional[typing.List[WindowElement]], element_count:typing.Optional[int], total_element_count:typing.Optional[int], returned_element_count:typing.Optional[int], filtered_element_count:typing.Optional[int], elements_complete:typing.Optional[bool], degraded:typing.Optional[bool], degraded_reason:typing.Optional[str], truncated:typing.Optional[bool], truncation_reason:typing.Optional[str], screenshot_width:typing.Optional[int], screenshot_height:typing.Optional[int], screenshot_scale:typing.Optional[float], screenshot_mime_type:typing.Optional[str], screenshot_file_path:typing.Optional[str], screenshot_frame_valid:typing.Optional[bool], window_bounds:typing.Optional[WindowBounds], images:typing.List[SnapshotImage]):
+    def __init__(self, *, pid:int, window_id:int, snapshot_id:typing.Optional[str], app_name:typing.Optional[str], window_title:typing.Optional[str], tree_markdown:typing.Optional[str], elements:typing.Optional[typing.List[WindowElement]], element_count:typing.Optional[int], total_element_count:typing.Optional[int], returned_element_count:typing.Optional[int], filtered_element_count:typing.Optional[int], elements_complete:typing.Optional[bool], degraded:typing.Optional[bool], degraded_reason:typing.Optional[str], truncated:typing.Optional[bool], truncation_reason:typing.Optional[str], screenshot_width:typing.Optional[int], screenshot_height:typing.Optional[int], screenshot_scale:typing.Optional[float], screenshot_mime_type:typing.Optional[str], screenshot_file_path:typing.Optional[str], screenshot_frame_valid:typing.Optional[bool], native_window_geometry:typing.Optional[NativeWindowGeometry], window_bounds:typing.Optional[WindowBounds], images:typing.List[SnapshotImage]):
         self.pid = pid
         self.window_id = window_id
         self.snapshot_id = snapshot_id
@@ -6332,6 +6551,7 @@ class WindowStateOutput:
         self.screenshot_mime_type = screenshot_mime_type
         self.screenshot_file_path = screenshot_file_path
         self.screenshot_frame_valid = screenshot_frame_valid
+        self.native_window_geometry = native_window_geometry
         self.window_bounds = window_bounds
         self.images = images
 
@@ -6339,7 +6559,7 @@ class WindowStateOutput:
 
 
     def __str__(self):
-        return "WindowStateOutput(pid={}, window_id={}, snapshot_id={}, app_name={}, window_title={}, tree_markdown={}, elements={}, element_count={}, total_element_count={}, returned_element_count={}, filtered_element_count={}, elements_complete={}, degraded={}, degraded_reason={}, truncated={}, truncation_reason={}, screenshot_width={}, screenshot_height={}, screenshot_scale={}, screenshot_mime_type={}, screenshot_file_path={}, screenshot_frame_valid={}, window_bounds={}, images={})".format(self.pid, self.window_id, self.snapshot_id, self.app_name, self.window_title, self.tree_markdown, self.elements, self.element_count, self.total_element_count, self.returned_element_count, self.filtered_element_count, self.elements_complete, self.degraded, self.degraded_reason, self.truncated, self.truncation_reason, self.screenshot_width, self.screenshot_height, self.screenshot_scale, self.screenshot_mime_type, self.screenshot_file_path, self.screenshot_frame_valid, self.window_bounds, self.images)
+        return "WindowStateOutput(pid={}, window_id={}, snapshot_id={}, app_name={}, window_title={}, tree_markdown={}, elements={}, element_count={}, total_element_count={}, returned_element_count={}, filtered_element_count={}, elements_complete={}, degraded={}, degraded_reason={}, truncated={}, truncation_reason={}, screenshot_width={}, screenshot_height={}, screenshot_scale={}, screenshot_mime_type={}, screenshot_file_path={}, screenshot_frame_valid={}, native_window_geometry={}, window_bounds={}, images={})".format(self.pid, self.window_id, self.snapshot_id, self.app_name, self.window_title, self.tree_markdown, self.elements, self.element_count, self.total_element_count, self.returned_element_count, self.filtered_element_count, self.elements_complete, self.degraded, self.degraded_reason, self.truncated, self.truncation_reason, self.screenshot_width, self.screenshot_height, self.screenshot_scale, self.screenshot_mime_type, self.screenshot_file_path, self.screenshot_frame_valid, self.native_window_geometry, self.window_bounds, self.images)
     def __eq__(self, other):
         if self.pid != other.pid:
             return False
@@ -6385,6 +6605,8 @@ class WindowStateOutput:
             return False
         if self.screenshot_frame_valid != other.screenshot_frame_valid:
             return False
+        if self.native_window_geometry != other.native_window_geometry:
+            return False
         if self.window_bounds != other.window_bounds:
             return False
         if self.images != other.images:
@@ -6417,6 +6639,7 @@ class _UniffiFfiConverterTypeWindowStateOutput(_UniffiConverterRustBuffer):
             screenshot_mime_type=_UniffiFfiConverterOptionalString.read(buf),
             screenshot_file_path=_UniffiFfiConverterOptionalString.read(buf),
             screenshot_frame_valid=_UniffiFfiConverterOptionalBoolean.read(buf),
+            native_window_geometry=_UniffiFfiConverterOptionalTypeNativeWindowGeometry.read(buf),
             window_bounds=_UniffiFfiConverterOptionalTypeWindowBounds.read(buf),
             images=_UniffiFfiConverterSequenceTypeSnapshotImage.read(buf),
         )
@@ -6445,6 +6668,7 @@ class _UniffiFfiConverterTypeWindowStateOutput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.check_lower(value.screenshot_mime_type)
         _UniffiFfiConverterOptionalString.check_lower(value.screenshot_file_path)
         _UniffiFfiConverterOptionalBoolean.check_lower(value.screenshot_frame_valid)
+        _UniffiFfiConverterOptionalTypeNativeWindowGeometry.check_lower(value.native_window_geometry)
         _UniffiFfiConverterOptionalTypeWindowBounds.check_lower(value.window_bounds)
         _UniffiFfiConverterSequenceTypeSnapshotImage.check_lower(value.images)
 
@@ -6472,6 +6696,7 @@ class _UniffiFfiConverterTypeWindowStateOutput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.write(value.screenshot_mime_type, buf)
         _UniffiFfiConverterOptionalString.write(value.screenshot_file_path, buf)
         _UniffiFfiConverterOptionalBoolean.write(value.screenshot_frame_valid, buf)
+        _UniffiFfiConverterOptionalTypeNativeWindowGeometry.write(value.native_window_geometry, buf)
         _UniffiFfiConverterOptionalTypeWindowBounds.write(value.window_bounds, buf)
         _UniffiFfiConverterSequenceTypeSnapshotImage.write(value.images, buf)
 
@@ -6561,6 +6786,7 @@ __all__ = [
     "ScrollBy",
     "CaptureScope",
     "EffectiveScope",
+    "NativeWindowGeometry",
     "Platform",
     "ActionDelivery",
     "ActionEscalation",

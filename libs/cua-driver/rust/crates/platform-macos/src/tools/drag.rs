@@ -266,7 +266,7 @@ impl Tool for DragTool {
         // refuses rather than dragging across the desktop behind it.
         let (from_sx, from_sy, from_lx, from_ly, to_sx, to_sy, to_lx, to_ly) =
             if let Some(wid) = window_id {
-                match super::px_frame::resolve_or_refuse(wid).await {
+                match super::px_frame::resolve_or_refuse(pid, wid).await {
                     Ok(frame) => {
                         let (fsx, fsy, flx, fly) = frame.to_screen(from_x, from_y);
                         let (tsx, tsy, tlx, tly) = frame.to_screen(to_x, to_y);

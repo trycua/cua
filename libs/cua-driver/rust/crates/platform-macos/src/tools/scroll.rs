@@ -390,6 +390,10 @@ impl Tool for ScrollTool {
                 })?;
                 std::thread::sleep(std::time::Duration::from_millis(40));
                 let center = unsafe { element_screen_center(element_ptr as AXUIElementRef) };
+                if let (Some(wid), Some(_)) = (wid, center) {
+                    super::px_frame::verify_native_geometry(pid, wid)
+                        .map_err(|error| super::px_frame::refusal(&error))?;
+                }
                 Ok(center.map(|(cx, cy)| {
                     let win_local = wid
                         .and_then(crate::windows::window_bounds_by_id)
@@ -431,7 +435,7 @@ impl Tool for ScrollTool {
                     "window_id is required when scrolling by window-local x,y pixels.".to_string(),
                 );
             };
-            match super::px_frame::resolve_or_refuse(wid).await {
+            match super::px_frame::resolve_or_refuse(pid, wid).await {
                 Ok(frame) => {
                     let (sx, sy, lx, ly) = frame.to_screen(cx, cy);
                     Some(WheelTarget {

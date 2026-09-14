@@ -70,7 +70,11 @@ fn def() -> &'static ToolDef {
             its raw dimensions are validated as a coherent 1x/2x representation of \
             the requested WindowServer bounds. `px_frame_mismatch` or \
             `px_capture_unavailable` omits an unprovable screenshot/pixel frame \
-            instead of guessing a transform; the truthful AX payload remains available.\n\n\
+            instead of guessing a transform; the truthful AX payload remains available. \
+            `native_window_geometry` separately reports bounded logical/compositor \
+            agreement: aligned, mismatched, unstable, or unavailable. A mismatch retains \
+            the observation and semantic actions but refuses pixel targeting; it does \
+            not identify Stage Manager or prove image freshness.\n\n\
             Optional `query` projects both tree_markdown and structured `elements` to \
             matching lines plus their ancestor chain (case-insensitive substring). The \
             element_index values are unchanged, the complete snapshot remains actionable, \
@@ -353,9 +357,12 @@ impl Tool for GetWindowStateTool {
         // downscale source width, the WindowServer bounds it was validated
         // against, and the raw capture's backing scale.
         let mut screenshot_frame_error = None;
+        let mut native_geometry =
+            cua_driver_core::native_window_geometry::GeometryAssessment::Unavailable;
         let screenshot = if should_capture {
             let out_file = screenshot_out_file.clone();
-            let res = tokio::task::spawn_blocking(move || -> Result<
+            let res = tokio::task::spawn_blocking(move || {
+                crate::native_window_geometry::observe_capture(pid, window_id, || -> Result<
                 (
                     Option<String>,
                     Option<String>,
@@ -425,7 +432,13 @@ impl Tool for GetWindowStateTool {
                         scale,
                     ))
                 }
-            }).await;
+            })
+            })
+            .await;
+            let res = res.map(|(capture, geometry)| {
+                native_geometry = geometry;
+                capture
+            });
             match res {
                 Ok(Ok((b64, file_path, w, h, orig_w, bounds, scale))) => {
                     // Record resize ratio so ClickTool can scale coordinates back
@@ -645,6 +658,7 @@ impl Tool for GetWindowStateTool {
                 structured["background_input"] = report;
             }
         }
+        native_geometry.project_snapshot(&mut structured);
         if let Some((sw, sh)) = screenshot_dims {
             structured["screenshot_width"] = serde_json::json!(sw);
             structured["screenshot_height"] = serde_json::json!(sh);

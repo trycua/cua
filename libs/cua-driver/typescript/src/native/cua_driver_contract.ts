@@ -4509,6 +4509,215 @@ const FfiConverterTypeWindowElement = (() => {
     return new FFIConverter();
 })();
 
+
+// Enum: NativeWindowGeometry
+export enum NativeWindowGeometry_Tags {
+    Aligned = "Aligned",
+    Mismatched = "Mismatched",
+    Unstable = "Unstable",
+    Unavailable = "Unavailable"
+}
+export const NativeWindowGeometry = (() => {
+
+    type Aligned__interface = {
+        tag: NativeWindowGeometry_Tags.Aligned;
+        inner:
+Readonly<{logical: WindowBounds; compositor: WindowBounds}>
+    };
+    class Aligned_ extends UniffiEnum implements Aligned__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "NativeWindowGeometry";
+        readonly tag = NativeWindowGeometry_Tags.Aligned;
+        readonly inner:
+Readonly<{logical: WindowBounds; compositor: WindowBounds}>;
+        constructor(
+inner: {logical: WindowBounds; compositor: WindowBounds }) {
+            super("NativeWindowGeometry", "Aligned");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {logical: WindowBounds; compositor: WindowBounds }): Aligned_ {
+            return new Aligned_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Aligned_ {
+            return obj.tag === NativeWindowGeometry_Tags.Aligned;
+        }
+
+    }
+
+    type Mismatched__interface = {
+        tag: NativeWindowGeometry_Tags.Mismatched;
+        inner:
+Readonly<{logical: WindowBounds; compositor: WindowBounds}>
+    };
+    class Mismatched_ extends UniffiEnum implements Mismatched__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "NativeWindowGeometry";
+        readonly tag = NativeWindowGeometry_Tags.Mismatched;
+        readonly inner:
+Readonly<{logical: WindowBounds; compositor: WindowBounds}>;
+        constructor(
+inner: {logical: WindowBounds; compositor: WindowBounds }) {
+            super("NativeWindowGeometry", "Mismatched");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {logical: WindowBounds; compositor: WindowBounds }): Mismatched_ {
+            return new Mismatched_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Mismatched_ {
+            return obj.tag === NativeWindowGeometry_Tags.Mismatched;
+        }
+
+    }
+
+    type Unstable__interface = {
+        tag: NativeWindowGeometry_Tags.Unstable
+    };
+    class Unstable_ extends UniffiEnum implements Unstable__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "NativeWindowGeometry";
+        readonly tag = NativeWindowGeometry_Tags.Unstable;
+        constructor() {
+            super("NativeWindowGeometry", "Unstable");
+        }
+
+        static new(): Unstable_ {
+            return new Unstable_();
+        }
+
+        static instanceOf(obj: any): obj is Unstable_ {
+            return obj.tag === NativeWindowGeometry_Tags.Unstable;
+        }
+
+    }
+
+    type Unavailable__interface = {
+        tag: NativeWindowGeometry_Tags.Unavailable
+    };
+    class Unavailable_ extends UniffiEnum implements Unavailable__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "NativeWindowGeometry";
+        readonly tag = NativeWindowGeometry_Tags.Unavailable;
+        constructor() {
+            super("NativeWindowGeometry", "Unavailable");
+        }
+
+        static new(): Unavailable_ {
+            return new Unavailable_();
+        }
+
+        static instanceOf(obj: any): obj is Unavailable_ {
+            return obj.tag === NativeWindowGeometry_Tags.Unavailable;
+        }
+
+    }
+
+    function instanceOf(obj: any): obj is NativeWindowGeometry {
+        return obj[uniffiTypeNameSymbol] === "NativeWindowGeometry";
+    }
+
+    return Object.freeze({
+        instanceOf,
+  Aligned: Aligned_,
+  Mismatched: Mismatched_,
+  Unstable: Unstable_,
+  Unavailable: Unavailable_
+    });
+
+})();
+export type NativeWindowGeometry = InstanceType<
+    typeof NativeWindowGeometry['Aligned' | 'Mismatched' | 'Unstable' | 'Unavailable']
+>;
+
+// FfiConverter for enum NativeWindowGeometry
+const FfiConverterTypeNativeWindowGeometry = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = NativeWindowGeometry;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return new NativeWindowGeometry.Aligned({logical: FfiConverterTypeWindowBounds.read(from), compositor: FfiConverterTypeWindowBounds.read(from) });
+                case 2: return new NativeWindowGeometry.Mismatched({logical: FfiConverterTypeWindowBounds.read(from), compositor: FfiConverterTypeWindowBounds.read(from) });
+                case 3: return new NativeWindowGeometry.Unstable();
+                case 4: return new NativeWindowGeometry.Unavailable();
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value.tag) {
+                case NativeWindowGeometry_Tags.Aligned: {
+                    ordinalConverter.write(1, into);
+                    const inner = value.inner;
+                    FfiConverterTypeWindowBounds.write(inner.logical, into);
+                    FfiConverterTypeWindowBounds.write(inner.compositor, into);
+                    return;
+                }
+                case NativeWindowGeometry_Tags.Mismatched: {
+                    ordinalConverter.write(2, into);
+                    const inner = value.inner;
+                    FfiConverterTypeWindowBounds.write(inner.logical, into);
+                    FfiConverterTypeWindowBounds.write(inner.compositor, into);
+                    return;
+                }
+                case NativeWindowGeometry_Tags.Unstable: {
+                    ordinalConverter.write(3, into);
+                    return;
+                }
+                case NativeWindowGeometry_Tags.Unavailable: {
+                    ordinalConverter.write(4, into);
+                    return;
+                }
+                default:
+                    // Throwing from here means that NativeWindowGeometry_Tags hasn't matched an ordinal.
+                    throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        allocationSize(value: TypeName): number {
+            switch (value.tag) {
+                case NativeWindowGeometry_Tags.Aligned: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(1);
+                    size += FfiConverterTypeWindowBounds.allocationSize(inner.logical);
+                    size += FfiConverterTypeWindowBounds.allocationSize(inner.compositor);
+                    return size;
+                }
+                case NativeWindowGeometry_Tags.Mismatched: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(2);
+                    size += FfiConverterTypeWindowBounds.allocationSize(inner.logical);
+                    size += FfiConverterTypeWindowBounds.allocationSize(inner.compositor);
+                    return size;
+                }
+                case NativeWindowGeometry_Tags.Unstable: {
+                    return ordinalConverter.allocationSize(3);
+                }
+                case NativeWindowGeometry_Tags.Unavailable: {
+                    return ordinalConverter.allocationSize(4);
+                }
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+    }
+    return new FFIConverter();
+})();
+
 export type WindowStateOutput = {
     pid: number,
     windowId: bigint,
@@ -4532,6 +4741,7 @@ export type WindowStateOutput = {
     screenshotMimeType?: string,
     screenshotFilePath?: string,
     screenshotFrameValid?: boolean,
+    nativeWindowGeometry?: NativeWindowGeometry,
     windowBounds?: WindowBounds,
     /**
      * Image content belongs to the MCP envelope, never structuredContent.
@@ -4582,6 +4792,7 @@ const FfiConverterTypeWindowStateOutput = (() => {
                 screenshotMimeType: FfiConverterOptionalString.read(from),
                 screenshotFilePath: FfiConverterOptionalString.read(from),
                 screenshotFrameValid: FfiConverterOptionalBoolean.read(from),
+                nativeWindowGeometry: FfiConverterOptionalTypeNativeWindowGeometry.read(from),
                 windowBounds: FfiConverterOptionalTypeWindowBounds.read(from),
                 images: FfiConverterSequenceTypeSnapshotImage.read(from)
             };
@@ -4609,6 +4820,7 @@ const FfiConverterTypeWindowStateOutput = (() => {
             FfiConverterOptionalString.write(value.screenshotMimeType, into);
             FfiConverterOptionalString.write(value.screenshotFilePath, into);
             FfiConverterOptionalBoolean.write(value.screenshotFrameValid, into);
+            FfiConverterOptionalTypeNativeWindowGeometry.write(value.nativeWindowGeometry, into);
             FfiConverterOptionalTypeWindowBounds.write(value.windowBounds, into);
             FfiConverterSequenceTypeSnapshotImage.write(value.images, into);
         }
@@ -4635,6 +4847,7 @@ const FfiConverterTypeWindowStateOutput = (() => {
              FfiConverterOptionalString.allocationSize(value.screenshotMimeType) +
              FfiConverterOptionalString.allocationSize(value.screenshotFilePath) +
              FfiConverterOptionalBoolean.allocationSize(value.screenshotFrameValid) +
+             FfiConverterOptionalTypeNativeWindowGeometry.allocationSize(value.nativeWindowGeometry) +
              FfiConverterOptionalTypeWindowBounds.allocationSize(value.windowBounds) +
              FfiConverterSequenceTypeSnapshotImage.allocationSize(value.images);
 
@@ -4780,6 +4993,9 @@ const FfiConverterSequenceTypeWindowElement = new FfiConverterArray(FfiConverter
 // FfiConverter for Array<WindowElement> | undefined
 const FfiConverterOptionalSequenceTypeWindowElement = new FfiConverterOptional(FfiConverterSequenceTypeWindowElement);
 
+// FfiConverter for NativeWindowGeometry | undefined
+const FfiConverterOptionalTypeNativeWindowGeometry = new FfiConverterOptional(FfiConverterTypeNativeWindowGeometry);
+
 // FfiConverter for WindowBounds | undefined
 const FfiConverterOptionalTypeWindowBounds = new FfiConverterOptional(FfiConverterTypeWindowBounds);
 
@@ -4867,6 +5083,7 @@ export default Object.freeze({
     FfiConverterTypeListWindowsInput,
     FfiConverterTypeListWindowsOutput,
     FfiConverterTypeMoveCursorInput,
+    FfiConverterTypeNativeWindowGeometry,
     FfiConverterTypePlatform,
     FfiConverterTypePredicateOutcome,
     FfiConverterTypePressKeyInput,

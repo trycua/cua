@@ -10,7 +10,7 @@
 //! window's origin there is nothing to add the local point to, so a missing or
 //! stale window is a refusal.
 
-use cua_driver_core::protocol::ToolResult;
+use cua_driver_core::{native_window_geometry::GeometryAssessment, protocol::ToolResult};
 
 use crate::windows::WindowBounds;
 
@@ -37,6 +37,10 @@ impl WindowPxFrame {
 /// Why a window-local pixel action cannot be translated.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PxFrameError {
+    NativeGeometryMismatch {
+        window_id: u32,
+        geometry: GeometryAssessment,
+    },
     /// WindowServer has no usable frame for this id: it was closed, the id is
     /// stale or fabricated, or the record carries degenerate `0×0` bounds
     /// (`windows.rs`'s missing-`kCGWindowBounds` default), which would make
@@ -104,7 +108,48 @@ pub fn validate_capture_frame(
 
 /// Resolve `window_id`'s screen origin and capture scale. Blocking: enumerates
 /// CGWindowList and takes one window capture to measure the scale.
-pub fn resolve_window_px_frame(window_id: u32) -> Result<WindowPxFrame, PxFrameError> {
+pub fn resolve_window_px_frame(pid: i32, window_id: u32) -> Result<WindowPxFrame, PxFrameError> {
+    let (frame, geometry) = crate::native_window_geometry::observe_capture(pid, window_id, || {
+        resolve_capture_frame(window_id)
+    });
+    let frame = frame?;
+    if geometry.blocks_pointer() {
+        return Err(PxFrameError::NativeGeometryMismatch {
+            window_id,
+            geometry,
+        });
+    }
+    Ok(frame)
+}
+
+impl std::fmt::Display for PxFrameError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{self:?}")
+    }
+}
+
+impl std::error::Error for PxFrameError {}
+
+pub(crate) fn action_error(error: anyhow::Error) -> ToolResult {
+    match error.downcast_ref::<PxFrameError>() {
+        Some(frame_error) => refusal(frame_error),
+        None => ToolResult::error(format!("{error:#}")),
+    }
+}
+
+pub(crate) fn verify_native_geometry(pid: i32, window_id: u32) -> Result<(), PxFrameError> {
+    let (_, geometry) = crate::native_window_geometry::observe_capture(pid, window_id, || ());
+    if geometry.blocks_pointer() {
+        Err(PxFrameError::NativeGeometryMismatch {
+            window_id,
+            geometry,
+        })
+    } else {
+        Ok(())
+    }
+}
+
+fn resolve_capture_frame(window_id: u32) -> Result<WindowPxFrame, PxFrameError> {
     let bounds = crate::windows::window_bounds_by_id(window_id)
         .filter(|b| b.width > 0.0 && b.height > 0.0)
         .ok_or(PxFrameError::WindowNotFound { window_id })?;
@@ -128,6 +173,12 @@ pub fn resolve_window_px_frame(window_id: u32) -> Result<WindowPxFrame, PxFrameE
 /// The shared refusal for a pixel action whose window cannot be framed.
 pub fn refusal(error: &PxFrameError) -> ToolResult {
     match error {
+        PxFrameError::NativeGeometryMismatch { window_id, .. } => ToolResult::error(format!(
+            "window_id {window_id}'s native logical frame disagrees with its compositor frame. \
+             Refusing pixel targeting; use a semantic action or explicitly select the window \
+             and take a new snapshot before choosing new coordinates."
+        ))
+        .with_structured(error_structured(error)),
         PxFrameError::WindowNotFound { window_id } => ToolResult::error(format!(
             "window_id {window_id} has no live frame, so window-local pixels cannot be \
              translated to screen coordinates. Refusing to dispatch — treating them as \
@@ -164,6 +215,14 @@ pub fn refusal(error: &PxFrameError) -> ToolResult {
 /// failure.
 pub fn error_structured(error: &PxFrameError) -> serde_json::Value {
     match error {
+        PxFrameError::NativeGeometryMismatch {
+            window_id,
+            geometry,
+        } => serde_json::json!({
+            "code": "native_window_geometry_mismatch",
+            "window_id": window_id,
+            "native_window_geometry": geometry,
+        }),
         PxFrameError::WindowNotFound { window_id } => serde_json::json!({
             "code": "px_window_not_found",
             "window_id": window_id,
@@ -205,8 +264,8 @@ pub fn error_structured(error: &PxFrameError) -> serde_json::Value {
 
 /// Resolve the frame off the async path, mapping both the task error and the
 /// refusal onto a `ToolResult` the caller can return directly.
-pub async fn resolve_or_refuse(window_id: u32) -> Result<WindowPxFrame, ToolResult> {
-    match tokio::task::spawn_blocking(move || resolve_window_px_frame(window_id)).await {
+pub async fn resolve_or_refuse(pid: i32, window_id: u32) -> Result<WindowPxFrame, ToolResult> {
+    match tokio::task::spawn_blocking(move || resolve_window_px_frame(pid, window_id)).await {
         Ok(Ok(frame)) => Ok(frame),
         Ok(Err(e)) => Err(refusal(&e)),
         Err(e) => Err(ToolResult::error(format!(
@@ -229,6 +288,27 @@ mod tests {
             },
             scale,
         }
+    }
+
+    #[test]
+    fn native_geometry_mismatch_is_a_structured_terminal_refusal() {
+        use cua_driver_core::native_window_geometry::{
+            assess, GeometrySample, NativeWindowRect, PointTolerance,
+        };
+        let sample = GeometrySample {
+            logical: NativeWindowRect::new(200.0, 100.0, 230.0, 408.0),
+            compositor: NativeWindowRect::new(10.0, 250.0, 31.0, 102.0),
+        };
+        let error = PxFrameError::NativeGeometryMismatch {
+            window_id: 7,
+            geometry: assess(sample, sample, PointTolerance::new(1.0).unwrap()),
+        };
+        let result = action_error(anyhow::Error::new(error).context("implicit pointer fallback"));
+        assert_eq!(result.is_error, Some(true));
+        let structured = result.structured_content.unwrap();
+        assert_eq!(structured["code"], "native_window_geometry_mismatch");
+        assert_eq!(structured["window_id"], 7);
+        assert_eq!(structured["native_window_geometry"]["status"], "mismatched");
     }
 
     #[test]

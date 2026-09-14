@@ -1,19 +1,31 @@
-#[derive(Clone, Copy, Debug, PartialEq)]
+use serde::Serialize;
+use serde_json::{json, Value};
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct NativeWindowRect {
-    components: [f64; 4],
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
 }
 
 impl NativeWindowRect {
     pub fn new(x: f64, y: f64, width: f64, height: f64) -> Option<Self> {
         let components = [x, y, width, height];
-        (components.iter().all(|value| value.is_finite()) && width > 0.0 && height > 0.0)
-            .then_some(Self { components })
+        (components.iter().all(|value| value.is_finite()) && width > 0.0 && height > 0.0).then_some(
+            Self {
+                x,
+                y,
+                width,
+                height,
+            },
+        )
     }
 
     pub fn matches_within(self, other: Self, tolerance: PointTolerance) -> bool {
-        self.components
+        [self.x, self.y, self.width, self.height]
             .iter()
-            .zip(other.components)
+            .zip([other.x, other.y, other.width, other.height])
             .all(|(left, right)| (left - right).abs() <= tolerance.0)
     }
 }
@@ -24,6 +36,96 @@ pub struct PointTolerance(f64);
 impl PointTolerance {
     pub fn new(points: f64) -> Option<Self> {
         (points.is_finite() && points >= 0.0).then_some(Self(points))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct GeometrySample {
+    pub logical: Option<NativeWindowRect>,
+    pub compositor: Option<NativeWindowRect>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum GeometryAssessment {
+    Aligned {
+        logical: NativeWindowRect,
+        compositor: NativeWindowRect,
+    },
+    Mismatched {
+        logical: NativeWindowRect,
+        compositor: NativeWindowRect,
+    },
+    Unstable,
+    Unavailable,
+}
+
+impl GeometryAssessment {
+    pub fn blocks_pointer(self) -> bool {
+        matches!(self, Self::Mismatched { .. })
+    }
+
+    pub fn project_snapshot(self, snapshot: &mut Value) {
+        snapshot["native_window_geometry"] = json!(self);
+        if self.blocks_pointer() {
+            if let Some(routes) = snapshot
+                .get_mut("background_input")
+                .and_then(|report| report.get_mut("routes"))
+                .and_then(Value::as_array_mut)
+            {
+                for route in routes {
+                    if route["route"] == "window_pointer" && route["status"] == "available" {
+                        route["status"] = json!("refused");
+                        route["reason"] = json!("native_window_geometry_mismatch");
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub fn observe_capture<T>(
+    mut sample: impl FnMut() -> GeometrySample,
+    capture: impl FnOnce() -> T,
+    tolerance: PointTolerance,
+) -> (T, GeometryAssessment) {
+    let before = sample();
+    let captured = capture();
+    let after = sample();
+    (captured, assess(before, after, tolerance))
+}
+
+pub fn assess(
+    before: GeometrySample,
+    after: GeometrySample,
+    tolerance: PointTolerance,
+) -> GeometryAssessment {
+    let (Some(before_logical), Some(before_compositor), Some(logical), Some(compositor)) = (
+        before.logical,
+        before.compositor,
+        after.logical,
+        after.compositor,
+    ) else {
+        return GeometryAssessment::Unavailable;
+    };
+    if !before_logical.matches_within(logical, tolerance)
+        || !before_compositor.matches_within(compositor, tolerance)
+    {
+        return GeometryAssessment::Unstable;
+    }
+    match (
+        before_logical.matches_within(before_compositor, tolerance),
+        logical.matches_within(compositor, tolerance),
+    ) {
+        (true, true) => GeometryAssessment::Aligned {
+            logical,
+            compositor,
+        },
+        (false, false) => GeometryAssessment::Mismatched {
+            logical,
+            compositor,
+        },
+        _ => GeometryAssessment::Unstable,
     }
 }
 

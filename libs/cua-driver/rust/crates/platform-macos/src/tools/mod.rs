@@ -407,10 +407,13 @@ pub(crate) async fn focus_by_pixel(
         if !foreground || pixel_focus_landed(pid, window_id, x, y).await {
             return Ok(());
         }
-    } else if !foreground {
-        return Err(cua_driver_core::protocol::ToolResult::error(format!(
-            "focus pixel-click at ({x:.0},{y:.0}) failed."
-        )));
+    } else if !foreground
+        || focus
+            .structured_content
+            .as_ref()
+            .is_some_and(|result| result["code"] == "native_window_geometry_mismatch")
+    {
+        return Err(focus);
     }
 
     // Some renderer surfaces do not expose a usable AX focus action. The
@@ -436,9 +439,7 @@ pub(crate) async fn focus_by_pixel(
         .invoke(click_args)
         .await;
     if focus.is_error == Some(true) {
-        return Err(cua_driver_core::protocol::ToolResult::error(format!(
-            "focus pixel-click at ({x:.0},{y:.0}) failed."
-        )));
+        return Err(focus);
     }
     // Brief settle so the renderer registers focus before the keystrokes.
     tokio::time::sleep(std::time::Duration::from_millis(120)).await;
@@ -463,7 +464,7 @@ async fn pixel_focus_landed(pid: i32, window_id: Option<u32>, x: f64, y: f64) ->
         return false;
     };
     tokio::task::spawn_blocking(move || {
-        let Ok(frame) = px_frame::resolve_window_px_frame(wid) else {
+        let Ok(frame) = px_frame::resolve_window_px_frame(pid, wid) else {
             return false;
         };
         let (screen_x, screen_y, _, _) = frame.to_screen(x, y);

@@ -98,6 +98,35 @@ was before the launch. That guard is why `launch_app` with `urls`
 is safe even for apps that normally foreground on media-load
 (Chrome, Electron, media players).
 
+## Native capture geometry
+
+`get_window_state` reports `native_window_geometry` separately from
+`screenshot_frame_valid`. The latter still describes PNG-to-WindowServer scale
+coherence; it does not prove that the compositor exposes the full native window.
+
+| `status` | Meaning |
+| --- | --- |
+| `aligned` | Bounded samples around capture agree within the point tolerance. |
+| `mismatched` | Both samples show stable logical/compositor disagreement. |
+| `unstable` | Geometry or agreement changed across the samples. |
+| `unavailable` | The required exact-window measurements were not obtained within the metadata budget, or capture was not requested. |
+
+`aligned` and `mismatched` include `logical` and `compositor` rectangles with
+`x`, `y`, `width`, and `height` in top-left-origin logical screen points. These
+are not screenshot pixels. No status proves image freshness or readability,
+and `mismatched` does not identify Stage Manager as the cause.
+
+The image and AX tree remain useful observations even when geometry disagrees.
+Semantic actions remain independently available. Confirmed mismatched pointer
+routes return `native_window_geometry_mismatch`; do not retry old thumbnail
+coordinates with foreground delivery. Explicitly select the window, take a new
+snapshot, and choose new coordinates instead. Unstable or unavailable geometry
+does not introduce a new blanket refusal or bypass existing input checks.
+
+This additional assessment is currently implemented by the macOS adapter only.
+An absent field on Windows, X11, or Wayland means unassessed, not aligned; their
+existing coordinate and compositor capability checks remain in force.
+
 ## Intent → tool mapping (macOS-specific)
 
 | Intent                                | Use                                                                                    | Don't use                                                   |

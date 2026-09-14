@@ -300,6 +300,7 @@ pub enum OracleKind {
 #[serde(rename_all = "snake_case")]
 pub enum RefusalCode {
     BringToFrontExactWindowUnverified,
+    NativeWindowGeometryMismatch,
     BackgroundUnavailable,
     BackgroundOccluded,
     BackgroundUipiBlocked,

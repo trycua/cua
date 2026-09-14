@@ -572,6 +572,15 @@ or an incorrect harness cannot fall back to running the full suite. AppKit
 selection requires `--retry-only`; full-matrix automatic retry eligibility is
 unchanged.
 
+The `macos-appkit-native-geometry-mismatch-px-background` cell uses an opt-in
+AppKit fixture that changes its reported accessibility frame without resizing
+the compositor window. A real middle-click first calibrates the fixture's native
+input journal. The test then requires retained PNG/tree output, a working semantic
+button action, and a pixel refusal with no additional native input or background
+focus/cursor/stacking violations. Raw responses, PNG and fixture state are retained
+under the cell's recording directory. This is controlled native disagreement
+coverage, not a Stage Manager reproduction or tolerance calibration.
+
 ## Test the runner itself
 
 The runner's shell helpers, including status matching, build-namespace selection,

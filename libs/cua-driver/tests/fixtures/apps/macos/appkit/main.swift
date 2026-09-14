@@ -656,6 +656,14 @@ struct CuaAppKitHarness {
             withExtendedLifetime(fixture) {}
             return
         }
+        if let directory = ProcessInfo.processInfo.environment["CUA_APPKIT_GEOMETRY_DIR"] {
+            let fixture = NativeGeometryFixture(directory: URL(fileURLWithPath: directory))
+            fixture.show()
+            app.activate(ignoringOtherApps: true)
+            app.run()
+            withExtendedLifetime(fixture) {}
+            return
+        }
         let controller = HarnessWindowController()
         installMenuBar(target: controller)
         controller.show()

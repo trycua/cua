@@ -1956,6 +1956,77 @@ fn harness_appkit_type_text_background() {
     );
 }
 
+/// A field whose `AXValue` catches up with the write over the next second is
+/// not a partially typed field. The AX rung used to read the value back once,
+/// microseconds after the write returned, and published the prefix it caught
+/// as `type_text_incomplete`: measured in Contacts as "delivered 6 of 14"
+/// for a phone number the card in fact held in full.
+#[test]
+#[ignore]
+fn harness_appkit_type_text_waits_for_a_lagging_value_readback() {
+    run_case_with(
+        native_background_case(
+            "appkit",
+            "type_text_lagging_readback",
+            Targeting::Ax,
+            DriverRoute::MacosAxValue,
+        ),
+        || {
+            Harness::spawn(
+                None,
+                None,
+                false,
+                None,
+                &[("CUA_APPKIT_AX_VALUE_LAG_MS", "900")],
+            )
+            .presented()
+        },
+        |pid, wid, driver| {
+            let (_, passed) = run_with_background_oracles(
+                driver,
+                TargetWindow {
+                    pid,
+                    native_id: wid,
+                },
+                |driver| {
+                    let snap_pre = snapshot_elements(driver, pid, wid);
+                    let idx = element_index_by_id(snap_pre.tree_text(), "txt-input")
+                        .expect("txt-input element_index not found");
+                    let text = "lagging-readback-cua";
+                    let resp = driver.call(
+                        "type_text",
+                        serde_json::json!({
+                            "pid": pid as i64, "window_id": wid,
+                            "element_token": snap_pre.element_token(idx),
+                            "text": text, "delivery_mode": "background"
+                        }),
+                    );
+                    assert!(
+                        !resp.is_error(),
+                        "a value the field was still publishing was reported as a failure: {}",
+                        resp.text()
+                    );
+                    assert_eq!(
+                        resp.structured()["delivery"]["delivered_count"],
+                        serde_json::json!(text.chars().count()),
+                        "type_text under-counted a complete insertion: {}",
+                        resp.raw
+                    );
+
+                    std::thread::sleep(Duration::from_millis(1200));
+                    let post = snapshot_elements(driver, pid, wid).tree_text().to_owned();
+                    assert!(
+                        post.matches(text).count() == 1,
+                        "the field does not hold the string exactly once:\n{post}"
+                    );
+                },
+            )
+            .unwrap_or_else(|error| panic!("background desktop contract failed: {error}"));
+            Observation::delivered_with_fixture_state(passed)
+        },
+    );
+}
+
 #[test]
 #[ignore]
 fn harness_appkit_scroll_foreground() {

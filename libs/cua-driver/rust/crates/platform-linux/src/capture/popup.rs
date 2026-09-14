@@ -603,7 +603,7 @@ mod live_tests {
                 xid,
                 AtomEnum::WM_NAME,
                 AtomEnum::STRING,
-                b"OpenSky popup capture fixture",
+                b"Cua popup capture fixture",
             )
             .unwrap()
             .check()

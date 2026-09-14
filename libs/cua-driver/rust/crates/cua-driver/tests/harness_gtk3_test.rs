@@ -904,12 +904,15 @@ fn invoke_operation(
     wait_for_state(driver, pid, window_id, expected);
     if DisplayServer::current() == DisplayServer::X11
         && row.delivery == Delivery::Foreground
-        && matches!(row.operation, Operation::Hotkey { .. })
+        && matches!(
+            row.operation,
+            Operation::PressKey { .. } | Operation::Hotkey { .. }
+        )
     {
         assert_eq!(
             response.action_route(),
             Some("global_input"),
-            "XTest hotkey must report its executed route: {}",
+            "XTest keyboard input must report its executed route: {}",
             response.raw
         );
         assert_eq!(response.action_effect(), Some("unverifiable"));

@@ -220,6 +220,7 @@ jobs:
             trap "kill $wm 2>/dev/null || true" EXIT
             status=0
             cargo test -p platform-linux --test keyboard_tools_x11 --test terminal_keyboard_x11 \
+              --test keyboard_lifecycle_x11 --test keyboard_io_failure_x11 --no-fail-fast \
               --locked -- --ignored --nocapture --test-threads=1 || status=$?
             cargo test -p platform-linux --lib keyboard_producer_tests \
               --locked -- --ignored --nocapture --test-threads=1 || status=$?

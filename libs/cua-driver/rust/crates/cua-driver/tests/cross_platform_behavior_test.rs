@@ -1376,13 +1376,25 @@ fn run_press_key_action(fixture: &mut Fixture, addressing: &str, delivery: &str)
     passed.extend(unverified_background_protocol_oracle(&response, delivery));
     assert_fixture_contains(fixture, "key_state=enter");
     assert_fixture_value(fixture, "number-input", "42");
-    assert_keyboard_outcome(&response, delivery);
+    assert_keyboard_outcome(fixture, &response, "press_key", addressing, delivery);
 
     Observation::delivered(passed, Evidence::default())
 }
 
-fn assert_keyboard_outcome(response: &ToolResponse, delivery: &str) {
-    let expected_route = match delivery {
+fn assert_keyboard_outcome(
+    fixture: &Fixture,
+    response: &ToolResponse,
+    tool: &str,
+    addressing: &str,
+    delivery: &str,
+) {
+    let actual_delivery = if cfg!(target_os = "macos") && tool == "press_key" && addressing == "px"
+    {
+        "background"
+    } else {
+        delivery
+    };
+    let expected_route = match actual_delivery {
         "foreground" => "global_input",
         "background" => "synthetic_events",
         other => panic!("unexpected keyboard delivery {other}"),
@@ -1401,7 +1413,7 @@ fn assert_keyboard_outcome(response: &ToolResponse, delivery: &str) {
     );
     assert_eq!(
         response.action_delivery_mode(),
-        Some(delivery),
+        Some(actual_delivery),
         "{}",
         response.raw
     );
@@ -1429,6 +1441,43 @@ fn assert_keyboard_outcome(response: &ToolResponse, delivery: &str) {
             response.raw
         );
     }
+    assert_keyboard_recording(fixture, response, tool);
+}
+
+fn assert_keyboard_recording(fixture: &Fixture, response: &ToolResponse, tool: &str) {
+    let Some(directory) = fixture.driver.recording_dir() else {
+        return;
+    };
+    let mut turns: Vec<_> = std::fs::read_dir(directory)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("turn-")
+        })
+        .collect();
+    turns.sort();
+    let path = turns
+        .last()
+        .expect("recorded keyboard turn")
+        .join("action.json");
+    let action: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    assert_eq!(action["tool"], tool);
+    let truth = &action["action_truth"];
+    let public = response.structured();
+    assert!(
+        truth.is_object(),
+        "keyboard recording lost producer truth: {action}"
+    );
+    assert_eq!(truth["effect"], public["effect"]);
+    assert_eq!(truth["route"], public["route"]);
+    assert_eq!(truth["actual_delivery"], public["delivery"]["mode"]);
+    assert_eq!(
+        truth["delivered_count"],
+        public["delivery"]["delivered_count"]
+    );
 }
 
 fn run_hotkey_action(fixture: &mut Fixture, addressing: &str, delivery: &str) -> Observation {
@@ -1451,7 +1500,7 @@ fn run_hotkey_action(fixture: &mut Fixture, addressing: &str, delivery: &str) ->
     );
     assert_fixture_contains(fixture, "key_state=hotkey");
     assert_fixture_value(fixture, "number-input", "42");
-    assert_keyboard_outcome(&response, delivery);
+    assert_keyboard_outcome(fixture, &response, "hotkey", addressing, delivery);
     #[cfg(target_os = "macos")]
     if fixture.name == "electron" && addressing == "px" && delivery == "foreground" {
         run_macos_selection_hotkeys(fixture);

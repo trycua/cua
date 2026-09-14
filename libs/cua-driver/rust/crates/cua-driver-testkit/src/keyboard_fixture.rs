@@ -59,22 +59,21 @@ impl KeyboardFixture {
     }
 
     pub fn key_event(&self, kind: &str, key: u64) -> Value {
-        loop {
-            let event = self.event(kind);
-            if event["key"] == key {
-                return event;
-            }
-        }
+        self.matching_event(kind, Some(key))
     }
 
     pub fn event(&self, kind: &str) -> Value {
+        self.matching_event(kind, None)
+    }
+
+    fn matching_event(&self, kind: &str, key: Option<u64>) -> Value {
         let deadline = std::time::Instant::now() + Duration::from_secs(15);
         loop {
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
             let event = self.events.recv_timeout(remaining).unwrap_or_else(|error| {
                 panic!("native keyboard oracle did not report {kind}: {error}")
             });
-            if event["kind"] == kind {
+            if event["kind"] == kind && key.is_none_or(|key| event["key"] == key) {
                 return event;
             }
         }

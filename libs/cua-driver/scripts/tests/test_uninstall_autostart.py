@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import shutil
 import subprocess
 
 import pytest
@@ -19,14 +20,15 @@ def _write_executable(path: Path, body: str) -> None:
 def _sandbox(tmp_path: Path, os_name: str) -> tuple[Path, Path, dict[str, str]]:
     home = tmp_path / "home"
     fake_bin = tmp_path / "bin"
-    host_bin = tmp_path / "host-bin"
     calls = tmp_path / "calls.log"
     home.mkdir()
     fake_bin.mkdir()
-    host_bin.mkdir()
-    _write_executable(host_bin / "pgrep", "exit 2\n")
+    for command in ("cat", "dirname", "id", "readlink", "realpath", "sleep"):
+        executable = shutil.which(command, path=os.defpath)
+        assert executable is not None, f"missing fixture utility: {command}"
+        (fake_bin / command).symlink_to(executable)
 
-    _write_executable(fake_bin / "pgrep", "exit 1\n")
+    _write_executable(fake_bin / "ps", "exit 2\n")
     _write_executable(fake_bin / "uname", f"printf '%s\\n' '{os_name}'\n")
     for command in ("launchctl", "systemctl", "tccutil", "sudo"):
         _write_executable(
@@ -57,15 +59,7 @@ done
 """,
     )
 
-    env = os.environ.copy()
-    env.update(
-        {
-            "HOME": str(home),
-            "PATH": f"{fake_bin}:{host_bin}:/usr/bin:/bin",
-        }
-    )
-    env.pop("CUA_DRIVER_HOME", None)
-    env.pop("CUA_DRIVER_RS_HOME", None)
+    env = {"HOME": str(home), "PATH": str(fake_bin)}
     return home, calls, env
 
 

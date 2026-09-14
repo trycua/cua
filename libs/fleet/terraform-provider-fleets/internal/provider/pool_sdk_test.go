@@ -6,6 +6,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/trycua/cloud/cyclops-cs/sdk-bindings/go-uniffi/cyclops_sdk_schema"
 	"github.com/trycua/cloud/cyclops-cs/sdk-bindings/go-uniffi/fleet_sdk"
@@ -34,6 +35,16 @@ func testAutoscalingValue(initial int64) types.Object {
 		"initial_pool_size": types.Int64Value(initial),
 		"max_pool_size":     types.Int64Value(5),
 	})
+}
+
+func TestPoolResourceSchemaImagePullSecretIsOptionalOnly(t *testing.T) {
+	attribute, ok := poolResourceSchema().Attributes["image_pull_secret"].(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("image_pull_secret schema type = %T, want schema.StringAttribute", attribute)
+	}
+	if !attribute.Optional || attribute.Computed {
+		t.Fatalf("image_pull_secret optional = %t, computed = %t; want optional-only", attribute.Optional, attribute.Computed)
+	}
 }
 
 func TestPoolResourceModelToSDKCreatePoolRequest(t *testing.T) {
@@ -205,7 +216,7 @@ func TestPoolResourceModelToSDKCreateTemplateRequest(t *testing.T) {
 	}
 }
 
-func TestPoolResourceModelToSDKPublicImageOmitsPullSecret(t *testing.T) {
+func TestPoolResourceModelToSDKEmptyPullSecretPreservesConfiguredValue(t *testing.T) {
 	model := examplePoolModel()
 	model.ImagePullSecret = types.StringValue("")
 
@@ -214,12 +225,13 @@ func TestPoolResourceModelToSDKPublicImageOmitsPullSecret(t *testing.T) {
 	if diagnostics.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diagnostics)
 	}
-	if request.Spec.VmTemplate.ImagePullSecret != nil {
-		t.Fatalf("imagePullSecret = %v, want omitted for a public image", request.Spec.VmTemplate.ImagePullSecret)
+	secret := request.Spec.VmTemplate.ImagePullSecret
+	if secret == nil || *secret != "" {
+		t.Fatalf("imagePullSecret = %v, want configured empty string", secret)
 	}
 }
 
-func TestPoolResourceModelToSDKUnconfiguredPullSecretKeepsECRDefault(t *testing.T) {
+func TestPoolResourceModelToSDKUnconfiguredPullSecretIsOmitted(t *testing.T) {
 	for name, value := range map[string]types.String{
 		"null":    types.StringNull(),
 		"unknown": types.StringUnknown(),
@@ -233,9 +245,8 @@ func TestPoolResourceModelToSDKUnconfiguredPullSecretKeepsECRDefault(t *testing.
 			if diagnostics.HasError() {
 				t.Fatalf("unexpected diagnostics: %v", diagnostics)
 			}
-			secret := request.Spec.VmTemplate.ImagePullSecret
-			if secret == nil || *secret != "ecr-credentials" {
-				t.Fatalf("imagePullSecret = %v, want ecr-credentials", secret)
+			if request.Spec.VmTemplate.ImagePullSecret != nil {
+				t.Fatalf("imagePullSecret = %v, want omitted", request.Spec.VmTemplate.ImagePullSecret)
 			}
 		})
 	}
@@ -301,8 +312,8 @@ func TestPoolResourceModelFromSDKPublicImagePreservesOmittedPullSecret(t *testin
 	if diagnostics.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diagnostics)
 	}
-	if model.ImagePullSecret.ValueString() != "" {
-		t.Fatalf("image_pull_secret = %q, want empty string", model.ImagePullSecret.ValueString())
+	if !model.ImagePullSecret.IsNull() {
+		t.Fatalf("image_pull_secret = %v, want null", model.ImagePullSecret)
 	}
 }
 

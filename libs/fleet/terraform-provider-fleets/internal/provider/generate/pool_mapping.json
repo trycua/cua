@@ -58,10 +58,10 @@
       "name": "image_pull_secret",
       "go_name": "ImagePullSecret",
       "value_type": "string",
-      "mode": "optional_computed",
+      "mode": "optional",
       "cr": "template",
       "crd_path": "spec.vmTemplate.imagePullSecret",
-      "description": "Kubernetes image pull secret. Defaults to ecr-credentials when omitted; set to an empty string to omit imagePullSecret for anonymous public-image pulls."
+      "description": "Kubernetes image pull secret. Omit this argument for anonymous public-image pulls."
     },
     {
       "name": "runtime",

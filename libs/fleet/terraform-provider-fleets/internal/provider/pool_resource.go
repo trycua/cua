@@ -361,13 +361,9 @@ func (m poolResourceModel) toSDKTemplateSpec(ctx context.Context, diagnostics *d
 
 func configuredImagePullSecret(value types.String) *string {
 	if value.IsNull() || value.IsUnknown() {
-		defaultSecret := "ecr-credentials"
-		return &defaultSecret
-	}
-	configured := value.ValueString()
-	if configured == "" {
 		return nil
 	}
+	configured := value.ValueString()
 	return &configured
 }
 
@@ -456,7 +452,11 @@ func (m *poolResourceModel) fromSDKTemplate(ctx context.Context, template *fleet
 	m.CPUCores = types.Int64Value(optionalUint32(vmTemplate.CpuCores))
 	m.Memory = types.StringValue(optionalString(vmTemplate.Memory))
 	m.ContainerDiskImage = types.StringValue(vmTemplate.ContainerDiskImage)
-	m.ImagePullSecret = types.StringValue(optionalString(vmTemplate.ImagePullSecret))
+	if vmTemplate.ImagePullSecret == nil {
+		m.ImagePullSecret = types.StringNull()
+	} else {
+		m.ImagePullSecret = types.StringValue(*vmTemplate.ImagePullSecret)
+	}
 	m.Runtime = types.StringValue(runtimeString(vmTemplate.Runtime))
 	m.Firmware = types.StringValue(firmwareString(vmTemplate.Firmware))
 	probes := sdkProbes(vmTemplate.Probes, diagnostics)

@@ -39,9 +39,8 @@ resource "fleets_pool" "linux_autoscaled" {
 
 ## Public image without registry credentials
 
-Set `image_pull_secret` to an empty string to omit `imagePullSecret` from the
-Fleet template and let Kubernetes pull an anonymously accessible image. Leaving
-the argument unset retains the `ecr-credentials` default.
+Omit `image_pull_secret` to omit `imagePullSecret` from the Fleet template and
+let Kubernetes pull an anonymously accessible image.
 
 ```terraform
 resource "fleets_pool" "public_gvisor" {
@@ -49,7 +48,6 @@ resource "fleets_pool" "public_gvisor" {
   cpu_cores            = 4
   memory               = "8Gi"
   container_disk_image = "ghcr.io/example/public-image@sha256:..."
-  image_pull_secret    = ""
   runtime              = "gvisor"
 
   autoscaling {
@@ -67,7 +65,7 @@ resource "fleets_pool" "public_gvisor" {
 - `cpu_cores` - Virtual CPUs per sandbox.
 - `memory` - Kubernetes memory quantity per sandbox.
 - `container_disk_image` - OCI containerDisk or runtime image.
-- `image_pull_secret` - Image pull secret; omitted values default to `ecr-credentials`. Set `""` to omit the field for an anonymous public-image pull.
+- `image_pull_secret` - Optional image pull secret. Omit it for an anonymous public-image pull.
 - `runtime` - `kubevirt`, `macos`, or `gvisor`; defaults to `kubevirt`.
 - `firmware` - `bios` or `efi`; defaults to `bios`.
 - `readiness_probe_json` / `liveness_probe_json` - Kubernetes probe objects encoded as JSON.

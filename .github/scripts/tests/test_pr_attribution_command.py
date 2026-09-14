@@ -19,15 +19,11 @@ HEAD = "b" * 40
 KNOWN = {"known@institution.example": "known-author"}
 
 
-def configuration(overrides):
-    return {"identityOverrides": overrides}
-
-
 def contents(overrides):
-    return {
-        "encoding": "base64",
-        "content": base64.b64encode(json.dumps(configuration(overrides)).encode()).decode(),
-    }
+    if overrides is None:
+        return None
+    data = json.dumps({"identityOverrides": overrides}).encode()
+    return {"encoding": "base64", "content": base64.b64encode(data).decode()}
 
 
 @pytest.fixture
@@ -39,9 +35,9 @@ def github_api():
             pass
 
         def do_GET(self):
-            payload = responses.get(self.path, {"message": f"Unexpected GET {self.path}"})
+            payload = responses.get(self.path)
             data = json.dumps(payload).encode()
-            self.send_response(200 if self.path in responses else 404)
+            self.send_response(404 if payload is None else 200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
@@ -74,14 +70,15 @@ def validate_command(tmp_path, github_api):
             ["git", *args], cwd=tmp_path, env=env, text=True
         ).strip()
 
-    def validate(*, ancestor, head, trusted=KNOWN, body=""):
+    def validate(*, ancestor, head, body="", merge_base_sha=ANCESTOR):
         config = tmp_path / CONFIG
         config.parent.mkdir()
-        config.write_text(json.dumps(configuration(trusted)))
+        config.write_text(json.dumps({"identityOverrides": KNOWN}))
         git("init", "-q", "--template=")
         git("add", CONFIG)
         git(
-            "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+            "-c", "user.name=Fixture",
+            "-c", "user.email=fixture@example.invalid",
             "commit", "-qm", "trusted policy",
         )
         trusted_sha = git("rev-parse", "HEAD")
@@ -111,21 +108,95 @@ def validate_command(tmp_path, github_api):
             }],
             f"/repos/contributor/cua/contents/{CONFIG}?ref={HEAD}": contents(head),
             f"/repos/trycua/cua/compare/{trusted_sha}...{HEAD}?per_page=1": {
-                "merge_base_commit": {"sha": ANCESTOR},
+                "merge_base_commit": {"sha": merge_base_sha},
             },
             f"/repos/trycua/cua/contents/{CONFIG}?ref={ANCESTOR}": contents(ancestor),
         })
         return subprocess.run(
-            [sys.executable, str(ROOT / ".github/scripts/release_attribution.py"),
-             "validate-pr", "--event", "event.json"],
-            cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30,
+            [
+                sys.executable, str(ROOT / ".github/scripts/release_attribution.py"),
+                "validate-pr", "--event", "event.json",
+            ],
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
 
     return validate
 
 
-def test_unchanged_stale_configuration_uses_current_trusted_policy(validate_command):
-    result = validate_command(ancestor={}, head={})
+@pytest.mark.parametrize(
+    "ancestor",
+    [
+        {},
+        {"known@institution.example": "previous-author"},
+        {"retired@institution.example": "retired-author"},
+        KNOWN,
+    ],
+    ids=["before-addition", "before-update", "before-removal", "current"],
+)
+def test_unchanged_configuration_uses_current_trusted_policy(validate_command, ancestor):
+    result = validate_command(ancestor=ancestor, head=ancestor)
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "merge-ready for pull request #50" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "head", [{}, {"known@institution.example": "other-author"}], ids=["removed", "altered"]
+)
+def test_actual_changes_to_trusted_mappings_are_rejected(validate_command, head):
+    result = validate_command(ancestor=KNOWN, head=head)
+
+    assert result.returncode == 1
+    assert "removes or changes trusted identityOverrides" in result.stderr
+    assert "merge-ready" not in result.stdout
+
+
+def test_unverified_addition_on_stale_branch_is_rejected(validate_command):
+    result = validate_command(ancestor={}, head={"new@institution.example": "new-author"})
+
+    assert result.returncode == 1
+    assert "new@institution.example" in result.stderr
+    assert "has no explicit same-repository source PR" in result.stderr
+    assert "merge-ready" not in result.stdout
+
+
+def test_verified_addition_on_stale_branch_is_accepted(validate_command, github_api):
+    _, responses = github_api
+    responses["/repos/trycua/cua/pulls/12"] = {
+        "number": 12, "user": {"login": "source-author"},
+    }
+    responses["/repos/trycua/cua/pulls/12/commits?per_page=100&page=1"] = [
+        {"commit": {"author": {"email": "source@institution.example"}}},
+    ]
+    result = validate_command(
+        ancestor={},
+        head={"source@institution.example": "source-author"},
+        body="The identity is verified by https://github.com/trycua/cua/pull/12",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "merge-ready for pull request #50" in result.stdout
+
+
+@pytest.mark.parametrize("missing", ["ancestor", "head"])
+def test_unreadable_configuration_is_not_approved(validate_command, missing):
+    configurations = {"ancestor": {}, "head": {}}
+    configurations[missing] = None
+    result = validate_command(**configurations)
+
+    assert result.returncode == 1
+    assert "GitHub API GET" in result.stderr
+    assert "404" in result.stderr
+    assert "merge-ready" not in result.stdout
+
+
+def test_missing_merge_base_is_not_approved(validate_command):
+    result = validate_command(ancestor={}, head={}, merge_base_sha="")
+
+    assert result.returncode == 1
+    assert "no merge base" in result.stderr
+    assert "merge-ready" not in result.stdout

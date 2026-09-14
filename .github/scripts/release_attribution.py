@@ -1220,12 +1220,32 @@ def validate_pr_command(args: argparse.Namespace) -> None:
 
     base_config = json.loads(args.config.read_text())
     head_config = client.file_json(head_repository, args.config.as_posix(), head_sha)
+    trusted_sha = run_git(Path.cwd(), "rev-parse", "HEAD").strip()
+    comparison = client.get(
+        f"repos/{repository}/compare/{trusted_sha}...{head_sha}?per_page=1"
+    )
+    ancestor_sha = str((comparison.get("merge_base_commit") or {}).get("sha") or "")
+    if not ancestor_sha:
+        raise ReleaseError("GitHub returned no merge base for attribution validation")
+    ancestor_config = client.file_json(repository, args.config.as_posix(), ancestor_sha)
+    ancestor_overrides = _normalized_map(ancestor_config, "identityOverrides")
+    head_overrides = _normalized_map(head_config, "identityOverrides")
+    candidate_overrides = {
+        email: login
+        for email, login in _normalized_map(base_config, "identityOverrides").items()
+        if head_overrides.get(email) == ancestor_overrides.get(email)
+    }
+    candidate_overrides.update(
+        (email, login)
+        for email, login in head_overrides.items()
+        if login != ancestor_overrides.get(email)
+    )
     validate_pr_attribution(
         repository=repository,
         pull=pull,
         commits=commits,
         base_config=base_config,
-        head_config=head_config,
+        head_config={**head_config, "identityOverrides": candidate_overrides},
         github=client,
     )
     print(f"contributor attribution is merge-ready for pull request #{number}")

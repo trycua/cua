@@ -1,4 +1,5 @@
 import AppKit
+import WebKit
 
 final class NativeGeometryWindow: NSWindow {
     var reportsMismatch = false
@@ -32,19 +33,12 @@ final class NativeGeometryWindow: NSWindow {
     }
 }
 
-final class NativeGeometryButton: NSButton {
-    var onReveal: (() -> Void)?
+final class NativeGeometryWebObserver: NSObject, WKScriptMessageHandler {
+    var update: ((Double) -> Void)?
 
-    override func accessibilityActionNames() -> [NSAccessibility.Action] {
-        super.accessibilityActionNames() + [NSAccessibility.Action(rawValue: "AXScrollToVisible")]
-    }
-
-    override func accessibilityPerformAction(_ action: NSAccessibility.Action) {
-        if action.rawValue == "AXScrollToVisible" {
-            onReveal?()
-        } else {
-            super.accessibilityPerformAction(action)
-        }
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let position = message.body as? NSNumber else { return }
+        update?(position.doubleValue)
     }
 }
 
@@ -53,10 +47,13 @@ final class NativeGeometryFixture: NSObject {
     private let directory: URL
     private let counterLabel = NSTextField(labelWithString: "geometry_count=0")
     private var counter = 0
-    private var reveals = 0
+    private var webScroll = -1.0
+    private let webObserver = NativeGeometryWebObserver()
+    private let web: WKWebView
 
     init(directory: URL) {
         self.directory = directory
+        web = WKWebView(frame: NSRect(x: 200, y: 20, width: 140, height: 200))
         window = NativeGeometryWindow(
             contentRect: NSRect(x: 100, y: 100, width: 360, height: 240),
             styleMask: [.titled, .closable, .miniaturizable],
@@ -68,12 +65,7 @@ final class NativeGeometryFixture: NSObject {
         window.setFrameAutosaveName("")
         window.setAccessibilityIdentifier("geometry-window")
         let content = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 240))
-        let increment = NativeGeometryButton(title: "Increment", target: self, action: #selector(increment))
-        increment.onReveal = { [weak self] in
-            guard let self else { return }
-            self.reveals += 1
-            self.publish()
-        }
+        let increment = NSButton(title: "Increment", target: self, action: #selector(increment))
         increment.frame = NSRect(x: 20, y: 170, width: 160, height: 36)
         increment.setAccessibilityIdentifier("geometry-increment")
         content.addSubview(increment)
@@ -81,7 +73,29 @@ final class NativeGeometryFixture: NSObject {
         mismatch.frame = NSRect(x: 20, y: 100, width: 160, height: 36)
         mismatch.setAccessibilityIdentifier("geometry-mismatch")
         content.addSubview(mismatch)
-        counterLabel.frame = NSRect(x: 20, y: 30, width: 240, height: 24)
+        let reset = NSButton(title: "Reset web", target: self, action: #selector(resetWeb))
+        reset.frame = NSRect(x: 20, y: 60, width: 160, height: 30)
+        reset.setAccessibilityIdentifier("geometry-reset-web")
+        content.addSubview(reset)
+        webObserver.update = { [weak self] position in
+            self?.webScroll = position
+            self?.publish()
+        }
+        let scripts = web.configuration.userContentController
+        scripts.add(webObserver, name: "geometry")
+        scripts.addUserScript(WKUserScript(source: """
+            const publish = () => window.webkit.messageHandlers.geometry.postMessage(window.scrollY);
+            window.addEventListener('load', publish);
+            window.addEventListener('scroll', publish);
+            """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        web.loadHTMLString("""
+            <!doctype html><html lang="en"><head><title>Geometry scroll probe</title></head>
+            <body style="margin:0"><div style="height:800px">Native reveal probe</div>
+            <button aria-label="Geometry reveal target">Reveal target</button>
+            <div style="height:200px"></div></body></html>
+            """, baseURL: nil)
+        content.addSubview(web)
+        counterLabel.frame = NSRect(x: 20, y: 30, width: 160, height: 24)
         content.addSubview(counterLabel)
         window.contentView = content
         window.onInput = { [weak self] in self?.publish() }
@@ -96,6 +110,10 @@ final class NativeGeometryFixture: NSObject {
         counter += 1
         counterLabel.stringValue = "geometry_count=\(counter)"
         publish()
+    }
+
+    @objc private func resetWeb() {
+        web.evaluateJavaScript("window.scrollTo(0, 0)")
     }
 
     @objc private func disagree() {
@@ -114,7 +132,7 @@ final class NativeGeometryFixture: NSObject {
                 "reported_width": window.accessibilityFrame().width,
                 "mismatched": window.reportsMismatch,
                 "counter": counter,
-                "reveals": reveals,
+                "web_scroll_y": webScroll,
                 "input_events": window.inputEvents
             ], options: [.sortedKeys])
             try data.write(to: directory.appendingPathComponent("state.json"), options: .atomic)

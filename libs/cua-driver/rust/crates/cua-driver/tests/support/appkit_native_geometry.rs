@@ -28,6 +28,19 @@ fn save_response(directory: &Path, name: &str, response: &ToolResponse) {
     .unwrap();
 }
 
+fn web_target(snapshot: &ToolResponse) -> String {
+    snapshot.structured()["elements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|element| {
+            element["role"] == "AXButton" && element["label"] == "Geometry reveal target"
+        })
+        .and_then(|element| element["element_token"].as_str())
+        .expect("native WebKit reveal target")
+        .to_owned()
+}
+
 #[test]
 #[ignore]
 fn harness_appkit_native_geometry_mismatch_refuses_pixel_without_side_effects() {
@@ -58,7 +71,9 @@ fn harness_appkit_native_geometry_mismatch_refuses_pixel_without_side_effects() 
             pid: app.id(),
             _app: app,
         };
-        let initial = fixture_state(&directory, |state| state["window_id"].is_u64());
+        let initial = fixture_state(&directory, |state| {
+            state["window_id"].is_u64() && state["web_scroll_y"].as_f64().is_some_and(|y| y >= 0.0)
+        });
         let wid = initial["window_id"].as_u64().unwrap();
         assert_eq!(initial["pid"], harness.pid);
         let aligned = snapshot_elements(&mut driver, harness.pid, wid);
@@ -88,7 +103,7 @@ fn harness_appkit_native_geometry_mismatch_refuses_pixel_without_side_effects() 
             "scroll",
             serde_json::json!({
                 "pid": harness.pid, "window_id": wid,
-                "element_token": element_token_by_id(&reveal_snapshot, "geometry-increment"),
+                "element_token": web_target(&reveal_snapshot),
                 "direction": "down", "amount": 1
             }),
         );
@@ -99,7 +114,7 @@ fn harness_appkit_native_geometry_mismatch_refuses_pixel_without_side_effects() 
             reveal_calibration.text()
         );
         let calibrated = fixture_state(&directory, |state| {
-            state["reveals"] == 1
+            state["web_scroll_y"].as_f64().is_some_and(|y| y > 0.0)
                 && state["input_events"].as_array().is_some_and(|events| {
                     events
                         .iter()
@@ -117,6 +132,16 @@ fn harness_appkit_native_geometry_mismatch_refuses_pixel_without_side_effects() 
             serde_json::to_vec_pretty(&calibrated).unwrap(),
         )
         .unwrap();
+        let before_reset = snapshot_elements(&mut driver, harness.pid, wid);
+        let reset = driver.call(
+            "click",
+            serde_json::json!({
+                "pid": harness.pid, "window_id": wid,
+                "element_token": element_token_by_id(&before_reset, "geometry-reset-web")
+            }),
+        );
+        assert!(!reset.is_error(), "reset scroll probe: {}", reset.text());
+        fixture_state(&directory, |state| state["web_scroll_y"] == 0.0);
         let before_toggle = snapshot_elements(&mut driver, harness.pid, wid);
         let toggle = driver.call(
             "click",
@@ -208,7 +233,7 @@ fn harness_appkit_native_geometry_mismatch_refuses_pixel_without_side_effects() 
                 "scroll",
                 serde_json::json!({
                     "pid": harness.pid, "window_id": wid,
-                    "element_token": element_token_by_id(&snapshot, "geometry-increment"),
+                    "element_token": web_target(&snapshot),
                     "direction": "down", "amount": 1
                 }),
             );
@@ -226,7 +251,7 @@ fn harness_appkit_native_geometry_mismatch_refuses_pixel_without_side_effects() 
             )
             .unwrap();
             assert_eq!(
-                after_scroll["reveals"], calibrated["reveals"],
+                after_scroll["web_scroll_y"], 0.0,
                 "refused wheel fallback revealed its element"
             );
             std::thread::sleep(Duration::from_millis(750));

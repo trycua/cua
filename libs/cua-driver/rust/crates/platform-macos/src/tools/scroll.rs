@@ -14,6 +14,7 @@ use crate::ax::bindings::{
     copy_children, copy_element_attr, copy_string_attr, element_screen_center, kAXErrorSuccess,
     perform_action, AXUIElementRef,
 };
+use crate::ax::cache::RetainedElement;
 use crate::focus_guard;
 use crate::window_change_detector::WindowChangeDetector;
 
@@ -245,7 +246,16 @@ impl Tool for ScrollTool {
                 let by_for_ax = by.clone();
                 let foreground = delivery_mode.is_foreground();
                 let ax_result =
-                    tokio::task::spawn_blocking(move || -> anyhow::Result<(bool, bool)> {
+                    tokio::task::spawn_blocking(move || -> anyhow::Result<Option<(bool, bool)>> {
+                        let Some(button) = (unsafe {
+                            native_text_scroll_button(
+                                element_guard.as_ptr() as AXUIElementRef,
+                                &direction_for_ax,
+                                &by_for_ax,
+                            )
+                        }) else {
+                            return Ok(None);
+                        };
                         if foreground {
                             let mut delivered = false;
                             let fronted = crate::input::skylight::with_foreground_assist(
@@ -253,10 +263,8 @@ impl Tool for ScrollTool {
                                 wid,
                                 || {
                                     delivered = unsafe {
-                                        scroll_native_text_area(
-                                            element_guard.as_ptr() as AXUIElementRef,
-                                            &direction_for_ax,
-                                            &by_for_ax,
+                                        press_scroll_button(
+                                            button.as_ptr() as AXUIElementRef,
                                             amount,
                                         )
                                     };
@@ -264,24 +272,19 @@ impl Tool for ScrollTool {
                                     Ok(())
                                 },
                             )?;
-                            Ok((delivered, fronted))
+                            Ok(Some((delivered, fronted)))
                         } else {
-                            Ok((
+                            Ok(Some((
                                 unsafe {
-                                    scroll_native_text_area(
-                                        element_guard.as_ptr() as AXUIElementRef,
-                                        &direction_for_ax,
-                                        &by_for_ax,
-                                        amount,
-                                    )
+                                    press_scroll_button(button.as_ptr() as AXUIElementRef, amount)
                                 },
                                 false,
-                            ))
+                            )))
                         }
                     })
                     .await;
                 match ax_result {
-                    Ok(Ok((true, fronted))) => {
+                    Ok(Ok(Some((true, fronted)))) => {
                         return ToolResult::text(format!(
                         "✅ Scrolled native macOS control {direction} by {by} × {amount} through AX."
                     ))
@@ -291,7 +294,14 @@ impl Tool for ScrollTool {
                         "effect": "unverifiable"
                     }));
                     }
-                    Ok(Ok((false, _))) => {}
+                    Ok(Ok(Some((false, fronted)))) => {
+                        return ToolResult::error("Native AX scroll did not complete.")
+                            .with_structured(serde_json::json!({
+                                "path": if fronted { "ax_fg" } else { "ax" },
+                                "effect": "unverifiable"
+                            }));
+                    }
+                    Ok(Ok(None)) => {}
                     Ok(Err(error)) => {
                         return ToolResult::error(format!("Native AX scroll failed: {error}"));
                     }
@@ -679,29 +689,22 @@ impl Tool for ScrollTool {
     }
 }
 
-unsafe fn scroll_native_text_area(
+unsafe fn native_text_scroll_button(
     element: AXUIElementRef,
     direction: &str,
     by: &str,
-    amount: usize,
-) -> bool {
+) -> Option<RetainedElement> {
     if copy_string_attr(element, "AXRole").as_deref() != Some("AXTextArea") {
-        return false;
+        return None;
     }
-    let Some(scroll_area) = copy_element_attr(element, "AXParent") else {
-        return false;
-    };
+    let scroll_area = copy_element_attr(element, "AXParent")?;
     if copy_string_attr(scroll_area, "AXRole").as_deref() != Some("AXScrollArea") {
         CFRelease(scroll_area as CFTypeRef);
-        return false;
+        return None;
     }
     let mut buttons = Vec::new();
     collect_ax_buttons(scroll_area, 0, &mut buttons);
     CFRelease(scroll_area as CFTypeRef);
-    if buttons.is_empty() {
-        return false;
-    }
-
     let reverse = direction == "up";
     let base = if by == "page" && buttons.len() >= 4 {
         2
@@ -709,18 +712,23 @@ unsafe fn scroll_native_text_area(
         0
     };
     let index = base + usize::from(reverse);
-    let mut delivered = false;
-    if let Some(target) = buttons.get(index).copied() {
-        for _ in 0..amount.max(1) {
-            if perform_action(target, "AXPress") != kAXErrorSuccess {
-                break;
-            }
-            delivered = true;
-            std::thread::sleep(std::time::Duration::from_millis(30));
-        }
-    }
+    let target = buttons
+        .get(index)
+        .map(|button| RetainedElement::retain(*button as usize));
     for button in buttons {
         CFRelease(button as CFTypeRef);
+    }
+    target
+}
+
+unsafe fn press_scroll_button(target: AXUIElementRef, amount: usize) -> bool {
+    let mut delivered = false;
+    for _ in 0..amount.max(1) {
+        if perform_action(target, "AXPress") != kAXErrorSuccess {
+            break;
+        }
+        delivered = true;
+        std::thread::sleep(std::time::Duration::from_millis(30));
     }
     delivered
 }

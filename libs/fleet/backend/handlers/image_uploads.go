@@ -237,6 +237,24 @@ func (s *s3ImageObjectStore) Exists(ctx context.Context, key string, size int64,
 	if err != nil {
 		return false, err
 	}
+	objects, err := s.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+		Bucket:  aws.String(s.bucket),
+		Prefix:  aws.String(key),
+		MaxKeys: aws.Int32(1),
+	})
+	if err != nil {
+		return false, err
+	}
+	found := false
+	for _, candidate := range objects.Contents {
+		if aws.ToString(candidate.Key) == key {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return false, nil
+	}
 	object, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket:       aws.String(s.bucket),
 		Key:          aws.String(key),

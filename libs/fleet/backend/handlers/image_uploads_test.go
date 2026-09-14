@@ -367,7 +367,14 @@ func TestS3ImageObjectStoreExistsRequiresExactSizeAndChecksum(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			var checksumMode string
+			var requests []string
 			store := testS3ImageObjectStore(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet && r.URL.Query().Get("list-type") == "2" {
+					requests = append(requests, "list")
+					fmt.Fprint(w, `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>image-uploads</Name><Prefix>tenants/workers/images/test</Prefix><KeyCount>1</KeyCount><MaxKeys>1</MaxKeys><IsTruncated>false</IsTruncated><Contents><Key>tenants/workers/images/test</Key><Size>12</Size></Contents></ListBucketResult>`)
+					return
+				}
+				requests = append(requests, "head")
 				checksumMode = r.Header.Get("X-Amz-Checksum-Mode")
 				w.Header().Set("Content-Length", fmt.Sprint(test.size))
 				if test.checksum != "" {
@@ -386,7 +393,33 @@ func TestS3ImageObjectStoreExistsRequiresExactSizeAndChecksum(t *testing.T) {
 			if got, want := checksumMode, "ENABLED"; got != want {
 				t.Fatalf("checksum mode = %q, want %q", got, want)
 			}
+			if got, want := strings.Join(requests, ","), "list,head"; got != want {
+				t.Fatalf("requests = %q, want %q", got, want)
+			}
 		})
+	}
+}
+
+func TestS3ImageObjectStoreExistsReturnsFalseFromEmptyExactPrefixList(t *testing.T) {
+	var requests int
+	store := testS3ImageObjectStore(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodGet || r.URL.Query().Get("list-type") != "2" ||
+			r.URL.Query().Get("prefix") != "tenants/workers/images/test" || r.URL.Query().Get("max-keys") != "1" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+		fmt.Fprint(w, `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>image-uploads</Name><Prefix>tenants/workers/images/test</Prefix><KeyCount>0</KeyCount><MaxKeys>1</MaxKeys><IsTruncated>false</IsTruncated></ListBucketResult>`)
+	}))
+
+	exists, err := store.Exists(context.Background(), "tenants/workers/images/test", 12, imageUploadDigest)
+	if err != nil {
+		t.Fatalf("Exists() error = %v", err)
+	}
+	if exists {
+		t.Fatal("Exists() = true, want false")
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want 1", requests)
 	}
 }
 

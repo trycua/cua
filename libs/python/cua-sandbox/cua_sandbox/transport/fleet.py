@@ -9,12 +9,12 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 from cua_sandbox.transport.base import Transport
-from cua_sandbox.transport.osworld import OSWorldOverServiceMixin
 from cua_sandbox.transport.computer_server import (
     decode_screenshot_response,
     normalize_screen_size,
     parse_command_response,
 )
+from cua_sandbox.transport.osworld import OSWorldOverServiceMixin
 from fleet_sdk import HttpHeader, HttpRequest, HttpRequestBuilder
 
 _CMD_MAX_RETRIES = 3

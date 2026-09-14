@@ -21,8 +21,8 @@ from cua_sandbox._config import (
 )
 from cua_sandbox.image import Image, cloud_registry_image
 from cua_sandbox.transport.cyclops_http_client import CyclopsHttpClient
-from cua_sandbox.transport.osworld import OSWORLD_SERVER_PORT, OSWorldOverServiceMixin
 from cua_sandbox.transport.fleet import FleetTransport, build_http_request
+from cua_sandbox.transport.osworld import OSWORLD_SERVER_PORT, OSWorldOverServiceMixin
 from fleet_sdk import (
     AccessTokenProvider,
     AccessTokenProviderError,

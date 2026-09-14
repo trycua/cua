@@ -15,7 +15,6 @@ from typing import Any, Dict, Optional
 import httpx
 from cua_sandbox.transport.base import Transport
 
-
 OSWORLD_SERVER_PORT = 5000
 """Port the OSWorld Flask control server listens on inside the guest."""
 

@@ -5,7 +5,7 @@ description: Turn the official OSWorld image into a Fleet containerDisk with Cua
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-You start from the official [OSWorld](https://os-world.github.io/) Ubuntu disk,
+You start from the official [OSWorld](https://osworld-v1.xlang.ai/) Ubuntu disk,
 add the Cua Driver MCP server to it, publish it as a Fleet containerDisk, and
 drive it with the Sandbox SDK. The same script runs the disk locally under QEMU.
 
@@ -21,9 +21,8 @@ drive it with the Sandbox SDK. The same script runs the disk locally under QEMU.
 - About 60 GB of free disk.
 - [Fleet credentials](/how-to-guides/sandbox/set-up-fleet-credentials) exported
   as `CUA_CLIENT_ID`, `CUA_CLIENT_SECRET`, and `CUA_TOKEN_URL`.
-- The files under
-  [`samples/python/osworld-image/`](https://github.com/trycua/cua/tree/main/samples/python/osworld-image)
-  and [`samples/python/3_osworld_fleet.py`](https://github.com/trycua/cua/blob/main/samples/python/3_osworld_fleet.py).
+- A checkout of the Cua repository, for `samples/python/osworld-image/` and
+  `samples/python/3_osworld_fleet.py`.
 
 ## 1. Get the OSWorld image
 

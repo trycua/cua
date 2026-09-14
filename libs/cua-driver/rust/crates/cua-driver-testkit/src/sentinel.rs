@@ -9,9 +9,14 @@ use crate::e2e::OracleKind;
 use crate::observer::{DesktopObserver, NativeObserver, TargetWindow};
 use crate::{harness_app, spawn_in_job, BehaviorRecording, ChildReaper, Driver};
 
+#[cfg(any(target_os = "linux", test))]
+#[path = "sentinel_hyprland.rs"]
+mod hyprland;
+
 /// A foreground Electron window that journals focus and leaked input while it
 /// fully occludes the background target.
 pub struct ForegroundSentinel {
+    cursor_calibrated: bool,
     journal_path: std::path::PathBuf,
     target: TargetWindow,
     _reaper: ChildReaper,
@@ -65,6 +70,10 @@ impl ForegroundSentinel {
             .args(&electron.args)
             .env("CUA_E2E_SENTINEL", "1")
             .env("CUA_E2E_SENTINEL_JOURNAL", &journal_path)
+            .env(
+                "CUA_E2E_SENTINEL_CONTROL",
+                journal_path.with_extension("control.json"),
+            )
             .env("CUA_E2E_USER_DATA_DIR", user_data.path())
             .env("CUA_ELECTRON_CDP_PORT", cdp_port.to_string())
             .stdout(Stdio::null())
@@ -108,13 +117,19 @@ impl ForegroundSentinel {
         let focus_deadline = Instant::now() + Duration::from_secs(10);
         if is_wayland_session() {
             wait_for_journal(&journal_path, focus_deadline, r#""kind":"ready""#, "ready");
-            try_activate_native_foreground(driver, target)?;
+            #[cfg(target_os = "linux")]
+            if hyprland::is_session() {
+                target
+                    .wait_for_hyprland_sentinel_geometry()
+                    .map_err(|error| error.to_string())?;
+            }
+            activate_and_drain_setup_click(driver, target, &journal_path)?;
             // Electron may already be focused before its preload listener is ready.
             // The compositor observation is the authoritative Wayland focus gate.
             wait_for_native_focus_stable(target);
         } else {
             wait_for_journal(&journal_path, focus_deadline, r#""kind":"ready""#, "ready");
-            try_activate_native_foreground(driver, target)?;
+            activate_and_drain_setup_click(driver, target, &journal_path)?;
             wait_for_native_focus_stable(target);
             // On macOS the Electron renderer can report `document.hasFocus()`
             // as false at DOMContentLoaded, then become natively focused
@@ -131,10 +146,19 @@ impl ForegroundSentinel {
                 "focused by setup click",
             );
         }
+        let cursor_calibrated = !is_wayland_session();
+        #[cfg(target_os = "linux")]
+        let cursor_calibrated = if hyprland::is_session() {
+            hyprland::calibrate(driver, target)?;
+            true
+        } else {
+            cursor_calibrated
+        };
         fs::write(&journal_path, "")
             .map_err(|error| format!("reset focused sentinel journal: {error}"))?;
 
         Ok(Self {
+            cursor_calibrated,
             journal_path,
             target,
             _reaper: reaper,
@@ -250,23 +274,11 @@ impl ForegroundSentinel {
 
         #[cfg(target_os = "linux")]
         set_sway_fullscreen(driver, self.target, false)?;
-        let raised = driver.call(
-            "bring_to_front",
-            serde_json::json!({
-                "pid": background_target.pid,
-                "window_id": background_target.native_id,
-            }),
-        );
-        if raised.is_error() {
-            return Err(format!(
-                "focus-loss canary could not raise the background target: {}",
-                raised.text()
-            ));
-        }
+        raise_for_focus_canary(driver, background_target)?;
         #[cfg(target_os = "linux")]
         focus_sway_target(driver, background_target)?;
         if is_wayland_session() {
-            wait_for_native_focus_lost(self.target)?;
+            wait_for_native_focus_lost(self.target, background_target)?;
         } else {
             wait_for_event(&self.journal_path, "blur", Duration::from_secs(3))?;
             let (_, focus_violations) = self.observe();
@@ -280,7 +292,7 @@ impl ForegroundSentinel {
             }
         }
 
-        activate_native_foreground(driver, self.target);
+        activate_and_drain_setup_click(driver, self.target, &self.journal_path)?;
         #[cfg(target_os = "linux")]
         set_sway_fullscreen(driver, self.target, true)?;
         wait_for_native_focus_stable(self.target);
@@ -326,15 +338,12 @@ impl ForegroundSentinel {
         driver: &mut impl Driver,
         target: TargetWindow,
     ) -> Result<(), String> {
-        activate_native_foreground(driver, self.target);
+        activate_and_drain_setup_click(driver, self.target, &self.journal_path)?;
         wait_for_native_focus_stable(self.target);
         std::thread::sleep(Duration::from_millis(100));
         reset_journal(&self.journal_path)?;
-        // Windows establishes focus with a physical click. Its DOM `click`
-        // can arrive after the native focus transition and the first journal
-        // reset, falsely attributing setup input to the background action.
-        // A later heartbeat is an event-loop barrier: once observed, clear the
-        // journal again so the action boundary starts from a quiet sentinel.
+        // This heartbeat checks liveness only. Windows setup input has already
+        // crossed its explicit renderer/main journal barrier before the reset.
         wait_for_event(&self.journal_path, "heartbeat", Duration::from_secs(2))?;
         reset_journal(&self.journal_path)?;
         self.assert_background_posture(target)
@@ -378,10 +387,7 @@ impl ForegroundSentinel {
             ));
         }
         let mut native_oracles = vec![OracleKind::Focus, OracleKind::ZOrder];
-        if std::env::var("XDG_SESSION_TYPE")
-            .map(|session| !session.eq_ignore_ascii_case("wayland"))
-            .unwrap_or(true)
-        {
+        if self.cursor_calibrated {
             native_oracles.push(OracleKind::Cursor);
         }
         let (result, delta) = observer
@@ -471,15 +477,82 @@ fn is_wayland_session() -> bool {
             .is_ok_and(|session| session.eq_ignore_ascii_case("wayland"))
 }
 
-fn activate_native_foreground(driver: &mut impl Driver, target: TargetWindow) {
-    try_activate_native_foreground(driver, target)
-        .unwrap_or_else(|error| panic!("could not activate foreground sentinel: {error}"));
+fn activate_and_drain_setup_click(
+    driver: &mut impl Driver,
+    target: TargetWindow,
+    _journal_path: &std::path::Path,
+) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    let token = {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT_TOKEN: AtomicU64 = AtomicU64::new(1);
+        let token = NEXT_TOKEN.fetch_add(1, Ordering::Relaxed).to_string();
+        fs::write(
+            _journal_path.with_extension("control.json"),
+            serde_json::json!({ "token": token }).to_string(),
+        )
+        .map_err(|error| format!("arm sentinel setup click: {error}"))?;
+        wait_for_setup_click_marker(_journal_path, "setup-click-armed", &token)?;
+        token
+    };
+    try_activate_native_foreground(driver, target)?;
+    #[cfg(target_os = "windows")]
+    wait_for_setup_click_marker(_journal_path, "setup-click-drained", &token)?;
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn wait_for_setup_click_marker(
+    path: &std::path::Path,
+    kind: &str,
+    token: &str,
+) -> Result<(), String> {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let events = read_journal_events(path)?;
+        if events
+            .iter()
+            .any(|event| event_kind(event) == Some(kind) && event["token"].as_str() == Some(token))
+        {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "sentinel setup barrier {kind:?} token {token:?} timed out: {events:?}"
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+fn raise_for_focus_canary(driver: &mut impl Driver, target: TargetWindow) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    if hyprland::is_session() {
+        return hyprland::activate(driver, target).map_err(|error| {
+            format!("Hyprland focus-loss canary could not raise target over fullscreen sentinel: {error}")
+        });
+    }
+    let raised = driver.call(
+        "bring_to_front",
+        serde_json::json!({ "pid": target.pid, "window_id": target.native_id }),
+    );
+    if raised.is_error() {
+        return Err(format!(
+            "focus-loss canary could not raise the background target: {}",
+            raised.text()
+        ));
+    }
+    Ok(())
 }
 
 fn try_activate_native_foreground(
     driver: &mut impl Driver,
     target: TargetWindow,
 ) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    if hyprland::is_session() {
+        return hyprland::activate(driver, target);
+    }
     let response = driver.call(
         "bring_to_front",
         serde_json::json!({
@@ -488,7 +561,11 @@ fn try_activate_native_foreground(
         }),
     );
     if response.is_error() {
-        return Err(response.text().to_owned());
+        return Err(format!(
+            "{}; activation_observation={}",
+            response.text(),
+            response.structured()
+        ));
     }
     #[cfg(target_os = "linux")]
     focus_sway_target(driver, target).map_err(|error| {
@@ -504,20 +581,20 @@ fn try_activate_native_foreground(
 #[cfg(target_os = "macos")]
 fn focus_macos_sentinel_contents(
     driver: &mut impl Driver,
-    target: TargetWindow,
+    _target: TargetWindow,
 ) -> Result<(), String> {
     // A native app activation can leave Electron's renderer without keyboard
     // focus even though WindowServer reports its window at the front. This
-    // bounded setup click lands well inside every canonical sentinel window
-    // and is cleared from the journal before any behavioral action begins.
+    // bounded desktop-HID setup click lands in the already-proven foreground
+    // window and is cleared from the journal before any behavioral action
+    // begins. Do not use the pid-routed path here: reaching foreground
+    // Chromium WebContents is the setup condition, not the behavior under test.
     let response = driver.call(
         "click",
         serde_json::json!({
-            "pid": target.pid,
-            "window_id": target.native_id,
             "x": 320.0,
             "y": 240.0,
-            "delivery_mode": "background",
+            "scope": "desktop",
         }),
     );
     if response.is_error() {
@@ -989,8 +1066,15 @@ fn wait_for_native_focus_stable(target: TargetWindow) {
 }
 
 #[cfg(target_os = "linux")]
-fn wait_for_native_focus_lost(target: TargetWindow) -> Result<(), String> {
+fn wait_for_native_focus_lost(
+    target: TargetWindow,
+    background_target: TargetWindow,
+) -> Result<(), String> {
     use crate::observer::{ObserverBackend, TargetZ};
+
+    if hyprland::is_session() {
+        return hyprland::wait_for_focus_transfer(target, background_target);
+    }
 
     let backend = NativeObserver::new();
     let deadline = Instant::now() + Duration::from_secs(3);
@@ -1012,7 +1096,10 @@ fn wait_for_native_focus_lost(target: TargetWindow) -> Result<(), String> {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn wait_for_native_focus_lost(_target: TargetWindow) -> Result<(), String> {
+fn wait_for_native_focus_lost(
+    _target: TargetWindow,
+    _background_target: TargetWindow,
+) -> Result<(), String> {
     Err("native Wayland focus observation is only available on Linux".to_owned())
 }
 

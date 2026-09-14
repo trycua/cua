@@ -23,7 +23,7 @@ from tests.live.fleet_e2e_support import (
 
 IMAGE = (
     "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04"
-    "@sha256:82702ebdd32d1f8fc05f2ea409a7c67d0ba9f8f8e4e9f1a89ce40989d5f4475d"
+    "@sha256:80fff8a40f217a460cef7a60161adb3899eabd02c3451f18926b84d1f81b8da2"
 )
 
 POOL_CPU = 4

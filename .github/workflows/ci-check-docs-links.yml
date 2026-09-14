@@ -7,7 +7,10 @@ on:
       - "docs/src/**"
       - "docs/package.json"
       - "docs/scripts/check-links.ts"
+      - "docs/scripts/check-links.test.ts"
+      - "docs/scripts/fixtures/link-checks/**"
       - "docs/scripts/check-hygiene.ts"
+      - ".github/workflows/ci-check-docs-links.yml"
 
 jobs:
   check-internal-links:
@@ -27,6 +30,10 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install
+        working-directory: docs
+
+      - name: Test link checker regression fixtures
+        run: pnpm exec tsx --test scripts/check-links.test.ts
         working-directory: docs
 
       - name: Check internal links

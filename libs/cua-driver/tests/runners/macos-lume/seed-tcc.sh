@@ -33,10 +33,8 @@ usage() {
 Usage: seed-tcc.sh [options] <vm-name> [<vm-name> ...]
 
 Seed macOS Accessibility and Screen Recording TCC rows for CuaDriverLocal.app
-inside running, SSH-reachable, SIP-disabled Lume macOS VMs. This uses the
-same SIP-off system-TCC seed model as the later uvisor `gui grant --gui`
-path; it does not install the app. Run install-local first, then run this
-from the host.
+inside running, SSH-reachable, SIP-disabled Lume macOS VMs. This does not
+install the app. Run install-local first, then run this from the host.
 
 Options:
   --app PATH                 App bundle to grant inside the guest

@@ -1,0 +1,64 @@
+# Local-development recipe. Build only from an explicit Cua monorepo checkout.
+# shellcheck shell=bash disable=SC2034,SC2154
+pkgname=cua-hyprland-plugin-local
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Discovery-only Cua integration for an exact local Hyprland ABI'
+arch=('x86_64' 'aarch64')
+url='https://github.com/trycua/cua'
+license=('MIT')
+makedepends=('cmake' 'ninja' 'pkgconf' 'binutils')
+options=('!strip' '!debug' '!lto')
+source=()
+sha256sums=()
+
+: "${CUA_SOURCE_ROOT:?Set CUA_SOURCE_ROOT to the Cua monorepo root}"
+: "${CUA_HYPRLAND_PACKAGE_VERSION:?Set CUA_HYPRLAND_PACKAGE_VERSION to the exact pacman package version}"
+_source_root="$(realpath -e -- "$CUA_SOURCE_ROOT")"
+_plugin_source="${_source_root}/libs/cua-driver/hyprland-plugin"
+_hyprland_package_version="$CUA_HYPRLAND_PACKAGE_VERSION"
+_hyprland_header_version="${CUA_HYPRLAND_HEADER_VERSION:-0.56.2}"
+depends=("hyprland=${_hyprland_package_version}")
+
+prepare() {
+  [[ -f "${_plugin_source}/CMakeLists.txt" ]] || {
+    printf 'error: CUA_SOURCE_ROOT does not contain the Hyprland plugin source\n' >&2
+    return 1
+  }
+
+  local installed_hyprland
+  installed_hyprland="$(LC_ALL=C pacman -Q hyprland 2>/dev/null | cut -d' ' -f2-)"
+  [[ "$installed_hyprland" == "$_hyprland_package_version" ]] || {
+    printf 'error: expected hyprland package %s, found %s\n' \
+      "$_hyprland_package_version" "${installed_hyprland:-not installed}" >&2
+    return 1
+  }
+
+  local header_version
+  header_version="$(pkg-config --modversion hyprland 2>/dev/null)"
+  [[ "$header_version" == "$_hyprland_header_version" ]] || {
+    printf 'error: expected hyprland headers %s, found %s\n' \
+      "$_hyprland_header_version" "${header_version:-not installed}" >&2
+    return 1
+  }
+}
+
+build() {
+  cmake \
+    -S "$_plugin_source" \
+    -B "$srcdir/build" \
+    -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCUA_HYPRLAND_EXPECTED_VERSION="$_hyprland_header_version"
+  cmake --build "$srcdir/build"
+}
+
+check() {
+  ctest --test-dir "$srcdir/build" --output-on-failure
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install "$srcdir/build" --prefix /usr
+  install -Dm644 "$_source_root/LICENSE.md" \
+    "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

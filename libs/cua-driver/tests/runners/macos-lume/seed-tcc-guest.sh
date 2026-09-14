@@ -191,8 +191,6 @@ if ! /usr/bin/grep -q '|auth_value|' <<< "${ACCESS_COLUMNS}"; then
   fail "unsupported TCC access schema; expected modern auth_value column"
 fi
 
-# Keep this row shape in sync with trycua/uvisor's TCCGrant.swift system grant
-# path. Both helpers seed the same modern macOS TCC schema from a signed csreq.
 SQL="
 BEGIN;
 INSERT OR REPLACE INTO access(

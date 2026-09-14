@@ -32,9 +32,10 @@ test_is_admin_false_no_flags if {
 # once. That is the point of the shared vocabulary, and the reason it is worth
 # testing directly rather than only through the surfaces that happen to use it.
 
-test_interactive_clients_are_exactly_two if {
+test_interactive_clients_are_exactly_three if {
 	authz.is_interactive_client with input as {"user": {"azp": "cyclops-cs-spa"}}
 	authz.is_interactive_client with input as {"user": {"azp": "cua-cli"}}
+	authz.is_interactive_client with input as {"user": {"azp": "cua-desktop"}}
 	not authz.is_interactive_client with input as {"user": {"azp": "kubernetes"}}
 	not authz.is_interactive_client with input as {"user": {"azp": ""}}
 }
@@ -43,6 +44,11 @@ test_per_key_client_recognised_by_prefix if {
 	authz.is_per_key_client with input as {"user": {"azp": "key-foo"}}
 	not authz.is_per_key_client with input as {"user": {"azp": "cyclops-cs-spa"}}
 	not authz.is_per_key_client with input as {"user": {"azp": "ukey-foo"}}
+}
+
+test_per_key_client_uses_configured_prefix if {
+	authz.is_per_key_client with input as {"user": {"azp": "poolkey-foo", "key_client_prefix": "poolkey-"}}
+	not authz.is_per_key_client with input as {"user": {"azp": "key-foo", "key_client_prefix": "poolkey-"}}
 }
 
 test_user_key_client_recognised_by_prefix if {

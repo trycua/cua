@@ -1,4 +1,4 @@
-# Admission for direct creation of custom-resource instances through /api/k8s.
+# Admission for custom-resource creation and Image rebuilds through /api/k8s.
 package custom_resource_creation_admission
 
 import data.authz
@@ -15,6 +15,10 @@ custom_api_group(group) {
 
 custom_api_group(group) {
 	group == "osgym.cua.ai"
+}
+
+custom_api_group(group) {
+	group == "images.cua.ai"
 }
 
 is_custom_resource_create {
@@ -41,8 +45,22 @@ exempt {
 	object.get(input.flags, "require_card_for_custom_resource_creation", false) != true
 }
 
+is_image_patch {
+	input.method == "PATCH"
+	parts := split(input.params.path, "/")
+	count(parts) == 7
+	parts[0] == "apis"
+	parts[1] == "images.cua.ai"
+	parts[2] == "v1alpha1"
+	parts[3] == "namespaces"
+	parts[4] != ""
+	parts[5] == "images"
+	parts[6] != ""
+}
+
 exempt {
 	not is_custom_resource_create
+	not is_image_patch
 }
 
 exempt {

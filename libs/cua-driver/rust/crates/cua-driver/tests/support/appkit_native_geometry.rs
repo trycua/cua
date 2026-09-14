@@ -98,11 +98,6 @@ fn pointer_requests(
             json!({"x":x,"y":y,"direction":"down","amount":1}),
         ),
         (
-            "drag-px",
-            "drag",
-            json!({"from_x":x,"from_y":y,"to_x":x+10.0,"to_y":y+10.0,"duration_ms":50}),
-        ),
-        (
             "type-focus-px",
             "type_text",
             json!({"x":x,"y":y,"text":"geometry-veto"}),
@@ -141,6 +136,11 @@ fn pointer_requests(
         ("selection-element", "click", json!({"element_token":row})),
     ];
     if foreground {
+        requests.push((
+            "drag-px",
+            "drag",
+            json!({"from_x":x,"from_y":y,"to_x":x+10.0,"to_y":y+10.0,"duration_ms":50}),
+        ));
         requests.push((
             "modified-px",
             "click",
@@ -448,6 +448,21 @@ fn run_native_geometry_mismatch(foreground: bool) {
             );
             assert_eq!(increment.action_route(), Some("accessibility"));
             fixture_state(&directory, |state| state["counter"] == 1);
+            let selection = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid":harness.pid, "window_id":wid,
+                    "element_token":element_token_by_id(&snapshot, "geometry-selectable")
+                }),
+            );
+            save_response(&directory, "semantic-selection.json", &selection);
+            assert!(
+                !selection.is_error(),
+                "independent semantic selection: {}",
+                selection.text()
+            );
+            assert_eq!(selection.action_route(), Some("accessibility"));
+            fixture_state(&directory, |state| state["selected"] == true);
             let response = driver.call(
                 "click",
                 serde_json::json!({

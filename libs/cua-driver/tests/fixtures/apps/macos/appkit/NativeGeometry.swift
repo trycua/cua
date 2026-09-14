@@ -51,9 +51,18 @@ final class NativeGeometryWebObserver: NSObject, WKScriptMessageHandler {
 }
 
 final class NativeGeometryRow: NSView {
+    var allowsSelection = false
+    var selected = false
+    var onSelection: (() -> Void)?
+
     override func accessibilityPerformShowMenu() -> Bool { false }
-    override func isAccessibilitySelected() -> Bool { false }
-    override func setAccessibilitySelected(_ selected: Bool) {}
+    override func isAccessibilitySelected() -> Bool { selected }
+    override func setAccessibilitySelected(_ selected: Bool) {
+        if allowsSelection {
+            self.selected = selected
+            onSelection?()
+        }
+    }
 }
 
 final class NativeGeometryFixture: NSObject {
@@ -61,6 +70,7 @@ final class NativeGeometryFixture: NSObject {
     private let directory: URL
     private let counterLabel = NSTextField(labelWithString: "geometry_count=0")
     private var counter = 0
+    private let selectable = NativeGeometryRow(frame: NSRect(x: 190, y: 222, width: 150, height: 18))
     private var webScroll = -1.0
     private let webObserver = NativeGeometryWebObserver()
     private let web: WKWebView
@@ -91,6 +101,13 @@ final class NativeGeometryFixture: NSObject {
         row.setAccessibilityLabel("Selection probe")
         row.setAccessibilityIdentifier("geometry-selection")
         content.addSubview(row)
+        selectable.allowsSelection = true
+        selectable.setAccessibilityElement(true)
+        selectable.setAccessibilityRole(.row)
+        selectable.setAccessibilityLabel("Semantic selection probe")
+        selectable.setAccessibilityIdentifier("geometry-selectable")
+        selectable.onSelection = { [weak self] in self?.publish() }
+        content.addSubview(selectable)
         let mismatch = NSButton(title: "Disagree", target: self, action: #selector(disagree))
         mismatch.frame = NSRect(x: 20, y: 100, width: 160, height: 36)
         mismatch.setAccessibilityIdentifier("geometry-mismatch")
@@ -175,6 +192,7 @@ final class NativeGeometryFixture: NSObject {
                 "unavailable": window.reportsUnavailable,
                 "geometry_delay_ms": window.geometryDelay * 1000,
                 "counter": counter,
+                "selected": selectable.selected,
                 "web_scroll_y": webScroll,
                 "input_events": window.inputEvents
             ], options: [.sortedKeys])

@@ -8,8 +8,13 @@
 //!   `osascript do JavaScript` for WebKit `<select>` elements that expose no AX
 //!   children when the popup is closed.
 //!
-//! * **Everything else**: Write `AXValue` directly (sliders, steppers, native
-//!   text fields that expose a settable AXValue).
+//! * **Native single-line text roles**: Replace the text through the keystroke
+//!   rung. An `AXValue` write neither starts nor ends an editing session, so a
+//!   control whose value is a binding target keeps its own value while every
+//!   read-back the driver can perform returns the written string.
+//!
+//! * **Everything else**: Write `AXValue` directly (sliders, steppers, search
+//!   fields whose `AXConfirm` is the commit, web inputs).
 
 use async_trait::async_trait;
 use cua_driver_contract::ActionCommit;
@@ -23,7 +28,7 @@ use std::sync::Arc;
 use crate::apps;
 use crate::ax::bindings::{
     copy_action_names, copy_children, copy_number_attr, copy_string_attr, kAXErrorSuccess,
-    perform_action, set_number_attr, set_string_attr, AXUIElementRef,
+    perform_action, set_number_attr, set_range_attr, set_string_attr, AXUIElementRef,
 };
 use crate::focus_guard;
 use crate::window_change_detector::WindowChangeDetector;
@@ -61,16 +66,17 @@ fn def() -> &'static ToolDef {
              For free-form text entry into web inputs, prefer `type_text_chars` \
              which synthesises key events — AXValue writes are ignored by WebKit.\n\
              \n\
-             Commits the write on text roles: after a successful AXValue write \
-             the element's own AXConfirm action runs, or — when it advertises \
-             none — the element is focused and a tab/return keystroke ends the \
-             edit, so the app's editing pipeline sees the value instead of only \
-             the AX tree. `committed` reports what was observed of that \
-             end-of-edit: `not_committed` when the gesture was refused or the \
-             app replaced the value, and `unproven` when the value survived \
-             but the only evidence is an accessibility read-back, which a \
-             bound control echoes whether or not the app took the value. Web \
-             content is never committed this way (the \
+             Commits the write on text roles. A native single-line text field \
+             is retyped through the keystroke rung and the edit is ended, so \
+             the value reaches the binding behind the control; everything else \
+             takes an AXValue write ended by the element's own AXConfirm or by \
+             a tab/return keystroke. `committed` reports what was observed of \
+             that end-of-edit: `committed` only for a typed edit session that \
+             ended with the value in place, `not_committed` when the gesture \
+             was refused or the app replaced the value, and `unproven` when \
+             the value survived but the only evidence is an accessibility \
+             read-back, which a bound control echoes whether or not the app \
+             took the value. Web content is never committed this way (the \
              renderer never observes an AXValue write), and a multi-line \
              AXTextArea has no end-of-edit gesture.\n\
              \n\
@@ -212,8 +218,14 @@ impl Tool for SetValueTool {
             Some(window_id),
         );
 
-        let commit =
-            resolve_commit_plan(&_mutation_lease, window_id, element_ptr, ax_echo_surface).await;
+        let plan = resolve_write_plan(
+            &_mutation_lease,
+            window_id,
+            element_ptr,
+            &value,
+            ax_echo_surface,
+        )
+        .await;
 
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
         // AXValue writes on popups / sliders can cause reflex activations
@@ -228,7 +240,14 @@ impl Tool for SetValueTool {
             "set_value.AXValue",
             || async move {
                 tokio::task::spawn_blocking(move || {
-                    set_value_blocking(element_guard.as_ptr(), element_index, pid, &value, commit)
+                    set_value_blocking(
+                        element_guard.as_ptr(),
+                        element_index,
+                        pid,
+                        window_id,
+                        &value,
+                        plan,
+                    )
                 })
                 .await
             },
@@ -246,12 +265,15 @@ impl Tool for SetValueTool {
                 msg.push_str(&changes.result_suffix());
                 let verified = outcome.verified.unwrap_or(false);
                 let mut structured = serde_json::json!({
-                    "path": "ax",
+                    "path": outcome.path,
                     "verified": verified,
                     "effect": if verified { "confirmed" } else { "unverifiable" },
                 });
                 if let Some(committed) = committed {
                     structured["committed"] = serde_json::json!(committed.as_wire());
+                }
+                if let Some(delivered) = outcome.delivered {
+                    structured["delivered_chars"] = serde_json::json!(delivered);
                 }
                 if ax_echo_surface {
                     structured["escalation"] = serde_json::json!({
@@ -269,79 +291,105 @@ impl Tool for SetValueTool {
     }
 }
 
-/// How the app's own editing pipeline is made to accept a written value.
+/// How the written value reaches the app's own editing pipeline.
 #[derive(Debug, PartialEq, Eq)]
-enum CommitPlan {
+enum WritePlan {
     /// Not a text control: the `AXValue` write is the whole edit.
-    NotText,
-    /// The element advertises its own `AXConfirm` action.
-    Confirm,
-    /// Focus the element and end the edit with this key.
-    Key(&'static str),
-    /// No commit route exists, or one was refused before dispatch.
+    ValueOnly,
+    /// `AXValue`, ended by the control's own advertised `AXConfirm`. For a
+    /// search field that action *is* the commit: it runs the search.
+    ValueThenConfirm,
+    /// `AXValue`, ended by focusing the control and pressing this key.
+    ValueThenKey(&'static str),
+    /// Replace the control's text through the keystroke rung, then end the
+    /// edit with this key.
+    ///
+    /// An `AXValue` write sets a control's string without starting or ending
+    /// an editing session, so a plain `NSTextField` — a save sheet's name
+    /// field, an action parameter — never hands the value to the binding
+    /// behind it, while every read-back the driver can perform returns the
+    /// written string. Keystrokes go through the field editor the binding
+    /// reads on end-of-edit, which is the route a person uses.
+    Retype(&'static str),
+    /// No route exists, or one was refused before dispatch.
     Blocked(String),
 }
 
 /// Settle time between the commit gesture and the read-back that judges it.
 const COMMIT_SETTLE: std::time::Duration = std::time::Duration::from_millis(120);
 
-/// Native single-line text roles whose value AppKit carries in a field editor
-/// and hands to the app's own model only when the editing session ends.
-/// `AXSearchField` is deliberately absent: its `AXConfirm` is the commit.
+/// Settle time between an `AXFocused` write and the read-back that proves it.
+const FOCUS_SETTLE: std::time::Duration = std::time::Duration::from_millis(60);
+
+/// Native single-line text roles whose value AppKit carries in a field editor.
+/// `AXSearchField` is deliberately absent: its `AXConfirm` is the commit, and
+/// an `AXValue` write plus that action is measurably enough.
 pub(super) fn is_binding_target_role(role: &str, subrole: &str) -> bool {
     matches!(role, "AXTextField" | "AXSecureTextField") && subrole != "AXSearchField"
 }
 
-fn commit_gesture(role: &str, advertised: &[String]) -> CommitPlan {
+/// Whether keystrokes can carry this value into a single-line control. Tab
+/// moves focus and Return ends the edit, so a value holding either can only
+/// ever be written losslessly through `AXValue`.
+fn is_typeable(value: &str) -> bool {
+    !value.chars().any(char::is_control)
+}
+
+fn write_plan(role: &str, subrole: &str, advertised: &[String], value: &str) -> WritePlan {
     match role {
-        "AXTextArea" => CommitPlan::Blocked(
+        "AXTextArea" => WritePlan::Blocked(
             "a multi-line AXTextArea has no end-of-edit gesture, so the app may never \
              register the write"
                 .to_owned(),
         ),
+        _ if is_binding_target_role(role, subrole) && is_typeable(value) => {
+            WritePlan::Retype("tab")
+        }
         "AXTextField" | "AXSecureTextField" | "AXSearchField" | "AXComboBox" | "AXDateField"
         | "AXTimeField" => {
             if advertised.iter().any(|action| action == "AXConfirm") {
-                CommitPlan::Confirm
-            } else if role == "AXSearchField" {
-                CommitPlan::Key("return")
+                WritePlan::ValueThenConfirm
+            } else if role == "AXSearchField" || subrole == "AXSearchField" {
+                WritePlan::ValueThenKey("return")
             } else {
-                CommitPlan::Key("tab")
+                WritePlan::ValueThenKey("tab")
             }
         }
-        _ => CommitPlan::NotText,
+        _ => WritePlan::ValueOnly,
     }
 }
 
-/// Resolve the commit gesture for the addressed element, re-gating the
-/// keystroke rung before it is promised: a process-scoped key is a stricter
-/// route than the semantic AX write this tool already holds a lease for.
-async fn resolve_commit_plan(
+/// Resolve the write route for the addressed element, re-gating the keystroke
+/// rung before it is promised: a process-scoped key is a stricter route than
+/// the semantic AX write this tool already holds a lease for.
+async fn resolve_write_plan(
     lease: &super::BackgroundMutationLease,
     window_id: u32,
     element_ptr: usize,
+    value: &str,
     ax_echo_surface: bool,
-) -> CommitPlan {
+) -> WritePlan {
     if ax_echo_surface {
-        return CommitPlan::Blocked(
+        return WritePlan::Blocked(
             "web content never observes an AXValue write, so there is nothing to commit".to_owned(),
         );
     }
-    let Ok((role, advertised)) = tokio::task::spawn_blocking(move || unsafe {
+    let Ok((role, subrole, advertised)) = tokio::task::spawn_blocking(move || unsafe {
         let element = element_ptr as AXUIElementRef;
         (
             copy_string_attr(element, "AXRole").unwrap_or_default(),
+            copy_string_attr(element, "AXSubrole").unwrap_or_default(),
             copy_action_names(element),
         )
     })
     .await
     else {
-        return CommitPlan::Blocked(
+        return WritePlan::Blocked(
             "the element stopped answering AX reads before the write".to_owned(),
         );
     };
-    let plan = commit_gesture(&role, &advertised);
-    if matches!(plan, CommitPlan::Key(_)) {
+    let plan = write_plan(&role, &subrole, &advertised, value);
+    if matches!(plan, WritePlan::ValueThenKey(_) | WritePlan::Retype(_)) {
         if let Err(refusal) = lease
             .gate_again(
                 window_id,
@@ -350,10 +398,33 @@ async fn resolve_commit_plan(
             )
             .await
         {
-            return CommitPlan::Blocked(keystroke_refusal_reason(&refusal));
+            return refused_keystroke_plan(&plan, &advertised, &refusal);
         }
     }
     plan
+}
+
+/// What is left when the keystroke rung is refused before dispatch.
+///
+/// The gate refuses process-scoped keys whenever the application owns another
+/// eligible top-level window, and an open save panel is exactly that: its own
+/// top-level window beside the document. `set_value` has no `delivery_mode`,
+/// so the refusal is final for this call. An advertised `AXConfirm` is then
+/// the only end-of-edit left, and on a save panel it is the panel's own
+/// confirm — measured on Automator: the write is saved to disk under the
+/// written name. Keeping the `AXValue` route in that case preserves a control
+/// the typed route cannot reach; the verdict stays `unproven`, because a
+/// read-back is all the evidence there is.
+fn refused_keystroke_plan(
+    plan: &WritePlan,
+    advertised: &[String],
+    refusal: &ToolResult,
+) -> WritePlan {
+    let confirms = advertised.iter().any(|action| action == "AXConfirm");
+    if matches!(plan, WritePlan::Retype(_)) && confirms {
+        return WritePlan::ValueThenConfirm;
+    }
+    WritePlan::Blocked(keystroke_refusal_reason(refusal))
 }
 
 fn keystroke_refusal_reason(refusal: &ToolResult) -> String {
@@ -368,48 +439,72 @@ fn keystroke_refusal_reason(refusal: &ToolResult) -> String {
     }
 }
 
-/// Run the commit gesture and report what was observed of the app's own
-/// end-of-edit.
-fn commit_write(
+/// Run the commit gesture for an `AXValue` write and report what was observed
+/// of the app's end-of-edit.
+fn commit_written_value(
     element: AXUIElementRef,
     pid: i32,
     requested: &str,
     numeric: bool,
-    commit: CommitPlan,
+    plan: WritePlan,
 ) -> (Option<ActionCommit>, String) {
-    match commit {
-        CommitPlan::NotText => (None, String::new()),
-        CommitPlan::Blocked(reason) => (
+    match plan {
+        WritePlan::ValueOnly => (None, String::new()),
+        WritePlan::Blocked(reason) => (
             Some(ActionCommit::NotCommitted),
             format!(" Not committed: {reason}."),
         ),
-        CommitPlan::Confirm => {
+        WritePlan::Retype(_) => unreachable!("the retype route does not write AXValue"),
+        WritePlan::ValueThenConfirm => {
             let dispatched = unsafe { perform_action(element, "AXConfirm") } == kAXErrorSuccess;
-            let survived = dispatched && value_survived(element, requested, numeric);
-            judge_commit(dispatched, survived, "AXConfirm")
+            let survived = dispatched && {
+                std::thread::sleep(COMMIT_SETTLE);
+                let after = unsafe { copy_string_attr(element, "AXValue") };
+                value_matches(after.as_deref(), requested, numeric)
+            };
+            // An `AXConfirm` is not an end-of-edit the driver can read, and
+            // the value never went through the field editor, so the read-back
+            // is the only evidence there is.
+            judge_commit(dispatched, survived, false, "AXConfirm")
         }
-        CommitPlan::Key(key) => {
-            let dispatched = crate::input::ax_actions::focus_element(element as usize).is_ok()
-                && crate::input::keyboard::press_key(pid, key, &[]).is_ok();
-            let survived = dispatched && value_survived(element, requested, numeric);
-            judge_commit(dispatched, survived, key)
+        WritePlan::ValueThenKey(key) => {
+            let focused = crate::input::ax_actions::focus_element(element as usize).is_ok();
+            let dispatched = focused && crate::input::keyboard::press_key(pid, key, &[]).is_ok();
+            let survived = dispatched && {
+                std::thread::sleep(COMMIT_SETTLE);
+                let after = unsafe { copy_string_attr(element, "AXValue") };
+                value_matches(after.as_deref(), requested, numeric)
+            };
+            // The key ends the edit session, but the value in it arrived
+            // through `AXValue` rather than the field editor, so the ended
+            // session is not evidence the app took it.
+            judge_commit(dispatched, survived, false, key)
         }
     }
 }
 
-/// Whether the written value is still in place once the gesture has had time
-/// to land.
-fn value_survived(element: AXUIElementRef, requested: &str, numeric: bool) -> bool {
-    std::thread::sleep(COMMIT_SETTLE);
-    let after = unsafe { copy_string_attr(element, "AXValue") };
-    value_matches(after.as_deref(), requested, numeric)
-}
-
-/// An `AXValue` write reaches `unproven` at best. Nothing on this route
-/// observes the application's own model, and a control whose value is a
-/// binding target echoes the accessibility read-back whether or not the
-/// application took the value.
-fn judge_commit(dispatched: bool, survived: bool, gesture: &str) -> (Option<ActionCommit>, String) {
+/// What the driver may claim about the app's end-of-edit.
+///
+/// An accessibility read-back is echoed by a bound control whether or not the
+/// application took the value, so it can only ever refute a commit. The one
+/// positive signal available is a *typed* edit session ending — which is what
+/// an AppKit binding commits on — observed as the control losing the app's own
+/// keyboard focus after a gesture that had established it.
+///
+/// `typed` is what makes the ended edit mean anything, and it is measured, not
+/// assumed. On Automator's "Save as:" action parameter (2026-09-14): an
+/// `AXValue` write, a proven `AXFocused` write and a Tab that demonstrably
+/// moved focus left the written string in the control's read-back and the
+/// application still kept its own value in `document.wflow`. An ended edit
+/// session over a value the field editor never saw proves nothing, so an
+/// `AXValue` route can reach `unproven` at best; the same sequence with the
+/// value typed through the keystroke rung committed.
+fn judge_commit(
+    dispatched: bool,
+    survived: bool,
+    typed_edit_ended: bool,
+    gesture: &str,
+) -> (Option<ActionCommit>, String) {
     if !dispatched {
         return (
             Some(ActionCommit::NotCommitted),
@@ -422,6 +517,15 @@ fn judge_commit(dispatched: bool, survived: bool, gesture: &str) -> (Option<Acti
             " Not committed: the value did not survive the app's end-of-edit, so the app \
              still holds its own value."
                 .to_owned(),
+        );
+    }
+    if typed_edit_ended {
+        return (
+            Some(ActionCommit::Committed),
+            format!(
+                " Committed via {gesture}: the typed edit session ended with this value in \
+                 place."
+            ),
         );
     }
     (
@@ -454,6 +558,11 @@ struct SetValueOutcome {
     /// What was observed of the app's own end-of-edit. `None` for paths that
     /// have no commit gesture (menu selection, non-text controls).
     committed: Option<ActionCommit>,
+    /// The transport the value actually travelled on, published as
+    /// `structured.path`.
+    path: &'static str,
+    /// Characters the keystroke rung proved delivered, for the retype route.
+    delivered: Option<usize>,
 }
 
 fn apply_surface_trust(outcome: &mut SetValueOutcome, ax_echo_surface: bool) {
@@ -469,8 +578,11 @@ fn apply_surface_trust(outcome: &mut SetValueOutcome, ax_echo_surface: bool) {
 
 fn apply_verification_label(outcome: &mut SetValueOutcome) {
     if outcome.verified != Some(true) {
-        if let Some(rest) = outcome.detail.strip_prefix("✅ Set") {
-            outcome.detail = format!("📨 Sent (unverified){rest}");
+        for prefix in ["✅ Set", "✅ Typed", "✅ Cleared"] {
+            if let Some(rest) = outcome.detail.strip_prefix(prefix) {
+                outcome.detail = format!("📨 Sent (unverified){rest}");
+                return;
+            }
         }
     }
 }
@@ -479,8 +591,9 @@ fn set_value_blocking(
     element_ptr: usize,
     element_index: usize,
     pid: i32,
+    window_id: u32,
     value: &str,
-    commit: CommitPlan,
+    plan: WritePlan,
 ) -> anyhow::Result<SetValueOutcome> {
     let element = element_ptr as AXUIElementRef;
 
@@ -495,8 +608,21 @@ fn set_value_blocking(
                 verified: None,
                 changed: None,
                 committed: None,
+                path: "ax",
+                delivered: None,
             }
         })
+    } else if let WritePlan::Retype(end) = plan {
+        retype_blocking(
+            element,
+            element_ptr,
+            element_index,
+            pid,
+            window_id,
+            value,
+            end,
+            &role,
+        )
     } else {
         // Default path: write AXValue directly. Numeric controls (AXSlider /
         // AXStepper) reject a CFString with -25201 and need a CFNumber; text
@@ -530,7 +656,7 @@ fn set_value_blocking(
                 numeric_target.is_some(),
             );
             let (committed, commit_detail) =
-                commit_write(element, pid, value, numeric_target.is_some(), commit);
+                commit_written_value(element, pid, value, numeric_target.is_some(), plan);
             let suffix = match (verified, changed) {
                 (Some(true), Some(false)) => " Value already matched; write was idempotent.",
                 (Some(true), _) => "",
@@ -544,6 +670,8 @@ fn set_value_blocking(
                 verified,
                 changed,
                 committed,
+                path: "ax",
+                delivered: None,
             })
         } else if let Some(target) = numeric_target {
             // Both direct writes failed for a numeric target — fall back to
@@ -559,6 +687,8 @@ fn set_value_blocking(
                     verified,
                     changed,
                     committed: None,
+                    path: "ax",
+                    delivered: None,
                 })
             } else {
                 anyhow::bail!("AXUIElementSetAttributeValue(AXValue) failed with error {err}")
@@ -567,6 +697,123 @@ fn set_value_blocking(
             anyhow::bail!("AXUIElementSetAttributeValue(AXValue) failed with error {err}")
         }
     }
+}
+
+/// Replace a bound control's text through the keystroke rung.
+///
+/// The order is the one AppKit requires: focus installs the field editor, the
+/// selection write makes the first keystroke a replacement rather than an
+/// insertion, the keystrokes land in the editor the binding reads, and the
+/// end-of-edit key is what makes the binding read it.
+#[allow(clippy::too_many_arguments)]
+fn retype_blocking(
+    element: AXUIElementRef,
+    element_ptr: usize,
+    element_index: usize,
+    pid: i32,
+    window_id: u32,
+    value: &str,
+    end: &'static str,
+    role: &str,
+) -> anyhow::Result<SetValueOutcome> {
+    let before = unsafe { copy_string_attr(element, "AXValue") };
+
+    crate::input::ax_actions::focus_element(element_ptr)
+        .map_err(|error| anyhow::anyhow!("could not focus [{element_index}] {role}: {error}"))?;
+    std::thread::sleep(FOCUS_SETTLE);
+    if !crate::input::ax_actions::is_element_focused(pid, element_ptr) {
+        // AppKit can install the window's remembered first responder just
+        // after the write. One re-apply covers that.
+        let _ = crate::input::ax_actions::focus_element(element_ptr);
+        std::thread::sleep(FOCUS_SETTLE);
+    }
+    if !crate::input::ax_actions::is_element_focused(pid, element_ptr) {
+        anyhow::bail!(
+            "[{element_index}] {role} did not take keyboard focus, so typed keystrokes cannot \
+             be proven to reach it; click the control first, or retry with \
+             delivery_mode \"foreground\""
+        );
+    }
+
+    let existing = before.as_deref().unwrap_or_default().chars().count();
+    if existing > 0 && !select_all_text(element, existing) {
+        anyhow::bail!(
+            "[{element_index}] {role} refused both an AXSelectedTextRange selection and an \
+             AXValue clear, so typing would append to its current value"
+        );
+    }
+
+    // A keystroke has to make the change for the editor to notice it, so an
+    // empty value is delivered as a deletion of the selection.
+    let (delivered_all, delivered) = if value.is_empty() {
+        crate::input::keyboard::press_key(pid, "delete", &[])?;
+        std::thread::sleep(COMMIT_SETTLE);
+        let after = unsafe { copy_string_attr(element, "AXValue") };
+        (after.as_deref() == Some(""), Some(0))
+    } else {
+        super::type_text::type_and_drain(
+            pid,
+            value,
+            0,
+            Some(""),
+            Some((element_ptr, Some(element_index))),
+            Some(window_id),
+        )?
+    };
+
+    let dispatched = crate::input::keyboard::press_key(pid, end, &[]).is_ok();
+    let (survived, edit_ended) = if dispatched {
+        std::thread::sleep(COMMIT_SETTLE);
+        let after = unsafe { copy_string_attr(element, "AXValue") };
+        (
+            value_matches(after.as_deref(), value, false),
+            !crate::input::ax_actions::is_element_focused(pid, element_ptr),
+        )
+    } else {
+        (false, false)
+    };
+    let (committed, commit_detail) = judge_commit(dispatched, survived, edit_ended, end);
+
+    let after = unsafe { copy_string_attr(element, "AXValue") };
+    let (verified, changed) = classify_write(before.as_deref(), after.as_deref(), value, false);
+    let delivery = match (delivered_all, delivered) {
+        (true, _) => String::new(),
+        (false, Some(count)) => format!(
+            " Only {count} of {} character(s) were observed in the control.",
+            value.chars().count()
+        ),
+        (false, None) => " Delivery is not readable through AX.".to_owned(),
+    };
+    let gesture = if value.is_empty() {
+        format!("✅ Cleared [{element_index}] {role}")
+    } else {
+        format!(
+            "✅ Typed {} character(s) into [{element_index}] {role}",
+            value.chars().count()
+        )
+    };
+    Ok(SetValueOutcome {
+        detail: format!(
+            "{gesture} through the app's own editing pipeline.{delivery}{commit_detail}"
+        ),
+        verified,
+        changed,
+        committed,
+        path: "key_events",
+        delivered,
+    })
+}
+
+/// Select the control's whole value so the first keystroke replaces it.
+/// A control that refuses a selection write still accepts an `AXValue` clear;
+/// without one of the two, typing would append to the current value.
+fn select_all_text(element: AXUIElementRef, length: usize) -> bool {
+    if unsafe { set_range_attr(element, "AXSelectedTextRange", 0, length as isize) }
+        == kAXErrorSuccess
+    {
+        return true;
+    }
+    (unsafe { set_string_attr(element, "AXValue", "") }) == kAXErrorSuccess
 }
 
 /// Whether an observed AXValue string equals `expected`. Numeric controls are
@@ -878,75 +1125,180 @@ fn hex_digit(n: u8) -> char {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_surface_trust, apply_verification_label, classify_write, commit_gesture,
-        commit_write, is_binding_target_role, judge_commit, CommitPlan, SetValueOutcome,
+        apply_surface_trust, apply_verification_label, classify_write, commit_written_value,
+        judge_commit, refused_keystroke_plan, write_plan, SetValueOutcome, ToolResult, WritePlan,
     };
     use cua_driver_contract::ActionCommit;
 
+    fn outcome(
+        detail: &str,
+        verified: Option<bool>,
+        committed: Option<ActionCommit>,
+    ) -> SetValueOutcome {
+        SetValueOutcome {
+            detail: detail.to_owned(),
+            verified,
+            changed: Some(true),
+            committed,
+            path: "ax",
+            delivered: None,
+        }
+    }
+
+    /// The Automator "Save as:" field advertises `AXConfirm`, and an `AXValue`
+    /// write plus that action left the app holding `Untitled.txt`. A plain
+    /// `NSTextField` has to be typed into, whatever it advertises.
     #[test]
-    fn single_line_text_fields_commit_by_ending_the_edit() {
+    fn a_binding_target_field_is_written_by_typing() {
         assert_eq!(
-            commit_gesture("AXTextField", &[]),
-            CommitPlan::Key("tab"),
-            "a text field with no confirm action must still be committed"
+            write_plan("AXTextField", "", &["AXConfirm".to_owned()], "name.txt"),
+            WritePlan::Retype("tab")
         );
         assert_eq!(
-            commit_gesture("AXTextField", &["AXConfirm".to_owned()]),
-            CommitPlan::Confirm,
-            "the element's own confirm action wins when advertised"
+            write_plan("AXTextField", "", &[], "name.txt"),
+            WritePlan::Retype("tab")
         );
         assert_eq!(
-            commit_gesture("AXSearchField", &[]),
-            CommitPlan::Key("return"),
-            "a search field is submitted, not tabbed away from"
+            write_plan("AXSecureTextField", "", &[], "name.txt"),
+            WritePlan::Retype("tab")
+        );
+    }
+
+    /// Tab moves focus and Return ends the edit, so a value holding either can
+    /// only be written losslessly through `AXValue`.
+    #[test]
+    fn a_value_keystrokes_cannot_carry_keeps_the_ax_value_route() {
+        for value in ["\n", " \tΩ café\n", "a\rb"] {
+            assert_eq!(
+                write_plan("AXTextField", "", &["AXConfirm".to_owned()], value),
+                WritePlan::ValueThenConfirm,
+                "{value:?}"
+            );
+        }
+        assert_eq!(
+            write_plan("AXTextField", "", &[], ""),
+            WritePlan::Retype("tab"),
+            "an empty value is delivered as a deletion, which is typeable"
+        );
+    }
+
+    /// A search field's `AXConfirm` runs the search, which is the commit, and
+    /// the Automator library search field is measurably filtered by it.
+    #[test]
+    fn a_search_field_keeps_the_ax_value_route() {
+        assert_eq!(
+            write_plan(
+                "AXTextField",
+                "AXSearchField",
+                &["AXConfirm".to_owned()],
+                "name.txt"
+            ),
+            WritePlan::ValueThenConfirm
+        );
+        assert_eq!(
+            write_plan("AXSearchField", "", &[], "name.txt"),
+            WritePlan::ValueThenKey("return")
+        );
+        assert_eq!(
+            write_plan("AXComboBox", "", &[], "name.txt"),
+            WritePlan::ValueThenKey("tab")
         );
     }
 
     #[test]
     fn controls_without_an_editing_pipeline_report_no_commit() {
-        assert_eq!(commit_gesture("AXSlider", &[]), CommitPlan::NotText);
-        assert_eq!(commit_gesture("AXCheckBox", &[]), CommitPlan::NotText);
-        let (committed, detail) =
-            commit_write(std::ptr::null_mut(), 0, "value", false, CommitPlan::NotText);
+        assert_eq!(
+            write_plan("AXSlider", "", &[], "name.txt"),
+            WritePlan::ValueOnly
+        );
+        assert_eq!(
+            write_plan("AXCheckBox", "", &[], "name.txt"),
+            WritePlan::ValueOnly
+        );
+        let (committed, detail) = commit_written_value(
+            std::ptr::null_mut(),
+            0,
+            "value",
+            false,
+            WritePlan::ValueOnly,
+        );
         assert_eq!(committed, None, "a slider write has nothing to commit");
         assert!(detail.is_empty());
     }
 
     #[test]
     fn a_text_area_write_is_reported_as_uncommitted() {
-        let plan = commit_gesture("AXTextArea", &[]);
-        assert!(matches!(plan, CommitPlan::Blocked(_)), "{plan:?}");
-        let (committed, detail) = commit_write(std::ptr::null_mut(), 0, "value", false, plan);
+        // Measured on TextEdit: the text appeared in the AX tree while the
+        // document stayed unmarked. There is no end-of-edit gesture to run.
+        let plan = write_plan("AXTextArea", "", &[], "name.txt");
+        assert!(matches!(plan, WritePlan::Blocked(_)), "{plan:?}");
+        let (committed, detail) =
+            commit_written_value(std::ptr::null_mut(), 0, "value", false, plan);
         assert_eq!(committed, Some(ActionCommit::NotCommitted));
         assert!(detail.contains("Not committed"), "{detail}");
     }
 
-    /// An `AXValue` write plus a commit gesture cannot distinguish "the app
-    /// took the value" from "the control echoed what was written", so the
-    /// surviving read-back must not be published as a commit.
+    /// A read-back is echoed by a bound control whether or not the app took
+    /// the value, so surviving the gesture alone can never say `committed` —
+    /// and neither can an ended edit session over a value the field editor
+    /// never saw. Measured on Automator's "Save as:" action parameter: an
+    /// `AXValue` write plus a Tab that moved focus survived the read-back and
+    /// the app still kept its own value on disk.
     #[test]
-    fn a_surviving_ax_write_is_unproven_not_committed() {
-        let (committed, detail) = judge_commit(true, true, "tab");
+    fn only_a_typed_ended_edit_is_a_commit() {
+        let (committed, detail) = judge_commit(true, true, false, "AXConfirm");
         assert_eq!(committed, Some(ActionCommit::Unproven));
         assert!(detail.contains("Commit unproven"), "{detail}");
+
+        // The AXValue + Tab route: dispatched, survived, and the edit really
+        // ended — but untyped, so the only honest verdict is unproven.
         assert_eq!(
-            judge_commit(true, false, "tab").0,
-            Some(ActionCommit::NotCommitted),
-            "a value the app replaced is a rejection, not an unproven write"
+            judge_commit(true, true, false, "tab").0,
+            Some(ActionCommit::Unproven)
         );
         assert_eq!(
-            judge_commit(false, false, "AXConfirm").0,
-            Some(ActionCommit::NotCommitted),
-            "a gesture that never dispatched cannot have committed"
+            judge_commit(true, true, true, "tab").0,
+            Some(ActionCommit::Committed)
+        );
+        assert_eq!(
+            judge_commit(true, false, true, "tab").0,
+            Some(ActionCommit::NotCommitted)
+        );
+        assert_eq!(
+            judge_commit(false, false, false, "tab").0,
+            Some(ActionCommit::NotCommitted)
         );
     }
 
+    /// `set_value` has no `delivery_mode`, so a refused keystroke is final for
+    /// the call. A save panel is always a sibling top-level window, which is
+    /// exactly what the gate refuses on — dropping to the control's own
+    /// advertised `AXConfirm` keeps that control reachable instead of turning
+    /// the whole write into a refusal.
     #[test]
-    fn a_search_field_is_not_a_binding_target() {
-        assert!(is_binding_target_role("AXTextField", ""));
-        assert!(is_binding_target_role("AXSecureTextField", ""));
-        assert!(!is_binding_target_role("AXTextField", "AXSearchField"));
-        assert!(!is_binding_target_role("AXTextArea", ""));
+    fn a_refused_retype_falls_back_to_an_advertised_confirm() {
+        let refusal = ToolResult::error("refused".to_owned());
+        assert_eq!(
+            refused_keystroke_plan(
+                &WritePlan::Retype("tab"),
+                &["AXShowMenu".to_owned(), "AXConfirm".to_owned()],
+                &refusal,
+            ),
+            WritePlan::ValueThenConfirm
+        );
+        assert!(matches!(
+            refused_keystroke_plan(&WritePlan::Retype("tab"), &[], &refusal),
+            WritePlan::Blocked(_)
+        ));
+        // The AXValue routes have no second gesture to fall back to.
+        assert!(matches!(
+            refused_keystroke_plan(
+                &WritePlan::ValueThenKey("tab"),
+                &["AXConfirm".to_owned()],
+                &refusal,
+            ),
+            WritePlan::Blocked(_)
+        ));
     }
 
     #[test]
@@ -1013,44 +1365,44 @@ mod tests {
 
     #[test]
     fn web_content_ax_echo_is_never_reported_as_verified() {
-        let mut outcome = SetValueOutcome {
-            detail: "Set value.".to_owned(),
-            verified: Some(true),
-            changed: Some(true),
-            committed: Some(ActionCommit::Unproven),
-        };
-        apply_surface_trust(&mut outcome, true);
-        assert_eq!(outcome.verified, Some(false));
-        assert_eq!(outcome.changed, None);
-        assert!(outcome.detail.contains("not trusted for web content"));
+        let mut result = outcome("Set value.", Some(true), Some(ActionCommit::Committed));
+        apply_surface_trust(&mut result, true);
+        assert_eq!(result.verified, Some(false));
+        assert_eq!(result.changed, None);
+        assert!(result.detail.contains("not trusted for web content"));
     }
 
     #[test]
     fn native_read_back_remains_trusted() {
-        let mut outcome = SetValueOutcome {
-            detail: "Set value.".to_owned(),
-            verified: Some(true),
-            changed: Some(true),
-            committed: Some(ActionCommit::Unproven),
-        };
-        apply_surface_trust(&mut outcome, false);
-        assert_eq!(outcome.verified, Some(true));
-        assert_eq!(outcome.changed, Some(true));
-        assert_eq!(outcome.detail, "Set value.");
+        let mut result = outcome("Set value.", Some(true), Some(ActionCommit::Committed));
+        apply_surface_trust(&mut result, false);
+        assert_eq!(result.verified, Some(true));
+        assert_eq!(result.changed, Some(true));
+        assert_eq!(result.detail, "Set value.");
     }
 
     #[test]
     fn unverified_result_does_not_keep_a_success_checkmark() {
-        let mut outcome = SetValueOutcome {
-            detail: "✅ Set AXValue on [4] AXTextField.".to_owned(),
-            verified: Some(false),
-            changed: Some(false),
-            committed: Some(ActionCommit::NotCommitted),
-        };
-        apply_verification_label(&mut outcome);
+        let mut result = outcome(
+            "✅ Set AXValue on [4] AXTextField.",
+            Some(false),
+            Some(ActionCommit::NotCommitted),
+        );
+        apply_verification_label(&mut result);
         assert_eq!(
-            outcome.detail,
+            result.detail,
             "📨 Sent (unverified) AXValue on [4] AXTextField."
+        );
+
+        let mut typed = outcome(
+            "✅ Typed 4 character(s) into [4] AXTextField.",
+            Some(false),
+            Some(ActionCommit::Unproven),
+        );
+        apply_verification_label(&mut typed);
+        assert_eq!(
+            typed.detail,
+            "📨 Sent (unverified) 4 character(s) into [4] AXTextField."
         );
     }
 }

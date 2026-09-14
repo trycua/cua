@@ -173,9 +173,26 @@
         "additionalProperties": false,
         "properties": {
           "committed": {
-            "type": [
-              "boolean",
-              "null"
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "const": "committed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "not_committed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unproven",
+                    "type": "string"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "delivery": {
@@ -615,9 +632,26 @@
         "additionalProperties": false,
         "properties": {
           "committed": {
-            "type": [
-              "boolean",
-              "null"
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "const": "committed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "not_committed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unproven",
+                    "type": "string"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "delivery": {
@@ -2058,9 +2092,26 @@
         "additionalProperties": false,
         "properties": {
           "committed": {
-            "type": [
-              "boolean",
-              "null"
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "const": "committed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "not_committed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unproven",
+                    "type": "string"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "delivery": {
@@ -2268,9 +2319,26 @@
         "additionalProperties": false,
         "properties": {
           "committed": {
-            "type": [
-              "boolean",
-              "null"
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "const": "committed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "not_committed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unproven",
+                    "type": "string"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "delivery": {
@@ -2910,9 +2978,26 @@
         "additionalProperties": false,
         "properties": {
           "committed": {
-            "type": [
-              "boolean",
-              "null"
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "const": "committed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "not_committed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unproven",
+                    "type": "string"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "delivery": {
@@ -3669,9 +3754,26 @@
         "additionalProperties": false,
         "properties": {
           "committed": {
-            "type": [
-              "boolean",
-              "null"
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "const": "committed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "not_committed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unproven",
+                    "type": "string"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "delivery": {
@@ -3945,9 +4047,26 @@
         "additionalProperties": false,
         "properties": {
           "committed": {
-            "type": [
-              "boolean",
-              "null"
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "const": "committed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "not_committed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unproven",
+                    "type": "string"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "delivery": {
@@ -4468,9 +4587,26 @@
         "additionalProperties": false,
         "properties": {
           "committed": {
-            "type": [
-              "boolean",
-              "null"
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "const": "committed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "not_committed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unproven",
+                    "type": "string"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "delivery": {
@@ -4860,9 +4996,26 @@
         "additionalProperties": false,
         "properties": {
           "committed": {
-            "type": [
-              "boolean",
-              "null"
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "const": "committed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "not_committed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unproven",
+                    "type": "string"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "delivery": {

@@ -205,6 +205,42 @@ func TestPoolResourceModelToSDKCreateTemplateRequest(t *testing.T) {
 	}
 }
 
+func TestPoolResourceModelToSDKPublicImageOmitsPullSecret(t *testing.T) {
+	model := examplePoolModel()
+	model.ImagePullSecret = types.StringValue("")
+
+	var diagnostics diag.Diagnostics
+	request := model.toSDKCreateTemplateRequest(context.Background(), &diagnostics)
+	if diagnostics.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diagnostics)
+	}
+	if request.Spec.VmTemplate.ImagePullSecret != nil {
+		t.Fatalf("imagePullSecret = %v, want omitted for a public image", request.Spec.VmTemplate.ImagePullSecret)
+	}
+}
+
+func TestPoolResourceModelToSDKUnconfiguredPullSecretKeepsECRDefault(t *testing.T) {
+	for name, value := range map[string]types.String{
+		"null":    types.StringNull(),
+		"unknown": types.StringUnknown(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			model := examplePoolModel()
+			model.ImagePullSecret = value
+
+			var diagnostics diag.Diagnostics
+			request := model.toSDKCreateTemplateRequest(context.Background(), &diagnostics)
+			if diagnostics.HasError() {
+				t.Fatalf("unexpected diagnostics: %v", diagnostics)
+			}
+			secret := request.Spec.VmTemplate.ImagePullSecret
+			if secret == nil || *secret != "ecr-credentials" {
+				t.Fatalf("imagePullSecret = %v, want ecr-credentials", secret)
+			}
+		})
+	}
+}
+
 func TestPoolResourceModelFromSDKObjects(t *testing.T) {
 	replicas := uint32(2)
 	readyReplicas := uint32(1)
@@ -251,6 +287,22 @@ func TestPoolResourceModelFromSDKObjects(t *testing.T) {
 	}
 	if length := len(model.Services.Elements()); length != 1 {
 		t.Fatalf("service count = %d, want 1", length)
+	}
+}
+
+func TestPoolResourceModelFromSDKPublicImagePreservesOmittedPullSecret(t *testing.T) {
+	template := fleet_sdk.Template{Spec: cyclops_sdk_schema.OsGymSandboxTemplateSpec{
+		VmTemplate: cyclops_sdk_schema.VmTemplate{ContainerDiskImage: "ghcr.io/example/public@sha256:deadbeef"},
+	}}
+
+	var model poolResourceModel
+	var diagnostics diag.Diagnostics
+	model.fromSDKTemplate(context.Background(), &template, &diagnostics)
+	if diagnostics.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diagnostics)
+	}
+	if model.ImagePullSecret.ValueString() != "" {
+		t.Fatalf("image_pull_secret = %q, want empty string", model.ImagePullSecret.ValueString())
 	}
 }
 

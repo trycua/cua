@@ -44,13 +44,44 @@ fn web_target(snapshot: &ToolResponse) -> String {
 #[test]
 #[ignore]
 fn harness_appkit_native_geometry_mismatch_refuses_pixel_without_side_effects() {
-    let case = native_background_case(
-        "appkit",
-        "native_geometry_mismatch",
-        Targeting::Px,
-        DriverRoute::MacosCgEventPid,
-    )
+    run_native_geometry_mismatch(false);
+}
+
+#[test]
+#[ignore]
+fn harness_appkit_native_geometry_mismatch_refuses_foreground_without_side_effects() {
+    run_native_geometry_mismatch(true);
+}
+
+fn run_native_geometry_mismatch(foreground: bool) {
+    let mut case = if foreground {
+        native_foreground_case(
+            "appkit",
+            "native_geometry_mismatch",
+            Targeting::Px,
+            DriverRoute::MacosCgEventHid,
+        )
+    } else {
+        native_background_case(
+            "appkit",
+            "native_geometry_mismatch",
+            Targeting::Px,
+            DriverRoute::MacosCgEventPid,
+        )
+    }
     .expecting_refusal(vec![RefusalCode::NativeWindowGeometryMismatch]);
+    case.oracles = vec![
+        OracleKind::FixtureState,
+        OracleKind::Focus,
+        OracleKind::ZOrder,
+        OracleKind::NoLeakedInput,
+        OracleKind::Cursor,
+    ];
+    let delivery_mode = if foreground {
+        "foreground"
+    } else {
+        "background"
+    };
     let cell = case.cell_id.clone();
     execute_case(case, |evidence| {
         let mut driver = McpDriver::spawn_macos_daemon_proxy_named(&cell)
@@ -214,7 +245,7 @@ fn harness_appkit_native_geometry_mismatch_refuses_pixel_without_side_effects() 
                 serde_json::json!({
                     "pid": harness.pid, "window_id": wid,
                     "x": 300.0 * scale, "y": 130.0 * scale,
-                    "delivery_mode": "background"
+                    "delivery_mode": delivery_mode
                 }),
             );
             save_response(&directory, "refusal.json", &response);
@@ -234,7 +265,7 @@ fn harness_appkit_native_geometry_mismatch_refuses_pixel_without_side_effects() 
                 serde_json::json!({
                     "pid": harness.pid, "window_id": wid,
                     "element_token": web_target(&snapshot),
-                    "direction": "down", "amount": 1
+                    "direction": "down", "amount": 1, "delivery_mode": delivery_mode
                 }),
             );
             save_response(&directory, "scroll-refusal.json", &scroll);

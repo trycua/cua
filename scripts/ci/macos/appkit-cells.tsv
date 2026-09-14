@@ -21,3 +21,4 @@ macos-appkit-double-click-px-background	harness_appkit_double_click_px_backgroun
 macos-appkit-slider-drag-px-foreground	harness_appkit_slider_drag_px_foreground
 macos-appkit-slider-drag-px-background	harness_appkit_slider_drag_px_background
 macos-appkit-native-geometry-mismatch-px-background	native_geometry::harness_appkit_native_geometry_mismatch_refuses_pixel_without_side_effects
+macos-appkit-native-geometry-mismatch-px-foreground	native_geometry::harness_appkit_native_geometry_mismatch_refuses_foreground_without_side_effects

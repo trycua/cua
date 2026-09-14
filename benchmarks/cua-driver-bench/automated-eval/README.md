@@ -101,6 +101,35 @@ The Linux observer records three diagnostic foreground metrics:
 
 These metrics do not change scores, pass results, or comparison signals.
 
+## Run on Cua Fleet
+
+Fleet runs the same comparison CLI on one isolated Linux/X11 worker. The controller uploads only the public benchmark source, Cua Bench Runtime, selected driver releases, and selected tasks from the authorized task pack. Task content remains separate from the public source archive.
+
+From the monorepo root, install the Fleet extra:
+
+```bash
+python -m pip install -e 'libs/cua-bench-runtime[fleet]'
+```
+
+Put Fleet and model credentials in `benchmarks/cua-driver-bench/automated-eval/.env`. If `OPENAI_BASE_URL` is reachable only through a tailnet, set `OPENAI_FLEET_BASE_URL` to a provider URL that the worker can reach.
+
+Run the controller from the benchmark directory:
+
+```bash
+cd benchmarks/cua-driver-bench
+python automated-eval/cli.py fleet \
+  --model small \
+  --reasoning-effort high \
+  --tasks-root /absolute/path/to/authorized/tasks \
+  --drivers-root cua-drivers \
+  --baseline 0.28.0 \
+  --candidate 0.26.1 \
+  --task CDB-S01 \
+  --task CDB-S04
+```
+
+Fleet reads the selected task descriptors and provisions supported external applications, including Google Chrome, LibreOffice, and GnuCash. Results are written to `automated-eval/fleet-results/<UTC timestamp>/`. The worker is released after the reports and raw trial artifacts are downloaded.
+
 ## Main Options
 
 | Option | Purpose |

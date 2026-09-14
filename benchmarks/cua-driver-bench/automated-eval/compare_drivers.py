@@ -604,6 +604,24 @@ def _resolve_executable(command: Sequence[str]) -> list[str]:
     return [resolved, *command[1:]]
 
 
+def _linux_root_gui_command(command: Sequence[str], kind: str) -> list[str]:
+    resolved = list(command)
+    getuid = getattr(os, "geteuid", None)
+    if (
+        not sys.platform.startswith("linux")
+        or getuid is None
+        or getuid() != 0
+        or "--no-sandbox" in resolved
+    ):
+        return resolved
+    if kind == "browser":
+        return [resolved[0], "--no-sandbox", *resolved[1:]]
+    if kind == "electron":
+        index = 2 if Path(resolved[0]).name == "npx" else 1
+        return [*resolved[:index], "--no-sandbox", *resolved[index:]]
+    return resolved
+
+
 def _run_preflight_command(
     command: Sequence[str], *, cwd: Path, environment: Mapping[str, str], timeout: float
 ) -> subprocess.CompletedProcess[str]:
@@ -2080,6 +2098,7 @@ def _launch_apps(
     gui_environment: Mapping[str, str],
 ) -> list[dict[str, Any]]:
     processes: list[dict[str, Any]] = []
+    launched: list[tuple[str, bool, subprocess.Popen[bytes]]] = []
     process_path = artifacts / "app-processes.json"
     for raw_app in descriptor["apps"]:
         if not isinstance(raw_app, dict):
@@ -2095,7 +2114,9 @@ def _launch_apps(
             environment.pop(str(name), None)
         cwd = Path(app.get("cwd", variables["bundle"])).resolve()
         try:
-            command = _resolve_executable(app["command"])
+            command = _linux_root_gui_command(
+                _resolve_executable(app["command"]), str(app.get("kind", ""))
+            )
         except (KeyError, FileNotFoundError, ValueError):
             if optional:
                 processes.append({"app_id": app_id, "kind": app.get("kind"), "skipped": True})
@@ -2128,15 +2149,17 @@ def _launch_apps(
             "skipped": False,
         }
         processes.append(record)
+        launched.append((app_id, optional, process))
         _write_json(process_path, processes)
         ready = app.get("ready")
-        if isinstance(ready, dict) and isinstance(ready.get("url"), str):
+        ready_url = ready.get("http", ready.get("url")) if isinstance(ready, dict) else None
+        if isinstance(ready, dict) and isinstance(ready_url, str):
             deadline = time.monotonic() + float(ready.get("timeout_seconds", 15))
             while time.monotonic() < deadline:
                 if process.poll() is not None:
                     raise RuntimeError(f"app {app_id} exited before readiness")
                 try:
-                    with urllib.request.urlopen(ready["url"], timeout=1.0) as response:
+                    with urllib.request.urlopen(ready_url, timeout=1.0) as response:
                         if response.status < 500:
                             break
                 except (OSError, urllib.error.URLError):
@@ -2144,6 +2167,9 @@ def _launch_apps(
             else:
                 raise TimeoutError(f"app {app_id} readiness timed out")
     time.sleep(1.0)
+    for app_id, optional, process in launched:
+        if not optional and process.poll() is not None:
+            raise RuntimeError(f"app {app_id} exited during startup")
     return processes
 
 
@@ -2377,6 +2403,45 @@ Get-CimInstance Win32_Process |
     )
 
 
+def _linux_process_groups_for_path(path: Path) -> tuple[int, ...]:
+    if not sys.platform.startswith("linux"):
+        return ()
+    root = path.resolve()
+    root_bytes = os.fsencode(str(root))
+    current_group = os.getpgrp()
+    groups: set[int] = set()
+    try:
+        processes = tuple(Path("/proc").iterdir())
+    except OSError:
+        return ()
+    for process in processes:
+        if not process.name.isdigit():
+            continue
+        pid = int(process.name)
+        if pid == os.getpid():
+            continue
+        belongs_to_trial = False
+        try:
+            cwd = Path(os.readlink(process / "cwd"))
+            belongs_to_trial = cwd == root or root in cwd.parents
+        except OSError:
+            pass
+        if not belongs_to_trial:
+            try:
+                belongs_to_trial = root_bytes in (process / "cmdline").read_bytes()
+            except OSError:
+                continue
+        if not belongs_to_trial:
+            continue
+        try:
+            process_group = os.getpgid(pid)
+        except OSError:
+            continue
+        if process_group > 0 and process_group != current_group:
+            groups.add(process_group)
+    return tuple(sorted(groups))
+
+
 def _cleanup_trial_processes(trial_dir: Path) -> None:
     artifacts = trial_dir / "artifacts"
     paths = (artifacts / "codex-process.json", artifacts / "app-processes.json")
@@ -2394,6 +2459,10 @@ def _cleanup_trial_processes(trial_dir: Path) -> None:
             if isinstance(pid, int) and pid > 0 and pid not in seen:
                 seen.add(pid)
                 _terminate_process_group(pid)
+    for pid in _linux_process_groups_for_path(trial_dir):
+        if pid not in seen:
+            seen.add(pid)
+            _terminate_process_group(pid)
     for pid in _windows_processes_for_path(trial_dir):
         if pid not in seen:
             seen.add(pid)

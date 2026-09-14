@@ -4,6 +4,7 @@ import importlib.util
 import json
 from dataclasses import asdict
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -68,6 +69,31 @@ def _write_foreground_evidence(trial: Path) -> None:
 
 
 class CompareDriversTests(unittest.TestCase):
+    def test_linux_root_gui_commands_disable_chromium_sandbox(self) -> None:
+        with (
+            patch.object(compare_drivers.sys, "platform", "linux"),
+            patch.object(compare_drivers.os, "geteuid", return_value=0),
+        ):
+            browser = compare_drivers._linux_root_gui_command(
+                ["/usr/bin/chromium", "https://example.test"], "browser"
+            )
+            electron = compare_drivers._linux_root_gui_command(
+                ["/usr/bin/npx", "electron", "."], "electron"
+            )
+
+        self.assertEqual(browser[1], "--no-sandbox")
+        self.assertEqual(electron[2], "--no-sandbox")
+
+    def test_non_root_gui_commands_are_unchanged(self) -> None:
+        command = ["/usr/bin/chromium", "https://example.test"]
+        with (
+            patch.object(compare_drivers.sys, "platform", "linux"),
+            patch.object(compare_drivers.os, "geteuid", return_value=1000),
+        ):
+            resolved = compare_drivers._linux_root_gui_command(command, "browser")
+
+        self.assertEqual(resolved, command)
+
     def test_codex_runtime_root_uses_cache_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             cache_home = Path(temporary) / "cache"
@@ -276,8 +302,13 @@ command = "unrelated"
             with (
                 patch.object(
                     compare_drivers,
-                    "_windows_processes_for_path",
+                    "_linux_process_groups_for_path",
                     return_value=(202,),
+                ),
+                patch.object(
+                    compare_drivers,
+                    "_windows_processes_for_path",
+                    return_value=(303,),
                 ),
                 patch.object(compare_drivers, "_terminate_process_group") as terminate,
             ):
@@ -285,8 +316,24 @@ command = "unrelated"
 
         self.assertEqual(
             [call.args[0] for call in terminate.call_args_list],
-            [101, 202],
+            [101, 202, 303],
         )
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux /proc only")
+    def test_linux_process_group_discovery_tracks_trial_cwd(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            trial = Path(temporary)
+            process = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(30)"],
+                cwd=trial,
+                start_new_session=True,
+            )
+            try:
+                groups = compare_drivers._linux_process_groups_for_path(trial)
+                self.assertIn(process.pid, groups)
+            finally:
+                process.terminate()
+                process.wait(timeout=5)
 
     def test_discovers_semver_releases_and_matching_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

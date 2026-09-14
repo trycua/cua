@@ -14,6 +14,7 @@ from cua_sandbox.transport.computer_server import (
     normalize_screen_size,
     parse_command_response,
 )
+from cua_sandbox.transport.osworld import OSWorldOverServiceMixin
 from fleet_sdk import HttpHeader, HttpRequest, HttpRequestBuilder
 
 _CMD_MAX_RETRIES = 3
@@ -250,3 +251,12 @@ class FleetTransport(Transport):
             return None
         response.raise_for_status()
         return response.json()
+
+
+class OSWorldFleetTransport(OSWorldOverServiceMixin, FleetTransport):
+    """``FleetTransport`` for a claim whose ``server`` service is the OSWorld Flask API."""
+
+
+def fleet_transport_for(agent_type: Optional[str]) -> type[FleetTransport]:
+    """Pick the Fleet transport class matching an image's ``agent_type`` hint."""
+    return OSWorldFleetTransport if agent_type == "osworld" else FleetTransport

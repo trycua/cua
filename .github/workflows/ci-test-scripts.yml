@@ -4,6 +4,10 @@ on:
   pull_request:
     paths:
       - ".github/scripts/**"
+      - "TESTING.md"
+      - "libs/cua-driver/rust/README.md"
+      - "libs/cua-driver/rust/**/Cargo.toml"
+      - "libs/cua-driver/rust/crates/*/tests/**"
       - ".github/release-attribution-config.json"
       - ".github/release-manifest.schema.json"
       - ".github/release-backfill/**"

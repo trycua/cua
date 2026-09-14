@@ -3,16 +3,24 @@ import WebKit
 
 final class NativeGeometryWindow: NSWindow {
     var reportsMismatch = false
+    var reportsUnavailable = false
+    var geometryDelay = 0.0
     var inputEvents: [[String: Any]] = []
     var onInput: (() -> Void)?
 
-    override func accessibilityFrame() -> NSRect {
+    var reportedFrame: NSRect {
+        if reportsUnavailable { return .zero }
         var frame = super.accessibilityFrame()
         if reportsMismatch {
             frame.size.width += 200
             frame.size.height += 120
         }
         return frame
+    }
+
+    override func accessibilityFrame() -> NSRect {
+        if geometryDelay > 0 { Thread.sleep(forTimeInterval: geometryDelay) }
+        return reportedFrame
     }
 
     override func sendEvent(_ event: NSEvent) {
@@ -55,6 +63,8 @@ final class NativeGeometryFixture: NSObject {
     private var webScroll = -1.0
     private let webObserver = NativeGeometryWebObserver()
     private let web: WKWebView
+    private var timer: Timer?
+    private var lastCommand: String?
 
     init(directory: URL) {
         self.directory = directory
@@ -115,6 +125,21 @@ final class NativeGeometryFixture: NSObject {
     func show() {
         window.makeKeyAndOrderFront(nil)
         publish()
+        timer = Timer.scheduledTimer(withTimeInterval: 0.02, repeats: true) { [weak self] _ in
+            self?.readCommand()
+        }
+    }
+
+    private func readCommand() {
+        guard let command = try? String(contentsOf: directory.appendingPathComponent("command"), encoding: .utf8),
+              command != lastCommand else { return }
+        lastCommand = command
+        switch command {
+        case "align": setGeometry()
+        case "unavailable": setGeometry(unavailable: true)
+        case "slow": setGeometry(delay: 0.5)
+        default: break
+        }
     }
 
     @objc private func increment() {
@@ -127,8 +152,12 @@ final class NativeGeometryFixture: NSObject {
         web.evaluateJavaScript("window.scrollTo(0, 0)")
     }
 
-    @objc private func disagree() {
-        window.reportsMismatch = true
+    @objc private func disagree() { setGeometry(mismatched: true) }
+
+    private func setGeometry(mismatched: Bool = false, unavailable: Bool = false, delay: Double = 0) {
+        window.reportsMismatch = mismatched
+        window.reportsUnavailable = unavailable
+        window.geometryDelay = delay
         NSAccessibility.post(element: window, notification: .moved)
         NSAccessibility.post(element: window, notification: .resized)
         publish()
@@ -140,8 +169,10 @@ final class NativeGeometryFixture: NSObject {
                 "pid": ProcessInfo.processInfo.processIdentifier,
                 "window_id": window.windowNumber,
                 "physical_width": window.frame.width,
-                "reported_width": window.accessibilityFrame().width,
+                "reported_width": window.reportedFrame.width,
                 "mismatched": window.reportsMismatch,
+                "unavailable": window.reportsUnavailable,
+                "geometry_delay_ms": window.geometryDelay * 1000,
                 "counter": counter,
                 "web_scroll_y": webScroll,
                 "input_events": window.inputEvents

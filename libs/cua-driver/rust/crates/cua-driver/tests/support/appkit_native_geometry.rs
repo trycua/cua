@@ -41,6 +41,27 @@ fn web_target(snapshot: &ToolResponse) -> String {
         .to_owned()
 }
 
+fn launch_fixture(directory: &Path) -> (Harness, u64) {
+    std::fs::create_dir_all(directory).unwrap();
+    let app = Command::new(harness_exe())
+        .env("CUA_APPKIT_GEOMETRY_DIR", directory)
+        .stdout(std::fs::File::create(directory.join("fixture.stdout")).unwrap())
+        .stderr(std::fs::File::create(directory.join("fixture.stderr")).unwrap())
+        .spawn()
+        .expect("launch native geometry fixture");
+    let harness = Harness {
+        pid: app.id(),
+        _app: app,
+    };
+    let initial = fixture_state(directory, |state| {
+        state["window_id"].as_u64().is_some_and(|id| id > 0)
+            && state["web_scroll_y"].as_f64().is_some_and(|y| y >= 0.0)
+    });
+    assert_eq!(initial["pid"], harness.pid);
+    let wid = initial["window_id"].as_u64().unwrap();
+    (harness, wid)
+}
+
 fn assert_geometry_refusal(directory: &Path, name: &str, response: &ToolResponse) {
     save_response(directory, &format!("{name}.json"), response);
     assert!(response.is_error(), "{name}: {}", response.text());
@@ -131,6 +152,120 @@ fn pointer_requests(
 
 #[test]
 #[ignore]
+fn harness_appkit_geometry_unavailable_and_timeout_preserve_observation() {
+    let case = native_foreground_case(
+        "appkit",
+        "geometry_availability",
+        Targeting::Px,
+        DriverRoute::MacosCgEventHid,
+    );
+    let label = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_macos_daemon_proxy_named(&label).unwrap();
+        *evidence = recording_evidence(driver.recording_dir());
+        let directory = driver.recording_dir().unwrap().join("native-geometry");
+        let (harness, wid) = launch_fixture(&directory);
+        driver.start_behavior_recording();
+        let before = snapshot_elements(&mut driver, harness.pid, wid);
+        assert_eq!(
+            before.structured()["native_window_geometry"]["status"],
+            "aligned"
+        );
+        save_response(&directory, "availability-initial.json", &before);
+        let scale = before.structured()["screenshot_width"].as_f64().unwrap() / 360.0;
+        std::fs::write(directory.join("command"), "unavailable").unwrap();
+        fixture_state(&directory, |state| state["unavailable"] == true);
+        let missing = driver.call("get_window_state", serde_json::json!({
+            "pid":harness.pid, "window_id":wid, "screenshot_out_file":directory.join("unavailable.png")
+        }));
+        save_response(&directory, "unavailable.json", &missing);
+        assert!(
+            !missing.is_error(),
+            "unavailable observation: {}",
+            missing.text()
+        );
+        assert_eq!(
+            missing.structured()["native_window_geometry"]["status"],
+            "unavailable"
+        );
+        assert_eq!(missing.structured()["screenshot_frame_valid"], true);
+        assert!(has_id(missing.tree_text(), "geometry-increment"));
+        assert!(std::fs::read(directory.join("unavailable.png"))
+            .unwrap()
+            .starts_with(b"\x89PNG\r\n\x1a\n"));
+        let delivered = driver.call(
+            "click",
+            serde_json::json!({
+                "pid":harness.pid, "window_id":wid, "x":300.0*scale, "y":130.0*scale,
+                "button":"middle", "delivery_mode":"foreground"
+            }),
+        );
+        save_response(&directory, "unavailable-pointer.json", &delivered);
+        assert!(
+            !delivered.is_error(),
+            "unavailable added a veto: {}",
+            delivered.text()
+        );
+        let native = fixture_state(&directory, |state| {
+            let events = state["input_events"].as_array().unwrap();
+            [25, 26].iter().all(|kind| {
+                events
+                    .iter()
+                    .any(|event| event["type"] == *kind && event["window_id"] == wid)
+            })
+        });
+        std::fs::write(
+            directory.join("unavailable-native-input.json"),
+            serde_json::to_vec_pretty(&native).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(directory.join("command"), "slow").unwrap();
+        fixture_state(&directory, |state| state["geometry_delay_ms"] == 500.0);
+        let started = Instant::now();
+        let slow = driver.call(
+            "get_window_state",
+            serde_json::json!({
+                "pid":harness.pid, "window_id":wid, "include_accessibility_tree":false,
+                "screenshot_out_file":directory.join("slow.png")
+            }),
+        );
+        let elapsed = started.elapsed();
+        save_response(&directory, "slow.json", &slow);
+        std::fs::write(
+            directory.join("slow-elapsed-ms.txt"),
+            elapsed.as_millis().to_string(),
+        )
+        .unwrap();
+        assert!(
+            !slow.is_error(),
+            "slow metadata erased capture: {}",
+            slow.text()
+        );
+        assert_eq!(
+            slow.structured()["native_window_geometry"]["status"],
+            "unavailable"
+        );
+        assert_eq!(slow.structured()["screenshot_frame_valid"], true);
+        assert!(std::fs::read(directory.join("slow.png"))
+            .unwrap()
+            .starts_with(b"\x89PNG\r\n\x1a\n"));
+        std::fs::write(directory.join("command"), "align").unwrap();
+        fixture_state(&directory, |state| {
+            state["geometry_delay_ms"] == 0.0 && state["unavailable"] == false
+        });
+        let recovered = snapshot_elements(&mut driver, harness.pid, wid);
+        save_response(&directory, "availability-recovered.json", &recovered);
+        assert_eq!(
+            recovered.structured()["native_window_geometry"]["status"],
+            "aligned"
+        );
+        assert_ne!(before.snapshot_id(), recovered.snapshot_id());
+        Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+    });
+}
+
+#[test]
+#[ignore]
 fn harness_appkit_native_geometry_mismatch_refuses_pixel_without_side_effects() {
     run_native_geometry_mismatch(false);
 }
@@ -179,22 +314,7 @@ fn run_native_geometry_mismatch(foreground: bool) {
             .recording_dir()
             .expect("native evidence directory")
             .join("native-geometry");
-        std::fs::create_dir_all(&directory).unwrap();
-        let app = Command::new(harness_exe())
-            .env("CUA_APPKIT_GEOMETRY_DIR", &directory)
-            .stdout(std::fs::File::create(directory.join("fixture.stdout")).unwrap())
-            .stderr(std::fs::File::create(directory.join("fixture.stderr")).unwrap())
-            .spawn()
-            .expect("launch native geometry fixture");
-        let harness = Harness {
-            pid: app.id(),
-            _app: app,
-        };
-        let initial = fixture_state(&directory, |state| {
-            state["window_id"].is_u64() && state["web_scroll_y"].as_f64().is_some_and(|y| y >= 0.0)
-        });
-        let wid = initial["window_id"].as_u64().unwrap();
-        assert_eq!(initial["pid"], harness.pid);
+        let (harness, wid) = launch_fixture(&directory);
         let aligned = snapshot_elements(&mut driver, harness.pid, wid);
         save_response(&directory, "aligned.json", &aligned);
         assert!(!aligned.is_error(), "aligned snapshot: {}", aligned.text());

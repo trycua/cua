@@ -9,7 +9,8 @@ of `hotkey`. It is not a certification result for any candidate.
    process. Give each distinct text and use the platform accessibility reader
    to record the exact `AXFocusedWindow` before the action; leave B focused.
 2. Run `cua-driver call list_windows '{"pid":PID}'` and identify A's
-   `window_id`. Save the raw `get_window_state` responses for both documents:
+   `window_id`. Replace `PID` and `A_WINDOW_ID`/`B_WINDOW_ID` below with
+   the observed numeric values. Save the raw `get_window_state` responses for both documents:
 
    ```sh
    cua-driver call get_window_state '{"pid":PID,"window_id":A_WINDOW_ID}'
@@ -23,14 +24,21 @@ of `hotkey`. It is not a certification result for any candidate.
    cua-driver call hotkey '{"pid":PID,"window_id":A_WINDOW_ID,"keys":["cmd","n"],"delivery_mode":"foreground"}'
    ```
 
-4. Read `AXFocusedWindow` again and repeat both `get_window_state` calls.
-   Retain all four document observations and the command response.
+4. List windows again and identify the newly created document C. Capture its
+   `get_window_state` as well as A and B. Read `AXFocusedWindow` again through
+   the same independent accessibility reader; compare its window title/identity
+   with the new document and the two original documents. Retain before/after
+   focus, all document observations and the command response. A pass requires
+   C to be created and focused with A and B's text unchanged; a tool success
+   alone does not pass. If the key is not delivered or C never appears, record
+   that separate failure rather than treating it as window-targeting evidence.
 
 Before this change, the process-routed menu-equivalent path could create a
 new document while B remained accessibility-focused. With this change, the
 existing exact-window HID guard must establish A as key before it posts the
-chord, so the created document belongs to A's key-window context; B's document
-identity remains unchanged. Do not replay the chord after an uncertain result.
+chord, and normal Cmd+N behavior should create and focus C while leaving A and B's
+text unchanged. This expected application outcome still needs a candidate GUI
+run; the focused compile tests do not establish it. Do not replay the chord after an uncertain result.
 
 ## Dependency and limits
 

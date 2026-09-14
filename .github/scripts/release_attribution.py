@@ -361,7 +361,7 @@ def validate_pr_attribution(
     pull: Mapping[str, Any],
     commits: Sequence[Mapping[str, Any]],
     base_config: Mapping[str, Any],
-    head_config: Mapping[str, Any],
+    identity_changes: Mapping[str, str | None],
     github: GitHubClient,
 ) -> None:
     """Fail closed when preserved human authorship cannot reach a GitHub login.
@@ -376,13 +376,12 @@ def validate_pr_attribution(
     opt_out = _normalized_set(base_config, "optOutHandles")
     ignored = _normalized_set(base_config, "ignoredCoauthorEmails")
     base_overrides = _normalized_map(base_config, "identityOverrides")
-    head_overrides = _normalized_map(head_config, "identityOverrides")
     coauthor_overrides = _normalized_map(base_config, "coauthorOverrides")
 
     changed_existing = {
-        email: (login, head_overrides.get(email))
-        for email, login in base_overrides.items()
-        if head_overrides.get(email) != login
+        email: (base_overrides[email], login)
+        for email, login in identity_changes.items()
+        if email in base_overrides and login != base_overrides[email]
     }
     if changed_existing:
         details = ", ".join(
@@ -520,7 +519,9 @@ def validate_pr_attribution(
                 )
 
     new_overrides = {
-        email: login for email, login in head_overrides.items() if email not in base_overrides
+        email: login
+        for email, login in identity_changes.items()
+        if login is not None and email not in base_overrides
     }
     if not unresolved and not new_overrides and not preserved_authors and not early_errors:
         return
@@ -615,7 +616,7 @@ def validate_pr_attribution(
             )
 
     for email, expected in sorted(suggestions.items()):
-        actual = head_overrides.get(email)
+        actual = identity_changes.get(email)
         if actual != expected:
             fragment = json.dumps(
                 {"identityOverrides": {email: expected}}, indent=2, sort_keys=True
@@ -1230,22 +1231,17 @@ def validate_pr_command(args: argparse.Namespace) -> None:
     ancestor_config = client.file_json(repository, args.config.as_posix(), ancestor_sha)
     ancestor_overrides = _normalized_map(ancestor_config, "identityOverrides")
     head_overrides = _normalized_map(head_config, "identityOverrides")
-    candidate_overrides = {
-        email: login
-        for email, login in _normalized_map(base_config, "identityOverrides").items()
-        if head_overrides.get(email) == ancestor_overrides.get(email)
+    identity_changes = {
+        email: head_overrides.get(email)
+        for email in ancestor_overrides.keys() | head_overrides.keys()
+        if head_overrides.get(email) != ancestor_overrides.get(email)
     }
-    candidate_overrides.update(
-        (email, login)
-        for email, login in head_overrides.items()
-        if login != ancestor_overrides.get(email)
-    )
     validate_pr_attribution(
         repository=repository,
         pull=pull,
         commits=commits,
         base_config=base_config,
-        head_config={**head_config, "identityOverrides": candidate_overrides},
+        identity_changes=identity_changes,
         github=client,
     )
     print(f"contributor attribution is merge-ready for pull request #{number}")

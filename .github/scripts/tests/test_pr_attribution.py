@@ -76,7 +76,7 @@ def validate(
     pull_value=None,
     commits=None,
     base=None,
-    head=None,
+    changes=None,
     authors=None,
     source_emails=None,
 ):
@@ -86,7 +86,7 @@ def validate(
         pull=pull_value or pull(),
         commits=commits or [],
         base_config=base,
-        head_config=head or base,
+        identity_changes=changes or {},
         github=SourceGitHub(authors or {}, source_emails or {}),
     )
 
@@ -291,11 +291,10 @@ def test_verified_source_pr_produces_exact_override_and_accepts_it():
         error.value
     )
 
-    head = config(identityOverrides={"source@university.example": "source-login"})
     validate(
         pull_value=landing,
         commits=commits,
-        head=head,
+        changes={"source@university.example": "source-login"},
         authors={2280: "source-login"},
         source_emails={2280: ["source@university.example"]},
     )
@@ -337,15 +336,15 @@ def test_source_pr_author_without_exact_email_is_not_mapping_evidence():
 
 
 def test_mapping_only_override_requires_and_accepts_exact_source_evidence():
-    head = config(identityOverrides={"historic@institution.example": "historic-author"})
+    changes = {"historic@institution.example": "historic-author"}
     with pytest.raises(ReleaseError, match="has no explicit same-repository source PR"):
-        validate(head=head)
+        validate(changes=changes)
 
     validate(
         pull_value=pull(
             body=("The identity is verified by [PR #20](https://github.com/trycua/cua/pull/20)")
         ),
-        head=head,
+        changes=changes,
         authors={20: "historic-author"},
         source_emails={20: ["historic@institution.example"]},
     )
@@ -354,11 +353,11 @@ def test_mapping_only_override_requires_and_accepts_exact_source_evidence():
 def test_existing_identity_override_cannot_be_removed_or_changed():
     base = config(identityOverrides={"known@institution.example": "known-author"})
     with pytest.raises(ReleaseError, match="removes or changes trusted identityOverrides"):
-        validate(base=base, head=config())
+        validate(base=base, changes={"known@institution.example": None})
     with pytest.raises(ReleaseError, match="removes or changes trusted identityOverrides"):
         validate(
             base=base,
-            head=config(identityOverrides={"known@institution.example": "other-author"}),
+            changes={"known@institution.example": "other-author"},
         )
 
 

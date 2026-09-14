@@ -160,7 +160,8 @@ result = await sandbox.shell.run(
 Long guest commands can outlast the SDK's fixed response read timeout. Start
 long work detached with PowerShell `Start-Process`, redirect output to a log,
 and poll that log with short `shell.run` calls.
-Run Codex CLI with Native Computer Use on Windows Fleet
+
+## 3. Run Codex CLI with native Computer Use
 
 This is the corrected workflow based on our live test.
 
@@ -168,7 +169,7 @@ Codex CLI can drive native Windows apps. The tested setup uses the ChatGPT deskt
 
 It uses OpenAI’s @oai/sky through node_repl—not cua-driver MCP. A standalone npm-only installation was not tested.
 
-1. Prerequisites
+### Prerequisites
 
 Inside your Windows Fleet VM, you need:
 
@@ -189,13 +190,13 @@ Our tested versions were:
 
 Run the following commands inside the Windows VM, not in a Linux host or WSL session.
 
-2. Install and Launch the Desktop Runtime
+### 3.1. Install and launch the desktop runtime
 
 The desktop app supplies the native Computer Use runtime and generates its configuration.
 
 In an elevated PowerShell window:
 
-powershell
+```powershell
 $work = 'C:\codex-e2e'
 New-Item -ItemType Directory -Force $work | Out-Null
 
@@ -220,15 +221,13 @@ Add-AppxProvisionedPackage `
   -Online `
   -PackagePath $packagePath `
   -LicensePath $licensePath
-
-
-
+```
 
 The provisioning command installs the supplied offline license and changes machine-wide deployment state. In our Server 2022 test, installing the package without this step left app activation failing with 0xC0EA0001.
 
 Verify the package, then launch it:
 
-powershell
+```powershell
 $package = Get-AppxPackage -Name OpenAI.Codex
 
 if (-not $package) {
@@ -240,9 +239,7 @@ $package | Select-Object Name, Version, InstallLocation
 Start-Process explorer.exe -ArgumentList (
     'shell:AppsFolder\' + $package.PackageFamilyName + '!App'
 )
-
-
-
+```
 
 Wait for the app to initialize. Keep it running during this workflow.
 
@@ -253,46 +250,40 @@ Two corrections to the original guide:
 
 The download URLs are rolling releases. Check the installed version rather than assuming it matches our test.
 
-3. Install and Authenticate Codex CLI
+### 3.2. Install and authenticate Codex CLI
 
 Install the tested CLI version into an isolated directory:
 
-powershell
+```powershell
 npm.cmd install --prefix C:\codex-cli @openai/codex@0.154.0
 
 $Codex = 'C:\codex-cli\node_modules\.bin\codex.cmd'
 
 & $Codex --version
 & $Codex login --device-auth
-
-
-
+```
 
 Open the URL printed by Codex, enter its generated code, and approve the login.
 
 Then verify:
 
-powershell
+```powershell
 & $Codex login status
-
-
-
+```
 
 Expected:
 
-text
+```text
 Logged in using ChatGPT
-
-
-
+```
 
 CLI login and desktop-app login are separate checks. Our CLI test succeeded even though the desktop app’s earlier browser sign-in attempt timed out.
 
-4. Enable the Native Computer Use Plugin
+### 3.3. Enable the native Computer Use plugin
 
 Check the feature and available plugins:
 
-powershell
+```powershell
 & $Codex features list | Select-String 'computer_use'
 
 $catalog = (
@@ -302,26 +293,21 @@ $catalog = (
 @($catalog.installed) + @($catalog.available) |
     Where-Object { $_.name -match 'computer-use' } |
     Select-Object pluginId, version, installed, enabled
-
-
-
+```
 
 Install the official native plugin:
 
-powershell
+```powershell
 & $Codex plugin add computer-use@openai-bundled --json
-cuajsherm  [3:27 PM]
 The desktop app generated a configuration containing:
 
-toml
+```toml
 [mcp_servers.node_repl]
-
-
-
+```
 
 Check for that section:
 
-powershell
+```powershell
 $codexHome = if ($env:CODEX_HOME) {
     $env:CODEX_HOME
 } else {
@@ -331,27 +317,23 @@ $codexHome = if ($env:CODEX_HOME) {
 Select-String `
   -Path "$codexHome\config.toml" `
   -Pattern '^\[mcp_servers\.node_repl\]'
-
-
-
+```
 
 Preserve the app-generated configuration. It contains runtime paths and native-pipe settings specific to this installation. Do not copy those paths or pipe identifiers from another VM.
 
 If the marketplace or runtime configuration is missing, return to the desktop app’s Computer Use setup and check its initialization. Installing the CLI alone is not evidence that the native runtime is ready.
 
-5. Prepare the Foreground Desktop
+### 3.4. Prepare the foreground desktop
 
 Use one disposable Notepad window for the smoke test:
 
-powershell
+```powershell
 $notepad = Start-Process notepad.exe -PassThru
 Start-Sleep -Seconds 1
 
 $shell = New-Object -ComObject WScript.Shell
 $shell.AppActivate($notepad.Id)
-
-
-
+```
 
 Visually confirm that Notepad is in front. Avoid switching windows while Codex is working.
 
@@ -359,11 +341,11 @@ This matters: our test encountered a native capture that returned Notepad’s ac
 
 The agent must stop if the screenshot and target-window identity disagree.
 
-6. Run a Native CLI Smoke Test
+### 3.5. Run a native CLI smoke test
 
 Create a prompt with an unambiguous expected string:
 
-powershell
+```powershell
 $prompt = @'
 Read the installed computer-use skill and its required guidance,
 API, and confirmation documents.
@@ -392,13 +374,11 @@ Stop on permission errors or screenshot/target mismatches.
     $prompt,
     [Text.UTF8Encoding]::new($false)
 )
-
-
-
+```
 
 Run it with captured output:
 
-powershell
+```powershell
 $arguments = @(
     '/c'
     $Codex
@@ -422,21 +402,19 @@ $process = Start-Process cmd.exe `
 
 $process.ExitCode
 Get-Content "$work\final.txt" -Encoding UTF8
+```
 
-
-
-
-Security: this reproduces our test’s shell execution policy. danger-full-access is appropriate only for an authorized, isolated VM—not your everyday workstation. -a never prevents interactive shell approval requests; it does not establish that every native-app action is permitted.
+**Security:** This reproduces our test’s shell execution policy. danger-full-access is appropriate only for an authorized, isolated VM—not your everyday workstation. -a never prevents interactive shell approval requests; it does not establish that every native-app action is permitted.
 
 Noninteractive codex exec works with redirected input/output; it does not require a PTY.
 
-7. Optional: Use LiteLLM for Model Inference
+### 3.6. Optional: Use LiteLLM for model inference
 
 Keep the native runtime configuration and add a provider overlay rather than replacing config.toml.
 
-Create $codexHome\litellm.config.toml:
+Create `$codexHome\litellm.config.toml`:
 
-toml
+```toml
 model = "medium"
 model_provider = "litellm"
 
@@ -447,34 +425,31 @@ env_key = "CODEX_GATEWAY_KEY"
 wire_api = "responses"
 requires_openai_auth = false
 supports_websockets = false
-
-
-
+```
 
 Supply the credential only to the current process environment:
 
 ```powershell
-cuajsherm  [3:27 PM]
 $secret = Read-Host 'LiteLLM key' -AsSecureString
 
 $env:CODEX_GATEWAY_KEY = (
-    [System.Net.NetworkCredential]::new('', $secret)
+    [System.Net.NetworkCredential]::new('', $secret)
 ).Password
+```
+
 Add `--profile litellm` after `exec` in the previous run command. The child process inherits the environment variable.
 
 After the run:
 
 ```powershell
 Remove-Item Env:CODEX_GATEWAY_KEY
-
-
-
+```
 
 Our medium gateway test successfully exercised native screenshots, keyboard input, and typing with this provider configuration.
 
 That establishes gateway inference with an already provisioned native runtime. It does not establish gateway-only plugin installation or entitlement.
 
-8. Verify the Result
+### 3.7. Verify the result
 
 Do not rely solely on Codex saying “passed.”
 
@@ -490,8 +465,10 @@ Known warnings: the gateway’s OpenAI-style /models response produced a nonfata
 
 Fleet cleanup: release the claim when finished and disable/delete unused warm capacity. Do not leave a warm pool replenishing VMs after the test.
 
-Official references: Computer Use, Authentication, Windows deployment, Configuration reference.
-## 6. Reach the desktop service
+
+```
+
+## 4. Reach the desktop service
 
 Fleet routes a declared guest service at:
 
@@ -520,8 +497,11 @@ for the supported routing contract.
 
 - Native Computer Use is gated by ChatGPT account, plan, credentials, and region;
   it cannot be validated with a mocked endpoint.
-- On Windows it controls only the foreground desktop. Keep the VM unlocked and
-  do not switch away from the active session during a task.
+- Codex Computer Use on Windows does not support multiplayer or background
+  Computer Use. Use [Cua Driver](/how-to-guides/sandbox/control-the-desktop-with-cua-driver)
+  on Windows when you need either capability.
+- Native Computer Use controls only the foreground desktop. Keep the VM unlocked
+  and do not switch away from the active session during a task.
 - Published Windows images do not include production or commercial Windows
   licensing. Bring and manage your own license for production use.
 - Warm replicas consume billable capacity until the pool is deleted or scaled

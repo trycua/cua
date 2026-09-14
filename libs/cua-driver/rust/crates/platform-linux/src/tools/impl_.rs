@@ -1028,6 +1028,11 @@ impl Tool for GetWindowStateTool {
                     // the structured payload so consumers don't have to sniff
                     // magic bytes off the base64 to know the format.
                     structured["screenshot_mime_type"] = json!("image/png");
+                    // The capture produced pixels for the requested window
+                    // without taking the refusal path, so the frame is proven.
+                    // Mirror the macOS contract instead of leaving the key
+                    // unset (#3788).
+                    structured["screenshot_frame_valid"] = json!(true);
                     if let Some(fp) = file_path {
                         structured["screenshot_file_path"] = json!(fp);
                     }

@@ -160,72 +160,337 @@ result = await sandbox.shell.run(
 Long guest commands can outlast the SDK's fixed response read timeout. Start
 long work detached with PowerShell `Start-Process`, redirect output to a log,
 and poll that log with short `shell.run` calls.
+Run Codex CLI with Native Computer Use on Windows Fleet
 
-## 3. Install ChatGPT desktop
+This is the corrected workflow based on our live test.
 
-The host for native Computer Use is the Store-signed ChatGPT Windows app. The
-clean Fleet image does not include `winget`, so run this in an interactive
-PowerShell window in the VM:
+Codex CLI can drive native Windows apps. The tested setup uses the ChatGPT desktop app to install and initialize OpenAI’s native runtime, then runs the task through codex exec.
+
+It uses OpenAI’s @oai/sky through node_repl—not cua-driver MCP. A standalone npm-only installation was not tested.
+
+1. Prerequisites
+
+Inside your Windows Fleet VM, you need:
+
+- An unlocked, interactive Windows desktop.
+- Node.js and npm.
+- PowerShell running as the interactive desktop user.
+- Administrator privileges for the machine-wide package provisioning step.
+- ChatGPT authentication, or a separately tested model-provider configuration.
+
+Our tested versions were:
+
+| Component | Version |
+|---|---|
+| Windows | Server 2022 |
+| Codex CLI | 0.154.0 |
+| Desktop package | OpenAI.Codex 26.903.8094.0 |
+| Native Computer Use plugin | 26.903.61454 |
+
+Run the following commands inside the Windows VM, not in a Linux host or WSL session.
+
+2. Install and Launch the Desktop Runtime
+
+The desktop app supplies the native Computer Use runtime and generates its configuration.
+
+In an elevated PowerShell window:
+
+powershell
+$work = 'C:\codex-e2e'
+New-Item -ItemType Directory -Force $work | Out-Null
+
+$ProgressPreference = 'SilentlyContinue'
+
+Invoke-WebRequest `
+  'https://persistent.oaistatic.com/codex-app-prod/ChatGPT-x64.msix' `
+  -OutFile "$work\ChatGPT-x64.msix" `
+  -UseBasicParsing
+
+Invoke-WebRequest `
+  'https://persistent.oaistatic.com/codex-app-prod/ChatGPT-License.xml' `
+  -OutFile "$work\ChatGPT-License.xml" `
+  -UseBasicParsing
+
+$packagePath = (Get-Item "$work\ChatGPT-x64.msix").FullName
+$licensePath = (Get-Item "$work\ChatGPT-License.xml").FullName
+
+Add-AppxPackage -Path $packagePath
+
+Add-AppxProvisionedPackage `
+  -Online `
+  -PackagePath $packagePath `
+  -LicensePath $licensePath
+
+
+
+
+The provisioning command installs the supplied offline license and changes machine-wide deployment state. In our Server 2022 test, installing the package without this step left app activation failing with 0xC0EA0001.
+
+Verify the package, then launch it:
+
+powershell
+$package = Get-AppxPackage -Name OpenAI.Codex
+
+if (-not $package) {
+    throw 'OpenAI.Codex is not installed for this user.'
+}
+
+$package | Select-Object Name, Version, InstallLocation
+
+Start-Process explorer.exe -ArgumentList (
+    'shell:AppsFolder\' + $package.PackageFamilyName + '!App'
+)
+
+
+
+
+Wait for the app to initialize. Keep it running during this workflow.
+
+Two corrections to the original guide:
+
+- Add-AppxPackage does not accept -LicenseFile.
+- The tested package is named OpenAI.Codex; searching only for *ChatGPT* misses it.
+
+The download URLs are rolling releases. Check the installed version rather than assuming it matches our test.
+
+3. Install and Authenticate Codex CLI
+
+Install the tested CLI version into an isolated directory:
+
+powershell
+npm.cmd install --prefix C:\codex-cli @openai/codex@0.154.0
+
+$Codex = 'C:\codex-cli\node_modules\.bin\codex.cmd'
+
+& $Codex --version
+& $Codex login --device-auth
+
+
+
+
+Open the URL printed by Codex, enter its generated code, and approve the login.
+
+Then verify:
+
+powershell
+& $Codex login status
+
+
+
+
+Expected:
+
+text
+Logged in using ChatGPT
+
+
+
+
+CLI login and desktop-app login are separate checks. Our CLI test succeeded even though the desktop app’s earlier browser sign-in attempt timed out.
+
+4. Enable the Native Computer Use Plugin
+
+Check the feature and available plugins:
+
+powershell
+& $Codex features list | Select-String 'computer_use'
+
+$catalog = (
+    & $Codex plugin list --available --json
+) | ConvertFrom-Json
+
+@($catalog.installed) + @($catalog.available) |
+    Where-Object { $_.name -match 'computer-use' } |
+    Select-Object pluginId, version, installed, enabled
+
+
+
+
+Install the official native plugin:
+
+powershell
+& $Codex plugin add computer-use@openai-bundled --json
+cuajsherm  [3:27 PM]
+The desktop app generated a configuration containing:
+
+toml
+[mcp_servers.node_repl]
+
+
+
+
+Check for that section:
+
+powershell
+$codexHome = if ($env:CODEX_HOME) {
+    $env:CODEX_HOME
+} else {
+    Join-Path $env:USERPROFILE '.codex'
+}
+
+Select-String `
+  -Path "$codexHome\config.toml" `
+  -Pattern '^\[mcp_servers\.node_repl\]'
+
+
+
+
+Preserve the app-generated configuration. It contains runtime paths and native-pipe settings specific to this installation. Do not copy those paths or pipe identifiers from another VM.
+
+If the marketplace or runtime configuration is missing, return to the desktop app’s Computer Use setup and check its initialization. Installing the CLI alone is not evidence that the native runtime is ready.
+
+5. Prepare the Foreground Desktop
+
+Use one disposable Notepad window for the smoke test:
+
+powershell
+$notepad = Start-Process notepad.exe -PassThru
+Start-Sleep -Seconds 1
+
+$shell = New-Object -ComObject WScript.Shell
+$shell.AppActivate($notepad.Id)
+
+
+
+
+Visually confirm that Notepad is in front. Avoid switching windows while Codex is working.
+
+This matters: our test encountered a native capture that returned Notepad’s accessibility tree but pixels from the overlapping ChatGPT window. A foreground-only retry worked after explicitly activating Notepad.
+
+The agent must stop if the screenshot and target-window identity disagree.
+
+6. Run a Native CLI Smoke Test
+
+Create a prompt with an unambiguous expected string:
+
+powershell
+$prompt = @'
+Read the installed computer-use skill and its required guidance,
+API, and confirmation documents.
+
+Use only OpenAI's native @oai/sky API through node_repl for UI actions.
+
+Find the single blank Notepad window. Capture it and verify that the
+screenshot actually shows Notepad. If multiple windows exist, the editor
+is not blank, or the screenshot shows another app, stop.
+
+Type exactly the characters inside these quotes, including the period:
+"Codex native Windows Computer Use E2E - 6 x 7 = 42."
+
+Capture the resulting Notepad window and report its visible contents.
+Leave it open and unsaved.
+
+The user authorizes controlling this scratch Notepad window.
+Do not inspect credentials or unrelated apps.
+Do not use shell UI automation, cua-driver, or another backend.
+Shell commands may only read the required plugin documentation.
+Stop on permission errors or screenshot/target mismatches.
+'@
+
+[IO.File]::WriteAllText(
+    "$work\prompt.txt",
+    $prompt,
+    [Text.UTF8Encoding]::new($false)
+)
+
+
+
+
+Run it with captured output:
+
+powershell
+$arguments = @(
+    '/c'
+    $Codex
+    '-a never'
+    'exec'
+    '--skip-git-repo-check'
+    "-C $work"
+    '--sandbox danger-full-access'
+    '--json'
+    "-o $work\final.txt"
+    '-'
+) -join ' '
+
+$process = Start-Process cmd.exe `
+    -ArgumentList $arguments `
+    -RedirectStandardInput "$work\prompt.txt" `
+    -RedirectStandardOutput "$work\events.jsonl" `
+    -RedirectStandardError "$work\stderr.log" `
+    -PassThru `
+    -Wait
+
+$process.ExitCode
+Get-Content "$work\final.txt" -Encoding UTF8
+
+
+
+
+Security: this reproduces our test’s shell execution policy. danger-full-access is appropriate only for an authorized, isolated VM—not your everyday workstation. -a never prevents interactive shell approval requests; it does not establish that every native-app action is permitted.
+
+Noninteractive codex exec works with redirected input/output; it does not require a PTY.
+
+7. Optional: Use LiteLLM for Model Inference
+
+Keep the native runtime configuration and add a provider overlay rather than replacing config.toml.
+
+Create $codexHome\litellm.config.toml:
+
+toml
+model = "medium"
+model_provider = "litellm"
+
+[model_providers.litellm]
+name = "LiteLLM"
+base_url = "https://litellm-public.tail204509.ts.net/v1"
+env_key = "CODEX_GATEWAY_KEY"
+wire_api = "responses"
+requires_openai_auth = false
+supports_websockets = false
+
+
+
+
+Supply the credential only to the current process environment:
 
 ```powershell
-Set-Location $env:TEMP
-Invoke-WebRequest https://persistent.oaistatic.com/codex-app-prod/ChatGPT-x64.msix -OutFile ChatGPT-x64.msix -UseBasicParsing
-Invoke-WebRequest https://persistent.oaistatic.com/codex-app-prod/ChatGPT-License.xml -OutFile ChatGPT-License.xml -UseBasicParsing
-Add-AppxPackage -Package ChatGPT-x64.msix -LicenseFile ChatGPT-License.xml
-Get-AppxPackage -AllUsers *ChatGPT* | Select-Object Name, Version
-```
+cuajsherm  [3:27 PM]
+$secret = Read-Host 'LiteLLM key' -AsSecureString
 
-Do not treat `Add-AppxPackage` launch as proof of installation. Confirm that
-the final command prints an installed package and version. That confirmation was
-not completed in the live run summarized above.
+$env:CODEX_GATEWAY_KEY = (
+    [System.Net.NetworkCredential]::new('', $secret)
+).Password
+Add `--profile litellm` after `exec` in the previous run command. The child process inherits the environment variable.
 
-If `winget` is available in a customized image, use:
+After the run:
 
 ```powershell
-winget install --id 9PLM9XGG6VKS -s msstore
-```
+Remove-Item Env:CODEX_GATEWAY_KEY
 
-You can also open the [Microsoft Store installer](https://get.microsoft.com/installer/download/9PLM9XGG6VKS).
-The optional open-source CLI, installed with `npm install -g @openai/codex`
-after adding Node.js, is a separate interface. Codex-in-ChatGPT carries the
-native Computer Use plugin.
 
-## 4. Enable native Computer Use
 
-Keep the VM unlocked and its interactive desktop in the foreground:
 
-1. Launch ChatGPT desktop and sign in with the eligible account.
-2. Open **Work/Codex**, then **Plugins > Computer Use**. Select **Install plugin**,
-   enable it, turn on its server and skill toggles, and select **Try now**.
-3. Address the computer or an app with `@Computer` or `@AppName`. For example,
-   ask `@Calculator` to calculate `6 × 7`.
+Our medium gateway test successfully exercised native screenshots, keyboard input, and typing with this provider configuration.
 
-Native Computer Use controls the active foreground desktop, including pointer
-and keyboard input. UI labels can change between ChatGPT desktop releases; if
-the path above differs, use the app's Computer Use settings and follow the
-[first-party Computer Use documentation](https://developers.openai.com/codex/computer-use).
+That establishes gateway inference with an already provisioned native runtime. It does not establish gateway-only plugin installation or entitlement.
 
-## 5. Configure the Windows app allowlist
+8. Verify the Result
 
-Add an executable to `$CODEX_HOME/config.toml` when it should not require a
-prompt each time:
+Do not rely solely on Codex saying “passed.”
 
-```toml
-[computer_use.windows]
-always_allowed_app_ids = ["mspaint.exe"]
-```
+- Inspect the actual Notepad text.
+- Inspect the native screenshot returned in events.jsonl.
+- Confirm UI actions used node_repl with @oai/sky, not a substituted backend.
+- Compare exact characters if the test requires exact output.
+- Preserve the first failure separately from a successful retry.
 
-Packaged Windows apps use application user model IDs (AUMIDs), not necessarily
-an `.exe` name. Computer Use prompts before controlling unlisted apps. Remove
-saved decisions under **Settings > Computer Use > Always allow**.
+Our gateway run omitted a requested trailing period. The UI interaction worked, but the strict string assertion remained a failure.
 
-Administrators can disable the feature in managed `requirements.toml`:
+Known warnings: the gateway’s OpenAI-style /models response produced a nonfatal “missing field models” warning in this CLI version. Explicit model selection still worked.
 
-```toml
-[features]
-computer_use = false
-```
+Fleet cleanup: release the claim when finished and disable/delete unused warm capacity. Do not leave a warm pool replenishing VMs after the test.
 
+Official references: Computer Use, Authentication, Windows deployment, Configuration reference.
 ## 6. Reach the desktop service
 
 Fleet routes a declared guest service at:

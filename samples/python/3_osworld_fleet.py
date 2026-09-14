@@ -38,7 +38,7 @@ image = (
     Image.from_file(QCOW2, os_type="linux", agent_type="osworld")
     if LOCAL
     else Image.from_registry(IMAGE_REF, os_type="linux", kind="vm", agent_type="osworld")
-).expose(MCP_PORT)
+).expose(5000).expose(MCP_PORT).expose(8080).expose(9222)  # OSWorld server, MCP, VLC, Chrome CDP
 
 
 class Mcp:

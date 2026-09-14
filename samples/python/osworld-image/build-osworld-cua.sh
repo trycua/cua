@@ -7,7 +7,7 @@
 # and copied in, so the recipe works with libguestfs' network disabled.
 set -euxo pipefail
 cd /work
-: "${DRIVER_TGZ:=cua-driver-rs-0.25.0-linux-x86_64-binary.tar.gz}"
+: "${DRIVER_TGZ:=cua-driver-rs-0.26.1-linux-x86_64-binary.tar.gz}"
 : "${SUPERGATEWAY_VERSION:=3.4.3}"
 : "${NODE_VERSION:=22.12.0}"
 
@@ -33,6 +33,9 @@ virt-customize -a work.qcow2 --no-network --smp 4 --memsize 4096 \
   --chmod 0755:/opt/cua/start-cua-mcp.sh \
   --copy-in osworld-image/cua-driver-mcp.service:/etc/systemd/system \
   --copy-in osworld-image/99-cua-dhcp.yaml:/etc/netplan \
+  --copy-in osworld-image/99-cua-uinput.rules:/etc/udev/rules.d \
+  --copy-in osworld-image/uinput.conf:/etc/modules-load.d \
+  --run-command 'usermod -aG input user' \
   --chmod 0600:/etc/netplan/99-cua-dhcp.yaml \
   --run-command 'mkdir -p /etc/cloud/cloud.cfg.d && printf "network: {config: disabled}\n" > /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg' \
   --run-command 'export PATH=/usr/local/bin:/opt/node/bin:$PATH; cua-driver --version && node --version && supergateway --help >/dev/null' \

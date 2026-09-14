@@ -281,6 +281,10 @@ fn harness_appkit_pending_snapshot_cannot_retarget_token() {
             std::fs::metadata(&initial_png).unwrap().len() > 256 * 1024,
             "initial fixture PNG must exceed FIFO capacity comfortably"
         );
+        assert_eq!(
+            first.structured()["native_window_geometry"]["status"],
+            "aligned"
+        );
         let original_index = element_index_by_id(first.tree_text(), "snapshot-original").unwrap();
         let old_token = element_token_by_id(&first, "snapshot-original");
         std::fs::write(directory.path().join("command"), "replace").unwrap();
@@ -312,7 +316,15 @@ fn harness_appkit_pending_snapshot_cannot_retarget_token() {
             serde_json::to_vec_pretty(&after_old).unwrap(),
         )
         .unwrap();
+        std::fs::write(directory.path().join("command"), "mismatch").unwrap();
+        fixture_state(directory.path(), |state| state["mismatched"] == true);
+        capture.assert_writer_pending();
         let second = capture.finish(&output.join("snapshot-pending.png"));
+        assert_eq!(
+            second.structured()["native_window_geometry"]["status"],
+            "unstable"
+        );
+        assert_eq!(second.structured()["screenshot_frame_valid"], true);
         assert!(
             !second.is_error(),
             "replacement native snapshot: {}",
@@ -352,6 +364,163 @@ fn harness_appkit_pending_snapshot_cannot_retarget_token() {
             "old token activated replacement control during built-in capture; old response: {}",
             attempted.text()
         );
+        let mismatched = snapshot_elements(&mut driver, harness.pid, window);
+        assert_eq!(
+            mismatched.structured()["native_window_geometry"]["status"],
+            "mismatched"
+        );
+        std::fs::write(directory.path().join("command"), "align").unwrap();
+        fixture_state(directory.path(), |state| state["mismatched"] == false);
+        let aligned = snapshot_elements(&mut driver, harness.pid, window);
+        assert_eq!(
+            aligned.structured()["native_window_geometry"]["status"],
+            "aligned"
+        );
+        save_geometry_transitions(&output, &mismatched, &aligned);
+        Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+    });
+}
+
+fn save_geometry_transitions(output: &Path, mismatched: &ToolResponse, aligned: &ToolResponse) {
+    for (name, response) in [("mismatched", mismatched), ("aligned", aligned)] {
+        std::fs::write(
+            output.join(format!("snapshot-transition-{name}.json")),
+            serde_json::to_vec_pretty(&response.raw).unwrap(),
+        )
+        .unwrap();
+    }
+}
+
+fn sdk_capture(
+    runtime: &tokio::runtime::Runtime,
+    sdk: Arc<cua_driver_sdk::CuaDriver>,
+    directory: &Path,
+    pid: u32,
+    window: u64,
+) -> (PendingCapture<()>, tokio::task::AbortHandle) {
+    let path = directory.join("sdk-pending.png.pipe");
+    let reader = fifo_reader(&path);
+    let action = runtime.spawn(async move {
+        sdk.call_tool(
+            "get_window_state".to_owned(),
+            serde_json::json!({
+                "pid":pid, "window_id":window, "screenshot_out_file":path
+            })
+            .to_string(),
+        )
+        .await
+    });
+    let abort = action.abort_handle();
+    let handle = runtime.handle().clone();
+    let task = std::thread::spawn(move || {
+        let result = handle.block_on(action);
+        assert!(
+            result.unwrap_err().is_cancelled(),
+            "SDK capture must be cancelled"
+        );
+    });
+    (
+        PendingCapture {
+            reader: Some(reader),
+            task: Some(task),
+            bytes: Vec::new(),
+        },
+        abort,
+    )
+}
+
+#[test]
+#[ignore]
+fn harness_appkit_cancelled_geometry_capture_preserves_published_token() {
+    let case = native_foreground_case(
+        "appkit",
+        "geometry_snapshot_cancellation",
+        Targeting::Ax,
+        DriverRoute::MacosAxAction,
+    );
+    let label = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let mut recording = McpDriver::spawn_macos_daemon_proxy_named(&label).unwrap();
+        *evidence = recording_evidence(recording.recording_dir());
+        let output = recording.recording_dir().unwrap().to_path_buf();
+        let directory = tempfile::tempdir().unwrap();
+        let child = Command::new(harness_exe())
+            .env("CUA_APPKIT_SNAPSHOT_DIR", directory.path())
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .unwrap();
+        let harness = Harness {
+            pid: child.id(),
+            _app: child,
+        };
+        let state = fixture_state(directory.path(), |state| {
+            state["window_id"].as_u64().is_some_and(|id| id > 0)
+        });
+        let window = state["window_id"].as_u64().unwrap();
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        let sdk =
+            cua_driver_sdk::CuaDriver::try_create_for_host(cua_driver_sdk::DriverHostOptions {
+                cursor: cursor_overlay::CursorConfig {
+                    enabled: false,
+                    ..Default::default()
+                },
+                host_owns_permission_ux: false,
+                host_bundle_id: None,
+                claude_code_compatibility: false,
+                prepare_desktop_environment: false,
+                register_host_tools: None,
+                authorization_host: None,
+                activity_observer: None,
+            })
+            .unwrap();
+        recording.start_behavior_recording();
+        let first = runtime.block_on(sdk.call_tool("get_window_state".to_owned(), serde_json::json!({
+            "pid":harness.pid, "window_id":window, "screenshot_out_file":output.join("sdk-initial.png")
+        }).to_string())).unwrap();
+        std::fs::write(output.join("sdk-initial.json"), &first.raw_json).unwrap();
+        assert!(!first.is_error, "initial SDK capture: {}", first.text);
+        let first: serde_json::Value =
+            serde_json::from_str(first.structured_json.as_ref().unwrap()).unwrap();
+        assert_eq!(first["native_window_geometry"]["status"], "aligned");
+        let token = first["elements"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|element| element["role"] == "AXButton" && element["label"] == "Original")
+            .unwrap()["element_token"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let (mut pending, abort) =
+            sdk_capture(&runtime, sdk.clone(), directory.path(), harness.pid, window);
+        pending.wait_for_png_writer();
+        std::fs::write(directory.path().join("command"), "mismatch").unwrap();
+        fixture_state(directory.path(), |state| state["mismatched"] == true);
+        pending.assert_writer_pending();
+        abort.abort();
+        pending.finish(&output.join("sdk-cancelled-output.png"));
+        let clicked = runtime.block_on(sdk.call_tool("click".to_owned(), serde_json::json!({
+            "pid":harness.pid, "window_id":window, "element_token":token, "delivery_mode":"foreground"
+        }).to_string())).unwrap();
+        std::fs::write(output.join("sdk-retained-token.json"), &clicked.raw_json).unwrap();
+        assert!(
+            !clicked.is_error,
+            "cancelled capture replaced published identity: {}",
+            clicked.text
+        );
+        let after = fixture_state(directory.path(), |state| state["original_clicks"] == 1);
+        assert_eq!(after["replacement_clicks"], 0);
+        std::fs::write(
+            output.join("sdk-after-cancel.json"),
+            serde_json::to_vec_pretty(&after).unwrap(),
+        )
+        .unwrap();
+        runtime.block_on(sdk.shutdown()).unwrap();
         Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
     });
 }

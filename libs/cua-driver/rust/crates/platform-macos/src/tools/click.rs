@@ -1079,9 +1079,9 @@ impl Tool for ClickTool {
                                     crate::input::mouse::right_click_at_xy(pid, screen_x, screen_y, &m)
                                 }
                                 "middle" => {
-                                    if let Some(_wid) = window_id {
+                                    if let Some(wid) = window_id {
                                         return crate::input::mouse::middle_click_at_xy_with_window_local(
-                                            pid, screen_x, screen_y, win_local_x, win_local_y, &m,
+                                            pid, screen_x, screen_y, win_local_x, win_local_y, wid, &m,
                                         );
                                     }
                                     crate::input::mouse::middle_click_at_xy(pid, screen_x, screen_y, &m)

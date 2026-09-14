@@ -4,13 +4,19 @@ use cua_driver_core::action_record::ActionEffect;
 use cua_driver_testkit::{keyboard_fixture::KeyboardFixture, spawn_in_job, ChildReaper};
 use serde_json::json;
 use std::io::{Read, Write};
-use std::net::{Shutdown, TcpListener, TcpStream};
+use std::net::{Shutdown, TcpListener, TcpStream, UdpSocket};
 use std::os::unix::net::UnixStream;
 use std::process::{Command, Stdio};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Condvar, Mutex,
 };
+
+#[derive(Clone, Copy)]
+enum Interruption {
+    Disconnect,
+    Cancel,
+}
 
 struct Receipt(Arc<(Mutex<bool>, Condvar)>);
 
@@ -78,6 +84,7 @@ fn relay(
     auth: &(Vec<u8>, Vec<u8>),
     window: u32,
     receipt: Arc<(Mutex<bool>, Condvar)>,
+    interruption: Interruption,
 ) -> std::io::Result<()> {
     let mut server = UnixStream::connect(socket)?;
     let mut header = [0; 12];
@@ -136,7 +143,9 @@ fn relay(
             while !*observed {
                 observed = wake.wait(observed).unwrap();
             }
-            return Ok(());
+            if matches!(interruption, Interruption::Disconnect) {
+                return Ok(());
+            }
         }
     })();
     let _ = client.shutdown(Shutdown::Both);
@@ -151,6 +160,7 @@ fn observed_key_down_then_connection_failure_is_not_a_clean_refusal() {
         "press_key",
         "observed_key_down_then_connection_failure_is_not_a_clean_refusal",
         0xffc2,
+        Interruption::Disconnect,
     );
 }
 
@@ -161,10 +171,67 @@ fn observed_modifier_down_then_connection_failure_is_not_a_clean_refusal() {
         "hotkey",
         "observed_modifier_down_then_connection_failure_is_not_a_clean_refusal",
         0xffe3,
+        Interruption::Disconnect,
     );
 }
 
-fn fault_case(tool: &str, test: &str, key: u64) {
+#[test]
+#[ignore = "requires an isolated X11/Openbox desktop and xauth"]
+fn cancelled_admitted_press_key_finishes_its_native_release() {
+    fault_case(
+        "press_key",
+        "cancelled_admitted_press_key_finishes_its_native_release",
+        0xffc2,
+        Interruption::Cancel,
+    );
+}
+
+#[test]
+#[ignore = "requires an isolated X11/Openbox desktop and xauth"]
+fn cancelled_admitted_hotkey_finishes_its_native_sequence_and_releases_modifiers() {
+    fault_case(
+        "hotkey",
+        "cancelled_admitted_hotkey_finishes_its_native_sequence_and_releases_modifiers",
+        0xffe3,
+        Interruption::Cancel,
+    );
+}
+
+fn cancel_child(
+    runtime: tokio::runtime::Runtime,
+    registry: cua_driver_core::tool::ToolRegistry,
+    tool: &str,
+    args: serde_json::Value,
+) {
+    let control = UdpSocket::bind("127.0.0.1:0").unwrap();
+    control
+        .set_read_timeout(Some(std::time::Duration::from_secs(15)))
+        .unwrap();
+    control
+        .connect(std::env::var("CUA_KEYBOARD_CANCEL_PARENT").unwrap())
+        .unwrap();
+    let registry = Arc::new(registry);
+    let pending_registry = registry.clone();
+    let pending_args = args.clone();
+    let tool = tool.to_owned();
+    let pending = runtime.spawn(async move { pending_registry.invoke(&tool, pending_args).await });
+    control.send(b"ready").unwrap();
+    let mut message = [0; 32];
+    let count = control.recv(&mut message).unwrap();
+    assert_eq!(&message[..count], b"cancel");
+    pending.abort();
+    assert!(runtime.block_on(pending).unwrap_err().is_cancelled());
+    control.send(b"cancelled").unwrap();
+    let count = control.recv(&mut message).unwrap();
+    assert_eq!(&message[..count], b"finished");
+    let mut recovery = args;
+    recovery.as_object_mut().unwrap().remove("keys");
+    recovery["key"] = json!("f6");
+    let result = runtime.block_on(registry.invoke("press_key", recovery));
+    assert_ne!(result.is_error, Some(true), "{result:?}");
+}
+
+fn fault_case(tool: &str, test: &str, key: u64, interruption: Interruption) {
     if std::env::var_os("CUA_KEYBOARD_FAULT_CHILD").is_some() {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let registry = platform_linux::tools::build_registry(false);
@@ -177,6 +244,10 @@ fn fault_case(tool: &str, test: &str, key: u64) {
             args["key"] = json!("f5");
         } else {
             args["keys"] = json!(["ctrl", "h"]);
+        }
+        if matches!(interruption, Interruption::Cancel) {
+            cancel_child(runtime, registry, tool, args);
+            return;
         }
         let result = runtime.block_on(registry.invoke(tool, args));
         assert_eq!(
@@ -224,7 +295,7 @@ fn fault_case(tool: &str, test: &str, key: u64) {
                     let auth = auth.clone();
                     let signal = signal.clone();
                     std::thread::spawn(move || {
-                        let _ = relay(client, &socket, &auth, window, signal);
+                        let _ = relay(client, &socket, &auth, window, signal, interruption);
                     });
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -238,10 +309,18 @@ fn fault_case(tool: &str, test: &str, key: u64) {
         running,
         server: Some(server),
     };
+    let control = UdpSocket::bind("127.0.0.1:0").unwrap();
+    control
+        .set_read_timeout(Some(std::time::Duration::from_secs(15)))
+        .unwrap();
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
         .args(["--ignored", "--exact", test, "--nocapture"])
         .env("CUA_KEYBOARD_FAULT_CHILD", "1")
+        .env(
+            "CUA_KEYBOARD_CANCEL_PARENT",
+            control.local_addr().unwrap().to_string(),
+        )
         .env("DISPLAY", proxy_display)
         .env("CUA_KEYBOARD_TARGET_PID", fixture.pid().to_string())
         .env("CUA_KEYBOARD_TARGET_WINDOW", fixture.window_id.to_string())
@@ -252,7 +331,27 @@ fn fault_case(tool: &str, test: &str, key: u64) {
     let mut reaper = ChildReaper::new();
     reaper.track_pid(child.id());
     fixture.key_event("down", key);
-    receipt.release();
+    if matches!(interruption, Interruption::Cancel) {
+        let mut message = [0; 32];
+        let (count, peer) = control.recv_from(&mut message).unwrap();
+        assert_eq!(&message[..count], b"ready");
+        control.connect(peer).unwrap();
+        control.send(b"cancel").unwrap();
+        let count = control.recv(&mut message).unwrap();
+        assert_eq!(&message[..count], b"cancelled");
+        receipt.release();
+        if tool == "hotkey" {
+            fixture.key_event("down", 0x68);
+            fixture.key_event("up", 0x68);
+        }
+        fixture.key_event("up", key);
+        fixture.assert_no_key_down();
+        control.send(b"finished").unwrap();
+        assert_eq!(fixture.key_event("down", 0xffc3)["flags"], 0);
+        fixture.key_event("up", 0xffc3);
+    } else {
+        receipt.release();
+    }
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
     let status = loop {
         if let Some(status) = child.try_wait().unwrap() {
@@ -264,6 +363,7 @@ fn fault_case(tool: &str, test: &str, key: u64) {
         );
         std::thread::sleep(std::time::Duration::from_millis(5));
     };
+    fixture.assert_no_key_down();
     assert!(
         status.success(),
         "public dispatch misreported an independently observed partial keyboard attempt"

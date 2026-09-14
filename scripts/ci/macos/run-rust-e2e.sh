@@ -389,6 +389,8 @@ EOF
       note_lane_failure native-filter-selection
     fi
   else
+    run_test keyboard-producer-contracts cargo test -p platform-macos --lib keyboard_producer_tests -- \
+      --ignored --nocapture --test-threads=1
     run_test installed-app-launch cargo test -p cua-driver --test installed_app_launch_macos_test -- \
       --ignored --nocapture --test-threads=1
     run_test installed-app-textedit cargo test -p cua-driver --test installed_app_textedit_macos_test -- \

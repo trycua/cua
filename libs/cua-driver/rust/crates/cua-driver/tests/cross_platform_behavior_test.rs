@@ -1120,7 +1120,7 @@ async fn sdk_keyboard_runtime_isolation(sdk: &CuaDriver, fixture: &Fixture, owne
         assert!(response.is_error, "{response:?}");
         assert_eq!(
             response.error_code.as_deref(),
-            Some("generation_mismatch"),
+            Some("stale_element_token"),
             "{response:?}"
         );
         assert!(
@@ -1364,6 +1364,7 @@ fn run_press_key_action(fixture: &mut Fixture, addressing: &str, delivery: &str)
         .insert("key".to_owned(), serde_json::json!("return"));
     let response = fixture.driver.call("press_key", press_args);
     if let Some(code) = background_refusal_code(&response, delivery) {
+        assert_keyboard_refusal(&response);
         return refused_without_fixture_mutation(fixture, &journal_before, code, &response);
     }
     assert!(
@@ -1424,6 +1425,14 @@ fn assert_keyboard_outcome(
         response.raw
     );
     let structured = response.structured();
+    assert_ne!(
+        structured
+            .pointer("/escalation/reason")
+            .and_then(|reason| reason.as_str()),
+        Some("delivery_failed"),
+        "an accepted, independently observed keyboard action is not a delivery failure: {}",
+        response.raw
+    );
     assert!(structured["evidence"].is_null(), "{}", response.raw);
     assert!(
         structured["delivery"]["delivered_count"].is_null(),
@@ -1442,6 +1451,20 @@ fn assert_keyboard_outcome(
         );
     }
     assert_keyboard_recording(fixture, response, tool);
+}
+
+fn assert_keyboard_refusal(response: &ToolResponse) {
+    let public = response.structured();
+    assert!(
+        public["delivery"].is_null(),
+        "clean keyboard refusal must not claim delivery: {}",
+        response.raw
+    );
+    assert!(
+        public["evidence"].is_null(),
+        "clean keyboard refusal must not claim evidence: {}",
+        response.raw
+    );
 }
 
 fn assert_keyboard_recording(fixture: &Fixture, response: &ToolResponse, tool: &str) {
@@ -1490,6 +1513,7 @@ fn run_hotkey_action(fixture: &mut Fixture, addressing: &str, delivery: &str) ->
         .insert("keys".to_owned(), serde_json::json!(["ctrl", "shift", "h"]));
     let response = fixture.driver.call("hotkey", hotkey_args);
     if let Some(code) = background_refusal_code(&response, delivery) {
+        assert_keyboard_refusal(&response);
         return refused_without_fixture_mutation(fixture, &journal_before, code, &response);
     }
     assert!(

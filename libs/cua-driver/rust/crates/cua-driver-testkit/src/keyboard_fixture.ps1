@@ -29,6 +29,11 @@ public class KeyboardOracle : Form {
         var input = new Input { Text = "unchanged", Location = new Point(30, 80), Width = 350 };
         Controls.Add(input);
         Shown += delegate {
+            if (Environment.GetEnvironmentVariable("CUA_KEYBOARD_COMPANION") == "1") {
+                var companion = new Form { Text = "Cua Keyboard Oracle Companion", Size = new Size(360, 240) };
+                companion.Controls.Add(new Input { Text = "unchanged", Location = new Point(30, 80), Width = 300 });
+                companion.Show();
+            }
             Activate();
             input.Focus();
             Console.WriteLine("{\"kind\":\"ready\",\"window\":" + Handle.ToInt64() + "}");

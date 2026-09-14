@@ -43,18 +43,28 @@ wm_class = b"keyboard-oracle\0XTerm\0"
 property_(display, window, atom(display, b"WM_CLASS", 0), 31, 8, 0, c.cast(c.c_char_p(wm_class), p), len(wm_class))
 pid = u(os.getpid())
 property_(display, window, atom(display, b"_NET_WM_PID", 0), 6, 32, 0, c.byref(pid), 1)
-select(display, window, (1 << 0) | (1 << 1) | (1 << 17))
-map_window(display, window)
+windows = [window]
+if os.environ.get("CUA_KEYBOARD_COMPANION") == "1":
+    companion = create(display, root_window(display), 610, 160, 360, 240, 0, 0, 0xffffff)
+    store_name(display, companion, b"Cua Keyboard Oracle Companion")
+    property_(display, companion, atom(display, b"_NET_WM_PID", 0), 6, 32, 0, c.byref(pid), 1)
+    windows.append(companion)
+for target in windows:
+    select(display, target, (1 << 0) | (1 << 1) | (1 << 17))
+    map_window(display, target)
 flush(display, 0)
 event = (c.c_long * 24)()
 closed = False
+mapped = set()
 ready = False
 while True:
     next_event(display, c.byref(event))
     key = c.cast(c.byref(event), c.POINTER(KeyEvent)).contents
-    if key.type == 19 and not ready:
-        ready = True
-        emit("ready", window=window)
+    if key.type == 19:
+        mapped.add(key.window)
+        if not ready and mapped == set(windows):
+            ready = True
+            emit("ready", window=window)
     if key.type not in (2, 3):
         continue
     emit("down" if key.type == 2 else "up", key=lookup(c.byref(event), 0), flags=key.state, synthetic=bool(key.send_event))

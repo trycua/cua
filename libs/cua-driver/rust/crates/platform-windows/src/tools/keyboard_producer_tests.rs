@@ -2,6 +2,32 @@ use super::*;
 use cua_driver_core::action_record::{ActionEffect, ActionTransport, ActualDelivery};
 use cua_driver_testkit::keyboard_fixture::KeyboardFixture;
 
+#[tokio::test]
+#[ignore = "requires an interactive Windows desktop"]
+async fn native_registry_refuses_ambiguous_pid_only_keyboard_targets() {
+    let fixture = KeyboardFixture::spawn_with_companion();
+    let registry = crate::tools::build_registry(false);
+    for (tool, fields) in [
+        ("press_key", serde_json::json!({"key":"f5"})),
+        ("hotkey", serde_json::json!({"keys":["ctrl","h"]})),
+    ] {
+        let mut args = fields;
+        args["pid"] = serde_json::json!(fixture.pid());
+        let result = registry.invoke(tool, args).await;
+        assert_eq!(result.is_error, Some(true), "{result:?}");
+        let value = result.structured_content.as_ref().unwrap();
+        assert_eq!(
+            value
+                .pointer("/refusal/code")
+                .or_else(|| value.get("code"))
+                .and_then(|v| v.as_str()),
+            Some("ambiguous_window_target"),
+            "{result:?}"
+        );
+        fixture.assert_quiet();
+    }
+}
+
 fn producer(name: &str) -> Box<dyn Tool> {
     let state = ToolState::new();
     match name {
@@ -91,12 +117,12 @@ async fn native_producer_target_destruction_after_key_down_is_not_a_clean_refusa
 
 #[tokio::test]
 #[ignore = "requires an interactive Windows desktop"]
-async fn native_producer_invalid_keys_never_reach_the_target() {
+async fn native_producer_malformed_keys_never_reach_the_target() {
     let fixture = KeyboardFixture::spawn(false);
     for (tool, fields) in [
-        ("press_key", serde_json::json!({"key":"not-a-key"})),
+        ("press_key", serde_json::json!({"key":""})),
+        ("press_key", serde_json::json!({"key":17})),
         ("hotkey", serde_json::json!({"keys":[]})),
-        ("hotkey", serde_json::json!({"keys":["ctrl","shift"]})),
     ] {
         let mut args = fields;
         args["pid"] = serde_json::json!(fixture.pid());
@@ -105,4 +131,53 @@ async fn native_producer_invalid_keys_never_reach_the_target() {
         assert_eq!(result.is_error, Some(true), "{result:?}");
         fixture.assert_quiet();
     }
+}
+
+#[tokio::test]
+#[ignore = "requires an interactive Windows desktop"]
+async fn native_producer_retains_first_character_key_name_compatibility() {
+    let fixture = KeyboardFixture::spawn(false);
+    let result = producer("press_key")
+        .invoke(serde_json::json!({
+            "pid":fixture.pid(), "window_id":fixture.window_id, "key":"not-a-key"
+        }))
+        .await;
+    assert_ne!(result.is_error, Some(true), "{result:?}");
+    fixture.key_event("down", 0x4e);
+    fixture.key_event("up", 0x4e);
+}
+
+#[tokio::test]
+#[ignore = "requires an interactive Windows desktop"]
+async fn native_producer_retains_modifier_only_hotkey_compatibility() {
+    let fixture = KeyboardFixture::spawn(false);
+    let result = producer("hotkey")
+        .invoke(serde_json::json!({
+            "pid":fixture.pid(), "window_id":fixture.window_id, "keys":["ctrl","shift"]
+        }))
+        .await;
+    assert_ne!(result.is_error, Some(true), "{result:?}");
+    fixture.key_event("down", 0x10);
+    fixture.key_event("up", 0x10);
+}
+
+#[tokio::test]
+#[ignore = "requires an interactive Windows desktop"]
+async fn native_producer_duplicate_modifiers_form_one_chord_and_release() {
+    let fixture = KeyboardFixture::spawn(false);
+    let result = producer("hotkey")
+        .invoke(serde_json::json!({
+            "pid":fixture.pid(), "window_id":fixture.window_id,
+            "keys":["ctrl","ctrl","h"], "delivery_mode":"foreground"
+        }))
+        .await;
+    assert_ne!(result.is_error, Some(true), "{result:?}");
+    fixture.key_event("down", 0x48);
+    fixture.assert_single_release(0x48);
+    let recovery = producer("press_key").invoke(serde_json::json!({
+        "pid":fixture.pid(), "window_id":fixture.window_id, "key":"f5", "delivery_mode":"foreground"
+    })).await;
+    assert_ne!(recovery.is_error, Some(true), "{recovery:?}");
+    assert_eq!(fixture.key_event("down", 0x74)["flags"], 0);
+    fixture.key_event("up", 0x74);
 }

@@ -3,6 +3,33 @@ use cua_driver_core::action_record::{ActionEffect, ActionTransport, ActualDelive
 use cua_driver_testkit::keyboard_fixture::KeyboardFixture;
 use serde_json::json;
 
+#[tokio::test]
+#[ignore = "requires a native macOS desktop"]
+async fn native_registry_refuses_ambiguous_pid_only_keyboard_targets() {
+    let fixture = KeyboardFixture::spawn_with_companion();
+    let mut registry = ToolRegistry::new();
+    super::register_all(&mut registry, false, false, true, None);
+    for (tool, fields) in [
+        ("press_key", json!({"key":"f5"})),
+        ("hotkey", json!({"keys":["ctrl","h"]})),
+    ] {
+        let mut args = fields;
+        args["pid"] = json!(fixture.pid());
+        let result = registry.invoke(tool, args).await;
+        assert_eq!(result.is_error, Some(true), "{result:?}");
+        let value = result.structured_content.as_ref().unwrap();
+        assert_eq!(
+            value
+                .pointer("/refusal/code")
+                .or_else(|| value.get("code"))
+                .and_then(|v| v.as_str()),
+            Some("ambiguous_window_target"),
+            "{result:?}"
+        );
+        fixture.assert_quiet();
+    }
+}
+
 fn producer(name: &str) -> Box<dyn Tool> {
     let state = Arc::new(ToolState::default());
     match name {
@@ -92,6 +119,29 @@ async fn native_producer_target_closes_after_key_post_without_false_confirmation
 }
 
 #[tokio::test]
+#[ignore = "requires a native macOS desktop and permission attributed to the test host"]
+async fn native_producer_confirms_only_after_the_same_ax_control_changes() {
+    assert!(
+        unsafe { crate::ax::bindings::AXIsProcessTrusted() },
+        "environment blocked: native producer test host lacks Accessibility permission"
+    );
+    let fixture = KeyboardFixture::spawn(false);
+    let result = producer("press_key")
+        .invoke(json!({"pid":fixture.pid(), "key":"x"}))
+        .await;
+    assert_ne!(result.is_error, Some(true), "{result:?}");
+    fixture.key_event("down", 7);
+    assert_eq!(fixture.event("value")["value"], "x");
+    let record = result.action_record.expect("native AX readback record");
+    assert_eq!(record.effect, ActionEffect::Confirmed);
+    assert_eq!(record.transport, ActionTransport::MacosCgEventPid);
+    assert_eq!(record.actual_delivery, Some(ActualDelivery::Background));
+    assert!(record.delivered_count.is_none());
+    let public = serde_json::to_value(record.public_result().unwrap()).unwrap();
+    assert_eq!(public["evidence"], json!([{"kind":"value_readback"}]));
+}
+
+#[tokio::test]
 #[ignore = "requires a native macOS desktop"]
 async fn native_producer_invalid_keys_never_reach_the_target() {
     let fixture = KeyboardFixture::spawn(false);
@@ -106,4 +156,29 @@ async fn native_producer_invalid_keys_never_reach_the_target() {
         assert_eq!(result.is_error, Some(true), "{result:?}");
         fixture.assert_quiet();
     }
+}
+
+#[tokio::test]
+#[ignore = "requires a native macOS desktop and permission attributed to the test host"]
+async fn native_producer_duplicate_modifiers_form_one_chord_and_release() {
+    assert!(
+        unsafe { crate::ax::bindings::AXIsProcessTrusted() },
+        "environment blocked: native producer test host lacks Accessibility permission"
+    );
+    let fixture = KeyboardFixture::spawn(false);
+    let result = producer("hotkey")
+        .invoke(json!({"pid":fixture.pid(), "keys":["ctrl","ctrl","h"]}))
+        .await;
+    assert_ne!(result.is_error, Some(true), "{result:?}");
+    fixture.key_event("down", 4);
+    fixture.assert_single_release(4);
+    let recovery = producer("press_key")
+        .invoke(json!({"pid":fixture.pid(), "key":"f5"}))
+        .await;
+    assert_ne!(recovery.is_error, Some(true), "{recovery:?}");
+    assert_eq!(
+        fixture.key_event("down", 96)["flags"].as_u64().unwrap() & (1 << 18),
+        0
+    );
+    fixture.key_event("up", 96);
 }

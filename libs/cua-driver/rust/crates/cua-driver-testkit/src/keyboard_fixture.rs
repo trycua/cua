@@ -14,8 +14,17 @@ pub struct KeyboardFixture {
 
 impl KeyboardFixture {
     pub fn spawn(close_on_key: bool) -> Self {
+        Self::spawn_configured(close_on_key, false)
+    }
+
+    pub fn spawn_with_companion() -> Self {
+        Self::spawn_configured(false, true)
+    }
+
+    fn spawn_configured(close_on_key: bool, companion: bool) -> Self {
         let directory = tempfile::tempdir().unwrap();
         let mut command = fixture_command(directory.path());
+        command.env("CUA_KEYBOARD_COMPANION", if companion { "1" } else { "0" });
         command.env(
             "CUA_KEYBOARD_CLOSE_ON_KEY",
             if close_on_key { "1" } else { "0" },
@@ -79,14 +88,44 @@ impl KeyboardFixture {
         }
     }
 
+    pub fn assert_single_release(&self, key: u64) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        loop {
+            let event = self
+                .events
+                .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+                .expect("native key release");
+            assert!(
+                !(event["kind"] == "down" && event["key"] == key),
+                "duplicate primary key: {event}"
+            );
+            if event["kind"] == "up" && event["key"] == key {
+                break;
+            }
+        }
+        self.assert_events_avoid(|event| event["kind"] == "down" && event["key"] == key);
+    }
+
+    pub fn assert_no_key_down(&self) {
+        self.assert_events_avoid(|event| event["kind"] == "down");
+    }
+
     pub fn assert_quiet(&self) {
-        assert!(
-            matches!(
-                self.events.recv_timeout(Duration::from_millis(150)),
-                Err(mpsc::RecvTimeoutError::Timeout)
-            ),
-            "unexpected input or terminated native oracle"
-        );
+        self.assert_events_avoid(|_| true);
+    }
+
+    fn assert_events_avoid(&self, forbidden: impl Fn(&Value) -> bool) {
+        let deadline = std::time::Instant::now() + Duration::from_millis(150);
+        loop {
+            match self
+                .events
+                .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+            {
+                Ok(event) => assert!(!forbidden(&event), "unexpected native event: {event}"),
+                Err(mpsc::RecvTimeoutError::Timeout) => return,
+                Err(error) => panic!("native observer disconnected: {error}"),
+            }
+        }
     }
 
     pub fn terminate(&mut self) {

@@ -84,6 +84,55 @@ const SELECTION_READBACK_POLL: std::time::Duration = std::time::Duration::from_m
 const SELECTION_READBACK_SETTLE: std::time::Duration = std::time::Duration::from_millis(200);
 const SELECTION_READBACK_STABILITY: std::time::Duration = std::time::Duration::from_millis(250);
 
+/// Replies AppKit applications return *from the action they performed*.
+/// Contacts answers `AXPress` on its Edit/Done buttons with `kAXErrorFailure`
+/// or `kAXErrorAttributeUnsupported` after saving the card, and a text field
+/// answers `kAXErrorActionUnsupported` after taking focus; each of those
+/// presses is readable in the next snapshot. The remaining codes are
+/// framework-level rejections — an illegal argument, a dead element, disabled
+/// API, a messaging timeout — where nothing is known to have reached the
+/// application at all, so they stay errors.
+fn ax_reply_is_outcome_unverifiable(code: crate::ax::bindings::AXError) -> bool {
+    matches!(
+        code,
+        crate::ax::bindings::kAXErrorFailure
+            | crate::ax::bindings::kAXErrorAttributeUnsupported
+            | crate::ax::bindings::kAXErrorActionUnsupported
+    )
+}
+
+fn ax_reply_code_name(code: crate::ax::bindings::AXError) -> &'static str {
+    match code {
+        crate::ax::bindings::kAXErrorFailure => "kAXErrorFailure",
+        crate::ax::bindings::kAXErrorAttributeUnsupported => "kAXErrorAttributeUnsupported",
+        crate::ax::bindings::kAXErrorActionUnsupported => "kAXErrorActionUnsupported",
+        _ => "AXError",
+    }
+}
+
+/// The opening line of an AX action's reply. An unverifiable reply claims a
+/// dispatch and nothing more: the window-change suffix the caller appends and
+/// the caller's own next observation are what settle it, so the text must not
+/// send the agent to repeat an action that may have landed.
+fn ax_reply_summary(
+    unverified: Option<crate::ax::bindings::AXError>,
+    ax_action: &str,
+    idx: usize,
+    role: &str,
+    title: &str,
+) -> String {
+    match unverified {
+        None => format!("✅ Performed {ax_action} on [{idx}] {role} \"{title}\"."),
+        Some(code) => format!(
+            "❔ Dispatched {ax_action} to [{idx}] {role} \"{title}\"; the app replied {code} ({}), \
+             which does not say whether it acted — applications commonly answer this way *after* \
+             performing the action. Effect unverified: read the state below, or observe the \
+             window, before deciding. Do not repeat the action solely because of this reply.",
+            ax_reply_code_name(code)
+        ),
+    }
+}
+
 fn pixel_activation_policy(
     button: &str,
     effective_foreground: bool,
@@ -680,13 +729,14 @@ impl Tool for ClickTool {
 
             match result {
                 Ok(Ok((
-                    (
-                        mut msg,
+                    AxClickOutcome {
+                        summary: mut msg,
                         needs_webkit_delay,
                         suspected_noop,
                         selection_verified,
                         selection_via_pixel,
-                    ),
+                        unverified,
+                    },
                     fronted,
                 ))) => {
                     // For text inputs, wait 800ms for WebKit DOM focus to settle
@@ -725,6 +775,12 @@ impl Tool for ClickTool {
                         structured["evidence"] = serde_json::json!([
                             { "kind": "accessibility_readback" }
                         ]);
+                    }
+                    // The application answered the dispatch with a code that
+                    // establishes neither delivery nor a no-op, so the mode
+                    // the action was delivered in is not known either.
+                    if unverified.is_some() {
+                        structured["delivery_mode"] = serde_json::json!("unknown");
                     }
                     if suspected_noop {
                         structured["escalation"] = serde_json::json!({
@@ -1176,14 +1232,25 @@ impl Tool for ClickTool {
 
 // ── AX click implementation (blocking) ───────────────────────────────────────
 
-/// Returns `(summary_text, needs_webkit_delay, suspected_noop,
-/// selection_verified, selection_via_pixel)`.
-///
-/// `suspected_noop` is true when the element did not advertise the action we
-/// dispatched — AXUIElementPerformAction returns success regardless, so this is
-/// the driver's only signal that the press likely did nothing. The caller turns
-/// it into `effect: "suspected_noop"` + an escalation hint so the agent crosses
-/// to the vision/pixel path instead of trusting a hollow success.
+/// What the AX dispatch did, as far as the driver can tell.
+#[derive(Default)]
+struct AxClickOutcome {
+    summary: String,
+    needs_webkit_delay: bool,
+    /// True when the element did not advertise the action we dispatched —
+    /// AXUIElementPerformAction returns success regardless, so this is the
+    /// driver's only signal that the press likely did nothing. The caller
+    /// turns it into `effect: "suspected_noop"` + an escalation hint so the
+    /// agent crosses to the vision/pixel path instead of trusting a hollow
+    /// success.
+    suspected_noop: bool,
+    selection_verified: bool,
+    selection_via_pixel: bool,
+    /// The application's own reply, when it neither succeeded nor proved that
+    /// nothing was performed: `ax_reply_is_outcome_unverifiable`.
+    unverified: Option<crate::ax::bindings::AXError>,
+}
+
 fn perform_ax_click(
     element_ptr: usize,
     idx: usize,
@@ -1194,7 +1261,7 @@ fn perform_ax_click(
     selection_pixel: Option<SelectionPixelTarget>,
     modifiers: &[String],
     foreground: bool,
-) -> anyhow::Result<(String, bool, bool, bool, bool)> {
+) -> anyhow::Result<AxClickOutcome> {
     let ax_action = map_action(action_str);
     let element = element_ptr as AXUIElementRef;
 
@@ -1220,16 +1287,14 @@ fn perform_ax_click(
             if let Some(selected_role) =
                 crate::input::ax_actions::select_nearest_container(element_ptr)
             {
-                return Ok((
-                    format!(
+                return Ok(AxClickOutcome {
+                    summary: format!(
                         "✅ Selected nearest {selected_role} for [{idx}] {role} \"{title}\"; \
                          confirmed AXSelected=true."
                     ),
-                    false,
-                    false,
-                    true,
-                    false,
-                ));
+                    selection_verified: true,
+                    ..AxClickOutcome::default()
+                });
             }
         }
 
@@ -1292,18 +1357,17 @@ fn perform_ax_click(
                                     stable_peers_preserved,
                                 )
                             {
-                                return Ok((
-                                    format!(
+                                return Ok(AxClickOutcome {
+                                    summary: format!(
                                         "✅ Selected nearest {selected_role} for [{idx}] {role} \
                                          \"{title}\"; AX selection write was unavailable, so a \
                                          coordinate click was delivered and confirmed by stable \
                                          AXSelected read-back."
                                     ),
-                                    false,
-                                    false,
-                                    true,
-                                    true,
-                                ));
+                                    selection_verified: true,
+                                    selection_via_pixel: true,
+                                    ..AxClickOutcome::default()
+                                });
                             }
                         }
                     }
@@ -1329,7 +1393,9 @@ fn perform_ax_click(
     }
 
     let err = unsafe { crate::ax::bindings::perform_action(element, ax_action) };
-    if err != crate::ax::bindings::kAXErrorSuccess {
+    let unverified = if err == crate::ax::bindings::kAXErrorSuccess {
+        None
+    } else {
         // Some collection rows claim a click-like action but Finder returns
         // kAXErrorCannotComplete. Use the same verified selection fallback
         // before surfacing the dispatch error.
@@ -1337,22 +1403,23 @@ fn perform_ax_click(
             if let Some(selected_role) =
                 crate::input::ax_actions::select_nearest_container(element_ptr)
             {
-                return Ok((
-                    format!(
+                return Ok(AxClickOutcome {
+                    summary: format!(
                         "✅ Selected nearest {selected_role} for [{idx}] {role} \"{title}\" \
                          after AXPress returned {err}; confirmed AXSelected=true."
                     ),
-                    false,
-                    false,
-                    true,
-                    false,
-                ));
+                    selection_verified: true,
+                    ..AxClickOutcome::default()
+                });
             }
         }
-        anyhow::bail!("AXUIElementPerformAction({ax_action}) returned {err}");
-    }
+        if !ax_reply_is_outcome_unverifiable(err) {
+            anyhow::bail!("AXUIElementPerformAction({ax_action}) returned {err}");
+        }
+        Some(err)
+    };
 
-    let mut summary = format!("✅ Performed {ax_action} on [{idx}] {role} \"{title}\".");
+    let mut summary = ax_reply_summary(unverified, ax_action, idx, &role, &title);
 
     // AXPopUpButton: list available options, redirect to set_value.
     if role == "AXPopUpButton" {
@@ -1433,7 +1500,13 @@ fn perform_ax_click(
     let _ = pid;
     let _ = window_id; // used by caller context
 
-    Ok((summary, needs_webkit_delay, suspected_noop, false, false))
+    Ok(AxClickOutcome {
+        summary,
+        needs_webkit_delay,
+        suspected_noop,
+        unverified,
+        ..AxClickOutcome::default()
+    })
 }
 
 #[cfg(test)]
@@ -1473,6 +1546,49 @@ fn map_action(action: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Contacts answers `AXPress` on its Edit/Done buttons with
+    /// `kAXErrorFailure` or `kAXErrorAttributeUnsupported` *after* saving the
+    /// card, and a text field answers `kAXErrorActionUnsupported` after taking
+    /// focus. Reporting those replies as a failed invocation loses the rest of
+    /// the caller's call, including the observation that would have read the
+    /// effect back.
+    #[test]
+    fn an_app_reply_that_cannot_disprove_the_action_reports_a_dispatch() {
+        for code in [
+            crate::ax::bindings::kAXErrorFailure,
+            crate::ax::bindings::kAXErrorAttributeUnsupported,
+            crate::ax::bindings::kAXErrorActionUnsupported,
+        ] {
+            assert!(ax_reply_is_outcome_unverifiable(code), "{code}");
+            let summary = ax_reply_summary(Some(code), "AXPress", 7, "AXButton", "Done");
+            assert!(
+                summary.contains("Dispatched AXPress to [7] AXButton \"Done\""),
+                "{summary}"
+            );
+            assert!(summary.contains(&code.to_string()), "{summary}");
+            assert!(summary.contains(ax_reply_code_name(code)), "{summary}");
+            assert!(!summary.contains('✅'), "{summary}");
+        }
+        assert!(ax_reply_summary(None, "AXOpen", 3, "AXRow", "note.txt")
+            .starts_with("✅ Performed AXOpen"));
+    }
+
+    /// A reply the framework produced rather than an application answering an
+    /// action keeps the error: nothing in it says the request ever reached a
+    /// receiver. -25204 is the AX messaging deadline, which the element walk
+    /// raises for an app that stopped answering at all.
+    #[test]
+    fn framework_reply_errors_are_not_promoted_to_a_dispatch() {
+        for code in [
+            crate::ax::bindings::kAXErrorInvalidUIElement,
+            crate::ax::bindings::kAXErrorAPIDisabled,
+            -25201,
+            -25204,
+        ] {
+            assert!(!ax_reply_is_outcome_unverifiable(code), "{code}");
+        }
+    }
 
     /// Surface 5: schema must advertise the new `button` field with the three
     /// canonical values and default to "left". Hermes / Codex / Claude Code

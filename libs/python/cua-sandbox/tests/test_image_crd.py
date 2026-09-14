@@ -84,8 +84,7 @@ def test_image_crd_files_use_external_references() -> None:
     reference = file_item["properties"]["source"]["properties"]["reference"]
     assert reference["pattern"] == "^uploads/[a-z0-9]([-a-z0-9]*[a-z0-9])?/[A-Za-z0-9_-]+$"
     assert (
-        file_item["properties"]["source"]["properties"]["sizeBytes"]["maximum"]
-        == 9223372036854775807
+        file_item["properties"]["source"]["properties"]["sizeBytes"]["maximum"] == 9007199254740991
     )
     assert "content" not in file_item["properties"]
     assert "path" not in file_item["properties"]["source"]["properties"]

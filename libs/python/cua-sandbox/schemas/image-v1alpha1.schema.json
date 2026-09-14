@@ -126,7 +126,7 @@
                       },
                       "sizeBytes": {
                         "format": "int64",
-                        "maximum": 9223372036854775807,
+                        "maximum": 9007199254740991,
                         "minimum": 0,
                         "type": "integer"
                       }

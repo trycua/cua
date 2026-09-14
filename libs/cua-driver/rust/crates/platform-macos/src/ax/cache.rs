@@ -168,6 +168,7 @@ mod tests {
             max_value: None,
             enabled: None,
             selected: None,
+            url: None,
             in_web_content: false,
         }
     }

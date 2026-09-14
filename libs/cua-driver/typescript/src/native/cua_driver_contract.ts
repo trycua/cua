@@ -4429,7 +4429,11 @@ export type WindowElement = {
     parentIndex?: bigint,
     frame?: ElementFrame,
     min?: number,
-    max?: number
+    max?: number,
+    /**
+     * Navigation target of a link element, when the platform exposes one.
+     */
+    url?: string
 }
 
 /**
@@ -4467,7 +4471,8 @@ const FfiConverterTypeWindowElement = (() => {
                 parentIndex: FfiConverterOptionalUInt64.read(from),
                 frame: FfiConverterOptionalTypeElementFrame.read(from),
                 min: FfiConverterOptionalFloat64.read(from),
-                max: FfiConverterOptionalFloat64.read(from)
+                max: FfiConverterOptionalFloat64.read(from),
+                url: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -4486,6 +4491,7 @@ const FfiConverterTypeWindowElement = (() => {
             FfiConverterOptionalTypeElementFrame.write(value.frame, into);
             FfiConverterOptionalFloat64.write(value.min, into);
             FfiConverterOptionalFloat64.write(value.max, into);
+            FfiConverterOptionalString.write(value.url, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterUInt64.allocationSize(value.elementIndex) +
@@ -4502,7 +4508,8 @@ const FfiConverterTypeWindowElement = (() => {
              FfiConverterOptionalUInt64.allocationSize(value.parentIndex) +
              FfiConverterOptionalTypeElementFrame.allocationSize(value.frame) +
              FfiConverterOptionalFloat64.allocationSize(value.min) +
-             FfiConverterOptionalFloat64.allocationSize(value.max);
+             FfiConverterOptionalFloat64.allocationSize(value.max) +
+             FfiConverterOptionalString.allocationSize(value.url);
 
         }
     };

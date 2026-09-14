@@ -88,6 +88,9 @@ pub struct AXNode {
     pub enabled: Option<bool>,
     /// AXSelected. `None` when the app doesn't report the attribute.
     pub selected: Option<bool>,
+    /// AXURL of a link — the target a press would navigate to. Read only for
+    /// actionable `AXLink` nodes; `None` everywhere else.
+    pub url: Option<String>,
     /// True when this node is an AX web-document root or descends from one.
     /// This trust marker is independent of actionable ancestry because
     /// AXWebArea is commonly non-actionable and therefore has no element index.
@@ -102,6 +105,14 @@ struct ControlState {
     max_value: Option<f64>,
     enabled: Option<bool>,
     selected: Option<bool>,
+    url: Option<String>,
+}
+
+/// Roles whose `AXURL` names a navigation target worth surfacing. `AXWebArea`
+/// also carries `AXURL` (the document URL) but is not actionable, so it never
+/// reaches the structured `elements` array.
+fn role_exposes_link_url(role: &str) -> bool {
+    role == "AXLink"
 }
 
 fn read_control_state_if_actionable<F>(is_actionable: bool, read: F) -> ControlState
@@ -481,6 +492,13 @@ unsafe fn walk_element(
         max_value: copy_number_attr(element, "AXMaxValue"),
         enabled,
         selected: copy_bool_attr(element, "AXSelected"),
+        url: if role_exposes_link_url(&role) {
+            copy_url_attr(element, "AXURL")
+                .map(|v| v.trim().to_owned())
+                .filter(|v| !v.is_empty())
+        } else {
+            None
+        },
     });
     let node = if is_actionable {
         let idx = *counter;
@@ -519,6 +537,7 @@ unsafe fn walk_element(
             max_value: control_state.max_value,
             enabled: control_state.enabled,
             selected: control_state.selected,
+            url: control_state.url.clone(),
             in_web_content,
         }
     } else {
@@ -553,6 +572,7 @@ unsafe fn walk_element(
             max_value: control_state.max_value,
             enabled: control_state.enabled,
             selected: control_state.selected,
+            url: control_state.url.clone(),
             in_web_content,
         }
     };
@@ -781,5 +801,19 @@ mod tests {
         });
         assert_eq!(reads.get(), 1, "actionable nodes must read state once");
         assert_eq!(actionable.enabled, Some(true));
+    }
+
+    #[test]
+    fn link_url_is_read_only_for_links() {
+        assert!(role_exposes_link_url("AXLink"));
+        for role in [
+            "AXWebArea",
+            "AXButton",
+            "AXStaticText",
+            "AXImage",
+            "AXTextField",
+        ] {
+            assert!(!role_exposes_link_url(role), "{role}");
+        }
     }
 }

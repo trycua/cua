@@ -40,7 +40,15 @@ async fn pty_record(foreground: bool) {
     let script = "import socket,sys\ns=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)\na=('127.0.0.1',int(sys.argv[1]))\ns.sendto(b'ready',a)\nfor line in sys.stdin:s.sendto(line.encode(),a)";
     let child = cua_driver_testkit::spawn_in_job(
         Command::new("xterm")
-            .args(["-e", "python3", "-u", "-c", script])
+            .args([
+                "-xrm",
+                "XTerm*allowSendEvents: false",
+                "-e",
+                "python3",
+                "-u",
+                "-c",
+                script,
+            ])
             .arg(socket.local_addr().unwrap().port().to_string())
             .stdin(Stdio::null())
             .stdout(Stdio::null()),
@@ -63,6 +71,10 @@ async fn pty_record(foreground: bool) {
         );
         std::thread::sleep(Duration::from_millis(10));
     };
+    cua_driver_testkit::keyboard_fixture::wait_for_x11_focus(window);
+    let sentinel = KeyboardFixture::spawn(false);
+    let input = cua_driver_testkit::keyboard_fixture::X11KeyboardObserver::start();
+    input.track_focus(sentinel.window_id);
     let (conn, _) = x11rb::connect(None).unwrap();
     let before = conn.get_input_focus().unwrap().reply().unwrap().focus;
     let result = producer("press_key")
@@ -77,6 +89,10 @@ async fn pty_record(foreground: bool) {
     assert_eq!(
         conn.get_input_focus().unwrap().reply().unwrap().focus,
         before
+    );
+    assert!(
+        input.events().is_empty(),
+        "PTY delivery must not generate global key or focus events"
     );
     let record = result
         .action_record

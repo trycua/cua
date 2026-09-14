@@ -7,7 +7,6 @@ use serde_json::{json, Value};
 use std::net::UdpSocket;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
-use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
 
 const ORACLE: &str = r#"
@@ -34,6 +33,8 @@ impl Terminal {
             .args([
                 "-title",
                 "Cua terminal keyboard test",
+                "-xrm",
+                "XTerm*allowSendEvents: false",
                 "-e",
                 "python3",
                 "-u",
@@ -58,12 +59,13 @@ impl Terminal {
                 platform_linux::x11::list_windows(Some(terminal.child.id())).first()
             {
                 terminal.window = window.xid;
+                cua_driver_testkit::keyboard_fixture::wait_for_x11_focus(window.xid);
                 return Ok(terminal);
             }
             if terminal.child.try_wait()?.is_some() || Instant::now() >= deadline {
                 bail!("terminal fixture did not publish its exact window");
             }
-            std::thread::sleep(Duration::from_millis(10));
+            std::thread::sleep(Duration::from_millis(25));
         }
     }
 
@@ -268,6 +270,7 @@ rejected_keyboard_case!(
 
 async fn foreground_sequence(tool: &str, fields: Value, expected: &[u8]) -> Result<()> {
     let terminal = Terminal::new()?;
+    let input = cua_driver_testkit::keyboard_fixture::X11KeyboardObserver::start();
     let response = terminal.call(tool, fields).await;
     assert_ne!(response.is_error, Some(true), "{response:?}");
     let flush = terminal
@@ -278,6 +281,10 @@ async fn foreground_sequence(tool: &str, fields: Value, expected: &[u8]) -> Resu
         .await;
     assert_ne!(flush.is_error, Some(true), "{flush:?}");
     assert_eq!(terminal.receive()?, expected);
+    assert!(
+        !input.events().is_empty(),
+        "XTest must reach the independent raw-key observer"
+    );
     assert_eq!(
         response.structured_content,
         Some(json!({
@@ -335,11 +342,11 @@ async fn pty_execution_record_names_the_executed_transport() -> Result<()> {
 #[ignore = "requires an isolated X11 desktop, xterm, and permitted descendant PTY borrowing"]
 async fn foreground_request_does_not_relabel_background_pty_delivery() -> Result<()> {
     let terminal = Terminal::new()?;
-    let (conn, screen) = x11rb::connect(None)?;
-    let root = conn.setup().roots[screen].root;
-    conn.set_input_focus(InputFocus::PARENT, root, x11rb::CURRENT_TIME)?
-        .check()?;
-    assert_eq!(conn.get_input_focus()?.reply()?.focus, root);
+    let sentinel = cua_driver_testkit::keyboard_fixture::KeyboardFixture::spawn(false);
+    let (conn, _) = x11rb::connect(None)?;
+    let before = conn.get_input_focus()?.reply()?.focus;
+    let input = cua_driver_testkit::keyboard_fixture::X11KeyboardObserver::start();
+    input.track_focus(sentinel.window_id);
     let response = terminal
         .call(
             "press_key",
@@ -348,7 +355,11 @@ async fn foreground_request_does_not_relabel_background_pty_delivery() -> Result
         .await;
     assert_ne!(response.is_error, Some(true), "{response:?}");
     assert_eq!(terminal.receive()?, b"\n");
-    assert_eq!(conn.get_input_focus()?.reply()?.focus, root);
+    assert_eq!(conn.get_input_focus()?.reply()?.focus, before);
+    assert!(
+        input.events().is_empty(),
+        "PTY delivery must not generate global key or focus events"
+    );
     let output = response.structured_content.unwrap();
     assert_eq!(output["route"], "synthetic_events");
     assert_eq!(output["effect"], "unverifiable");

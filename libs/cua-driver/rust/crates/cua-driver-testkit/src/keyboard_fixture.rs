@@ -60,6 +60,10 @@ impl KeyboardFixture {
         };
         let ready = fixture.event("ready");
         fixture.window_id = ready["window"].as_u64().expect("native window identity");
+        #[cfg(target_os = "linux")]
+        if !companion {
+            wait_for_x11_focus(fixture.window_id);
+        }
         fixture
     }
 
@@ -133,6 +137,91 @@ impl KeyboardFixture {
     }
 }
 
+#[cfg(target_os = "linux")]
+pub struct X11KeyboardObserver(x11rb::rust_connection::RustConnection);
+
+#[cfg(target_os = "linux")]
+impl X11KeyboardObserver {
+    pub fn start() -> Self {
+        use x11rb::connection::Connection;
+        use x11rb::protocol::xinput::{ConnectionExt, Device, EventMask, XIEventMask};
+        let (conn, screen) = x11rb::connect(None).unwrap();
+        conn.xinput_xi_query_version(2, 0).unwrap().reply().unwrap();
+        conn.xinput_xi_select_events(
+            conn.setup().roots[screen].root,
+            &[EventMask {
+                deviceid: Device::ALL_MASTER.into(),
+                mask: vec![XIEventMask::RAW_KEY_PRESS | XIEventMask::RAW_KEY_RELEASE],
+            }],
+        )
+        .unwrap()
+        .check()
+        .unwrap();
+        Self(conn)
+    }
+
+    pub fn track_focus(&self, window: u64) {
+        use x11rb::protocol::xproto::{ChangeWindowAttributesAux, ConnectionExt, EventMask};
+        self.0
+            .change_window_attributes(
+                u32::try_from(window).unwrap(),
+                &ChangeWindowAttributesAux::new().event_mask(EventMask::FOCUS_CHANGE),
+            )
+            .unwrap()
+            .check()
+            .unwrap();
+    }
+
+    pub fn events(&self) -> Vec<x11rb::protocol::Event> {
+        use x11rb::connection::Connection;
+        use x11rb::protocol::Event;
+        let deadline = std::time::Instant::now() + Duration::from_millis(150);
+        let mut events = Vec::new();
+        while std::time::Instant::now() < deadline {
+            while let Some(event) = self.0.poll_for_event().unwrap() {
+                if matches!(
+                    event,
+                    Event::XinputRawKeyPress(_)
+                        | Event::XinputRawKeyRelease(_)
+                        | Event::FocusIn(_)
+                        | Event::FocusOut(_)
+                ) {
+                    events.push(event);
+                }
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        events
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub fn wait_for_x11_focus(window: u64) {
+    use x11rb::protocol::xproto::ConnectionExt;
+    let (conn, _) = x11rb::connect(None).expect("native fixture display");
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let mut stable = 0;
+    loop {
+        let mut focused = conn.get_input_focus().unwrap().reply().unwrap().focus;
+        while focused > 1 && u64::from(focused) != window {
+            focused = conn.query_tree(focused).unwrap().reply().unwrap().parent;
+        }
+        stable = if u64::from(focused) == window {
+            stable + 1
+        } else {
+            0
+        };
+        if stable == 3 {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "native fixture never reached stable window-manager focus"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
 #[cfg(target_os = "macos")]
 fn fixture_command(directory: &std::path::Path) -> Command {
     let source = directory.join("KeyboardOracle.swift");
@@ -151,10 +240,11 @@ fn fixture_command(directory: &std::path::Path) -> Command {
 
 #[cfg(target_os = "linux")]
 fn fixture_command(directory: &std::path::Path) -> Command {
+    use std::os::unix::process::CommandExt;
     let source = directory.join("keyboard_oracle.py");
     std::fs::write(&source, include_str!("keyboard_fixture.py")).unwrap();
     let mut command = Command::new("python3");
-    command.arg("-u").arg(source);
+    command.arg0("xterm").arg("-u").arg(source);
     command
 }
 

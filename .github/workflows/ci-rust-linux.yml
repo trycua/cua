@@ -127,7 +127,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
             libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev \
-            imagemagick xvfb xauth x11-utils ffmpeg openbox xterm dbus-x11
+            imagemagick xvfb xauth x11-utils ffmpeg openbox xterm dbus-x11 \
+          python3-gi gir1.2-gtk-3.0 at-spi2-core
       - name: Run Linux Rust tests
         working-directory: libs/cua-driver/rust
         run: cargo test -p cua-driver -p cua-driver-contract -p cua-driver-core -p cua-driver-testkit -p cursor-overlay -p cursor-theme-cli -p platform-linux --all-targets --locked
@@ -220,7 +221,8 @@ jobs:
             trap "kill $wm 2>/dev/null || true" EXIT
             status=0
             cargo test -p platform-linux --test keyboard_tools_x11 --test terminal_keyboard_x11 \
-              --test keyboard_lifecycle_x11 --test keyboard_io_failure_x11 --no-fail-fast \
+              --test keyboard_lifecycle_x11 --test keyboard_io_failure_x11 \
+            --test keyboard_terminal_element_x11 --no-fail-fast \
               --locked -- --ignored --nocapture --test-threads=1 || status=$?
             cargo test -p platform-linux --lib keyboard_producer_tests \
               --locked -- --ignored --nocapture --test-threads=1 || status=$?

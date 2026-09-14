@@ -5361,14 +5361,14 @@ impl Tool for HotkeyTool {
         };
         let deliver_fg = delivery.is_foreground();
 
-        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+        let result = tokio::task::spawn_blocking(move || {
             if crate::wayland::wayland_input_enabled() {
                 // Native Wayland: route the modifier combo through wtype's
                 // -M/-k/-m sequence — the closest equivalent to the X11
                 // state-mask path. window_id is irrelevant once focused.
                 let mut combo: Vec<String> = mods_for_wayland.clone();
                 combo.push(key_for_wayland.clone());
-                return crate::wayland::hotkey(xid, &combo);
+                return crate::wayland::hotkey(xid, &combo).map(|()| None);
             }
             let m: Vec<&str> = mods.iter().map(String::as_str).collect();
             // foreground: activate the target first, then inject the accelerator
@@ -5378,13 +5378,15 @@ impl Tool for HotkeyTool {
             if deliver_fg {
                 return crate::input::with_x11_foreground(xid, 80, || {
                     crate::input::send_key_xtest(&key, &m)
-                });
+                })
+                .map(|()| Some("x11_xtest_fg"));
             }
             if let Some((x, y)) = px_target {
                 crate::input::send_key_at(xid, x, y, &key, &m)
             } else {
                 crate::input::send_key(xid, &key, &m)
             }
+            .map(|()| None)
         })
         .await;
         let mode_label = if deliver_fg {
@@ -5393,10 +5395,16 @@ impl Tool for HotkeyTool {
             "background"
         };
         match result {
-            Ok(Ok(())) => ToolResult::text(format!(
-                "Pressed {key_display} on pid {pid} (delivery_mode={mode_label})."
-            ))
-            .with_structured(json!({ "verified": false, "delivery_mode": mode_label })),
+            Ok(Ok(path)) => {
+                let mut structured = json!({ "verified": false, "delivery_mode": mode_label });
+                if let Some(path) = path {
+                    structured["path"] = json!(path);
+                }
+                ToolResult::text(format!(
+                    "Pressed {key_display} on pid {pid} (delivery_mode={mode_label})."
+                ))
+                .with_structured(structured)
+            }
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }

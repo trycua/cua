@@ -912,6 +912,8 @@ fn invoke_operation(
             "XTest hotkey must report its executed route: {}",
             response.raw
         );
+        assert_eq!(response.action_effect(), Some("unverifiable"));
+        assert_eq!(response.action_delivery_mode(), Some("foreground"));
     }
     false
 }

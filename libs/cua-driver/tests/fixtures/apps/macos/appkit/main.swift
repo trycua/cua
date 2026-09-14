@@ -55,13 +55,42 @@ let kSecondaryWindowTitle = "CuaTestHarness AppKit Secondary"
 let kSheetWindowTitle = "CuaTestHarness AppKit Sheet"
 let kFloatingWindowTitle = "CuaTestHarness AppKit Floating"
 
+// MARK: - Controls
+
+/// An `NSTextField` whose `AXValue` catches up with the text it holds only
+/// after `CUA_APPKIT_AX_VALUE_LAG_MS`, growing a character at a time.
+///
+/// AppKit rebuilds a field's editor around an insertion, so the value read
+/// microseconds after an `AXSelectedText` write is a prefix of what landed:
+/// measured in Contacts, "(408) " of "(408) 961-1560", complete ~20 ms later.
+/// Unset, the field behaves like a stock `NSTextField`.
+final class LaggingTextField: NSTextField {
+    private var reported = ""
+    private var changedAt: Date?
+
+    override func accessibilityValue() -> String? {
+        let actual = stringValue
+        let lag = HarnessWindowController.envSeconds("CUA_APPKIT_AX_VALUE_LAG_MS")
+        guard lag > 0 else { return actual }
+        if actual != reported {
+            reported = actual
+            changedAt = Date()
+        }
+        guard let changedAt, !actual.isEmpty else { return actual }
+        let elapsed = Date().timeIntervalSince(changedAt)
+        if elapsed >= lag { return actual }
+        let visible = max(1, Int(Double(actual.count) * elapsed / lag))
+        return String(actual.prefix(visible))
+    }
+}
+
 // MARK: - Controller
 
 final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate, NSMenuItemValidation {
     let window: NSWindow
     let counterLabel = NSTextField(labelWithString: "counter=0")
     var counterValue = 0
-    let textInput = NSTextField(string: "")
+    let textInput = LaggingTextField(string: "")
     let textInputMirror = NSTextField(labelWithString: "")
     let textInputCommit = NSTextField(labelWithString: "committed=none")
     let lastActionLabel = NSTextField(labelWithString: "last_action=none")
@@ -368,6 +397,13 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
     @objc private func onIncrement() {
         counterValue += 1
         counterLabel.stringValue = "counter=\(counterValue)"
+    }
+
+    /// Milliseconds from `name`, as seconds. Absent or unparseable is 0.
+    static func envSeconds(_ name: String) -> TimeInterval {
+        guard let raw = ProcessInfo.processInfo.environment[name],
+              let ms = Double(raw), ms > 0 else { return 0 }
+        return ms / 1000
     }
 
     @objc private func onReset() {

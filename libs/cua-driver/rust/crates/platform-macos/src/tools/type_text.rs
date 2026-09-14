@@ -1054,18 +1054,42 @@ fn await_typed_delivery(
     before: Option<&str>,
     text: &str,
     deadline: std::time::Instant,
-    mut read_value: impl FnMut() -> Option<String>,
+    read_value: impl FnMut() -> Option<String>,
 ) -> (bool, Option<usize>) {
+    match await_typed_progress(before, text, deadline, read_value) {
+        TypedProgress::Complete => (true, Some(text.chars().count())),
+        TypedProgress::Partial(delivered) => (false, Some(delivered)),
+        TypedProgress::Unchanged => (false, Some(0)),
+        TypedProgress::Unverifiable => (false, None),
+    }
+}
+
+/// Poll the target's read-back until it proves complete delivery or the
+/// deadline passes, and report the strongest reading observed.
+///
+/// Both delivery rungs need this: neither a posted keystroke nor an accepted
+/// `AXSelectedText` write is applied by the time the call that sent it
+/// returns. Chromium acknowledges the posting process with a long tail still
+/// queued, and an AppKit field rebuilds its editor around the insertion —
+/// measured in Contacts, where the value read microseconds after the write
+/// held "(408) " of "(408) 961-1560" and was complete ~20 ms later. Sampling
+/// once turns that window into a false partial.
+fn await_typed_progress(
+    before: Option<&str>,
+    text: &str,
+    deadline: std::time::Instant,
+    mut read_value: impl FnMut() -> Option<String>,
+) -> TypedProgress {
     let mut best_partial = None;
     loop {
         let after = read_value();
         match typed_progress(before, after.as_deref(), text) {
-            TypedProgress::Complete => return (true, Some(text.chars().count())),
+            TypedProgress::Complete => return TypedProgress::Complete,
             TypedProgress::Partial(delivered) => {
                 best_partial =
                     Some(best_partial.map_or(delivered, |best: usize| best.max(delivered)));
             }
-            TypedProgress::Unverifiable => return (false, None),
+            TypedProgress::Unverifiable => return TypedProgress::Unverifiable,
             TypedProgress::Unchanged => {
                 // A readable unchanged value is an observed zero-character
                 // delivery, not an unverifiable success.
@@ -1073,7 +1097,10 @@ fn await_typed_delivery(
             }
         }
         if std::time::Instant::now() >= deadline {
-            return (false, best_partial);
+            return match best_partial {
+                Some(delivered) if delivered > 0 => TypedProgress::Partial(delivered),
+                _ => TypedProgress::Unchanged,
+            };
         }
         std::thread::sleep(DELIVERY_DRAIN_POLL_INTERVAL);
     }
@@ -1262,14 +1289,23 @@ fn type_text_blocking(
         let role = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
         let title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
         let err = unsafe { set_string_attr(element, "AXSelectedText", text) };
-        // Classify the atomic write before considering synthesis. Complete AX
+        // Classify the write before considering synthesis. Complete AX
         // delivery returns immediately. Partial delivery is surfaced as such
         // instead of appending the full payload again. When synthesis would
         // exceed its transport-safe budget, rejected/unchanged AX writes fail
         // safely and unreadable AX state is reported as indeterminate.
-        let after = unsafe { copy_string_attr(element, "AXValue") };
+        //
+        // The write is atomic, its effect on the field is not: the same drain
+        // the keystroke rung uses settles the read-back here, so a value the
+        // app is still rebuilding is never reported as a partial insertion.
         let ax_progress = if err == kAXErrorSuccess {
-            Some(typed_progress(before.as_deref(), after.as_deref(), text))
+            let deadline = std::time::Instant::now() + DELIVERY_DRAIN_TIMEOUT;
+            Some(await_typed_progress(
+                before.as_deref(),
+                text,
+                deadline,
+                || unsafe { copy_string_attr(element, "AXValue") },
+            ))
         } else {
             None
         };
@@ -1545,6 +1581,24 @@ mod tests {
             || Some("BEGIN".to_owned()),
         );
         assert_eq!(delivery, (false, Some(5)));
+    }
+
+    /// The drain summarises a whole polling window, and the AX rung reads that
+    /// summary to decide between reporting a partial insertion and falling
+    /// through to keystrokes. A window in which the field never moved must
+    /// stay `Unchanged`: `Partial(0)` there would publish "delivered 0 of n"
+    /// and swallow the keystroke rung that still had to run.
+    #[test]
+    fn a_write_the_field_never_took_stays_unchanged() {
+        assert_eq!(
+            await_typed_progress(
+                Some("old"),
+                "new value",
+                std::time::Instant::now(),
+                || Some("old".to_owned())
+            ),
+            TypedProgress::Unchanged
+        );
     }
 
     #[test]

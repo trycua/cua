@@ -92,75 +92,71 @@ is mutable; pin a resolved digest when you need a reproducible image.
 | ----- | ---------------------- | ------------ | ------- | -------------------------------------------------------- |
 | Linux | Ubuntu 24.04           | amd64, arm64 | XFCE    | `public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:docker-latest` |
 
-### NixOS desktop Docker builds
+### NixOS desktop Docker images
 
-Each NixOS desktop definition has independent VM and native Docker outputs.
-The Docker image is built from the NixOS system closure using Nix-native container
-layers, not by converting or embedding the VM disk.
+These 43 NixOS 26.05 Linux/amd64 Docker images are native desktop containers,
+not VM containerDisks. Each profile has independent VM and Docker outputs; the
+Docker layers are built directly from the NixOS system closure, without
+converting or embedding a VM disk.
 
-The following 43 Linux/amd64 Docker profiles passed build and actual-container
-boot, desktop, keyboard, pointer, reconnection, computer-server and Cua Driver
-checks at source revision
-`60395ad7603bda8bc77a1bb2f3f59266e5ce4be0`.
-These changes are merged in cloud revision
-`0d1436d9825486fe6ea0a827e18486e3f00b38e5`.
+The references below are pinned to public image digests from source revision
+`0d1436d9825486fe6ea0a827e18486e3f00b38e5`, verified on September 14, 2026.
+Each listed image passed actual-container boot, desktop, keyboard, pointer,
+reconnection, computer-server and Cua Driver checks before publication. Its
+public tag and digest resolve anonymously to the same tested image configuration.
+These are published candidates, not `latest` images or built-in SDK selectors.
+Docker tags use `docker-git-<source-sha>`; VM tags and digests are separate.
 
-**Registry publication is pending.** These are verified source-build outputs,
-not published Docker registry references. Do not use the VM digests above with
-`docker run`. Docker publication uses separate `docker-git-<source-sha>` tags;
-no NixOS Docker `latest` tag or SDK built-in image selector is implied.
-
-| Desktop / window manager | Display server | Docker build output |
+| Desktop / window manager | Display server | Docker registry image |
 | --- | --- | --- |
-| Awesome | X11 | `nixos-workspace-awesome-docker` |
-| berry | X11 | `nixos-workspace-berry-docker` |
-| bspwm | X11 | `nixos-workspace-bspwm-docker` |
-| Budgie | Wayland | `nixos-workspace-budgie-docker` |
-| CDE | X11 | `nixos-workspace-cde-docker` |
-| Cinnamon | X11 | `nixos-workspace-cinnamon-docker` |
-| CLFSWM | X11 | `nixos-workspace-clfswm-docker` |
-| dk | X11 | `nixos-workspace-dk-docker` |
-| dwl | Wayland | `nixos-workspace-dwl-docker` |
-| dwm | X11 | `nixos-workspace-dwm-docker` |
-| Fluxbox | X11 | `nixos-workspace-fluxbox-docker` |
-| FVWM 2 | X11 | `nixos-workspace-fvwm2-docker` |
-| FVWM 3 | X11 | `nixos-workspace-fvwm3-docker` |
-| Hackedbox | X11 | `nixos-workspace-hackedbox-docker` |
-| herbstluftwm | X11 | `nixos-workspace-herbstluftwm-docker` |
-| i3 | X11 | `nixos-workspace-i3-docker` |
-| IceWM | X11 | `nixos-workspace-icewm-docker` |
-| JWM | X11 | `nixos-workspace-jwm-docker` |
-| katriawm | X11 | `nixos-workspace-katriawm-docker` |
-| KDE Plasma 6 | X11 | `nixos-workspace-plasma-docker` |
-| lwm | X11 | `nixos-workspace-lwm-docker` |
-| LXQt | X11 | `nixos-workspace-lxqt-docker` |
-| MATE | X11 | `nixos-workspace-mate-docker` |
-| Metacity | X11 | `nixos-workspace-metacity-docker` |
-| MLVWM | X11 | `nixos-workspace-mlvwm-docker` |
-| Motif Window Manager | X11 | `nixos-workspace-mwm-docker` |
-| Nimdow | X11 | `nixos-workspace-nimdow-docker` |
-| Notion | X11 | `nixos-workspace-notion-docker` |
-| Openbox | X11 | `nixos-workspace-openbox-docker` |
-| oxwm | X11 | `nixos-workspace-oxwm-docker` |
-| PekWM | X11 | `nixos-workspace-pekwm-docker` |
-| Qtile | X11 | `nixos-workspace-qtile-docker` |
-| Ratpoison | X11 | `nixos-workspace-ratpoison-docker` |
-| River | Wayland | `nixos-workspace-river-docker` |
-| Sawfish | X11 | `nixos-workspace-sawfish-docker` |
-| smallwm | X11 | `nixos-workspace-smallwm-docker` |
-| StumpWM | X11 | `nixos-workspace-stumpwm-docker` |
-| Sway | Wayland | `nixos-workspace-sway-docker` |
-| Wayfire | Wayland | `nixos-workspace-wayfire-docker` |
-| Window Maker | X11 | `nixos-workspace-windowmaker-docker` |
-| wmderland | X11 | `nixos-workspace-wmderland-docker` |
-| wmii | X11 | `nixos-workspace-wmii-docker` |
-| XFCE | X11 | `nixos-workspace-xfce-docker` |
+| Awesome | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-awesome@sha256:baf96caf36d34d0047546fc72baed940bcdb989acdcdcf011460f25089817a21` |
+| berry | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-berry@sha256:3601667e69abc4c3af471de3c854111b31a4d21b042e621698924897e34d3cb3` |
+| bspwm | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-bspwm@sha256:5ee44b35200a46a423bf3b47b1ee83f8fa8a25af9a28a1c5150cc67fde9694e8` |
+| Budgie | Wayland | `public.ecr.aws/k5j5w0x5/cua-nixos-budgie@sha256:54c68e206706ca4b660a78a55728ad5e269ef3494c1e223fbfc6712150040cd9` |
+| CDE | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-cde@sha256:39292ea496cef5aeb175f99e903232ef18f89cf9d83f7c981a5793a83ef48bbe` |
+| Cinnamon | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-cinnamon@sha256:842ffbff61365f693463707a7b8e892c550b539ed5e3dc0d88d2b87604313afd` |
+| CLFSWM | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-clfswm@sha256:3c2ed2c4cd035a82479dc193a99a5174d1aea5aaa5ee2c323c91ad6f7ee0ab7d` |
+| dk | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-dk@sha256:e622892460034e3720cc07bf76d1879392ccfd494d34131bc98cdc0532fc49e0` |
+| dwl | Wayland | `public.ecr.aws/k5j5w0x5/cua-nixos-dwl@sha256:3a2cd6d86594781eb9e67aa33947bdc021eded3550cffb372adf61e688ac3842` |
+| dwm | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-dwm@sha256:f87392c5cc3bd6e01e7eba001266e5e37df3f35f0f02e347e05ea429be72225a` |
+| Fluxbox | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-fluxbox@sha256:080a02e97a08e8352431098d9c1a735ad58a52d48951afd03043b771992549e3` |
+| FVWM 2 | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-fvwm2@sha256:5cd1b56d915755216ce30a98a7bd89d7dcbfe2854779145cd209918936e05c79` |
+| FVWM 3 | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-fvwm3@sha256:b592974b9d12d1afb0570fb7bd2a194a34cd8d83c5f1a9f346681add151b3024` |
+| Hackedbox | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-hackedbox@sha256:31ab9872be960c3e9d8c65a19476b6f9baf47c24548562853578c71afbbe1d6b` |
+| herbstluftwm | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-herbstluftwm@sha256:6e2eba1230226179dc3210aa9964d1da09ce8164e990e080e88339173533c327` |
+| i3 | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-i3@sha256:0b9c3563876fc8635c87d0cbe3ea2da0f265ebcabc8207bb34af0419db19724d` |
+| IceWM | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-icewm@sha256:9e03983f424d6db2dac5b6ec7481bcf8184dc0a2e05c1379983d4789c477acf5` |
+| JWM | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-jwm@sha256:dc6595048fa160b0059144bd5b1ce01eecc5bb597339bc90dec0029a7ba880d0` |
+| katriawm | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-katriawm@sha256:4c286bea57c8fd421133995f37a259a5242e1c4a472e9daa39f55e9da355069b` |
+| KDE Plasma 6 | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-plasma@sha256:fcffda20bb7219806e37499e97189739752d6a48f754378480c5c841db8221e0` |
+| lwm | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-lwm@sha256:cb731627a758ea75ca652fa84a22dbfa3706eb375e48a4089888006957721992` |
+| LXQt | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-lxqt@sha256:998216c1089b073d1232bbbea6ee883ca281516ff996bdfda18f6aa268fdc728` |
+| MATE | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-mate@sha256:a8da6eb4d000cd37a3594c575a569888fe38c9703c9640fdd3aa009dd87b5106` |
+| Metacity | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-metacity@sha256:1269be92ffe50395f3c5681a56ad2dc7be4190bc39e2d3b0c865614bf5edc4fa` |
+| MLVWM | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-mlvwm@sha256:552e9b401a938a5a5d4fc7cb6c216d6e4a58cdaa4ce7072fc9a11f0c6b9f71d6` |
+| Motif Window Manager | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-mwm@sha256:9dd5ca8f39dcf897f119d8b1e0c1d63f05be5b8030af740f918f8a224b80fa63` |
+| Nimdow | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-nimdow@sha256:55bce48e4c086696dd4c057b604116ba1ed0820ecd4c53e2728b2906a9e98bcb` |
+| Notion | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-notion@sha256:8db006f7462f652a156c783f4ccbeb99a1a4d214a18db4b9ad6bb57333f7a185` |
+| Openbox | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-openbox@sha256:9fa6adfbedb0ce3c4fc5d800eb24f93d107620b1cfba52ab399f58f481e72bea` |
+| oxwm | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-oxwm@sha256:f1304445754565db7216c10341092533af730ce521742a93079a9ef777820571` |
+| PekWM | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-pekwm@sha256:40aef51994b0534c9e2bacdf429cdfc4fbd3b76b4f1860516faa688afaeb376f` |
+| Qtile | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-qtile@sha256:f918cc7fa86af6b43c69dd9044bec10ea6817b6c2dc7bf156abdaf8644a03a95` |
+| Ratpoison | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-ratpoison@sha256:597e87e87474b2dedd6fe446b9c3d661788e966cf6fb59b65996280168892546` |
+| River | Wayland | `public.ecr.aws/k5j5w0x5/cua-nixos-river@sha256:5441e490456fed1a53150d61b29339a6192b97727b19ed17b4b84ebbcd427cef` |
+| Sawfish | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-sawfish@sha256:13cc7d9f8bc43aadcc910d4096393022b9c6992c17619f9facb20503e752f39e` |
+| smallwm | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-smallwm@sha256:8c4293be66c907da15432149a7675dc3eb7a05e83aee4478a5b247fc135ad482` |
+| StumpWM | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-stumpwm@sha256:7fbd840736aed2787d256375c371c60967134ba83f648d27315df7071df2f55a` |
+| Sway | Wayland | `public.ecr.aws/k5j5w0x5/cua-nixos-sway@sha256:7ce0bc9cbb7a0b305c3e1cf4b68eb200ea5614b3c6b460e90f0a74decf24408d` |
+| Wayfire | Wayland | `public.ecr.aws/k5j5w0x5/cua-nixos-wayfire@sha256:8ef1a7f85ca12723867bc29e42b0fefa2875419125544d87a33f4d64b85952b8` |
+| Window Maker | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-windowmaker@sha256:e1da35653755af3d1846a9b05c3c18a0aaf4c0cdefc040e6a9aa7868905f2803` |
+| wmderland | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-wmderland@sha256:f3606f81f4fd167e725c2c960e9b3f17836ee00f14119bec039ea50d2ab3734e` |
+| wmii | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-wmii@sha256:72258aa7af5c312ee8cbe419f5905e84be66f25cff991fef2bbdab8b0a95a524` |
+| XFCE | X11 | `public.ecr.aws/k5j5w0x5/cua-nixos-xfce@sha256:e050acd09925e42ccef2619230006912a5983bd95bf66576013a500641caa3d7` |
 
-Hyprland and cwm are intentionally excluded: their Docker runtime checks did
-not pass. Hyprland failed graphics initialization; cwm failed exact screenshot
-text recognition. The 24 previously blocked catalog definitions are also not
-listed. Docker qualification is independent of VM qualification: a desktop can
-have a working VM image without a qualified Docker variant, or vice versa.
+Hyprland and cwm are intentionally excluded because their Docker runtime checks
+did not pass. The 24 previously blocked catalog definitions are also excluded.
+Docker and VM qualification are independent: a working VM image does not imply
+a qualified Docker variant, or vice versa.
 
 These are **systemd-based containers requiring rootful Docker, `--privileged`
 and a private cgroup namespace on an isolated, disposable Linux host**. They are
@@ -168,27 +164,14 @@ not a tenant isolation boundary or a drop-in replacement for an unprivileged
 container. Rootless Docker, gVisor and Modal compatibility is not established.
 Never expose the Docker socket or bind host PID/network/cgroup namespaces.
 
-To build a listed profile from the tested cloud source, with Git, Nix and
-Docker installed:
-
-```bash
-git clone https://github.com/trycua/cloud.git
-cd cloud
-git checkout 60395ad7603bda8bc77a1bb2f3f59266e5ce4be0
-python3 nixos/desktop-workspace/docker.py build \
-  --profile xfce --output /tmp/nixos-xfce-docker
-```
-
-The cloud source repository requires appropriate repository access. The build
-loads the local image `cua-nixos-xfce:docker-dev`; substitute another listed
-profile ID to build its image. On the isolated Docker host:
+For example, run the pinned XFCE image on the isolated Linux Docker host:
 
 ```bash
 docker run --rm --name nixos-xfce --privileged --cgroupns=private \
   --tmpfs /run --tmpfs /tmp:mode=1777 --shm-size=512m \
   --memory=4g --cpus=2 \
   -p 127.0.0.1:6080:6080 -p 127.0.0.1:8000:8000 -p 127.0.0.1:3000:3000 \
-  cua-nixos-xfce:docker-dev
+  public.ecr.aws/k5j5w0x5/cua-nixos-xfce@sha256:e050acd09925e42ccef2619230006912a5983bd95bf66576013a500641caa3d7
 ```
 
 Computer-server listens on port 8000 and Cua Driver MCP on port 3000. StumpWM

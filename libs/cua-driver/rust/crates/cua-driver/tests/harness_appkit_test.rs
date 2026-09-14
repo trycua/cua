@@ -869,6 +869,61 @@ fn harness_appkit_element_foreground_press_key_commits_edit() {
     );
 }
 
+/// `press_key` on the foreground rung built its events with a default source
+/// and no flags, so a chord's base key arrived bare: `cmd+a` typed a literal
+/// `a`. The fixture's accelerator requires the modifiers to be present on the
+/// event itself (`flags.contains([.control, .shift])`), which the desktop-scope
+/// `press_key_global` rung already satisfied and this one did not.
+#[test]
+#[ignore]
+fn harness_appkit_foreground_press_key_chord_carries_its_modifiers() {
+    run_case(
+        native_foreground_case(
+            "appkit",
+            "press_key_chord",
+            Targeting::Ax,
+            DriverRoute::MacosCgEventHid,
+        ),
+        |pid, wid, driver| {
+            let before = snapshot_elements(driver, pid, wid);
+            assert!(
+                before.tree_text().contains("accel_fired=0"),
+                "fixture did not start with an unfired accelerator:\n{}",
+                before.tree_text()
+            );
+            let chord = driver.call(
+                "press_key",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "key": "k",
+                    "modifiers": ["ctrl", "shift"],
+                    "delivery_mode": "foreground"
+                }),
+            );
+            assert!(
+                !chord.is_error(),
+                "foreground press_key chord failed: {}",
+                chord.text()
+            );
+            let deadline = std::time::Instant::now() + Duration::from_secs(2);
+            loop {
+                let after = snapshot_elements(driver, pid, wid);
+                if after.tree_text().contains("accel_fired=1") {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "ctrl+shift+k arrived without its modifiers:\n{}",
+                    after.tree_text()
+                );
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Observation::delivered_with_fixture_state(Vec::new())
+        },
+    );
+}
+
 #[test]
 #[ignore]
 fn harness_appkit_px_background_press_key_reports_honest_delivery_truth() {

@@ -129,24 +129,24 @@ def test_generated_models_reject_irrelevant_layer_fields(layer: dict[str, object
         )
 
 
-def test_generated_models_accept_file_reference_at_kubernetes_int64_maximum() -> None:
+def test_generated_models_accept_file_reference_at_json_safe_integer_maximum() -> None:
     reference = ImageFileReference.model_validate(
         {
             "reference": "uploads/tenant-a/a",
             "digest": "sha256:" + "a" * 64,
-            "sizeBytes": 9223372036854775807,
+            "sizeBytes": 9007199254740991,
         }
     )
-    assert reference.size_bytes == 9223372036854775807
+    assert reference.size_bytes == 9007199254740991
 
 
-def test_generated_models_reject_file_reference_larger_than_kubernetes_int64() -> None:
+def test_generated_models_reject_file_reference_larger_than_json_safe_integer() -> None:
     with pytest.raises(ValidationError):
         ImageFileReference.model_validate(
             {
                 "reference": "uploads/tenant-a/a",
                 "digest": "sha256:" + "a" * 64,
-                "sizeBytes": 9223372036854775808,
+                "sizeBytes": 9007199254740992,
             }
         )
 

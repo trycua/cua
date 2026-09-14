@@ -672,6 +672,10 @@ mod live_tests {
     #[ignore = "requires disposable depth24 Xvfb with real EWMH WM; run --test-threads=1"]
     fn live_exact_owner_composes_and_wrong_sibling_missing_hidden_background_keep_raw() {
         let f = Fixture::new();
+        // The unchanged raw backend cannot supply a root-sibling popup's
+        // pixels. Establish the pre-fix outcome before checking composition.
+        let raw = image::load_from_memory(&f.raw()).unwrap().to_rgba8();
+        assert_ne!(raw.get_pixel(12, 12).0, [0xdd, 0x22, 0x44, 255]);
         let image = image::load_from_memory(&f.capture().unwrap())
             .unwrap()
             .to_rgba8();

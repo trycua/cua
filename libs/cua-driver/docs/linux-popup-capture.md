@@ -40,7 +40,16 @@ capture, multiple popup stack order, clipping, and shape/opacity/occlusion/resiz
 refusals. They must run only in a disposable depth-24 Xvfb desktop with a real
 EWMH window manager, never on a user's desktop.
 
-From the repository root, in an already prepared disposable Linux environment:
+From the repository root on Linux with Xvfb, xauth, xprop and Openbox installed,
+run the isolated live reproduction (also wired into Linux CI):
+
+```sh
+bash libs/cua-driver/scripts/test-x11-popup-capture.sh
+```
+
+It creates its own display/window manager and tears both down. The first test
+checks that the unchanged raw backend omits the popup color, then that production
+composition includes it. In an already prepared disposable Linux environment:
 
 ```sh
 cd libs/cua-driver/rust

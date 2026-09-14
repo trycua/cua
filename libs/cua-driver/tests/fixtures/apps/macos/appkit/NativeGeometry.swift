@@ -42,6 +42,11 @@ final class NativeGeometryWebObserver: NSObject, WKScriptMessageHandler {
     }
 }
 
+final class NativeGeometryRow: NSView {
+    override func isAccessibilitySelected() -> Bool { false }
+    override func setAccessibilitySelected(_ selected: Bool) {}
+}
+
 final class NativeGeometryFixture: NSObject {
     let window: NativeGeometryWindow
     private let directory: URL
@@ -69,6 +74,12 @@ final class NativeGeometryFixture: NSObject {
         increment.frame = NSRect(x: 20, y: 170, width: 160, height: 36)
         increment.setAccessibilityIdentifier("geometry-increment")
         content.addSubview(increment)
+        let row = NativeGeometryRow(frame: NSRect(x: 20, y: 214, width: 160, height: 22))
+        row.setAccessibilityElement(true)
+        row.setAccessibilityRole(.row)
+        row.setAccessibilityLabel("Selection probe")
+        row.setAccessibilityIdentifier("geometry-selection")
+        content.addSubview(row)
         let mismatch = NSButton(title: "Disagree", target: self, action: #selector(disagree))
         mismatch.frame = NSRect(x: 20, y: 100, width: 160, height: 36)
         mismatch.setAccessibilityIdentifier("geometry-mismatch")

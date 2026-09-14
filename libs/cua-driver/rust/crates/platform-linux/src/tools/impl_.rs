@@ -7975,6 +7975,20 @@ impl Tool for GetScreenSizeTool {
                 // refuses layouts outside its qualified 1:1 single-output frame.
                 return crate::wayland::hyprland::screen_size();
             }
+            // Fractional-scale unification (#3061): on Wayland, report the
+            // compositor-logical frame and its backing scale when a single
+            // logical output is advertised, so callers can map screenshot
+            // pixels 1:1 onto input coordinates.
+            if crate::wayland::is_wayland() {
+                if let Some(frame) = crate::wayland::logical_desktop() {
+                    return Ok::<(u32, u32, f64), anyhow::Error>((
+                        frame.width,
+                        frame.height,
+                        frame.scale,
+                    ));
+                }
+                tracing::debug!("no logical desktop advertised, reporting the X11 root frame");
+            }
             // X11 reports pixel dimensions; scale factor on X11 is not
             // well-defined per-monitor, so report 1.0 (matches DPI-unaware
             // assumption). Other Wayland compositors retain their existing
@@ -8022,6 +8036,18 @@ fn x11_screen_size() -> anyhow::Result<(u32, u32)> {
         );
     }
     Ok((w, h))
+}
+
+/// Desktop action frame for a native Wayland capture: the compositor-logical
+/// size when one is advertised (so the backing buffer is normalized into the
+/// input frame, #3061), otherwise the native buffer dims (legacy #2017
+/// pure-Wayland behavior — never query the X11 root here, it may not exist).
+fn desktop_action_frame(
+    native_width: u32,
+    native_height: u32,
+    logical: Option<(u32, u32)>,
+) -> (u32, u32) {
+    logical.unwrap_or((native_width, native_height))
 }
 
 /// Put the desktop image in the exact coordinate frame consumed by desktop
@@ -8108,7 +8134,19 @@ impl Tool for GetDesktopStateTool {
             // Only fall back to the X11 root-window geometry off Wayland, so
             // the X11 / XWayland path is unchanged. See #2017 / Sway testing.
             let (screen_w, screen_h) = if crate::wayland::is_wayland() {
-                (native_w, native_h)
+                // Fractional-scale unification (#3061): prefer the
+                // compositor-logical frame so `normalize_…` downscales the
+                // backing buffer into the input frame and reports the real
+                // scale. Falls back to native dims when no single logical
+                // output is advertised — preserving the #2017 pure-Wayland
+                // no-X11 behavior.
+                let logical = crate::wayland::logical_desktop_frame();
+                if logical.is_none() {
+                    tracing::debug!(
+                        "no logical desktop advertised, keeping the native capture frame"
+                    );
+                }
+                desktop_action_frame(native_w, native_h, logical)
             } else {
                 x11_screen_size()?
             };
@@ -10038,7 +10076,7 @@ mod session_cursor_target_tests {
 
 #[cfg(test)]
 mod desktop_capture_frame_tests {
-    use super::normalize_desktop_capture_for_action_frame;
+    use super::{desktop_action_frame, normalize_desktop_capture_for_action_frame};
 
     fn png(width: u32, height: u32) -> Vec<u8> {
         let rgba = vec![0x7f; (width * height * 4) as usize];
@@ -10065,5 +10103,34 @@ mod desktop_capture_frame_tests {
         let error = normalize_desktop_capture_for_action_frame(png(3200, 2000), 1600, 1200)
             .expect_err("nonuniform mapping must fail closed");
         assert!(error.to_string().contains("cannot be mapped uniformly"));
+    }
+
+    #[test]
+    fn fractional_150pc_capture_normalizes_to_the_logical_frame() {
+        // Issue #3061: GNOME 150% serves a 3840x2160 backing buffer for a
+        // 2560x1440 logical desktop. The normalized image must be logical.
+        let (normalized, width, height, scale) =
+            normalize_desktop_capture_for_action_frame(png(300, 225), 200, 150)
+                .expect("normalize 1.5x capture");
+        assert_eq!((width, height), (200, 150));
+        assert_eq!(
+            cua_driver_core::image_utils::png_dimensions(&normalized).unwrap(),
+            (200, 150)
+        );
+        assert!(
+            (scale - 1.5).abs() < 0.0001,
+            "scale is truthful, got {scale}"
+        );
+    }
+
+    #[test]
+    fn desktop_action_frame_prefers_logical_and_keeps_the_native_fallback() {
+        assert_eq!(
+            desktop_action_frame(3840, 2160, Some((2560, 1440))),
+            (2560, 1440)
+        );
+        // No advertised logical output (older compositor, no xdg-output):
+        // keep the legacy native frame rather than failing the tool (#2017).
+        assert_eq!(desktop_action_frame(3840, 2160, None), (3840, 2160));
     }
 }

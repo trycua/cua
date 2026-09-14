@@ -32,14 +32,32 @@ function run(command, args, cwd) {
   }
 }
 
-function nativeLibraryPath() {
+function nativeLibraryPath(targetDirectory) {
   const file =
     process.platform === "darwin"
       ? "libcua_driver_sdk.dylib"
       : process.platform === "win32"
         ? "cua_driver_sdk.dll"
         : "libcua_driver_sdk.so"
-  return join(rustRoot, "target", "release", file)
+  return join(targetDirectory, "release", file)
+}
+
+// Cargo writes into `CARGO_TARGET_DIR` when it is set, so a hand-composed
+// `<rustRoot>/target/release` path can either miss the library the build just
+// produced or silently pick up a stale one left by another branch or worktree.
+// Ask cargo itself where it put the artifacts instead.
+function cargoTargetDirectory() {
+  const result = spawnSync("cargo", ["metadata", "--format-version", "1", "--no-deps"], {
+    cwd: rustRoot,
+    encoding: "utf8",
+  })
+  if (result.error) throw result.error
+  if (result.status !== 0) {
+    throw new Error(`cargo metadata exited with status ${result.status}`)
+  }
+  const { target_directory: targetDirectory } = JSON.parse(result.stdout)
+  if (!targetDirectory) throw new Error("cargo metadata returned no target_directory")
+  return targetDirectory
 }
 
 function normalizeWhitespace(source) {
@@ -256,7 +274,7 @@ function applyGroup(root, inventoryName, files) {
 const temporaryRoot = mkdtempSync(join(tmpdir(), "cua-driver-uniffi-"))
 try {
   run("cargo", ["build", "--locked", "--release", "-p", "cua-driver-sdk"], rustRoot)
-  const library = nativeLibraryPath()
+  const library = nativeLibraryPath(cargoTargetDirectory())
   if (!existsSync(library)) throw new Error(`missing built SDK library ${library}`)
 
   const pythonOutput = join(temporaryRoot, "python")

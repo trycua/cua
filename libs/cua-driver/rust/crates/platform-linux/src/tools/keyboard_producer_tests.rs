@@ -107,8 +107,19 @@ fn producer(name: &str) -> Box<dyn Tool> {
     }
 }
 
+async fn focus_probe(fixture: &KeyboardFixture) {
+    let result = producer("press_key")
+        .invoke(serde_json::json!({"scope":"desktop", "key":"f6"}))
+        .await;
+    assert_ne!(result.is_error, Some(true), "{result:?}");
+    fixture.key_event("down", 0xffc3);
+    fixture.key_event("up", 0xffc3);
+}
+
 async fn observes_record(name: &str, foreground: bool) {
     let fixture = KeyboardFixture::spawn(false);
+    let sentinel = KeyboardFixture::spawn(false);
+    focus_probe(&sentinel).await;
     let mut args = serde_json::json!({"pid": fixture.pid(), "window_id": fixture.window_id,
         "delivery_mode": if foreground { "foreground" } else { "background" }});
     let key = if name == "press_key" {
@@ -124,6 +135,8 @@ async fn observes_record(name: &str, foreground: bool) {
     let up = fixture.key_event("up", key);
     assert_eq!(down["synthetic"], !foreground);
     assert_eq!(up["synthetic"], !foreground);
+    sentinel.assert_quiet();
+    focus_probe(&sentinel).await;
     let record = result
         .action_record
         .expect("keyboard producer must supply a record before dispatch reconstruction");

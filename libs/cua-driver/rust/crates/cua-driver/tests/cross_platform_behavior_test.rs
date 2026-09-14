@@ -1395,6 +1395,12 @@ fn assert_keyboard_outcome(
     } else {
         delivery
     };
+    #[cfg(target_os = "linux")]
+    let actual_delivery = if platform_linux::wayland::is_inject_mode() {
+        "background"
+    } else {
+        actual_delivery
+    };
     let expected_route = match actual_delivery {
         "foreground" => "global_input",
         "background" => "synthetic_events",

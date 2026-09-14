@@ -39,9 +39,22 @@ fn producer(name: &str) -> Box<dyn Tool> {
     }
 }
 
+async fn focus_probe(fixture: &KeyboardFixture) {
+    let result = producer("press_key")
+        .invoke(json!({"scope":"desktop", "key":"f6"}))
+        .await;
+    assert_ne!(result.is_error, Some(true), "{result:?}");
+    fixture.key_event("down", 97);
+    fixture.key_event("up", 97);
+}
+
 async fn observes_record(name: &str, foreground: bool, close: bool) {
     assert!(unsafe { crate::ax::bindings::AXIsProcessTrusted() }, "environment blocked: native producer test host lacks Accessibility permission; do not treat an unobserved post as delivery");
     let fixture = KeyboardFixture::spawn(close);
+    let sentinel = (!close).then(|| KeyboardFixture::spawn(false));
+    if let Some(sentinel) = &sentinel {
+        focus_probe(sentinel).await;
+    }
     let mut args = json!({"pid": fixture.pid(), "delivery_mode": if foreground { "foreground" } else { "background" }});
     let key = if name == "press_key" {
         args["key"] = json!("f5");
@@ -64,6 +77,10 @@ async fn observes_record(name: &str, foreground: bool, close: bool) {
         fixture.event("closed");
     } else {
         fixture.key_event("up", key);
+    }
+    if let Some(sentinel) = &sentinel {
+        sentinel.assert_quiet();
+        focus_probe(sentinel).await;
     }
     let record = result.action_record.expect(
         "keyboard producer must supply its execution record before dispatch reconstruction",

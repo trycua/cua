@@ -169,8 +169,8 @@ PowerShell window in the VM:
 
 ```powershell
 Set-Location $env:TEMP
-Invoke-WebRequest   https://persistent.oaistatic.com/codex-app-prod/ChatGPT-x64.msix   -OutFile ChatGPT-x64.msix -UseBasicParsing
-Invoke-WebRequest   https://persistent.oaistatic.com/codex-app-prod/ChatGPT-License.xml   -OutFile ChatGPT-License.xml -UseBasicParsing
+Invoke-WebRequest https://persistent.oaistatic.com/codex-app-prod/ChatGPT-x64.msix -OutFile ChatGPT-x64.msix -UseBasicParsing
+Invoke-WebRequest https://persistent.oaistatic.com/codex-app-prod/ChatGPT-License.xml -OutFile ChatGPT-License.xml -UseBasicParsing
 Add-AppxPackage -Package ChatGPT-x64.msix -LicenseFile ChatGPT-License.xml
 Get-AppxPackage -AllUsers *ChatGPT* | Select-Object Name, Version
 ```

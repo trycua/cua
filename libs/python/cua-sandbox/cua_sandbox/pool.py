@@ -138,7 +138,7 @@ class _ClaimHandle:
             "pool": self.pool_name,
             "claim": self.name,
             "service": self.service,
-            "agent_type": self.agent_type,
+            **({"agent_type": self.agent_type} if self.agent_type else {}),
         }
 
     @classmethod

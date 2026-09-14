@@ -82,8 +82,8 @@ from cua_sandbox.transport.base import Transport
 from cua_sandbox.transport.cloud import CloudTransport
 from cua_sandbox.transport.fleet_cloud import (
     FleetCloudTransport,
+    OSWorldFleetCloudTransport,
     default_server_port,
-    fleet_cloud_transport_for,
 )
 from cua_sandbox.transport.http import HTTPTransport
 from cua_sandbox.transport.websocket import WebSocketTransport
@@ -1483,7 +1483,12 @@ class Sandbox:
         if image and not runtime and not local:
             # image without runtime and not local → cloud creation
             if not any([ws_url, http_url]) and cls._uses_fleet(api_key):
-                transport = fleet_cloud_transport_for(image)(
+                transport_cls = (
+                    OSWorldFleetCloudTransport
+                    if image._agent_type == "osworld"
+                    else FleetCloudTransport  # module attribute, so tests can patch it
+                )
+                transport = transport_cls(
                     image=image,
                     name=name or _random_name(),
                     cpu=cpu,

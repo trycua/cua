@@ -12,10 +12,16 @@ authors = [{ name = "Cua AI", email = "gh@trycua.com" }]
 requires-python = ">=3.11"
 dependencies = [
   "jsonschema==4.23.0",
+  "python-dotenv>=1.0,<2.0",
   "referencing==0.35.1",
   "rfc3339-validator==0.1.4",
   "rfc3986-validator==0.1.1",
   "rfc8785==0.1.4",
+]
+
+[project.optional-dependencies]
+fleet = [
+  "cua-sandbox==0.4.3; sys_platform == 'linux'",
 ]
 
 [dependency-groups]

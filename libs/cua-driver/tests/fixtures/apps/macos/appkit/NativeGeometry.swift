@@ -51,6 +51,7 @@ final class NativeGeometryWebObserver: NSObject, WKScriptMessageHandler {
 }
 
 final class NativeGeometryRow: NSView {
+    override func accessibilityPerformShowMenu() -> Bool { false }
     override func isAccessibilitySelected() -> Bool { false }
     override func setAccessibilitySelected(_ selected: Bool) {}
 }

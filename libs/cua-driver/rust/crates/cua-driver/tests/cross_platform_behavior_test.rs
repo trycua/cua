@@ -1232,8 +1232,59 @@ fn run_press_key_action(fixture: &mut Fixture, addressing: &str, delivery: &str)
     passed.extend(unverified_background_protocol_oracle(&response, delivery));
     assert_fixture_contains(fixture, "key_state=enter");
     assert_fixture_value(fixture, "number-input", "42");
+    assert_keyboard_outcome(&response, delivery);
 
     Observation::delivered(passed, Evidence::default())
+}
+
+fn assert_keyboard_outcome(response: &ToolResponse, delivery: &str) {
+    let expected_route = match delivery {
+        "foreground" => "global_input",
+        "background" => "synthetic_events",
+        other => panic!("unexpected keyboard delivery {other}"),
+    };
+    #[cfg(target_os = "linux")]
+    let expected_route = if platform_linux::wayland::is_inject_mode() {
+        "global_input"
+    } else {
+        expected_route
+    };
+    assert_eq!(
+        response.action_route(),
+        Some(expected_route),
+        "{}",
+        response.raw
+    );
+    assert_eq!(
+        response.action_delivery_mode(),
+        Some(delivery),
+        "{}",
+        response.raw
+    );
+    assert_eq!(
+        response.action_effect(),
+        Some("unverifiable"),
+        "{}",
+        response.raw
+    );
+    let structured = response.structured();
+    assert!(structured["evidence"].is_null(), "{}", response.raw);
+    assert!(
+        structured["delivery"]["delivered_count"].is_null(),
+        "{}",
+        response.raw
+    );
+    for field in structured
+        .as_object()
+        .expect("keyboard ActionResult")
+        .keys()
+    {
+        assert!(
+            ["effect", "route", "delivery", "evidence", "escalation"].contains(&field.as_str()),
+            "private keyboard field {field} leaked: {}",
+            response.raw
+        );
+    }
 }
 
 fn run_hotkey_action(fixture: &mut Fixture, addressing: &str, delivery: &str) -> Observation {
@@ -1256,6 +1307,7 @@ fn run_hotkey_action(fixture: &mut Fixture, addressing: &str, delivery: &str) ->
     );
     assert_fixture_contains(fixture, "key_state=hotkey");
     assert_fixture_value(fixture, "number-input", "42");
+    assert_keyboard_outcome(&response, delivery);
     #[cfg(target_os = "macos")]
     if fixture.name == "electron" && addressing == "px" && delivery == "foreground" {
         run_macos_selection_hotkeys(fixture);

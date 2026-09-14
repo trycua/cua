@@ -127,7 +127,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
             libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev \
-            imagemagick xvfb xauth x11-utils ffmpeg
+            imagemagick xvfb xauth x11-utils ffmpeg openbox xterm dbus-x11
       - name: Run Linux Rust tests
         working-directory: libs/cua-driver/rust
         run: cargo test -p cua-driver -p cua-driver-contract -p cua-driver-core -p cua-driver-testkit -p cursor-overlay -p cursor-theme-cli -p platform-linux --all-targets --locked
@@ -144,6 +144,16 @@ jobs:
         run: |
           xvfb-run -a cargo test -p platform-linux --test key_input_x11 \
             --locked -- --ignored --nocapture --test-threads=1
+      - name: Run keyboard tool and terminal contract regressions
+        working-directory: libs/cua-driver/rust
+        run: |
+          xvfb-run -a dbus-run-session -- bash -c '
+            openbox >/tmp/cua-keyboard-openbox.log 2>&1 &
+            wm=$!
+            trap "kill $wm 2>/dev/null || true" EXIT
+            cargo test -p platform-linux --test keyboard_tools_x11 --test terminal_keyboard_x11 \
+              --locked -- --ignored --nocapture --test-threads=1
+          '
       - name: Run X11 overlay click-through regression
         working-directory: libs/cua-driver/rust
         run: |

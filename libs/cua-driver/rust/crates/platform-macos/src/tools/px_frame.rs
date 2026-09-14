@@ -178,7 +178,11 @@ pub fn refusal(error: &PxFrameError) -> ToolResult {
              Refusing pixel targeting; use a semantic action or explicitly select the window \
              and take a new snapshot before choosing new coordinates."
         ))
-        .with_structured(error_structured(error)),
+        .with_structured({
+            let mut structured = error_structured(error);
+            structured["effect"] = serde_json::json!("refused");
+            structured
+        }),
         PxFrameError::WindowNotFound { window_id } => ToolResult::error(format!(
             "window_id {window_id} has no live frame, so window-local pixels cannot be \
              translated to screen coordinates. Refusing to dispatch — treating them as \
@@ -291,7 +295,7 @@ mod tests {
     }
 
     #[test]
-    fn native_geometry_mismatch_is_a_structured_terminal_refusal() {
+    fn native_geometry_refusal_preserves_action_truth_through_fallback_context() {
         use cua_driver_core::native_window_geometry::{
             assess, GeometrySample, NativeWindowRect, PointTolerance,
         };
@@ -309,6 +313,33 @@ mod tests {
         assert_eq!(structured["code"], "native_window_geometry_mismatch");
         assert_eq!(structured["window_id"], 7);
         assert_eq!(structured["native_window_geometry"]["status"], "mismatched");
+        for tool in [
+            "click",
+            "double_click",
+            "right_click",
+            "drag",
+            "scroll",
+            "type_text",
+            "press_key",
+            "hotkey",
+        ] {
+            for delivery_mode in ["background", "foreground"] {
+                let outcome = cua_driver_core::action_record::ActionExecutionRecord::from_legacy(
+                    tool,
+                    &serde_json::json!({
+                        "pid": 42, "window_id": 7, "x": 10, "y": 20,
+                        "delivery_mode": delivery_mode
+                    }),
+                    &structured,
+                )
+                .unwrap()
+                .public_result()
+                .unwrap();
+                let outcome = serde_json::to_value(outcome).unwrap();
+                assert_eq!(outcome["effect"], "refused", "{tool}/{delivery_mode}");
+                assert!(outcome.get("delivery").is_none(), "{tool}/{delivery_mode}");
+            }
+        }
     }
 
     #[test]

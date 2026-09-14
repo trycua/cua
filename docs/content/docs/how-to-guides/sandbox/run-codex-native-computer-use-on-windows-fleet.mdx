@@ -1,0 +1,285 @@
+---
+title: Run Codex with native Computer Use on a Cua Cloud Fleet (Windows)
+description: Run Codex-in-ChatGPT Computer Use inside an isolated Windows Fleet VM.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Codex native Computer Use is the first-party Computer Use plugin in the ChatGPT
+desktop app (Codex-in-ChatGPT). It is not a standalone headless CLI flag or a
+model endpoint that can be mocked. The native backend is available on macOS and
+Windows through the `computer_use.macos` and `computer_use.windows`
+configuration sections; there is no Linux backend. Availability also depends on
+a supported region and a signed-in, eligible ChatGPT account.
+
+Running the ChatGPT desktop app in a Windows Fleet VM lets Computer Use take over
+the VM instead of your main desktop. The recipe is: provision a Windows VM,
+install ChatGPT desktop, enable its Computer Use plugin, and let Codex drive that
+VM's desktop.
+
+<Callout type="warn">
+  The Fleet infrastructure and in-VM installation path were exercised, but native Computer Use
+  cannot be verified without a real region- and plan-eligible ChatGPT sign-in. App sign-in, plugin
+  installation and enablement, and app-control approvals remain interactive.
+</Callout>
+
+## What was live-verified
+
+These observations are evidence for the Fleet and guest path only. They do not
+establish that ChatGPT installation or native Computer Use completed.
+
+| Check | Live observation |
+| --- | --- |
+| Image response | `cua-windows-2022:main-bac7daa3` responded; its index digest began `sha256:6d341afc` and matched the SDK pin |
+| Pool creation | `Image.windows("2022")` selected UEFI; pool `codex-cu-win-09141933` became ready in 3.3 seconds |
+| Cold claim | Claim `cu-demo` bound in 487 seconds |
+| Guest | Windows Server 2022 Standard Evaluation, build `10.0.20348.0` |
+| Desktop | `computer-server` returned a valid 164,398-byte PNG screenshot |
+| Clean image | ChatGPT, Codex, Edge, Chrome, and `winget` were absent; PowerShell 5.1 was present |
+| ChatGPT package | The official MSIX installation was launched, but substrate recycle interrupted final package-version verification |
+
+## Prerequisites
+
+You need:
+
+- run.cua.ai OAuth credentials in `CUA_CLIENT_ID` and `CUA_CLIENT_SECRET`;
+- Python `>=3.11,<3.14` with [`uv`](https://docs.astral.sh/uv/), or
+  Terraform with the [`trycua/fleets` provider](https://registry.terraform.io/providers/trycua/fleets/latest); and
+- an eligible ChatGPT account with Codex access in a supported region.
+
+Keep credentials in environment variables or a secret manager. Do not put them
+in scripts, Terraform files, or VM images.
+
+## 1. Create a Windows pool
+
+Windows requires UEFI. In `cua-sandbox==0.7.0`,
+`Image.windows("2022")` selects the pinned Windows Server 2022 Fleet image and
+generates an EFI template.
+
+Save this as `create_win_pool.py`:
+
+```python title="create_win_pool.py"
+# /// script
+# requires-python = ">=3.11,<3.14"
+# dependencies = ["cua-sandbox==0.7.0"]
+# ///
+import asyncio
+from cua_sandbox import Image, Pool
+
+async def main():
+    pool = await Pool.apply(
+        Image.windows("2022"),
+        name="my-windows-pool",
+        replicas=1,
+        cpu=4,
+        memory_mb=4096,
+        services={"server": 8000},
+    )
+    print("ready:", pool.name)
+
+asyncio.run(main())
+```
+
+Run it:
+
+```bash
+uv run create_win_pool.py
+```
+
+Pool names are globally unique lowercase DNS labels. Change the example name if
+it is already owned by another account.
+
+### Terraform alternative
+
+The provider uses `CYCLOPS_*` environment variables rather than the Sandbox
+SDK's `CUA_*` names. Follow [Configure a sandbox pool with Terraform](/how-to-guides/sandbox/configure-pool-with-terraform#authentication)
+to map the same OAuth credentials, pin provider version `0.2.0`, and configure
+the provider endpoint before adding this resource:
+
+```hcl
+resource "fleets_pool" "windows" {
+  name                 = "windows-pool"
+  cpu_cores            = 4
+  memory               = "4Gi"
+  container_disk_image = "public.ecr.aws/k5j5w0x5/cua-windows-2022:main-bac7daa3"
+  runtime              = "kubevirt"
+  firmware             = "efi"
+
+  readiness_probe_json = jsonencode({
+    tcpSocket           = { port = 8000 }
+    initialDelaySeconds = 60
+    periodSeconds       = 5
+    timeoutSeconds      = 3
+    failureThreshold    = 120
+  })
+
+  service {
+    name        = "computer-server"
+    target_port = 8000
+    protocol    = "TCP"
+  }
+
+  autoscaling {
+    min_pool_size     = 0
+    initial_pool_size = 1
+    max_pool_size     = 5
+  }
+}
+```
+
+Run `terraform fmt -check` and `terraform validate` before applying it.
+
+## 2. Claim the VM
+
+Look up the pool rather than reconciling configuration owned elsewhere:
+
+```python
+pool = await Pool.get("my-windows-pool")
+sandbox = await pool.claim(
+    name="codex-cu",
+    service="server",
+    time_to_start=1200,
+)
+print(sandbox.pool_name, sandbox.claim_name)
+await sandbox.screenshot()
+```
+
+A cold Windows claim can take about eight minutes. Keep `time_to_start` high
+enough for boot and computer-server readiness, and call `await sandbox.close()`
+when you are finished with the claim.
+
+On this Windows image, `shell.run` starts commands with `cmd.exe`. Invoke
+PowerShell explicitly when you need it:
+
+```python
+result = await sandbox.shell.run(
+    'powershell -NoProfile -Command "Get-ComputerInfo | Select-Object WindowsProductName, OsVersion"'
+)
+```
+
+Long guest commands can outlast the SDK's fixed response read timeout. Start
+long work detached with PowerShell `Start-Process`, redirect output to a log,
+and poll that log with short `shell.run` calls.
+
+## 3. Install ChatGPT desktop
+
+The host for native Computer Use is the Store-signed ChatGPT Windows app. The
+clean Fleet image does not include `winget`, so run this in an interactive
+PowerShell window in the VM:
+
+```powershell
+Set-Location $env:TEMP
+Invoke-WebRequest   https://persistent.oaistatic.com/codex-app-prod/ChatGPT-x64.msix   -OutFile ChatGPT-x64.msix -UseBasicParsing
+Invoke-WebRequest   https://persistent.oaistatic.com/codex-app-prod/ChatGPT-License.xml   -OutFile ChatGPT-License.xml -UseBasicParsing
+Add-AppxPackage -Package ChatGPT-x64.msix -LicenseFile ChatGPT-License.xml
+Get-AppxPackage -AllUsers *ChatGPT* | Select-Object Name, Version
+```
+
+Do not treat `Add-AppxPackage` launch as proof of installation. Confirm that
+the final command prints an installed package and version. That confirmation was
+not completed in the live run summarized above.
+
+If `winget` is available in a customized image, use:
+
+```powershell
+winget install --id 9PLM9XGG6VKS -s msstore
+```
+
+You can also open the [Microsoft Store installer](https://get.microsoft.com/installer/download/9PLM9XGG6VKS).
+The optional open-source CLI, installed with `npm install -g @openai/codex`
+after adding Node.js, is a separate interface. Codex-in-ChatGPT carries the
+native Computer Use plugin.
+
+## 4. Enable native Computer Use
+
+Keep the VM unlocked and its interactive desktop in the foreground:
+
+1. Launch ChatGPT desktop and sign in with the eligible account.
+2. Open **Work/Codex**, then **Plugins > Computer Use**. Select **Install plugin**,
+   enable it, turn on its server and skill toggles, and select **Try now**.
+3. Address the computer or an app with `@Computer` or `@AppName`. For example,
+   ask `@Calculator` to calculate `6 × 7`.
+
+Native Computer Use controls the active foreground desktop, including pointer
+and keyboard input. UI labels can change between ChatGPT desktop releases; if
+the path above differs, use the app's Computer Use settings and follow the
+[first-party Computer Use documentation](https://developers.openai.com/codex/computer-use).
+
+## 5. Configure the Windows app allowlist
+
+Add an executable to `$CODEX_HOME/config.toml` when it should not require a
+prompt each time:
+
+```toml
+[computer_use.windows]
+always_allowed_app_ids = ["mspaint.exe"]
+```
+
+Packaged Windows apps use application user model IDs (AUMIDs), not necessarily
+an `.exe` name. Computer Use prompts before controlling unlisted apps. Remove
+saved decisions under **Settings > Computer Use > Always allow**.
+
+Administrators can disable the feature in managed `requirements.toml`:
+
+```toml
+[features]
+computer_use = false
+```
+
+## 6. Reach the desktop service
+
+Fleet routes a declared guest service at:
+
+```text
+https://run.cua.ai/api/svc/<namespace>/<sandbox_name>-port-<N>/
+```
+
+Authenticate with the Bearer token returned by the OAuth client-credentials
+flow. Use the bound `sandbox.name`, not the claim name. In the Python pool,
+`server:8000` is computer-server; the Terraform example names the same target
+port `computer-server`.
+
+Declare every additional port when creating the pool. With the Python image API,
+`.expose(N)` declares a `port-N` Fleet service, but it does not install or
+start VNC/noVNC (or any other guest service):
+
+```python
+image = Image.windows("2022").expose(6080)
+```
+
+Prefer `sandbox.services.request()` for authenticated named-service requests.
+See [Connect to guest services and tunnels](/how-to-guides/sandbox/tunneling)
+for the supported routing contract.
+
+## Caveats
+
+- Native Computer Use is gated by ChatGPT account, plan, credentials, and region;
+  it cannot be validated with a mocked endpoint.
+- On Windows it controls only the foreground desktop. Keep the VM unlocked and
+  do not switch away from the active session during a task.
+- Published Windows images do not include production or commercial Windows
+  licensing. Bring and manage your own license for production use.
+- Warm replicas consume billable capacity until the pool is deleted or scaled
+  down. A stopped controller process cannot run its cleanup code.
+
+## Clean up
+
+Release the claim, then delete a pool you own when no other workload uses it:
+
+```python
+await sandbox.close()
+await pool.delete()
+```
+
+For a pool created by `Pool.apply()`, deletion removes the pool and its owned
+template, and namespace deletion follows. Independently rerun
+`await Pool.get("my-windows-pool")`; an HTTP 403 or 404 confirms that the
+credentials can no longer retrieve it. Do not create a replacement resource
+merely to obtain a cleanup handle.
+
+## Related documentation
+
+- [Cua Fleets](/cloud-fleets)
+- [Pool and claim reference](/reference/sandbox-sdk/pool)
+- [Sandbox runtime support](/reference/sandbox-sdk/runtime-support)
+- [Configure a sandbox pool with Terraform](/how-to-guides/sandbox/configure-pool-with-terraform)

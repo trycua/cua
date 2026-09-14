@@ -1,5 +1,6 @@
 use serde::Serialize;
 use serde_json::{json, Value};
+use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct NativeWindowRect {
@@ -93,6 +94,36 @@ pub fn observe_capture<T>(
     let captured = capture();
     let after = sample();
     (captured, assess(before, after, tolerance))
+}
+
+pub fn observe_capture_budgeted<T>(
+    mut sample: impl FnMut(Duration) -> (GeometrySample, Duration),
+    capture: impl FnOnce() -> T,
+    mut remaining: Duration,
+    tolerance: PointTolerance,
+) -> (T, GeometryAssessment) {
+    observe_capture(
+        || {
+            if remaining.is_zero() {
+                return GeometrySample::default();
+            }
+            let (result, elapsed) = sample(remaining);
+            let in_budget = elapsed <= remaining;
+            remaining = remaining.saturating_sub(elapsed);
+            if in_budget {
+                result
+            } else {
+                GeometrySample::default()
+            }
+        },
+        capture,
+        tolerance,
+    )
+}
+
+pub fn geometry_call_timeout(remaining: Duration, calls: u32, cap: Duration) -> Option<Duration> {
+    let timeout = remaining.checked_div(calls)?.min(cap);
+    (!timeout.is_zero()).then_some(timeout)
 }
 
 pub fn assess(

@@ -1,6 +1,6 @@
 use core_foundation::base::{CFType, TCFType};
 use cua_driver_core::native_window_geometry::{
-    GeometryAssessment, GeometrySample, NativeWindowRect, PointTolerance,
+    geometry_call_timeout, GeometryAssessment, GeometrySample, NativeWindowRect, PointTolerance,
 };
 use std::time::{Duration, Instant};
 
@@ -18,21 +18,14 @@ pub(crate) fn observe_capture<T>(
     window_id: u32,
     capture: impl FnOnce() -> T,
 ) -> (T, GeometryAssessment) {
-    let mut remaining = METADATA_BUDGET;
-    cua_driver_core::native_window_geometry::observe_capture(
-        || {
+    cua_driver_core::native_window_geometry::observe_capture_budgeted(
+        |remaining| {
             let started = Instant::now();
             let sample = sample(pid, window_id, started + remaining);
-            let elapsed = started.elapsed();
-            let in_budget = elapsed <= remaining;
-            remaining = remaining.saturating_sub(elapsed);
-            if in_budget {
-                sample
-            } else {
-                GeometrySample::default()
-            }
+            (sample, started.elapsed())
         },
         capture,
+        METADATA_BUDGET,
         PointTolerance::new(POINT_TOLERANCE).unwrap(),
     )
 }
@@ -55,11 +48,10 @@ fn sample(pid: i32, window_id: u32, deadline: Instant) -> GeometrySample {
 
 fn set_timeout(element: AXUIElementRef, deadline: Instant, calls: u32) -> bool {
     let remaining = deadline.saturating_duration_since(Instant::now());
-    if remaining.is_zero() {
+    let Some(timeout) = geometry_call_timeout(remaining, calls, Duration::from_millis(25)) else {
         return false;
-    }
-    let seconds = (remaining / calls).as_secs_f32().min(0.025);
-    seconds > 0.0 && unsafe { AXUIElementSetMessagingTimeout(element, seconds) == 0 }
+    };
+    unsafe { AXUIElementSetMessagingTimeout(element, timeout.as_secs_f32()) == 0 }
 }
 
 fn logical_rect(pid: i32, window_id: u32, deadline: Instant) -> Option<NativeWindowRect> {

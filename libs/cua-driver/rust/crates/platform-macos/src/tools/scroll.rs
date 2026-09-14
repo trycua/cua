@@ -382,7 +382,13 @@ impl Tool for ScrollTool {
                 // reveal the target before taking the screen-space center;
                 // otherwise the wheel is posted outside the rendered window
                 // and nested overflow regions never receive it.
-                after_exact_target_gate(semantic_gate, || unsafe {
+                let geometry_gate = semantic_gate.and_then(|()| {
+                    wid.map_or(Ok(()), |wid| {
+                        super::px_frame::verify_native_geometry(pid, wid)
+                            .map_err(|error| super::px_frame::refusal(&error))
+                    })
+                });
+                after_exact_target_gate(geometry_gate, || unsafe {
                     crate::ax::bindings::perform_action(
                         element_ptr as AXUIElementRef,
                         "AXScrollToVisible",
@@ -390,10 +396,6 @@ impl Tool for ScrollTool {
                 })?;
                 std::thread::sleep(std::time::Duration::from_millis(40));
                 let center = unsafe { element_screen_center(element_ptr as AXUIElementRef) };
-                if let (Some(wid), Some(_)) = (wid, center) {
-                    super::px_frame::verify_native_geometry(pid, wid)
-                        .map_err(|error| super::px_frame::refusal(&error))?;
-                }
                 Ok(center.map(|(cx, cy)| {
                     let win_local = wid
                         .and_then(crate::windows::window_bounds_by_id)

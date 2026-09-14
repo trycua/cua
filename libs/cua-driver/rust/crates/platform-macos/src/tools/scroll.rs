@@ -188,9 +188,9 @@ impl Tool for ScrollTool {
         let amount = args.u64_or("amount", 3) as usize;
         // Surface 6: element_token / element_index precedence.
         let element_token_arg = args.opt_str("element_token");
-        let window_id_arg = args.opt_u64("window_id").map(|v| v as u32);
+        let window_id_arg = args.opt_u64("window_id");
         let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match cua_driver_core::element_token::resolve_element_args(
+        let resolved = match self.state.element_cache.resolve_element_args(
             pid,
             element_index_arg,
             element_token_arg.as_deref(),
@@ -201,46 +201,20 @@ impl Tool for ScrollTool {
             Ok(r) => r,
             Err(e) => return e,
         };
-        let (element_index, window_id) = match resolved {
-            cua_driver_core::element_token::ResolvedElement::None => (None, window_id_arg),
-            cua_driver_core::element_token::ResolvedElement::Element {
-                window_id: wid,
-                element_index: idx,
-                via_token: _,
-            } => (Some(idx), wid),
-        };
-
-        // Resolve the pre-focus element pointer (if requested) outside
-        // the suppression closure — only the focus_element() write itself
-        // needs to run under suppression, the cache lookup does not.
-        // Retain out of the cache so a concurrent get_window_state can't free
-        // the element before the suppressed focus below dereferences it
-        // (use-after-free → daemon crash). Guard lives to method end.
-        let pre_focus_guard = if let (Some(idx), Some(wid)) = (element_index, window_id) {
-            self.state.element_cache.get_element_retained(pid, wid, idx)
-        } else {
-            None
+        let (_, window_id, pre_focus_guard) = resolved.into_parts(window_id_arg);
+        let window_id = match super::native_window_id(window_id) {
+            Ok(window_id) => window_id,
+            Err(error) => return error,
         };
         let pre_focus_ptr: Option<usize> = pre_focus_guard.as_ref().map(|g| g.as_ptr());
 
-        // An element target was explicitly requested (element_index/element_token)
-        // but couldn't be retained from the cache — the snapshot is stale. Fail
-        // loudly instead of silently falling through to the keystroke/page
-        // scroller below, which would scroll the wrong thing.
-        if let Some(idx) = element_index {
-            if pre_focus_guard.is_none() {
-                return ToolResult::error(format!(
-                    "Element index {idx} not found. Call get_window_state first."
-                ));
-            }
-        }
         let mut _mutation_lease: Option<super::BackgroundMutationLease> = None;
 
         // AppKit exposes vertical scroll-bar buttons beneath the text area's
         // AXScrollArea parent. Pressing those controls is a true
         // background-safe scroll: no activation, z-order change, or cursor move.
         if matches!(direction.as_str(), "up" | "down") {
-            if let (Some(index), Some(wid)) = (element_index, window_id) {
+            if let (Some(element_guard), Some(wid)) = (pre_focus_guard.clone(), window_id) {
                 if !delivery_mode.is_foreground() {
                     if let Some(lease) = _mutation_lease.as_ref() {
                         if let Err(refusal_result) = lease
@@ -267,18 +241,11 @@ impl Tool for ScrollTool {
                         }
                     }
                 }
-                let native_element_guard = self
-                    .state
-                    .element_cache
-                    .get_element_retained(pid, wid, index);
                 let direction_for_ax = direction.clone();
                 let by_for_ax = by.clone();
                 let foreground = delivery_mode.is_foreground();
                 let ax_result =
                     tokio::task::spawn_blocking(move || -> anyhow::Result<(bool, bool)> {
-                        let Some(element_guard) = native_element_guard else {
-                            return Ok((false, false));
-                        };
                         if foreground {
                             let mut delivered = false;
                             let fronted = crate::input::skylight::with_foreground_assist(
@@ -407,7 +374,9 @@ impl Tool for ScrollTool {
             // coordinates and window bounds are logical top-left points, so no
             // Retina scaling is needed here.
             let wid = window_id;
+            let target_guard = pre_focus_guard.clone();
             let target_task = tokio::task::spawn_blocking(move || {
+                let _target_guard = target_guard;
                 // Web content can be present in AX while its frame is below
                 // the outer page viewport. Ask the accessibility hierarchy to
                 // reveal the target before taking the screen-space center;
@@ -669,9 +638,9 @@ impl Tool for ScrollTool {
             || async move {
                 // Pre-focus the element under suppression so its
                 // side-effects are captured by the snapshot + lease.
-                if let Some(element_ptr) = pre_focus_ptr {
+                if let Some(guard) = pre_focus_guard {
                     let _ = tokio::task::spawn_blocking(move || {
-                        crate::input::ax_actions::focus_element(element_ptr)
+                        crate::input::ax_actions::focus_element(guard.as_ptr())
                     })
                     .await;
                     tokio::time::sleep(std::time::Duration::from_millis(30)).await;

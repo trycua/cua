@@ -348,9 +348,9 @@ impl Tool for ClickTool {
         // stale token returns an explicit error instead of silently
         // falling back to the integer (Surface 6 hard constraint).
         let element_token_arg = args.opt_str("element_token");
-        let window_id_arg = args.opt_u64("window_id").map(|v| v as u32);
+        let window_id_arg = args.opt_u64("window_id");
         let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match cua_driver_core::element_token::resolve_element_args(
+        let resolved = match self.state.element_cache.resolve_element_args(
             pid,
             element_index_arg,
             element_token_arg.as_deref(),
@@ -361,13 +361,10 @@ impl Tool for ClickTool {
             Ok(r) => r,
             Err(e) => return e,
         };
-        let (element_index, window_id, _via_token) = match resolved {
-            cua_driver_core::element_token::ResolvedElement::None => (None, window_id_arg, false),
-            cua_driver_core::element_token::ResolvedElement::Element {
-                window_id: wid,
-                element_index: idx,
-                via_token,
-            } => (Some(idx), wid, via_token),
+        let (element_index, window_id, element_guard) = resolved.into_parts(window_id_arg);
+        let window_id = match super::native_window_id(window_id) {
+            Ok(window_id) => window_id,
+            Err(error) => return error,
         };
         let x = args
             .opt_f64("x")
@@ -421,21 +418,9 @@ impl Tool for ClickTool {
             }));
         }
 
-        if let (Some(idx), Some(wid)) = (element_index, window_id) {
-            // ── AX element path ────────────────────────────────────────────
-            // Retain the element out of the cache so it can't be freed by a
-            // concurrent get_window_state on the same (pid, window_id) while
-            // this click is mid-flight (use-after-free → daemon crash). The
-            // guard lives to the end of this method, past the AX action below.
-            let element_guard = match self.state.element_cache.get_element_retained(pid, wid, idx) {
-                Some(e) => e,
-                None => {
-                    return ToolResult::error(format!(
-                        "Element index {idx} not found in cache for pid={pid} window_id={wid}. \
-                     Call get_window_state first."
-                    ))
-                }
-            };
+        if let (Some(idx), Some(wid), Some(element_guard)) =
+            (element_index, window_id, element_guard)
+        {
             let element_ptr = element_guard.as_ptr();
 
             // ── Exact-target background gate (macOS background input v1) ──
@@ -471,9 +456,9 @@ impl Tool for ClickTool {
 
             // Animate cursor to element center BEFORE firing AX action,
             // mirroring Swift's `performElementClick` → `animateAndWait(to:)`.
-            let center_ptr = element_ptr;
+            let center_guard = element_guard.clone();
             let center = tokio::task::spawn_blocking(move || unsafe {
-                crate::ax::bindings::element_screen_center(center_ptr as AXUIElementRef)
+                crate::ax::bindings::element_screen_center(center_guard.as_ptr() as AXUIElementRef)
             })
             .await
             .ok()
@@ -554,9 +539,12 @@ impl Tool for ClickTool {
             // elements so perform_ax_click can cross that one failed semantic
             // rung internally and confirm the result by AX read-back.
             let selection_candidate = if effective_action == "press" {
+                let selection_guard = element_guard.clone();
                 tokio::task::spawn_blocking(move || {
-                    crate::input::ax_actions::nearest_container_selection_state(element_ptr)
-                        .is_some()
+                    crate::input::ax_actions::nearest_container_selection_state(
+                        selection_guard.as_ptr(),
+                    )
+                    .is_some()
                 })
                 .await
                 .unwrap_or(false)
@@ -630,6 +618,7 @@ impl Tool for ClickTool {
                 "click.AXPress",
                 || async move {
                     tokio::task::spawn_blocking(move || {
+                        let element_ptr = element_guard.as_ptr();
                         if foreground {
                             let mut outcome = None;
                             let has_modifiers = !selection_modifiers.is_empty();

@@ -83,15 +83,34 @@ fn harness_appkit_native_geometry_mismatch_refuses_pixel_without_side_effects() 
             "calibrate native input: {}",
             calibration.text()
         );
+        let reveal_snapshot = snapshot_elements(&mut driver, harness.pid, wid);
+        let reveal_calibration = driver.call(
+            "scroll",
+            serde_json::json!({
+                "pid": harness.pid, "window_id": wid,
+                "element_token": element_token_by_id(&reveal_snapshot, "geometry-increment"),
+                "direction": "down", "amount": 1
+            }),
+        );
+        save_response(&directory, "reveal-calibration.json", &reveal_calibration);
+        assert!(
+            !reveal_calibration.is_error(),
+            "calibrate reveal: {}",
+            reveal_calibration.text()
+        );
         let calibrated = fixture_state(&directory, |state| {
-            state["input_events"].as_array().is_some_and(|events| {
-                events
-                    .iter()
-                    .any(|event| event["type"] == 25 && event["window_id"] == wid)
-                    && events
+            state["reveals"] == 1
+                && state["input_events"].as_array().is_some_and(|events| {
+                    events
                         .iter()
-                        .any(|event| event["type"] == 26 && event["window_id"] == wid)
-            })
+                        .any(|event| event["type"] == 25 && event["window_id"] == wid)
+                        && events
+                            .iter()
+                            .any(|event| event["type"] == 26 && event["window_id"] == wid)
+                        && events
+                            .iter()
+                            .any(|event| event["type"] == 22 && event["window_id"] == wid)
+                })
         });
         std::fs::write(
             directory.join("calibrated.json"),
@@ -207,7 +226,7 @@ fn harness_appkit_native_geometry_mismatch_refuses_pixel_without_side_effects() 
             )
             .unwrap();
             assert_eq!(
-                after_scroll["reveals"], 0,
+                after_scroll["reveals"], calibrated["reveals"],
                 "refused wheel fallback revealed its element"
             );
             std::thread::sleep(Duration::from_millis(750));

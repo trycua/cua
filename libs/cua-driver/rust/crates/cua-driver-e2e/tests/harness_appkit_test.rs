@@ -802,6 +802,59 @@ fn harness_appkit_text_input() {
     );
 }
 
+/// A text control does not advertise `AXPress`, so a click used to dispatch
+/// one anyway and report `-25206` plus "Action may have been a no-op" on the
+/// route that works. A click on a text role means "put the caret here": the
+/// proof is that the next unaddressed `type_text` lands in that field.
+#[test]
+#[ignore]
+fn harness_appkit_click_on_a_text_role_focuses_it() {
+    run_background_case(
+        "click_text_focus",
+        DriverRoute::MacosAxValue,
+        |pid, wid, driver| {
+            let before = snapshot_elements(driver, pid, wid);
+            let clicked = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "element_token": element_token_by_id(&before, "txt-input")
+                }),
+            );
+            assert!(!clicked.is_error(), "click failed: {}", clicked.text());
+            assert!(
+                !clicked.text().contains("does not advertise"),
+                "a text role still had an AXPress dispatched at it: {}",
+                clicked.text()
+            );
+            assert_eq!(
+                clicked.action_effect(),
+                Some("confirmed"),
+                "focusing a text control is read-back verifiable: {}",
+                clicked.raw
+            );
+
+            let typed = driver.call(
+                "type_text",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "text": "focus-cua"
+                }),
+            );
+            assert!(!typed.is_error(), "type_text failed: {}", typed.text());
+            std::thread::sleep(Duration::from_millis(250));
+            let after = snapshot_elements(driver, pid, wid);
+            assert!(
+                after.tree_text().contains("focus-cua"),
+                "the click did not leave the field focused:\n{}",
+                after.tree_text()
+            );
+        },
+    );
+}
+
 #[test]
 #[ignore]
 fn harness_appkit_element_foreground_press_key_commits_edit() {

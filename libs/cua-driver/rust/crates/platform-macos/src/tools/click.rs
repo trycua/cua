@@ -1303,6 +1303,109 @@ impl Tool for ClickTool {
 
 // ── AX click implementation (blocking) ───────────────────────────────────────
 
+/// Roles whose click gesture is "put the caret here" rather than "activate".
+/// None of them advertise `AXPress`.
+fn is_text_entry_role(role: &str) -> bool {
+    matches!(
+        role,
+        "AXTextField"
+            | "AXTextArea"
+            | "AXSecureTextField"
+            | "AXSearchField"
+            | "AXComboBox"
+            | "AXDateField"
+            | "AXTimeField"
+    )
+}
+
+/// An `AXFocused` write can be accepted and then clobbered when AppKit
+/// installs the window's remembered first responder, so the write is read back
+/// rather than trusted.
+const FOCUS_READBACK_SETTLE: std::time::Duration = std::time::Duration::from_millis(80);
+
+/// Focus a text control, proving it through the application's own
+/// `AXFocusedUIElement`, and escalate to a pointer click at the control's
+/// centre when the `AXFocused` write does not stick.
+fn focus_text_entry(
+    element_ptr: usize,
+    idx: usize,
+    pid: i32,
+    window_id: u32,
+    role: &str,
+    title: &str,
+    pixel: Option<SelectionPixelTarget>,
+    foreground: bool,
+) -> anyhow::Result<(String, bool, bool, bool, bool)> {
+    let ax_accepted = crate::input::ax_actions::focus_element(element_ptr).is_ok();
+    if ax_accepted {
+        std::thread::sleep(FOCUS_READBACK_SETTLE);
+        if crate::input::ax_actions::is_element_focused(pid, element_ptr) {
+            return Ok((
+                format!(
+                    "✅ Focused [{idx}] {role} \"{title}\": a text control has no AXPress \
+                     action, so the click set keyboard focus, confirmed through the \
+                     application's own AXFocusedUIElement."
+                ),
+                false,
+                false,
+                true,
+                false,
+            ));
+        }
+    }
+
+    let Some(target) = pixel else {
+        anyhow::bail!(
+            "{role} has no AXPress action, the AXFocused write {}, and no resolvable \
+             on-window frame was available for a pointer click; take a fresh snapshot and \
+             click by pixel",
+            if ax_accepted {
+                "did not stick"
+            } else {
+                "was rejected"
+            }
+        );
+    };
+    crate::input::mouse::click_at_xy_with_window_local(
+        pid,
+        target.screen_x,
+        target.screen_y,
+        target.window_x,
+        target.window_y,
+        window_id,
+        1,
+        &[],
+        crate::input::mouse::WindowClickDelivery::from_foreground(foreground),
+    )?;
+    std::thread::sleep(FOCUS_READBACK_SETTLE);
+    if crate::input::ax_actions::is_element_focused(pid, element_ptr) {
+        return Ok((
+            format!(
+                "✅ Focused [{idx}] {role} \"{title}\" at its centre ({:.0}, {:.0}): the \
+                 AXFocused write did not stick, so a pointer click was delivered and \
+                 confirmed through the application's own AXFocusedUIElement.",
+                target.screen_x, target.screen_y
+            ),
+            false,
+            false,
+            true,
+            true,
+        ));
+    }
+    Ok((
+        format!(
+            "📨 Clicked [{idx}] {role} \"{title}\" at its centre ({:.0}, {:.0}): a text \
+             control has no AXPress action, so focus was written and a pointer click \
+             delivered, but the application still reports another element focused.",
+            target.screen_x, target.screen_y
+        ),
+        false,
+        false,
+        false,
+        true,
+    ))
+}
+
 /// Returns `(summary_text, needs_webkit_delay, suspected_noop,
 /// selection_verified, selection_via_pixel)`.
 ///
@@ -1452,6 +1555,19 @@ fn perform_ax_click(
                  transition while preserving the prior selection; \
                  before_selected={before}, last_readback={last_observation:?}; \
                  take a fresh snapshot before retrying"
+            );
+        }
+
+        if modifiers.is_empty() && is_text_entry_role(&role) {
+            return focus_text_entry(
+                element_ptr,
+                idx,
+                pid,
+                window_id,
+                &role,
+                &title,
+                selection_pixel,
+                foreground,
             );
         }
     }

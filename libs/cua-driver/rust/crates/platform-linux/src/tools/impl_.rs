@@ -889,9 +889,10 @@ impl Tool for GetWindowStateTool {
                         state.element_cache.update(pid, xid, &tr.nodes);
                     }
                     structured["element_count"] = json!(count);
-                    // AT-SPI's current bounded walker does not surface an
-                    // exhaustive-walk proof. Keep negative existence unknown.
-                    structured["elements_complete"] = json!(false);
+                    // The walker reports whether the enumeration was
+                    // exhaustive for this window, so negative existence is
+                    // provable instead of permanently unknown (#3812).
+                    structured["elements_complete"] = json!(tr.elements_complete);
                     structured["tree_markdown"] = json!(tr.tree_markdown);
 
                     // Surface 6: register a snapshot in the global token

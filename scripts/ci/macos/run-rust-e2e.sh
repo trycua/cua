@@ -350,6 +350,7 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
     harness_appkit_invoke_menu_live_path \
     harness_appkit_text_input \
     harness_appkit_element_foreground_press_key_commits_edit \
+    harness_appkit_foreground_press_key_chord_carries_its_modifiers \
     harness_appkit_modified_click_preserves_selection \
     harness_appkit_type_text_background \
     harness_appkit_scroll_foreground \

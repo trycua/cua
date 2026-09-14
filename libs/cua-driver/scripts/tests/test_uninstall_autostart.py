@@ -26,6 +26,7 @@ def _sandbox(tmp_path: Path, os_name: str) -> tuple[Path, Path, dict[str, str]]:
     host_bin.mkdir()
     _write_executable(host_bin / "pgrep", "exit 2\n")
 
+    _write_executable(fake_bin / "pgrep", "exit 1\n")
     _write_executable(fake_bin / "uname", f"printf '%s\\n' '{os_name}'\n")
     for command in ("launchctl", "systemctl", "tccutil", "sudo"):
         _write_executable(

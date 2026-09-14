@@ -5133,6 +5133,10 @@ fn read_focused_value_uia(expect_pid: u32) -> Option<String> {
 
 // ── press_key ─────────────────────────────────────────────────────────────────
 
+#[cfg(test)]
+#[path = "keyboard_producer_tests.rs"]
+mod keyboard_producer_tests;
+
 pub struct PressKeyTool {
     state: Arc<ToolState>,
 }

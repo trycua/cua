@@ -916,8 +916,7 @@ fn sdk_background_click(fixture: &Fixture, token: String) -> ClickInput {
     }
 }
 
-fn run_typed_sdk_native_window(fixture: &mut Fixture) -> Observation {
-    let runtime = tokio::runtime::Runtime::new().expect("SDK test runtime");
+fn native_sdk() -> std::sync::Arc<CuaDriver> {
     // The macOS harness authorizes the installed daemon, not cargo's test
     // executable. Exercise the typed SDK over that verified native backend.
     #[cfg(target_os = "macos")]
@@ -953,6 +952,12 @@ fn run_typed_sdk_native_window(fixture: &mut Fixture) -> Observation {
         .expect("create in-process native SDK runtime")
     };
 
+    sdk
+}
+
+fn run_typed_sdk_native_window(fixture: &mut Fixture) -> Observation {
+    let runtime = tokio::runtime::Runtime::new().expect("SDK test runtime");
+    let sdk = native_sdk();
     runtime.block_on(async {
         let apps = sdk
             .list_apps(ListAppsInput {})
@@ -996,7 +1001,7 @@ fn run_typed_sdk_native_window(fixture: &mut Fixture) -> Observation {
         );
         let journal_before = fixture.journal.snapshot();
         let stale = sdk
-            .click(sdk_background_click(fixture, stale_token))
+            .click(sdk_background_click(fixture, stale_token.clone()))
             .await
             .expect_err("stale SDK token must refuse");
         assert!(
@@ -1038,6 +1043,20 @@ fn run_typed_sdk_native_window(fixture: &mut Fixture) -> Observation {
             "mismatched SDK window identity changed fixture state"
         );
 
+        sdk_keyboard_target_refusals(
+            &sdk,
+            fixture,
+            &stale_token,
+            &current_token,
+            other_window.window_id,
+            current.elements.as_ref().unwrap().iter()
+                .find(|element| element.element_token.as_deref() != Some(&current_token))
+                .unwrap().element_index,
+        ).await;
+
+        #[cfg(not(target_os = "macos"))]
+        sdk_keyboard_runtime_isolation(&sdk, fixture, &current_token).await;
+
         sdk.click(sdk_background_click(fixture, current_token.clone()))
             .await
             .expect("typed background element click");
@@ -1058,6 +1077,131 @@ fn run_typed_sdk_native_window(fixture: &mut Fixture) -> Observation {
         sdk.shutdown().await.expect("shut down typed SDK client");
     });
     delivered_observation()
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn sdk_keyboard_runtime_isolation(sdk: &CuaDriver, fixture: &Fixture, owner_token: &str) {
+    let other = native_sdk();
+    let snapshot = other
+        .get_window_state(sdk_window_input(fixture))
+        .await
+        .unwrap();
+    let other_token = sdk_click_token(&snapshot);
+    let before = fixture.journal.snapshot();
+    for tool in ["press_key", "hotkey"] {
+        let mut args = serde_json::json!({"pid": fixture.pid, "window_id": fixture.wid,
+            "element_token": owner_token, "delivery_mode": "foreground"});
+        if tool == "press_key" {
+            args["key"] = serde_json::json!("return");
+        } else {
+            args["keys"] = serde_json::json!(["ctrl", "shift", "h"]);
+        }
+        let response = other
+            .call_tool(tool.into(), args.to_string())
+            .await
+            .unwrap();
+        assert!(response.is_error, "{response:?}");
+        assert_eq!(
+            response.error_code.as_deref(),
+            Some("generation_mismatch"),
+            "{response:?}"
+        );
+    }
+    other.shutdown().await.unwrap();
+    for tool in ["press_key", "hotkey"] {
+        let mut args = serde_json::json!({"pid": fixture.pid, "window_id": fixture.wid,
+            "element_token": other_token, "delivery_mode": "foreground"});
+        if tool == "press_key" {
+            args["key"] = serde_json::json!("return");
+        } else {
+            args["keys"] = serde_json::json!(["ctrl", "shift", "h"]);
+        }
+        let response = sdk.call_tool(tool.into(), args.to_string()).await.unwrap();
+        assert!(response.is_error, "{response:?}");
+        assert_eq!(
+            response.error_code.as_deref(),
+            Some("generation_mismatch"),
+            "{response:?}"
+        );
+        assert!(
+            other
+                .call_tool(tool.into(), args.to_string())
+                .await
+                .is_err(),
+            "closed runtime admitted keyboard input"
+        );
+    }
+    thread::sleep(Duration::from_millis(150));
+    assert_eq!(
+        fixture.journal.snapshot(),
+        before,
+        "foreign or retired runtime input reached the fixture"
+    );
+}
+
+async fn sdk_keyboard_target_refusals(
+    sdk: &CuaDriver,
+    fixture: &Fixture,
+    stale: &str,
+    current: &str,
+    other_window: u64,
+    other_index: u64,
+) {
+    let before = fixture.journal.snapshot();
+    for tool in ["press_key", "hotkey"] {
+        for (token, window, index, codes) in [
+            (stale, fixture.wid, None, &["stale_element_token"][..]),
+            (
+                current,
+                other_window,
+                None,
+                &[
+                    "conflicting_element_target",
+                    "window_target_not_found",
+                    "window_target_mismatch",
+                ][..],
+            ),
+            (
+                current,
+                fixture.wid,
+                Some(other_index),
+                &["conflicting_element_target"][..],
+            ),
+        ] {
+            let mut args = serde_json::json!({
+                "pid": fixture.pid,
+                "window_id": window,
+                "element_token": token,
+                "delivery_mode": "foreground",
+            });
+            if tool == "press_key" {
+                args["key"] = serde_json::json!("return");
+            } else {
+                args["keys"] = serde_json::json!(["ctrl", "shift", "h"]);
+            }
+            if let Some(index) = index {
+                args["element_index"] = serde_json::json!(index);
+            }
+            let result = sdk
+                .call_tool(tool.into(), args.to_string())
+                .await
+                .expect("keyboard refusal must retain the SDK transport");
+            assert!(
+                result.is_error,
+                "{tool} accepted an invalid native target: {result:?}"
+            );
+            assert!(
+                codes.contains(&result.error_code.as_deref().unwrap_or_default()),
+                "{tool}: {result:?}"
+            );
+            thread::sleep(Duration::from_millis(150));
+            assert_eq!(
+                fixture.journal.snapshot(),
+                before,
+                "{tool} mutated the fixture on refusal"
+            );
+        }
+    }
 }
 
 fn browser_ref_by_label(snapshot: &ToolResponse, label_fragment: &str) -> String {

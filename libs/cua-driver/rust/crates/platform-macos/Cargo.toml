@@ -73,6 +73,7 @@ tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
 futures-util = "0.3"
 
 [dev-dependencies]
+cua-driver-testkit = { path = "../cua-driver-testkit" }
 tempfile = "3"
 
 [[test]]

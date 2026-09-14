@@ -144,16 +144,6 @@ jobs:
         run: |
           xvfb-run -a cargo test -p platform-linux --test key_input_x11 \
             --locked -- --ignored --nocapture --test-threads=1
-      - name: Run keyboard tool and terminal contract regressions
-        working-directory: libs/cua-driver/rust
-        run: |
-          xvfb-run -a dbus-run-session -- bash -c '
-            openbox >/tmp/cua-keyboard-openbox.log 2>&1 &
-            wm=$!
-            trap "kill $wm 2>/dev/null || true" EXIT
-            cargo test -p platform-linux --test keyboard_tools_x11 --test terminal_keyboard_x11 \
-              --locked -- --ignored --nocapture --test-threads=1
-          '
       - name: Run X11 overlay click-through regression
         working-directory: libs/cua-driver/rust
         run: |
@@ -221,3 +211,17 @@ jobs:
       - name: Compile portable GNOME/KDE portal input
         working-directory: libs/cua-driver/rust
         run: cargo check -p cua-driver --features portal-input --locked
+      - name: Run keyboard producer, tool, and terminal contract regressions
+        working-directory: libs/cua-driver/rust
+        run: |
+          xvfb-run -a dbus-run-session -- bash -c '
+            openbox >/tmp/cua-keyboard-openbox.log 2>&1 &
+            wm=$!
+            trap "kill $wm 2>/dev/null || true" EXIT
+            status=0
+            cargo test -p platform-linux --test keyboard_tools_x11 --test terminal_keyboard_x11 \
+              --locked -- --ignored --nocapture --test-threads=1 || status=$?
+            cargo test -p platform-linux --lib keyboard_producer_tests \
+              --locked -- --ignored --nocapture --test-threads=1 || status=$?
+            exit "$status"
+          '

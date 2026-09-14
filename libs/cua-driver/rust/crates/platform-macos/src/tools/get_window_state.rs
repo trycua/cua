@@ -34,7 +34,8 @@ fn def() -> &'static ToolDef {
             indexed row with `element_index`, `role`, `label`, `value` (the \
             element's text/AXValue when present — use it to verify what a field \
             holds), `actions` (names of AX actions exposed by the element, \
-            omitted when empty), `frame: {x,y,w,h}`, `parent_index`, `depth`). The markdown \
+            omitted when empty), `url` (a link's navigation target, on link rows \
+            that expose one), `frame: {x,y,w,h}`, `parent_index`, `depth`). The markdown \
             `tree_markdown` stays available \
             and unchanged in shape for existing text-parsing callers — but new \
             fields will only be added to the structured side.\n\n\
@@ -934,6 +935,12 @@ pub(crate) fn build_elements_array_with_token(
             if node.in_web_content {
                 entry["in_web_content"] = serde_json::Value::Bool(true);
             }
+            // A link's navigation target (AXURL). Without it a caller reading
+            // web content could see a link's text but not where it leads, and
+            // would have to press it to find out.
+            if let Some(url) = node.url.clone() {
+                entry["url"] = serde_json::Value::String(url);
+            }
             if let Some(frame) = frame {
                 entry["frame"] = frame;
             }
@@ -1153,6 +1160,7 @@ mod tests {
             max_value: None,
             enabled: None,
             selected: None,
+            url: None,
             in_web_content: false,
         }
     }
@@ -1392,6 +1400,22 @@ mod tests {
     }
 
     #[test]
+    fn elements_surface_link_url() {
+        let mut nodes = vec![node(
+            Some(0),
+            "AXLink",
+            Some("Background mode"),
+            2,
+            None,
+            None,
+            vec!["AXPress".into()],
+        )];
+        nodes[0].url = Some("https://example.com/docs/guides/background".into());
+        let entry = &build_elements_array_with_token(&nodes, None)[0];
+        assert_eq!(entry["url"], "https://example.com/docs/guides/background");
+    }
+
+    #[test]
     fn checkbox_value_state_normalizes_to_selected() {
         let mut nodes = vec![node(
             Some(0),
@@ -1412,7 +1436,14 @@ mod tests {
         // Stock behaviour is unchanged for elements without control state.
         let nodes = vec![node(Some(0), "AXButton", Some("OK"), 0, None, None, vec![])];
         let entry = &build_elements_array_with_token(&nodes, None)[0];
-        for key in ["value_description", "min", "max", "enabled", "selected"] {
+        for key in [
+            "value_description",
+            "min",
+            "max",
+            "enabled",
+            "selected",
+            "url",
+        ] {
             assert!(entry.get(key).is_none(), "{key} must be omitted");
         }
     }

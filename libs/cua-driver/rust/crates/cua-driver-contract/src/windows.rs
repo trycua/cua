@@ -227,6 +227,9 @@ pub struct WindowElement {
     pub min: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max: Option<f64>,
+    /// Navigation target of a link element, when the platform exposes one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]

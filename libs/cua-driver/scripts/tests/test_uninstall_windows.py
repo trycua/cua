@@ -14,7 +14,7 @@ FIXTURE = Path(__file__).with_name("uninstall-windows-fixture.ps1")
 
 
 def _run_uninstall(root: Path, overrides: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    for directory in ("profile", "localappdata", "appdata", "bin", "temp"):
+    for directory in ("profile", "localappdata", "appdata", "bin", "temp", "modules"):
         (root / directory).mkdir(parents=True, exist_ok=True)
     system_root = Path(os.environ["SystemRoot"])
     powershell = system_root / "System32/WindowsPowerShell/v1.0/powershell.exe"
@@ -27,7 +27,7 @@ def _run_uninstall(root: Path, overrides: dict[str, str]) -> subprocess.Complete
         "TMP": str(root / "temp"),
         "PATH": str(root / "bin"),
         "PATHEXT": ".EXE",
-        "PSModulePath": str(powershell.parent / "Modules"),
+        "PSModulePath": str(root / "modules"),
         "CUA_DRIVER_RS_UNINSTALL_FORCE": "1",
         **overrides,
     }

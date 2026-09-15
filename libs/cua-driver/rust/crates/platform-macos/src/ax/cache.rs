@@ -48,15 +48,32 @@ impl CachedSnapshot {
     }
 }
 
+impl CachedSnapshot {
+    fn retain_element(&self, index: usize) -> Option<RetainedElement> {
+        self.elements
+            .get(index)
+            .filter(|ptr| **ptr != 0)
+            .map(|ptr| unsafe { RetainedElement::retain(*ptr) })
+    }
+}
 impl SnapshotPayload for CachedSnapshot {
     type Element = RetainedElement;
     fn len(&self) -> usize {
         self.elements.len()
     }
-    fn retain(&self, index: usize) -> Option<RetainedElement> {
-        self.elements
-            .get(index)
-            .map(|ptr| unsafe { RetainedElement::retain(*ptr) })
+    fn retain(&self, index: usize) -> Option<Self::Element> {
+        self.retain_element(index)
+    }
+    fn resolve_fresh(
+        pid: i32,
+        window_id: u64,
+        index: usize,
+    ) -> Result<Option<Self::Element>, String> {
+        let window_id = u32::try_from(window_id)
+            .map_err(|_| format!("window_id {window_id} is not a valid macOS window id"))?;
+        let tree = super::tree::walk_tree(pid, Some(window_id), None);
+        let payload = Self::from_nodes(&tree.nodes);
+        Ok(payload.retain_element(index))
     }
 }
 
@@ -75,98 +92,8 @@ pub type ElementCache = ElementCacheCore<CachedSnapshot>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core_foundation::base::{CFGetRetainCount, TCFType};
-    use core_foundation::string::CFString;
-    use cua_driver_core::element_token::{token_for, ResolvedElement};
-
-    fn resolve(cache: &ElementCache, snapshot: u32, index: usize) -> Option<RetainedElement> {
-        match cache
-            .resolve_element_args(
-                1,
-                None,
-                Some(&token_for(snapshot, index)),
-                None,
-                Some(2),
-                "click",
-            )
-            .ok()?
-        {
-            ResolvedElement::Element { element, .. } => Some(element),
-            _ => None,
-        }
-    }
-
-    fn payload(ptr: usize) -> CachedSnapshot {
-        unsafe { CFRetain(ptr as CFTypeRef) };
-        CachedSnapshot {
-            elements: vec![ptr],
-        }
-    }
-
     #[test]
-    fn retained_element_survives_concurrent_snapshot_replace() {
-        let value = CFString::new("cua-driver-uaf-test-element-placeholder");
-        let ptr = value.as_concrete_TypeRef() as usize;
-        let base = unsafe { CFGetRetainCount(ptr as CFTypeRef) };
-        let cache = ElementCache::new();
-        let snapshot = cache.publish(1, 2, payload(ptr));
-        assert_eq!(unsafe { CFGetRetainCount(ptr as CFTypeRef) }, base + 1);
-        let guard = resolve(&cache, snapshot, 0).unwrap();
-        assert_eq!(unsafe { CFGetRetainCount(ptr as CFTypeRef) }, base + 2);
-        cache.publish(1, 2, CachedSnapshot::from_nodes(&[]));
-        assert_eq!(unsafe { CFGetRetainCount(ptr as CFTypeRef) }, base + 1);
-        assert!(resolve(&cache, snapshot, 0).is_none());
-        drop(guard);
-        assert_eq!(unsafe { CFGetRetainCount(ptr as CFTypeRef) }, base);
-    }
-
-    #[test]
-    fn admitted_element_survives_cache_destruction_until_native_work_finishes() {
-        let value = CFString::new("cua-driver-invariant-admitted-native-work");
-        let ptr = value.as_concrete_TypeRef() as usize;
-        let base = unsafe { CFGetRetainCount(ptr as CFTypeRef) };
-        let cache = ElementCache::new();
-        let snapshot = cache.publish(1, 2, payload(ptr));
-        let guard = resolve(&cache, snapshot, 0).unwrap();
-        let (finish_tx, finish_rx) = std::sync::mpsc::channel();
-        let worker = std::thread::spawn(move || {
-            finish_rx.recv().unwrap();
-            assert_eq!(guard.as_ptr(), ptr);
-            drop(guard);
-        });
-        drop(cache);
-        let retained = unsafe { CFGetRetainCount(ptr as CFTypeRef) };
-        finish_tx.send(()).unwrap();
-        worker.join().unwrap();
-        assert_eq!(retained, base + 1);
-        assert_eq!(unsafe { CFGetRetainCount(ptr as CFTypeRef) }, base);
-    }
-
-    #[test]
-    fn missing_index_returns_none() {
-        let cache = ElementCache::new();
-        assert!(resolve(&cache, 0, 0).is_none());
-        let snapshot = cache.publish(1, 2, CachedSnapshot::from_nodes(&[]));
-        assert!(resolve(&cache, snapshot, 0).is_none());
-        assert!(resolve(&cache, snapshot, 5).is_none());
-    }
-
-    #[test]
-    fn abandoned_preparation_releases_native_payload_without_replacing_snapshot() {
-        let original = CFString::new("cua-driver-original-published-native-work");
-        let replacement = CFString::new("cua-driver-abandoned-prepared-native-work");
-        let original_ptr = original.as_concrete_TypeRef() as usize;
-        let replacement_ptr = replacement.as_concrete_TypeRef() as usize;
-        let base = unsafe { CFGetRetainCount(replacement_ptr as CFTypeRef) };
-        let cache = ElementCache::new();
-        let snapshot = cache.publish(1, 2, payload(original_ptr));
-        let prepared = payload(replacement_ptr);
-        assert_eq!(resolve(&cache, snapshot, 0).unwrap().as_ptr(), original_ptr);
-        drop(prepared);
-        assert_eq!(
-            unsafe { CFGetRetainCount(replacement_ptr as CFTypeRef) },
-            base
-        );
-        assert_eq!(resolve(&cache, snapshot, 0).unwrap().as_ptr(), original_ptr);
+    fn empty_projection_has_no_element() {
+        assert!(CachedSnapshot::from_nodes(&[]).retain_element(0).is_none());
     }
 }

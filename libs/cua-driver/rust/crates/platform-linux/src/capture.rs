@@ -34,8 +34,18 @@ const MAX_CAPTURE_BYTES: usize = 1 << 30;
 /// after this backoff. Request/capture failures never use this path.
 const XSHM_INIT_RETRY_BACKOFF: Duration = Duration::from_secs(30);
 
-/// Capture a window by X11 XID. Returns raw PNG bytes.
+mod popup;
+
+/// Capture the exact X11 window canvas, including a verified foreground combo.
 pub fn screenshot_window_bytes(xid: u64) -> Result<Vec<u8>> {
+    if crate::wayland::is_wayland() {
+        return screenshot_window_bytes_raw(xid);
+    }
+    popup::capture(xid, screenshot_window_bytes_raw)
+}
+
+/// Raw per-drawable pixels; never recursively composes popups.
+fn screenshot_window_bytes_raw(xid: u64) -> Result<Vec<u8>> {
     capture_window_with_backends(
         xid,
         capture_via_xshm,

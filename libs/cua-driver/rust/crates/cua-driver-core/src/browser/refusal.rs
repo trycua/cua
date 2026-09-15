@@ -113,7 +113,112 @@ impl BrowserRefusal {
         self.detail = Some(detail);
         self
     }
+}
 
+/// Raw OS error number for "too many open files in this process"
+/// (EMFILE). Shared by Linux and macOS.
+pub const EMFILE_NUMBER: i32 = 24;
+/// Raw OS error number for "too many open files system-wide" (ENFILE).
+/// Shared by Linux and macOS.
+pub const ENFILE_NUMBER: i32 = 23;
+
+/// Recovery hint attached to descriptor-exhaustion inspection refusals.
+pub const DESCRIPTOR_EXHAUSTION_HINT: &str = "restart the driver service and raise the file-descriptor limit (e.g. `ulimit -n`) before retrying";
+
+/// True when an I/O error reports file-descriptor exhaustion, either via
+/// its raw OS error number (EMFILE/ENFILE) or via its message text.
+pub fn is_descriptor_exhaustion(error: &std::io::Error) -> bool {
+    match error.raw_os_error() {
+        Some(code) => code == EMFILE_NUMBER || code == ENFILE_NUMBER,
+        None => error
+            .to_string()
+            .to_ascii_lowercase()
+            .contains("too many open files"),
+    }
+}
+
+/// Best-effort snapshot of the current process's file-descriptor limit as
+/// `(soft, hard)`. Returns `None` when the limit cannot be read; callers
+/// must treat a missing snapshot as unknown rather than as healthy.
+#[cfg(unix)]
+pub fn descriptor_limit_snapshot() -> Option<(u64, u64)> {
+    let mut limits = std::mem::MaybeUninit::<libc::rlimit>::uninit();
+    if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, limits.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    let limits = unsafe { limits.assume_init() };
+    Some((limits.rlim_cur as u64, limits.rlim_max as u64))
+}
+
+/// No descriptor-limit introspection outside Unix; unknown, not healthy.
+#[cfg(not(unix))]
+pub fn descriptor_limit_snapshot() -> Option<(u64, u64)> {
+    None
+}
+
+/// Build a fail-closed refusal for a browser-inspection subprocess that
+/// could not be started. Ordinary spawn failures keep the historical
+/// `"{base}: {error}"` message with no detail. Descriptor exhaustion
+/// (EMFILE/ENFILE) keeps the same `BrowserRouteUnavailable` code but names
+/// the exhausted resource, the command that could not start, the inspected
+/// pid when known, the current descriptor limit when readable, and an
+/// actionable recovery hint.
+pub fn inspection_spawn_refusal(
+    base_message: impl Into<String>,
+    command: &str,
+    target_pid: Option<i64>,
+    error: &std::io::Error,
+) -> BrowserRefusal {
+    let base = base_message.into();
+    if !is_descriptor_exhaustion(error) {
+        return BrowserRefusal::new(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            format!("{base}: {error}"),
+        );
+    }
+    let message = format!(
+        "{base}: {error}; file-descriptor table exhausted while starting `{command}`; {DESCRIPTOR_EXHAUSTION_HINT}"
+    );
+    let mut detail = serde_json::Map::new();
+    detail.insert(
+        "resource".to_owned(),
+        serde_json::Value::String("file_descriptors".to_owned()),
+    );
+    detail.insert(
+        "command".to_owned(),
+        serde_json::Value::String(command.to_owned()),
+    );
+    if let Some(pid) = target_pid {
+        detail.insert(
+            "target_pid".to_owned(),
+            serde_json::Value::Number(pid.into()),
+        );
+    }
+    if let Some(code) = error.raw_os_error() {
+        detail.insert(
+            "os_error".to_owned(),
+            serde_json::Value::Number(code.into()),
+        );
+    }
+    if let Some((soft, hard)) = descriptor_limit_snapshot() {
+        detail.insert(
+            "descriptor_limit_soft".to_owned(),
+            serde_json::Value::Number(soft.into()),
+        );
+        detail.insert(
+            "descriptor_limit_hard".to_owned(),
+            serde_json::Value::Number(hard.into()),
+        );
+    }
+    detail.insert(
+        "hint".to_owned(),
+        serde_json::Value::String(DESCRIPTOR_EXHAUSTION_HINT.to_owned()),
+    );
+    BrowserRefusal::new(BrowserRefusalCode::BrowserRouteUnavailable, message)
+        .with_detail(Value::Object(detail))
+}
+
+impl BrowserRefusal {
     /// Render as a tool result. NOT an MCP protocol error: the call
     /// executed correctly and its outcome is the refusal, so `isError`
     /// stays unset and agents branch on `structuredContent.status`.
@@ -242,5 +347,74 @@ mod tests {
             v.get("detail").is_none(),
             "absent detail must not serialize: {v}"
         );
+    }
+
+    #[test]
+    fn descriptor_exhaustion_matches_emfile_and_enfile() {
+        let emfile = std::io::Error::from_raw_os_error(EMFILE_NUMBER);
+        let enfile = std::io::Error::from_raw_os_error(ENFILE_NUMBER);
+        assert!(is_descriptor_exhaustion(&emfile));
+        assert!(is_descriptor_exhaustion(&enfile));
+        assert!(!is_descriptor_exhaustion(&std::io::Error::from(
+            std::io::ErrorKind::NotFound
+        )));
+        assert!(!is_descriptor_exhaustion(
+            &std::io::Error::from_raw_os_error(2)
+        ));
+    }
+
+    #[test]
+    fn inspection_spawn_refusal_keeps_plain_mapping_for_ordinary_errors() {
+        let error = std::io::Error::from_raw_os_error(2);
+        let refusal =
+            inspection_spawn_refusal("could not inspect browser listeners", "lsof", None, &error);
+        assert_eq!(refusal.code, BrowserRefusalCode::BrowserRouteUnavailable);
+        assert_eq!(
+            refusal.message,
+            format!("could not inspect browser listeners: {error}")
+        );
+        assert!(
+            refusal.detail.is_none(),
+            "ordinary spawn errors carry no resource detail"
+        );
+    }
+
+    #[test]
+    fn inspection_spawn_refusal_names_resource_and_recovery_for_emfile() {
+        let error = std::io::Error::from_raw_os_error(EMFILE_NUMBER);
+        let refusal = inspection_spawn_refusal(
+            "could not inspect browser process 4242",
+            "ps",
+            Some(4242),
+            &error,
+        );
+        // Fail-closed: the code is unchanged, so agents keep branching on it.
+        assert_eq!(refusal.code, BrowserRefusalCode::BrowserRouteUnavailable);
+        assert!(
+            refusal
+                .message
+                .contains("could not inspect browser process 4242"),
+            "historical prefix must survive: {}",
+            refusal.message
+        );
+        assert!(
+            refusal.message.contains("`ps`") && refusal.message.contains("ulimit -n"),
+            "message must name the command and the recovery: {}",
+            refusal.message
+        );
+        let detail = refusal.detail.expect("exhaustion must carry detail");
+        assert_eq!(detail["resource"], "file_descriptors");
+        assert_eq!(detail["command"], "ps");
+        assert_eq!(detail["target_pid"], 4242);
+        assert_eq!(detail["os_error"], EMFILE_NUMBER);
+        assert_eq!(detail["hint"], DESCRIPTOR_EXHAUSTION_HINT);
+    }
+
+    #[test]
+    fn descriptor_limit_snapshot_never_panics() {
+        let snapshot = descriptor_limit_snapshot();
+        if let Some((soft, hard)) = snapshot {
+            assert!(soft > 0 && hard >= soft);
+        }
     }
 }

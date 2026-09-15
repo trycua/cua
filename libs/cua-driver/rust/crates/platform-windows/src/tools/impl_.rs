@@ -329,7 +329,6 @@ use cua_driver_core::{
 use serde_json::{json, Value};
 use std::sync::{Arc, RwLock};
 
-use crate::uia::ElementCache;
 use cursor_overlay::CursorRegistry;
 use windows::core::Interface as _;
 
@@ -607,7 +606,6 @@ impl ZoomRegistry {
 }
 
 pub struct ToolState {
-    pub element_cache: Arc<ElementCache>,
     pub cursor_registry: Arc<CursorRegistry>,
     pub resize_registry: Arc<ResizeRegistry>,
     pub zoom_registry: Arc<ZoomRegistry>,
@@ -617,7 +615,6 @@ pub struct ToolState {
 impl ToolState {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
-            element_cache: Arc::new(ElementCache::new()),
             cursor_registry: Arc::new(CursorRegistry::new()),
             resize_registry: Arc::new(ResizeRegistry::new()),
             zoom_registry: Arc::new(ZoomRegistry::new()),
@@ -1122,7 +1119,7 @@ fn fold_max_dimension(ceiling: u32, per_call: Option<u32>) -> u32 {
 /// Returns `None` when the node has no `element_index` (non-actionable rows).
 fn build_element_entry(
     n: &crate::uia::UiaNode,
-    snapshot_id: Option<u32>,
+    snapshot_id: Option<&str>,
 ) -> Option<serde_json::Value> {
     let idx = n.element_index?;
     // `label`: name → value → automation_id → help_text.
@@ -1138,7 +1135,12 @@ fn build_element_entry(
         "depth": n.depth,
     });
     if let Some(snapshot_id) = snapshot_id {
-        entry["element_token"] = json!(cua_driver_core::element_token::token_for(snapshot_id, idx));
+        entry["element_token"] = json!(cua_driver_core::element_token::token_for_identity(
+            snapshot_id,
+            idx,
+            &crate::uia::cache::identity_for_node(n)
+        )
+        .expect("fresh snapshot handle"));
     }
     if n.in_web_content {
         entry["in_web_content"] = json!(true);
@@ -1485,8 +1487,10 @@ impl Tool for GetWindowStateTool {
                     structured["elements_complete"] = json!(false);
                     structured["tree_markdown"] = json!(tr.tree_markdown);
 
-                    let snapshot_id = (!observation_only)
-                        .then(|| state.element_cache.publish(pid as i32, hwnd, payload));
+                    let snapshot_id = (!observation_only).then(|| {
+                        cua_driver_core::element_token::mint_snapshot_handle(pid as i32, hwnd)
+                    });
+                    let _payload = payload;
 
                     // Structured `elements` array — preferred consumption
                     // path. Shape matches the cross-platform spec:
@@ -1509,9 +1513,7 @@ impl Tool for GetWindowStateTool {
                     // Surface 6: snapshot id mirror for debug correlation.
                     if let Some(snapshot_id) = snapshot_id {
                         structured["snapshot_id"] =
-                            json!(cua_driver_core::element_token::token_for(snapshot_id, 0)
-                                .trim_end_matches(":0")
-                                .to_string());
+                            json!(snapshot_id.to_owned().trim_end_matches(":0").to_string());
                     }
                     structured["_note"] = json!(
                         "Prefer `elements` — `tree_markdown` will continue to work \
@@ -3228,7 +3230,7 @@ impl Tool for ClickTool {
         // Surface 6: element_token / element_index precedence resolution.
         // Windows uses u64 HWND but the token registry stores u32; truncate
         // through the same path get_window_state used when registering.
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match crate::uia::cache::resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
@@ -4472,7 +4474,7 @@ impl Tool for TypeTextTool {
         };
         let pid = raw_pid as u32;
         // Surface 6: element_token / element_index precedence resolution.
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match crate::uia::cache::resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
@@ -5222,7 +5224,7 @@ impl Tool for PressKeyTool {
         };
         let pid = raw_pid as u32;
         // Surface 6: element_token / element_index precedence resolution.
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match crate::uia::cache::resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
@@ -5632,7 +5634,7 @@ impl Tool for HotkeyTool {
             Err(e) => return e,
         };
         let pid = raw_pid as u32;
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match crate::uia::cache::resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|value| value as usize),
             args.opt_str("element_token").as_deref(),
@@ -5917,7 +5919,7 @@ impl Tool for SetValueTool {
             None => return ToolResult::error("Missing required string field value."),
         };
         // Surface 6: element_token / element_index precedence resolution.
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match crate::uia::cache::resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
@@ -6158,7 +6160,7 @@ impl Tool for ScrollTool {
         let direction_display = direction.clone();
         let by_display = by.clone();
         // Surface 6: element_token / element_index precedence resolution.
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match crate::uia::cache::resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
@@ -6679,7 +6681,7 @@ impl Tool for DoubleClickTool {
         let pid = raw_pid as u32;
         use cua_driver_core::tool_args::ArgsExt;
         // Surface 6: element_token / element_index precedence resolution.
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match crate::uia::cache::resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
@@ -7054,7 +7056,7 @@ impl Tool for RightClickTool {
         let pid = raw_pid as u32;
         use cua_driver_core::tool_args::ArgsExt;
         // Surface 6: element_token / element_index precedence resolution.
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match crate::uia::cache::resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
@@ -9986,10 +9988,6 @@ pub fn build_registry_with_provider(
             },
         ))
     };
-    // Share the element cache with the recording-hook layer so it can
-    // resolve element_index → window-local screenshot coords for click.png.
-    crate::recording_hooks::set_element_cache(state.element_cache.clone());
-
     // Drop a session's owned cursor on `session_end` (explicit end_session, the
     // CLI `session end` verb, or the daemon idle-TTL sweep). The session id IS
     // the cursor key (caller-declared `session`), so this prunes the metadata

@@ -105,9 +105,9 @@ pub fn element_index_schema() -> Value {
 pub fn snapshot_id_schema() -> Value {
     json!({
         "type": "string",
-        "pattern": "^s[0-9a-f]{8}$",
-        "description": "Snapshot handle from get_window_state. Required when \
-            targeting by element_index; stale snapshots fail closed."
+        "pattern": "^sa1\\.[0-9a-f]{32}\\.[0-9]+\\.[0-9a-f]{16}\\.[0-9a-f]{8}\\.[0-9a-f]{32}$",
+        "description": "Authenticated runtime-, process-, and window-bound snapshot handle \
+            from get_window_state. Required when targeting by element_index."
     })
 }
 
@@ -115,10 +115,10 @@ pub fn snapshot_id_schema() -> Value {
 pub fn element_token_schema() -> Value {
     json!({
         "type": "string",
-        "description": "Opaque per-snapshot element handle from \
+        "description": "Opaque authenticated element address from \
             `structuredContent.elements[].element_token`. If element_index, \
-            snapshot_id, or window_id are also supplied they must agree. Returns \
-            an explicit stale error once a newer snapshot supersedes it."
+            snapshot_id, or window_id are also supplied they must agree. The \
+            address is re-resolved against current accessibility state."
     })
 }
 

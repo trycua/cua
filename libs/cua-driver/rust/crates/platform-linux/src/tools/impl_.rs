@@ -16,7 +16,6 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
-use crate::atspi::ElementCache;
 use cursor_overlay::CursorRegistry;
 
 fn window_target_candidates_for_pid(
@@ -150,7 +149,6 @@ impl ZoomRegistry {
 }
 
 pub struct ToolState {
-    pub element_cache: Arc<ElementCache>,
     pub cursor_registry: Arc<CursorRegistry>,
     pub resize_registry: Arc<ResizeRegistry>,
     pub zoom_registry: Arc<ZoomRegistry>,
@@ -169,10 +167,7 @@ pub struct MouseHoldState {
 
 impl ToolState {
     pub fn new() -> Arc<Self> {
-        let element_cache = Arc::new(ElementCache::new());
-        cua_driver_core::element_cache::register_runtime_cache(&element_cache);
         Arc::new(Self {
-            element_cache,
             cursor_registry: Arc::new(CursorRegistry::new()),
             resize_registry: Arc::new(ResizeRegistry::new()),
             zoom_registry: Arc::new(ZoomRegistry::new()),
@@ -579,7 +574,7 @@ fn fold_max_dimension(ceiling: u32, per_call: Option<u32>) -> u32 {
 /// Returns `None` when the node has no `element_index` (non-actionable rows).
 fn build_element_entry(
     n: &crate::atspi::AtspiNode,
-    snapshot_id: Option<u32>,
+    snapshot_id: Option<&str>,
     bounds: Option<(i32, i32, u32, u32)>,
 ) -> Option<serde_json::Value> {
     let idx = n.element_index?;
@@ -596,7 +591,12 @@ fn build_element_entry(
         "depth": n.depth,
     });
     if let Some(snapshot_id) = snapshot_id {
-        entry["element_token"] = json!(cua_driver_core::element_token::token_for(snapshot_id, idx));
+        entry["element_token"] = json!(cua_driver_core::element_token::token_for_identity(
+            snapshot_id,
+            idx,
+            &crate::atspi::cache::identity_for_node(n)
+        )
+        .expect("fresh snapshot handle"));
     }
     if n.in_web_content {
         entry["in_web_content"] = json!(true);
@@ -896,15 +896,8 @@ impl Tool for GetWindowStateTool {
                     let target_scoped = !(crate::wayland::is_wayland()
                         && crate::wayland::hyprland::is_session())
                         || tr.window_scoped;
-                    if !observation_only && !target_scoped {
-                        state.element_cache.remove(pid as i32, xid);
-                    }
                     let snapshot_id = (!observation_only && target_scoped).then(|| {
-                        state.element_cache.publish(
-                            pid as i32,
-                            xid,
-                            crate::atspi::cache::CachedSnapshot::from_nodes(&tr.nodes),
-                        )
+                        cua_driver_core::element_token::mint_snapshot_handle(pid as i32, xid)
                     });
 
                     // Structured `elements` array: one entry per actionable node.
@@ -925,7 +918,7 @@ impl Tool for GetWindowStateTool {
                         .filter_map(|n| {
                             build_element_entry(
                                 n,
-                                snapshot_id,
+                                snapshot_id.as_deref(),
                                 bounds_by_idx.get(&n.element_index?).copied(),
                             )
                         })
@@ -941,9 +934,7 @@ impl Tool for GetWindowStateTool {
                     // Surface 6: snapshot id mirror for debug correlation.
                     if let Some(snapshot_id) = snapshot_id {
                         structured["snapshot_id"] =
-                            json!(cua_driver_core::element_token::token_for(snapshot_id, 0)
-                                .trim_end_matches(":0")
-                                .to_string());
+                            json!(snapshot_id.to_owned().trim_end_matches(":0").to_string());
                     }
                     structured["_note"] = json!(
                         "Prefer `elements` — `tree_markdown` will continue to work \
@@ -3399,7 +3390,7 @@ impl Tool for ClickTool {
         let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id");
         let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match crate::atspi::cache::resolve_element_args(
             pid as i32,
             element_index_arg,
             element_token_arg.as_deref(),
@@ -4027,7 +4018,7 @@ impl Tool for TypeTextTool {
         // Surface 6: resolve element_token / element_index for the
         // optional pre-typing focus glide below. The token also carries
         // the window_id when supplied so the caller can omit window_id.
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match crate::atspi::cache::resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
@@ -4718,7 +4709,7 @@ impl Tool for PressKeyTool {
         let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id");
         let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match crate::atspi::cache::resolve_element_args(
             pid as i32,
             element_index_arg,
             element_token_arg.as_deref(),
@@ -5094,7 +5085,7 @@ impl Tool for HotkeyTool {
         let pid = args.u64_or("pid", 0) as u32;
         let window_id_arg = args.opt_u64("window_id");
         let element_index_arg = args.opt_u64("element_index").map(|value| value as usize);
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match crate::atspi::cache::resolve_element_args(
             pid as i32,
             element_index_arg,
             args.opt_str("element_token").as_deref(),
@@ -5442,7 +5433,7 @@ impl Tool for SetValueTool {
             Err(e) => return e,
         };
         // Surface 6: element_token / element_index precedence resolution.
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match crate::atspi::cache::resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
@@ -5667,7 +5658,7 @@ impl Tool for ScrollTool {
         // element (X11 scroll buttons go to the window root), but the
         // token still needs to be accepted + validated so a stale
         // token surfaces an error instead of silently no-op'ing.
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match crate::atspi::cache::resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
@@ -6138,7 +6129,7 @@ impl Tool for DoubleClickTool {
             .await;
         }
         // Surface 6: element_token / element_index precedence.
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match crate::atspi::cache::resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
@@ -6377,7 +6368,7 @@ impl Tool for RightClickTool {
             .await;
         }
         // Surface 6: element_token / element_index precedence.
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match crate::atspi::cache::resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),

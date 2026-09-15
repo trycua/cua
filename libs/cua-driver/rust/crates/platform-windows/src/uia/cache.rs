@@ -1,9 +1,8 @@
 use super::UiaNode;
-use cua_driver_core::element_cache::{ElementCacheCore, SnapshotPayload};
+use cua_driver_core::element_token::{self, ElementTarget, ResolvedElement};
+use cua_driver_core::protocol::ToolResult;
 use windows::core::Interface;
 use windows::Win32::UI::Accessibility::{IAccessible, IUIAutomationElement};
-
-pub type ElementCache = ElementCacheCore<CachedSnapshot>;
 
 #[derive(Debug)]
 pub struct RetainedElement {
@@ -125,26 +124,57 @@ impl CachedSnapshot {
             .cloned()
     }
 }
-impl SnapshotPayload for CachedSnapshot {
-    type Element = RetainedElement;
-    fn len(&self) -> usize {
-        self.elements.len()
-    }
-    fn retain(&self, index: usize) -> Option<Self::Element> {
-        self.retain_element(index)
-    }
-    fn resolve_fresh(
-        _pid: i32,
-        window_id: u64,
-        index: usize,
-    ) -> Result<Option<Self::Element>, String> {
-        let tree = super::walk_tree(window_id, None);
-        let kind = if tree.nodes.iter().any(|node| node.msaa_role.is_some()) {
-            SnapshotKind::Msaa
-        } else {
-            SnapshotKind::Uia
-        };
-        let payload = Self::from_nodes(&tree.nodes, kind);
-        Ok(payload.retain_element(index))
-    }
+pub fn identity_for_node(node: &UiaNode) -> Vec<u8> {
+    serde_json::to_vec(&(
+        &node.control_type,
+        &node.name,
+        &node.automation_id,
+        &node.help_text,
+        &node.actions,
+        node.depth,
+        node.in_web_content,
+        node.msaa_role,
+    ))
+    .expect("UIA identity tuple")
+}
+pub fn resolve_element_args(
+    pid: i32,
+    element_index: Option<usize>,
+    element_token: Option<&str>,
+    snapshot_id: Option<&str>,
+    window_id: Option<u64>,
+    tool: &str,
+) -> Result<ResolvedElement<RetainedElement>, ToolResult> {
+    element_token::resolve_element_args(
+        pid,
+        element_index,
+        element_token,
+        snapshot_id,
+        window_id,
+        tool,
+        |w, t| resolve_fresh(w, t),
+    )
+}
+fn resolve_fresh(w: u64, t: &ElementTarget) -> Result<Option<RetainedElement>, String> {
+    let tree = super::walk_tree(w, None);
+    let kind = if tree.nodes.iter().any(|n| n.msaa_role.is_some()) {
+        SnapshotKind::Msaa
+    } else {
+        SnapshotKind::Uia
+    };
+    let payload = CachedSnapshot::from_nodes(&tree.nodes, kind);
+    let matched = if !t.has_identity() {
+        tree.nodes
+            .iter()
+            .find(|n| n.element_index == Some(t.element_index))
+            .and_then(|n| n.element_index)
+    } else {
+        let mut m = tree.nodes.iter().filter_map(|n| {
+            n.element_index
+                .filter(|_| t.matches_identity(&identity_for_node(n)))
+        });
+        let f = m.next();
+        f.filter(|_| m.next().is_none())
+    };
+    Ok(matched.and_then(|i| payload.retain_element(i)))
 }

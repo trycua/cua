@@ -7,17 +7,11 @@
 //!    on UIA/MSAA-indexed clicks (not just pixel-addressed ones).
 
 #[cfg(target_os = "windows")]
-use std::sync::Arc;
-
 #[cfg(target_os = "windows")]
-use cua_driver_core::element_cache::{current_runtime_cache, register_runtime_cache};
-
 #[cfg(target_os = "windows")]
 use crate::uia::cache::{CachedSnapshot, SnapshotKind};
 
 #[cfg(target_os = "windows")]
-use crate::uia::ElementCache;
-
 use cua_driver_core::recording::ScreenshotCapture;
 
 #[cfg(target_os = "windows")]
@@ -32,10 +26,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 #[cfg(target_os = "windows")]
-pub fn set_element_cache(cache: Arc<ElementCache>) {
-    register_runtime_cache(&cache);
-}
-
 /// Resolve the window whose application evidence should be captured. Keep a
 /// live explicit HWND so occluded/background turns capture the exact target.
 /// When an action closes a modal HWND, fall back to another top-level window
@@ -126,20 +116,18 @@ pub fn element_window_local_xy(
     args: &serde_json::Value,
     capture_point: bool,
 ) -> Option<(u64, Option<(f64, f64)>)> {
-    let cache = current_runtime_cache::<CachedSnapshot>()?;
     let pid_u32 = u32::try_from(pid).ok()?;
-    let resolved = cache
-        .resolve_element_args(
-            pid_u32 as i32,
-            args.get("element_index")
-                .and_then(|value| value.as_u64())
-                .map(|value| value as usize),
-            args.get("element_token").and_then(|value| value.as_str()),
-            args.get("snapshot_id").and_then(|value| value.as_str()),
-            args.get("window_id").and_then(|value| value.as_u64()),
-            "recording",
-        )
-        .ok()?;
+    let resolved = crate::uia::cache::resolve_element_args(
+        pid_u32 as i32,
+        args.get("element_index")
+            .and_then(|value| value.as_u64())
+            .map(|value| value as usize),
+        args.get("element_token").and_then(|value| value.as_str()),
+        args.get("snapshot_id").and_then(|value| value.as_str()),
+        args.get("window_id").and_then(|value| value.as_u64()),
+        "recording",
+    )
+    .ok()?;
     let cua_driver_core::element_token::ResolvedElement::Element {
         window_id: Some(window_id),
         element,

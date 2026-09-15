@@ -7,11 +7,14 @@ from .decorators import evaluate_task, setup_task, solve_task, tasks_config
 from .desktop import Desktop
 from .environment import Environment
 from .runners import (
+    BenchmarkRunConfig,
     BenchmarkResult,
     TaskResult,
+    build_benchmark_manifest,
     run_benchmark,
     run_interactive,
     run_single_task,
+    write_benchmark_artifacts,
 )
 from .types import (
     Action,
@@ -67,6 +70,9 @@ __all__ = [
     "run_benchmark",
     "run_single_task",
     "run_interactive",
+    "build_benchmark_manifest",
+    "write_benchmark_artifacts",
+    "BenchmarkRunConfig",
     "BenchmarkResult",
     "TaskResult",
 ]

@@ -55,6 +55,19 @@ pub fn mark_browser_chrome_capture_coverage(
     });
 }
 
+pub fn attach_document_state(
+    structured: &mut Value,
+    document_path: Option<&str>,
+    document_edited: Option<bool>,
+) {
+    if let Some(path) = document_path {
+        structured["document_path"] = json!(path);
+    }
+    if let Some(edited) = document_edited {
+        structured["document_edited"] = json!(edited);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,5 +141,30 @@ mod tests {
                 "coverage signal leaked a prompt-content field: {public}"
             );
         }
+    }
+
+    #[test]
+    fn document_state_reports_the_path_and_the_dirty_bit_it_was_given() {
+        let mut dirty = json!({"window_id": 11, "pid": 5});
+        attach_document_state(&mut dirty, Some("/Users/x/notes.txt"), Some(true));
+        assert_eq!(dirty["document_path"], "/Users/x/notes.txt");
+        assert_eq!(dirty["document_edited"], json!(true));
+
+        let mut saved = json!({"window_id": 11, "pid": 5});
+        attach_document_state(&mut saved, Some("/Users/x/notes.txt"), Some(false));
+        assert_eq!(saved["document_edited"], json!(false));
+    }
+
+    #[test]
+    fn unread_document_state_is_absent_rather_than_a_claim() {
+        let mut unknown = json!({"window_id": 4, "pid": 2});
+        let untouched = unknown.clone();
+        attach_document_state(&mut unknown, None, None);
+        assert_eq!(unknown, untouched);
+
+        let mut path_only = untouched;
+        attach_document_state(&mut path_only, Some("/tmp/a.txt"), None);
+        assert_eq!(path_only["document_path"], "/tmp/a.txt");
+        assert!(path_only.get("document_edited").is_none());
     }
 }

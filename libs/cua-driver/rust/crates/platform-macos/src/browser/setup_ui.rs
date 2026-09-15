@@ -1748,6 +1748,8 @@ mod tests {
             nodes,
             truncated: false,
             window_scope: Some(crate::ax::WindowScope::Matched),
+            document_path: None,
+            document_edited: None,
         }
     }
 
@@ -1876,6 +1878,8 @@ mod tests {
             nodes: Vec::new(),
             truncated: true,
             window_scope: Some(crate::ax::WindowScope::Matched),
+            document_path: None,
+            document_edited: None,
         };
         assert!(
             exact_pixel_setup_checkbox(0, &truncated, 0, chrome(), false)

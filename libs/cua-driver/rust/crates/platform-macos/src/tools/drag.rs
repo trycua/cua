@@ -278,14 +278,17 @@ impl Tool for DragTool {
                 (from_x, from_y, from_x, from_y, to_x, to_y, to_x, to_y)
             };
 
-        // Animate agent cursor along drag path (start → end).
-        if let Some(wid) = window_id {
-            crate::cursor::overlay::send_command(
-                cursor_key.clone(),
-                cursor_overlay::OverlayCommand::PinAbove(wid as u64),
-            );
-        }
-        crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), from_sx, from_sy).await;
+        // Animate agent cursor along drag path (start → end). Background drag
+        // is refused above, so this always shows; routed through the shared
+        // helper to keep one cursor-display decision point (issue #3801).
+        crate::cursor::overlay::pin_and_animate_window_action(
+            cursor_key.clone(),
+            window_id,
+            !delivery_mode.is_foreground(),
+            from_sx,
+            from_sy,
+        )
+        .await;
 
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
         // Drags can trigger drag-and-drop side-effects that spawn helper

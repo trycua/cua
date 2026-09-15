@@ -320,12 +320,16 @@ impl Tool for TypeTextTool {
             .await
             {
                 let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
-                crate::cursor::overlay::send_command(
+                // Hidden instead of pinned for background delivery to an
+                // off-Space target (issue #3801).
+                crate::cursor::overlay::pin_and_animate_window_action(
                     cursor_key.clone(),
-                    cursor_overlay::OverlayCommand::PinAbove(wid as u64),
-                );
-                crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), screen_x, screen_y)
-                    .await;
+                    Some(wid),
+                    !delivery_mode.is_foreground(),
+                    screen_x,
+                    screen_y,
+                )
+                .await;
                 self.state
                     .cursor_registry
                     .update_position(&cursor_key, screen_x, screen_y);

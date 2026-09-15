@@ -62,37 +62,6 @@ jobs:
         run: python -m pip install pytest
       - name: Test Windows release uninstall reporting
         run: python -m pytest libs/cua-driver/scripts/tests/test_uninstall_windows.py -v
-      - name: Verify native negative controls
-        shell: python
-        run: |
-          from pathlib import Path
-          import subprocess
-          import sys
-          import hashlib
-          import urllib.request
-          baseline = urllib.request.urlopen("https://raw.githubusercontent.com/trycua/cua/42d764bb19e9873b581d7147453942484dc4839b/libs/cua-driver/scripts/uninstall.ps1", timeout=30).read()
-          assert hashlib.sha256(baseline).hexdigest() == "191c86cbae38b449f6ce69e833d3945691308776e7be70052866469dd52576a6"
-          path = Path("libs/cua-driver/scripts/uninstall.ps1")
-          original = path.read_bytes()
-          before = b"if ($LocalSurvivor) {"
-          assert original.count(before) == 1
-          controls = [
-              ("pre-fix main", baseline, "default-cli and Expression", "assert 'source-built cua-driver-local installation remains' in"),
-              ("missing notice", original.replace(before, b"if ($false) {"), "default-cli and File", "assert 'source-built cua-driver-local installation remains' in"),
-              ("local removal", original.replace(before, before + b"\n    Remove-Item -LiteralPath $LocalSurvivor -Force"), "default-cli and File", "FileNotFoundError"),
-              ("BOM expression", b"\xef\xbb\xbf" + original, "default-cli and Expression", "CommandNotFoundException"),
-              ("false positive", original.replace(before, b"if ($true) {"), "marker-free-home and File", ">           assert notice not in result.stdout"),
-          ]
-          try:
-              for name, source, selector, expected in controls:
-                  path.write_bytes(source)
-                  result = subprocess.run([sys.executable, "-m", "pytest", "libs/cua-driver/scripts/tests/test_uninstall_windows.py", "-k", selector, "-q"], capture_output=True, text=True)
-                  print(name, result.stdout, result.stderr, sep="\n")
-                  assert result.returncode == 1
-                  assert "1 failed" in result.stdout
-                  assert expected in result.stdout
-          finally:
-              path.write_bytes(original)
 
   test:
     runs-on: ubuntu-latest

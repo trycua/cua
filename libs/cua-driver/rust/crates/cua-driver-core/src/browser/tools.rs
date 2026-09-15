@@ -17,7 +17,9 @@ use crate::tool_args::ArgsExt;
 use super::cdp_ws::CdpConnection;
 use super::download::BrowserDownloadTool;
 use super::engine::{BrowserEngine, BrowserTabScreenshot};
-use super::platform::{BrowserVisualActionKind, PrepareProfile, PrepareRequest, PrepareStrategy};
+use super::platform::{
+    BrowserVisualActionKind, PrepareAction, PrepareProfile, PrepareRequest, PrepareStrategy,
+};
 use super::pointer::BrowserPointerTool;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::session_schema as schema_session;
@@ -704,6 +706,28 @@ impl Tool for BrowserPrepareTool {
         match self.engine.prepare_browser(request).await {
             Ok(outcome) => {
                 let prepared = outcome.endpoint.is_some();
+                // An isolated process may publish its native surface shortly
+                // after its DevTools endpoint. Resolve only the sole exact
+                // window owned by that freshly prepared pid. This avoids the
+                // public `list_windows` permission entirely and does not leak
+                // desktop inventory. Zero or multiple candidates stay null.
+                let mut prepared_window_id = None;
+                if outcome.action == PrepareAction::LaunchedIsolatedBrowser {
+                    if let Some(prepared_pid) = outcome.prepared_pid {
+                        for _ in 0..40 {
+                            match self.engine.sole_exact_native_window_id(prepared_pid).await {
+                                Ok(Some(window_id)) => {
+                                    prepared_window_id = Some(window_id);
+                                    break;
+                                }
+                                Ok(None) => {
+                                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                                }
+                                Err(_) => break,
+                            }
+                        }
+                    }
+                }
                 ToolResult::text(format!(
                     "browser_prepare: {} — {}",
                     if prepared {
@@ -721,6 +745,7 @@ impl Tool for BrowserPrepareTool {
                     // The ws_url itself stays internal; expose only proof metadata.
                     "endpoint_ownership": outcome.endpoint.map(|e| e.ownership),
                     "prepared_pid": outcome.prepared_pid,
+                    "prepared_window_id": prepared_window_id,
                     "side_effects": outcome.side_effects,
                     "attachment": outcome.attachment,
                 }))

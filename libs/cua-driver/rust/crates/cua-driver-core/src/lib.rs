@@ -52,6 +52,7 @@ pub mod cdp;
 pub mod clipboard;
 pub mod consent;
 pub mod cursor_events;
+pub mod cursor_hook;
 pub mod cursor_sampler;
 pub mod daemon;
 pub mod element_cache;

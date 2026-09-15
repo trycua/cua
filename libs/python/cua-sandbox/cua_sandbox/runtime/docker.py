@@ -71,14 +71,27 @@ def _has_docker() -> bool:
 
 
 def _has_kvm() -> bool:
-    """Check if /dev/kvm is available (Linux/WSL2 only)."""
+    """Check if /dev/kvm is available (Linux/WSL2 only, or Windows with WSL2 Docker backend)."""
     import platform
-
-    if platform.system() != "Linux":
-        return False
     from pathlib import Path
 
-    return Path("/dev/kvm").exists()
+    if platform.system() == "Linux":
+        return Path("/dev/kvm").exists()
+
+    # On Windows, Docker Desktop uses WSL2 which may expose /dev/kvm
+    if platform.system() == "Windows":
+        import subprocess
+        try:
+            result = subprocess.run(
+                ["wsl", "-e", "test", "-e", "/dev/kvm"],
+                capture_output=True,
+                timeout=5,
+            )
+            return result.returncode == 0
+        except Exception:
+            return False
+
+    return False
 
 
 class DockerRuntime(Runtime):
@@ -95,7 +108,7 @@ class DockerRuntime(Runtime):
         devices: Optional[list[str]] = None,
         platform: Optional[str] = None,
         privileged: bool = False,
-        stop_timeout: int = 120,
+        stop_timeout: int = 10,
     ):
         self.api_port = api_port
         self.vnc_port = vnc_port
@@ -111,7 +124,7 @@ class DockerRuntime(Runtime):
         if not _has_docker():
             raise RuntimeError("Docker is not installed or not running")
 
-        docker_image = resolve_image(image.os_type, image._registry)
+        docker_image = resolve_image(image.os_type, image._registry, image.kind)
         internal_api, internal_vnc = internal_ports(docker_image)
         extra_flags: list[str] = []
 
@@ -157,6 +170,12 @@ class DockerRuntime(Runtime):
         api_port = _find_free_port(self.api_port)
         vnc_port = _find_free_port(api_port + 1)
 
+        # Map SSH port (22) for QEMU linux images
+        ssh_host_port = None
+        if "qemu" in docker_image and "windows" not in docker_image and "android" not in docker_image:
+            ssh_host_port = _find_free_port(vnc_port + 1)
+            extra_flags += ["-p", f"{ssh_host_port}:22"]
+
         cmd = [
             docker,
             "run",
@@ -184,10 +203,13 @@ class DockerRuntime(Runtime):
             host="localhost",
             api_port=api_port,
             vnc_port=vnc_port,
+            ssh_port=ssh_host_port,
+            ssh_username="cua",
+            ssh_password="cua",
             container_id=container_id,
             name=name,
         )
-        await self.is_ready(info)
+        await self.is_ready(info, timeout=3600)
 
         # Apply image layers and files via computer-server.
         # If any provisioning step fails, stop and remove the half-baked container
@@ -241,7 +263,7 @@ class DockerRuntime(Runtime):
 
     async def stop(self, name: str) -> None:
         docker = _docker_bin()
-        subprocess.run([docker, "stop", name], capture_output=True)
+        subprocess.run([docker, "stop", "-t", str(self.stop_timeout), name], capture_output=True)
         if self.ephemeral:
             subprocess.run([docker, "rm", name], capture_output=True)
 
@@ -281,7 +303,7 @@ class DockerRuntime(Runtime):
             int(result2.stdout.strip()) if result2.stdout.strip().isdigit() else self.vnc_port
         )
         info = RuntimeInfo(host="localhost", api_port=api_port, vnc_port=vnc_port, name=name)
-        await self.is_ready(info)
+        await self.is_ready(info, timeout=3600)
         return info
 
     async def list(self) -> list[dict]:
@@ -320,8 +342,24 @@ class DockerRuntime(Runtime):
     async def is_ready(self, info: RuntimeInfo, timeout: float = 120) -> bool:
         url = f"http://{info.host}:{info.api_port}/status"
         deadline = asyncio.get_event_loop().time() + timeout
+        docker = _docker_bin()
         async with httpx.AsyncClient(timeout=5) as client:
             while asyncio.get_event_loop().time() < deadline:
+                # Fail fast if the container has already exited
+                result = subprocess.run(
+                    [docker, "inspect", "--format", "{{.State.Status}}", info.name],
+                    capture_output=True, text=True,
+                )
+                state = result.stdout.strip()
+                if state and state not in ("running", "created"):
+                    logs = subprocess.run(
+                        [docker, "logs", "--tail", "20", info.name],
+                        capture_output=True,
+                    )
+                    log_text = (logs.stderr or logs.stdout or b"").decode("utf-8", errors="replace")
+                    raise RuntimeError(
+                        f"Container {info.name} exited (state={state}):\n{log_text}"
+                    )
                 try:
                     resp = await client.get(url)
                     if resp.status_code == 200:

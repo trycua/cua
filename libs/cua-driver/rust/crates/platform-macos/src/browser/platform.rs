@@ -574,9 +574,11 @@ async fn process_details(pid: i64) -> Result<(String, String), BrowserRefusal> {
         .output()
         .await
         .map_err(|error| {
-            refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("could not inspect browser process {pid}: {error}"),
+            cua_driver_core::browser::refusal::inspection_spawn_refusal(
+                format!("could not inspect browser process {pid}"),
+                "ps",
+                Some(pid),
+                &error,
             )
         })?;
     if !output.status.success() {
@@ -634,9 +636,11 @@ async fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
         .output()
         .await
         .map_err(|error| {
-            refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("could not inspect browser listeners: {error}"),
+            cua_driver_core::browser::refusal::inspection_spawn_refusal(
+                "could not inspect browser listeners",
+                "lsof",
+                Some(pid),
+                &error,
             )
         })?;
     Ok(parse_loopback_lsof_ports(&String::from_utf8_lossy(

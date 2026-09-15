@@ -2554,7 +2554,7 @@ fn isolated_background_routes_do_not_reprobe_availability_before_primary_fallbac
 fn type_text_routes_isolated_background_before_generic_wayland_refusal() {
     let source = include_str!("impl_.rs");
     let invoke = source
-        .split_once("impl Tool for TypeTextTool {")
+        .rsplit_once("impl Tool for TypeTextTool {")
         .unwrap()
         .1
         .split_once("impl Tool for PressKeyTool {")

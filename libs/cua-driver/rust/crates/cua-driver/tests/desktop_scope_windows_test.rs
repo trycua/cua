@@ -320,6 +320,9 @@ fn desktop_scope_hotkey_releases_modifiers() {
                 "desktop hotkey failed: {}",
                 hotkey.text()
             );
+            assert_eq!(hotkey.action_route(), Some("global_input"));
+            assert_eq!(hotkey.action_delivery_mode(), Some("not_applicable"));
+            assert_eq!(hotkey.action_effect(), Some("unverifiable"));
             let deadline = Instant::now() + Duration::from_secs(2);
             loop {
                 let state = snapshot(driver, window_session, pid, wid);

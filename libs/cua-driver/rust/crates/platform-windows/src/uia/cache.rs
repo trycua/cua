@@ -27,6 +27,8 @@ impl RetainedElement {
         if !self.is_uia() {
             anyhow::bail!("element is an MSAA element, not a UIA element");
         }
+        #[cfg(test)]
+        cua_driver_testkit::keyboard_native_barrier::pause_native_focus("windows", self.ptr);
         let element = unsafe { IUIAutomationElement::from_raw(self.ptr as *mut _) };
         let result = unsafe { element.SetFocus() };
         std::mem::forget(element);

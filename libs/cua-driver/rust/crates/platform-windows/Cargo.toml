@@ -86,5 +86,6 @@ windows = { version = "0.58", features = [
 base64 = { workspace = true }
 
 [dev-dependencies]
+cua-driver-testkit = { path = "../cua-driver-testkit" }
 uuid = { workspace = true }
 tempfile = "3"

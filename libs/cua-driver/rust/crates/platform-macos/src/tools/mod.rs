@@ -8,6 +8,8 @@ mod drag;
 mod get_window_state;
 mod hotkey;
 mod invoke_menu;
+#[cfg(test)]
+mod keyboard_producer_tests;
 mod kill_app;
 mod launch_app;
 mod list_apps;

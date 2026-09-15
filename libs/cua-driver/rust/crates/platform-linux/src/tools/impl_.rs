@@ -3214,6 +3214,15 @@ fn terminal_tty_for_window(pid: u32, xid: u64) -> Option<PathBuf> {
     ttys.get(window_index).cloned()
 }
 
+/// True when `key` names the Enter key in the shared X keysym vocabulary
+/// (`key_name_to_keysym`). The terminal pty short-circuit below applies to
+/// every spelling of that physical key — `enter`, `return`, any case — so an
+/// agent following the documented key names cannot silently lose the keypress
+/// on a terminal window (terminals discard synthetic XSendEvent keys).
+fn is_enter_key(key: &str) -> bool {
+    crate::input::key_name_to_keysym(key).ok() == Some(0xFF0D)
+}
+
 /// Type into a terminal window without touching X focus. Resolves the window's
 /// pty, then borrows the emulator's master fd and writes to it (see
 /// `crate::tty`). Returns `Ok(false)` when the target isn't a terminal we can
@@ -4592,6 +4601,14 @@ impl Tool for TypeTextTool {
 
 // ── press_key ─────────────────────────────────────────────────────────────────
 
+#[cfg(test)]
+#[path = "keyboard_producer_tests.rs"]
+mod keyboard_producer_tests;
+
+#[cfg(test)]
+#[path = "keyboard_wayland_producer_tests.rs"]
+mod keyboard_wayland_producer_tests;
+
 pub struct PressKeyTool {
     state: Arc<ToolState>,
 }
@@ -4614,11 +4631,38 @@ fn press_key_chord(mods: &[String], key: &str) -> Option<Vec<String>> {
 
 #[cfg(test)]
 mod press_key_tests {
+    use super::is_enter_key;
     use super::press_key_chord;
 
     #[test]
     fn unmodified_press_stays_on_the_single_key_route() {
         assert_eq!(press_key_chord(&[], "return"), None);
+    }
+
+    #[test]
+    fn enter_key_gate_accepts_the_documented_enter_spelling() {
+        assert!(is_enter_key("enter"));
+        assert!(is_enter_key("Enter"));
+        assert!(is_enter_key("ENTER"));
+    }
+
+    #[test]
+    fn enter_key_gate_accepts_the_documented_return_spelling() {
+        // `key_name_to_keysym` resolves "return" and "enter" to the same
+        // physical key (XK_Return, 0xFF0D); the pty short-circuit must not
+        // drop a documented spelling on terminals (they discard synthetic
+        // XSendEvent keys, so a dropped short-circuit loses the keypress).
+        assert!(is_enter_key("return"));
+        assert!(is_enter_key("Return"));
+        assert!(is_enter_key("RETURN"));
+    }
+
+    #[test]
+    fn enter_key_gate_rejects_non_enter_keys() {
+        assert!(!is_enter_key("tab"));
+        assert!(!is_enter_key("escape"));
+        assert!(!is_enter_key("space"));
+        assert!(!is_enter_key(""));
     }
 
     #[test]
@@ -4653,7 +4697,7 @@ impl Tool for PressKeyTool {
                     "session": cua_driver_core::tool_schema::session_schema(),
                     "pid":{"type":"integer"},
                     "window_id":{"type":"integer"},
-                    "key":{"type":"string"},
+                    "key":{"type":"string","description":"Key name: enter/return, tab, escape, space, backspace, delete, insert, home, end, pageup, pagedown, up, down, left, right, f1-f12, or any single ASCII character."},
                     "modifiers":{"type":"array","items":{"type":"string"}},
                     "element_index": cua_driver_core::tool_schema::element_index_schema(),
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
@@ -4944,7 +4988,7 @@ impl Tool for PressKeyTool {
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             if resolved_element_index.is_none()
                 && mods.is_empty()
-                && key_for_task.eq_ignore_ascii_case("enter")
+                && is_enter_key(&key_for_task)
             {
                 if inject_terminal_input(pid, xid, "\n")? {
                     return Ok(());
@@ -5361,14 +5405,14 @@ impl Tool for HotkeyTool {
         };
         let deliver_fg = delivery.is_foreground();
 
-        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+        let result = tokio::task::spawn_blocking(move || {
             if crate::wayland::wayland_input_enabled() {
                 // Native Wayland: route the modifier combo through wtype's
                 // -M/-k/-m sequence — the closest equivalent to the X11
                 // state-mask path. window_id is irrelevant once focused.
                 let mut combo: Vec<String> = mods_for_wayland.clone();
                 combo.push(key_for_wayland.clone());
-                return crate::wayland::hotkey(xid, &combo);
+                return crate::wayland::hotkey(xid, &combo).map(|()| None);
             }
             let m: Vec<&str> = mods.iter().map(String::as_str).collect();
             // foreground: activate the target first, then inject the accelerator
@@ -5378,13 +5422,15 @@ impl Tool for HotkeyTool {
             if deliver_fg {
                 return crate::input::with_x11_foreground(xid, 80, || {
                     crate::input::send_key_xtest(&key, &m)
-                });
+                })
+                .map(|()| Some("x11_xtest_fg"));
             }
             if let Some((x, y)) = px_target {
                 crate::input::send_key_at(xid, x, y, &key, &m)
             } else {
                 crate::input::send_key(xid, &key, &m)
             }
+            .map(|()| None)
         })
         .await;
         let mode_label = if deliver_fg {
@@ -5393,10 +5439,16 @@ impl Tool for HotkeyTool {
             "background"
         };
         match result {
-            Ok(Ok(())) => ToolResult::text(format!(
-                "Pressed {key_display} on pid {pid} (delivery_mode={mode_label})."
-            ))
-            .with_structured(json!({ "verified": false, "delivery_mode": mode_label })),
+            Ok(Ok(path)) => {
+                let mut structured = json!({ "verified": false, "delivery_mode": mode_label });
+                if let Some(path) = path {
+                    structured["path"] = json!(path);
+                }
+                ToolResult::text(format!(
+                    "Pressed {key_display} on pid {pid} (delivery_mode={mode_label})."
+                ))
+                .with_structured(structured)
+            }
             Ok(Err(e)) => ToolResult::error(e.to_string()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }

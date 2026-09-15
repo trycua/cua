@@ -1,0 +1,307 @@
+use serde_json::Value;
+use std::io::{BufRead, BufReader};
+use std::process::{Command, Stdio};
+use std::sync::{
+    mpsc::{self, Receiver},
+    Arc, Mutex,
+};
+use std::time::Duration;
+
+pub struct KeyboardFixture {
+    reaper: Option<crate::ChildReaper>,
+    pid: u32,
+    events: Receiver<Value>,
+    history: Arc<Mutex<Vec<Value>>>,
+    pub window_id: u64,
+    _directory: tempfile::TempDir,
+}
+
+impl KeyboardFixture {
+    pub fn spawn(close_on_key: bool) -> Self {
+        Self::spawn_configured(close_on_key, false)
+    }
+
+    pub fn spawn_with_companion() -> Self {
+        Self::spawn_configured(false, true)
+    }
+
+    fn spawn_configured(close_on_key: bool, companion: bool) -> Self {
+        let directory = tempfile::tempdir().unwrap();
+        let mut command = fixture_command(directory.path());
+        command.env("CUA_KEYBOARD_COMPANION", if companion { "1" } else { "0" });
+        command.env(
+            "CUA_KEYBOARD_CLOSE_ON_KEY",
+            if close_on_key { "1" } else { "0" },
+        );
+        let fixture = Self::spawn_command_in(command, directory);
+        #[cfg(target_os = "linux")]
+        if !companion {
+            wait_for_x11_focus(fixture.window_id);
+        }
+        fixture
+    }
+
+    pub fn spawn_command(command: Command) -> Self {
+        Self::spawn_command_in(command, tempfile::tempdir().unwrap())
+    }
+
+    fn spawn_command_in(mut command: Command, directory: tempfile::TempDir) -> Self {
+        let mut child = crate::spawn_in_job(
+            command
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::inherit()),
+        )
+        .expect("launch native keyboard oracle");
+        let output = child.stdout.take().unwrap();
+        let pid = child.id();
+        let mut reaper = crate::ChildReaper::new();
+        reaper.push(child);
+        let (sender, events) = mpsc::channel();
+        let history = Arc::new(Mutex::new(Vec::new()));
+        let received = history.clone();
+        std::thread::spawn(move || {
+            for line in BufReader::new(output).lines() {
+                let Ok(line) = line else { break };
+                if let Ok(event) = serde_json::from_str::<Value>(&line) {
+                    received.lock().unwrap().push(event.clone());
+                    if sender.send(event).is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+        let mut fixture = Self {
+            reaper: Some(reaper),
+            pid,
+            events,
+            history,
+            window_id: 0,
+            _directory: directory,
+        };
+        let ready = fixture.event("ready");
+        fixture.window_id = ready["window"].as_u64().expect("native window identity");
+        fixture
+    }
+
+    pub fn recorded_key_down_count(&self) -> usize {
+        self.history
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|event| event["kind"] == "down")
+            .count()
+    }
+
+    pub fn pid(&self) -> u32 {
+        self.pid
+    }
+
+    pub fn key_event(&self, kind: &str, key: u64) -> Value {
+        self.matching_event(kind, Some(key))
+    }
+
+    pub fn event(&self, kind: &str) -> Value {
+        self.matching_event(kind, None)
+    }
+
+    fn matching_event(&self, kind: &str, key: Option<u64>) -> Value {
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            let event = self.events.recv_timeout(remaining).unwrap_or_else(|error| {
+                panic!("native keyboard oracle pid={} window={} did not report {kind} key={key:?}: {error}", self.pid, self.window_id)
+            });
+            if event["kind"] == kind && key.is_none_or(|key| event["key"] == key) {
+                return event;
+            }
+        }
+    }
+
+    pub fn assert_single_release(&self, key: u64) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        loop {
+            let event = self
+                .events
+                .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+                .expect("native key release");
+            assert!(
+                !(event["kind"] == "down" && event["key"] == key),
+                "duplicate primary key: {event}"
+            );
+            if event["kind"] == "up" && event["key"] == key {
+                break;
+            }
+        }
+        self.assert_events_avoid(|event| event["kind"] == "down" && event["key"] == key);
+    }
+
+    pub fn assert_no_key_down(&self) {
+        self.assert_events_avoid(|event| event["kind"] == "down");
+    }
+
+    pub fn assert_quiet(&self) {
+        self.assert_events_avoid(|_| true);
+    }
+
+    fn assert_events_avoid(&self, forbidden: impl Fn(&Value) -> bool) {
+        let deadline = std::time::Instant::now() + Duration::from_millis(150);
+        loop {
+            match self
+                .events
+                .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+            {
+                Ok(event) => assert!(!forbidden(&event), "unexpected native event: {event}"),
+                Err(mpsc::RecvTimeoutError::Timeout) => return,
+                Err(error) => panic!("native observer disconnected: {error}"),
+            }
+        }
+    }
+
+    pub fn terminate(&mut self) {
+        drop(self.reaper.take());
+    }
+}
+
+impl Drop for KeyboardFixture {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            if let Ok(history) = self.history.lock() {
+                eprintln!(
+                    "native keyboard oracle pid={} window={} events={}",
+                    self.pid,
+                    self.window_id,
+                    serde_json::to_string(&*history).unwrap()
+                );
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub struct X11KeyboardObserver(x11rb::rust_connection::RustConnection);
+
+#[cfg(target_os = "linux")]
+impl X11KeyboardObserver {
+    pub fn start() -> Self {
+        use x11rb::connection::Connection;
+        use x11rb::protocol::xinput::{ConnectionExt, Device, EventMask, XIEventMask};
+        let (conn, screen) = x11rb::connect(None).unwrap();
+        conn.xinput_xi_query_version(2, 0).unwrap().reply().unwrap();
+        conn.xinput_xi_select_events(
+            conn.setup().roots[screen].root,
+            &[EventMask {
+                deviceid: Device::ALL_MASTER.into(),
+                mask: vec![XIEventMask::RAW_KEY_PRESS | XIEventMask::RAW_KEY_RELEASE],
+            }],
+        )
+        .unwrap()
+        .check()
+        .unwrap();
+        Self(conn)
+    }
+
+    pub fn track_focus(&self, window: u64) {
+        use x11rb::protocol::xproto::{ChangeWindowAttributesAux, ConnectionExt, EventMask};
+        self.0
+            .change_window_attributes(
+                u32::try_from(window).unwrap(),
+                &ChangeWindowAttributesAux::new().event_mask(EventMask::FOCUS_CHANGE),
+            )
+            .unwrap()
+            .check()
+            .unwrap();
+    }
+
+    pub fn events(&self) -> Vec<x11rb::protocol::Event> {
+        use x11rb::connection::Connection;
+        use x11rb::protocol::Event;
+        let deadline = std::time::Instant::now() + Duration::from_millis(150);
+        let mut events = Vec::new();
+        while std::time::Instant::now() < deadline {
+            while let Some(event) = self.0.poll_for_event().unwrap() {
+                if matches!(
+                    event,
+                    Event::XinputRawKeyPress(_)
+                        | Event::XinputRawKeyRelease(_)
+                        | Event::FocusIn(_)
+                        | Event::FocusOut(_)
+                ) {
+                    events.push(event);
+                }
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        events
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub fn wait_for_x11_focus(window: u64) {
+    use x11rb::protocol::xproto::ConnectionExt;
+    let (conn, _) = x11rb::connect(None).expect("native fixture display");
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let mut stable = 0;
+    loop {
+        let mut focused = conn.get_input_focus().unwrap().reply().unwrap().focus;
+        while focused > 1 && u64::from(focused) != window {
+            focused = conn.query_tree(focused).unwrap().reply().unwrap().parent;
+        }
+        stable = if u64::from(focused) == window {
+            stable + 1
+        } else {
+            0
+        };
+        if stable == 3 {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "native fixture never reached stable window-manager focus"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn fixture_command(directory: &std::path::Path) -> Command {
+    let source = directory.join("KeyboardOracle.swift");
+    let executable = directory.join("KeyboardOracle");
+    std::fs::write(&source, include_str!("keyboard_fixture.swift")).unwrap();
+    assert!(Command::new("/usr/bin/swiftc")
+        .args(["-framework", "AppKit"])
+        .arg(source)
+        .arg("-o")
+        .arg(&executable)
+        .status()
+        .unwrap()
+        .success());
+    Command::new(executable)
+}
+
+#[cfg(target_os = "linux")]
+fn fixture_command(directory: &std::path::Path) -> Command {
+    use std::os::unix::process::CommandExt;
+    let source = directory.join("keyboard_oracle.py");
+    std::fs::write(&source, include_str!("keyboard_fixture.py")).unwrap();
+    let mut command = Command::new("python3");
+    command.arg0("xterm").arg("-u").arg(source);
+    command
+}
+
+#[cfg(target_os = "windows")]
+fn fixture_command(directory: &std::path::Path) -> Command {
+    let source = directory.join("keyboard_oracle.ps1");
+    std::fs::write(&source, include_str!("keyboard_fixture.ps1")).unwrap();
+    let mut command = Command::new("powershell.exe");
+    command
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+        ])
+        .arg(source);
+    command
+}

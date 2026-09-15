@@ -73,14 +73,15 @@ jobs:
           before = b"if ($LocalSurvivor) {"
           assert original.count(before) == 1
           controls = [
-              ("missing notice", original.replace(before, b"if ($false) {"), "File", "E       assert 'source-built cua-driver-local installation remains' in"),
-              ("local removal", original.replace(before, before + b"\n    Remove-Item -LiteralPath $LocalSurvivor -Force"), "File", "FileNotFoundError"),
-              ("BOM expression", b"\xef\xbb\xbf" + original, "Expression", "CommandNotFoundException"),
+              ("missing notice", original.replace(before, b"if ($false) {"), "default-cli and File", "assert 'source-built cua-driver-local installation remains' in"),
+              ("local removal", original.replace(before, before + b"\n    Remove-Item -LiteralPath $LocalSurvivor -Force"), "default-cli and File", "FileNotFoundError"),
+              ("BOM expression", b"\xef\xbb\xbf" + original, "default-cli and Expression", "CommandNotFoundException"),
+              ("false positive", original.replace(before, b"if ($true) {"), "marker-free-home and File", "assert 'source-built cua-driver-local installation remains' not in"),
           ]
           try:
-              for name, source, invocation, expected in controls:
+              for name, source, selector, expected in controls:
                   path.write_bytes(source)
-                  result = subprocess.run([sys.executable, "-m", "pytest", "libs/cua-driver/scripts/tests/test_uninstall_windows.py", "-k", f"default-cli and {invocation}", "-q"], capture_output=True, text=True)
+                  result = subprocess.run([sys.executable, "-m", "pytest", "libs/cua-driver/scripts/tests/test_uninstall_windows.py", "-k", selector, "-q"], capture_output=True, text=True)
                   print(name, result.stdout, result.stderr, sep="\n")
                   assert result.returncode == 1
                   assert "1 failed" in result.stdout

@@ -195,7 +195,7 @@ impl Tool for RightClickTool {
                     }
                     translated
                 }
-                Err(refusal) => return refusal,
+                Err(refusal) => return refusal.into_tool_result(),
             }
         } else {
             (cx, cy, cx, cy)

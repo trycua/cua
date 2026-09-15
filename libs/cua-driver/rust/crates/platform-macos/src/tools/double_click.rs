@@ -201,7 +201,7 @@ impl Tool for DoubleClickTool {
                     }
                     translated
                 }
-                Err(refusal) => return refusal,
+                Err(refusal) => return refusal.into_tool_result(),
             }
         } else {
             (cx, cy, cx, cy)

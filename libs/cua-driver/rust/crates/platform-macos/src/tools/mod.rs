@@ -352,7 +352,8 @@ pub(crate) async fn focus_by_pixel(
     from_zoom: bool,
     mutation_lease: Option<&BackgroundMutationLease>,
 ) -> Result<(), cua_driver_core::protocol::ToolResult> {
-    use click::{PixelClickError, PixelClickRequest};
+    use click::PixelClickRequest;
+    use px_frame::PixelActionError;
     if let (Some(wid), Some(lease)) = (window_id, mutation_lease) {
         lease
             .gate_again(
@@ -379,7 +380,7 @@ pub(crate) async fn focus_by_pixel(
         skip_window_change_detection: false,
     };
     let click = click::ClickTool::new(state.clone());
-    let attempt = click.pixel_click(request.clone());
+    let attempt = click.pixel_click(&request);
     let focus = if let Some(lease) = mutation_lease {
         crate::background_mutation::with_held_lease(lease.pid, attempt).await
     } else {
@@ -393,7 +394,7 @@ pub(crate) async fn focus_by_pixel(
             }
         }
         Err(
-            error @ PixelClickError::Frame(px_frame::PxFrameError::NativeGeometryMismatch {
+            error @ PixelActionError::Frame(px_frame::PxFrameError::NativeGeometryMismatch {
                 ..
             }),
         ) => {
@@ -405,9 +406,9 @@ pub(crate) async fn focus_by_pixel(
     request.focus_only = false;
     request.delivery_mode = DeliveryMode::Foreground;
     click
-        .pixel_click(request)
+        .pixel_click(&request)
         .await
-        .map_err(PixelClickError::into_tool_result)?;
+        .map_err(PixelActionError::into_tool_result)?;
     tokio::time::sleep(std::time::Duration::from_millis(120)).await;
     Ok(())
 }

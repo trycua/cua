@@ -14,6 +14,20 @@ use cua_driver_core::{native_window_geometry::GeometryAssessment, protocol::Tool
 
 use crate::windows::WindowBounds;
 
+pub(crate) enum PixelActionError {
+    Frame(PxFrameError),
+    Existing(ToolResult),
+}
+
+impl PixelActionError {
+    pub fn into_tool_result(self) -> ToolResult {
+        match self {
+            Self::Frame(error) => refusal(&error),
+            Self::Existing(result) => result,
+        }
+    }
+}
+
 /// A window's screen origin plus the physical-pixels-per-logical-point scale
 /// of its `screencapture` output.
 #[derive(Debug, Clone)]
@@ -172,29 +186,22 @@ fn resolve_capture_frame(window_id: u32) -> Result<WindowPxFrame, PxFrameError> 
 
 /// The shared refusal for a pixel action whose window cannot be framed.
 pub fn refusal(error: &PxFrameError) -> ToolResult {
-    match error {
-        PxFrameError::NativeGeometryMismatch { window_id, .. } => ToolResult::error(format!(
+    let message = match error {
+        PxFrameError::NativeGeometryMismatch { window_id, .. } => format!(
             "window_id {window_id}'s native logical frame disagrees with its compositor frame. \
              Refusing pixel targeting; use a semantic action or explicitly select the window \
              and take a new snapshot before choosing new coordinates."
-        ))
-        .with_structured({
-            let mut structured = error_structured(error);
-            structured["effect"] = serde_json::json!("refused");
-            structured
-        }),
-        PxFrameError::WindowNotFound { window_id } => ToolResult::error(format!(
+        ),
+        PxFrameError::WindowNotFound { window_id } => format!(
             "window_id {window_id} has no live frame, so window-local pixels cannot be \
              translated to screen coordinates. Refusing to dispatch — treating them as \
              screen-absolute would act on whatever is behind the closed window. Call \
              list_windows for a current window_id, then re-snapshot with get_window_state."
-        ))
-        .with_structured(error_structured(error)),
-        PxFrameError::CaptureUnavailable { window_id, reason } => ToolResult::error(format!(
+        ),
+        PxFrameError::CaptureUnavailable { window_id, reason } => format!(
             "window_id {window_id}'s current capture is unavailable ({reason}), so its \
                  pixel coordinate frame cannot be verified. Refusing to dispatch."
-        ))
-        .with_structured(error_structured(error)),
+        ),
         PxFrameError::FrameMismatch {
             window_id,
             bounds_width,
@@ -203,14 +210,18 @@ pub fn refusal(error: &PxFrameError) -> ToolResult {
             capture_height,
             scale_x,
             scale_y,
-        } => ToolResult::error(format!(
+        } => format!(
             "window_id {window_id}'s capture is {capture_width}x{capture_height}, but its \
              WindowServer bounds are {bounds_width:.2}x{bounds_height:.2} points \
              (scale_x={scale_x:.4}, scale_y={scale_y:.4}). These are not one coherent \
              1x/2x frame. Refusing to dispatch."
-        ))
-        .with_structured(error_structured(error)),
+        ),
+    };
+    let mut structured = error_structured(error);
+    if matches!(error, PxFrameError::NativeGeometryMismatch { .. }) {
+        structured["effect"] = serde_json::json!("refused");
     }
+    ToolResult::error(message).with_structured(structured)
 }
 
 /// Structured form shared by action refusals and a successful state snapshot
@@ -266,15 +277,15 @@ pub fn error_structured(error: &PxFrameError) -> serde_json::Value {
     }
 }
 
-/// Resolve the frame off the async path, mapping both the task error and the
-/// refusal onto a `ToolResult` the caller can return directly.
-pub async fn resolve_or_refuse(pid: i32, window_id: u32) -> Result<WindowPxFrame, ToolResult> {
+pub(crate) async fn resolve_or_refuse(
+    pid: i32,
+    window_id: u32,
+) -> Result<WindowPxFrame, PixelActionError> {
     match tokio::task::spawn_blocking(move || resolve_window_px_frame(pid, window_id)).await {
-        Ok(Ok(frame)) => Ok(frame),
-        Ok(Err(e)) => Err(refusal(&e)),
-        Err(e) => Err(ToolResult::error(format!(
+        Ok(result) => result.map_err(PixelActionError::Frame),
+        Err(e) => Err(PixelActionError::Existing(ToolResult::error(format!(
             "window frame lookup for window_id {window_id} failed: {e}. Not dispatching."
-        ))),
+        )))),
     }
 }
 

@@ -272,7 +272,7 @@ impl Tool for DragTool {
                         let (tsx, tsy, tlx, tly) = frame.to_screen(to_x, to_y);
                         (fsx, fsy, flx, fly, tsx, tsy, tlx, tly)
                     }
-                    Err(refusal) => return refusal,
+                    Err(refusal) => return refusal.into_tool_result(),
                 }
             } else {
                 (from_x, from_y, from_x, from_y, to_x, to_y, to_x, to_y)

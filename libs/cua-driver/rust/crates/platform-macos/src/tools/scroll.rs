@@ -457,7 +457,7 @@ impl Tool for ScrollTool {
                         wid: Some(wid),
                     })
                 }
-                Err(refusal) => return refusal,
+                Err(refusal) => return refusal.into_tool_result(),
             }
         } else {
             None

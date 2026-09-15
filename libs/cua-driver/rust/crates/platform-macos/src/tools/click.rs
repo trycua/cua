@@ -32,13 +32,12 @@ use crate::focus_guard;
 use crate::window_change_detector::WindowChangeDetector;
 use core_foundation::base::{CFRelease, TCFType};
 
-use super::ToolState;
+use super::{px_frame::PixelActionError, ToolState};
 
 pub struct ClickTool {
     state: Arc<ToolState>,
 }
 
-#[derive(Clone)]
 pub(crate) struct PixelClickRequest {
     pub pid: i32,
     pub window_id: Option<u32>,
@@ -61,23 +60,26 @@ pub(crate) struct PixelClickOutcome {
     pub screen_point: (f64, f64),
 }
 
-pub(crate) enum PixelClickError {
-    Frame(super::px_frame::PxFrameError),
-    Existing(ToolResult),
-}
-
-impl PixelClickError {
-    pub fn into_tool_result(self) -> ToolResult {
-        match self {
-            Self::Frame(error) => super::px_frame::refusal(&error),
-            Self::Existing(result) => result,
-        }
-    }
-}
-
 impl ClickTool {
     pub fn new(state: Arc<ToolState>) -> Self {
         Self { state }
+    }
+
+    async fn position_cursor(
+        &self,
+        cursor_key: &str,
+        window_id: Option<u32>,
+        point: Option<(f64, f64)>,
+    ) {
+        let Some((x, y)) = point else { return };
+        if let Some(wid) = window_id {
+            crate::cursor::overlay::send_command(
+                cursor_key.to_owned(),
+                cursor_overlay::OverlayCommand::PinAbove(wid as u64),
+            );
+        }
+        crate::cursor::overlay::animate_cursor_to(cursor_key.to_owned(), x, y).await;
+        self.state.cursor_registry.update_position(cursor_key, x, y);
     }
 }
 
@@ -332,10 +334,8 @@ impl Tool for ClickTool {
             }
             // Glide the session's agent cursor to the screen point for visibility.
             let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
-            crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), sx, sy).await;
-            self.state
-                .cursor_registry
-                .update_position(&cursor_key, sx, sy);
+            self.position_cursor(&cursor_key, None, Some((sx, sy)))
+                .await;
 
             let btn = button.clone();
             let desktop_modifiers: Vec<String> = args.str_array("modifier");
@@ -525,14 +525,8 @@ impl Tool for ClickTool {
                         )
                     }
                 };
-                crate::cursor::overlay::send_command(
-                    cursor_key.clone(),
-                    cursor_overlay::OverlayCommand::PinAbove(wid as u64),
-                );
-                crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), cx, cy).await;
-                self.state
-                    .cursor_registry
-                    .update_position(&cursor_key, cx, cy);
+                self.position_cursor(&cursor_key, Some(wid), Some((cx, cy)))
+                    .await;
 
                 let mods_owned = modifiers.clone();
                 let foreground = delivery_mode.is_foreground();
@@ -587,18 +581,14 @@ impl Tool for ClickTool {
             };
             let mut selection_pixel = if selection_candidate {
                 if let Some((cx, cy)) = center {
-                    match tokio::task::spawn_blocking(move || {
-                        super::px_frame::resolve_window_px_frame(pid, wid)
-                    })
-                    .await
-                    {
-                        Ok(Ok(frame)) => Ok(Some(SelectionPixelTarget {
+                    match super::px_frame::resolve_or_refuse(pid, wid).await {
+                        Ok(frame) => Ok(Some(SelectionPixelTarget {
                             screen_x: cx,
                             screen_y: cy,
                             window_x: cx - frame.bounds.x,
                             window_y: cy - frame.bounds.y,
                         })),
-                        Ok(Err(
+                        Err(PixelActionError::Frame(
                             error @ super::px_frame::PxFrameError::NativeGeometryMismatch { .. },
                         )) => Err(error),
                         _ => Ok(None),
@@ -632,21 +622,9 @@ impl Tool for ClickTool {
                 selection_pixel = Ok(None);
             }
 
-            let position_cursor = || async {
-                if let Some((cx, cy)) = center {
-                    crate::cursor::overlay::send_command(
-                        cursor_key.clone(),
-                        cursor_overlay::OverlayCommand::PinAbove(wid as u64),
-                    );
-                    crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), cx, cy).await;
-                    self.state
-                        .cursor_registry
-                        .update_position(&cursor_key, cx, cy);
-                }
-            };
             let defer_cursor_position = selection_pixel.is_err();
             if !defer_cursor_position {
-                position_cursor().await;
+                self.position_cursor(&cursor_key, Some(wid), center).await;
             }
 
             // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
@@ -753,7 +731,7 @@ impl Tool for ClickTool {
                     fronted,
                 ))) => {
                     if defer_cursor_position {
-                        position_cursor().await;
+                        self.position_cursor(&cursor_key, Some(wid), center).await;
                     }
                     // For text inputs, wait 800ms for WebKit DOM focus to settle
                     // before returning — matches the Swift reference behaviour.
@@ -807,7 +785,7 @@ impl Tool for ClickTool {
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             }
         } else if let (Some(cx), Some(cy)) = (x, y) {
-            self.pixel_click(PixelClickRequest {
+            self.pixel_click(&PixelClickRequest {
                 pid,
                 window_id,
                 x: cx,
@@ -825,7 +803,7 @@ impl Tool for ClickTool {
             })
             .await
             .map(|outcome| outcome.result)
-            .unwrap_or_else(PixelClickError::into_tool_result)
+            .unwrap_or_else(PixelActionError::into_tool_result)
         } else {
             ToolResult::error(
                 "Provide either (element_index + window_id) or (x + y). pid is always required.",
@@ -837,38 +815,26 @@ impl Tool for ClickTool {
 impl ClickTool {
     pub(crate) async fn pixel_click(
         &self,
-        request: PixelClickRequest,
-    ) -> Result<PixelClickOutcome, PixelClickError> {
-        let PixelClickRequest {
-            pid,
-            window_id,
-            x: mut cx,
-            y: mut cy,
-            focus_only,
-            delivery_mode,
-            button: button_str,
-            count,
-            modifiers,
-            from_zoom,
-            debug_image_out,
-            cursor_key,
-            session_id,
-            skip_window_change_detection,
-        } = request;
+        request: &PixelClickRequest,
+    ) -> Result<PixelClickOutcome, PixelActionError> {
+        let (pid, window_id) = (request.pid, request.window_id);
+        let (mut cx, mut cy) = (request.x, request.y);
+        let focus_only = request.focus_only;
+        let count = request.count;
 
         // debug_image_out: capture fresh screenshot, overlay crosshair BEFORE
         // any coordinate translation (so it shows received coords in the same
         // space the caller was reasoning in).
-        if let Some(ref dbg_path) = debug_image_out {
-            if from_zoom {
-                return Err(PixelClickError::Existing(ToolResult::error(
+        if let Some(ref dbg_path) = request.debug_image_out {
+            if request.from_zoom {
+                return Err(PixelActionError::Existing(ToolResult::error(
                     "debug_image_out is incompatible with from_zoom — \
                          received (x, y) would be in zoom-crop space, not window-local.",
                 )));
             }
             match window_id {
                 None => {
-                    return Err(PixelClickError::Existing(ToolResult::error(
+                    return Err(PixelActionError::Existing(ToolResult::error(
                         "debug_image_out requires window_id.",
                     )))
                 }
@@ -877,7 +843,7 @@ impl ClickTool {
                     // matches the resize the calling session sees in
                     // get_window_state (precedence: session override > global).
                     let max_dim = self.state.session_config.effective_max_image_dimension(
-                        session_id.as_deref(),
+                        request.session_id.as_deref(),
                         &self.state.config.read().unwrap(),
                     );
                     let dbg_path_c = dbg_path.clone();
@@ -889,12 +855,12 @@ impl ClickTool {
                     .await;
                     match dbg_result {
                         Err(e) => {
-                            return Err(PixelClickError::Existing(ToolResult::error(format!(
+                            return Err(PixelActionError::Existing(ToolResult::error(format!(
                                 "debug_image_out task failed: {e}. Not dispatching click."
                             ))))
                         }
                         Ok(Err(e)) => {
-                            return Err(PixelClickError::Existing(ToolResult::error(format!(
+                            return Err(PixelActionError::Existing(ToolResult::error(format!(
                                 "debug_image_out write failed: {e}. Not dispatching click."
                             ))))
                         }
@@ -904,7 +870,7 @@ impl ClickTool {
             }
         }
 
-        if from_zoom {
+        if request.from_zoom {
             match self.state.zoom_registry.get(pid) {
                 Some(ctx) => {
                     let (wx, wy) = ctx.zoom_to_window(cx, cy);
@@ -912,7 +878,7 @@ impl ClickTool {
                     cy = wy;
                 }
                 None => {
-                    return Err(PixelClickError::Existing(ToolResult::error(format!(
+                    return Err(PixelActionError::Existing(ToolResult::error(format!(
                         "from_zoom=true but no zoom context for pid {pid}. Call zoom first."
                     ))))
                 }
@@ -934,36 +900,25 @@ impl ClickTool {
         // win_local_x/y: window-local logical-pixel coords needed for
         // CGEventSetWindowLocation in the Chromium recipe.
         let (screen_x, screen_y, win_local_x, win_local_y) = if let Some(wid) = window_id {
+            let frame = super::px_frame::resolve_or_refuse(pid, wid).await?;
+            let (sx, sy, lx, ly) = frame.to_screen(cx, cy);
+            // A window-local point outside the live frame would
+            // dispatch onto whatever occupies that screen point —
+            // the same wrong-surface misclick class as #2237.
+            // Refuse in background, where the caller cannot see
+            // what is actually under the translated point.
+            if !request.delivery_mode.is_foreground()
+                && (lx < 0.0 || ly < 0.0 || lx > frame.bounds.width || ly > frame.bounds.height)
             {
-                let frame = tokio::task::spawn_blocking(move || {
-                    super::px_frame::resolve_window_px_frame(pid, wid)
-                })
-                .await
-                .map_err(|error| {
-                    PixelClickError::Existing(ToolResult::error(format!(
-                        "window frame lookup for window_id {wid} failed: {error}. Not dispatching."
-                    )))
-                })?
-                .map_err(PixelClickError::Frame)?;
-                let (sx, sy, lx, ly) = frame.to_screen(cx, cy);
-                // A window-local point outside the live frame would
-                // dispatch onto whatever occupies that screen point —
-                // the same wrong-surface misclick class as #2237.
-                // Refuse in background, where the caller cannot see
-                // what is actually under the translated point.
-                if !delivery_mode.is_foreground()
-                    && (lx < 0.0 || ly < 0.0 || lx > frame.bounds.width || ly > frame.bounds.height)
-                {
-                    return Err(PixelClickError::Existing(ToolResult::error(format!(
-                        "click: window-local point ({lx:.1}, {ly:.1}) pt lies outside \
+                return Err(PixelActionError::Existing(ToolResult::error(format!(
+                    "click: window-local point ({lx:.1}, {ly:.1}) pt lies outside \
                                  window {wid}'s {:.0}×{:.0} pt frame; background delivery \
                                  refused. Re-read coordinates from a fresh get_window_state \
                                  screenshot.",
-                        frame.bounds.width, frame.bounds.height
-                    ))));
-                }
-                (sx, sy, lx, ly)
+                    frame.bounds.width, frame.bounds.height
+                ))));
             }
+            (sx, sy, lx, ly)
         } else {
             // No window_id → treat x,y as screen coordinates (legacy behaviour).
             (cx, cy, cx, cy)
@@ -977,7 +932,7 @@ impl ClickTool {
         // BEFORE the AX hit-test backend and any cursor/dispatch work.
         // delivery_mode:"foreground" stays the explicit last resort.
         let mutation_lease_held = crate::background_mutation::held_by_current_task(pid);
-        let _mutation_lease = if !delivery_mode.is_foreground() && !mutation_lease_held {
+        let _mutation_lease = if !request.delivery_mode.is_foreground() && !mutation_lease_held {
             if let Some(wid) = window_id {
                 match super::gate_background_window_action(
                     pid,
@@ -988,7 +943,7 @@ impl ClickTool {
                 .await
                 {
                     Ok(lease) => Some(lease),
-                    Err(refusal_result) => return Err(PixelClickError::Existing(refusal_result)),
+                    Err(refusal_result) => return Err(PixelActionError::Existing(refusal_result)),
                 }
             } else {
                 None
@@ -1001,11 +956,11 @@ impl ClickTool {
         // backend after resolving the requested screen point. This keeps
         // targeting (PX) orthogonal to delivery (AX) and avoids making a
         // Chromium/AppKit window key merely to satisfy first-mouse rules.
-        if !delivery_mode.is_foreground()
+        if !request.delivery_mode.is_foreground()
             && window_id.is_some()
-            && button_str == "left"
+            && request.button == "left"
             && count == 1
-            && modifiers.is_empty()
+            && request.modifiers.is_empty()
         {
             let hit_test_wid = window_id.expect("guarded by window_id.is_some() above");
             let ax_result = tokio::task::spawn_blocking(move || unsafe {
@@ -1046,7 +1001,7 @@ impl ClickTool {
                     });
                 }
                 Ok(Ok(false)) if focus_only => {
-                    return Err(PixelClickError::Existing(
+                    return Err(PixelActionError::Existing(
                         ToolResult::error(
                             "Background PX focus is unavailable at the requested point.".to_owned(),
                         )
@@ -1056,7 +1011,7 @@ impl ClickTool {
                     ));
                 }
                 Ok(Err(error)) if focus_only => {
-                    return Err(PixelClickError::Existing(
+                    return Err(PixelActionError::Existing(
                         ToolResult::error(format!("Background PX focus failed: {error}"))
                             .with_structured(serde_json::json!({
                                 "code": "background_unavailable"
@@ -1070,24 +1025,11 @@ impl ClickTool {
         // Resolve the effective delivery posture before observation. A
         // requested foreground click without a window id still degrades to
         // background, matching the existing contract and result label.
-        let fg = delivery_mode.is_foreground() && window_id.is_some();
-        let activation_policy = pixel_activation_policy(&button_str, fg, window_id.is_some());
+        let fg = request.delivery_mode.is_foreground() && window_id.is_some();
+        let activation_policy = pixel_activation_policy(&request.button, fg, window_id.is_some());
 
-        // Pin the overlay above the target window BEFORE animating so
-        // the cursor is already sandwiched correctly while it glides in.
-        if let Some(wid) = window_id {
-            crate::cursor::overlay::send_command(
-                cursor_key.clone(),
-                cursor_overlay::OverlayCommand::PinAbove(wid as u64),
-            );
-        }
-        // Animate the visual cursor to the click point and wait for it to
-        // arrive — mirrors Swift's `AgentCursor.shared.animateAndWait(to:)`.
-        crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), screen_x, screen_y).await;
-        // Keep the registry in sync with the overlay (see AX path above).
-        self.state
-            .cursor_registry
-            .update_position(&cursor_key, screen_x, screen_y);
+        self.position_cursor(&request.cursor_key, window_id, Some((screen_x, screen_y)))
+            .await;
 
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
         // A pixel click can land on a "Sign In" button that opens a sheet
@@ -1120,13 +1062,13 @@ impl ClickTool {
                 {
                     Ok(activated) => {
                         crate::cursor::overlay::send_command(
-                            cursor_key.clone(),
+                            request.cursor_key.clone(),
                             cursor_overlay::OverlayCommand::PinAbove(wid as u64),
                         );
                         activated
                     }
                     Err(error) => {
-                        return Err(PixelClickError::Existing(ToolResult::error(format!(
+                        return Err(PixelActionError::Existing(ToolResult::error(format!(
                             "Background click activation task failed: {error}"
                         ))));
                     }
@@ -1138,18 +1080,18 @@ impl ClickTool {
         // Pulse only after the activation settle so it visually coincides
         // with the real target click rather than the private focus prelude.
         crate::cursor::overlay::send_command(
-            cursor_key.clone(),
+            request.cursor_key.clone(),
             cursor_overlay::OverlayCommand::ClickPulse {
                 x: screen_x,
                 y: screen_y,
             },
         );
 
-        let mods_owned = modifiers.clone();
+        let mods_owned = request.modifiers.clone();
         // Surface 5: route to the right/middle CGEvent primitives when
         // button != left. Left-button path stays on the existing Chromium-
         // routed `click_at_xy_with_window_local` for back-compat.
-        let button_kind = button_str.clone();
+        let button_kind = request.button.clone();
         let result = focus_guard::with_focus_suppressed(
                 if activation_policy == PixelActivationPolicy::SuppressTarget {
                     Some(pid)
@@ -1258,9 +1200,9 @@ impl ClickTool {
         }
 
         let changes =
-            super::finish_window_observation(snapshot, skip_window_change_detection).await;
+            super::finish_window_observation(snapshot, request.skip_window_change_detection).await;
 
-        let button_label = match button_str.as_str() {
+        let button_label = match request.button.as_str() {
             "right" => "right-click",
             "middle" => "middle-click",
             _ => "click",
@@ -1288,10 +1230,10 @@ impl ClickTool {
                     })),
                 })
             }
-            Ok(Err(e)) => Err(PixelClickError::Existing(ToolResult::error(format!(
+            Ok(Err(e)) => Err(PixelActionError::Existing(ToolResult::error(format!(
                 "{button_label} failed: {e}"
             )))),
-            Err(e) => Err(PixelClickError::Existing(ToolResult::error(format!(
+            Err(e) => Err(PixelActionError::Existing(ToolResult::error(format!(
                 "Task error: {e}"
             )))),
         }

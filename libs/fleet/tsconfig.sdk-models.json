@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "outDir": "target/sdk-model-tests",
+    "skipLibCheck": true,
+    "types": [
+      "vite/client",
+      "node"
+    ],
+    "strict": true
+  },
+  "files": [
+    "e2e/sdk-models.unit.ts",
+    "e2e/mock-chat-api.spec.ts"
+  ]
+}

@@ -14,6 +14,20 @@ const fixture = JSON.parse(
 
 const normalize = (value) => value.replace(/\s+/g, " ").trim()
 
+test("current native-window methods return typed outputs", () => {
+  const declarations = normalize(fs.readFileSync(
+    path.join(packageRoot, "dist", "native", "cua_driver_sdk.d.ts"), "utf8",
+  ))
+  for (const [method, input, output] of [
+    ["listApps", "ListAppsInput", "ListAppsOutput"],
+    ["listWindows", "ListWindowsInput", "ListWindowsOutput"],
+    ["getWindowState", "GetWindowStateInput", "WindowStateOutput"],
+    ["click", "ClickInput", "ActionResult"],
+  ]) {
+    assert.ok(declarations.includes(`${method}(input: ${input}, asyncOpts_?: { signal: AbortSignal; }): Promise<${output}>;`), method)
+  }
+})
+
 test("released package exports and declarations remain available", () => {
   const packageJson = JSON.parse(
     fs.readFileSync(path.join(packageRoot, "package.json"), "utf8"),

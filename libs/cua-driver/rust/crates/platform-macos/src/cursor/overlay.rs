@@ -31,6 +31,7 @@
 
 use std::collections::HashMap;
 use std::ffi::c_void;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -74,6 +75,11 @@ static CMD_TX: OnceLock<std::sync::mpsc::SyncSender<OverlayMsg>> = OnceLock::new
 // Single-consumer slot; receiver is moved into run_on_main_thread().
 static CMD_RX_CELL: Mutex<Option<std::sync::mpsc::Receiver<OverlayMsg>>> = Mutex::new(None);
 static RENDER: Mutex<Option<RenderMap>> = Mutex::new(None);
+static OVERLAY_WINDOW_ID: AtomicU32 = AtomicU32::new(0);
+
+pub(crate) fn is_overlay_window(window_id: u32) -> bool {
+    window_id != 0 && OVERLAY_WINDOW_ID.load(Ordering::Acquire) == window_id
+}
 
 /// The keyed, insertion-ordered collection of owned cursors that the render
 /// loop composites every frame. Insertion order = stable z-order (later keys
@@ -598,16 +604,14 @@ unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     let win_h = screen_frame.size.height;
     // NSScreen.backingScaleFactor is the most direct source of truth — it's
     // what AppKit will use for the layer's native backing surface anyway.
-    // Fall back to the CG estimator (pixel mode width ÷ logical bounds) when
+    // Fall back to the CG estimator (current-mode pixels ÷ points) when
     // the AppKit call returns a non-positive value, since downstream paint
     // math divides by this and a 0.0 would zero out the cursor.
     let mut backing_scale: f64 = msg_send![main_screen, backingScaleFactor];
     if backing_scale.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
-        use core_graphics::display::{CGDisplayBounds, CGMainDisplayID};
+        use core_graphics::display::CGMainDisplayID;
         let display_id = CGMainDisplayID();
-        let bounds = CGDisplayBounds(display_id);
-        backing_scale =
-            crate::tools::get_screen_size::get_backing_scale(display_id, bounds.size.width as i64);
+        backing_scale = crate::tools::get_screen_size::get_backing_scale(display_id);
         if backing_scale.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
             backing_scale = 1.0;
         }
@@ -678,6 +682,9 @@ unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         }
     }
 
+    let window_number: isize = msg_send![win, windowNumber];
+    OVERLAY_WINDOW_ID.store(u32::try_from(window_number).unwrap_or(0), Ordering::Release);
+
     // ---- Show the window ----
     let _: () = msg_send![win, orderFrontRegardless];
 
@@ -690,6 +697,7 @@ unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
 
     // ---- NSApplication run loop (blocks until process exits) ----
     let _: () = msg_send![app, run];
+    OVERLAY_WINDOW_ID.store(0, Ordering::Release);
 }
 
 fn render_loop(
@@ -952,7 +960,7 @@ fn dispatch_set_layer_contents(layer_ptr: usize, pixmap: tiny_skia::Pixmap) {
     // symbol is `_dispatch_main_q`, a *struct* (not a pointer).
     // We declare it as `u8` (opaque placeholder) and take its ADDRESS to
     // obtain the `dispatch_queue_t` (pointer to the struct).
-    #[link(name = "dispatch", kind = "dylib")]
+    #[link(name = "System", kind = "framework")]
     extern "C" {
         // Opaque placeholder — we only ever take &_dispatch_main_q, never read it.
         static _dispatch_main_q: u8;
@@ -997,7 +1005,7 @@ fn dispatch_set_layer_contents(layer_ptr: usize, pixmap: tiny_skia::Pixmap) {
 fn dispatch_order_front(win_ptr: usize) {
     use std::ffi::c_void;
 
-    #[link(name = "dispatch", kind = "dylib")]
+    #[link(name = "System", kind = "framework")]
     extern "C" {
         static _dispatch_main_q: u8;
         fn dispatch_async_f(
@@ -1061,7 +1069,7 @@ fn target_is_frontmost_visible_window(
 fn dispatch_pin_above(win_ptr: usize, target_wid: u64) {
     use std::ffi::c_void;
 
-    #[link(name = "dispatch", kind = "dylib")]
+    #[link(name = "System", kind = "framework")]
     extern "C" {
         static _dispatch_main_q: u8;
         fn dispatch_async_f(

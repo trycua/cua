@@ -3,35 +3,27 @@
  */
 
 import type { OSType } from '../types';
-import type { BaseComputerInterface } from './base';
+import type { BaseComputerInterface, ComputerInterfaceConnection } from './base';
 import { LinuxComputerInterface } from './linux';
 import { MacOSComputerInterface } from './macos';
 import { WindowsComputerInterface } from './windows';
 
 export const InterfaceFactory = {
-  /**
-   * Create an interface for the specified OS.
-   *
-   * @param os Operating system type ('macos', 'linux', or 'windows')
-   * @param ipAddress IP address of the computer to control
-   * @param apiKey Optional API key for cloud authentication
-   * @param vmName Optional VM name for cloud authentication
-   * @returns The appropriate interface for the OS
-   * @throws Error if the OS type is not supported
-   */
+  /** Create an interface for the specified operating system and connection. */
   createInterfaceForOS(
     os: OSType,
     ipAddress: string,
     apiKey?: string,
-    vmName?: string
+    vmName?: string,
+    connection?: ComputerInterfaceConnection
   ): BaseComputerInterface {
     switch (os) {
       case 'macos':
-        return new MacOSComputerInterface(ipAddress, 'lume', 'lume', apiKey, vmName);
+        return new MacOSComputerInterface(ipAddress, 'lume', 'lume', apiKey, vmName, connection);
       case 'linux':
-        return new LinuxComputerInterface(ipAddress, 'lume', 'lume', apiKey, vmName);
+        return new LinuxComputerInterface(ipAddress, 'lume', 'lume', apiKey, vmName, connection);
       case 'windows':
-        return new WindowsComputerInterface(ipAddress, 'lume', 'lume', apiKey, vmName);
+        return new WindowsComputerInterface(ipAddress, 'lume', 'lume', apiKey, vmName, connection);
       default:
         throw new Error(`Unsupported OS type: ${os}`);
     }

@@ -1,0 +1,101 @@
+---
+title: Build and inspect a map
+description: Turn fictional station observations into a QGIS planning map and a checked PDF handoff with Cua Driver.
+---
+
+Create an editable QGIS map from eight fictional refill-station observations, then
+use the map in a one-page LibreOffice Writer handoff. The workflow covers importing
+coordinates, calculating categories, designing a print layout, and inspecting the
+saved PDFs.
+
+The clip shows selected layout gestures in QGIS and inspection of the exported
+map in Chrome. The prompt below also includes the data preparation and handoff.
+
+<VideoDemo
+  src="https://github.com/user-attachments/assets/e133cb0a-9b70-4812-9d97-76fadd67317b"
+  poster="/media/workflow-demos/map-poster.jpg"
+  title="Build a planning map in QGIS and inspect the exported PDF"
+  aspectRatio={8 / 5}
+  autoPlay={false}
+  loop={false}
+  preload="metadata"
+>
+  Recorded on macOS with GPT-6 Astra + Cua Driver. Selected gestures play at 1x; setup, waits,
+  retries and intervening edits are cut. These examples include foreground/desktop input and
+  fictional data. Clip duration is not task completion time.
+</VideoDemo>
+
+## Prepare the apps and source files
+
+Use a Mac with QGIS, LibreOffice Writer, and Chrome installed. The recording uses
+Chrome to inspect the map PDF; you can also use Preview for PDF checks. Follow
+[Install Cua Driver](/how-to-guides/driver/install),
+grant the required [macOS permissions](/reference/cua-driver/macos-permissions), and
+[connect your agent](/how-to-guides/driver/connect-your-agent). Keep the desktop
+available while the agent works.
+
+Download these original, synthetic inputs into one working folder:
+
+- [Station observations (CSV)](/media/workflow-demos/map/stations.csv): eight
+  records with coordinates, flow in liters per minute, and elapsed days since
+  the last check.
+- [Campus and building outlines (GeoJSON)](/media/workflow-demos/map/campus.geojson):
+  one campus boundary and three buildings.
+
+All names, measurements, and geometry are invented. The coordinates near zero
+longitude and latitude deliberately place the example in the ocean. `READY` and
+`REVIEW` are planning categories, not water safety findings. No basemap or external
+map service is needed.
+
+## Ask the agent to create the map
+
+Give the agent the working folder and this bounded task:
+
+```text
+Use Cua Driver to build a fictional Morrow Field campus planning map in QGIS.
+Preserve stations.csv and campus.geojson. Save new outputs in an output folder.
+
+Import stations.csv as points: X = longitude, Y = latitude, source CRS EPSG:4326.
+Import campus.geojson with the same source CRS. Set the project CRS to EPSG:3857
+for a layout with distances in meters; do not relabel the source coordinates.
+
+Use the field calculator to create status: READY when flow_lpm >= 2.0 AND
+days_since_check <= 30; otherwise REVIEW. Compare the original numeric values
+without rounding or recalculating elapsed days. Save an editable GeoPackage.
+
+Style READY green and REVIEW amber, label all eight station IDs, and include
+category names so the result does not rely on color alone. Select the REVIEW
+features and confirm their IDs and count from the data.
+
+Create one A4 landscape layout with a title, legend, north arrow, and meter scale
+bar. Save a QGZ project with relative paths and export the map as a PDF.
+
+In LibreOffice Writer, create a one-page handoff with the map, verified category
+counts and REVIEW IDs, the classification rule, and the fictional-planning caveat.
+Save the handoff as ODT and PDF. Reopen the project and inspect both exported PDFs
+in Chrome or Preview. Report the saved files, completed checks, and any unresolved issue.
+Keep the outputs local; do not send or publish them.
+```
+
+## Verify the saved outputs
+
+Check the saved files, including the data behind the map:
+
+1. Reopen the QGZ project and confirm that its layers resolve. Check that R01 is at
+   longitude `0.00150`, latitude `0.00440`; swapped axes can look plausible in this
+   example. Confirm eight station points, one campus boundary, and three buildings.
+2. Inspect the saved status field. `READY` must contain R01–R04 and `REVIEW` must
+   contain R05–R08, with four records in each category. R01 meets both thresholds
+   exactly; R08 needs review because its flow is `1.99`.
+3. Open the map PDF in Chrome or Preview. Check all eight labels, the legend, north arrow,
+   and scale bar at readable zoom. Confirm that the page is A4 landscape and that
+   no labels or symbols are clipped.
+4. Open the handoff PDF and its editable ODT. Confirm one page, a readable map,
+   matching counts and IDs, and the statement that these are fictional planning
+   categories. Preserve the original CSV and GeoJSON alongside the saved project.
+
+## Related workflows
+
+- [Build a report in a native app](/how-to-guides/recipes/build-a-report-in-a-native-app)
+- [Redact and annotate a PDF](/how-to-guides/recipes/redact-and-annotate-a-pdf)
+- [Drive your first app](/tutorials/drive-your-first-app)

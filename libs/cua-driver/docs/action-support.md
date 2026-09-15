@@ -77,12 +77,28 @@ are capabilities, not one uniform API.
 | X11/Openbox | Exact run `29254936043` passed all 116 declared outcomes: 75 deliveries and 41 exact refusals. GTK3 AT-SPI actions and values, foreground XTest pointer/keyboard routes, capture, desktop scope, and the complete Electron/Tauri catalog all reached fixture-owned oracles. | Xvfb does not prove the real-Xorg MPX/uinput background pointer route. Toolkits that reject XSendEvent retain exact refusals. |
 | Sway/wlroots | Runs `29255208927` and `29257961614` passed the complete 116 outcomes: native and capture 36/36, then shared 80/80. The Electron, Tauri, GTK3, capture, and desktop-scope catalogs use live Sway identity/geometry and external fixture oracles. | Stock Wayland cannot target raw focus-bound input at an occluded surface. Those rows retain exact refusals; another wlroots compositor is not assumed equivalent until a material divergence is reported and tested. Exact cursor preservation remains unproven and is tracked in [issue #2194](https://github.com/trycua/cua/issues/2194). |
 | GNOME/Mutter | A real GNOME 46 Wayland run passed the full GTK3 matrix, 31/31. The WinRects helper supplies stable window ids, frame and buffer geometry, stacking, verified activation, stage capture, and the compositor cursor. AT-SPI handles semantic actions; persistent portal/libei sessions deliver foreground PX click, right/double click, drag, scroll, type, key, and hotkey. Background rows either deliver through AT-SPI with focus and leak guards or return the declared exact refusal. | The helper requires installation plus one Shell-session restart. Without it, target-bound foreground input refuses. Portal video and a shared Electron/Tauri GNOME run remain open. |
-| KDE/KWin | A Plasma 6 session reached GTK AT-SPI discovery, generic toplevel discovery, and portal-interface preflight. Portal input is compiled into release binaries. | No behavioral matrix is accepted. A target-addressable KWin activation adapter is not implemented, so foreground portal/libei input refuses instead of injecting into the wrong focused app. |
+| KDE/KWin | A Plasma 6 Wayland session has a live-validated Cua-owned native KWin identity adapter: trusted in-process helper, opaque KWin-lifetime tokens, PID/geometry correlation, active/minimized metadata, and live-window token pruning. | Raw target-addressed keyboard and pointer actions are intentionally refused. KWin portal/libei delivery is focus-bound, so activation plus read-back cannot prevent focus changing before compositor EIS processing. Delivery remains disabled until a KWin input path binds the mutation itself to the target token/window. The ABI-specific helper remains optional and is currently obtained by a host build. |
 | Nested `cua-compositor` | The optional backend owns its nested session and is covered by typed shared, native, and capture catalogs. Run `29197643541` passed native GTK3 31/31; run `29197887387` passed capture/scope 5/5. Full shared run `29199596935` passed 26/36 Electron rows before the occluded-subtree and wheel-frame repairs. | The lane remains experimental. The accepted full shared run still has 10 failures; focused replacement runs reduce that set but do not promote the environment. Unicode text and a canonical parallel-drag row remain unproven. This private route is not evidence of a stock-Wayland capability. |
 
 PX background left-click rows may resolve the screen point to an actionable
 AT-SPI node. Such a pass proves the public PX-addressed behavior and its desktop
 side effects, but it does not prove raw pixel delivery to canvases or games.
+
+The [accepted Hyprland foreground extension](https://github.com/trycua/cua/issues/3550#issuecomment-5564996417)
+is planned support, not an empirical pass in this table. Production protocol v3
+advertises `foreground_target:true` and binds `FOREGROUND_TARGET` to the exact
+native top-level surface for activation, click, key, scroll, and bounded drag.
+Driver expands bounded ASCII text under the exact US keymap; Unicode and IME
+input remain outside this route. Native GTK3, Electron, and Tauri foreground
+coverage still requires the complete canonical Linux suite in native Hyprland.
+
+Foreground delivery may activate the target and move the primary cursor, with
+no restoration promise. Held keys/buttons, grabs, constraints, and drag-and-drop
+must refuse before takeover; foreground drag interruption still requires review
+and native verification. This route has no Calc/Inkscape package gate. Background
+`TARGET` retains its Calc/Inkscape qualification and never escalates to
+foreground. Observation followed by global `wtype` input is not an exact-target
+fallback. Both routes retain the common permission and lifecycle contract.
 
 ## Maintenance rule
 

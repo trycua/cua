@@ -12,8 +12,8 @@ Driver integration](/concepts/choose-a-cua-driver-integration) to compare MCP,
 the direct SDK, private workers, and app-hosted services.
 
 <Callout type="info">
-  This connects an agent to Cua Driver on the current machine. To create a disposable local desktop,
-  use [Cua Sandbox](/tutorials/your-first-local-sandbox) instead.
+  This connects an agent to Cua Driver on the current machine. To create an isolated cloud desktop,
+  use [Cua Sandbox](/tutorials/your-first-cloud-fleet) instead.
 </Callout>
 
 ## Before you start
@@ -57,10 +57,10 @@ directly, and it applies only to a runtime this command launches. An agent canno
 widen any of this from a tool call.
 
 <Callout type="warn">
-  A `standard`-mode runtime allows input against every application on the
-  desktop. If an agent should reach only a reviewed set of apps, origins, and
-  directories, register it against a `bounded` runtime instead — see [Write a
-  capability manifest](/how-to-guides/driver/write-a-bounded-manifest).
+  A `standard`-mode runtime allows input against every application on the desktop. If an agent
+  should reach only a reviewed set of apps, origins, and directories, register it against a
+  `bounded` runtime instead — see [Write a capability
+  manifest](/how-to-guides/driver/write-a-bounded-manifest).
 </Callout>
 
 ## Generate the client config
@@ -72,6 +72,21 @@ cua-driver mcp-config --client <client>
 ```
 
 The generated reference is the source of truth for the complete roster and exact command shapes: [`cua-driver mcp-config`](/reference/cua-driver/cli-reference#cua-driver-mcp-config).
+
+## Protocol and embedded skill compatibility
+
+Cua Driver 0.28.0 and later supports the MCP `2026-07-28` revision over stdio.
+MCP protocol revisions use dates, so `2026-07-28` is the revision name.
+
+Modern clients can discover Cua Driver without `initialize` and can list and
+read its embedded `skill://cua-driver/` resources. Legacy clients continue to
+negotiate `2025-06-18` through `initialize` and receive the same Driver tools.
+The embedded skill does not grant desktop permissions or approve actions.
+
+Client support for MCP resources also does not guarantee native skill
+activation. Use the client notes below and [Install the Cua Driver agent
+skill](/how-to-guides/driver/install-agent-skill) when a filesystem skill is
+required.
 
 ## Claude Code
 
@@ -89,6 +104,11 @@ cua-driver mcp-config --client claude
 ```
 
 That profile exposes the same driver tools under the compatibility server name. It still runs Cua Driver over MCP; Anthropic's native computer-use API is separate.
+
+As of Claude Code 2.1.268, it can list and read the embedded Cua Driver resources
+when asked, but it does not add the remote skill to its native startup skill catalog.
+Install the filesystem skill when you want Claude Code to activate it as a
+skill.
 
 <Callout type="info" title="Using a local model">
   Claude Code can also act as the harness for a model served on the same machine. Follow [Run a
@@ -119,6 +139,10 @@ cua-driver skills status
 ```
 
 See [Install the Cua Driver agent skill](/how-to-guides/driver/install-agent-skill) for the ClawHub and direct-install paths.
+
+As of Codex 0.154.0, it can list and read Cua Driver's embedded skill through
+the MCP resource APIs. The filesystem install remains useful for older clients
+and for explicit local skill discovery.
 
 ## Prime Agent
 
@@ -222,23 +246,14 @@ Two valid setups:
 
 ## Clients without a dedicated preset
 
-Some MCP clients can run Cua Driver directly even though `mcp-config` does not yet have a named
-preset for them. Resolve the absolute executable path first with `command -v cua-driver`, then use
-the client's native command:
+Some MCP clients can run Cua Driver directly even though `mcp-config` does not
+have a named preset for them. After completing the installation and permission
+steps on this page, use the client-specific registration and verification steps:
 
-```bash
-# Grok Build (xAI coding CLI, not Grok Bot)
-grok mcp add cua-driver -- /absolute/path/to/cua-driver mcp
-grok mcp doctor cua-driver
-
-# Kimi Code CLI
-kimi mcp add cua-driver -- /absolute/path/to/cua-driver mcp
-kimi mcp test cua-driver
-```
-
-These commands use each client's documented stdio MCP interface and the standard `cua-driver mcp`
-entry point. See the focused guides for [Grok Build](/use-cua-with/grok-build) and [Kimi
-Code](/use-cua-with/kimi-code).
+- [Grok Build](/use-cua-with/grok-build), xAI's coding CLI, uses stdio MCP.
+  [Grok Bot](/use-cua-with/grok-bot) is a separate local-command integration.
+- [Kimi Code](/use-cua-with/kimi-code) uses stdio MCP through its native CLI or
+  configuration file.
 
 T3 Code is a control plane for other coding agents rather than a separate MCP client. Configure Cua
 Driver in the underlying harness, then launch that harness from [T3 Code](/use-cua-with/t3-code).

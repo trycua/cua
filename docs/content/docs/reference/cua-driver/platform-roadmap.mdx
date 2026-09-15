@@ -10,10 +10,10 @@ desktop state.
 
 ## Status vocabulary
 
-| Status            | Meaning                                                                                           |
-| ----------------- | ------------------------------------------------------------------------------------------------- |
-| Proven            | Canonical harness evidence supports the current public claim.                                     |
-| Evidence gap      | Code or platform APIs may support the behavior, but representative harness evidence is missing.   |
+| Status            | Meaning                                                                                            |
+| ----------------- | -------------------------------------------------------------------------------------------------- |
+| Proven            | Canonical harness evidence supports the current public claim.                                      |
+| Evidence gap      | Code or platform APIs may support the behavior, but representative harness evidence is missing.    |
 | Engineering work  | A concrete driver, fixture, observer, or runner change is required.                                |
 | Experimental      | An opt-in backend or environment has evidence but is not part of the general support contract.     |
 | Platform boundary | The ordinary OS security or windowing model does not expose a safe general route for the behavior. |
@@ -24,22 +24,22 @@ inside an environment that owns the compositor.
 
 ## Cross-platform priorities
 
-| Area                         | Current state                                                                                       | Next acceptance condition                                                                                           |
-| ---------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Shared application catalog   | Electron and Tauri use one typed Rust behavior catalog across operating systems.                    | Keep the same action, AX/PX, foreground/background, scope, and oracle dimensions on every representative host.     |
-| Native application catalogs  | Windows, macOS, and Linux have toolkit-specific source-built harnesses.                             | Expand native rows toward the shared action cross-product where the toolkit exposes an equivalent behavior.        |
-| Background safety            | Background cells attach focus, z-order, cursor, and leaked-input oracles.                           | Add the same side-effect owners to every new background delivery or refusal row.                                    |
-| Release evidence             | Hosted GUI lanes retain typed results, trajectories, screenshots, logs, and per-cell video.        | Require accepted exact-source-SHA runs for affected platforms before changing release support claims.              |
-| Representative environments | Hosted lanes cover Windows, Linux X11, Sway, and the nested compositor; macOS uses a logged-in host. | Close named GNOME, KDE, real-Xorg, and renderer evidence gaps without weakening fixtures or oracles.                |
+| Area                        | Current state                                                                                        | Next acceptance condition                                                                                      |
+| --------------------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Shared application catalog  | Electron and Tauri use one typed Rust behavior catalog across operating systems.                     | Keep the same action, AX/PX, foreground/background, scope, and oracle dimensions on every representative host. |
+| Native application catalogs | Windows, macOS, and Linux have toolkit-specific source-built harnesses.                              | Expand native rows toward the shared action cross-product where the toolkit exposes an equivalent behavior.    |
+| Background safety           | Background cells attach focus, z-order, cursor, and leaked-input oracles.                            | Add the same side-effect owners to every new background delivery or refusal row.                               |
+| Release evidence            | Hosted GUI lanes retain typed results, trajectories, screenshots, logs, and per-cell video.          | Require accepted exact-source-SHA runs for affected platforms before changing release support claims.          |
+| Representative environments | Hosted lanes cover Windows, Linux X11, Sway, and the nested compositor; macOS uses a logged-in host. | Close named GNOME, KDE, real-Xorg, and renderer evidence gaps without weakening fixtures or oracles.           |
 
 ## Windows
 
-| Work item                                  | Status           | Acceptance condition                                                                                                           |
-| ------------------------------------------ | ---------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| Broader WPF PX gestures and keyboard paths | Evidence gap     | Typed foreground/background rows observe native control state and all required desktop side effects.                          |
-| WinUI 3 pointer and background coverage    | Evidence gap     | Right click, double click, drag, scroll, and keyboard contracts are declared and empirically observed or refused.              |
-| WebView2 native-input coverage             | Evidence gap     | Native pointer and keyboard cells complement the existing page/CDP and background-left-click evidence.                        |
-| Elevated-integrity boundary                | Engineering work | A controlled fixture proves the `background_uipi_blocked` contract across process integrity levels.                           |
+| Work item                                  | Status           | Acceptance condition                                                                                              |
+| ------------------------------------------ | ---------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Broader WPF PX gestures and keyboard paths | Evidence gap     | Typed foreground/background rows observe native control state and all required desktop side effects.              |
+| WinUI 3 pointer and background coverage    | Evidence gap     | Right click, double click, drag, scroll, and keyboard contracts are declared and empirically observed or refused. |
+| WebView2 native-input coverage             | Evidence gap     | Native pointer and keyboard cells complement the existing page/CDP and background-left-click evidence.            |
+| Elevated-integrity boundary                | Engineering work | A controlled fixture proves the `background_uipi_blocked` contract across process integrity levels.               |
 
 Windows integrity isolation is a platform boundary: a lower-integrity process
 cannot generally inject input into a higher-integrity target. The roadmap item
@@ -47,11 +47,11 @@ is to detect and prove that refusal, not bypass the operating-system boundary.
 
 ## macOS
 
-| Work item                                | Status           | Acceptance condition                                                                                       |
-| ---------------------------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------- |
-| Native AppKit action cross-product       | Evidence gap     | Press key, hotkey, AX-addressed pointer gestures, and additional controls have application-owned evidence. |
-| SwiftUI transient-window discovery       | Engineering work | The opened popover or panel is independently visible through targeted window and AX enumeration.           |
-| Installed-app confidence checks          | Proven           | Keep the typed Calculator and TextEdit rows as supporting evidence; repo-local fixtures remain the primary behavioral contract. |
+| Work item                          | Status           | Acceptance condition                                                                                                            |
+| ---------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Native AppKit action cross-product | Evidence gap     | Press key, hotkey, AX-addressed pointer gestures, and additional controls have application-owned evidence.                      |
+| SwiftUI transient-window discovery | Engineering work | The opened popover or panel is independently visible through targeted window and AX enumeration.                                |
+| Installed-app confidence checks    | Proven           | Keep the typed Calculator and TextEdit rows as supporting evidence; repo-local fixtures remain the primary behavioral contract. |
 
 Accessibility and Screen Recording consent remain platform prerequisites.
 Off-Space SwiftUI tree stripping, minimized keyboard commits, and applications
@@ -72,13 +72,46 @@ remains required.
 
 ## Linux Wayland
 
-| Environment             | Work item                                     | Status           | Acceptance condition                                                                                                      |
-| ----------------------- | --------------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| Sway/wlroots            | Preserve the accepted shared and native catalog | Proven         | Keep every declared Electron, Tauri, and GTK cell delivering or returning its exact refusal through unchanged oracles.    |
-| GNOME/Mutter            | Shared renderer catalog and portal video      | Evidence gap     | Electron and representative WebKitGTK rows pass with reporter-owned per-cell recordings.                                  |
-| KDE/KWin                | Target-addressable activation and full matrix | Engineering work | A supported KWin adapter activates the selected target and an independent observer verifies it before portal input.      |
-| Nested `cua-compositor` | Complete shared catalog and protocol coverage | Experimental     | One accepted full catalog proves renderer behavior, Unicode text, and canonical parallel drag.                            |
-| Other wlroots           | Representative compatibility                 | Evidence gap     | Add a lane only after a user report demonstrates behavior that the Sway lane does not represent.                          |
+| Environment             | Work item                                       | Status           | Acceptance condition                                                                                                                                                                                      |
+| ----------------------- | ----------------------------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Sway/wlroots            | Preserve the accepted shared and native catalog | Proven           | Keep every declared Electron, Tauri, and GTK cell delivering or returning its exact refusal through unchanged oracles.                                                                                    |
+| Hyprland / Omarchy      | Driver integration and isolated-input plugin    | Experimental     | Accept integrated driver evidence separately from plugin transport tests; complete the design and behavior gates below before claiming isolated input.                                                    |
+| GNOME/Mutter            | Shared renderer catalog and portal video        | Evidence gap     | Electron and representative WebKitGTK rows pass with reporter-owned per-cell recordings.                                                                                                                  |
+| KDE/KWin                | Target-bound input and full matrix              | Engineering work | Bind the input operation itself to the selected target and verify application state. The existing read-only helper and a pre-dispatch focus check cannot make later focus-bound portal input target-safe. |
+| Nested `cua-compositor` | Complete shared catalog and protocol coverage   | Experimental     | One accepted full catalog proves renderer behavior, Unicode text, and canonical parallel drag.                                                                                                            |
+| Other wlroots           | Representative compatibility                    | Evidence gap     | Add a lane only after a user report demonstrates behavior that the Sway lane does not represent.                                                                                                          |
+
+### Hyprland and Omarchy
+
+The [support reference](/reference/cua-driver/platform-support#hyprland-and-omarchy)
+records the dated driver-branch and plugin evidence. The discovery-only plugin
+is not an input implementation, and its lifecycle tests do not replace the
+driver's representative desktop catalog.
+
+Promotion requires distinct design, implementation, and validation work:
+
+- Accept an RFC for the input and permission contract, including operator
+  authorization, revocation, target identity, and compositor restart behavior.
+  Same-UID socket access does not identify or authorize a particular agent.
+- Review the nonshipping [input experiment #3572](https://github.com/trycua/cua/pull/3572)
+  before adopting a production integration. Its independent synthetic seat and
+  test-only authorization grants provide focused evidence, not a production
+  approval mechanism or general client compatibility. A second cursor image or
+  a successful transport request is not sufficient.
+- Prove packaged installation, upgrade refusal, restart, and ABI compatibility
+  on the exact Hyprland/plugin/toolchain combination. Preserve discovery and
+  lifecycle checks as a separate gate.
+- Run the representative application catalog at the integrated candidate SHA,
+  with fixture-owned state plus focus, z-order, cursor, and leaked-input
+  oracles. Include concurrent foreground grabs, keyboard state, native Wayland
+  and XWayland clients, and explicit unsupported-action refusals.
+- Complete the plugin's documented physical Omarchy acceptance baseline after
+  Fleet validation. A VM run supplements that gate; it does not certify a
+  bare-metal host or a different package combination.
+
+These are acceptance conditions, not an approved protocol or a delivery date.
+The plugin is Hyprland-specific rather than Omarchy-specific, and does not add
+the same capability to Sway, GNOME, or KDE.
 
 ### Standard Wayland boundary
 

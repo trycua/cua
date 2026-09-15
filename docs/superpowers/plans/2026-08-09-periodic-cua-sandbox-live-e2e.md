@@ -13,7 +13,7 @@
 - Schedule must remain `7/15 * * * *`, running at `:07`, `:22`, `:37`, and `:52` UTC.
 - Scheduled runs execute both `main-source` and `published-package`; relevant pushes to `main` execute only `main-source`.
 - Manual dispatch accepts `both`, `main-source`, or `published-package`; only manual dispatch may set `force_failure=true`.
-- Use image `public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04@sha256:82702ebdd32d1f8fc05f2ea409a7c67d0ba9f8f8e4e9f1a89ce40989d5f4475d`.
+- Use image `public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04@sha256:80fff8a40f217a460cef7a60161adb3899eabd02c3451f18926b84d1f81b8da2`.
 - Provision with `cpu=4`, `memory_mb=4096`, `server_port=8000`, `time_to_start=900`, `request_timeout=60`, and `telemetry_enabled=False`.
 - Authenticate only with `CUA_CLIENT_ID`, `CUA_CLIENT_SECRET`, `CUA_FLEET_BASE_URL=https://run.cua.ai`, and the default Cyclops token endpoint.
 - Do not use `CUA_API_KEY`, legacy `/api/keys`, namespace-scoped key creation, repository-private SDK helpers, or mutable image tags.
@@ -387,7 +387,7 @@ from tests.live.fleet_e2e_support import (
 
 IMAGE = (
     "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04"
-    "@sha256:82702ebdd32d1f8fc05f2ea409a7c67d0ba9f8f8e4e9f1a89ce40989d5f4475d"
+    "@sha256:80fff8a40f217a460cef7a60161adb3899eabd02c3451f18926b84d1f81b8da2"
 )
 
 
@@ -880,14 +880,14 @@ Update the merged PR or implementation issue with workflow run links, observed v
 
 ## Live Evidence Remediation
 
-The monitor uses reusable, dedicated namespaces instead of per-run namespaces.
+The monitor uses reusable namespaces for scheduled and push runs, while manual ephemeral runs use per-run namespaces to avoid stale ownership collisions.
 Each lane has one DNS-safe namespace for each event class:
 
 - `cua-live-<lane>-schedule` for scheduled runs
 - `cua-live-<lane>-push` for pushes
-- `cua-live-<lane>-manual` for `workflow_dispatch`
+- `cua-live-<lane>-<run-id>` for `workflow_dispatch`
 
-The event-and-lane concurrency group serializes use of each deterministic claim;
+The event-and-lane concurrency group serializes reusable scheduled and push claims;
 only scheduled runs cancel an older scheduled run in the same lane. Fleet
 reconciliation preserves the namespace, pool, and template, all named after the
 namespace. `Sandbox.ephemeral()` is verified with claim-only cleanup: after
@@ -898,7 +898,7 @@ that fails before yielding a sandbox. It never explicitly deletes a namespace,
 pool, or template.
 
 
-Workflow namespace expression: `cua-live-${{ matrix.lane }}-${{ github.event_name == 'workflow_dispatch' && 'manual' || github.event_name }}`.
+Workflow namespace expression: `cua-live-${{ matrix.lane }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event_name }}`.
 
 persistent reconciled resources are intentionally retained between runs; only deterministic claims are ephemeral.
 

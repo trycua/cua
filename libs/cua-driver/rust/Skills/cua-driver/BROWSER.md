@@ -199,11 +199,13 @@ process/profile proof remains valid. After preparation or reconnect, discard
 all previous target, tab, and ref values, list windows again when the pid
 changed, and bind again.
 
-Chrome's remote-debugging setting can remain enabled after the Cua session
-ends or Chrome restarts. Session cleanup revokes the in-memory grant and closes
-the Cua socket, but it leaves Chrome running and does not change browser
-preferences. The user can disable the setting from Chrome's fixed
-remote-debugging page.
+When Cua enabled a Chromium browser's remote-debugging setting, ending the last
+Cua session for that browser process restores the setting through the same
+exact, bounded setup-page route and dismisses any exact browser-owned
+remote-debugging consent prompt. A session that attached to a
+setting already enabled by the user does not claim ownership or turn it off. An
+abrupt daemon or browser crash can prevent cleanup; the user can disable the
+setting from the browser's fixed remote-debugging page.
 
 On the attached path tested during development, `navigator.webdriver` remained
 `false`. Treat that as an observation, since browser releases may change it.

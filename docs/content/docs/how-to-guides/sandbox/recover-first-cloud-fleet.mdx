@@ -1,0 +1,31 @@
+---
+title: Recover an interrupted first Fleet tutorial
+description: Delete the dedicated pool from Your first Cloud Fleet without repeating its workload.
+---
+
+Use this guide only when
+[Your first Cloud Fleet](/tutorials/your-first-cloud-fleet) stopped after it
+printed a pool name but before you confirmed deletion. Do not rerun the
+tutorial to recover a handle. Creating another pool does not clean up the
+original capacity.
+
+## Delete the recorded pool
+
+1. Restore valid Fleet credentials for the same account that created the pool.
+2. Copy the exact `first-fleet-...` name from the tutorial output.
+3. Open [Fleet](https://run.cua.ai), find that exact pool, and confirm that it
+   belongs to the interrupted tutorial run.
+4. Delete the pool. This requests deletion of its dedicated namespace,
+   template, claims, and computer capacity.
+5. Refresh the account inventory until the exact pool name is absent.
+
+An accepted deletion request can precede final removal. Until the pool is
+absent, its capacity can continue to incur usage charges. A `403` response does
+not prove absence; verify that you are using the original account and have
+permission to inspect the pool.
+
+If the name was not printed, the create response was interrupted, or the pool's
+ownership is uncertain, follow
+[Recover interrupted cleanup](/how-to-guides/sandbox/troubleshoot-fleet-pools#recover-interrupted-cleanup).
+That procedure covers inventory-based recovery without creating or reconciling
+resources.

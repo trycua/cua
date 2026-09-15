@@ -33,9 +33,12 @@ use cua_driver_testkit::e2e::{
     execute_case, native_background_case, native_foreground_case, native_readonly_case,
     recording_evidence, DriverRoute, Evidence, Observation, OracleKind, RefusalCode, Targeting,
 };
-use cua_driver_testkit::observer::TargetWindow;
+use cua_driver_testkit::observer::{NativeObserver, ObserverBackend, TargetWindow};
 use cua_driver_testkit::sentinel::run_with_background_oracles;
 use cua_driver_testkit::{Driver, McpDriver, ToolResponse};
+
+#[path = "support/appkit_snapshot_publication.rs"]
+mod snapshot_publication;
 
 // ── paths ────────────────────────────────────────────────────────────────────
 
@@ -66,6 +69,18 @@ impl Harness {
     }
 
     fn launch_with_command_oracle(command_oracle: Option<&Path>) -> Self {
+        Self::launch_with_oracles(command_oracle, None)
+    }
+
+    fn launch_with_oracles(command_oracle: Option<&Path>, pointer_oracle: Option<&Path>) -> Self {
+        Self::launch_with_options(command_oracle, pointer_oracle, false)
+    }
+
+    fn launch_with_options(
+        command_oracle: Option<&Path>,
+        pointer_oracle: Option<&Path>,
+        keep_ordered_front: bool,
+    ) -> Self {
         let exe = harness_exe();
         assert!(
             exe.exists(),
@@ -78,6 +93,12 @@ impl Harness {
         command.stdout(Stdio::null()).stderr(Stdio::null());
         if let Some(path) = command_oracle {
             command.env("CUA_APPKIT_COMMAND_ORACLE", path);
+        }
+        if let Some(path) = pointer_oracle {
+            command.env("CUA_APPKIT_POINTER_ORACLE", path);
+        }
+        if keep_ordered_front {
+            command.env("CUA_APPKIT_KEEP_ORDERED_FRONT", "1");
         }
         let app = command
             .spawn()
@@ -211,6 +232,265 @@ fn run_background_case_targeting(
 
 #[test]
 #[ignore]
+fn harness_appkit_exact_activation_with_agent_cursor() {
+    let mut case = native_foreground_case(
+        "appkit",
+        "exact_activation_with_agent_cursor",
+        Targeting::NotApplicable,
+        DriverRoute::WindowState,
+    );
+    case.oracles.extend([OracleKind::Focus, OracleKind::Cursor]);
+    run_case(case, |pid, wid, driver| {
+        let snapshot = snapshot_elements(driver, pid, wid);
+        assert!(!snapshot.is_error(), "snapshot: {}", snapshot.text());
+        let target = TargetWindow {
+            pid,
+            native_id: wid,
+        };
+        let observer = NativeObserver::new();
+        let before = observer.snapshot(target).expect("observe native desktop");
+        let socket = std::env::var("CUA_E2E_MACOS_DAEMON_SOCKET")
+            .expect("canonical installed daemon socket");
+        let mut peer = McpDriver::spawn_daemon_proxy_unrecorded(&socket)
+            .expect("start concurrent cursor session");
+        let verifies_target = |response: &ToolResponse| {
+            let state = response.structured();
+            !response.is_error()
+                && state["activated"] == true
+                && state["observed"]["focused_window_id"].as_u64() == Some(wid)
+                && state["observed"]["frontmost_ordinary_window_id"].as_u64() == Some(wid)
+                && state["observed"]["frontmost_pid"].as_u64() == Some(u64::from(pid))
+        };
+        let stopped = std::sync::atomic::AtomicBool::new(false);
+        let (ready, started) = std::sync::mpsc::sync_channel(1);
+        let activated = std::thread::scope(|scope| {
+            let moving = scope.spawn(|| {
+                let snapshot = snapshot_elements(&mut peer, pid, wid);
+                assert!(!snapshot.is_error(), "peer snapshot: {}", snapshot.text());
+                let motion = peer.call(
+                    "set_agent_cursor_motion",
+                    serde_json::json!({"idle_hide_ms": 0, "glide_duration_ms": 0}),
+                );
+                assert!(!motion.is_error(), "cursor motion: {}", motion.text());
+                let deadline = std::time::Instant::now() + Duration::from_secs(60);
+                let mut first = true;
+                let mut x = 120;
+                while !stopped.load(std::sync::atomic::Ordering::Relaxed)
+                    && std::time::Instant::now() < deadline
+                {
+                    let moved = peer.call(
+                        "move_cursor",
+                        serde_json::json!({
+                            "target": {"kind": "window", "pid": pid, "window_id": wid},
+                            "x": x,
+                            "y": 100
+                        }),
+                    );
+                    assert!(!moved.is_error(), "agent cursor: {}", moved.text());
+                    if first {
+                        ready.send(()).expect("cursor readiness");
+                        first = false;
+                    }
+                    x = if x == 120 { 121 } else { 120 };
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                assert!(
+                    stopped.load(std::sync::atomic::Ordering::Relaxed),
+                    "cursor producer expired before the activation interval completed"
+                );
+            });
+            started
+                .recv_timeout(Duration::from_secs(15))
+                .expect("live cursor ready");
+            let mut result = driver.call(
+                "bring_to_front",
+                serde_json::json!({"pid": pid, "window_id": wid}),
+            );
+            for _ in 1..20 {
+                if !verifies_target(&result) {
+                    break;
+                }
+                result = driver.call(
+                    "bring_to_front",
+                    serde_json::json!({"pid": pid, "window_id": wid}),
+                );
+            }
+            stopped.store(true, std::sync::atomic::Ordering::Relaxed);
+            moving.join().expect("concurrent cursor transport");
+            result
+        });
+        assert!(
+            verifies_target(&activated),
+            "active agent cursor must not invalidate exact activation: {}",
+            activated.raw
+        );
+        let after = observer.snapshot(target).expect("observe activated target");
+        assert_eq!(after.foreground, Some(u64::from(pid)));
+        assert_eq!(after.cursor_pos, before.cursor_pos, "real pointer moved");
+        Observation::delivered_with_fixture_state(vec![OracleKind::Focus, OracleKind::Cursor])
+    });
+}
+
+#[test]
+#[ignore]
+fn harness_appkit_exact_activation_refuses_competing_window() {
+    let mut case = native_foreground_case(
+        "appkit",
+        "exact_activation_competing_window",
+        Targeting::NotApplicable,
+        DriverRoute::WindowState,
+    )
+    .expecting_refusal(vec![RefusalCode::BringToFrontExactWindowUnverified]);
+    case.oracles.push(OracleKind::Cursor);
+    run_case(case, |pid, wid, driver| {
+        let competitor = Harness::launch_with_options(None, None, true);
+        let (competing_wid, _) = driver
+            .find_window(competitor.pid as i64, "CuaTestHarness AppKit")
+            .expect("find competing ordinary window");
+        let snapshot = snapshot_elements(driver, pid, wid);
+        assert!(!snapshot.is_error(), "target snapshot: {}", snapshot.text());
+        let observer = NativeObserver::new();
+        let target = TargetWindow {
+            pid,
+            native_id: wid,
+        };
+        let before = observer.snapshot(target).expect("observe competing window");
+        let response = driver.call(
+            "bring_to_front",
+            serde_json::json!({"pid": pid, "window_id": wid}),
+        );
+        assert!(
+            response.is_error(),
+            "competing window must prevent verification"
+        );
+        assert_eq!(
+            response.structured()["code"],
+            "bring_to_front_exact_window_unverified"
+        );
+        assert_eq!(response.structured()["activated"], false);
+        assert_eq!(response.structured()["process_activated"], true);
+        assert_eq!(
+            response.structured()["exact_window_effect"]["focused"],
+            true
+        );
+        assert_eq!(
+            response.structured()["observed"]["frontmost_ordinary_window_id"].as_u64(),
+            Some(competing_wid)
+        );
+        let after = observer
+            .snapshot(target)
+            .expect("observe refused activation");
+        assert_eq!(after.cursor_pos, before.cursor_pos, "real pointer moved");
+        Observation::refused(
+            RefusalCode::BringToFrontExactWindowUnverified,
+            vec![OracleKind::FixtureState, OracleKind::Cursor],
+            response.text(),
+            Evidence::default(),
+        )
+    });
+}
+
+#[test]
+#[ignore]
+fn harness_appkit_foreground_single_click_has_one_ordered_native_pair() {
+    let case = native_foreground_case(
+        "appkit",
+        "single_click_native_pair",
+        Targeting::Px,
+        DriverRoute::MacosCgEventPid,
+    );
+    execute_case(case, |evidence| {
+        let mut driver =
+            McpDriver::spawn_macos_daemon_proxy_named("appkit-single-click-native-pair")
+                .expect("start macOS daemon proxy");
+        *evidence = recording_evidence(driver.recording_dir());
+        let directory = tempfile::tempdir().expect("create native pointer journal directory");
+        let journal = directory.path().join("pointer.jsonl");
+        std::fs::write(&journal, "").expect("initialize native pointer journal");
+        let harness = Harness::launch_with_oracles(None, Some(&journal));
+        let (wid, _) = driver
+            .find_window(harness.pid as i64, "CuaTestHarness AppKit")
+            .expect("find native receiver window");
+        driver.start_behavior_recording();
+        let read_events = || -> Vec<serde_json::Value> {
+            std::fs::read_to_string(&journal)
+                .expect("read native pointer journal")
+                .lines()
+                .map(|line| serde_json::from_str(line).expect("parse native pointer event"))
+                .collect()
+        };
+        let initial = read_events();
+        assert_eq!(
+            initial.len(),
+            1,
+            "receiver must be idle before the request: {initial:?}"
+        );
+        assert_eq!(initial[0]["kind"], "ready");
+        assert_eq!(initial[0]["window_id"].as_u64(), Some(wid));
+        let snapshot = snapshot_elements(&mut driver, harness.pid, wid);
+        assert!(
+            !snapshot.is_error(),
+            "capture receiver: {}",
+            snapshot.text()
+        );
+        let width = snapshot.structured()["screenshot_width"]
+            .as_f64()
+            .expect("screenshot width");
+        let height = snapshot.structured()["screenshot_height"]
+            .as_f64()
+            .expect("screenshot height");
+        assert!(width > 0.0 && height > 0.0);
+        let response = driver.call(
+            "click",
+            serde_json::json!({
+                "pid": harness.pid,
+                "window_id": wid,
+                "x": width / 2.0,
+                "y": height / 2.0,
+                "count": 1,
+                "delivery_mode": "foreground"
+            }),
+        );
+        assert!(
+            !response.is_error(),
+            "single click request failed: {}",
+            response.text()
+        );
+        std::thread::sleep(Duration::from_millis(750));
+        let events = read_events();
+        let received = &events[1..];
+        assert_eq!(
+        received.len(),
+        2,
+        "one request must deliver one native down/up pair: {received:?}; receiver={initial:?}; screenshot={width}x{height}"
+    );
+        assert_eq!(received[0]["kind"], "down");
+        assert_eq!(received[1]["kind"], "up");
+        let expected_x = initial[0]["width"].as_f64().unwrap() / 2.0;
+        let expected_y = initial[0]["height"].as_f64().unwrap() / 2.0;
+        for event in received {
+            assert_eq!(event["window_id"].as_u64(), Some(wid));
+            assert_eq!(event["click_count"], 1);
+            assert!(
+                (event["x"].as_f64().unwrap() - expected_x).abs() <= 1.0,
+                "wrong horizontal target: {event}"
+            );
+            assert!(
+                (event["y"].as_f64().unwrap() - expected_y).abs() <= 1.0,
+                "wrong vertical target: {event}"
+            );
+        }
+        assert!(
+            received[0]["timestamp"].as_f64().unwrap()
+                <= received[1]["timestamp"].as_f64().unwrap()
+        );
+        println!("native pointer events: {received:?}");
+        Observation::delivered_with_fixture_state(vec![])
+    });
+}
+
+#[test]
+#[ignore]
 fn harness_appkit_smoke() {
     run_case(
         native_readonly_case(
@@ -335,8 +615,16 @@ fn harness_appkit_stale_element_token_fails_closed() {
         ),
         |pid, wid, driver| {
             let first = snapshot_elements(driver, pid, wid);
+            assert!(first.tree_text().contains("counter=0"));
             let token = element_token_by_id(&first, "btn-increment");
-            let _newer = snapshot_elements(driver, pid, wid);
+            let index = element_index_by_id(first.tree_text(), "btn-increment").unwrap();
+            let newer = snapshot_elements(driver, pid, wid);
+            assert!(
+                !newer.is_error(),
+                "replacement read failed: {}",
+                newer.text()
+            );
+            assert_ne!(first.snapshot_id(), newer.snapshot_id());
             let refused = driver.call(
                 "click",
                 serde_json::json!({"pid": pid as i64, "element_token": token}),
@@ -350,11 +638,51 @@ fn harness_appkit_stale_element_token_fails_closed() {
                 refused.structured()["refusal"]["code"].as_str(),
                 Some("stale_element_token")
             );
+            let refused_index = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "snapshot_id": first.snapshot_id(),
+                    "element_index": index
+                }),
+            );
+            assert!(
+                refused_index.is_error(),
+                "stale snapshot/index was accepted"
+            );
+            assert_eq!(
+                refused_index.structured()["refusal"]["code"].as_str(),
+                Some("stale_element_token")
+            );
             let post = snapshot_elements(driver, pid, wid);
             assert!(
                 post.tree_text().contains("counter=0"),
-                "stale click mutated counter"
+                "stale targeting mutated counter"
             );
+            let fresh_token = element_token_by_id(&post, "btn-increment");
+            let delivered = driver.call(
+                "click",
+                serde_json::json!({"pid": pid as i64, "element_token": fresh_token}),
+            );
+            assert!(
+                !delivered.is_error(),
+                "fresh recovery failed: {}",
+                delivered.text()
+            );
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            loop {
+                let recovered = snapshot_elements(driver, pid, wid);
+                if recovered.tree_text().contains("counter=1") {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "fresh recovery did not increment exactly once: {}",
+                    recovered.tree_text()
+                );
+                std::thread::sleep(Duration::from_millis(50));
+            }
             Observation::delivered(vec![OracleKind::AxState], Evidence::default())
         },
     );
@@ -1113,11 +1441,11 @@ fn harness_appkit_double_click_px_background() {
                 response.text()
             );
             std::thread::sleep(Duration::from_millis(250));
+            let receiver_snapshot = snapshot_elements(driver, pid, wid);
+            let receiver = receiver_snapshot.tree_text();
             assert!(
-                snapshot_elements(driver, pid, wid)
-                    .tree_text()
-                    .contains("last_action=double_click"),
-                "AppKit background double-click handler did not fire"
+                receiver.contains("last_action=double_click") && receiver.contains("clicks=2"),
+                "AppKit background double-click receiver did not record exactly two clicks"
             );
         },
     );

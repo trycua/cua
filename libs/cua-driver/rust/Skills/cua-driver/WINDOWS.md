@@ -823,12 +823,10 @@ typed browser tools yet.
   materialized yet. Re-call `list_windows({pid: N})` after 500ms;
   for chronic cases, key off the app name in `list_windows({})`
   output.
-- **JPEG screenshot has more compression than expected** — default
-  quality on the MCP screenshot compat path is 85; for raw
-  `cua-driver call screenshot`, defaults to PNG (no compression).
-  Pass `{format: "jpeg", quality: 70}` to opt into compressed
-  screenshots. The `max_image_dimension` config (default 2048)
-  downscales via Lanczos3 before encoding.
+- **Need a screenshot file** — use `get_window_state` with
+  `screenshot_out_file`; the result is PNG. The removed standalone screenshot
+  compatibility inputs (`format` and `quality`) are rejected by the live tool
+  schema. Downsample or convert the saved PNG outside cua-driver if needed.
 
 ## Diagnostics
 

@@ -3233,6 +3233,15 @@ fn inject_terminal_input(pid: u32, xid: u64, text: &str) -> anyhow::Result<bool>
     crate::tty::inject_via_master(pid, ptn, text)
 }
 
+/// `return` and `enter` name the same physical key (XK_Return, 0xFF0D) and both
+/// spellings are documented as canonical, so the terminal pty-injection route
+/// must accept either. Gating on the literal `"enter"` spelling alone made the
+/// documented `return` fall through to XSendEvent, which terminals discard:
+/// the call reported success while nothing was submitted (#3657).
+fn is_enter_key(key: &str) -> bool {
+    key.eq_ignore_ascii_case("enter") || key.eq_ignore_ascii_case("return")
+}
+
 // ── click ─────────────────────────────────────────────────────────────────────
 
 pub struct ClickTool {
@@ -4640,6 +4649,16 @@ mod press_key_tests {
         let chord = press_key_chord(&["ctrl".to_owned()], "s").expect("chord");
         assert_eq!(chord.last().map(String::as_str), Some("s"));
     }
+
+    #[test]
+    fn enter_and_return_both_take_the_terminal_pty_route() {
+        for key in ["enter", "Enter", "RETURN", "return"] {
+            assert!(super::is_enter_key(key), "{key} must be accepted");
+        }
+        for key in ["escape", "tab", "kp_enter", "return2", ""] {
+            assert!(!super::is_enter_key(key), "{key} must not match");
+        }
+    }
 }
 
 #[async_trait]
@@ -4944,7 +4963,7 @@ impl Tool for PressKeyTool {
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             if resolved_element_index.is_none()
                 && mods.is_empty()
-                && key_for_task.eq_ignore_ascii_case("enter")
+                && is_enter_key(&key_for_task)
             {
                 if inject_terminal_input(pid, xid, "\n")? {
                     return Ok(());

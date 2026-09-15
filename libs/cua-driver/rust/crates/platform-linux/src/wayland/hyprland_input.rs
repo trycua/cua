@@ -53,10 +53,10 @@ fn validate_target_route(target: &Value, route: DeliveryRoute) -> Result<()> {
 
 /// Validate the whole string before dispatching any keys. Physical key delivery
 /// uses the compositor's keyboard layout; these codes describe US ASCII keys.
-pub(crate) fn foreground_text_actions(text: &str) -> Result<Vec<Action>> {
+pub(crate) fn text_actions(text: &str) -> Result<Vec<Action>> {
     ensure!(
         text.len() <= 4096 && text.is_ascii(),
-        "foreground text requires at most 4096 ASCII bytes"
+        "Hyprland text requires at most 4096 ASCII bytes"
     );
     text.bytes()
         .map(|byte| {
@@ -101,7 +101,7 @@ pub(crate) fn foreground_text_actions(text: &str) -> Result<Vec<Action>> {
                 b'*' => (9, true),
                 b'(' => (10, true),
                 b')' => (11, true),
-                _ => bail!("unsupported foreground text control character"),
+                _ => bail!("unsupported Hyprland text control character"),
             };
             Ok(Action::TextKey { keycode, shift })
         })
@@ -585,8 +585,7 @@ impl Client {
         ensure!(self.lane.is_some(), "isolated input lane is not claimed");
         self.check_route(route)?;
         ensure!(
-            route == DeliveryRoute::Foreground
-                || !matches!(&action, Action::Activate | Action::TextKey { .. }),
+            route == DeliveryRoute::Foreground || !matches!(&action, Action::Activate),
             "action requires foreground input"
         );
         ensure!(
@@ -1053,8 +1052,47 @@ pub(crate) fn execute_foreground_text(
     text: &str,
     cancellation: ActionCancellation,
 ) -> Result<Value> {
-    let actions = foreground_text_actions(text)?;
-    ensure!(!actions.is_empty(), "foreground text must not be empty");
+    execute_text_routed(
+        owner,
+        pid,
+        address,
+        text,
+        cancellation,
+        DeliveryRoute::Foreground,
+    )
+}
+
+pub(crate) fn execute_background_text(
+    owner: Option<String>,
+    pid: u32,
+    address: u64,
+    text: &str,
+    cancellation: ActionCancellation,
+) -> Result<Value> {
+    execute_text_routed(
+        owner,
+        pid,
+        address,
+        text,
+        cancellation,
+        DeliveryRoute::Background,
+    )
+}
+
+fn execute_text_routed(
+    owner: Option<String>,
+    pid: u32,
+    address: u64,
+    text: &str,
+    cancellation: ActionCancellation,
+    route: DeliveryRoute,
+) -> Result<Value> {
+    let actions = text_actions(text)?;
+    ensure!(
+        !actions.is_empty(),
+        "{} text must not be empty",
+        route.mode()
+    );
     execute_actions_routed(
         owner,
         pid,
@@ -1062,7 +1100,7 @@ pub(crate) fn execute_foreground_text(
         actions,
         None,
         cancellation,
-        DeliveryRoute::Foreground,
+        route,
         true,
     )
 }
@@ -1149,7 +1187,7 @@ fn dispatch_actions_in_slot(
                     attest,
                 );
             }
-            execute_text_actions(actions, |action| {
+            execute_text_actions(actions, route, |action| {
                 client.execute_routed_with_attest(action, None, route, attest)
             })
         },
@@ -1158,9 +1196,9 @@ fn dispatch_actions_in_slot(
 
 fn execute_text_actions(
     actions: Vec<Action>,
+    route: DeliveryRoute,
     mut dispatch: impl FnMut(Action) -> Result<Value>,
 ) -> Result<Value> {
-    let route = DeliveryRoute::Foreground;
     let mut delivered = 0u32;
     for action in actions {
         match dispatch(action) {
@@ -1356,9 +1394,11 @@ mod tests {
                     Ok(())
                 },
                 |client| {
-                    execute_text_actions(foreground_text_actions(text).unwrap(), |action| {
-                        client.execute_routed(action, None, DeliveryRoute::Foreground)
-                    })
+                    execute_text_actions(
+                        text_actions(text).unwrap(),
+                        DeliveryRoute::Foreground,
+                        |action| client.execute_routed(action, None, DeliveryRoute::Foreground),
+                    )
                 },
             )
             .unwrap();
@@ -1366,6 +1406,55 @@ mod tests {
             assert_eq!(attestations, call + 2);
             assert!(slot.is_some());
         }
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn text_result_reports_the_selected_delivery_route() {
+        for route in [DeliveryRoute::Background, DeliveryRoute::Foreground] {
+            let result = execute_text_actions(text_actions("abc").unwrap(), route, |_| {
+                Ok(json!({
+                    "ok": true,
+                    "effect": "unverifiable",
+                    "route": route.acknowledgement()
+                }))
+            })
+            .unwrap();
+            assert_eq!(result["route"], route.acknowledgement());
+            assert_eq!(result["delivery"]["mode"], route.mode());
+            assert_eq!(result["delivery"]["delivered_count"], 3);
+        }
+    }
+
+    #[test]
+    fn background_text_binds_each_key_to_the_exact_target() {
+        reset_test_attestations();
+        let (client, peer) = production_test_client();
+        let server = std::thread::spawn(move || {
+            for sequence in 1..=3 {
+                serve_key_target(&peer, DeliveryRoute::Background, sequence, sequence);
+                peer.send(br#"{"ok":true,"effect":"unverifiable","route":"synthetic_events"}"#)
+                    .unwrap();
+            }
+        });
+        let mut slot = Some(client);
+        let result = dispatch_actions_in_slot(
+            &mut slot,
+            text_actions("aaa").unwrap(),
+            None,
+            DeliveryRoute::Background,
+            true,
+            record_test_attestation,
+        )
+        .unwrap();
+        assert_eq!(result["route"], "synthetic_events");
+        assert_eq!(
+            result["delivery"],
+            json!({"mode":"background","delivered_count":3})
+        );
+        assert_eq!(test_attestations(), 3);
+        assert!(slot.is_some());
+        drop(slot);
         server.join().unwrap();
     }
 
@@ -1437,9 +1526,11 @@ mod tests {
             &mut slot,
             |_| Ok(()),
             |client| {
-                execute_text_actions(foreground_text_actions("abc").unwrap(), |action| {
-                    client.execute_routed(action, None, DeliveryRoute::Foreground)
-                })
+                execute_text_actions(
+                    text_actions("abc").unwrap(),
+                    DeliveryRoute::Foreground,
+                    |action| client.execute_routed(action, None, DeliveryRoute::Foreground),
+                )
             },
         )
         .unwrap();
@@ -1488,9 +1579,11 @@ mod tests {
             &mut slot,
             |_| Ok(()),
             |client| {
-                execute_text_actions(foreground_text_actions("abc").unwrap(), |action| {
-                    client.execute_routed(action, None, DeliveryRoute::Foreground)
-                })
+                execute_text_actions(
+                    text_actions("abc").unwrap(),
+                    DeliveryRoute::Foreground,
+                    |action| client.execute_routed(action, None, DeliveryRoute::Foreground),
+                )
             },
         )
         .unwrap();
@@ -1782,9 +1875,11 @@ mod tests {
                 0
             );
         });
-        let error = execute_text_actions(foreground_text_actions("abc").unwrap(), |_| {
-            client.dispatch_routed("KEY synthetic", false, None, DeliveryRoute::Foreground)
-        })
+        let error = execute_text_actions(
+            text_actions("abc").unwrap(),
+            DeliveryRoute::Foreground,
+            |_| client.dispatch_routed("KEY synthetic", false, None, DeliveryRoute::Foreground),
+        )
         .unwrap_err();
         assert_eq!(
             error
@@ -1811,16 +1906,13 @@ mod tests {
     }
 
     #[test]
-    fn foreground_text_is_bounded_and_fully_prevalidated() {
+    fn hyprland_text_is_bounded_and_fully_prevalidated() {
         for text in ["valid prefix\u{00e9}", "valid prefix\0", "\r", "\u{007f}"] {
-            assert!(foreground_text_actions(text).is_err());
+            assert!(text_actions(text).is_err());
         }
-        assert!(foreground_text_actions(&"a".repeat(4097)).is_err());
-        assert_eq!(
-            foreground_text_actions(&"a".repeat(4096)).unwrap().len(),
-            4096
-        );
-        let actions = foreground_text_actions("Aa!? \t\n").unwrap();
+        assert!(text_actions(&"a".repeat(4097)).is_err());
+        assert_eq!(text_actions(&"a".repeat(4096)).unwrap().len(), 4096);
+        let actions = text_actions("Aa!? \t\n").unwrap();
         let packets: Vec<_> = actions
             .into_iter()
             .map(|action| action.packet(1, TOKEN, 1, 1.0, 1.0).unwrap())
@@ -1832,7 +1924,7 @@ mod tests {
             assert_eq!(*packet, format!("KEY 1 {TOKEN} 1 {suffix}"));
         }
         assert_eq!(
-            foreground_text_actions(&(32u8..127).map(char::from).collect::<String>())
+            text_actions(&(32u8..127).map(char::from).collect::<String>())
                 .unwrap()
                 .len(),
             95
@@ -1843,15 +1935,21 @@ mod tests {
     fn foreground_text_stops_after_refusal_or_cancellation_without_replay() {
         for cancel in [false, true] {
             let mut calls = 0;
-            let reply = execute_text_actions(foreground_text_actions("abc").unwrap(), |_| {
-                calls += 1;
-                match calls {
-                    1 => Ok(json!({"ok":true})),
-                    2 if cancel => Err(ActionCancelled.into()),
-                    2 => Ok(json!({"ok":false,"code":"target_changed","detail":"target_changed"})),
-                    _ => panic!("replayed text after interrupted dispatch"),
-                }
-            })
+            let reply = execute_text_actions(
+                text_actions("abc").unwrap(),
+                DeliveryRoute::Foreground,
+                |_| {
+                    calls += 1;
+                    match calls {
+                        1 => Ok(json!({"ok":true})),
+                        2 if cancel => Err(ActionCancelled.into()),
+                        2 => Ok(
+                            json!({"ok":false,"code":"target_changed","detail":"target_changed"}),
+                        ),
+                        _ => panic!("replayed text after interrupted dispatch"),
+                    }
+                },
+            )
             .unwrap();
             assert_eq!(calls, 2);
             assert_eq!(reply["ok"], false);
@@ -1867,14 +1965,18 @@ mod tests {
     #[test]
     fn foreground_text_unknown_delivery_keeps_only_acknowledged_key_count() {
         let mut calls = 0;
-        let error = execute_text_actions(foreground_text_actions("abc").unwrap(), |_| {
-            calls += 1;
-            if calls == 1 {
-                Ok(json!({"ok":true}))
-            } else {
-                Err(unknown_dispatch(anyhow::anyhow!("peer closed"), 0))
-            }
-        })
+        let error = execute_text_actions(
+            text_actions("abc").unwrap(),
+            DeliveryRoute::Foreground,
+            |_| {
+                calls += 1;
+                if calls == 1 {
+                    Ok(json!({"ok":true}))
+                } else {
+                    Err(unknown_dispatch(anyhow::anyhow!("peer closed"), 0))
+                }
+            },
+        )
         .unwrap_err();
         assert_eq!(calls, 2);
         assert_eq!(

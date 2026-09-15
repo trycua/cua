@@ -52,7 +52,7 @@ from production_realapp_proof import (
 CASES = ('no_manifest_allow', 'resource_allow', 'resource_wrong_pid', 'resource_wrong_window',
          'managed_allow', 'managed_deny')
 DENIALS = frozenset(('resource_wrong_pid', 'resource_wrong_window', 'managed_deny'))
-TOOLS = ['get_window_state', 'press_key', 'hotkey']
+TOOLS = ['get_window_state', 'type_text', 'press_key', 'hotkey']
 MANAGED_ENV = 'CUA_DRIVER_MANAGED_POLICY_FILE'
 POLICY_ENV = (MANAGED_ENV, 'CUA_DRIVER_POLICY_FILE')
 # Bound Inkscape observations except before select and move: their grounding

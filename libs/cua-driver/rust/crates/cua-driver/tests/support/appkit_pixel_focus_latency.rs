@@ -65,16 +65,16 @@ fn harness_appkit_pixel_focus_preserves_selection_and_latency() {
                     .iter()
                     .find(|element| element["element_index"].as_u64() == Some(index))
                     .unwrap();
-                assert_eq!(
-                    field["value"], expected,
-                    "pixel focus must preserve select-all before replacement"
-                );
                 measurements.push(serde_json::json!({
                     "trial":trial, "warmup":trial < 2,
                     "verified_elapsed_ms":started.elapsed().as_secs_f64() * 1000.0,
                     "actions":actions, "observed_value":field["value"]
                 }));
                 std::fs::write(&output, serde_json::to_vec_pretty(&measurements).unwrap()).unwrap();
+                assert_eq!(
+                    field["value"], expected,
+                    "pixel focus must preserve select-all before replacement"
+                );
             }
             Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
         },

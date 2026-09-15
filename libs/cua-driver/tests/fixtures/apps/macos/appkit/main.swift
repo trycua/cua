@@ -582,6 +582,12 @@ func installMenuBar(target: HarnessWindowController) {
                                keyEquivalent: "q"))
     appItem.submenu = appMenu
 
+    let editItem = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
+    let editMenu = NSMenu(title: "Edit")
+    editMenu.addItem(NSMenuItem(title: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
+    editItem.submenu = editMenu
+    main.addItem(editItem)
+
     let windowItem = NSMenuItem(title: "Window", action: nil, keyEquivalent: "")
     let windowMenu = NSMenu(title: "Window")
     let arrangeItem = NSMenuItem(title: "Arrange", action: nil, keyEquivalent: "")

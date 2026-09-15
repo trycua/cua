@@ -42,6 +42,7 @@ pub mod e2e;
 mod journal;
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
 pub mod keyboard_fixture;
+pub mod keyboard_native_barrier;
 mod mcp;
 pub mod observer;
 mod paths;

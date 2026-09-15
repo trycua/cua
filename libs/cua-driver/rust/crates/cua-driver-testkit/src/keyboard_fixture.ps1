@@ -29,7 +29,7 @@ public class KeyboardOracle : Form {
     public KeyboardOracle() {
         Text = "Cua Keyboard Oracle";
         Size = new Size(420, 240);
-        var input = new Input { Text = "unchanged", Location = new Point(30, 80), Width = 350 };
+        var input = new Input { AccessibleName = "Keyboard input", Text = "unchanged", Location = new Point(30, 80), Width = 350 };
         Controls.Add(input);
         Shown += delegate {
             if (Environment.GetEnvironmentVariable("CUA_KEYBOARD_COMPANION") == "1") {

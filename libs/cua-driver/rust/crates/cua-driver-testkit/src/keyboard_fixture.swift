@@ -24,6 +24,7 @@ window.title = "Cua Keyboard Oracle"
 window.isReleasedWhenClosed = false
 let field = NSTextField(frame: NSRect(x: 30, y: 80, width: 350, height: 35))
 field.stringValue = "unchanged"
+field.setAccessibilityLabel("Keyboard input")
 field.delegate = observer
 window.contentView!.addSubview(field)
 let monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { event in

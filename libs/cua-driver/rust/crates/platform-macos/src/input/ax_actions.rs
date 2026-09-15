@@ -274,6 +274,8 @@ mod tests {
 
 /// Set AXFocused=true on an element (for pre-focusing before key press).
 pub fn focus_element(element_ptr: usize) -> anyhow::Result<()> {
+    #[cfg(test)]
+    cua_driver_testkit::keyboard_native_barrier::pause_native_focus("macos", element_ptr);
     let err = unsafe { set_bool_attr_true(element_ptr as AXUIElementRef, "AXFocused") };
     if err == kAXErrorSuccess {
         Ok(())

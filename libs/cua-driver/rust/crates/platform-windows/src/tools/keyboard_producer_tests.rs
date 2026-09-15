@@ -29,12 +29,100 @@ async fn native_registry_refuses_ambiguous_pid_only_keyboard_targets() {
 }
 
 fn producer(name: &str) -> Box<dyn Tool> {
-    let state = ToolState::new();
+    producer_with_state(name, ToolState::new())
+}
+
+fn producer_with_state(name: &str, state: Arc<ToolState>) -> Box<dyn Tool> {
     match name {
         "press_key" => Box::new(PressKeyTool { state }),
         "hotkey" => Box::new(HotkeyTool { state }),
         _ => unreachable!(),
     }
+}
+
+fn retained_uia_pid(pointer: usize) -> i32 {
+    use std::mem::ManuallyDrop;
+    use windows::core::Interface;
+    use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
+    use windows::Win32::UI::Accessibility::IUIAutomationElement;
+    unsafe { CoInitializeEx(None, COINIT_MULTITHREADED).ok().unwrap() };
+    let element = ManuallyDrop::new(unsafe { IUIAutomationElement::from_raw(pointer as *mut _) });
+    let pid = unsafe { element.CurrentProcessId() };
+    unsafe { CoUninitialize() };
+    pid.unwrap()
+}
+
+async fn admitted_target_survives_cache_clear(tool: &'static str) {
+    use cua_driver_testkit::keyboard_native_barrier::NativeFocusBarrier;
+    let fixture = KeyboardFixture::spawn(false);
+    let state = ToolState::new();
+    let snapshot = GetWindowStateTool {
+        state: state.clone(),
+    }
+    .invoke(serde_json::json!({
+        "pid":fixture.pid(), "window_id":fixture.window_id, "include_screenshot":false
+    }))
+    .await;
+    assert_ne!(snapshot.is_error, Some(true), "{snapshot:?}");
+    let elements = snapshot.structured_content.as_ref().unwrap()["elements"]
+        .as_array()
+        .unwrap();
+    let targets = elements
+        .iter()
+        .filter(|element| element["label"] == "Keyboard input")
+        .collect::<Vec<_>>();
+    assert_eq!(targets.len(), 1, "{snapshot:?}");
+    let token = targets[0]["element_token"].as_str().unwrap();
+    let mut args = serde_json::json!({"pid":fixture.pid(), "window_id":fixture.window_id, "element_token":token, "delivery_mode":"foreground"});
+    let key = if tool == "press_key" {
+        args["key"] = serde_json::json!("f5");
+        0x74
+    } else {
+        args["keys"] = serde_json::json!(["ctrl", "h"]);
+        0x48
+    };
+    let barrier = NativeFocusBarrier::install("windows");
+    let pending_tool = producer_with_state(tool, state.clone());
+    let pending_args = args.clone();
+    let pending = tokio::spawn(async move { pending_tool.invoke(pending_args).await });
+    let pointer = barrier.wait();
+    fixture.assert_quiet();
+    assert!(state.element_cache.clear() > 0);
+    assert_eq!(retained_uia_pid(pointer), fixture.pid() as i32);
+    let refused = producer_with_state(tool, state).invoke(args).await;
+    assert_eq!(refused.is_error, Some(true), "{refused:?}");
+    assert_eq!(
+        refused.structured_content.as_ref().unwrap()["refusal"]["code"],
+        "stale_element_token"
+    );
+    fixture.assert_quiet();
+    barrier.release();
+    let result = tokio::time::timeout(std::time::Duration::from_secs(15), pending)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(result.is_error, Some(true), "{result:?}");
+    fixture.key_event("down", key);
+    fixture.assert_single_release(key);
+    let record = result
+        .action_record
+        .as_ref()
+        .unwrap_or_else(|| panic!("admitted keyboard producer record: {result:?}"));
+    assert_eq!(record.effect, ActionEffect::Unverifiable);
+    assert!(record.delivered_count.is_none());
+    assert!(record.public_result().unwrap().evidence.is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+#[ignore = "requires an interactive Windows desktop and real UIA entry"]
+async fn native_producer_press_key_retains_the_admitted_uia_target_after_cache_clear() {
+    admitted_target_survives_cache_clear("press_key").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+#[ignore = "requires an interactive Windows desktop and real UIA entry"]
+async fn native_producer_hotkey_retains_the_admitted_uia_target_after_cache_clear() {
+    admitted_target_survives_cache_clear("hotkey").await;
 }
 
 async fn focus_probe(fixture: &KeyboardFixture) {

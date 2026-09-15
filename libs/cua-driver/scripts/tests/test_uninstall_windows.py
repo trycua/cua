@@ -8,12 +8,20 @@ import sys
 import pytest
 
 
-pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="native Windows PowerShell required")
+pytestmark = pytest.mark.skipif(
+    sys.platform != "win32", reason="native Windows PowerShell required"
+)
 UNINSTALL = Path(__file__).resolve().parents[1] / "uninstall.ps1"
 FIXTURE = Path(__file__).with_name("uninstall-windows-fixture.ps1")
 
 
-def _run_uninstall(root: Path, overrides: dict[str, str]) -> subprocess.CompletedProcess[str]:
+def _run_uninstall(
+    root: Path,
+    overrides: dict[str, str],
+    *,
+    invocation: str = "File",
+    uninstaller: Path = UNINSTALL,
+) -> subprocess.CompletedProcess[str]:
     for directory in ("profile", "localappdata", "appdata", "bin", "temp", "modules"):
         (root / directory).mkdir(parents=True, exist_ok=True)
     system_root = Path(os.environ["SystemRoot"])
@@ -34,8 +42,18 @@ def _run_uninstall(root: Path, overrides: dict[str, str]) -> subprocess.Complete
     try:
         return subprocess.run(
             [
-                str(powershell), "-NoLogo", "-NoProfile", "-NonInteractive", "-File",
-                str(FIXTURE), "-UninstallerPath", str(UNINSTALL), "-FixtureRoot", str(root),
+                str(powershell),
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-File",
+                str(FIXTURE),
+                "-UninstallerPath",
+                str(uninstaller),
+                "-FixtureRoot",
+                str(root),
+                "-Invocation",
+                invocation,
             ],
             cwd=root,
             env=env,
@@ -49,16 +67,49 @@ def _run_uninstall(root: Path, overrides: dict[str, str]) -> subprocess.Complete
         pytest.fail(f"uninstaller timed out: stdout={error.stdout!r}; stderr={error.stderr!r}")
 
 
-def test_release_uninstall_reports_and_preserves_local_cli(tmp_path: Path) -> None:
+@pytest.mark.parametrize("invocation", ["File", "Expression"])
+@pytest.mark.parametrize(
+    ("local_path", "overrides"),
+    [
+        pytest.param(
+            "localappdata/Programs/Cua/cua-driver-local/bin/cua-driver-local.exe",
+            {},
+            id="default-cli",
+        ),
+        pytest.param(
+            "custom bin/cua-driver-local.exe",
+            {"CUA_DRIVER_LOCAL_INSTALL_DIR": "custom bin"},
+            id="configured-cli",
+        ),
+        pytest.param(
+            "profile/.cua-driver-local/packages/current/cua-driver-local.exe",
+            {},
+            id="default-marker",
+        ),
+        pytest.param(
+            "custom home/packages/current/cua-driver-local.exe",
+            {"CUA_DRIVER_LOCAL_HOME": "custom home"},
+            id="configured-marker",
+        ),
+        pytest.param("bin/cua-driver-local.exe", {}, id="path-cli"),
+    ],
+)
+def test_release_uninstall_reports_and_preserves_local_product(
+    tmp_path: Path, local_path: str, overrides: dict[str, str], invocation: str
+) -> None:
     root = tmp_path / "fixture with spaces"
     release_cli = root / "profile/.cua-driver/packages/current/cua-driver.exe"
-    local_cli = root / "localappdata/Programs/Cua/cua-driver-local/bin/cua-driver-local.exe"
-    local_config = root / "profile/.cua-driver-local/config.json"
+    local_cli = root / local_path
+    local_config = (
+        root / overrides.get("CUA_DRIVER_LOCAL_HOME", "profile/.cua-driver-local") / "config.json"
+    )
     for path in (release_cli, local_cli, local_config):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("fixture payload\n", encoding="utf-8")
 
-    result = _run_uninstall(root, {})
+    result = _run_uninstall(
+        root, {key: str(root / value) for key, value in overrides.items()}, invocation=invocation
+    )
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert not release_cli.exists()

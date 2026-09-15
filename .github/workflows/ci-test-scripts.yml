@@ -62,7 +62,7 @@ jobs:
         run: python -m pip install pytest
       - name: Test Windows release uninstall reporting
         run: python -m pytest libs/cua-driver/scripts/tests/test_uninstall_windows.py -v
-      - name: Verify missing-notice negative control
+      - name: Verify native negative controls
         shell: python
         run: |
           from pathlib import Path
@@ -72,13 +72,19 @@ jobs:
           original = path.read_bytes()
           before = b"if ($LocalSurvivor) {"
           assert original.count(before) == 1
+          controls = [
+              ("missing notice", original.replace(before, b"if ($false) {"), "File", "E       assert 'source-built cua-driver-local installation remains' in"),
+              ("local removal", original.replace(before, before + b"\n    Remove-Item -LiteralPath $LocalSurvivor -Force"), "File", "FileNotFoundError"),
+              ("BOM expression", b"\xef\xbb\xbf" + original, "Expression", "CommandNotFoundException"),
+          ]
           try:
-              path.write_bytes(original.replace(before, b"if ($false) {"))
-              result = subprocess.run([sys.executable, "-m", "pytest", "libs/cua-driver/scripts/tests/test_uninstall_windows.py", "-q"], capture_output=True, text=True)
-              print(result.stdout)
-              print(result.stderr)
-              assert result.returncode == 1
-              assert "E       assert 'source-built cua-driver-local installation remains' in" in result.stdout
+              for name, source, invocation, expected in controls:
+                  path.write_bytes(source)
+                  result = subprocess.run([sys.executable, "-m", "pytest", "libs/cua-driver/scripts/tests/test_uninstall_windows.py", "-k", f"default-cli and {invocation}", "-q"], capture_output=True, text=True)
+                  print(name, result.stdout, result.stderr, sep="\n")
+                  assert result.returncode == 1
+                  assert "1 failed" in result.stdout
+                  assert expected in result.stdout
           finally:
               path.write_bytes(original)
 

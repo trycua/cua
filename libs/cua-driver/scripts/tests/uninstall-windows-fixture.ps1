@@ -1,11 +1,11 @@
 param(
     [Parameter(Mandatory = $true)][string]$UninstallerPath,
-    [Parameter(Mandatory = $true)][string]$FixtureRoot
+    [Parameter(Mandatory = $true)][string]$FixtureRoot,
+    [ValidateSet("File", "Expression")][string]$Invocation = "File"
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
-Set-PSDebug -Trace 1
 $FixtureRoot = [System.IO.Path]::GetFullPath($FixtureRoot).TrimEnd('\') + '\'
 $global:CuaUninstallFixtureViolations = [System.Collections.Generic.List[string]]::new()
 
@@ -44,7 +44,11 @@ function Remove-Item {
     Microsoft.PowerShell.Management\Remove-Item @PSBoundParameters
 }
 
-& $UninstallerPath
+if ($Invocation -eq "Expression") {
+    Invoke-Expression ([System.Text.Encoding]::UTF8.GetString([System.IO.File]::ReadAllBytes($UninstallerPath)))
+} else {
+    & $UninstallerPath
+}
 if (-not $?) { throw "uninstaller failed" }
 if ($global:CuaUninstallFixtureViolations.Count) {
     throw "fixture refused host operations: $($global:CuaUninstallFixtureViolations -join ', ')"

@@ -154,6 +154,13 @@ mod tests {
         fn retain(&self, index: usize) -> Option<usize> {
             self.0.get(index).copied()
         }
+        fn resolve_fresh(
+            _pid: i32,
+            _window_id: u64,
+            index: usize,
+        ) -> Result<Option<usize>, String> {
+            Ok((index < 5).then_some(index))
+        }
     }
     fn cache() -> ElementCacheCore<Payload> {
         ElementCacheCore::new()
@@ -241,7 +248,7 @@ mod tests {
         let id = publish(&cache, 11, 1, 3);
         assert!(resolve(&cache, 11, &format_token(id, 7))
             .unwrap_err()
-            .contains("out of range"));
+            .contains("current accessibility state"));
     }
     #[test]
     fn next_snapshot_for_same_window_invalidates_old_immediately() {

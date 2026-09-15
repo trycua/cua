@@ -11,6 +11,9 @@ impl SnapshotPayload for Payload {
     fn retain(&self, index: usize) -> Option<usize> {
         self.0.get(index).copied()
     }
+    fn resolve_fresh(_pid: i32, _window_id: u64, index: usize) -> Result<Option<usize>, String> {
+        Ok(Some(index))
+    }
 }
 
 pub(crate) fn cache() -> Arc<ElementCacheCore<Payload>> {

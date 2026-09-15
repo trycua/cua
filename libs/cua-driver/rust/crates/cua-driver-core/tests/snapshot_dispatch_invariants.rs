@@ -9,7 +9,8 @@ use cua_driver_core::session_authorization::{
 };
 use cua_driver_core::tool::{with_runtime_scope, Tool, ToolDef, ToolRegistry};
 use serde_json::{json, Value};
-use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tokio::sync::Notify;
 
@@ -19,6 +20,10 @@ const WAIT: Duration = Duration::from_secs(5);
 
 struct Payload(Vec<u64>);
 
+fn current_revisions() -> &'static Mutex<HashMap<(String, i32, u64), u64>> {
+    static REVISIONS: OnceLock<Mutex<HashMap<(String, i32, u64), u64>>> = OnceLock::new();
+    REVISIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
 impl SnapshotPayload for Payload {
     type Element = u64;
     fn len(&self) -> usize {
@@ -26,6 +31,18 @@ impl SnapshotPayload for Payload {
     }
     fn retain(&self, index: usize) -> Option<u64> {
         self.0.get(index).copied()
+    }
+    fn resolve_fresh(pid: i32, window_id: u64, index: usize) -> Result<Option<u64>, String> {
+        if index != 0 {
+            return Ok(None);
+        }
+        let scope = cua_driver_core::tool::current_dispatch_runtime_scope()
+            .unwrap_or_else(|| "legacy".into());
+        Ok(current_revisions()
+            .lock()
+            .unwrap()
+            .get(&(scope, pid, window_id))
+            .copied())
     }
 }
 
@@ -63,6 +80,12 @@ impl Tool for ProbeTool {
                 self.state.capture_started.notify_one();
                 self.state.finish_capture.notified().await;
             }
+            let scope = cua_driver_core::tool::current_dispatch_runtime_scope()
+                .unwrap_or_else(|| "legacy".into());
+            current_revisions()
+                .lock()
+                .unwrap()
+                .insert((scope, PID, WINDOW), revision);
             let snapshot = self.state.cache.publish(PID, WINDOW, prepared);
             return ToolResult::text("test capture complete").with_structured(json!({
                 "pid": PID,

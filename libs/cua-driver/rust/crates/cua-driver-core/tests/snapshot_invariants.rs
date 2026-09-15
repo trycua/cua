@@ -1,213 +1,124 @@
 use cua_driver_core::element_cache::{
     register_runtime_cache, retire_runtime_scope, ElementCacheCore, SnapshotPayload,
 };
-use cua_driver_core::element_token::{
-    format_token, ResolvedElement, LRU_CAP_PER_PID, STALE_TOKEN_ERROR,
-};
+use cua_driver_core::element_token::{format_token, ResolvedElement, LRU_CAP_PER_PID};
 use cua_driver_core::tool::with_runtime_scope;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{mpsc, Arc};
-
-struct Payload<T: Clone + Send + Sync + 'static> {
-    elements: Vec<T>,
+use std::sync::{Arc, Mutex, OnceLock};
+fn state() -> &'static Mutex<HashMap<(i32, u64), Vec<usize>>> {
+    static STATE: OnceLock<Mutex<HashMap<(i32, u64), Vec<usize>>>> = OnceLock::new();
+    STATE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+struct Payload {
+    observed: Vec<usize>,
     drops: Option<Arc<AtomicUsize>>,
 }
-
-impl<T: Clone + Send + Sync + 'static> SnapshotPayload for Payload<T> {
-    type Element = T;
+impl SnapshotPayload for Payload {
+    type Element = usize;
     fn len(&self) -> usize {
-        self.elements.len()
+        self.observed.len()
     }
-    fn retain(&self, index: usize) -> Option<T> {
-        self.elements.get(index).cloned()
+    fn retain(&self, index: usize) -> Option<usize> {
+        self.observed.get(index).copied()
+    }
+    fn resolve_fresh(pid: i32, window_id: u64, index: usize) -> Result<Option<usize>, String> {
+        Ok(state()
+            .lock()
+            .unwrap()
+            .get(&(pid, window_id))
+            .and_then(|v| v.get(index).copied()))
     }
 }
-
-impl<T: Clone + Send + Sync + 'static> Drop for Payload<T> {
+impl Drop for Payload {
     fn drop(&mut self) {
-        if let Some(drops) = &self.drops {
-            drops.fetch_add(1, Ordering::SeqCst);
+        if let Some(d) = &self.drops {
+            d.fetch_add(1, Ordering::SeqCst);
         }
     }
 }
-
-fn payload<T: Clone + Send + Sync + 'static>(elements: Vec<T>) -> Payload<T> {
+fn payload(v: Vec<usize>) -> Payload {
     Payload {
-        elements,
+        observed: v,
         drops: None,
     }
 }
-
-fn resolve<T: Clone + Send + Sync + 'static>(
-    cache: &ElementCacheCore<Payload<T>>,
+fn resolve(
+    cache: &ElementCacheCore<Payload>,
+    pid: i32,
     snapshot: u32,
     index: usize,
-) -> Result<(u64, usize, T), String> {
+) -> Result<(u64, usize, usize), String> {
     cache
         .resolve_element_args(
-            42,
+            pid,
             None,
             Some(&format_token(snapshot, index)),
             None,
             None,
             "click",
         )
-        .map(|result| match result {
+        .map(|r| match r {
             ResolvedElement::Element {
-                window_id: Some(window),
+                window_id: Some(w),
                 element_index,
                 element,
                 ..
-            } => (window, element_index, element),
-            _ => panic!("expected element"),
+            } => (w, element_index, element),
+            _ => panic!(),
         })
-        .map_err(|error| {
-            error.structured_content.unwrap()["refusal"]["message"]
+        .map_err(|e| {
+            e.structured_content.unwrap()["refusal"]["code"]
                 .as_str()
                 .unwrap()
-                .to_owned()
+                .into()
         })
 }
-
 #[test]
-fn empty_snapshot_has_no_resolvable_members() {
-    let cache = ElementCacheCore::new();
-    let snapshot = cache.publish(42, 7, payload(Vec::<usize>::new()));
-    assert!(
-        resolve(&cache, snapshot, 0).is_err(),
-        "an empty snapshot must not admit element zero"
-    );
+fn actions_use_current_state() {
+    let c = ElementCacheCore::new();
+    let id = c.publish(101, 7, payload(vec![10]));
+    state().lock().unwrap().insert((101, 7), vec![20]);
+    assert_eq!(resolve(&c, 101, id, 0), Ok((7, 0, 20)));
 }
-
 #[test]
-fn replacement_invalidates_every_old_member_and_admits_new_members() {
-    let cache = ElementCacheCore::new();
-    let first = cache.publish(42, 7, payload(vec![0, 1]));
-    let second = cache.publish(42, 7, payload(vec![10, 11]));
-    assert_ne!(first, second);
-    for index in 0..2 {
-        assert_eq!(
-            resolve(&cache, first, index),
-            Err(STALE_TOKEN_ERROR.to_owned())
-        );
-        assert_eq!(resolve(&cache, second, index), Ok((7, index, index + 10)));
+fn removed_current_element_refuses() {
+    let c = ElementCacheCore::new();
+    let id = c.publish(102, 8, payload(vec![10]));
+    state().lock().unwrap().insert((102, 8), vec![]);
+    assert_eq!(resolve(&c, 102, id, 0), Err("invalid_element_token".into()));
+}
+#[test]
+fn replacement_and_eviction_retire_addresses() {
+    let c = ElementCacheCore::new();
+    let old = c.publish(103, 1, payload(vec![1]));
+    let new = c.publish(103, 1, payload(vec![2]));
+    state().lock().unwrap().insert((103, 1), vec![3]);
+    assert_eq!(resolve(&c, 103, old, 0), Err("stale_element_token".into()));
+    assert_eq!(resolve(&c, 103, new, 0), Ok((1, 0, 3)));
+    for w in 2..=LRU_CAP_PER_PID as u64 + 1 {
+        c.publish(103, w, payload(vec![1]));
     }
+    assert_eq!(resolve(&c, 103, new, 0), Err("stale_element_token".into()));
 }
-
 #[test]
-fn resolving_does_not_change_publication_order_eviction() {
-    let cache = ElementCacheCore::new();
-    let first = cache.publish(42, 1, payload(vec![1]));
-    for window in 2..=LRU_CAP_PER_PID as u64 {
-        cache.publish(42, window, payload(vec![1]));
-    }
-    assert_eq!(resolve(&cache, first, 0), Ok((1, 0, 1)));
-    let latest = cache.publish(42, LRU_CAP_PER_PID as u64 + 1, payload(vec![1]));
-    assert_eq!(resolve(&cache, first, 0), Err(STALE_TOKEN_ERROR.to_owned()));
-    assert!(resolve(&cache, latest, 0).is_ok());
-}
-
-#[test]
-fn clearing_one_runtime_preserves_other_runtime_same_window() {
-    let make = |scope: &str| {
-        with_runtime_scope(scope.into(), || {
-            let cache = Arc::new(ElementCacheCore::new());
-            register_runtime_cache(&cache);
-            let id = cache.publish(42, 7, payload(vec![1]));
-            (cache, id)
-        })
-    };
-    let (first_cache, first) = make("invariant-a");
-    let (second_cache, second) = make("invariant-b");
-    with_runtime_scope("invariant-b".into(), || {
-        assert!(resolve(&second_cache, first, 0)
-            .unwrap_err()
-            .contains("another runtime generation"));
-        assert!(resolve(&first_cache, first, 0)
-            .unwrap_err()
-            .contains("another runtime generation"));
-    });
-    assert_eq!(retire_runtime_scope("invariant-a"), 1);
-    assert_eq!(retire_runtime_scope("invariant-a"), 0);
-    with_runtime_scope("invariant-a".into(), || {
-        assert!(resolve(&first_cache, first, 0).is_err());
-    });
-    with_runtime_scope("invariant-b".into(), || {
-        assert_eq!(resolve(&second_cache, second, 0), Ok((7, 0, 1)));
-    });
-    retire_runtime_scope("invariant-b");
-}
-
-#[test]
-fn token_resolution_cannot_be_retargeted_by_cache_replacement() {
-    let cache = ElementCacheCore::new();
-    let snapshot = cache.publish(42, 7, payload(vec!["original-target"]));
-    let (resolved_tx, resolved_rx) = mpsc::channel();
-    let (replaced_tx, replaced_rx) = mpsc::channel();
-    let observed = std::thread::scope(|threads| {
-        let cache = &cache;
-        let action = threads.spawn(move || {
-            let target = resolve(cache, snapshot, 0);
-            resolved_tx.send(()).unwrap();
-            replaced_rx.recv().unwrap();
-            target.ok().map(|(_, _, element)| element)
-        });
-        resolved_rx.recv().unwrap();
-        cache.publish(42, 7, payload(vec!["replacement-target"]));
-        replaced_tx.send(()).unwrap();
-        action.join().unwrap()
-    });
-    assert!(
-        observed.is_none() || observed == Some("original-target"),
-        "resolved identity was combined with another payload: {observed:?}"
-    );
-}
-
-#[test]
-fn runtime_retirement_releases_unadmitted_cache_payload() {
+fn retirement_never_owns_payloads() {
     let drops = Arc::new(AtomicUsize::new(0));
-    let cache = with_runtime_scope("retirement-invariant".into(), || {
-        let cache = Arc::new(ElementCacheCore::new());
-        register_runtime_cache(&cache);
-        cache.publish(
-            42,
-            7,
+    let c = with_runtime_scope("cacheless-retirement".into(), || {
+        let c = Arc::new(ElementCacheCore::new());
+        register_runtime_cache(&c);
+        c.publish(
+            104,
+            9,
             Payload {
-                elements: vec![1],
+                observed: vec![1],
                 drops: Some(drops.clone()),
             },
         );
-        cache
+        c
     });
-    retire_runtime_scope("retirement-invariant");
-    let released_at_retirement = drops.load(Ordering::SeqCst);
-    drop(cache);
     assert_eq!(drops.load(Ordering::SeqCst), 1);
-    assert_eq!(
-        released_at_retirement, 1,
-        "retired identity must release its unadmitted payload"
-    );
-}
-
-#[test]
-fn eviction_releases_unadmitted_cache_payload() {
-    let cache = ElementCacheCore::new();
-    let drops = Arc::new(AtomicUsize::new(0));
-    for window in 0..=LRU_CAP_PER_PID as u64 {
-        cache.publish(
-            42,
-            window,
-            Payload {
-                elements: vec![1],
-                drops: Some(drops.clone()),
-            },
-        );
-    }
-    let released_at_eviction = drops.load(Ordering::SeqCst);
-    drop(cache);
-    assert_eq!(drops.load(Ordering::SeqCst), LRU_CAP_PER_PID + 1);
-    assert_eq!(
-        released_at_eviction, 1,
-        "eviction must release the corresponding unadmitted payload"
-    );
+    assert_eq!(retire_runtime_scope("cacheless-retirement"), 1);
+    drop(c);
+    assert_eq!(drops.load(Ordering::SeqCst), 1);
 }

@@ -117,21 +117,34 @@ impl CachedSnapshot {
     }
 }
 
-impl SnapshotPayload for CachedSnapshot {
-    type Element = RetainedElement;
-
-    fn len(&self) -> usize {
-        self.elements.len()
-    }
-
-    fn retain(&self, index: usize) -> Option<Self::Element> {
+impl CachedSnapshot {
+    fn retain_element(&self, index: usize) -> Option<RetainedElement> {
         self.elements
             .get(index)
             .filter(|element| element.ptr != 0)
             .cloned()
     }
 }
-
-#[cfg(test)]
-#[path = "cache_uaf_repro.rs"]
-mod cache_uaf_repro;
+impl SnapshotPayload for CachedSnapshot {
+    type Element = RetainedElement;
+    fn len(&self) -> usize {
+        self.elements.len()
+    }
+    fn retain(&self, index: usize) -> Option<Self::Element> {
+        self.retain_element(index)
+    }
+    fn resolve_fresh(
+        _pid: i32,
+        window_id: u64,
+        index: usize,
+    ) -> Result<Option<Self::Element>, String> {
+        let tree = super::walk_tree(window_id, None);
+        let kind = if tree.nodes.iter().any(|node| node.msaa_role.is_some()) {
+            SnapshotKind::Msaa
+        } else {
+            SnapshotKind::Uia
+        };
+        let payload = Self::from_nodes(&tree.nodes, kind);
+        Ok(payload.retain_element(index))
+    }
+}

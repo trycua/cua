@@ -7,13 +7,14 @@ use cua_driver_core::tool::{
 };
 use serde_json::{json, Value};
 use std::cell::RefCell;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::Notify;
 
 const WAIT: Duration = Duration::from_secs(5);
 
-struct ProbePayload;
+struct ProbePayload(Arc<AtomicUsize>);
 impl SnapshotPayload for ProbePayload {
     type Element = usize;
     fn len(&self) -> usize {
@@ -21,6 +22,12 @@ impl SnapshotPayload for ProbePayload {
     }
     fn retain(&self, index: usize) -> Option<usize> {
         (index == 0).then_some(0)
+    }
+}
+
+impl Drop for ProbePayload {
+    fn drop(&mut self) {
+        self.0.fetch_add(1, Ordering::SeqCst);
     }
 }
 
@@ -53,6 +60,7 @@ struct CaptureProbe {
     native_finished: Notify,
     release: Mutex<Option<mpsc::Receiver<()>>>,
     published: Mutex<Option<(String, String)>>,
+    published_payload_drops: Arc<AtomicUsize>,
     cache: Mutex<Option<Arc<ElementCacheCore<ProbePayload>>>>,
 }
 
@@ -103,7 +111,11 @@ impl Tool for CaptureTool {
         .await
         .unwrap();
         let scope = current_dispatch_runtime_scope().expect("SDK supplied runtime scope");
-        let snapshot = self.cache.publish(731_347, 17, ProbePayload);
+        let snapshot = self.cache.publish(
+            731_347,
+            17,
+            ProbePayload(self.probe.published_payload_drops.clone()),
+        );
         let token = token_for(snapshot, 0);
         *self.probe.published.lock().unwrap() = Some((scope, token.clone()));
         ToolResult::text("capture complete").with_structured(json!({"token": token}))
@@ -155,6 +167,7 @@ fn capture_driver() -> (Arc<CuaDriver>, Arc<CaptureProbe>, ReleaseNative) {
         native_finished: Notify::new(),
         release: Mutex::new(Some(receiver)),
         published: Mutex::new(None),
+        published_payload_drops: Arc::new(AtomicUsize::new(0)),
         cache: Mutex::new(None),
     });
     NEXT_PROBE.with(|next| *next.borrow_mut() = Some(probe.clone()));
@@ -220,6 +233,11 @@ async fn sdk_shutdown_drains_snapshot_publication_and_retires_the_result() {
         "closed runtime admitted another publisher"
     );
     assert!(!result.is_error);
+    assert_eq!(
+        probe.published_payload_drops.load(Ordering::SeqCst),
+        1,
+        "publishing an SDK observation retained its accessibility payload"
+    );
     assert_eq!(resolution, Err(STALE_TOKEN_ERROR.to_owned()));
 }
 
@@ -266,6 +284,7 @@ async fn sdk_cancelled_capture_does_not_publish_after_shutdown() {
         published.is_none(),
         "cancelled capture published after its invocation ended"
     );
+    assert_eq!(probe.published_payload_drops.load(Ordering::SeqCst), 0);
 }
 
 #[cfg(target_os = "macos")]
@@ -356,13 +375,13 @@ mod native {
     }
 
     #[tokio::test]
-    async fn sdk_shutdown_releases_native_snapshot_while_closed_handle_is_retained() {
+    async fn sdk_publish_never_retains_native_snapshot_through_shutdown() {
         let serial = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
-        let value = CFString::new("sdk-snapshot-shutdown-native-retain-accounting");
+        let value = CFString::new("sdk-cacheless-native-snapshot-retain-accounting");
         let ptr = value.as_concrete_TypeRef() as usize;
         let base = unsafe { CFGetRetainCount(ptr as CFTypeRef) };
         let (driver, scope, token) = native_driver(ptr, 1);
-        assert_eq!(unsafe { CFGetRetainCount(ptr as CFTypeRef) }, base + 1);
+        assert_eq!(unsafe { CFGetRetainCount(ptr as CFTypeRef) }, base);
         driver.shutdown().await.unwrap();
         let retained_after_shutdown = unsafe { CFGetRetainCount(ptr as CFTypeRef) };
         let retired = with_runtime_scope(scope, || resolve_native(&token));
@@ -370,49 +389,14 @@ mod native {
         let retained_after_destroy = unsafe { CFGetRetainCount(ptr as CFTypeRef) };
         drop(serial);
         assert_eq!(retired, Err(STALE_TOKEN_ERROR.to_owned()));
-        assert_eq!(
-            retained_after_destroy, base,
-            "destroy must balance the native retain"
-        );
-        assert_eq!(
-            retained_after_shutdown, base,
-            "closed SDK handle still owns an unadmitted native snapshot"
-        );
+        assert_eq!(retained_after_shutdown, base);
+        assert_eq!(retained_after_destroy, base);
     }
 
     #[tokio::test]
-    async fn sdk_destroying_one_runtime_preserves_other_native_snapshot() {
+    async fn sdk_token_eviction_retires_addresses_without_native_ownership() {
         let serial = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
-        let first = CFString::new("sdk-first-runtime-native-snapshot-isolation");
-        let second = CFString::new("sdk-second-runtime-native-snapshot-isolation");
-        let first_ptr = first.as_concrete_TypeRef() as usize;
-        let second_ptr = second.as_concrete_TypeRef() as usize;
-        let first_base = unsafe { CFGetRetainCount(first_ptr as CFTypeRef) };
-        let second_base = unsafe { CFGetRetainCount(second_ptr as CFTypeRef) };
-        let (first_driver, first_scope, first_token) = native_driver(first_ptr, 1);
-        let (second_driver, second_scope, second_token) = native_driver(second_ptr, 1);
-        assert_ne!(first_scope, second_scope);
-        first_driver.shutdown().await.unwrap();
-        drop(first_driver);
-        let first_count = unsafe { CFGetRetainCount(first_ptr as CFTypeRef) };
-        let second_count = unsafe { CFGetRetainCount(second_ptr as CFTypeRef) };
-        let own = with_runtime_scope(second_scope.clone(), || resolve_native(&second_token));
-        let foreign = with_runtime_scope(second_scope, || resolve_native(&first_token));
-        second_driver.shutdown().await.unwrap();
-        drop(second_driver);
-        let second_after_destroy = unsafe { CFGetRetainCount(second_ptr as CFTypeRef) };
-        drop(serial);
-        assert_eq!(first_count, first_base);
-        assert_eq!(second_count, second_base + 1);
-        assert_eq!(own, Ok((0, 0)));
-        assert!(foreign.is_err());
-        assert_eq!(second_after_destroy, second_base);
-    }
-
-    #[tokio::test]
-    async fn sdk_token_eviction_releases_the_corresponding_native_snapshot() {
-        let serial = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
-        let value = CFString::new("sdk-snapshot-eviction-native-retain-accounting");
+        let value = CFString::new("sdk-cacheless-token-eviction-retain-accounting");
         let ptr = value.as_concrete_TypeRef() as usize;
         let base = unsafe { CFGetRetainCount(ptr as CFTypeRef) };
         let cap = cua_driver_core::element_token::LRU_CAP_PER_PID;
@@ -424,11 +408,7 @@ mod native {
         let retained_after_destroy = unsafe { CFGetRetainCount(ptr as CFTypeRef) };
         drop(serial);
         assert_eq!(retired, Err(STALE_TOKEN_ERROR.to_owned()));
+        assert_eq!(retained_after_eviction, base);
         assert_eq!(retained_after_destroy, base);
-        assert_eq!(
-            retained_after_eviction,
-            base + cap as isize,
-            "token eviction did not retire native cache ownership"
-        );
     }
 }

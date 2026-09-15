@@ -510,6 +510,12 @@ fn run_native_geometry_mismatch(foreground: bool) {
             );
             assert_eq!(selection.action_route(), Some("accessibility"));
             let selected = fixture_state(&directory, |state| state["selected"] == true);
+            let selected_cursor = agent_cursor_position(driver, &directory, "agent-cursor-semantic-selection.json");
+            let compositor = &geometry["compositor"];
+            assert_eq!(selected_cursor, serde_json::json!({
+                "x":compositor["x"].as_f64().unwrap() + 265.0,
+                "y":compositor["y"].as_f64().unwrap() + compositor["height"].as_f64().unwrap() - 231.0
+            }), "successful semantic selection must still position the agent cursor");
             let scroll_before = selected["native_scroll_y"].as_f64().unwrap();
             let native_text = snapshot.structured()["elements"]
                 .as_array()

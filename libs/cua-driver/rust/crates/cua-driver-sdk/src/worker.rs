@@ -131,6 +131,16 @@ impl WorkerProcess {
     }
 }
 
+// The private worker communicates over pipes and is not an interactive CLI.
+// Suppress console allocation when its host is a Windows GUI application.
+#[cfg(windows)]
+fn configure_private_worker_console(command: &mut Command) {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
 pub(crate) struct PrivateWorkerClient {
     generation: String,
     process: Mutex<WorkerProcess>,
@@ -141,6 +151,8 @@ impl PrivateWorkerClient {
     pub(crate) fn spawn(options: ValidatedWorkerOptions) -> Result<Arc<Self>, DriverError> {
         let generation = Uuid::new_v4().to_string();
         let mut command = Command::new(&options.binary_path);
+        #[cfg(windows)]
+        configure_private_worker_console(&mut command);
         command
             .arg("__private-worker")
             .arg("--generation")

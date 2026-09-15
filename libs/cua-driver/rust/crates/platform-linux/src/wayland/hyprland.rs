@@ -374,6 +374,192 @@ pub fn window_for_pid(pid: u32) -> Option<Window> {
     owned.next().is_none().then_some(first)
 }
 
+/// Active compositor window identity (address, PID) from the same attested IPC
+/// channel as the other observations.
+fn active_window_identity() -> Result<(u64, u32)> {
+    let active: Client = query("j/activewindow")?;
+    if !active.mapped {
+        bail!("Hyprland reported no mapped active window");
+    }
+    let address = u64::from_str_radix(active.address.trim_start_matches("0x"), 16)
+        .context("Hyprland active window has no valid address")?;
+    let pid = u32::try_from(active.pid).context("Hyprland active window has no valid PID")?;
+    Ok((address, pid))
+}
+
+fn active_window_address() -> Result<u64> {
+    active_window_identity().map(|(address, _)| address)
+}
+
+fn background_focus_restore_target_for_identity(
+    before: u64,
+    target_address: u64,
+    target_pid: u32,
+    observed_address: u64,
+    observed_pid: u32,
+) -> Option<u64> {
+    (before != 0
+        && before != target_address
+        && (observed_address == target_address || observed_pid == target_pid))
+        .then_some(before)
+}
+
+fn background_workspace_restore_target(
+    target_pid: u32,
+    target_workspace: i64,
+    observed_pid: u32,
+    observed_workspace: i64,
+) -> Option<i64> {
+    (observed_pid == target_pid && observed_workspace != target_workspace)
+        .then_some(target_workspace)
+}
+
+/// Dispatch one Hyprland action over the IPC socket. Actions are never
+/// retried: a refused or unanswered dispatch is reported instead of replayed.
+fn dispatch(command: &str) -> Result<()> {
+    let mut ipc = ipc_connection_with_timeout(QUERY_TIMEOUT)?;
+    let reply = read_reply(&mut ipc, command.as_bytes(), QUERY_TIMEOUT)?;
+    if !reply.starts_with(b"ok") {
+        bail!(
+            "Hyprland refused dispatch: {}",
+            String::from_utf8_lossy(&reply).trim()
+        );
+    }
+    Ok(())
+}
+
+/// Prefer Hyprland's current Lua dispatchers, keeping the legacy positional
+/// form for compositor versions that predate them.
+fn dispatch_lua_or_legacy(lua: &str, legacy: &str) -> Result<()> {
+    match dispatch(&format!("dispatch {lua}")) {
+        Ok(()) => Ok(()),
+        Err(lua_error) => dispatch(&format!("dispatch {legacy}"))
+            .with_context(|| format!("Hyprland Lua dispatcher failed first: {lua_error:#}")),
+    }
+}
+
+fn dispatch_focus_window(address: u64) -> Result<()> {
+    let selector = format!("address:0x{address:x}");
+    let lua = format!("hl.dsp.focus({{ window = \"{selector}\" }})");
+    dispatch_lua_or_legacy(&lua, &format!("focuswindow {selector}"))
+}
+
+fn dispatch_move_window_to_workspace(address: u64, workspace: i64) -> Result<()> {
+    let selector = format!("address:0x{address:x}");
+    let lua = format!(
+        "hl.dsp.window.move({{ workspace = \"{workspace}\", window = \"{selector}\", follow = false }})"
+    );
+    dispatch_lua_or_legacy(
+        &lua,
+        &format!("movetoworkspacesilent {workspace},{selector}"),
+    )
+}
+
+fn restore_target_workspace(address: u64, pid: u32, workspace: i64) -> Result<()> {
+    let Some(window) = window_for_address(address).filter(|window| window.pid == pid) else {
+        return Ok(());
+    };
+    if background_workspace_restore_target(pid, workspace, window.pid, window.workspace).is_none() {
+        return Ok(());
+    }
+    dispatch_move_window_to_workspace(address, workspace)?;
+    for _ in 0..20 {
+        if window_for_address(address)
+            .filter(|window| window.pid == pid)
+            .is_some_and(|window| window.workspace == workspace)
+        {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    bail!("Hyprland did not restore the background target workspace")
+}
+
+fn restore_focus_window(address: u64) -> Result<()> {
+    dispatch_focus_window(address)?;
+    for _ in 0..20 {
+        if active_window_address().ok() == Some(address) {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    bail!("Hyprland did not restore the previously active window")
+}
+
+/// Execute a semantic AT-SPI action while preserving the exact Hyprland
+/// foreground window and the target's workspace. Some applications activate
+/// or replace their own toplevel after `Action.DoAction`. Restore only when the
+/// target stole focus; if the user moved to any other window concurrently,
+/// leave their newer focus alone.
+pub fn with_preserved_background_focus<T>(
+    target_address: u64,
+    target_pid: u32,
+    body: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    let (mut protected, before_pid) = active_window_identity()?;
+    if protected == target_address || before_pid == target_pid {
+        return body();
+    }
+    let target_workspace = window_for_address(target_address)
+        .filter(|window| window.pid == target_pid)
+        .or_else(|| window_for_pid(target_pid))
+        .map(|window| window.workspace)
+        .context("Hyprland could not prove the background target workspace")?;
+    let body_result = body();
+    // Chromium dispatches its activation after AT-SPI Action.DoAction returns.
+    // Keep a short bounded watch rather than checking focus only once.
+    let quiet_period = Duration::from_secs(1);
+    let hard_deadline = Instant::now() + Duration::from_secs(3);
+    let mut quiet_deadline = Instant::now() + quiet_period;
+    let focus_result = loop {
+        match active_window_identity() {
+            Ok((observed_address, observed_pid)) => {
+                let restore = background_focus_restore_target_for_identity(
+                    protected,
+                    target_address,
+                    target_pid,
+                    observed_address,
+                    observed_pid,
+                );
+                if let Some(address) = restore {
+                    if let Err(error) =
+                        restore_target_workspace(observed_address, target_pid, target_workspace)
+                    {
+                        break Err(error);
+                    }
+                    if let Err(error) = restore_focus_window(address) {
+                        break Err(error);
+                    }
+                    // Electron applications can issue more than one activation
+                    // request while a semantic action transitions views. Do not
+                    // return until focus has remained quiet after the latest one.
+                    quiet_deadline = (Instant::now() + quiet_period).min(hard_deadline);
+                } else if observed_address != 0 {
+                    // Preserve a newer non-target focus rather than overwriting
+                    // a user's concurrent window change with the initial one.
+                    protected = observed_address;
+                }
+            }
+            Err(error) => break Err(error),
+        }
+        let now = Instant::now();
+        if now >= quiet_deadline || now >= hard_deadline {
+            break Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    match (body_result, focus_result) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(_), Err(focus_error)) => {
+            Err(focus_error.context("background accessibility action changed Hyprland state"))
+        }
+        (Err(error), Err(focus_error)) => Err(anyhow::anyhow!(
+            "{error}; background action also failed to preserve Hyprland state: {focus_error}"
+        )),
+    }
+}
+
 pub fn target_is_active(address: u64, pid: Option<u32>) -> Result<bool> {
     let target = window_for_address(address).context("Hyprland target no longer exists")?;
     if pid.is_some_and(|pid| pid != target.pid) {
@@ -449,6 +635,25 @@ mod tests {
             visible: true,
             hidden: false,
         }
+    }
+
+    #[test]
+    fn background_action_restores_only_focus_stolen_by_its_target() {
+        assert_eq!(
+            background_focus_restore_target_for_identity(0x1111, 0x2222, 42, 0x3333, 42),
+            Some(0x1111)
+        );
+        assert_eq!(
+            background_focus_restore_target_for_identity(0x1111, 0x2222, 42, 0x3333, 43),
+            None
+        );
+        assert_eq!(
+            background_focus_restore_target_for_identity(0, 0x2222, 42, 0x3333, 42),
+            None
+        );
+        assert_eq!(background_workspace_restore_target(42, 91, 42, 2), Some(91));
+        assert_eq!(background_workspace_restore_target(42, 91, 42, 91), None);
+        assert_eq!(background_workspace_restore_target(42, 91, 43, 2), None);
     }
 
     #[test]

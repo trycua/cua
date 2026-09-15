@@ -273,6 +273,14 @@ fn is_method_unsupported(error: &anyhow::Error) -> bool {
     error.to_string().contains("(-32601)")
 }
 
+/// Chromium's answer for a page target that lives in no browser window (an
+/// extension side panel, an offscreen document): `-32000 Browser window not
+/// found`. Such a target is not a tab of ANY native window.
+fn is_window_not_found(error: &anyhow::Error) -> bool {
+    let message = error.to_string();
+    message.contains("(-32000)") && message.contains("Browser window not found")
+}
+
 fn is_semantic_document_size_error(error: &anyhow::Error) -> bool {
     let message = error.to_string().to_ascii_lowercase();
     [
@@ -1163,6 +1171,12 @@ impl BrowserEngine {
                 // shape; every transient/vanished-target error fails the
                 // whole proof rather than shrinking it to a false unique set.
                 Err(error) if is_method_unsupported(&error) => None,
+                // A page target Chromium cannot map to any browser window (an
+                // extension side panel, an offscreen document) can never be the
+                // tab of the requested native window, so it is skipped: it enters
+                // neither the geometry correlation nor the title tie-break. Every
+                // other error still fails the whole proof.
+                Err(error) if is_window_not_found(&error) => continue,
                 Err(error) => {
                     return Err(route_err(
                         "Browser.getWindowForTarget failed while proving the native window",

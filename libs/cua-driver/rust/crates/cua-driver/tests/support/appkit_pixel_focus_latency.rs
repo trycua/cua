@@ -1,6 +1,62 @@
 use super::*;
 use std::time::Instant;
 
+fn input_value(snapshot: &ToolResponse) -> &serde_json::Value {
+    let index = element_index_by_id(snapshot.tree_text(), "txt-input").unwrap();
+    &snapshot.structured()["elements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|element| element["element_index"].as_u64() == Some(index))
+        .unwrap()["value"]
+}
+
+#[test]
+#[ignore]
+fn harness_appkit_pixel_key_focus_delivers_character() {
+    run_case(
+        native_foreground_case(
+            "appkit",
+            "pixel-key-focus",
+            Targeting::Px,
+            DriverRoute::MacosCgEventPid,
+        ),
+        |pid, wid, driver| {
+            let initial = snapshot_elements(driver, pid, wid);
+            let (x, y, width, height) = element_pixel_frame(&initial, "txt-input");
+            let mut request = serde_json::json!({
+                "pid":pid, "window_id":wid,
+                "x":x + width / 2.0, "y":y + height / 2.0,
+                "delivery_mode":"foreground", "text":"original"
+            });
+            let prepared = driver.call("type_text", request.clone());
+            assert!(!prepared.is_error(), "prepare: {}", prepared.text());
+            let before = snapshot_elements(driver, pid, wid);
+            assert_eq!(input_value(&before), "original");
+            request.as_object_mut().unwrap().remove("text");
+            request["key"] = serde_json::json!("a");
+            let key = driver.call("press_key", request);
+            let after = snapshot_elements(driver, pid, wid);
+            let output = driver.recording_dir().unwrap().join("pixel-key-focus.json");
+            std::fs::write(
+                output,
+                serde_json::to_vec_pretty(&serde_json::json!({
+                    "before":before.raw, "key":key.raw, "after":after.raw
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            assert!(!key.is_error(), "press_key: {}", key.text());
+            assert_eq!(
+                input_value(&after),
+                "originala",
+                "pixel-targeted press_key must change the exact field before replacement"
+            );
+            Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+        },
+    );
+}
+
 #[test]
 #[ignore]
 fn harness_appkit_pixel_focus_preserves_selection_and_latency() {

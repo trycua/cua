@@ -600,6 +600,15 @@ authority fails the observation precondition; it is neither cancellation evidenc
 nor a passing/ignored cell. Resolve that prerequisite before full certification;
 do not substitute another backend or silently repair TCC.
 
+`macos-appkit-pixel-key-focus-px-foreground` verifies that a pixel-targeted
+`press_key("a")` changes the exact native text field from `original` to
+`originala`. It observes the key's effect before any select-all or replacement
+can hide a dropped key. Before/key/after responses are retained in
+`pixel-key-focus.json`. This separate control does not change the
+`macos-appkit-pixel-focus-latency-px-foreground` workload or its two warmups and
+12 measured trials; that benchmark's final value alone does not prove each
+intermediate action was delivered.
+
 ## Test the runner itself
 
 The runner's shell helpers, including status matching, build-namespace selection,

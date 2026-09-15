@@ -124,6 +124,12 @@ pub struct CdpDialogState {
 enum CallOutcome {
     Result(Value),
     Error { code: Option<i64>, message: String },
+    InvalidResponse(String),
+}
+
+#[derive(serde::Deserialize)]
+struct ReplyId {
+    id: u64,
 }
 
 /// State shared between the caller side and the reader task.
@@ -163,7 +169,18 @@ async fn read_loop(mut read: SplitStream<WsStream>, demux: Arc<Demux>) {
         };
         let v: Value = match serde_json::from_str(&text) {
             Ok(v) => v,
-            Err(_) => continue,
+            Err(error) => {
+                // Skip the payload without constructing it to recover the reply id.
+                // Keep Value's nesting limit, but do not turn a rejected reply into
+                // a timeout: document readers need the error to request less data.
+                let Ok(reply) = serde_json::from_str::<ReplyId>(&text) else {
+                    break;
+                };
+                if let Some(tx) = demux.pending.lock().unwrap().remove(&reply.id) {
+                    let _ = tx.send(CallOutcome::InvalidResponse(error.to_string()));
+                }
+                continue;
+            }
         };
         if let Some(id) = v.get("id").and_then(Value::as_u64) {
             let Some(tx) = demux.pending.lock().unwrap().remove(&id) else {
@@ -395,6 +412,9 @@ impl CdpConnection {
                 anyhow::bail!("CDP {method} timed out after {CALL_TIMEOUT:?}")
             }
             Ok(Err(_)) => anyhow::bail!("CDP socket closed during {method}"),
+            Ok(Ok(CallOutcome::InvalidResponse(error))) => {
+                anyhow::bail!("CDP {method} response serialization failed: {error}")
+            }
             Ok(Ok(CallOutcome::Result(v))) => Ok(v),
             Ok(Ok(CallOutcome::Error {
                 code: Some(code),
@@ -684,6 +704,78 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result["echoed"]["x"], 7);
+    }
+
+    #[tokio::test]
+    async fn deeply_nested_reply_fails_promptly_without_poisoning_the_connection() {
+        let server = MockCdpServer::start(StdArc::new(|call| {
+            let mut value = json!({ "alive": true });
+            if call.method == "DOM.getDocument" {
+                for _ in 0..140 {
+                    value = json!({ "child": value });
+                }
+            }
+            MockReply::ok(value)
+        }))
+        .await;
+        let conn = CdpConnection::connect(&server.ws_url()).await.unwrap();
+        let error = tokio::time::timeout(
+            Duration::from_secs(2),
+            conn.call(None, "DOM.getDocument", json!({})),
+        )
+        .await
+        .expect("an unreadable reply must not wait for the request timeout")
+        .unwrap_err();
+        assert!(error.to_string().contains("serialization"), "{error}");
+        assert!(error.to_string().contains("recursion limit"), "{error}");
+        let result = conn
+            .call(None, "Browser.getVersion", json!({}))
+            .await
+            .unwrap();
+        assert_eq!(result["alive"], true);
+        assert!(!conn.is_closed());
+    }
+
+    #[test]
+    fn reply_id_recovery_skips_deep_payloads_and_still_validates_json() {
+        let payload = format!("{}0{}", "[".repeat(140), "]".repeat(140));
+        let raw = format!(r#"{{"result":{payload},"id":7}}"#);
+        assert!(serde_json::from_str::<Value>(&raw).is_err());
+        assert_eq!(serde_json::from_str::<ReplyId>(&raw).unwrap().id, 7);
+        assert!(serde_json::from_str::<ReplyId>(r#"{"id":7,"result":[}"#).is_err());
+        assert!(serde_json::from_str::<ReplyId>(r#"{"id":7,"id":8}"#).is_err());
+    }
+
+    #[tokio::test]
+    async fn malformed_reply_closes_the_connection_instead_of_timing_out() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let _ = ws.next().await;
+            ws.send(Message::Text(r#"{"id":1,"result":[}"#.into()))
+                .await
+                .unwrap();
+            let _ = ws.next().await;
+        });
+        let conn = CdpConnection::connect(&format!("ws://{address}/test"))
+            .await
+            .unwrap();
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            conn.call(None, "DOM.getDocument", json!({})),
+        )
+        .await;
+        let closed = conn.is_closed();
+        drop(conn);
+        server.abort();
+        let _ = server.await;
+        let error = result
+            .expect("malformed JSON must fail promptly")
+            .unwrap_err();
+        assert!(error.to_string().contains("socket closed"), "{error}");
+        assert!(closed);
     }
 
     #[tokio::test]

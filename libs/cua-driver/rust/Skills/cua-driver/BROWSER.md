@@ -136,6 +136,25 @@ or terminates an existing personal profile. The result returns a
 `prepared_pid`; list that process's windows and bind the new `(pid,
 window_id)`.
 
+For a standalone run where the caller wants Cua Driver to select and pass a
+nonzero DevTools port, request the factual `driver_selected_port` posture:
+
+```bash
+cua-driver browser_prepare \
+  '{"session":"browser-run-1","allow_launch":true,
+    "launch_posture":"driver_selected_port",
+    "profile":{"mode":"isolated_new"}}'
+```
+
+This mode is still a separate driver-owned profile. It does not attach to the
+user's existing profile or accept a `pid`. The result reports the selected
+launch posture, but the driver does not infer `navigator.webdriver` from it
+because Chromium behavior can vary by version. Verify `navigator.webdriver`
+in-page if the value matters. This mode applies no other browser identity or
+fingerprint overrides and does not guarantee that a site will accept the
+session. Treat any CAPTCHA or bot-detector result as site policy, not as a Cua
+guarantee.
+
 ### Existing profile
 
 Attaching to an authenticated profile requires explicit trusted launch or host
@@ -257,6 +276,11 @@ Cua Driver captures the exact tab viewport through CDP. It does not select the
 tab or foreground the browser window. Capture is opt-in because authenticated
 pages may contain sensitive information, and a requested capture refuses when
 the driver cannot return valid viewport metrics and a valid bounded PNG.
+
+Both snapshot formats use bounded document reads when the full page structure
+exceeds the browser or parser limits. The compatibility `dom_refs_v1` format
+reports `truncated: true` after this fallback; `semantic_v2` reports
+`snapshot.complete: false`. Do not treat either result as complete page coverage.
 
 `semantic_v2` composes the page accessibility tree, pierced DOM, layout, and
 viewport state. Read the compact `outline` for page content, use `refs` only

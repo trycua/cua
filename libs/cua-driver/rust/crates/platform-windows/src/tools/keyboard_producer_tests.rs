@@ -40,7 +40,7 @@ fn producer_with_state(name: &str, state: Arc<ToolState>) -> Box<dyn Tool> {
     }
 }
 
-fn retained_uia_pid(pointer: usize) -> i32 {
+fn retained_uia_identity(pointer: usize) -> (i32, String) {
     use std::mem::ManuallyDrop;
     use windows::core::Interface;
     use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
@@ -48,8 +48,9 @@ fn retained_uia_pid(pointer: usize) -> i32 {
     unsafe { CoInitializeEx(None, COINIT_MULTITHREADED).ok().unwrap() };
     let element = ManuallyDrop::new(unsafe { IUIAutomationElement::from_raw(pointer as *mut _) });
     let pid = unsafe { element.CurrentProcessId() };
+    let name = unsafe { element.CurrentName() };
     unsafe { CoUninitialize() };
-    pid.unwrap()
+    (pid.unwrap(), name.unwrap().to_string())
 }
 
 async fn admitted_target_survives_cache_clear(tool: &'static str) {
@@ -88,7 +89,10 @@ async fn admitted_target_survives_cache_clear(tool: &'static str) {
     let pointer = barrier.wait();
     fixture.assert_quiet();
     assert!(state.element_cache.clear() > 0);
-    assert_eq!(retained_uia_pid(pointer), fixture.pid() as i32);
+    assert_eq!(
+        retained_uia_identity(pointer),
+        (fixture.pid() as i32, "Keyboard input".to_owned())
+    );
     let refused = producer_with_state(tool, state).invoke(args).await;
     assert_eq!(refused.is_error, Some(true), "{refused:?}");
     assert_eq!(
@@ -109,6 +113,8 @@ async fn admitted_target_survives_cache_clear(tool: &'static str) {
         .as_ref()
         .unwrap_or_else(|| panic!("admitted keyboard producer record: {result:?}"));
     assert_eq!(record.effect, ActionEffect::Unverifiable);
+    assert_eq!(record.transport, ActionTransport::WindowsSendInput);
+    assert_eq!(record.actual_delivery, Some(ActualDelivery::Foreground));
     assert!(record.delivered_count.is_none());
     assert!(record.public_result().unwrap().evidence.is_none());
 }

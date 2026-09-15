@@ -96,6 +96,16 @@ async fn admitted_target_survives_cache_clear(tool: &'static str) {
     fixture.assert_quiet();
     assert!(state.element_cache.clear() > 0);
     assert_eq!(retained_ax_pid(pointer), fixture.pid() as i32);
+    assert_eq!(
+        unsafe {
+            crate::ax::bindings::copy_string_attr(
+                pointer as crate::ax::bindings::AXUIElementRef,
+                "AXValue",
+            )
+        }
+        .as_deref(),
+        Some("unchanged")
+    );
     let refused = producer_with_state(tool, state).invoke(args).await;
     assert_eq!(refused.is_error, Some(true), "{refused:?}");
     assert_eq!(
@@ -116,6 +126,8 @@ async fn admitted_target_survives_cache_clear(tool: &'static str) {
         .as_ref()
         .unwrap_or_else(|| panic!("admitted keyboard producer record: {result:?}"));
     assert_eq!(record.effect, ActionEffect::Unverifiable);
+    assert_eq!(record.transport, ActionTransport::MacosCgEventPid);
+    assert_eq!(record.actual_delivery, Some(ActualDelivery::Background));
     assert!(record.delivered_count.is_none());
     assert!(record.public_result().unwrap().evidence.is_none());
 }

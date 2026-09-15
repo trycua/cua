@@ -13,7 +13,12 @@
             <Button x:Name="BtnIncrement"
                     auto:AutomationProperties.AutomationId="btn-increment"
                     Content="Increment" Width="100"
-                    Click="OnIncrementClick"/>
+                    auto:AutomationProperties.AcceleratorKey="Ctrl+Shift+H"
+                    Click="OnIncrementClick">
+                <Button.KeyboardAccelerators>
+                    <KeyboardAccelerator Key="H" Modifiers="Control,Shift" Invoked="OnIncrementAccelerator"/>
+                </Button.KeyboardAccelerators>
+            </Button>
             <Button x:Name="BtnReset"
                     auto:AutomationProperties.AutomationId="btn-reset"
                     Content="Reset" Width="80"
@@ -126,7 +131,12 @@
             <CheckBox x:Name="ChkAgreed"
                       auto:AutomationProperties.AutomationId="chk-agreed"
                       Content="I agree"
-                      Checked="OnChkChanged" Unchecked="OnChkChanged"/>
+                      auto:AutomationProperties.AcceleratorKey="Ctrl+Shift+G"
+                      Checked="OnChkChanged" Unchecked="OnChkChanged">
+                <CheckBox.KeyboardAccelerators>
+                    <KeyboardAccelerator Key="G" Modifiers="Control,Shift" Invoked="OnToggleAccelerator"/>
+                </CheckBox.KeyboardAccelerators>
+            </CheckBox>
             <StackPanel Orientation="Horizontal" Spacing="12">
                 <RadioButton x:Name="RdoLow"  Content="Low"
                              auto:AutomationProperties.AutomationId="rdo-low"

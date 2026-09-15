@@ -33,6 +33,19 @@ impl KeyboardFixture {
             "CUA_KEYBOARD_CLOSE_ON_KEY",
             if close_on_key { "1" } else { "0" },
         );
+        let fixture = Self::spawn_command_in(command, directory);
+        #[cfg(target_os = "linux")]
+        if !companion {
+            wait_for_x11_focus(fixture.window_id);
+        }
+        fixture
+    }
+
+    pub fn spawn_command(command: Command) -> Self {
+        Self::spawn_command_in(command, tempfile::tempdir().unwrap())
+    }
+
+    fn spawn_command_in(mut command: Command, directory: tempfile::TempDir) -> Self {
         let mut child = crate::spawn_in_job(
             command
                 .stdin(Stdio::null())
@@ -68,11 +81,16 @@ impl KeyboardFixture {
         };
         let ready = fixture.event("ready");
         fixture.window_id = ready["window"].as_u64().expect("native window identity");
-        #[cfg(target_os = "linux")]
-        if !companion {
-            wait_for_x11_focus(fixture.window_id);
-        }
         fixture
+    }
+
+    pub fn recorded_key_down_count(&self) -> usize {
+        self.history
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|event| event["kind"] == "down")
+            .count()
     }
 
     pub fn pid(&self) -> u32 {

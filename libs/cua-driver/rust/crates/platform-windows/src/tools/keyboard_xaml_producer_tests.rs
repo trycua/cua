@@ -1,3 +1,4 @@
+use super::keyboard_producer_tests::focus_probe as probe;
 use super::*;
 use cua_driver_core::action_record::{ActionEffect, ActionTransport, ActualDelivery};
 use cua_driver_testkit::keyboard_fixture::KeyboardFixture;
@@ -38,17 +39,6 @@ async fn fixture() -> KeyboardFixture {
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-}
-
-async fn probe(sentinel: &KeyboardFixture) {
-    let result = PressKeyTool {
-        state: ToolState::new(),
-    }
-    .invoke(json!({"key":"f6"}))
-    .await;
-    assert_ne!(result.is_error, Some(true), "{result:?}");
-    sentinel.key_event("down", 0x75);
-    sentinel.key_event("up", 0x75);
 }
 
 async fn semantic_hotkey(

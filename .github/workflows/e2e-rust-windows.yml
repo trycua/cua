@@ -99,12 +99,15 @@ jobs:
       - name: Ensure FFmpeg for trajectory video
         shell: pwsh
         run: .\scripts\ci\windows\setup-ffmpeg.ps1
+      - name: Build XAML keyboard fixture
+        if: inputs.lane == 'keyboard-xaml'
+        shell: pwsh
+        run: .\scripts\ci\windows\build-harnesses.ps1 -Targets winui3
       - name: Run native Rust harnesses
-        if: inputs.lane != 'keyboard'
+        if: inputs.lane != 'keyboard' && inputs.lane != 'keyboard-xaml'
         shell: pwsh
         env:
           CUA_E2E_INTERNAL_LANE: native
-          CUA_E2E_HARNESS_FILTER: ${{ inputs.lane == 'keyboard-xaml' && 'winui3' || '' }}
         run: .\scripts\ci\windows\run-rust-e2e.ps1 -RequireGui
       - name: Run native keyboard producer contracts
         if: ${{ !cancelled() && inputs.lane != 'keyboard-xaml' }}

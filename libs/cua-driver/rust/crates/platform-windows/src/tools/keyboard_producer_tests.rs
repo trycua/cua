@@ -131,7 +131,7 @@ async fn native_producer_hotkey_retains_the_admitted_uia_target_after_cache_clea
     admitted_target_survives_cache_clear("hotkey").await;
 }
 
-async fn focus_probe(fixture: &KeyboardFixture) {
+pub(super) async fn focus_probe(fixture: &KeyboardFixture) {
     let result = producer("press_key")
         .invoke(serde_json::json!({"scope":"desktop", "key":"f6"}))
         .await;

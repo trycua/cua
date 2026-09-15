@@ -164,7 +164,10 @@ def test_unverified_addition_on_stale_branch_is_rejected(validate_command):
     assert "merge-ready" not in result.stdout
 
 
-def test_verified_addition_on_stale_branch_is_accepted(validate_command, github_api):
+@pytest.mark.parametrize("login,exit_code", [("source-author", 0), ("another-author", 1)])
+def test_addition_on_stale_branch_requires_verified_login(
+    validate_command, github_api, login, exit_code
+):
     _, responses = github_api
     responses["/repos/trycua/cua/pulls/12"] = {
         "number": 12, "user": {"login": "source-author"},
@@ -174,12 +177,16 @@ def test_verified_addition_on_stale_branch_is_accepted(validate_command, github_
     ]
     result = validate_command(
         ancestor={},
-        head={"source@institution.example": "source-author"},
+        head={"source@institution.example": login},
         body="The identity is verified by https://github.com/trycua/cua/pull/12",
     )
 
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "merge-ready for pull request #50" in result.stdout
+    assert result.returncode == exit_code, result.stdout + result.stderr
+    if exit_code:
+        assert "verified source PR author is @source-author" in result.stderr
+        assert "merge-ready" not in result.stdout
+    else:
+        assert "merge-ready for pull request #50" in result.stdout
 
 
 @pytest.mark.parametrize("missing", ["ancestor", "head"])

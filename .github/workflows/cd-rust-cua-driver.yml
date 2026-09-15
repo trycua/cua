@@ -193,7 +193,7 @@ jobs:
           apt-get -o Dir::Etc::sourceparts=- install -y --no-install-recommends \
             git ca-certificates curl python3 build-essential pkg-config \
             libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev \
-            libxkbcommon-dev
+            libxkbcommon-dev libxcb1-dev
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.source_ref || github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}

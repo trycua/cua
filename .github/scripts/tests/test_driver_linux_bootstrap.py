@@ -77,7 +77,7 @@ class TestDriverLinuxBootstrap(unittest.TestCase):
             {
                 "git", "ca-certificates", "curl", "python3", "build-essential", "pkg-config",
                 "libx11-dev", "libxi-dev", "libxtst-dev", "libxext-dev", "libwayland-dev",
-                "libxkbcommon-dev",
+                "libxkbcommon-dev", "libxcb1-dev",
             },
         )
         self.assertLess(self.bootstrap.index("\nEOF\n"), self.bootstrap.index("apt-get "))

@@ -266,13 +266,13 @@ impl Tool for DragTool {
         // refuses rather than dragging across the desktop behind it.
         let (from_sx, from_sy, from_lx, from_ly, to_sx, to_sy, to_lx, to_ly) =
             if let Some(wid) = window_id {
-                match super::px_frame::resolve_or_refuse(wid).await {
+                match super::px_frame::resolve_or_refuse(pid, wid).await {
                     Ok(frame) => {
                         let (fsx, fsy, flx, fly) = frame.to_screen(from_x, from_y);
                         let (tsx, tsy, tlx, tly) = frame.to_screen(to_x, to_y);
                         (fsx, fsy, flx, fly, tsx, tsy, tlx, tly)
                     }
-                    Err(refusal) => return refusal,
+                    Err(refusal) => return refusal.into_tool_result(),
                 }
             } else {
                 (from_x, from_y, from_x, from_y, to_x, to_y, to_x, to_y)
@@ -395,7 +395,11 @@ impl Tool for DragTool {
                 .update_position(&cursor_key, to_sx, to_sy);
         }
 
-        let changes = super::finish_window_observation(snapshot, &args).await;
+        let changes = super::finish_window_observation(
+            snapshot,
+            args.bool_or("_skip_window_change_detection", false),
+        )
+        .await;
 
         if let Some(wid) = window_id {
             crate::cursor::overlay::send_command(

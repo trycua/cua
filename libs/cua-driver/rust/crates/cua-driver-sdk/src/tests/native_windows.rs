@@ -189,6 +189,54 @@ fn typed_snapshot_rejects_dropped_images_and_inconsistent_metadata() {
 }
 
 #[test]
+fn typed_snapshot_rejects_invalid_native_geometry_dimensions() {
+    for (key, value) in [("width", 0.0), ("height", -1.0)] {
+        let mut geometry = json!({
+            "status": "mismatched",
+            "logical": {"x": 200.0, "y": 100.0, "width": 230.0, "height": 408.0},
+            "compositor": {"x": 10.0, "y": 250.0, "width": 31.0, "height": 102.0}
+        });
+        geometry["logical"][key] = json!(value);
+        let mut envelope = snapshot_envelope();
+        envelope["structuredContent"]["native_window_geometry"] = geometry;
+        assert!(matches!(
+            normalize_result("get_window_state", envelope)
+                .unwrap()
+                .window_state_success(),
+            Err(DriverError::Protocol { .. })
+        ));
+    }
+}
+
+#[test]
+fn typed_snapshot_retains_native_geometry_limitations_and_images() {
+    for status in ["aligned", "mismatched", "unstable", "unavailable"] {
+        let geometry = if matches!(status, "aligned" | "mismatched") {
+            let logical = json!({"x": 200.0, "y": 100.0, "width": 230.0, "height": 408.0});
+            let compositor = if status == "aligned" {
+                logical.clone()
+            } else {
+                json!({"x": 10.0, "y": 250.0, "width": 31.0, "height": 102.0})
+            };
+            json!({"status": status, "logical": logical, "compositor": compositor})
+        } else {
+            json!({"status": status})
+        };
+        let mut envelope = snapshot_envelope();
+        envelope["structuredContent"]["native_window_geometry"] = geometry.clone();
+        let output = normalize_result("get_window_state", envelope)
+            .unwrap()
+            .window_state_success()
+            .unwrap();
+        assert_eq!(output.images.len(), 2);
+        assert_eq!(
+            serde_json::to_value(output).unwrap()["native_window_geometry"],
+            geometry
+        );
+    }
+}
+
+#[test]
 fn typed_snapshot_retains_capture_failure_and_file_only_states() {
     for metadata in [
         json!({"pid":42,"window_id":73,"screenshot_frame_valid":false,"degraded":true}),

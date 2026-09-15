@@ -1709,6 +1709,177 @@
               "null"
             ]
           },
+          "native_window_geometry": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "properties": {
+                      "compositor": {
+                        "properties": {
+                          "height": {
+                            "format": "double",
+                            "type": "number"
+                          },
+                          "width": {
+                            "format": "double",
+                            "type": "number"
+                          },
+                          "x": {
+                            "format": "double",
+                            "type": "number"
+                          },
+                          "y": {
+                            "format": "double",
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "x",
+                          "y",
+                          "width",
+                          "height"
+                        ],
+                        "type": "object"
+                      },
+                      "logical": {
+                        "properties": {
+                          "height": {
+                            "format": "double",
+                            "type": "number"
+                          },
+                          "width": {
+                            "format": "double",
+                            "type": "number"
+                          },
+                          "x": {
+                            "format": "double",
+                            "type": "number"
+                          },
+                          "y": {
+                            "format": "double",
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "x",
+                          "y",
+                          "width",
+                          "height"
+                        ],
+                        "type": "object"
+                      },
+                      "status": {
+                        "const": "aligned",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "status",
+                      "logical",
+                      "compositor"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "properties": {
+                      "compositor": {
+                        "properties": {
+                          "height": {
+                            "format": "double",
+                            "type": "number"
+                          },
+                          "width": {
+                            "format": "double",
+                            "type": "number"
+                          },
+                          "x": {
+                            "format": "double",
+                            "type": "number"
+                          },
+                          "y": {
+                            "format": "double",
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "x",
+                          "y",
+                          "width",
+                          "height"
+                        ],
+                        "type": "object"
+                      },
+                      "logical": {
+                        "properties": {
+                          "height": {
+                            "format": "double",
+                            "type": "number"
+                          },
+                          "width": {
+                            "format": "double",
+                            "type": "number"
+                          },
+                          "x": {
+                            "format": "double",
+                            "type": "number"
+                          },
+                          "y": {
+                            "format": "double",
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "x",
+                          "y",
+                          "width",
+                          "height"
+                        ],
+                        "type": "object"
+                      },
+                      "status": {
+                        "const": "mismatched",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "status",
+                      "logical",
+                      "compositor"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "properties": {
+                      "status": {
+                        "const": "unstable",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "status"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "properties": {
+                      "status": {
+                        "const": "unavailable",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "status"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "pid": {
             "format": "uint32",
             "minimum": 0,

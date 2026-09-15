@@ -451,7 +451,11 @@ impl Tool for PressKeyTool {
         )
         .await;
 
-        let changes = super::finish_window_observation(snapshot, &args).await;
+        let changes = super::finish_window_observation(
+            snapshot,
+            args.bool_or("_skip_window_change_detection", false),
+        )
+        .await;
 
         let delivery_outcome = match result {
             Ok(result) => map_delivery_outcome(result),

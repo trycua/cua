@@ -235,6 +235,21 @@ pub struct SnapshotImage {
     pub data_base64: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Enum)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum NativeWindowGeometry {
+    Aligned {
+        logical: WindowBounds,
+        compositor: WindowBounds,
+    },
+    Mismatched {
+        logical: WindowBounds,
+        compositor: WindowBounds,
+    },
+    Unstable,
+    Unavailable,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 pub struct WindowStateOutput {
     pub pid: u32,
@@ -280,6 +295,8 @@ pub struct WindowStateOutput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub screenshot_frame_valid: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_window_geometry: Option<NativeWindowGeometry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub window_bounds: Option<WindowBounds>,
     /// Image content belongs to the MCP envelope, never structuredContent.
     #[serde(skip)]
@@ -289,6 +306,28 @@ pub struct WindowStateOutput {
 
 impl ToolOutput for WindowStateOutput {
     fn validate(&self) -> Result<(), String> {
+        if let Some(
+            NativeWindowGeometry::Aligned {
+                logical,
+                compositor,
+            }
+            | NativeWindowGeometry::Mismatched {
+                logical,
+                compositor,
+            },
+        ) = &self.native_window_geometry
+        {
+            for frame in [logical, compositor] {
+                if ![frame.x, frame.y, frame.width, frame.height]
+                    .iter()
+                    .all(|v| v.is_finite())
+                    || frame.width <= 0.0
+                    || frame.height <= 0.0
+                {
+                    return Err("native window geometry requires finite rectangles with positive dimensions".into());
+                }
+            }
+        }
         match (self.screenshot_width, self.screenshot_height) {
             (None, None) => {}
             (Some(width), Some(height)) if width > 0 && height > 0 => {}

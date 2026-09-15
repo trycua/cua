@@ -300,6 +300,7 @@ pub enum OracleKind {
 #[serde(rename_all = "snake_case")]
 pub enum RefusalCode {
     BringToFrontExactWindowUnverified,
+    NativeWindowGeometryMismatch,
     BackgroundUnavailable,
     BackgroundOccluded,
     BackgroundUipiBlocked,
@@ -580,16 +581,36 @@ impl CaseSpec {
                 && self.scope == Scope::Window
                 && self.driver_route == DriverRoute::WindowState
                 && allowed_codes == &[RefusalCode::BringToFrontExactWindowUnverified];
-            if self.delivery != Delivery::Background && !exact_activation_refusal {
+            let geometry_refusal =
+                matches!(self.delivery, Delivery::Background | Delivery::Foreground)
+                    && self.scope == Scope::Window
+                    && matches!(self.targeting, Targeting::Ax | Targeting::Px)
+                    && matches!(
+                        self.driver_route,
+                        DriverRoute::MacosCgEventPid | DriverRoute::MacosCgEventHid
+                    )
+                    && allowed_codes == &[RefusalCode::NativeWindowGeometryMismatch];
+            if self.delivery != Delivery::Background
+                && !exact_activation_refusal
+                && !geometry_refusal
+            {
                 return Err(format!(
-                    "{}: only background delivery or exact-window activation may declare refusal",
+                    "{}: refusal requires background delivery, exact-window activation, or guarded window geometry",
                     self.cell_id
                 ));
             }
             if allowed_codes.is_empty() {
                 return Err(format!("{}: refusal has no allowed code", self.cell_id));
             }
-            let required_oracles: &[OracleKind] = if exact_activation_refusal {
+            let required_oracles: &[OracleKind] = if geometry_refusal {
+                &[
+                    OracleKind::FixtureState,
+                    OracleKind::Focus,
+                    OracleKind::ZOrder,
+                    OracleKind::NoLeakedInput,
+                    OracleKind::Cursor,
+                ]
+            } else if exact_activation_refusal {
                 &[OracleKind::FixtureState]
             } else {
                 &[
@@ -2986,6 +3007,48 @@ mod tests {
         assert!(markdown.contains(
             "| web | evaluate | - | - | - | - | Background: PASS | NotApplicable/Background: PASS |"
         ));
+    }
+
+    #[test]
+    fn foreground_geometry_refusal_requires_exact_scope_and_complete_oracles() {
+        let mut case = native_foreground_case(
+            "appkit",
+            "native_geometry_mismatch",
+            Targeting::Px,
+            DriverRoute::MacosCgEventHid,
+        )
+        .expecting_refusal(vec![RefusalCode::NativeWindowGeometryMismatch]);
+        case.oracles = vec![
+            OracleKind::FixtureState,
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::NoLeakedInput,
+            OracleKind::Cursor,
+        ];
+        case.validate()
+            .expect("window geometry refusal is a valid foreground outcome");
+        for missing in case.oracles.clone() {
+            let mut incomplete = case.clone();
+            incomplete.oracles.retain(|oracle| *oracle != missing);
+            assert!(incomplete.validate().is_err(), "missing {missing:?}");
+        }
+        let mut desktop = case.clone();
+        desktop.scope = Scope::Desktop;
+        assert!(desktop.validate().is_err());
+        let mut observation = case.clone();
+        observation.driver_route = DriverRoute::WindowState;
+        assert!(observation.validate().is_err());
+        let mut mixed = case.clone();
+        mixed.expected_behavior = ContractExpectation::Refuse {
+            allowed_codes: vec![
+                RefusalCode::NativeWindowGeometryMismatch,
+                RefusalCode::BringToFrontExactWindowUnverified,
+            ],
+        };
+        assert!(mixed.validate().is_err());
+        let mut not_applicable = case;
+        not_applicable.delivery = Delivery::NotApplicable;
+        assert!(not_applicable.validate().is_err());
     }
 
     #[test]

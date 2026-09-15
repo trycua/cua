@@ -48,7 +48,7 @@ class GeneratedOptionsTests(unittest.TestCase):
             "AppInfo", "ClickPosition", "ElementFrame", "GetWindowStateInput",
             "InputDeliveryMode", "ListAppsInput", "ListAppsOutput", "ListWindowsInput",
             "ListWindowsOutput", "SnapshotImage", "WindowBounds", "WindowElement",
-            "WindowInfo", "WindowStateOutput",
+            "WindowInfo", "WindowStateOutput", "NativeWindowGeometry",
         ):
             self.assertIn(name, cua_driver.__all__)
             self.assertIsNotNone(getattr(cua_driver, name))

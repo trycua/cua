@@ -13,15 +13,19 @@ use super::ToolState;
 /// Resolve the cursor identity from the current session. The removed
 /// `cursor_id` alias is intentionally not accepted by the new contract.
 pub(crate) fn resolve_cursor_key(args: &Value) -> String {
-    use cua_driver_core::tool_args::ArgsExt;
-    for key in ["session", "_session_id"] {
-        if let Some(value) = args.opt_str(key) {
-            if !value.is_empty() {
-                return value;
-            }
-        }
-    }
-    default_cursor_session()
+    session_cursor_key(
+        args.get("session").and_then(Value::as_str),
+        args.get("_session_id").and_then(Value::as_str),
+    )
+}
+
+pub(crate) fn session_cursor_key(session: Option<&str>, session_id: Option<&str>) -> String {
+    [session, session_id]
+        .into_iter()
+        .flatten()
+        .find(|value| !value.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(default_cursor_session)
 }
 
 fn default_cursor_session() -> String {

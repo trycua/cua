@@ -154,7 +154,7 @@ impl Tool for DoubleClickTool {
 
             return match result {
                 Ok(Ok(msg)) => ToolResult::text(msg),
-                Ok(Err(e)) => ToolResult::error(format!("double_click failed: {e}")),
+                Ok(Err(e)) => super::px_frame::action_error(e.context("double_click failed")),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
         }
@@ -184,7 +184,7 @@ impl Tool for DoubleClickTool {
         // refuses a window with no live frame instead of silently treating the
         // local point as screen-absolute).
         let (screen_x, screen_y, win_local_x, win_local_y) = if let Some(wid) = window_id {
-            match super::px_frame::resolve_or_refuse(wid).await {
+            match super::px_frame::resolve_or_refuse(pid, wid).await {
                 Ok(frame) => {
                     let translated = frame.to_screen(cx, cy);
                     if !delivery_mode.is_foreground()
@@ -201,7 +201,7 @@ impl Tool for DoubleClickTool {
                     }
                     translated
                 }
-                Err(refusal) => return refusal,
+                Err(refusal) => return refusal.into_tool_result(),
             }
         } else {
             (cx, cy, cx, cy)
@@ -323,6 +323,8 @@ fn ax_double_click(
             "AXOpen returned {err} for element [{idx}], falling back to pixel double-click"
         );
     }
+
+    super::px_frame::verify_native_geometry(pid, wid)?;
 
     // Resolve screen center and fall back to pixel double-click.
     let (cx, cy) = unsafe { element_screen_center(element) }

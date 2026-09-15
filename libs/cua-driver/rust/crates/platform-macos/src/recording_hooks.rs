@@ -60,9 +60,11 @@ pub fn element_window_local_xy(
         .then(|| unsafe { element_screen_center(element.as_ptr() as AXUIElementRef) })
         .flatten()
         .and_then(|(sx, sy)| {
-            let frame =
-                crate::tools::px_frame::resolve_window_px_frame(u32::try_from(window_id).ok()?)
-                    .ok()?;
+            let frame = crate::tools::px_frame::resolve_window_px_frame(
+                i32::try_from(pid).ok()?,
+                u32::try_from(window_id).ok()?,
+            )
+            .ok()?;
             Some((
                 (sx - frame.bounds.x) * frame.scale,
                 (sy - frame.bounds.y) * frame.scale,

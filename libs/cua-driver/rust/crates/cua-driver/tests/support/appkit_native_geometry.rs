@@ -1,0 +1,626 @@
+use super::*;
+use std::time::Instant;
+
+fn fixture_state(
+    directory: &Path,
+    ready: impl Fn(&serde_json::Value) -> bool,
+) -> serde_json::Value {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Ok(bytes) = std::fs::read(directory.join("state.json")) {
+            let state = serde_json::from_slice(&bytes).expect("native geometry fixture state");
+            if ready(&state) {
+                return state;
+            }
+            assert!(Instant::now() < deadline, "fixture state deadline: {state}");
+        } else {
+            assert!(Instant::now() < deadline, "fixture did not publish state");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn save_response(directory: &Path, name: &str, response: &ToolResponse) {
+    std::fs::write(
+        directory.join(name),
+        serde_json::to_vec_pretty(&response.raw).unwrap(),
+    )
+    .unwrap();
+}
+
+fn agent_cursor_position(
+    driver: &mut McpDriver,
+    directory: &Path,
+    name: &str,
+) -> serde_json::Value {
+    let response = driver.call("get_agent_cursor_state", serde_json::json!({}));
+    save_response(directory, name, &response);
+    assert!(
+        !response.is_error(),
+        "agent cursor observation: {}",
+        response.text()
+    );
+    let position = response.structured()["position"].clone();
+    assert!(
+        position["x"].is_number() && position["y"].is_number(),
+        "agent cursor must have a calibrated position: {position}"
+    );
+    position
+}
+
+fn web_target(snapshot: &ToolResponse) -> String {
+    snapshot.structured()["elements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|element| {
+            element["role"] == "AXButton" && element["label"] == "Geometry reveal target"
+        })
+        .and_then(|element| element["element_token"].as_str())
+        .expect("native WebKit reveal target")
+        .to_owned()
+}
+
+fn launch_fixture(directory: &Path, include_web: bool) -> (Harness, u64) {
+    std::fs::create_dir_all(directory).unwrap();
+    let app = Command::new(harness_exe())
+        .env("CUA_APPKIT_GEOMETRY_DIR", directory)
+        .env(
+            "CUA_APPKIT_GEOMETRY_NO_WEB",
+            if include_web { "0" } else { "1" },
+        )
+        .stdout(std::fs::File::create(directory.join("fixture.stdout")).unwrap())
+        .stderr(std::fs::File::create(directory.join("fixture.stderr")).unwrap())
+        .spawn()
+        .expect("launch native geometry fixture");
+    let harness = Harness {
+        pid: app.id(),
+        _app: app,
+    };
+    let initial = fixture_state(directory, |state| {
+        state["window_id"].as_u64().is_some_and(|id| id > 0)
+            && state["web_scroll_y"].as_f64().is_some_and(|y| y >= 0.0)
+    });
+    assert_eq!(initial["pid"], harness.pid);
+    let wid = initial["window_id"].as_u64().unwrap();
+    (harness, wid)
+}
+
+fn assert_geometry_refusal(directory: &Path, name: &str, response: &ToolResponse) {
+    save_response(directory, &format!("{name}.json"), response);
+    assert!(response.is_error(), "{name}: {}", response.text());
+    assert_eq!(
+        response.structured()["code"],
+        "native_window_geometry_mismatch",
+        "{name}: {}",
+        response.text()
+    );
+    assert_eq!(response.action_effect(), Some("refused"), "{name}");
+    assert_eq!(response.action_delivery_mode(), None, "{name}");
+}
+
+fn pointer_requests(
+    snapshot: &ToolResponse,
+    scale: f64,
+    foreground: bool,
+) -> Vec<(&'static str, &'static str, serde_json::Value)> {
+    use serde_json::json;
+    let x = 300.0 * scale;
+    let y = 130.0 * scale;
+    let button = element_token_by_id(snapshot, "geometry-increment");
+    let row = element_token_by_id(snapshot, "geometry-selection");
+    let web = web_target(snapshot);
+    let mut requests = vec![
+        ("middle-px", "click", json!({"x":x,"y":y,"button":"middle"})),
+        ("right-px", "click", json!({"x":x,"y":y,"button":"right"})),
+        ("count-two-px", "click", json!({"x":x,"y":y,"count":2})),
+        ("double-tool-px", "double_click", json!({"x":x,"y":y})),
+        ("right-tool-px", "right_click", json!({"x":x,"y":y})),
+        (
+            "wheel-px",
+            "scroll",
+            json!({"x":x,"y":y,"direction":"down","amount":1}),
+        ),
+        (
+            "type-focus-px",
+            "type_text",
+            json!({"x":x,"y":y,"text":"geometry-veto"}),
+        ),
+        ("key-focus-px", "press_key", json!({"x":x,"y":y,"key":"a"})),
+        (
+            "hotkey-focus-px",
+            "hotkey",
+            json!({"x":x,"y":y,"keys":["shift","a"]}),
+        ),
+        (
+            "middle-element",
+            "click",
+            json!({"element_token":button,"button":"middle"}),
+        ),
+        (
+            "double-element",
+            "double_click",
+            json!({"element_token":button}),
+        ),
+        (
+            "right-element",
+            "right_click",
+            json!({"element_token":button}),
+        ),
+        (
+            "hotkey-web-focus",
+            "hotkey",
+            json!({"element_token":web,"keys":["shift","a"]}),
+        ),
+        ("selection-element", "click", json!({"element_token":row})),
+    ];
+    if foreground {
+        requests.push((
+            "drag-px",
+            "drag",
+            json!({"from_x":x,"from_y":y,"to_x":x+10.0,"to_y":y+10.0,"duration_ms":50}),
+        ));
+        requests.push((
+            "modified-px",
+            "click",
+            json!({"x":x,"y":y,"modifier":["shift"]}),
+        ));
+    }
+    requests
+}
+
+#[test]
+#[ignore]
+fn harness_appkit_geometry_unavailable_and_timeout_preserve_observation() {
+    let case = native_foreground_case(
+        "appkit",
+        "geometry_availability",
+        Targeting::Px,
+        DriverRoute::MacosCgEventHid,
+    );
+    let label = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_macos_daemon_proxy_named(&label).unwrap();
+        *evidence = recording_evidence(driver.recording_dir());
+        let directory = driver.recording_dir().unwrap().join("native-geometry");
+        let (harness, wid) = launch_fixture(&directory, false);
+        driver.start_behavior_recording();
+        std::fs::write(directory.join("command"), "mismatch").unwrap();
+        fixture_state(&directory, |state| state["mismatched"] == true);
+        let target = TargetWindow {
+            pid: harness.pid,
+            native_id: wid,
+        };
+        run_with_background_oracles(&mut driver, target, |driver| {
+            let implicit = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid":harness.pid, "x":300.0, "y":130.0, "delivery_mode":"foreground"
+                }),
+            );
+            assert_geometry_refusal(&directory, "implicit-window", &implicit);
+        })
+        .expect("inferred window refusal must preserve desktop state");
+        std::fs::write(directory.join("command"), "align").unwrap();
+        fixture_state(&directory, |state| state["mismatched"] == false);
+        let before = snapshot_elements(&mut driver, harness.pid, wid);
+        assert_eq!(
+            before.structured()["native_window_geometry"]["status"],
+            "aligned"
+        );
+        save_response(&directory, "availability-initial.json", &before);
+        let scale = before.structured()["screenshot_width"].as_f64().unwrap() / 360.0;
+        std::fs::write(directory.join("command"), "unavailable").unwrap();
+        fixture_state(&directory, |state| state["unavailable"] == true);
+        let missing = driver.call("get_window_state", serde_json::json!({
+            "pid":harness.pid, "window_id":wid, "screenshot_out_file":directory.join("unavailable.png")
+        }));
+        save_response(&directory, "unavailable.json", &missing);
+        assert!(
+            !missing.is_error(),
+            "unavailable observation: {}",
+            missing.text()
+        );
+        assert_eq!(
+            missing.structured()["native_window_geometry"]["status"],
+            "unavailable"
+        );
+        assert_eq!(missing.structured()["screenshot_frame_valid"], true);
+        assert!(has_id(missing.tree_text(), "geometry-increment"));
+        assert!(std::fs::read(directory.join("unavailable.png"))
+            .unwrap()
+            .starts_with(b"\x89PNG\r\n\x1a\n"));
+        let delivered = driver.call(
+            "click",
+            serde_json::json!({
+                "pid":harness.pid, "window_id":wid, "x":300.0*scale, "y":130.0*scale,
+                "button":"middle", "delivery_mode":"foreground"
+            }),
+        );
+        save_response(&directory, "unavailable-pointer.json", &delivered);
+        assert!(
+            !delivered.is_error(),
+            "unavailable added a veto: {}",
+            delivered.text()
+        );
+        let native = fixture_state(&directory, |state| {
+            let events = state["input_events"].as_array().unwrap();
+            [25, 26].iter().all(|kind| {
+                events
+                    .iter()
+                    .any(|event| event["type"] == *kind && event["window_id"] == wid)
+            })
+        });
+        std::fs::write(
+            directory.join("unavailable-native-input.json"),
+            serde_json::to_vec_pretty(&native).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(directory.join("command"), "slow").unwrap();
+        fixture_state(&directory, |state| state["geometry_delay_ms"] == 500.0);
+        let started = Instant::now();
+        let slow = driver.call(
+            "get_window_state",
+            serde_json::json!({
+                "pid":harness.pid, "window_id":wid, "include_accessibility_tree":false,
+                "screenshot_out_file":directory.join("slow.png")
+            }),
+        );
+        let elapsed = started.elapsed();
+        save_response(&directory, "slow.json", &slow);
+        std::fs::write(
+            directory.join("slow-elapsed-ms.txt"),
+            elapsed.as_millis().to_string(),
+        )
+        .unwrap();
+        assert!(
+            !slow.is_error(),
+            "slow metadata erased capture: {}",
+            slow.text()
+        );
+        assert_eq!(
+            slow.structured()["native_window_geometry"]["status"],
+            "unavailable"
+        );
+        assert_eq!(slow.structured()["screenshot_frame_valid"], true);
+        assert!(std::fs::read(directory.join("slow.png"))
+            .unwrap()
+            .starts_with(b"\x89PNG\r\n\x1a\n"));
+        std::fs::write(directory.join("command"), "align").unwrap();
+        fixture_state(&directory, |state| {
+            state["geometry_delay_ms"] == 0.0 && state["unavailable"] == false
+        });
+        let recovered = snapshot_elements(&mut driver, harness.pid, wid);
+        save_response(&directory, "availability-recovered.json", &recovered);
+        assert_eq!(
+            recovered.structured()["native_window_geometry"]["status"],
+            "aligned"
+        );
+        assert_ne!(before.snapshot_id(), recovered.snapshot_id());
+        Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+    });
+}
+
+#[test]
+#[ignore]
+fn harness_appkit_native_geometry_mismatch_refuses_pixel_without_side_effects() {
+    run_native_geometry_mismatch(false);
+}
+
+#[test]
+#[ignore]
+fn harness_appkit_native_geometry_mismatch_refuses_foreground_without_side_effects() {
+    run_native_geometry_mismatch(true);
+}
+
+fn run_native_geometry_mismatch(foreground: bool) {
+    let mut case = if foreground {
+        native_foreground_case(
+            "appkit",
+            "native_geometry_mismatch",
+            Targeting::Px,
+            DriverRoute::MacosCgEventHid,
+        )
+    } else {
+        native_background_case(
+            "appkit",
+            "native_geometry_mismatch",
+            Targeting::Px,
+            DriverRoute::MacosCgEventPid,
+        )
+    }
+    .expecting_refusal(vec![RefusalCode::NativeWindowGeometryMismatch]);
+    case.oracles = vec![
+        OracleKind::FixtureState,
+        OracleKind::Focus,
+        OracleKind::ZOrder,
+        OracleKind::NoLeakedInput,
+        OracleKind::Cursor,
+    ];
+    let delivery_mode = if foreground {
+        "foreground"
+    } else {
+        "background"
+    };
+    let cell = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_macos_daemon_proxy_named(&cell)
+            .expect("start installed macOS daemon proxy");
+        *evidence = recording_evidence(driver.recording_dir());
+        let directory = driver
+            .recording_dir()
+            .expect("native evidence directory")
+            .join("native-geometry");
+        let (harness, wid) = launch_fixture(&directory, true);
+        let aligned = snapshot_elements(&mut driver, harness.pid, wid);
+        save_response(&directory, "aligned.json", &aligned);
+        assert!(!aligned.is_error(), "aligned snapshot: {}", aligned.text());
+        assert_eq!(
+            aligned.structured()["native_window_geometry"]["status"],
+            "aligned"
+        );
+        let scale = aligned.structured()["screenshot_width"].as_f64().unwrap() / 360.0;
+        let calibration = driver.call(
+            "click",
+            serde_json::json!({
+                "pid": harness.pid, "window_id": wid,
+                "x": 300.0 * scale, "y": 130.0 * scale,
+                "button": "middle", "delivery_mode": "foreground"
+            }),
+        );
+        save_response(&directory, "calibration.json", &calibration);
+        assert!(
+            !calibration.is_error(),
+            "calibrate native input: {}",
+            calibration.text()
+        );
+        let cursor_calibration =
+            agent_cursor_position(&mut driver, &directory, "agent-cursor-calibrated.json");
+        let compositor = &aligned.structured()["native_window_geometry"]["compositor"];
+        assert_eq!(
+            cursor_calibration,
+            serde_json::json!({
+                "x":compositor["x"].as_f64().unwrap() + 300.0,
+                "y":compositor["y"].as_f64().unwrap() + 130.0
+            })
+        );
+        let reveal_snapshot = snapshot_elements(&mut driver, harness.pid, wid);
+        let reveal_calibration = driver.call(
+            "scroll",
+            serde_json::json!({
+                "pid": harness.pid, "window_id": wid,
+                "element_token": web_target(&reveal_snapshot),
+                "direction": "down", "amount": 1
+            }),
+        );
+        save_response(&directory, "reveal-calibration.json", &reveal_calibration);
+        assert!(
+            !reveal_calibration.is_error(),
+            "calibrate reveal: {}",
+            reveal_calibration.text()
+        );
+        let calibrated = fixture_state(&directory, |state| {
+            state["web_scroll_y"].as_f64().is_some_and(|y| y > 0.0)
+                && state["input_events"].as_array().is_some_and(|events| {
+                    events
+                        .iter()
+                        .any(|event| event["type"] == 25 && event["window_id"] == wid)
+                        && events
+                            .iter()
+                            .any(|event| event["type"] == 26 && event["window_id"] == wid)
+                        && events
+                            .iter()
+                            .any(|event| event["type"] == 22 && event["window_id"] == wid)
+                })
+        });
+        std::fs::write(
+            directory.join("calibrated.json"),
+            serde_json::to_vec_pretty(&calibrated).unwrap(),
+        )
+        .unwrap();
+        let before_reset = snapshot_elements(&mut driver, harness.pid, wid);
+        let reset = driver.call(
+            "click",
+            serde_json::json!({
+                "pid": harness.pid, "window_id": wid,
+                "element_token": element_token_by_id(&before_reset, "geometry-reset-web")
+            }),
+        );
+        assert!(!reset.is_error(), "reset scroll probe: {}", reset.text());
+        fixture_state(&directory, |state| state["web_scroll_y"] == 0.0);
+        let before_toggle = snapshot_elements(&mut driver, harness.pid, wid);
+        let toggle = driver.call(
+            "click",
+            serde_json::json!({
+                "pid": harness.pid, "window_id": wid,
+                "element_token": element_token_by_id(&before_toggle, "geometry-mismatch")
+            }),
+        );
+        assert!(
+            !toggle.is_error(),
+            "enable native disagreement: {}",
+            toggle.text()
+        );
+        let target = TargetWindow {
+            pid: harness.pid,
+            native_id: wid,
+        };
+        let (response, mut passed) = run_with_background_oracles(&mut driver, target, |driver| {
+            let snapshot = driver.call(
+                "get_window_state",
+                serde_json::json!({
+                    "pid": harness.pid, "window_id": wid,
+                    "screenshot_out_file": directory.join("mismatched.png")
+                }),
+            );
+            save_response(&directory, "mismatched.json", &snapshot);
+            assert!(
+                !snapshot.is_error(),
+                "mismatched snapshot: {}",
+                snapshot.text()
+            );
+            let geometry = &snapshot.structured()["native_window_geometry"];
+            assert_eq!(geometry["status"], "mismatched");
+            assert_eq!(geometry["logical"]["width"], 560.0);
+            assert_eq!(geometry["compositor"]["width"], 360.0);
+            assert_eq!(snapshot.structured()["window_id"], wid);
+            assert_eq!(snapshot.structured()["screenshot_frame_valid"], true);
+            let png = std::fs::read(directory.join("mismatched.png")).unwrap();
+            assert!(png.len() > 24 && png.starts_with(b"\x89PNG\r\n\x1a\n"));
+            assert_eq!(
+                snapshot.structured()["screenshot_file_path"],
+                directory.join("mismatched.png").to_str().unwrap()
+            );
+            assert_eq!(
+                snapshot.structured()["screenshot_width"],
+                u32::from_be_bytes(png[16..20].try_into().unwrap())
+            );
+            assert_eq!(
+                snapshot.structured()["screenshot_height"],
+                u32::from_be_bytes(png[20..24].try_into().unwrap())
+            );
+            assert!(has_id(snapshot.tree_text(), "geometry-increment"));
+            let increment = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": harness.pid, "window_id": wid,
+                    "element_token": element_token_by_id(&snapshot, "geometry-increment")
+                }),
+            );
+            save_response(&directory, "semantic.json", &increment);
+            assert!(
+                !increment.is_error(),
+                "semantic action: {}",
+                increment.text()
+            );
+            assert_eq!(increment.action_route(), Some("accessibility"));
+            fixture_state(&directory, |state| state["counter"] == 1);
+            let selection = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid":harness.pid, "window_id":wid,
+                    "element_token":element_token_by_id(&snapshot, "geometry-selectable")
+                }),
+            );
+            save_response(&directory, "semantic-selection.json", &selection);
+            assert!(
+                !selection.is_error(),
+                "independent semantic selection: {}",
+                selection.text()
+            );
+            assert_eq!(selection.action_route(), Some("accessibility"));
+            let selected = fixture_state(&directory, |state| state["selected"] == true);
+            let selected_cursor = agent_cursor_position(driver, &directory, "agent-cursor-semantic-selection.json");
+            let compositor = &geometry["compositor"];
+            assert_eq!(selected_cursor, serde_json::json!({
+                "x":compositor["x"].as_f64().unwrap() + 265.0,
+                "y":compositor["y"].as_f64().unwrap() + compositor["height"].as_f64().unwrap() - 231.0
+            }), "successful semantic selection must still position the agent cursor");
+            let scroll_before = selected["native_scroll_y"].as_f64().unwrap();
+            let native_text = snapshot.structured()["elements"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|element| {
+                    element["role"] == "AXTextArea"
+                        && element["value"]
+                            .as_str()
+                            .is_some_and(|value| value.starts_with("Native line 0\n"))
+                })
+                .and_then(|element| element["element_token"].as_str())
+                .expect("native multiline text snapshot token");
+            let semantic_scroll = driver.call(
+                "scroll",
+                serde_json::json!({
+                    "pid":harness.pid, "window_id":wid,
+                    "element_token":native_text,
+                    "direction":"down", "by":"page", "amount":1
+                }),
+            );
+            save_response(&directory, "semantic-scroll.json", &semantic_scroll);
+            assert!(
+                !semantic_scroll.is_error(),
+                "independent native AX scroll: {}",
+                semantic_scroll.text()
+            );
+            assert_eq!(semantic_scroll.action_route(), Some("accessibility"));
+            fixture_state(&directory, |state| {
+                state["native_scroll_y"]
+                    .as_f64()
+                    .is_some_and(|y| y > scroll_before)
+            });
+            let response = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": harness.pid, "window_id": wid,
+                    "x": 300.0 * scale, "y": 130.0 * scale,
+                    "delivery_mode": delivery_mode
+                }),
+            );
+            save_response(&directory, "refusal.json", &response);
+            assert!(
+                response.is_error(),
+                "pixel request must refuse: {}",
+                response.text()
+            );
+            assert_eq!(
+                response.structured()["code"],
+                "native_window_geometry_mismatch"
+            );
+            assert_eq!(response.action_effect(), Some("refused"));
+            assert_eq!(response.action_delivery_mode(), None);
+            let scroll = driver.call(
+                "scroll",
+                serde_json::json!({
+                    "pid": harness.pid, "window_id": wid,
+                    "element_token": web_target(&snapshot),
+                    "direction": "down", "amount": 1, "delivery_mode": delivery_mode
+                }),
+            );
+            save_response(&directory, "scroll-refusal.json", &scroll);
+            assert_eq!(
+                scroll.structured()["code"],
+                "native_window_geometry_mismatch"
+            );
+            assert_eq!(scroll.action_effect(), Some("refused"));
+            assert_eq!(scroll.action_delivery_mode(), None);
+            let after_scroll = fixture_state(&directory, |state| state["counter"] == 1);
+            std::fs::write(
+                directory.join("after-scroll.json"),
+                serde_json::to_vec_pretty(&after_scroll).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                after_scroll["web_scroll_y"], 0.0,
+                "refused wheel fallback revealed its element"
+            );
+            let agent_before =
+                agent_cursor_position(driver, &directory, "agent-cursor-before-refusals.json");
+            for (name, tool, mut args) in pointer_requests(&snapshot, scale, foreground) {
+                args["pid"] = serde_json::json!(harness.pid);
+                args["window_id"] = serde_json::json!(wid);
+                args["delivery_mode"] = serde_json::json!(delivery_mode);
+                let refused = driver.call(tool, args);
+                assert_geometry_refusal(&directory, name, &refused);
+                let agent_after =
+                    agent_cursor_position(driver, &directory, &format!("{name}-agent-cursor.json"));
+                assert_eq!(
+                    agent_after, agent_before,
+                    "{name} moved the agent cursor despite refusing"
+                );
+            }
+            std::thread::sleep(Duration::from_millis(750));
+            response
+        })
+        .expect("refusal must preserve background desktop oracles");
+        let final_state = fixture_state(&directory, |state| state["counter"] == 1);
+        assert_eq!(final_state["input_events"], calibrated["input_events"]);
+        passed.push(OracleKind::FixtureState);
+        Observation::refused(
+            RefusalCode::NativeWindowGeometryMismatch,
+            passed,
+            response.text(),
+            Evidence::default(),
+        )
+    });
+}

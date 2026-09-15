@@ -1,0 +1,17 @@
+{
+  "schema": "profile.schema.json",
+  "base": "../examples/profile.native-bundle.cuabench.json",
+  "cases": [
+    { "name": "root-fields", "remove": ["/schema_version", "/id", "/version", "/description", "/harness", "/driver_presentation", "/guidance", "/decision_bearing"], "covers": "#/required", "expect": { "instance": "/", "validator": "required" } },
+    { "name": "harness-fields", "remove": ["/harness/kind", "/harness/inventory"], "covers": "#/$defs/harness/required", "expect": { "instance": "/harness", "validator": "required" } },
+    { "name": "artifact-fields", "remove": ["/harness/inventory/path", "/harness/inventory/sha256"], "covers": "#/$defs/artifact/required", "expect": { "instance": "/harness/inventory", "validator": "required" } },
+    { "name": "guidance-mode", "remove": ["/guidance/mode"], "covers": "#/$defs/guidance/required", "expect": { "instance": "/guidance", "validator": "required" } },
+    { "name": "neutral-artifact", "base": "../examples/profile.normalized-facade.cuabench.json", "remove": ["/guidance/artifact"], "covers": "#/$defs/guidance/allOf/0/then/required", "expect": { "instance": "/guidance", "validator": "required" } },
+    { "name": "native-wrong-guidance", "replace": { "/guidance/mode": "removed" }, "expect": { "instance": "/guidance/mode", "validator": "const" } },
+    { "name": "bare-wrong-presentation", "base": "../examples/profile.bare-driver.cuabench.json", "replace": { "/driver_presentation": "absent" }, "expect": { "instance": "/driver_presentation", "validator": "const" } },
+    { "name": "reference-wrong-guidance", "base": "../examples/profile.harness-native-reference.cuabench.json", "replace": { "/guidance/mode": "removed" }, "expect": { "instance": "/guidance/mode", "validator": "const" } },
+    { "name": "normalized-wrong-harness", "base": "../examples/profile.normalized-facade.cuabench.json", "replace": { "/harness/kind": "restricted" }, "expect": { "instance": "/harness/kind", "validator": "const" } },
+    { "name": "non-neutral-artifact", "base": "../examples/profile.bare-driver.cuabench.json", "replace": { "/guidance/artifact": { "path": "freeze-inputs/neutral-instructions.txt", "sha256": "ff67877777532043e46f3c08aa57531603d8f65bd26ab38e5be358c244251e66" } }, "expect": { "instance": "/guidance", "validator": "not" } },
+    { "name": "diagnostic-decision-bearing", "base": "../examples/profile.driver-only-diagnostic.cuabench.json", "replace": { "/decision_bearing": true }, "expect": { "instance": "/decision_bearing", "validator": "const" } }
+  ]
+}

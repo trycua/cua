@@ -1,0 +1,246 @@
+{
+  "schema_version": "0.1.0",
+  "id": "cua.synthetic.release",
+  "version": "1.0.0",
+  "created_at": "2026-08-15T17:00:00Z",
+  "decision_bearing": true,
+  "inputs": {
+    "runtime": {
+      "id": "cua.synthetic.runtime",
+      "version": "1.0.0",
+      "source_revision": "ffffffffffffffffffffffffffffffffffffffff",
+      "artifact": {
+        "path": "freeze-inputs/runtime.json",
+        "sha256": "ae57341463703cb97b86ffd08cce322e934fa28635a5f4146f7dde5953d44200"
+      }
+    },
+    "dataset": {
+      "id": "cua.synthetic.dataset",
+      "version": "1.0.0",
+      "manifest": {
+        "path": "dataset.cuabench.json",
+        "sha256": "ed7d09c17b0e756877fb8a1612ae09751a56a7bcd6218de6f0b33641f0ca8b75"
+      },
+      "freeze_digest": "bb0cdefaa74107d64526087c1432cd4c0618791cba933664dc55e92f7696e413"
+    },
+    "apparatus": {
+      "digest": "c20b98d398d5432a24646715220773fb2f59c5477cf1943f46c380a16f8f1873",
+      "provenance": {
+        "original": true,
+        "sources_consulted": []
+      },
+      "harness_builds": [
+        {
+          "path": "freeze-inputs/harness-build.json",
+          "sha256": "017a335b02f72f243adecf84caff94a82ef264bdae00a84757799acd4767a3a2"
+        }
+      ],
+      "environment_images": [
+        {
+          "path": "freeze-inputs/environment-image.json",
+          "sha256": "8faddf0d2883811041a3d8ee9fa4672f509d93108b8c01e6e5bd9859a90505ce"
+        }
+      ],
+      "observers": [
+        {
+          "path": "freeze-inputs/observer.json",
+          "sha256": "fc3de3c8a7372d2c4d1237c459b6ba119b7d522de474dd27ed29940d1fea250d"
+        }
+      ],
+      "evaluators": [
+        {
+          "path": "freeze-inputs/evaluator.txt",
+          "sha256": "101a1639b91e8dde0cd80baed1f3fb2d8d3bf11451cebf867c0833f48aa7f125"
+        }
+      ],
+      "normalized_facade_contract": {
+        "path": "freeze-inputs/facade.json",
+        "sha256": "8c94fd9839765227a60e39caae1051e357290718f7fe97e9493d0d87738447df"
+      },
+      "neutral_instructions": {
+        "path": "freeze-inputs/neutral-instructions.txt",
+        "sha256": "ff67877777532043e46f3c08aa57531603d8f65bd26ab38e5be358c244251e66"
+      }
+    },
+    "profiles": [
+      {
+        "id": "native-bundle",
+        "version": "1.0.0",
+        "manifest": {
+          "path": "profile.native-bundle.cuabench.json",
+          "sha256": "ff376540433bb3ff16a2b78d426bf7e5e9fb928f235534fae2104d9b2bc43b08"
+        }
+      },
+      {
+        "id": "bare-driver",
+        "version": "1.0.0",
+        "manifest": {
+          "path": "profile.bare-driver.cuabench.json",
+          "sha256": "30bf5fa13220bce6c33c1fb6c47b5b3e8729d19cec004a927ed1c6ef33fc3bbf"
+        }
+      },
+      {
+        "id": "harness-native-reference",
+        "version": "1.0.0",
+        "manifest": {
+          "path": "profile.harness-native-reference.cuabench.json",
+          "sha256": "8e5d80ba1bd012340a9e132bd4475109f51b1a8b353eb60866c0fb70ef5268ee"
+        }
+      },
+      {
+        "id": "normalized-facade",
+        "version": "1.0.0",
+        "manifest": {
+          "path": "profile.normalized-facade.cuabench.json",
+          "sha256": "b6f4998278afbdce7c7a1c79987b6fe17857edd07cba0cc4f1b91d70fc28c6e3"
+        }
+      },
+      {
+        "id": "driver-only-diagnostic",
+        "version": "1.0.0",
+        "manifest": {
+          "path": "profile.driver-only-diagnostic.cuabench.json",
+          "sha256": "6672490eede7b8aca9fffb5c80976dceb01378f1b488fb3af97d1fe5c10ba569"
+        }
+      }
+    ],
+    "candidates": [
+      {
+        "id": "cua.synthetic.driver",
+        "version": "1.0.0",
+        "manifest": {
+          "path": "driver.cuabench.json",
+          "sha256": "6bac21e334ef593c0897506ce84338db9d5869044151bc02b8734165abe40b44"
+        }
+      }
+    ],
+    "trials": [
+      {
+        "id": "trial.synthetic.native-bundle.0",
+        "profile_id": "native-bundle",
+        "comparison_candidate_id": "cua.synthetic.driver",
+        "pairing_key": "background-note.fixture-alpha.attempt-0",
+        "manifest": {
+          "path": "trial.native-bundle.cuabench.json",
+          "sha256": "ef7a4d3a4b3d8f21c76276c4ac5aff82ae1bc7524c0a294be6f39fb709f70803"
+        }
+      },
+      {
+        "id": "trial.synthetic.bare-driver.0",
+        "profile_id": "bare-driver",
+        "comparison_candidate_id": "cua.synthetic.driver",
+        "pairing_key": "background-note.fixture-alpha.attempt-0",
+        "manifest": {
+          "path": "trial.bare-driver.cuabench.json",
+          "sha256": "8fb37fba18101a672cc5a9174e7582b2a14b79b5dd6abd3501741806365ee824"
+        }
+      },
+      {
+        "id": "trial.synthetic.harness-native-reference.0",
+        "profile_id": "harness-native-reference",
+        "comparison_candidate_id": "cua.synthetic.driver",
+        "pairing_key": "background-note.fixture-alpha.attempt-0",
+        "manifest": {
+          "path": "trial.harness-native-reference.cuabench.json",
+          "sha256": "dbc82df5d9714de3faa9dc73046aac8f9faf37c167372b91be8cb417bd784c99"
+        }
+      },
+      {
+        "id": "trial.synthetic.normalized-facade.0",
+        "profile_id": "normalized-facade",
+        "comparison_candidate_id": "cua.synthetic.driver",
+        "pairing_key": "background-note.fixture-alpha.attempt-0",
+        "manifest": {
+          "path": "trial.normalized-facade.cuabench.json",
+          "sha256": "ca987d85cf6f9c7a1bfeeef246ed03427b2be0450399860d7610ec04a9119173"
+        }
+      },
+      {
+        "id": "trial.synthetic.driver-only-diagnostic.0",
+        "profile_id": "driver-only-diagnostic",
+        "comparison_candidate_id": "cua.synthetic.driver",
+        "pairing_key": "background-note.fixture-alpha.attempt-0",
+        "manifest": {
+          "path": "trial.driver-only-diagnostic.cuabench.json",
+          "sha256": "555646993e61cdf84413537edd40369b8ddf445d72d2c4df73c4ac079a46cd64"
+        }
+      }
+    ],
+    "report_inputs": [
+      {
+        "path": "freeze-inputs/report-config.json",
+        "sha256": "dfefbf40225a9f81ad27feff68cba0ad2a5b48fda312949a89ba512ead88b9f9"
+      }
+    ],
+    "tool_surface_study": {
+      "backend": {
+        "id": "cua.synthetic.driver",
+        "version": "1.0.0",
+        "manifest": {
+          "path": "driver.cuabench.json",
+          "sha256": "6bac21e334ef593c0897506ce84338db9d5869044151bc02b8734165abe40b44"
+        }
+      },
+      "capabilities": [
+        "observe.window-metadata",
+        "act.keyboard",
+        "target.window",
+        "operate.background"
+      ],
+      "capability_digest": "46f05edc30f8b733beb21ed7d5ab432a9a295cd8907561fcb2501f5ead86ac7a",
+      "harness_kind": "full",
+      "guidance_mode": "removed",
+      "arms": [
+        {
+          "id": "consolidated",
+          "contract": {
+            "path": "freeze-inputs/tool-surface-consolidated.json",
+            "sha256": "a8dd7d2b229089f086ffe25653ca998acda40ff6a333f6271996da0279b750af"
+          },
+          "trials": {
+            "path": "freeze-inputs/tool-surface-consolidated-trials.json",
+            "sha256": "280864f1102637b518ce4a73165902ada85b36e7afe7504dbff850c8e76310c9"
+          },
+          "result": {
+            "path": "freeze-inputs/tool-surface-consolidated-result.json",
+            "sha256": "769eec3e66e5c555cdc948433a094cedb459ac3661f86f4a3b0ae3a10e1f47b1"
+          }
+        },
+        {
+          "id": "factored",
+          "contract": {
+            "path": "freeze-inputs/tool-surface-factored.json",
+            "sha256": "1c7fe5a8e0d17497e721820bf5a5b1f92d6149d107f5ebe1d41cfb31e7ed69e1"
+          },
+          "trials": {
+            "path": "freeze-inputs/tool-surface-factored-trials.json",
+            "sha256": "6d5ebf31a77dace740456be5932331a8fa00562cc435efa5c6ef5cf921647202"
+          },
+          "result": {
+            "path": "freeze-inputs/tool-surface-factored-result.json",
+            "sha256": "7a04e6499ab89315f028e7abc43751009a82159767c09ddb31e1e1d8d3d3c5c5"
+          }
+        },
+        {
+          "id": "fine-grained",
+          "contract": {
+            "path": "freeze-inputs/tool-surface-fine-grained.json",
+            "sha256": "4d93e1465c1e75fbc1f0176ea1e3a64df345213203752d29b358fdcb41a97295"
+          },
+          "trials": {
+            "path": "freeze-inputs/tool-surface-fine-grained-trials.json",
+            "sha256": "7fafe39a8ffd17f8b1d108af16dcbb9dd29aeb80f4e1bba4dbd635df77779370"
+          },
+          "result": {
+            "path": "freeze-inputs/tool-surface-fine-grained-result.json",
+            "sha256": "09e030fb6129ffbb0928ceee71672eca44aadb442efe723ea93f503079a8bd49"
+          }
+        }
+      ]
+    }
+  },
+  "digest": {
+    "algorithm": "sha256-canonical-json-v1",
+    "value": "f0fba777cd803e8421015d6d4d816a801c1cfaf04f8dc7c714590d908cf2c353"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "schema": "task.schema.json",
+  "base": "../examples/task.cuabench.json",
+  "cases": [
+    { "name": "root-required-fields", "remove": ["/schema_version", "/id", "/version", "/title", "/authors", "/provenance", "/instructions", "/variants", "/required_capabilities", "/observation_surfaces", "/network_policy", "/limits", "/side_effects", "/evaluator", "/reset"], "covers": "#/required", "expect": { "instance": "/", "validator": "required" } },
+    { "name": "author-name", "remove": ["/authors/0/name"], "covers": "#/$defs/author/required", "expect": { "instance": "/authors/0", "validator": "required" } },
+    { "name": "provenance-fields", "remove": ["/provenance/origin", "/provenance/sources_consulted", "/provenance/third_party_material"], "covers": "#/$defs/provenance/required", "expect": { "instance": "/provenance", "validator": "required" } },
+    { "name": "source-fields", "remove": ["/provenance/sources_consulted/0/title", "/provenance/sources_consulted/0/purpose"], "covers": "#/$defs/source/required", "expect": { "instance": "/provenance/sources_consulted/0", "validator": "required" } },
+    { "name": "variant-fields", "remove": ["/variants/0/id", "/variants/0/fixture_artifacts"], "covers": "#/$defs/variant/required", "expect": { "instance": "/variants/0", "validator": "required" } },
+    { "name": "artifact-fields", "remove": ["/variants/0/fixture_artifacts/0/path", "/variants/0/fixture_artifacts/0/sha256"], "covers": "#/$defs/artifact/required", "expect": { "instance": "/variants/0/fixture_artifacts/0", "validator": "required" } },
+    { "name": "network-policy-phases", "remove": ["/network_policy/setup", "/network_policy/agent", "/network_policy/evaluation", "/network_policy/cleanup"], "covers": "#/$defs/networkPolicy/required", "expect": { "instance": "/network_policy", "validator": "required" } },
+    { "name": "phase-policy-mode", "remove": ["/network_policy/setup/mode"], "covers": "#/$defs/phasePolicy/required", "expect": { "instance": "/network_policy/setup", "validator": "required" } },
+    { "name": "allowlist-hosts", "replace": { "/network_policy/setup/mode": "allowlist" }, "covers": "#/$defs/phasePolicy/allOf/0/then/required", "expect": { "instance": "/network_policy/setup", "validator": "required" } },
+    { "name": "limits-fields", "remove": ["/limits/agent_seconds", "/limits/evaluator_seconds"], "covers": "#/$defs/limits/required", "expect": { "instance": "/limits", "validator": "required" } },
+    { "name": "side-effects-fields", "remove": ["/side_effects/allowed", "/side_effects/forbidden"], "covers": "#/$defs/sideEffects/required", "expect": { "instance": "/side_effects", "validator": "required" } },
+    { "name": "side-effect-fields", "remove": ["/side_effects/allowed/0/scope", "/side_effects/allowed/0/description"], "covers": "#/$defs/sideEffect/required", "expect": { "instance": "/side_effects/allowed/0", "validator": "required" } },
+    { "name": "evaluator-fields", "remove": ["/evaluator/entrypoint", "/evaluator/inputs", "/evaluator/staging", "/evaluator/oracle"], "covers": "#/$defs/evaluator/required", "expect": { "instance": "/evaluator", "validator": "required" } },
+    { "name": "oracle-fields", "remove": ["/evaluator/oracle/required", "/evaluator/oracle/staging"], "covers": "#/$defs/oracle/required", "expect": { "instance": "/evaluator/oracle", "validator": "required" } },
+    { "name": "reset-fields", "remove": ["/reset/entrypoint", "/reset/verification", "/reset/failure_fixtures"], "covers": "#/$defs/reset/required", "expect": { "instance": "/reset", "validator": "required" } },
+    { "name": "reset-verification-fields", "remove": ["/reset/verification/entrypoint", "/reset/verification/timeout_seconds"], "covers": "#/$defs/verification/required", "expect": { "instance": "/reset/verification", "validator": "required" } },
+    { "name": "failure-fixture-fields", "remove": ["/reset/failure_fixtures/0/id", "/reset/failure_fixtures/0/artifact", "/reset/failure_fixtures/0/expected_failure"], "covers": "#/$defs/failureFixture/required", "expect": { "instance": "/reset/failure_fixtures/0", "validator": "required" } },
+    { "name": "unknown-capability", "replace": { "/required_capabilities/0": "vendor.magic-click" }, "expect": { "instance": "/required_capabilities/0", "validator": "enum" } }
+  ]
+}

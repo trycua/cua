@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cua-bench-runtime"
+version = "0.2.0"
+description = "Execution runtime for Cua Driver Bench"
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Cua AI", email = "gh@trycua.com" }]
+requires-python = ">=3.11"
+dependencies = [
+  "jsonschema==4.23.0",
+  "referencing==0.35.1",
+  "rfc3339-validator==0.1.4",
+  "rfc3986-validator==0.1.1",
+  "rfc8785==0.1.4",
+]
+
+[dependency-groups]
+test = [
+  "pytest>=8.0",
+  "pytest-asyncio>=0.25",
+]
+
+[project.scripts]
+cdb = "cua_bench_runtime.cli:main"
+
+[project.urls]
+Repository = "https://github.com/trycua/cua"
+Issues = "https://github.com/trycua/cua/issues"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+cua_bench_runtime = [
+  "schemas_data/**/*.json",
+  "schemas_data/**/*.jsonl",
+  "schemas_data/**/*.md",
+  "schemas_data/**/*.txt",
+]

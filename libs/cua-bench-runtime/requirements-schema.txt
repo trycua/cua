@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: MIT
+attrs==26.1.0
+jsonschema==4.23.0
+jsonschema-specifications==2025.9.1
+referencing==0.35.1
+rfc3339-validator==0.1.4
+rfc3986-validator==0.1.1
+rfc8785==0.1.4
+rpds-py==0.27.1

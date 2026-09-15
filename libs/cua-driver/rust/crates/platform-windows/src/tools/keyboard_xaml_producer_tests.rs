@@ -41,6 +41,14 @@ async fn fixture() -> KeyboardFixture {
     }
 }
 
+fn foreground_identity() -> (u32, u64) {
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+    let window = unsafe { GetForegroundWindow() };
+    let mut pid = 0;
+    unsafe { GetWindowThreadProcessId(window, Some(&mut pid)) };
+    (pid, window.0 as usize as u64)
+}
+
 async fn semantic_hotkey(
     key: &str,
     event: &str,
@@ -68,11 +76,17 @@ async fn semantic_hotkey(
         "UIA action must not be replayed as native keys"
     );
     sentinel.assert_quiet();
-    probe(&sentinel).await;
-    let record = result
-        .action_record
-        .as_ref()
-        .unwrap_or_else(|| panic!("XAML keyboard producer record: {result:?}"));
+    let foreground = foreground_identity();
+    let expected_foreground = (sentinel.pid(), sentinel.window_id);
+    if foreground == expected_foreground {
+        probe(&sentinel).await;
+    }
+    assert!(
+        foreground == expected_foreground && result.action_record.is_some(),
+        "XAML action after independent receipt: foreground={foreground:?}, expected={expected_foreground:?}, target=({}, {}), missing_record={}, result={result:?}",
+        fixture.pid(), fixture.window_id, result.action_record.is_none()
+    );
+    let record = result.action_record.as_ref().unwrap();
     assert_eq!(record.effect, ActionEffect::Unverifiable);
     assert_eq!(record.transport, transport);
     assert_eq!(record.actual_delivery, Some(ActualDelivery::Background));

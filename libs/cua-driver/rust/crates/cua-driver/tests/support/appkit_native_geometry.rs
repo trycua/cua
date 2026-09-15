@@ -507,7 +507,7 @@ fn run_native_geometry_mismatch(foreground: bool) {
                 "independent native AX scroll: {}",
                 semantic_scroll.text()
             );
-            assert_eq!(semantic_scroll.structured()["path"], "ax");
+            assert_eq!(semantic_scroll.action_route(), Some("accessibility"));
             fixture_state(&directory, |state| {
                 state["native_scroll_y"]
                     .as_f64()

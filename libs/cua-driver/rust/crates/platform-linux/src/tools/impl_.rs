@@ -1015,6 +1015,7 @@ impl Tool for GetWindowStateTool {
                     }
                     structured["screenshot_width"] = json!(w);
                     structured["screenshot_height"] = json!(h);
+                    structured["screenshot_frame_valid"] = json!(true);
                     // Surface 7: mirror the MCP image part's `mimeType` onto
                     // the structured payload so consumers don't have to sniff
                     // magic bytes off the base64 to know the format.

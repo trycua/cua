@@ -1,63 +1,14 @@
 #![cfg(target_os = "linux")]
 
 use cua_driver_core::action_record::ActionEffect;
-use cua_driver_core::cursor_events::{self, CursorEvent, CursorEventPhase};
+#[path = "support/keyboard_queue.rs"]
+mod keyboard_queue;
 use cua_driver_core::tool::ToolRegistry;
 use cua_driver_testkit::keyboard_fixture::KeyboardFixture;
+use keyboard_queue::OverlayBarrier;
 use serde_json::{json, Value};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Notify;
-
-struct OverlayBarrier {
-    released: Arc<(Mutex<bool>, Condvar)>,
-    finished: Arc<Notify>,
-    queued: Arc<Notify>,
-}
-
-impl OverlayBarrier {
-    fn install() -> Self {
-        let released = Arc::new((Mutex::new(false), Condvar::new()));
-        let finished = Arc::new(Notify::new());
-        let queued = Arc::new(Notify::new());
-        let wait = released.clone();
-        let first = finished.clone();
-        let second = queued.clone();
-        cursor_events::install_cursor_event_sink(Arc::new(move |event| {
-            if let CursorEvent::Action { session, phase, .. } = event {
-                if session.ends_with("keyboard-held") && phase == CursorEventPhase::End {
-                    first.notify_one();
-                    let (lock, wake) = &*wait;
-                    let mut released = lock.lock().unwrap();
-                    while !*released {
-                        released = wake.wait(released).unwrap();
-                    }
-                }
-                if session.ends_with("keyboard-queued") && phase == CursorEventPhase::Begin {
-                    second.notify_one();
-                }
-            }
-        }));
-        Self {
-            released,
-            finished,
-            queued,
-        }
-    }
-
-    fn release(&self) {
-        let (lock, wake) = &*self.released;
-        *lock.lock().unwrap() = true;
-        wake.notify_all();
-    }
-}
-
-impl Drop for OverlayBarrier {
-    fn drop(&mut self) {
-        self.release();
-        cursor_events::clear_cursor_event_sink();
-    }
-}
 
 fn args(fixture: &KeyboardFixture, session: &str, tool: &str) -> Value {
     let mut args = json!({"pid": fixture.pid(), "window_id": fixture.window_id,

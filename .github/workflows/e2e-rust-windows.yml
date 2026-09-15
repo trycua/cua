@@ -280,7 +280,7 @@ jobs:
           retention-days: 14
 
   summary:
-    if: always()
+    if: always() && inputs.lane != 'keyboard'
     needs: [source, shared, native, capture, installer]
     name: "Windows / matrix summary"
     runs-on: ubuntu-latest

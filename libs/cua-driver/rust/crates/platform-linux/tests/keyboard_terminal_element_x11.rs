@@ -1,14 +1,20 @@
 #![cfg(target_os = "linux")]
 
+#[path = "support/keyboard_queue.rs"]
+mod keyboard_queue;
+
+use cua_driver_core::action_record::ActionEffect;
 use cua_driver_core::tool::ToolRegistry;
 use cua_driver_testkit::{
     keyboard_fixture::{wait_for_x11_focus, X11KeyboardObserver},
     spawn_in_job, ChildReaper,
 };
+use keyboard_queue::OverlayBarrier;
 use serde_json::{json, Value};
 use std::net::UdpSocket;
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 struct Terminal {
@@ -86,6 +92,21 @@ impl Terminal {
         String::from_utf8(buffer[..size].to_vec()).unwrap()
     }
 
+    fn assert_quiet(&self) {
+        self.socket
+            .set_read_timeout(Some(Duration::from_millis(150)))
+            .unwrap();
+        let mut extra = [0; 128];
+        let result = self.socket.recv(&mut extra);
+        self.socket
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        assert!(
+            matches!(result, Err(ref error) if matches!(error.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut)),
+            "unexpected terminal input: {result:?} {extra:?}"
+        );
+    }
+
     async fn call(&self, tool: &str, mut fields: Value) -> cua_driver_core::protocol::ToolResult {
         fields["pid"] = json!(self.pid);
         fields["window_id"] = json!(self.window);
@@ -145,19 +166,103 @@ async fn targeted_input(tool: &str, fields: Value, gui_event: &str) {
     assert_ne!(result.is_error, Some(true), "{result:?}");
     assert_eq!(terminal.receive(), gui_event);
     assert_eq!(terminal.receive(), "pty");
-    terminal
-        .socket
-        .set_read_timeout(Some(Duration::from_millis(150)))
-        .unwrap();
-    let mut extra = [0; 128];
-    assert!(
-        matches!(terminal.socket.recv(&mut extra), Err(error) if matches!(error.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut)),
-        "duplicate terminal keyboard delivery"
-    );
+    terminal.assert_quiet();
     assert!(
         !observer.events().is_empty(),
         "element-targeted keyboard input bypassed the native GTK entry"
     );
+}
+
+async fn token_replaced_while_queued(tool: &'static str, fields: Value, receipt: &str) {
+    let terminal = Arc::new(Terminal::new());
+    for session in ["keyboard-held", "keyboard-queued"] {
+        let result = terminal
+            .registry
+            .invoke_with_context(
+                "start_session",
+                json!({"session":session}),
+                terminal.context.clone(),
+            )
+            .await;
+        assert_ne!(result.is_error, Some(true), "{result:?}");
+    }
+    let token = terminal.entry_token().await;
+    let observer = X11KeyboardObserver::start();
+    let barrier = OverlayBarrier::install();
+    let first_terminal = terminal.clone();
+    let first_token = token.clone();
+    let first = tokio::spawn(async move {
+        first_terminal.call("press_key", json!({"session":"keyboard-held", "element_token":first_token, "key":"return", "delivery_mode":"foreground"})).await
+    });
+    tokio::time::timeout(Duration::from_secs(10), barrier.finished.notified())
+        .await
+        .unwrap();
+    assert_eq!(terminal.receive(), "gui");
+    assert_eq!(terminal.receive(), "pty");
+    assert!(!observer.events().is_empty());
+    let mut queued_args = fields.clone();
+    queued_args["session"] = json!("keyboard-queued");
+    queued_args["element_token"] = json!(token);
+    queued_args["delivery_mode"] = json!("foreground");
+    let queued_terminal = terminal.clone();
+    let queued = tokio::spawn(async move { queued_terminal.call(tool, queued_args).await });
+    tokio::time::timeout(Duration::from_secs(10), barrier.queued.notified())
+        .await
+        .unwrap();
+    terminal.assert_quiet();
+    let fresh_token = tokio::time::timeout(Duration::from_secs(10), terminal.entry_token())
+        .await
+        .unwrap();
+    assert_ne!(fresh_token, token);
+    barrier.release();
+    let first_result = tokio::time::timeout(Duration::from_secs(10), first)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(first_result.is_error, Some(true), "{first_result:?}");
+    let result = tokio::time::timeout(Duration::from_secs(10), queued)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(result.is_error, Some(true), "{result:?}");
+    assert_eq!(
+        result.structured_content.as_ref().unwrap()["refusal"]["code"],
+        "stale_element_token",
+        "{result:?}"
+    );
+    let record = result
+        .action_record
+        .as_ref()
+        .expect("pre-input refusal record");
+    assert_eq!(record.effect, ActionEffect::Refused, "{result:?}");
+    assert!(record.actual_delivery.is_none(), "{result:?}");
+    assert!(record.public_result().unwrap().evidence.is_none());
+    terminal.assert_quiet();
+    assert!(
+        observer.events().is_empty(),
+        "retired queued target emitted native input"
+    );
+    let mut recovery = fields;
+    recovery["element_token"] = json!(fresh_token);
+    recovery["delivery_mode"] = json!("foreground");
+    let result = terminal.call(tool, recovery).await;
+    assert_ne!(result.is_error, Some(true), "{result:?}");
+    assert_eq!(terminal.receive(), receipt);
+    assert_eq!(terminal.receive(), "pty");
+    terminal.assert_quiet();
+    assert!(!observer.events().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+#[ignore = "requires isolated X11/Openbox, D-Bus/AT-SPI, and Python GTK3 introspection"]
+async fn queued_press_key_rejects_a_replaced_token_before_native_admission() {
+    token_replaced_while_queued("press_key", json!({"key":"return"}), "gui").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+#[ignore = "requires isolated X11/Openbox, D-Bus/AT-SPI, and Python GTK3 introspection"]
+async fn queued_hotkey_rejects_a_replaced_token_before_native_admission() {
+    token_replaced_while_queued("hotkey", json!({"keys":["ctrl","return"]}), "gui_ctrl").await;
 }
 
 #[tokio::test]

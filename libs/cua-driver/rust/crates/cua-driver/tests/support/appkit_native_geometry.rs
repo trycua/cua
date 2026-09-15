@@ -481,11 +481,23 @@ fn run_native_geometry_mismatch(foreground: bool) {
             assert_eq!(selection.action_route(), Some("accessibility"));
             let selected = fixture_state(&directory, |state| state["selected"] == true);
             let scroll_before = selected["native_scroll_y"].as_f64().unwrap();
+            let native_text = snapshot.structured()["elements"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|element| {
+                    element["role"] == "AXTextArea"
+                        && element["value"]
+                            .as_str()
+                            .is_some_and(|value| value.starts_with("Native line 0\n"))
+                })
+                .and_then(|element| element["element_token"].as_str())
+                .expect("native multiline text snapshot token");
             let semantic_scroll = driver.call(
                 "scroll",
                 serde_json::json!({
                     "pid":harness.pid, "window_id":wid,
-                    "element_token":element_token_by_id(&snapshot, "geometry-native-text"),
+                    "element_token":native_text,
                     "direction":"down", "by":"page", "amount":1
                 }),
             );

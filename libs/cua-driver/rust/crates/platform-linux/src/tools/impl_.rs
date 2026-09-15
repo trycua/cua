@@ -874,6 +874,14 @@ impl Tool for GetWindowStateTool {
             Ok(Ok((tree_opt, shot_opt, bounds, screenshot_error))) => {
                 let mut content = Vec::new();
                 let mut structured = json!({ "window_id": xid, "pid": pid });
+                // Facts for the advisory `background_input` report below,
+                // captured before `tree_opt`/`shot_opt` are consumed.
+                let report_window_scoped = tree_opt.as_ref().is_some_and(|tree| tree.window_scoped);
+                let report_capture: Option<bool> = if should_capture {
+                    Some(shot_opt.is_some())
+                } else {
+                    None
+                };
 
                 if let Some(tr) = tree_opt {
                     let source_trusted = tr.trusted;
@@ -1021,6 +1029,24 @@ impl Tool for GetWindowStateTool {
                     structured["screenshot_mime_type"] = json!("image/png");
                     if let Some(fp) = file_path {
                         structured["screenshot_file_path"] = json!(fp);
+                    }
+                }
+                // Additive read-only `background_input` capability section
+                // (#3790): the same refusal predicates the input tools run,
+                // reported per route so an agent can choose before acting.
+                // Advisory — every action revalidates instead of trusting it.
+                {
+                    let report = tokio::task::spawn_blocking(move || {
+                        linux_background_input_report(
+                            pid,
+                            xid,
+                            report_window_scoped,
+                            report_capture,
+                        )
+                    })
+                    .await;
+                    if let Ok(report) = report {
+                        structured["background_input"] = report;
                     }
                 }
                 if let Some(reason) = &screenshot_error {
@@ -1999,6 +2025,85 @@ fn chromium_background_must_refuse(
     chromium: bool,
 ) -> bool {
     chromium && !foreground && !focus_free_inject_mode
+}
+
+/// Advisory, read-only `background_input` report for the requested window
+/// (#3790), mirroring the macOS capability section with Linux's refusal
+/// ladders: `window_pointer` from the predicates `click` / `double_click` /
+/// `right_click` / `drag` run, `pid_keyboard` from the `press_key` / `hotkey`
+/// ladder, and `accessibility` as the focus-free AT-SPI semantic route those
+/// refusals recommend.
+///
+/// `available` means the route's prerequisites are currently proven, not that
+/// a later call is guaranteed to succeed — every action revalidates instead of
+/// trusting this report, so the two can never drift apart. `reason` carries
+/// the same machine-readable code a refused call would return
+/// (`background_unavailable`).
+fn linux_background_input_report(
+    pid: u32,
+    xid: u64,
+    window_scoped: bool,
+    capture_available: Option<bool>,
+) -> Value {
+    let delivery = crate::input::delivery::DeliveryMode::Background;
+
+    let pointer_refusal = [
+        unavailable_chromium_background(pid, delivery),
+        unavailable_webkit_background(pid, delivery),
+        unavailable_gtk_pointer_background(pid, delivery),
+        unavailable_wayland_focused_input_background(delivery, true),
+    ]
+    .into_iter()
+    .flatten()
+    .next();
+    let keyboard_refusal = [
+        unavailable_chromium_background(pid, delivery),
+        unavailable_webkit_keyboard_background(pid, delivery),
+        unavailable_gtk_keyboard_background(pid, delivery),
+        unavailable_wayland_focused_input_background(delivery, true),
+    ]
+    .into_iter()
+    .flatten()
+    .next();
+
+    let route = |name: &str, refusal: Option<ToolResult>| -> Value {
+        match refusal {
+            Some(refusal) => {
+                let code = refusal
+                    .structured_content
+                    .as_ref()
+                    .and_then(|value| value.get("code"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("background_unavailable");
+                json!({ "route": name, "status": "refused", "reason": code })
+            }
+            None => json!({ "route": name, "status": "available" }),
+        }
+    };
+
+    json!({
+        // Linux has no macOS-style WindowServer attribution; `matched` means
+        // the snapshot proved the exact requested window, `unproven` means it
+        // is application-scoped and exact-target routes cannot rely on it.
+        "exact_window": {
+            "status": if window_scoped { "matched" } else { "unproven" },
+            "pid": pid,
+            "window_id": xid,
+        },
+        "routes": [
+            route("accessibility", None),
+            route("window_pointer", pointer_refusal),
+            route("pid_keyboard", keyboard_refusal),
+        ],
+        "observation": {
+            "one_shot_capture": match capture_available {
+                Some(true) => "available",
+                Some(false) => "unavailable",
+                None => "unknown",
+            },
+            "frame_freshness": "unknown",
+        },
+    })
 }
 
 /// Screen-absolute center of a window (top-left from translate_coordinates plus

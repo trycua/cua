@@ -131,6 +131,70 @@ async fn native_producer_hotkey_retains_the_admitted_uia_target_after_cache_clea
     admitted_target_survives_cache_clear("hotkey").await;
 }
 
+async fn partial_native_acceptance(tool: &str) {
+    use crate::input::keyboard::partial_input::PartialInputGuard;
+    use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
+    let fixture = KeyboardFixture::spawn(false);
+    let sentinel = KeyboardFixture::spawn(false);
+    focus_probe(&sentinel).await;
+    let fault = PartialInputGuard::install();
+    let mut args = serde_json::json!({"pid":fixture.pid(), "window_id":fixture.window_id, "delivery_mode":"foreground"});
+    let key = if tool == "press_key" {
+        args["key"] = serde_json::json!("f5");
+        0x74
+    } else {
+        args["keys"] = serde_json::json!(["ctrl", "h"]);
+        0x11
+    };
+    let result = producer(tool).invoke(args).await;
+    eprintln!("partial native acceptance result: {result:?}");
+    fixture.key_event("down", key);
+    assert!(
+        fault.release(),
+        "could not release the independently observed partial input"
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while unsafe { GetAsyncKeyState(key as i32) } as u16 & 0x8000 != 0 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "native key remained pressed after cleanup"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    fixture.assert_no_key_down();
+    assert_eq!(
+        fixture.recorded_key_down_count(),
+        1,
+        "partial input was replayed"
+    );
+    sentinel.assert_no_key_down();
+    focus_probe(&sentinel).await;
+    assert_eq!(result.is_error, Some(true), "{result:?}");
+    assert!(serde_json::to_string(&result)
+        .unwrap()
+        .contains("SendInput inserted only 1 of"));
+    let record = result.action_record.as_ref().unwrap_or_else(|| {
+        panic!("post-input native error requires an execution record: {result:?}")
+    });
+    assert_eq!(record.effect, ActionEffect::Unverifiable);
+    assert_eq!(record.transport, ActionTransport::WindowsSendInput);
+    assert_eq!(record.actual_delivery, Some(ActualDelivery::Foreground));
+    assert!(record.delivered_count.is_none());
+    assert!(record.public_result().unwrap().evidence.is_none());
+}
+
+#[tokio::test]
+#[ignore = "requires an interactive Windows desktop; injects partial acceptance at the SendInput boundary"]
+async fn native_producer_press_key_partial_acceptance_is_not_a_clean_refusal() {
+    partial_native_acceptance("press_key").await;
+}
+
+#[tokio::test]
+#[ignore = "requires an interactive Windows desktop; injects partial acceptance at the SendInput boundary"]
+async fn native_producer_hotkey_partial_acceptance_is_not_a_clean_refusal() {
+    partial_native_acceptance("hotkey").await;
+}
+
 pub(super) async fn focus_probe(fixture: &KeyboardFixture) {
     let result = producer("press_key")
         .invoke(serde_json::json!({"scope":"desktop", "key":"f6"}))

@@ -123,9 +123,10 @@ write_failure_record() {
 
 run_test() {
   local name="$1"; shift
+  local log_name="${name//[^a-zA-Z0-9._-]/_}"
   echo "[RUN] ${name}"
   set +e
-  (cd "${RUST_ROOT}" && "$@") 2>&1 | tee "${ARTIFACT_DIR}/${name}.log"
+  (cd "${RUST_ROOT}" && "$@") 2>&1 | tee "${ARTIFACT_DIR}/${log_name}.log"
   local exit_code=${PIPESTATUS[0]}
   set -e
   if [[ "${exit_code}" != 0 ]]; then

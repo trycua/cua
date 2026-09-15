@@ -288,9 +288,9 @@ def verify_calc(before, after):
     cell = row.find('table:table-cell', NS)
     assert cell is not None
     assert cell.get(f"{{{NS['office']}}}value-type") == 'string'
-    assert ''.join(cell.itertext()) == 'a', 'saved A1 does not contain the expected letter'
+    assert ''.join(cell.itertext()) == 'abc', 'saved A1 does not contain the expected text'
     assert cell.get(f"{{{NS['table']}}}formula") is None
-    return {'cell': 'A1', 'text': 'a', 'verified': True}
+    return {'cell': 'A1', 'text': 'abc', 'verified': True}
 
 
 def rectangle(content):
@@ -569,7 +569,7 @@ def run_app(mcp, app, document, directory):
     try:
         require_background_target(target, directory)
         if app == 'calc':
-            steps = [('insert', 'press_key', {'key': 'a'}),
+            steps = [('insert', 'type_text', {'text': 'abc'}),
                      ('commit', 'press_key', {'key': 'Return'}),
                      ('save', 'hotkey', {'keys': ['ctrl', 's']})]
         else:

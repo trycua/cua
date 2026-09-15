@@ -73,13 +73,15 @@ final class NativeGeometryFixture: NSObject {
     private let selectable = NativeGeometryRow(frame: NSRect(x: 190, y: 222, width: 150, height: 18))
     private var webScroll = -1.0
     private let webObserver = NativeGeometryWebObserver()
-    private let web: WKWebView
+    private let web: WKWebView?
     private var timer: Timer?
     private var lastCommand: String?
 
     init(directory: URL) {
         self.directory = directory
-        web = WKWebView(frame: NSRect(x: 200, y: 20, width: 140, height: 200))
+        let includeWeb = ProcessInfo.processInfo.environment["CUA_APPKIT_GEOMETRY_NO_WEB"] != "1"
+        web = includeWeb ? WKWebView(frame: NSRect(x: 200, y: 20, width: 140, height: 200)) : nil
+        webScroll = includeWeb ? -1 : 0
         window = NativeGeometryWindow(
             contentRect: NSRect(x: 100, y: 100, width: 360, height: 240),
             styleMask: [.titled, .closable, .miniaturizable],
@@ -120,6 +122,7 @@ final class NativeGeometryFixture: NSObject {
             self?.webScroll = position
             self?.publish()
         }
+        if let web {
         let scripts = web.configuration.userContentController
         scripts.add(webObserver, name: "geometry")
         scripts.addUserScript(WKUserScript(source: """
@@ -134,6 +137,7 @@ final class NativeGeometryFixture: NSObject {
             <div style="height:200px"></div></body></html>
             """, baseURL: nil)
         content.addSubview(web)
+        }
         counterLabel.frame = NSRect(x: 20, y: 30, width: 160, height: 24)
         content.addSubview(counterLabel)
         window.contentView = content
@@ -154,6 +158,7 @@ final class NativeGeometryFixture: NSObject {
         lastCommand = command
         switch command {
         case "align": setGeometry()
+        case "mismatch": setGeometry(mismatched: true)
         case "unavailable": setGeometry(unavailable: true)
         case "slow": setGeometry(delay: 0.5)
         default: break
@@ -167,7 +172,7 @@ final class NativeGeometryFixture: NSObject {
     }
 
     @objc private func resetWeb() {
-        web.evaluateJavaScript("window.scrollTo(0, 0)")
+        web?.evaluateJavaScript("window.scrollTo(0, 0)")
     }
 
     @objc private func disagree() { setGeometry(mismatched: true) }

@@ -41,10 +41,14 @@ fn web_target(snapshot: &ToolResponse) -> String {
         .to_owned()
 }
 
-fn launch_fixture(directory: &Path) -> (Harness, u64) {
+fn launch_fixture(directory: &Path, include_web: bool) -> (Harness, u64) {
     std::fs::create_dir_all(directory).unwrap();
     let app = Command::new(harness_exe())
         .env("CUA_APPKIT_GEOMETRY_DIR", directory)
+        .env(
+            "CUA_APPKIT_GEOMETRY_NO_WEB",
+            if include_web { "0" } else { "1" },
+        )
         .stdout(std::fs::File::create(directory.join("fixture.stdout")).unwrap())
         .stderr(std::fs::File::create(directory.join("fixture.stderr")).unwrap())
         .spawn()
@@ -159,7 +163,7 @@ fn harness_appkit_geometry_unavailable_and_timeout_preserve_observation() {
         let mut driver = McpDriver::spawn_macos_daemon_proxy_named(&label).unwrap();
         *evidence = recording_evidence(driver.recording_dir());
         let directory = driver.recording_dir().unwrap().join("native-geometry");
-        let (harness, wid) = launch_fixture(&directory);
+        let (harness, wid) = launch_fixture(&directory, false);
         driver.start_behavior_recording();
         let before = snapshot_elements(&mut driver, harness.pid, wid);
         assert_eq!(
@@ -168,6 +172,19 @@ fn harness_appkit_geometry_unavailable_and_timeout_preserve_observation() {
         );
         save_response(&directory, "availability-initial.json", &before);
         let scale = before.structured()["screenshot_width"].as_f64().unwrap() / 360.0;
+        std::fs::write(directory.join("command"), "mismatch").unwrap();
+        fixture_state(&directory, |state| state["mismatched"] == true);
+        let target = TargetWindow {
+            pid: harness.pid,
+            native_id: wid,
+        };
+        run_with_background_oracles(&mut driver, target, |driver| {
+            let implicit = driver.call("click", serde_json::json!({
+                "pid":harness.pid, "x":300.0*scale, "y":130.0*scale, "delivery_mode":"foreground"
+            }));
+            assert_geometry_refusal(&directory, "implicit-window", &implicit);
+        })
+        .expect("inferred window refusal must preserve desktop state");
         std::fs::write(directory.join("command"), "unavailable").unwrap();
         fixture_state(&directory, |state| state["unavailable"] == true);
         let missing = driver.call("get_window_state", serde_json::json!({
@@ -309,7 +326,7 @@ fn run_native_geometry_mismatch(foreground: bool) {
             .recording_dir()
             .expect("native evidence directory")
             .join("native-geometry");
-        let (harness, wid) = launch_fixture(&directory);
+        let (harness, wid) = launch_fixture(&directory, true);
         let aligned = snapshot_elements(&mut driver, harness.pid, wid);
         save_response(&directory, "aligned.json", &aligned);
         assert!(!aligned.is_error(), "aligned snapshot: {}", aligned.text());
@@ -510,14 +527,6 @@ fn run_native_geometry_mismatch(foreground: bool) {
                 let refused = driver.call(tool, args);
                 assert_geometry_refusal(&directory, name, &refused);
             }
-            let implicit_window = driver.call(
-                "click",
-                serde_json::json!({
-                    "pid": harness.pid, "x":300.0*scale, "y":130.0*scale,
-                    "delivery_mode": delivery_mode
-                }),
-            );
-            assert_geometry_refusal(&directory, "implicit-window", &implicit_window);
             std::thread::sleep(Duration::from_millis(750));
             response
         })

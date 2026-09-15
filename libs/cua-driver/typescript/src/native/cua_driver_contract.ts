@@ -4521,6 +4521,15 @@ export type WindowStateOutput = {
     totalElementCount?: bigint,
     returnedElementCount?: bigint,
     filteredElementCount?: bigint,
+    /**
+     * Whether `elements` is the whole addressable-element set of the
+     * requested window. `Some(true)` is a promise about absence: a control
+     * missing from the array is missing from the window, so a predicate that
+     * matches nothing is unsatisfied rather than unknown. `Some(false)` (or
+     * absent) means the observation gave something up — an element or depth
+     * cap, a child list that could not be read, an unresolved window — and
+     * absence proves nothing.
+     */
     elementsComplete?: boolean,
     degraded?: boolean,
     degradedReason?: string,

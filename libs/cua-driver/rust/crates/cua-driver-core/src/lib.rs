@@ -53,6 +53,7 @@ pub mod clipboard;
 pub mod consent;
 pub mod cursor_events;
 pub mod cursor_sampler;
+pub mod cursor_visibility;
 pub mod daemon;
 pub mod element_cache;
 pub mod element_query;

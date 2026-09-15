@@ -479,11 +479,14 @@ impl Tool for ClickTool {
                         )
                     }
                 };
-                crate::cursor::overlay::send_command(
+                crate::cursor::overlay::pin_and_animate_window_action(
                     cursor_key.clone(),
-                    cursor_overlay::OverlayCommand::PinAbove(wid as u64),
-                );
-                crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), cx, cy).await;
+                    Some(wid),
+                    !delivery_mode.is_foreground(),
+                    cx,
+                    cy,
+                )
+                .await;
                 self.state
                     .cursor_registry
                     .update_position(&cursor_key, cx, cy);
@@ -519,12 +522,17 @@ impl Tool for ClickTool {
             }
 
             if let Some((cx, cy)) = center {
-                // Pin overlay above target window first.
-                crate::cursor::overlay::send_command(
+                // Pin overlay above target window first — hidden instead for
+                // background delivery to an off-Space target so no cursor
+                // floats over the foreground app (issue #3801).
+                crate::cursor::overlay::pin_and_animate_window_action(
                     cursor_key.clone(),
-                    cursor_overlay::OverlayCommand::PinAbove(wid as u64),
-                );
-                crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), cx, cy).await;
+                    Some(wid),
+                    !delivery_mode.is_foreground(),
+                    cx,
+                    cy,
+                )
+                .await;
                 // Keep the registry in sync with the overlay so
                 // get_agent_cursor_state reports a truthful position even when
                 // the click was dispatched via the AX path (no pixel coords).
@@ -950,15 +958,16 @@ impl Tool for ClickTool {
 
             // Pin the overlay above the target window BEFORE animating so
             // the cursor is already sandwiched correctly while it glides in.
-            if let Some(wid) = window_id {
-                crate::cursor::overlay::send_command(
-                    cursor_key.clone(),
-                    cursor_overlay::OverlayCommand::PinAbove(wid as u64),
-                );
-            }
-            // Animate the visual cursor to the click point and wait for it to
-            // arrive — mirrors Swift's `AgentCursor.shared.animateAndWait(to:)`.
-            crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), screen_x, screen_y).await;
+            // A suppressed background action (issue #3801) shows no cursor;
+            // `cursor_shown` gates the re-pin below for the same reason.
+            let cursor_shown = crate::cursor::overlay::pin_and_animate_window_action(
+                cursor_key.clone(),
+                window_id,
+                !fg,
+                screen_x,
+                screen_y,
+            )
+            .await;
             // Keep the registry in sync with the overlay (see AX path above).
             self.state
                 .cursor_registry
@@ -996,10 +1005,14 @@ impl Tool for ClickTool {
                     .await
                     {
                         Ok(activated) => {
-                            crate::cursor::overlay::send_command(
-                                cursor_key.clone(),
-                                cursor_overlay::OverlayCommand::PinAbove(wid as u64),
-                            );
+                            // Re-pinning would clear background suppression
+                            // (issue #3801): only re-pin when the cursor was shown.
+                            if cursor_shown {
+                                crate::cursor::overlay::send_command(
+                                    cursor_key.clone(),
+                                    cursor_overlay::OverlayCommand::PinAbove(wid as u64),
+                                );
+                            }
                             activated
                         }
                         Err(error) => {

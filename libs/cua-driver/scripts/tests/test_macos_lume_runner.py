@@ -707,7 +707,7 @@ def test_appkit_selection_invokes_only_the_exact_native_test(
 
 @pytest.mark.parametrize(
     "harness,cell,expected_count",
-    [("", "", 26), ("appkit", "unknown-cell", 0), ("swiftui", "", 0)],
+    [("", "", 27), ("appkit", "unknown-cell", 0), ("swiftui", "", 0)],
 )
 def test_appkit_dispatch_preserves_full_scope_and_never_falls_back_on_no_match(
     tmp_path: Path, harness: str, cell: str, expected_count: int

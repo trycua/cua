@@ -190,6 +190,10 @@ final class NativeGeometryFixture: NSObject {
         do {
             let data = try JSONSerialization.data(withJSONObject: [
                 "pid": ProcessInfo.processInfo.processIdentifier,
+                "owned_windows": NSApplication.shared.windows.map { owned in
+                    ["window_id": owned.windowNumber, "title": owned.title,
+                     "class": NSStringFromClass(type(of: owned)), "visible": owned.isVisible] as [String: Any]
+                },
                 "window_id": window.windowNumber,
                 "physical_width": window.frame.width,
                 "reported_width": window.reportedFrame.width,

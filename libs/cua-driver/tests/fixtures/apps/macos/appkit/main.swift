@@ -647,7 +647,7 @@ final class SingleClickReceiver: NSView {
 struct CuaAppKitHarness {
     static func main() {
         let app = NSApplication.shared
-        app.setActivationPolicy(.regular)
+        app.setActivationPolicy(ProcessInfo.processInfo.environment["CUA_APPKIT_GEOMETRY_NO_WEB"] == "1" ? .accessory : .regular)
         if let directory = ProcessInfo.processInfo.environment["CUA_APPKIT_SNAPSHOT_DIR"] {
             let fixture = SnapshotPublicationFixture(directory: URL(fileURLWithPath: directory))
             fixture.show()

@@ -394,7 +394,7 @@ $arguments = @(
     '-'
 ) -join ' '
 
-$process = Start-Process cmd.exe `
+$process = Start-Process cmd.exe -WindowStyle Hidden `
     -ArgumentList $arguments `
     -RedirectStandardInput "$work\prompt.txt" `
     -RedirectStandardOutput "$work\events.jsonl" `

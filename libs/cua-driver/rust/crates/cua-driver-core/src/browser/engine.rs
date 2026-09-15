@@ -1390,6 +1390,16 @@ impl BrowserEngine {
         Ok(native)
     }
 
+    /// Resolve a native window only for a process whose ownership has already
+    /// been established by browser preparation. Unlike `list_windows`, this
+    /// never exposes desktop inventory and refuses ambiguous processes.
+    pub(crate) async fn sole_exact_native_window_id(
+        &self,
+        pid: i64,
+    ) -> Result<Option<u64>, BrowserRefusal> {
+        self.platform.sole_exact_native_window_id(pid).await
+    }
+
     // ── Revalidation (before every mutation) ────────────────────────────
 
     /// Re-prove the entire binding chain for a mutation on one tab.

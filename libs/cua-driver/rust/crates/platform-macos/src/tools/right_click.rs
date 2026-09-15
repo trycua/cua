@@ -302,21 +302,32 @@ fn ax_show_menu(element_ptr: usize, idx: usize, pid: i32, wid: u32) -> anyhow::R
     // it. Plain controls (NSButton, custom NSView click targets, most web
     // nodes) DON'T — calling AXShowMenu on them returns kAXErrorActionUnsupported
     // (-25206), which used to surface as a hard "AXShowMenu failed" error and
-    // forced the agent onto raw pixels. Instead, resolve the element's on-screen
-    // center and synthesize a REAL pixel right-click there — the same actuation
-    // a user performs, delivered to backgrounded windows via the window-local
+    // forced the agent onto raw pixels. It also returns success on controls
+    // that open no menu at all, so the reply is only trusted once a menu is
+    // observed. Otherwise resolve the element's on-screen center and
+    // synthesize a REAL pixel right-click there — the same actuation a user
+    // performs, delivered to backgrounded windows via the window-local
     // primitive. This makes "right-click element N" land on any element, not
     // just ones with a native context-menu AX action.
     if advertised.iter().any(|a| a == "AXShowMenu") {
+        let menus_before = crate::windows::accessory_window_ids(pid);
         let err = unsafe { perform_action(element, "AXShowMenu") };
         if err == kAXErrorSuccess {
-            return Ok(format!(
-                "Shown menu for [{idx}] {role} \"{title}\" (AXShowMenu)."
-            ));
+            if crate::windows::menu_appeared_since(pid, &menus_before) {
+                return Ok(format!(
+                    "Shown menu for [{idx}] {role} \"{title}\" (AXShowMenu)."
+                ));
+            }
+            tracing::debug!(
+                "AXShowMenu succeeded for [{idx}] without opening a menu; falling back to pixel right-click"
+            );
+        } else {
+            // Advertised but the action failed — fall through to the pixel path
+            // rather than erroring out.
+            tracing::debug!(
+                "AXShowMenu returned {err} for [{idx}]; falling back to pixel right-click"
+            );
         }
-        // Advertised but the action failed — fall through to the pixel path
-        // rather than erroring out.
-        tracing::debug!("AXShowMenu returned {err} for [{idx}]; falling back to pixel right-click");
     }
 
     // Pixel right-click at the element's screen-space center.

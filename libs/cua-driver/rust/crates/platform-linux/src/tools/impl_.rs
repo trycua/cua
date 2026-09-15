@@ -4605,6 +4605,10 @@ impl Tool for TypeTextTool {
 #[path = "keyboard_producer_tests.rs"]
 mod keyboard_producer_tests;
 
+#[cfg(test)]
+#[path = "keyboard_wayland_producer_tests.rs"]
+mod keyboard_wayland_producer_tests;
+
 pub struct PressKeyTool {
     state: Arc<ToolState>,
 }

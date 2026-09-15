@@ -172,11 +172,16 @@ impl Tool for SetValueTool {
         })
         .await
         {
-            crate::cursor::overlay::send_command(
+            // set_value is always-background: hide the cursor instead of
+            // pinning when the target is off the current Space (issue #3801).
+            crate::cursor::overlay::pin_and_animate_window_action(
                 cursor_key.clone(),
-                cursor_overlay::OverlayCommand::PinAbove(window_id as u64),
-            );
-            crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), screen_x, screen_y).await;
+                Some(window_id),
+                true,
+                screen_x,
+                screen_y,
+            )
+            .await;
             self.state
                 .cursor_registry
                 .update_position(&cursor_key, screen_x, screen_y);

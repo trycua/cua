@@ -493,15 +493,13 @@ impl Tool for ScrollTool {
             }
             let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
             // Pin + glide the agent-cursor overlay to the target for visibility
-            // (overlay only — does NOT move the hardware cursor). Mirrors click.
-            if let Some(wid) = target.wid {
-                crate::cursor::overlay::send_command(
-                    cursor_key.clone(),
-                    cursor_overlay::OverlayCommand::PinAbove(wid as u64),
-                );
-            }
-            crate::cursor::overlay::animate_cursor_to(
+            // (overlay only — does NOT move the hardware cursor). Hidden
+            // instead for background delivery to an off-Space target so no
+            // cursor floats over the foreground app (issue #3801). Mirrors click.
+            crate::cursor::overlay::pin_and_animate_window_action(
                 cursor_key.clone(),
+                target.wid,
+                !delivery_mode.is_foreground(),
                 target.screen_x,
                 target.screen_y,
             )

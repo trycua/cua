@@ -1,13 +1,17 @@
 use serde_json::Value;
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
-use std::sync::mpsc::{self, Receiver};
+use std::sync::{
+    mpsc::{self, Receiver},
+    Arc, Mutex,
+};
 use std::time::Duration;
 
 pub struct KeyboardFixture {
     reaper: Option<crate::ChildReaper>,
     pid: u32,
     events: Receiver<Value>,
+    history: Arc<Mutex<Vec<Value>>>,
     pub window_id: u64,
     _directory: tempfile::TempDir,
 }
@@ -41,10 +45,13 @@ impl KeyboardFixture {
         let mut reaper = crate::ChildReaper::new();
         reaper.push(child);
         let (sender, events) = mpsc::channel();
+        let history = Arc::new(Mutex::new(Vec::new()));
+        let received = history.clone();
         std::thread::spawn(move || {
             for line in BufReader::new(output).lines() {
                 let Ok(line) = line else { break };
                 if let Ok(event) = serde_json::from_str::<Value>(&line) {
+                    received.lock().unwrap().push(event.clone());
                     if sender.send(event).is_err() {
                         break;
                     }
@@ -55,6 +62,7 @@ impl KeyboardFixture {
             reaper: Some(reaper),
             pid,
             events,
+            history,
             window_id: 0,
             _directory: directory,
         };
@@ -84,7 +92,7 @@ impl KeyboardFixture {
         loop {
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
             let event = self.events.recv_timeout(remaining).unwrap_or_else(|error| {
-                panic!("native keyboard oracle did not report {kind}: {error}")
+                panic!("native keyboard oracle pid={} window={} did not report {kind} key={key:?}: {error}", self.pid, self.window_id)
             });
             if event["kind"] == kind && key.is_none_or(|key| event["key"] == key) {
                 return event;
@@ -134,6 +142,21 @@ impl KeyboardFixture {
 
     pub fn terminate(&mut self) {
         drop(self.reaper.take());
+    }
+}
+
+impl Drop for KeyboardFixture {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            if let Ok(history) = self.history.lock() {
+                eprintln!(
+                    "native keyboard oracle pid={} window={} events={}",
+                    self.pid,
+                    self.window_id,
+                    serde_json::to_string(&*history).unwrap()
+                );
+            }
+        }
     }
 }
 

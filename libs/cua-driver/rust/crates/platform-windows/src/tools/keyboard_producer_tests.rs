@@ -166,16 +166,15 @@ async fn native_producer_retains_first_character_key_name_compatibility() {
 
 #[tokio::test]
 #[ignore = "requires an interactive Windows desktop"]
-async fn native_producer_retains_modifier_only_hotkey_compatibility() {
+async fn native_producer_rejects_modifier_only_hotkeys_before_input() {
     let fixture = KeyboardFixture::spawn(false);
     let result = producer("hotkey")
         .invoke(serde_json::json!({
             "pid":fixture.pid(), "window_id":fixture.window_id, "keys":["ctrl","shift"]
         }))
         .await;
-    assert_ne!(result.is_error, Some(true), "{result:?}");
-    fixture.key_event("down", 0x10);
-    fixture.key_event("up", 0x10);
+    assert_eq!(result.is_error, Some(true), "{result:?}");
+    fixture.assert_quiet();
 }
 
 #[tokio::test]

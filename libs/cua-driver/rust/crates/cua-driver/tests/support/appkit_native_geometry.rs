@@ -28,6 +28,26 @@ fn save_response(directory: &Path, name: &str, response: &ToolResponse) {
     .unwrap();
 }
 
+fn agent_cursor_position(
+    driver: &mut McpDriver,
+    directory: &Path,
+    name: &str,
+) -> serde_json::Value {
+    let response = driver.call("get_agent_cursor_state", serde_json::json!({}));
+    save_response(directory, name, &response);
+    assert!(
+        !response.is_error(),
+        "agent cursor observation: {}",
+        response.text()
+    );
+    let position = response.structured()["position"].clone();
+    assert!(
+        position["x"].is_number() && position["y"].is_number(),
+        "agent cursor must have a calibrated position: {position}"
+    );
+    position
+}
+
 fn web_target(snapshot: &ToolResponse) -> String {
     snapshot.structured()["elements"]
         .as_array()
@@ -354,6 +374,16 @@ fn run_native_geometry_mismatch(foreground: bool) {
             "calibrate native input: {}",
             calibration.text()
         );
+        let cursor_calibration =
+            agent_cursor_position(&mut driver, &directory, "agent-cursor-calibrated.json");
+        let compositor = &aligned.structured()["native_window_geometry"]["compositor"];
+        assert_eq!(
+            cursor_calibration,
+            serde_json::json!({
+                "x":compositor["x"].as_f64().unwrap() + 300.0,
+                "y":compositor["y"].as_f64().unwrap() + 130.0
+            })
+        );
         let reveal_snapshot = snapshot_elements(&mut driver, harness.pid, wid);
         let reveal_calibration = driver.call(
             "scroll",
@@ -558,12 +588,20 @@ fn run_native_geometry_mismatch(foreground: bool) {
                 after_scroll["web_scroll_y"], 0.0,
                 "refused wheel fallback revealed its element"
             );
+            let agent_before =
+                agent_cursor_position(driver, &directory, "agent-cursor-before-refusals.json");
             for (name, tool, mut args) in pointer_requests(&snapshot, scale, foreground) {
                 args["pid"] = serde_json::json!(harness.pid);
                 args["window_id"] = serde_json::json!(wid);
                 args["delivery_mode"] = serde_json::json!(delivery_mode);
                 let refused = driver.call(tool, args);
                 assert_geometry_refusal(&directory, name, &refused);
+                let agent_after =
+                    agent_cursor_position(driver, &directory, &format!("{name}-agent-cursor.json"));
+                assert_eq!(
+                    agent_after, agent_before,
+                    "{name} moved the agent cursor despite refusing"
+                );
             }
             std::thread::sleep(Duration::from_millis(750));
             response

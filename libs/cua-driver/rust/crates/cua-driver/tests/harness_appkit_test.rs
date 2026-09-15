@@ -787,6 +787,50 @@ fn harness_appkit_text_input() {
     );
 }
 
+/// set_value must reach the app's own editing pipeline, not just the AX tree.
+/// The fixture publishes `committed=<value>` from `controlTextDidEndEditing`,
+/// so this reads the app's state rather than the value the write echoes back.
+#[test]
+#[ignore]
+fn harness_appkit_set_value_commits_the_edit() {
+    run_background_case(
+        "set_value_commit",
+        DriverRoute::MacosAxValue,
+        |pid, wid, driver| {
+            let before = snapshot_elements(driver, pid, wid);
+            assert!(
+                before.tree_text().contains("committed=none"),
+                "fixture did not start uncommitted:\n{}",
+                before.tree_text()
+            );
+            let set = driver.call(
+                "set_value",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "element_token": element_token_by_id(&before, "txt-input"),
+                    "value": "commit-cua"
+                }),
+            );
+            assert!(!set.is_error(), "set_value failed: {}", set.text());
+            assert_eq!(
+                set.structured()["committed"],
+                serde_json::json!("unproven"),
+                "an AXValue write judged only by its own read-back cannot claim a commit: {}",
+                set.raw
+            );
+
+            std::thread::sleep(Duration::from_millis(250));
+            let after = snapshot_elements(driver, pid, wid);
+            assert!(
+                after.tree_text().contains("committed=commit-cua"),
+                "the app never registered the write:\n{}",
+                after.tree_text()
+            );
+        },
+    );
+}
+
 #[test]
 #[ignore]
 fn harness_appkit_element_foreground_press_key_commits_edit() {
@@ -800,16 +844,26 @@ fn harness_appkit_element_foreground_press_key_commits_edit() {
         |pid, wid, driver| {
             let first = snapshot_elements(driver, pid, wid);
             let field = element_token_by_id(&first, "txt-input");
-            let set = driver.call(
-                "set_value",
+            let typed = driver.call(
+                "type_text",
                 serde_json::json!({
                     "pid": pid as i64,
                     "window_id": wid,
                     "element_token": field,
-                    "value": "inline-cua"
+                    "text": "inline-cua",
+                    "delivery_mode": "foreground"
                 }),
             );
-            assert!(!set.is_error(), "set_value failed: {}", set.text());
+            assert!(!typed.is_error(), "type_text failed: {}", typed.text());
+            // The fixture is still `committed=none` at this point, so a
+            // read-back that shows the text must not read as an accepted
+            // value: type_text delivers no end-of-edit.
+            assert_eq!(
+                typed.structured()["committed"],
+                serde_json::json!("unproven"),
+                "type_text implied the app had taken the value: {}",
+                typed.raw
+            );
 
             let second = snapshot_elements(driver, pid, wid);
             assert!(

@@ -4094,6 +4094,40 @@ impl Tool for TypeTextTool {
             }
         };
         let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
+        if isolated_hyprland_background(delivery)
+            && resolved_elem_idx.is_none()
+            && args.get("x").is_none()
+            && args.get("y").is_none()
+        {
+            if xid_opt.is_none() {
+                return isolated_hyprland_refusal(
+                    "an exact window_id is required for isolated text",
+                );
+            }
+            match crate::wayland::hyprland_input::text_actions(&text) {
+                Ok(actions) if !actions.is_empty() => {}
+                Ok(_) => return isolated_hyprland_refusal("background text must not be empty"),
+                Err(error) => return isolated_hyprland_refusal(error.to_string()),
+            }
+            let owner = named_session_cursor_key(&args);
+            let (_cancellation, dispatch) =
+                match spawn_isolated_hyprland(&args, move |cancellation| {
+                    crate::wayland::hyprland_input::execute_background_text(
+                        owner,
+                        pid,
+                        xid,
+                        &text,
+                        cancellation,
+                    )
+                }) {
+                    Ok(dispatch) => dispatch,
+                    Err(refusal) => return refusal,
+                };
+            return match dispatch.await {
+                Ok(result) => isolated_hyprland_result(result),
+                Err(error) => isolated_hyprland_task_error(error, false),
+            };
+        }
         if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
             return refusal;
         }
@@ -4137,7 +4171,7 @@ impl Tool for TypeTextTool {
                     }
                 }
             }
-            match crate::wayland::hyprland_input::foreground_text_actions(&text) {
+            match crate::wayland::hyprland_input::text_actions(&text) {
                 Ok(actions) if !actions.is_empty() => {}
                 Ok(_) => return foreground_hyprland_refusal("foreground text must not be empty"),
                 Err(error) => return foreground_hyprland_refusal(error.to_string()),

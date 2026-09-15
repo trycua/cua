@@ -253,6 +253,7 @@ async fn embedded_service_binds_authority_to_the_original_host_connection() {
         environment: Vec::<EmbeddedEnvironmentVariable>::new(),
         inherit_stderr: true,
         no_overlay: false,
+        capture_stderr: false,
     })
     .unwrap();
     let connection = host.clone().start().await.unwrap();

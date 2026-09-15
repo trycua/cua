@@ -556,6 +556,9 @@ impl Tool for ClickTool {
                         selection_guard.as_ptr(),
                     )
                     .is_some()
+                        && !unsafe { copy_action_names(selection_guard.as_ptr() as AXUIElementRef) }
+                            .iter()
+                            .any(|action| action == "AXPress")
                 })
                 .await
                 .unwrap_or(false)
@@ -639,7 +642,7 @@ impl Tool for ClickTool {
                 || async move {
                     tokio::task::spawn_blocking(move || {
                         let element_ptr = element_guard.as_ptr();
-                        if foreground {
+                        if foreground && selection_pixel.is_ok() {
                             let mut outcome = None;
                             let has_modifiers = !selection_modifiers.is_empty();
                             let action = || {

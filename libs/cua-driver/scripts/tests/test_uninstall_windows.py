@@ -30,18 +30,22 @@ def _run_uninstall(root: Path, overrides: dict[str, str]) -> subprocess.Complete
         "CUA_DRIVER_RS_UNINSTALL_FORCE": "1",
         **overrides,
     }
-    return subprocess.run(
-        [
-            str(powershell), "-NoLogo", "-NoProfile", "-NonInteractive", "-File",
-            str(FIXTURE), "-UninstallerPath", str(UNINSTALL), "-FixtureRoot", str(root),
-        ],
-        cwd=root,
-        env=env,
-        text=True,
-        capture_output=True,
-        timeout=30,
-        check=False,
-    )
+    try:
+        return subprocess.run(
+            [
+                str(powershell), "-NoLogo", "-NoProfile", "-NonInteractive", "-File",
+                str(FIXTURE), "-UninstallerPath", str(UNINSTALL), "-FixtureRoot", str(root),
+            ],
+            cwd=root,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            text=True,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        pytest.fail(f"uninstaller timed out: stdout={error.stdout!r}; stderr={error.stderr!r}")
 
 
 def test_release_uninstall_reports_and_preserves_local_cli(tmp_path: Path) -> None:

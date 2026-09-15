@@ -41,8 +41,8 @@ use super::cdp_ws::{CdpConnection, CdpPool};
 use super::grant::{ExistingProfileGrant, ExistingProfileGrants, GrantLookup};
 use super::mutation::{MutationGates, MutationKey};
 use super::platform::{
-    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, BrowserVisualAction,
-    BrowserVisualActionKind, ExistingProfileSetupRequest,
+    BrowserConsentOutcome, BrowserConsentRequest, BrowserCursorVisibility, BrowserPlatform,
+    BrowserVisualAction, BrowserVisualActionKind, ExistingProfileSetupRequest,
 };
 use super::prepare::ManagedBrowsers;
 use super::reconnect::ReconnectGates;
@@ -72,6 +72,42 @@ pub const MAX_REFS_PER_SNAPSHOT: usize = 300;
 /// compromised or malformed endpoint before its response reaches consumers.
 const MAX_BROWSER_SCREENSHOT_BYTES: usize = 16 * 1024 * 1024;
 
+#[derive(Debug, Default)]
+struct BrowserCursorTracker {
+    window_by_session: HashMap<String, u64>,
+}
+
+impl BrowserCursorTracker {
+    fn update(
+        &mut self,
+        session: &str,
+        window_id: u64,
+        tab_is_active: bool,
+    ) -> Vec<BrowserCursorVisibility> {
+        self.window_by_session.insert(session.to_owned(), window_id);
+
+        if !tab_is_active {
+            return vec![BrowserCursorVisibility {
+                session: session.to_owned(),
+                visible: false,
+            }];
+        }
+
+        self.window_by_session
+            .iter()
+            .filter(|(_, bound_window_id)| **bound_window_id == window_id)
+            .map(|(key, _)| BrowserCursorVisibility {
+                session: key.clone(),
+                visible: key == session,
+            })
+            .collect()
+    }
+
+    fn remove_session(&mut self, session: &str) {
+        self.window_by_session.remove(session);
+    }
+}
+
 pub struct BrowserEngine {
     pub(crate) platform: Arc<dyn BrowserPlatform>,
     pub(crate) store: BrowserStore,
@@ -83,6 +119,7 @@ pub struct BrowserEngine {
     mutation_gates: MutationGates,
     reconnect_gates: ReconnectGates,
     pending_existing_profile_cleanups: Mutex<HashMap<String, Vec<ExistingProfileSetupRequest>>>,
+    browser_cursors: Mutex<BrowserCursorTracker>,
     session_end_hook: Mutex<Option<crate::session::SessionEndHookRegistration>>,
 }
 
@@ -637,6 +674,7 @@ impl BrowserEngine {
             mutation_gates: MutationGates::new(),
             reconnect_gates: ReconnectGates::new(),
             pending_existing_profile_cleanups: Mutex::new(HashMap::new()),
+            browser_cursors: Mutex::new(BrowserCursorTracker::default()),
             session_end_hook: Mutex::new(None),
         });
         let weak: Weak<Self> = Arc::downgrade(&engine);
@@ -646,6 +684,11 @@ impl BrowserEngine {
                 if let Some(engine) = weak.upgrade() {
                     engine.store.remove_session(session_id);
                     engine.cleanup_prepared_session(session_id);
+                    engine
+                        .browser_cursors
+                        .lock()
+                        .unwrap()
+                        .remove_session(session_id);
                     let pending = {
                         let mut pending = engine.pending_existing_profile_cleanups.lock().unwrap();
                         let mut requests = pending.remove(session_id).unwrap_or_default();
@@ -1663,6 +1706,10 @@ impl BrowserEngine {
         viewport_y: f64,
         kind: BrowserVisualActionKind,
     ) {
+        if session.is_empty() || crate::session::is_session_ended(session) {
+            return;
+        }
+
         // `document.visibilityState` distinguishes the selected tab without
         // focusing its native window or invoking any CDP activation command.
         // Treat an unavailable or malformed proof as inactive: omitting
@@ -1706,15 +1753,21 @@ impl BrowserEngine {
         let (screen_x, screen_y) = screen_point
             .map(|(x, y)| (Some(x), Some(y)))
             .unwrap_or((None, None));
+        let visibility_updates = {
+            let mut browser_cursors = self.browser_cursors.lock().unwrap();
+            if crate::session::is_session_ended(session) {
+                return;
+            }
+            browser_cursors.update(session, validated.native.window_id, tab_is_active)
+        };
         self.platform
             .visualize_browser_action(BrowserVisualAction {
                 session: session.to_owned(),
                 window_id: validated.native.window_id,
-                cdp_target_id: validated.tab.cdp_target_id.clone(),
-                tab_is_active,
                 screen_x,
                 screen_y,
                 kind,
+                visibility_updates,
             })
             .await;
     }
@@ -2882,6 +2935,76 @@ fn collect_interactive(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn browser_cursor_tracker_keeps_one_active_tab_per_native_window() {
+        let mut tracker = BrowserCursorTracker::default();
+        assert_eq!(
+            tracker.update("session-red", 77, false),
+            vec![BrowserCursorVisibility {
+                session: "session-red".to_owned(),
+                visible: false,
+            }]
+        );
+
+        let mut updates = tracker.update("session-blue", 77, true);
+        updates.sort_by(|left, right| left.session.cmp(&right.session));
+        assert_eq!(
+            updates,
+            vec![
+                BrowserCursorVisibility {
+                    session: "session-blue".to_owned(),
+                    visible: true,
+                },
+                BrowserCursorVisibility {
+                    session: "session-red".to_owned(),
+                    visible: false,
+                },
+            ]
+        );
+
+        assert_eq!(
+            tracker.update("session-green", 88, true),
+            vec![BrowserCursorVisibility {
+                session: "session-green".to_owned(),
+                visible: true,
+            }]
+        );
+    }
+
+    #[test]
+    fn browser_visual_action_kind_pulses_only_discrete_mutations() {
+        for kind in [
+            BrowserVisualActionKind::Click,
+            BrowserVisualActionKind::Type,
+            BrowserVisualActionKind::RightClick,
+            BrowserVisualActionKind::DoubleClick,
+            BrowserVisualActionKind::Drag,
+        ] {
+            assert!(kind.shows_click_pulse(), "{kind:?} should pulse");
+        }
+        for kind in [
+            BrowserVisualActionKind::Hover,
+            BrowserVisualActionKind::Scroll,
+        ] {
+            assert!(!kind.shows_click_pulse(), "{kind:?} must not pulse");
+        }
+    }
+
+    #[test]
+    fn browser_cursor_tracker_forgets_ended_sessions() {
+        let mut tracker = BrowserCursorTracker::default();
+        tracker.update("ended", 77, true);
+        tracker.remove_session("ended");
+
+        assert_eq!(
+            tracker.update("current", 77, true),
+            vec![BrowserCursorVisibility {
+                session: "current".to_owned(),
+                visible: true,
+            }]
+        );
+    }
 
     #[test]
     fn endpoint_access_policy_requires_grants_for_standalone_consumers() {

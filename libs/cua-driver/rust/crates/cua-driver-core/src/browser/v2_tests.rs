@@ -22,8 +22,9 @@ use crate::tool::Tool;
 use super::engine::BrowserEngine;
 use super::mock_cdp::{MockCdpServer, MockEvent, MockHandler, MockReply};
 use super::platform::{
-    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, ExistingProfileSetupOutcome,
-    ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
+    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, BrowserVisualAction,
+    ExistingProfileSetupOutcome, ExistingProfileSetupRequest, PrepareAction, PrepareOutcome,
+    PrepareRequest,
 };
 use super::pointer::BrowserPointerTool;
 use super::refusal::BrowserRefusal;
@@ -677,6 +678,8 @@ impl BrowserPlatform for FixturePlatform {
         self.trusted_input_limited
             .then_some("fixture trusted input raises the standalone window")
     }
+
+    async fn visualize_browser_action(&self, _action: BrowserVisualAction) {}
 
     async fn classify_browser(&self, _pid: i64) -> Result<BrowserClassification, BrowserRefusal> {
         Ok(BrowserClassification {

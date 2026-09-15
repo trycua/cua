@@ -79,9 +79,7 @@ async fn observes_record(name: &str, foreground: bool, close: bool) {
         sentinel.assert_quiet();
         focus_probe(sentinel).await;
     }
-    let record = result.action_record.as_ref().expect(
-        "keyboard producer must supply its execution record before dispatch reconstruction",
-    );
+    let record = result.action_record.as_ref().unwrap_or_else(|| panic!("keyboard producer must supply its execution record before dispatch reconstruction: {result:?}"));
     assert_eq!(
         record.effect,
         ActionEffect::Unverifiable,

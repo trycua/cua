@@ -221,10 +221,9 @@ async fn target_closes_after_input(tool: &str, mut fields: serde_json::Value, ke
     let result = producer(tool).invoke(fields).await;
     assert_eq!(fixture.key_event("down", key)["synthetic"], true);
     fixture.event("closed");
-    let record = result
-        .action_record
-        .as_ref()
-        .expect("possibly delivered input needs an execution record even on error");
+    let record = result.action_record.as_ref().unwrap_or_else(|| {
+        panic!("possibly delivered input needs an execution record even on error: {result:?}")
+    });
     assert_ne!(
         record.effect,
         ActionEffect::Refused,

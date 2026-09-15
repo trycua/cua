@@ -2971,14 +2971,22 @@ fn finish_pixel_uia_attempt(
     Some(
         ToolResult::error(format!(
             "UIA pixel click {status} for pid {pid}. No fallback input was sent. \
-         The click effect is unknown; inspect the target state before another action."
+         The click effect is unknown; inspect the target state before another action. \
+         If the provider does not recover, retry this action with delivery_mode:\"foreground\"."
         ))
         .with_structured(json!({
             "code": "background_unavailable",
             "uia_status": status,
             "path": "ax",
             "verified": false,
-            "effect": "unverifiable"
+            "effect": "unverifiable",
+            "suggestion": "Retry this action with delivery_mode:\"foreground\".",
+            "escalation": {
+                "recommended": "foreground",
+                "reason": format!(
+                    "the UIA provider is {status}; retry this action with delivery_mode:\"foreground\"."
+                ),
+            },
         })),
     )
 }
@@ -4150,6 +4158,86 @@ mod pixel_click_transport_tests {
             });
         assert_eq!(fallback_calls, 1);
         assert_eq!(result.structured_content.unwrap()["path"], "post_message");
+    }
+
+    #[test]
+    fn uia_unavailable_errors_advertise_foreground_escalation() {
+        use cua_driver_core::action_record::EscalationKind;
+        use cua_driver_core::protocol::Content;
+        for (outcome, status) in [
+            (PointInvokeOutcome::Busy, "busy"),
+            (PointInvokeOutcome::Timeout, "timeout"),
+            (PointInvokeOutcome::Unavailable, "unavailable"),
+        ] {
+            let result = finish_pixel_uia_attempt(outcome, 7, 3, 4)
+                .expect("unavailable UIA must stop the route without fallback");
+            assert!(result.is_error.unwrap_or(false), "{outcome:?}");
+            let data = result
+                .structured_content
+                .as_ref()
+                .expect("structured error");
+            assert_eq!(data["code"], "background_unavailable");
+            assert_eq!(data["uia_status"], status);
+            assert_eq!(
+                data["suggestion"].as_str(),
+                Some("Retry this action with delivery_mode:\"foreground\"."),
+                "{outcome:?}"
+            );
+            assert_eq!(
+                data["escalation"]["recommended"].as_str(),
+                Some("foreground"),
+                "{outcome:?}"
+            );
+            let reason = data["escalation"]["reason"]
+                .as_str()
+                .expect("escalation reason");
+            assert!(
+                reason.contains(status),
+                "reason must name the UIA status: {reason}"
+            );
+            assert!(
+                reason.contains("delivery_mode:\"foreground\""),
+                "reason must name the next rung: {reason}"
+            );
+            let text = match &result.content[0] {
+                Content::Text { text, .. } => text,
+                _ => panic!("expected text content for {outcome:?}"),
+            };
+            assert!(
+                text.contains("No fallback input was sent"),
+                "text must keep the no-replay guarantee: {text}"
+            );
+            assert!(
+                text.contains("delivery_mode:\"foreground\""),
+                "text must surface the escalation: {text}"
+            );
+        }
+        // The completed-miss boundary is unchanged: only Miss falls through,
+        // and a delivered Invoke carries no escalation hint.
+        assert!(finish_pixel_uia_attempt(PointInvokeOutcome::Miss, 7, 3, 4).is_none());
+        let ok = finish_pixel_uia_attempt(PointInvokeOutcome::Invoked, 7, 3, 4)
+            .expect("invoked click reports success");
+        assert!(!ok.is_error.unwrap_or(false));
+        let ok_data = ok.structured_content.as_ref().expect("structured success");
+        assert!(ok_data.get("escalation").is_none());
+        assert!(ok_data.get("suggestion").is_none());
+        // The hint must flow into the existing escalation pipeline, not sit
+        // as inert metadata: Timeout (the #3621 case) normalizes to a
+        // foreground-delivery escalation on the internal record.
+        let timeout_data = finish_pixel_uia_attempt(PointInvokeOutcome::Timeout, 7, 3, 4)
+            .expect("timeout stops the route")
+            .structured_content
+            .expect("structured error");
+        let timeout_record = ActionExecutionRecord::from_legacy(
+            "click",
+            &serde_json::json!({ "delivery_mode": "background" }),
+            &timeout_data,
+        )
+        .expect("UIA timeout should normalize into the public action contract");
+        assert_eq!(
+            timeout_record.escalation.map(|escalation| escalation.kind),
+            Some(EscalationKind::RetryWithForegroundDelivery)
+        );
     }
 
     #[test]

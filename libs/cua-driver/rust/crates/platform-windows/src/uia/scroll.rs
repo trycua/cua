@@ -1,8 +1,8 @@
 //! Background-safe "scroll an off-screen element into view" for coordinate actions.
 //!
-//! The element cache records each actionable element's screen center at walk
+//! The element resolver records each actionable element's screen center at walk
 //! time. On a short display (e.g. 1024x768) a tall window reflows so some
-//! controls sit below the visible area; their cached center then falls outside
+//! controls sit below the visible area; their freshly resolved center then falls outside
 //! the window rect. A raw coordinate tap there lands on whatever is actually
 //! at that pixel - the taskbar, another window - instead of the control. The
 //! click/double-click/right-click element paths already turn that into a clean
@@ -64,7 +64,7 @@ pub unsafe fn element_is_offscreen(element_ptr: usize) -> Option<bool> {
 
 /// Ask the UIA element behind `element_ptr` to scroll itself into view, then
 /// return its fresh on-screen center (from the element's *live* bounding rect,
-/// since the cached center is stale once the control has moved).
+/// since the freshly resolved center is stale once the control has moved).
 ///
 /// Tries `ScrollItemPattern::ScrollIntoView` first; if that leaves the element
 /// off-screen (unsupported, or the container ignored it) it falls back to
@@ -115,7 +115,7 @@ pub unsafe fn scroll_into_view_and_recenter(
         .and_then(actionable)
         .or_else(|| scroll_ancestors_into_view(host_hwnd, &elem).and_then(actionable));
 
-    // Don't Release the cache's ref - the RetainedElement guard owns it.
+    // Don't Release the resolver guard's ref - the RetainedElement guard owns it.
     std::mem::forget(elem);
     result
 }

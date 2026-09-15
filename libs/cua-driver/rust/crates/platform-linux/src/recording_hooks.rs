@@ -77,7 +77,7 @@ pub fn element_window_local_xy(
     capture_point: bool,
 ) -> Option<(u64, Option<(f64, f64)>)> {
     use cua_driver_core::tool_args::ArgsExt;
-    let resolved = crate::atspi::cache::resolve_element_args(
+    let resolved = crate::atspi::element_resolver::resolve_element_args(
         i32::try_from(pid).ok()?,
         args.opt_u64("element_index").map(|index| index as usize),
         args.get("element_token")

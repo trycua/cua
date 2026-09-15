@@ -289,7 +289,7 @@ impl Tool for GetWindowStateTool {
             .map(|v| v.max(1) as usize)
             .unwrap_or(crate::ax::tree::DEFAULT_MAX_DEPTH);
 
-        let (tree_result, prepared_snapshot) = if want_tree {
+        let (tree_result, fresh_elements) = if want_tree {
             let q = query.clone();
             // Keep the product deadline below the public client's 25-second
             // deadline so callers receive a structured driver error. The AX
@@ -303,7 +303,7 @@ impl Tool for GetWindowStateTool {
                     max_elements,
                     max_depth,
                 );
-                let payload = crate::ax::cache::CachedSnapshot::from_nodes(&tree.nodes);
+                let payload = crate::ax::element_resolver::FreshAxElements::from_nodes(&tree.nodes);
                 (tree, payload)
             });
             match tokio::time::timeout(std::time::Duration::from_secs(20), walk_future).await {
@@ -517,7 +517,7 @@ impl Tool for GetWindowStateTool {
             .map(|r| r.tree_markdown.clone())
             .unwrap_or_default();
 
-        let snapshot_id = prepared_snapshot
+        let snapshot_id = fresh_elements
             .as_ref()
             .filter(|_| scope_matched && !observation_only)
             .map(|_| {
@@ -530,11 +530,12 @@ impl Tool for GetWindowStateTool {
         // alongside for back-compat with existing text-parsing callers
         // (Hermes' regex parser, Codex, Claude Code) and is signalled as
         // preferred-for-back-compat-only via the `_note` field below.
-        let elements_json: Vec<serde_json::Value> = match (snapshot_id, tree_result.as_ref()) {
-            (Some(ref sid), Some(r)) => build_elements_array_with_token(&r.nodes, Some(sid)),
-            (None, Some(r)) if scope_matched => build_elements_array_with_token(&r.nodes, None),
-            _ => Vec::new(),
-        };
+        let elements_json: Vec<serde_json::Value> =
+            match (snapshot_id.as_deref(), tree_result.as_ref()) {
+                (Some(sid), Some(r)) => build_elements_array_with_token(&r.nodes, Some(sid)),
+                (None, Some(r)) if scope_matched => build_elements_array_with_token(&r.nodes, None),
+                _ => Vec::new(),
+            };
         let elements_json = cua_driver_core::element_query::project_elements_for_query(
             elements_json,
             query.as_deref(),
@@ -837,7 +838,7 @@ pub(crate) fn build_elements_array_with_token(
                     serde_json::json!(cua_driver_core::element_token::token_for_identity(
                         sid,
                         idx,
-                        &crate::ax::cache::identity_for_node(node)
+                        &crate::ax::element_resolver::identity_for_node(node)
                     )
                     .expect("fresh snapshot handle"));
             }

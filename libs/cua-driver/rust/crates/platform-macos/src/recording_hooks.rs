@@ -1,5 +1,5 @@
 use crate::ax::bindings::{element_screen_center, AXUIElementRef};
-use crate::ax::cache::CachedSnapshot;
+use crate::ax::element_resolver::FreshAxElements;
 use cua_driver_core::element_token::ResolvedElement;
 use cua_driver_core::tool_args::ArgsExt;
 use serde_json::Value;
@@ -11,7 +11,7 @@ pub fn app_state_json_for(window_id: Option<u64>, pid: Option<i64>) -> Option<Ve
         None => crate::windows::resolve_main_window_id(pid).ok()?,
     };
     let result = crate::ax::tree::walk_tree(pid, Some(resolved_wid), None);
-    let _payload = CachedSnapshot::from_nodes(&result.nodes);
+    let _payload = FreshAxElements::from_nodes(&result.nodes);
     let element_count = result
         .nodes
         .iter()
@@ -31,7 +31,7 @@ pub fn element_window_local_xy(
     args: &Value,
     capture_point: bool,
 ) -> Option<(u64, Option<(f64, f64)>)> {
-    let target = crate::ax::cache::resolve_element_args(
+    let target = crate::ax::element_resolver::resolve_element_args(
         i32::try_from(pid).ok()?,
         args.opt_u64("element_index").map(|index| index as usize),
         args.get("element_token").and_then(Value::as_str),

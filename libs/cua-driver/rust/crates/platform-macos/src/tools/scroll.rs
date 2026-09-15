@@ -190,7 +190,7 @@ impl Tool for ScrollTool {
         let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id");
         let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match crate::ax::cache::resolve_element_args(
+        let resolved = match crate::ax::element_resolver::resolve_element_args(
             pid,
             element_index_arg,
             element_token_arg.as_deref(),
@@ -335,7 +335,7 @@ impl Tool for ScrollTool {
         // Resolve a screen-space wheel target, if a target was supplied.
         let wheel_target: Option<WheelTarget> = if let Some(element_ptr) = pre_focus_ptr {
             // Revealing an element is itself an AX mutation. Prove that the
-            // cached element still belongs to the exact requested window before
+            // freshly resolved element still belongs to the exact requested window before
             // AXScrollToVisible for every direction, then keep the lease for the
             // stricter pointer revalidation below.
             let semantic_gate = if !delivery_mode.is_foreground() {

@@ -11,7 +11,7 @@
 
 use anyhow::Result;
 
-pub mod cache;
+pub mod element_resolver;
 pub mod native;
 pub use native::ensure_listener_active;
 

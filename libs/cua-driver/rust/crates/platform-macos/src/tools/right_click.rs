@@ -30,7 +30,7 @@ fn def() -> &'static ToolDef {
         description:
             "Right-click against a target pid. Two addressing modes:\n\n\
              - `element_index` + `window_id` (from the last `get_window_state` snapshot) — \
-               performs `AXShowMenu` on the cached element. Pure AX RPC, works on backgrounded / \
+               performs `AXShowMenu` on the freshly resolved element. Pure AX RPC, works on backgrounded / \
                hidden windows, no cursor move or focus steal. Requires a prior \
                `get_window_state(pid, window_id)` in this turn.\n\n\
              - `x`, `y` — synthesizes `rightMouseDown` / `rightMouseUp` CGEvent pair posted \
@@ -99,7 +99,7 @@ impl Tool for RightClickTool {
         let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id");
         let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match crate::ax::cache::resolve_element_args(
+        let resolved = match crate::ax::element_resolver::resolve_element_args(
             pid,
             element_index_arg,
             element_token_arg.as_deref(),

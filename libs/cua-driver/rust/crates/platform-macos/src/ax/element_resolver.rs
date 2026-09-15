@@ -27,10 +27,10 @@ impl Drop for RetainedElement {
         }
     }
 }
-pub struct CachedSnapshot {
+pub struct FreshAxElements {
     pub elements: Vec<usize>,
 }
-impl CachedSnapshot {
+impl FreshAxElements {
     pub fn from_nodes(nodes: &[AXNode]) -> Self {
         Self {
             elements: nodes
@@ -47,7 +47,7 @@ impl CachedSnapshot {
             .map(|p| unsafe { RetainedElement::retain(*p) })
     }
 }
-impl Drop for CachedSnapshot {
+impl Drop for FreshAxElements {
     fn drop(&mut self) {
         for ptr in &self.elements {
             if *ptr != 0 {
@@ -90,7 +90,7 @@ fn resolve_fresh(pid: i32, w: u64, t: &ElementTarget) -> Result<Option<RetainedE
     let w =
         u32::try_from(w).map_err(|_| format!("window_id {w} is not a valid macOS window id"))?;
     let tree = super::tree::walk_tree(pid, Some(w), None);
-    let payload = CachedSnapshot::from_nodes(&tree.nodes);
+    let payload = FreshAxElements::from_nodes(&tree.nodes);
     let matched = if !t.has_identity() {
         tree.nodes
             .iter()
@@ -111,6 +111,6 @@ mod tests {
     use super::*;
     #[test]
     fn empty_projection_has_no_element() {
-        assert!(CachedSnapshot::from_nodes(&[]).retain_element(0).is_none());
+        assert!(FreshAxElements::from_nodes(&[]).retain_element(0).is_none());
     }
 }

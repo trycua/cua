@@ -7,7 +7,7 @@ use windows::Win32::UI::Accessibility::{IAccessible, IUIAutomationElement};
 #[derive(Debug)]
 pub struct RetainedElement {
     ptr: usize,
-    pub kind: SnapshotKind,
+    pub kind: ElementBackend,
     pub center: (i32, i32),
     pub rect: Option<(i32, i32, i32, i32)>,
     pub msaa_role: Option<i32>,
@@ -19,7 +19,7 @@ impl RetainedElement {
     }
 
     pub fn is_uia(&self) -> bool {
-        self.kind == SnapshotKind::Uia
+        self.kind == ElementBackend::Uia
     }
 
     pub fn focus_element(&self) -> anyhow::Result<()> {
@@ -50,13 +50,13 @@ impl Clone for RetainedElement {
         if self.ptr != 0 {
             unsafe {
                 match self.kind {
-                    SnapshotKind::Uia => {
+                    ElementBackend::Uia => {
                         let iface = IUIAutomationElement::from_raw(self.ptr as *mut _);
                         let dup = iface.clone();
                         std::mem::forget(iface);
                         std::mem::forget(dup);
                     }
-                    SnapshotKind::Msaa => {
+                    ElementBackend::Msaa => {
                         let iface = IAccessible::from_raw(self.ptr as *mut _);
                         let dup = iface.clone();
                         std::mem::forget(iface);
@@ -80,8 +80,8 @@ impl Drop for RetainedElement {
         if self.ptr != 0 {
             unsafe {
                 match self.kind {
-                    SnapshotKind::Uia => drop(IUIAutomationElement::from_raw(self.ptr as *mut _)),
-                    SnapshotKind::Msaa => drop(IAccessible::from_raw(self.ptr as *mut _)),
+                    ElementBackend::Uia => drop(IUIAutomationElement::from_raw(self.ptr as *mut _)),
+                    ElementBackend::Msaa => drop(IAccessible::from_raw(self.ptr as *mut _)),
                 }
             }
         }
@@ -89,17 +89,17 @@ impl Drop for RetainedElement {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SnapshotKind {
+pub enum ElementBackend {
     Uia,
     Msaa,
 }
 
-pub struct CachedSnapshot {
+pub struct FreshUiaElements {
     elements: Vec<RetainedElement>,
 }
 
-impl CachedSnapshot {
-    pub fn from_nodes(nodes: &[UiaNode], kind: SnapshotKind) -> Self {
+impl FreshUiaElements {
+    pub fn from_nodes(nodes: &[UiaNode], kind: ElementBackend) -> Self {
         Self {
             elements: nodes
                 .iter()
@@ -116,7 +116,7 @@ impl CachedSnapshot {
     }
 }
 
-impl CachedSnapshot {
+impl FreshUiaElements {
     fn retain_element(&self, index: usize) -> Option<RetainedElement> {
         self.elements
             .get(index)
@@ -158,11 +158,11 @@ pub fn resolve_element_args(
 fn resolve_fresh(w: u64, t: &ElementTarget) -> Result<Option<RetainedElement>, String> {
     let tree = super::walk_tree(w, None);
     let kind = if tree.nodes.iter().any(|n| n.msaa_role.is_some()) {
-        SnapshotKind::Msaa
+        ElementBackend::Msaa
     } else {
-        SnapshotKind::Uia
+        ElementBackend::Uia
     };
-    let payload = CachedSnapshot::from_nodes(&tree.nodes, kind);
+    let payload = FreshUiaElements::from_nodes(&tree.nodes, kind);
     let matched = if !t.has_identity() {
         tree.nodes
             .iter()

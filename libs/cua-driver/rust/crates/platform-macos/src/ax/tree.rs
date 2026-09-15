@@ -1,4 +1,4 @@
-//! AX tree walker: produces the treeMarkdown string and element cache.
+//! AX tree walker: produces the treeMarkdown string and element resolver.
 //!
 //! Format (matching libs/cua-driver exactly):
 //!   `INDENT- [N] AXRole "Title" [value="..." actions=[...]]`
@@ -485,7 +485,7 @@ unsafe fn walk_element(
     let node = if is_actionable {
         let idx = *counter;
         *counter += 1;
-        // Retain so the element stays alive in the cache after `copy_children`
+        // Retain so the element stays alive after the tree walk after `copy_children`
         // releases the per-child ref at the end of the caller's loop.
         CFRetain(element as CFTypeRef);
         AXNode {

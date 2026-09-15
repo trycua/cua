@@ -262,7 +262,7 @@ async fn decide_background_window_action(
         decide_background_input, BackgroundInputDecision, ExactWindowTarget,
     };
     let element_guard =
-        element_ptr.map(|ptr| unsafe { crate::ax::cache::RetainedElement::retain(ptr) });
+        element_ptr.map(|ptr| unsafe { crate::ax::element_resolver::RetainedElement::retain(ptr) });
     let facts = match tokio::task::spawn_blocking(move || {
         let element_ptr = element_guard.as_ref().map(|guard| guard.as_ptr());
         crate::ax::exact_target::gather_background_facts(pid, window_id, element_ptr)
@@ -524,7 +524,7 @@ impl ZoomRegistry {
 /// by this to recover original (native) window-local pixel coordinates.
 /// Mirrors Swift's `ImageResizeRegistry`.
 ///
-/// Keyed per window, matching the element cache and the element-token
+/// Keyed per window, matching the element resolver and the element-token
 /// registry. A pid-only key leaked the ratio recorded while snapshotting
 /// window A into pixel clicks aimed at window B of the same pid, sending them
 /// off-target (issue #2237).

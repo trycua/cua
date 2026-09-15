@@ -26,7 +26,7 @@ use windows::Win32::UI::Accessibility::{
     UIA_ToggleToggleStatePropertyId, UIA_ValuePatternId, UIA_ValueValuePropertyId,
 };
 
-pub mod cache;
+pub mod element_resolver;
 pub mod fg_bypass;
 pub mod scroll;
 pub mod windows_enum;
@@ -191,7 +191,7 @@ unsafe fn invoke_menu_element(element_ptr: usize, final_segment: bool) -> Result
 }
 
 /// Resolve and invoke an exact application menu path from fresh UIA state at
-/// every hop. No cached element index survives a menu mutation.
+/// every hop. No previously observed element index survives a menu mutation.
 pub fn invoke_menu_path(hwnd: u64, path: &[String]) -> Result<(), String> {
     for depth in 0..path.len() {
         let result = walk_tree(hwnd, None);

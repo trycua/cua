@@ -9,7 +9,7 @@
 #[cfg(target_os = "windows")]
 #[cfg(target_os = "windows")]
 #[cfg(target_os = "windows")]
-use crate::uia::cache::{CachedSnapshot, SnapshotKind};
+use crate::uia::element_resolver::{ElementBackend, FreshUiaElements};
 
 #[cfg(target_os = "windows")]
 use cua_driver_core::recording::ScreenshotCapture;
@@ -91,11 +91,11 @@ pub fn app_state_json_for(window_id: Option<u64>, pid: Option<i64>) -> Option<Ve
     let hwnd = resolve_window_for_recording(window_id, Some(pid.into()))?;
     let result = crate::uia::walk_tree(hwnd, None);
     let kind = if result.nodes.iter().any(|node| node.msaa_role.is_some()) {
-        SnapshotKind::Msaa
+        ElementBackend::Msaa
     } else {
-        SnapshotKind::Uia
+        ElementBackend::Uia
     };
-    let _native_payload = CachedSnapshot::from_nodes(&result.nodes, kind);
+    let _native_payload = FreshUiaElements::from_nodes(&result.nodes, kind);
     let element_count = result
         .nodes
         .iter()
@@ -117,7 +117,7 @@ pub fn element_window_local_xy(
     capture_point: bool,
 ) -> Option<(u64, Option<(f64, f64)>)> {
     let pid_u32 = u32::try_from(pid).ok()?;
-    let resolved = crate::uia::cache::resolve_element_args(
+    let resolved = crate::uia::element_resolver::resolve_element_args(
         pid_u32 as i32,
         args.get("element_index")
             .and_then(|value| value.as_u64())
@@ -140,7 +140,7 @@ pub fn element_window_local_xy(
         return Some((window_id, None));
     }
     let (sx, sy) = element.center;
-    // The cached center is in SCREEN coords. Convert to window-local pixel
+    // The freshly resolved center is in SCREEN coords. Convert to window-local pixel
     // coords by subtracting the window's screen origin (GetWindowRect-equivalent
     // in WindowInfo). Windows captures at logical pixels so no scale factor.
     let wins = crate::win32::list_windows(Some(pid_u32));

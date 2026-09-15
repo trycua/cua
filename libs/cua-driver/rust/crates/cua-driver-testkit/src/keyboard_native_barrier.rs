@@ -83,8 +83,10 @@ pub fn pause_native_focus(platform: &'static str, pointer: usize) {
                 |released| released.is_none(),
             )
             .unwrap();
+        let acknowledged = *released;
+        drop(released);
         assert_eq!(
-            *released,
+            acknowledged,
             Some(true),
             "native focus barrier abandoned or timed out before actuation"
         );

@@ -131,7 +131,7 @@ async fn native_producer_hotkey_retains_the_admitted_uia_target_after_cache_clea
     admitted_target_survives_cache_clear("hotkey").await;
 }
 
-async fn partial_native_acceptance(tool: &str) {
+async fn partial_native_acceptance(tool: &'static str) {
     use crate::input::keyboard::partial_input::PartialInputGuard;
     use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
     let fixture = KeyboardFixture::spawn(false);
@@ -146,9 +146,14 @@ async fn partial_native_acceptance(tool: &str) {
         args["keys"] = serde_json::json!(["ctrl", "h"]);
         0x11
     };
-    let result = producer(tool).invoke(args).await;
-    eprintln!("partial native acceptance result: {result:?}");
+    let pending = tokio::spawn(async move { producer(tool).invoke(args).await });
     fixture.key_event("down", key);
+    fault.finish();
+    let result = tokio::time::timeout(std::time::Duration::from_secs(15), pending)
+        .await
+        .unwrap()
+        .unwrap();
+    eprintln!("partial native acceptance result: {result:?}");
     assert!(
         fault.release(),
         "could not release the independently observed partial input"
@@ -183,13 +188,13 @@ async fn partial_native_acceptance(tool: &str) {
     assert!(record.public_result().unwrap().evidence.is_none());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
 #[ignore = "requires an interactive Windows desktop; injects partial acceptance at the SendInput boundary"]
 async fn native_producer_press_key_partial_acceptance_is_not_a_clean_refusal() {
     partial_native_acceptance("press_key").await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
 #[ignore = "requires an interactive Windows desktop; injects partial acceptance at the SendInput boundary"]
 async fn native_producer_hotkey_partial_acceptance_is_not_a_clean_refusal() {
     partial_native_acceptance("hotkey").await;

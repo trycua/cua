@@ -48,6 +48,29 @@ fn producer(name: &str) -> Box<dyn Tool> {
     }
 }
 
+fn foreground_pid() -> Option<u64> {
+    let output = std::process::Command::new("swaymsg")
+        .args(["-r", "-t", "get_tree"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "Sway foreground observation failed"
+    );
+    let mut nodes = vec![serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()];
+    while let Some(node) = nodes.pop() {
+        if node["focused"] == true && node["pid"].is_u64() {
+            return node["pid"].as_u64();
+        }
+        for field in ["nodes", "floating_nodes"] {
+            if let Some(children) = node[field].as_array() {
+                nodes.extend(children.iter().cloned());
+            }
+        }
+    }
+    None
+}
+
 fn probe(sentinel: &KeyboardFixture) {
     crate::wayland::press_key_focused("f6").unwrap();
     assert_eq!(
@@ -74,11 +97,17 @@ async fn observed_record(tool: &str, mut args: serde_json::Value, key: u64, cont
     assert_eq!(down["synthetic"], false);
     fixture.assert_single_release(key);
     sentinel.assert_quiet();
-    probe(&sentinel);
+    let foreground = foreground_pid();
+    if foreground == Some(u64::from(sentinel.pid())) {
+        probe(&sentinel);
+    }
     assert_ne!(result.is_error, Some(true), "{result:?}");
-    let record = result.action_record.as_ref().unwrap_or_else(|| {
-        panic!("native Wayland producer must supply its execution record: {result:?}")
-    });
+    assert!(
+        foreground == Some(u64::from(sentinel.pid())) && result.action_record.is_some(),
+        "native Wayland action after receipt: foreground={foreground:?}, expected={}, target={}, missing_record={}, result={result:?}",
+        sentinel.pid(), fixture.pid(), result.action_record.is_none()
+    );
+    let record = result.action_record.as_ref().unwrap();
     assert_eq!(record.effect, ActionEffect::Unverifiable);
     assert_eq!(record.actual_delivery, Some(ActualDelivery::Foreground));
     assert!(record.delivered_count.is_none());

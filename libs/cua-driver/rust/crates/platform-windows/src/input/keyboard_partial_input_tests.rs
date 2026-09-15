@@ -1,8 +1,10 @@
 use super::*;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 struct PartialInput {
     release: Mutex<Option<INPUT>>,
+    finish: Mutex<bool>,
+    wake: Condvar,
 }
 
 fn pending() -> &'static Mutex<Option<Arc<PartialInput>>> {
@@ -16,11 +18,18 @@ impl PartialInputGuard {
     pub(crate) fn install() -> Self {
         let state = Arc::new(PartialInput {
             release: Mutex::new(None),
+            finish: Mutex::new(false),
+            wake: Condvar::new(),
         });
         let mut slot = pending().lock().unwrap();
         assert!(slot.is_none(), "partial input fault already installed");
         *slot = Some(state.clone());
         Self(state)
+    }
+
+    pub(crate) fn finish(&self) {
+        *self.0.finish.lock().unwrap() = true;
+        self.0.wake.notify_all();
     }
 
     pub(crate) fn release(&self) -> bool {
@@ -51,6 +60,7 @@ impl Drop for PartialInputGuard {
             *slot = None;
         }
         drop(slot);
+        self.finish();
         if !self.release() {
             eprintln!("native partial-input cleanup could not release the accepted key");
         }
@@ -68,6 +78,17 @@ pub(super) unsafe fn send_input(events: &[INPUT]) -> u32 {
                 let mut release = events[0];
                 release.Anonymous.ki.dwFlags |= KEYEVENTF_KEYUP;
                 *fault.release.lock().unwrap() = Some(release);
+                let (finished, _) = fault
+                    .wake
+                    .wait_timeout_while(
+                        fault.finish.lock().unwrap(),
+                        std::time::Duration::from_secs(15),
+                        |finished| !*finished,
+                    )
+                    .unwrap();
+                let acknowledged = *finished;
+                drop(finished);
+                assert!(acknowledged, "native partial input was not independently observed before the syscall boundary returned");
             }
             sent
         }

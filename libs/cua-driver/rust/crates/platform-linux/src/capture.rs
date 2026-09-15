@@ -119,12 +119,13 @@ struct PackedLayout {
     len: usize,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct PixelDecoder {
     layout: PackedLayout,
     red_mask: u32,
     green_mask: u32,
     blue_mask: u32,
+    direct_colors: Option<Vec<[u8; 3]>>,
 }
 
 impl PixelCatalog {
@@ -185,14 +186,24 @@ impl PixelCatalog {
         })
     }
 
-    fn decoder(&self, w: u32, h: u32, depth: u8, visual_id: u32) -> Result<PixelDecoder> {
+    fn decoder(
+        &self,
+        w: u32,
+        h: u32,
+        depth: u8,
+        visual_id: u32,
+        query_colormap: impl FnOnce(&Visualtype) -> Result<Vec<[u8; 3]>>,
+    ) -> Result<PixelDecoder> {
         let layout = self.packed_layout(w, h, depth)?;
         let visual = self
             .visuals
             .iter()
             .find(|visual| visual.visual_id == visual_id)
             .ok_or_else(|| anyhow!("unknown X11 visual 0x{visual_id:x} for depth {depth}"))?;
-        if visual.class != VisualClass::TRUE_COLOR {
+        if !matches!(
+            visual.class,
+            VisualClass::TRUE_COLOR | VisualClass::DIRECT_COLOR
+        ) {
             bail!(
                 "unsupported X11 visual class {:?} for visual 0x{visual_id:x}",
                 visual.class
@@ -211,13 +222,63 @@ impl PixelCatalog {
         {
             bail!("overlapping RGB masks for X11 visual 0x{visual_id:x}");
         }
+        let direct_colors = if visual.class == VisualClass::DIRECT_COLOR {
+            Some(query_colormap(visual)?)
+        } else {
+            None
+        };
         Ok(PixelDecoder {
             layout,
             red_mask: visual.red_mask,
             green_mask: visual.green_mask,
             blue_mask: visual.blue_mask,
+            direct_colors,
         })
     }
+}
+
+/// DirectColor masks address separate color ramps, not RGB intensities. Fetch
+/// them from the window on every frame: applications can replace the colormap
+/// or change its entries without changing the pixels or the visual.
+fn query_direct_colors(
+    conn: &x11rb::rust_connection::RustConnection,
+    window: u32,
+    visual: &Visualtype,
+) -> Result<Vec<[u8; 3]>> {
+    use x11rb::protocol::xproto::ConnectionExt as _;
+
+    let masks = [visual.red_mask, visual.green_mask, visual.blue_mask];
+    let entries = masks
+        .iter()
+        .map(|mask| (mask >> mask.trailing_zeros()) + 1)
+        .max()
+        .unwrap_or(0);
+    if entries == 0 || entries > u32::from(visual.colormap_entries) {
+        bail!("DirectColor masks exceed the visual's colormap entries");
+    }
+    let attributes = conn.get_window_attributes(window)?.reply()?;
+    if attributes.visual != visual.visual_id {
+        bail!("X11 capture visual differs from window visual");
+    }
+    let mut colors = Vec::with_capacity(entries as usize);
+    // Fit ordinary X11 request limits even for 16-bit component maps.
+    for start in (0..entries).step_by(1024) {
+        let pixels: Vec<_> = (start..entries.min(start + 1024))
+            .map(|index| {
+                masks.iter().fold(0, |pixel, mask| {
+                    pixel | ((index << mask.trailing_zeros()) & mask)
+                })
+            })
+            .collect();
+        let reply = conn.query_colors(attributes.colormap, &pixels)?.reply()?;
+        if reply.colors.len() != pixels.len() {
+            bail!("X11 QueryColors returned an incomplete DirectColor map");
+        }
+        colors.extend(reply.colors.iter().map(|color| {
+            [color.red, color.green, color.blue].map(|value| ((u32::from(value) + 128) / 257) as u8)
+        }));
+    }
+    Ok(colors)
 }
 
 fn checked_capture_dimensions(w: u32, h: u32) -> Result<()> {
@@ -278,12 +339,17 @@ fn packed_zpixmap_to_png(data: &[u8], w: u32, h: u32, decoder: PixelDecoder) -> 
             } else {
                 bail!("unsupported X11 image byte order");
             };
-            rgba.extend_from_slice(&[
-                component_to_u8(pixel, decoder.red_mask),
-                component_to_u8(pixel, decoder.green_mask),
-                component_to_u8(pixel, decoder.blue_mask),
-                255,
-            ]);
+            let masks = [decoder.red_mask, decoder.green_mask, decoder.blue_mask];
+            for (channel, mask) in masks.into_iter().enumerate() {
+                let value = match &decoder.direct_colors {
+                    Some(colors) => {
+                        colors[((pixel & mask) >> mask.trailing_zeros()) as usize][channel]
+                    }
+                    None => component_to_u8(pixel, mask),
+                };
+                rgba.push(value);
+            }
+            rgba.push(255);
         }
     }
     cua_driver_core::image_utils::encode_rgba_to_png(&rgba, w, h)
@@ -597,7 +663,11 @@ impl XShmSession {
             data,
             w,
             h,
-            decoder: self.pixels.decoder(w, h, reply.depth, reply.visual)?,
+            decoder: self
+                .pixels
+                .decoder(w, h, reply.depth, reply.visual, |visual| {
+                    query_direct_colors(&self.conn, window, visual)
+                })?,
         })
     }
 }
@@ -823,7 +893,9 @@ impl XGetImageSession {
             data: img.data,
             w,
             h,
-            decoder: self.pixels.decoder(w, h, img.depth, img.visual)?,
+            decoder: self.pixels.decoder(w, h, img.depth, img.visual, |visual| {
+                query_direct_colors(&self.conn, window, visual)
+            })?,
         })
     }
 }
@@ -978,6 +1050,7 @@ mod tests {
             red_mask: 0x00ff_0000,
             green_mask: 0x0000_ff00,
             blue_mask: 0x0000_00ff,
+            direct_colors: None,
         };
         // Width 3 at 24bpp with 32-bit scanline padding: 9 payload bytes +
         // 3 ignored padding bytes per row. Colors are deliberately varied.
@@ -1007,6 +1080,7 @@ mod tests {
             red_mask: 0xf800,
             green_mask: 0x07e0,
             blue_mask: 0x001f,
+            direct_colors: None,
         };
         let packed = [0xf8, 0x00, 0x07, 0xe0];
         let png = packed_zpixmap_to_png(&packed, 2, 1, decoder).expect("decode big-endian");
@@ -1033,17 +1107,54 @@ mod tests {
             }],
             visuals: vec![valid],
         };
-        let decoder = catalog.decoder(3, 2, 24, 0x21).expect("valid decoder");
+        let decoder = catalog
+            .decoder(3, 2, 24, 0x21, |_| {
+                panic!("TrueColor does not query a colormap")
+            })
+            .expect("valid decoder");
         assert_eq!(decoder.layout.bytes_per_pixel, 3);
         assert_eq!(decoder.layout.stride, 12);
         assert_eq!(decoder.layout.len, 24);
 
         catalog.visuals[0].red_mask = 0x00f0_f000;
         let err = catalog
-            .decoder(3, 2, 24, 0x21)
+            .decoder(3, 2, 24, 0x21, |_| {
+                panic!("TrueColor does not query a colormap")
+            })
             .err()
             .expect("non-contiguous mask must fail");
         assert!(format!("{err:#}").contains("not contiguous"));
+    }
+
+    #[test]
+    fn directcolor_decoder_uses_independent_rgb565_indices() {
+        let catalog = PixelCatalog {
+            image_byte_order: ImageOrder::MSB_FIRST,
+            formats: vec![Format {
+                depth: 16,
+                bits_per_pixel: 16,
+                scanline_pad: 32,
+            }],
+            visuals: vec![Visualtype {
+                visual_id: 0x42,
+                class: VisualClass::DIRECT_COLOR,
+                bits_per_rgb_value: 8,
+                colormap_entries: 64,
+                red_mask: 0xf800,
+                green_mask: 0x07e0,
+                blue_mask: 0x001f,
+            }],
+        };
+        let decoder = catalog
+            .decoder(1, 1, 16, 0x42, |_| {
+                Ok((0..64)
+                    .map(|index| [100 + index, 200 - index, index * 2])
+                    .collect())
+            })
+            .expect("DirectColor decoder");
+        let png = packed_zpixmap_to_png(&[0x08, 0x43, 0xde, 0xad], 1, 1, decoder)
+            .expect("decode independently indexed channels and skip padding");
+        assert_eq!(decode_png_rgba(&png), vec![101, 198, 6, 255]);
     }
 
     #[test]
@@ -1419,6 +1530,121 @@ mod tests {
             .expect("fixture sync request")
             .reply()
             .expect("fixture sync reply");
+    }
+
+    /// DirectColor pixels index independently mutable red, green and blue maps.
+    /// A non-linear map and a map-only update distinguish correct capture from
+    /// treating the pixel masks as TrueColor intensities or caching the palette.
+    #[test]
+    #[ignore = "requires a live X11 server with DirectColor and MIT-SHM 1.2"]
+    fn live_directcolor_capture_tracks_window_colormap() {
+        use x11rb::protocol::xproto::{
+            ColorFlag, Coloritem, ColormapAlloc, ConnectionExt as _, CreateWindowAux, WindowClass,
+        };
+        use x11rb::rust_connection::RustConnection;
+
+        let display = std::env::var("DISPLAY").expect("DISPLAY must be set");
+        let (conn, screen_num) = RustConnection::connect(Some(&display)).expect("connect fixture");
+        let screen = &conn.setup().roots[screen_num];
+        let visual = screen
+            .allowed_depths
+            .iter()
+            .filter(|depth| depth.depth == 24)
+            .flat_map(|depth| &depth.visuals)
+            .find(|visual| {
+                visual.class == VisualClass::DIRECT_COLOR
+                    && visual.red_mask == 0xff0000
+                    && visual.green_mask == 0xff00
+                    && visual.blue_mask == 0xff
+            })
+            .expect("24-bit DirectColor visual");
+        let colormap = conn.generate_id().expect("colormap id");
+        conn.create_colormap(ColormapAlloc::ALL, colormap, screen.root, visual.visual_id)
+            .unwrap()
+            .check()
+            .unwrap();
+        let window = conn.generate_id().expect("window id");
+        conn.create_window(
+            24,
+            window,
+            screen.root,
+            0,
+            0,
+            67,
+            43,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            visual.visual_id,
+            &CreateWindowAux::new()
+                .background_pixel(0x175ba8)
+                .border_pixel(0)
+                .colormap(colormap),
+        )
+        .unwrap()
+        .check()
+        .unwrap();
+        conn.map_window(window).unwrap().check().unwrap();
+        let fixture = LiveFixture { conn, window };
+        paint_live_fixture(&fixture, 67, 43);
+        let mut shm = XShmSession::connect(display.clone()).expect("connect SHM capture");
+        let mut xget = XGetImageSession::connect(display).expect("connect XGetImage capture");
+        for phase in 0..2u16 {
+            let colors: Vec<_> = (0..256u16)
+                .map(|index| Coloritem {
+                    pixel: u32::from(index) * 0x010101,
+                    red: ((index + 73 + phase * 19) % 256) * 257,
+                    green: (255 - index) * 257,
+                    blue: ((index * 3 + phase * 31) % 256) * 257,
+                    flags: ColorFlag::RED | ColorFlag::GREEN | ColorFlag::BLUE,
+                })
+                .collect();
+            fixture
+                .conn
+                .store_colors(colormap, &colors)
+                .unwrap()
+                .check()
+                .unwrap();
+            for frame in [
+                shm.capture_raw(u64::from(window))
+                    .expect("DirectColor SHM capture"),
+                xget.capture_raw(u64::from(window))
+                    .expect("DirectColor XGetImage capture"),
+            ] {
+                let png = raw_frame_png(frame);
+                assert_eq!(
+                    cua_driver_core::image_utils::png_dimensions(&png).unwrap(),
+                    (67, 43)
+                );
+                let rgba = decode_png_rgba(&png);
+                for (x, indices) in [
+                    (0, [0x17u16, 0x5b, 0xa8]),
+                    (33, [0xc4, 0x3d, 0x52]),
+                    (66, [0x2d, 0xb8, 0x71]),
+                ] {
+                    assert_eq!(
+                        &rgba[x * 4..x * 4 + 4],
+                        &[
+                            ((indices[0] + 73 + phase * 19) % 256) as u8,
+                            (255 - indices[1]) as u8,
+                            ((indices[2] * 3 + phase * 31) % 256) as u8,
+                            255,
+                        ]
+                    );
+                }
+            }
+        }
+        fixture
+            .conn
+            .destroy_window(window)
+            .unwrap()
+            .check()
+            .unwrap();
+        fixture
+            .conn
+            .free_colormap(colormap)
+            .unwrap()
+            .check()
+            .unwrap();
     }
 
     fn raw_frame_png(frame: RawFrame) -> Vec<u8> {

@@ -85,6 +85,11 @@ For the relationship between distributions, desktops, and compositors, read
 | `cua-compositor` nested session | Experimental          | Native GTK behavior, capture and scope, private route metadata, independent observation, and per-cell video                                                         | The complete shared renderer matrix is not accepted. Unicode text and a canonical parallel-drag row remain unproven; this route does not establish a stock-Wayland capability.                                            |
 | XWayland                        | Supported with limits | X11 routes are used when the application exposes a real X11 window; native Wayland and AT-SPI fallbacks cover mixed sessions                                        | Capabilities depend on whether the application is actually using X11 or native Wayland.                                                                                                                                   |
 
+X11 window capture supports packed 16-, 24-, and 32-bit TrueColor and
+DirectColor images. DirectColor capture reads the window’s current colormap
+for each frame, including palette changes that do not repaint the window.
+Other indexed visual classes remain outside the native capture path.
+
 ### Hyprland and Omarchy
 
 Omarchy uses Hyprland; it is not a separate display protocol. Modern Hyprland

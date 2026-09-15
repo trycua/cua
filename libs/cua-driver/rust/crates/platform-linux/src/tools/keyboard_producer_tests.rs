@@ -213,16 +213,13 @@ async fn native_producer_missing_terminal_pty_falls_back_to_observed_xsend_event
     assert_eq!(record.effect, ActionEffect::Unverifiable);
 }
 
-#[tokio::test]
-#[ignore = "requires an isolated X11/Openbox desktop and Python"]
-async fn native_producer_target_destruction_after_key_down_is_not_a_clean_refusal() {
+async fn target_closes_after_input(tool: &str, mut fields: serde_json::Value, key: u64) {
     let fixture = KeyboardFixture::spawn(true);
-    let result = producer("press_key")
-        .invoke(
-            serde_json::json!({"pid": fixture.pid(), "window_id": fixture.window_id, "key":"f5"}),
-        )
-        .await;
-    fixture.key_event("down", 0xffc2);
+    fields["pid"] = serde_json::json!(fixture.pid());
+    fields["window_id"] = serde_json::json!(fixture.window_id);
+    fields["delivery_mode"] = serde_json::json!("background");
+    let result = producer(tool).invoke(fields).await;
+    assert_eq!(fixture.key_event("down", key)["synthetic"], true);
     fixture.event("closed");
     let record = result
         .action_record
@@ -234,7 +231,21 @@ async fn native_producer_target_destruction_after_key_down_is_not_a_clean_refusa
         "a key reached the target: {result:?}"
     );
     assert_ne!(record.effect, ActionEffect::Confirmed);
-    assert!(record.actual_delivery.is_some());
+    assert_eq!(record.actual_delivery, Some(ActualDelivery::Background));
+    assert_eq!(record.transport, ActionTransport::LinuxXSendEvent);
+    assert!(record.public_result().unwrap().evidence.is_none());
+}
+
+#[tokio::test]
+#[ignore = "requires an isolated X11/Openbox desktop and Python"]
+async fn native_producer_target_destruction_after_key_down_is_not_a_clean_refusal() {
+    target_closes_after_input("press_key", serde_json::json!({"key":"f5"}), 0xffc2).await;
+}
+
+#[tokio::test]
+#[ignore = "requires an isolated X11/Openbox desktop and Python"]
+async fn native_producer_hotkey_target_destruction_after_modifier_down_is_not_a_clean_refusal() {
+    target_closes_after_input("hotkey", serde_json::json!({"keys":["ctrl","h"]}), 0xffe3).await;
 }
 
 #[tokio::test]

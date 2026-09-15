@@ -59,7 +59,11 @@ async fn observes_record(name: &str, foreground: bool, close: bool) {
         0x74
     } else {
         args["keys"] = serde_json::json!(["ctrl", "h"]);
-        0x48
+        if close {
+            0x11
+        } else {
+            0x48
+        }
     };
     let result = producer(name).invoke(args).await;
     if !close {
@@ -130,6 +134,12 @@ async fn native_producer_foreground_hotkey_record() {
 #[ignore = "requires an interactive Windows desktop"]
 async fn native_producer_target_destruction_after_key_down_is_not_a_clean_refusal() {
     observes_record("press_key", false, true).await;
+}
+
+#[tokio::test]
+#[ignore = "requires an interactive Windows desktop"]
+async fn native_producer_hotkey_target_destruction_after_modifier_down_is_not_a_clean_refusal() {
+    observes_record("hotkey", false, true).await;
 }
 
 #[tokio::test]

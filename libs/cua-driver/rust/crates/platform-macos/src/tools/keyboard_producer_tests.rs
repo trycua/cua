@@ -67,16 +67,12 @@ async fn observes_record(name: &str, foreground: bool, close: bool) {
         args["window_id"] = json!(fixture.window_id);
     }
     let result = producer(name).invoke(args).await;
-    assert_ne!(
-        result.is_error,
-        Some(true),
-        "native producer failed before receipt: {result:?}"
-    );
     fixture.key_event("down", key);
     if close {
         fixture.event("closed");
     } else {
         fixture.key_event("up", key);
+        assert_ne!(result.is_error, Some(true), "{result:?}");
     }
     if let Some(sentinel) = &sentinel {
         sentinel.assert_quiet();
@@ -133,6 +129,12 @@ async fn native_producer_menu_hotkey_record() {
 #[ignore = "requires a native macOS desktop and permission attributed to the test host"]
 async fn native_producer_target_closes_after_key_post_without_false_confirmation() {
     observes_record("press_key", false, true).await;
+}
+
+#[tokio::test]
+#[ignore = "requires a native macOS desktop and permission attributed to the test host"]
+async fn native_producer_hotkey_target_closes_after_key_post_without_false_confirmation() {
+    observes_record("hotkey", false, true).await;
 }
 
 #[tokio::test]

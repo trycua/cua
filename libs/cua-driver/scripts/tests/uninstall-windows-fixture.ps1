@@ -5,7 +5,6 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
-Set-PSDebug -Trace 1
 $FixtureRoot = [System.IO.Path]::GetFullPath($FixtureRoot).TrimEnd('\') + '\'
 $global:CuaUninstallFixtureViolations = [System.Collections.Generic.List[string]]::new()
 

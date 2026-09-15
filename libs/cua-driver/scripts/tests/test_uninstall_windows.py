@@ -27,6 +27,7 @@ def _run_uninstall(root: Path, overrides: dict[str, str]) -> subprocess.Complete
         "TMP": str(root / "temp"),
         "PATH": str(root / "bin"),
         "PATHEXT": ".EXE",
+        "PSModulePath": str(powershell.parent / "Modules"),
         "CUA_DRIVER_RS_UNINSTALL_FORCE": "1",
         **overrides,
     }

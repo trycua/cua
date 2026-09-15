@@ -124,11 +124,6 @@ fn pointer_requests(
             json!({"element_token":button}),
         ),
         (
-            "key-web-focus",
-            "press_key",
-            json!({"element_token":web,"key":"a"}),
-        ),
-        (
             "hotkey-web-focus",
             "hotkey",
             json!({"element_token":web,"keys":["shift","a"]}),

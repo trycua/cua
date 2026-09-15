@@ -361,6 +361,16 @@ def test_existing_identity_override_cannot_be_removed_or_changed():
         )
 
 
+def test_protected_mapping_errors_are_complete_and_sorted():
+    base = config(identityOverrides={"z@example.com": "zoe", "a@example.com": "alice"})
+    with pytest.raises(ReleaseError) as error:
+        validate(base=base, changes={"z@example.com": None, "a@example.com": "other"})
+    assert str(error.value) == (
+        "the pull request removes or changes trusted identityOverrides: "
+        "a@example.com='other' (expected 'alice'), z@example.com=None (expected 'zoe')"
+    )
+
+
 def test_internal_bot_and_ignored_coauthors_are_excluded():
     validate(
         commits=[

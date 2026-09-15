@@ -378,18 +378,15 @@ def validate_pr_attribution(
     base_overrides = _normalized_map(base_config, "identityOverrides")
     coauthor_overrides = _normalized_map(base_config, "coauthorOverrides")
 
-    changed_existing = {
-        email: (base_overrides[email], login)
-        for email, login in identity_changes.items()
+    override_errors = [
+        f"{email}={login!r} (expected {base_overrides[email]!r})"
+        for email, login in sorted(identity_changes.items())
         if email in base_overrides and login != base_overrides[email]
-    }
-    if changed_existing:
-        details = ", ".join(
-            f"{email}={actual!r} (expected {expected!r})"
-            for email, (expected, actual) in sorted(changed_existing.items())
-        )
+    ]
+    if override_errors:
         raise ReleaseError(
-            "the pull request removes or changes trusted identityOverrides: " + details
+            "the pull request removes or changes trusted identityOverrides: "
+            + ", ".join(override_errors)
         )
 
     pull_number = int(pull.get("number") or 0)

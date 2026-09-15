@@ -395,7 +395,11 @@ impl Tool for DragTool {
                 .update_position(&cursor_key, to_sx, to_sy);
         }
 
-        let changes = super::finish_window_observation(snapshot, &args).await;
+        let changes = super::finish_window_observation(
+            snapshot,
+            args.bool_or("_skip_window_change_detection", false),
+        )
+        .await;
 
         if let Some(wid) = window_id {
             crate::cursor::overlay::send_command(

@@ -575,7 +575,11 @@ impl Tool for ScrollTool {
             )
             .await;
 
-            let changes = super::finish_window_observation(snapshot, &args).await;
+            let changes = super::finish_window_observation(
+                snapshot,
+                args.bool_or("_skip_window_change_detection", false),
+            )
+            .await;
             let mode_label = if fg {
                 " (delivery_mode:foreground)"
             } else {
@@ -674,7 +678,11 @@ impl Tool for ScrollTool {
         )
         .await;
 
-        let changes = super::finish_window_observation(snapshot, &args).await;
+        let changes = super::finish_window_observation(
+            snapshot,
+            args.bool_or("_skip_window_change_detection", false),
+        )
+        .await;
 
         match result {
             Ok(Ok(())) => ToolResult::text(format!(

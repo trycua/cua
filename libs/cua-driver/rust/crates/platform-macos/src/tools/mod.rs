@@ -311,13 +311,9 @@ pub(crate) async fn acquire_background_mutation(pid: i32) -> BackgroundMutationL
 /// delay to every input event. Regular MCP callers retain the full observer.
 pub(crate) async fn finish_window_observation(
     snapshot: crate::window_change_detector::Snapshot,
-    args: &serde_json::Value,
+    skip_window_change_detection: bool,
 ) -> crate::window_change_detector::Changes {
-    if args
-        .get("_skip_window_change_detection")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false)
-    {
+    if skip_window_change_detection {
         drop(snapshot);
         crate::window_change_detector::Changes::no_change()
     } else {
@@ -332,11 +328,7 @@ mod interactive_observation_tests {
     #[tokio::test]
     async fn embedded_interactive_input_can_finish_without_polling() {
         let snapshot = crate::window_change_detector::WindowChangeDetector::snapshot(None);
-        let changes = finish_window_observation(
-            snapshot,
-            &serde_json::json!({"_skip_window_change_detection": true}),
-        )
-        .await;
+        let changes = finish_window_observation(snapshot, true).await;
         assert!(!changes.needs_restore());
     }
 }
@@ -360,125 +352,86 @@ pub(crate) async fn focus_by_pixel(
     from_zoom: bool,
     mutation_lease: Option<&BackgroundMutationLease>,
 ) -> Result<(), cua_driver_core::protocol::ToolResult> {
-    use cua_driver_core::tool::Tool;
-    let mut click_args = serde_json::json!({
-        "pid": pid, "x": x, "y": y,
-        "delivery_mode": "background",
-        "action": "focus",
-    });
-    if let Some(wid) = window_id {
-        click_args["window_id"] = serde_json::json!(wid);
-        if let Some(lease) = mutation_lease {
-            lease
-                .gate_again(
-                    wid,
-                    None,
-                    cua_driver_core::background_input::BackgroundAction::WindowPointer,
-                )
-                .await?;
-        }
+    use click::{PixelClickError, PixelClickRequest};
+    if let (Some(wid), Some(lease)) = (window_id, mutation_lease) {
+        lease
+            .gate_again(
+                wid,
+                None,
+                cua_driver_core::background_input::BackgroundAction::WindowPointer,
+            )
+            .await?;
     }
-    if let Some(ref s) = session {
-        click_args["session"] = serde_json::json!(s);
-    }
-    if let Some(ref s) = session_id {
-        click_args["_session_id"] = serde_json::json!(s);
-    }
-    if from_zoom {
-        click_args["from_zoom"] = serde_json::json!(true);
-    }
-    let click_tool = click::ClickTool::new(state.clone());
-    let click = click_tool.invoke(click_args);
-    let focus = if let Some(lease) = mutation_lease {
-        crate::background_mutation::with_held_lease(lease.pid, click).await
-    } else {
-        click.await
+    let mut request = PixelClickRequest {
+        pid,
+        window_id,
+        x,
+        y,
+        focus_only: true,
+        delivery_mode: DeliveryMode::Background,
+        button: "left".to_owned(),
+        count: 1,
+        modifiers: Vec::new(),
+        from_zoom,
+        debug_image_out: None,
+        cursor_key: cursor_tools::session_cursor_key(session.as_deref(), session_id.as_deref()),
+        session_id,
+        skip_window_change_detection: false,
     };
-    if focus.is_error != Some(true) {
-        // AXFocused is non-destructive: unlike a second real click, it keeps a
-        // Cmd+A selection intact before a follow-up type_text or Cmd+V.
-        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
-        // A background focus-click is `effect:"unverifiable"` by construction:
-        // it cannot prove the renderer moved its first responder. Returning on
-        // "it didn't error" therefore skipped the real-click fallback below
-        // whenever the click was a silent no-op — advancing on transport
-        // success alone, which is exactly what the ladder forbids. Confirm the
-        // focus actually moved before claiming this rung worked.
-        if !foreground || pixel_focus_landed(pid, window_id, x, y).await {
-            return Ok(());
+    let click = click::ClickTool::new(state.clone());
+    let attempt = click.pixel_click(request.clone());
+    let focus = if let Some(lease) = mutation_lease {
+        crate::background_mutation::with_held_lease(lease.pid, attempt).await
+    } else {
+        attempt.await
+    };
+    match focus {
+        Ok(outcome) => {
+            tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+            if !foreground || pixel_focus_landed(pid, window_id, outcome.screen_point).await {
+                return Ok(());
+            }
         }
-    } else if !foreground
-        || focus
-            .structured_content
-            .as_ref()
-            .is_some_and(|result| result["code"] == "native_window_geometry_mismatch")
-    {
-        return Err(focus);
+        Err(
+            error @ PixelClickError::Frame(px_frame::PxFrameError::NativeGeometryMismatch {
+                ..
+            }),
+        ) => {
+            return Err(error.into_tool_result());
+        }
+        Err(error) if !foreground => return Err(error.into_tool_result()),
+        Err(_) => {}
     }
-
-    // Some renderer surfaces do not expose a usable AX focus action. The
-    // explicit foreground rung retains its real-click fallback for them.
-    let mut click_args = serde_json::json!({
-        "pid": pid, "x": x, "y": y,
-        "delivery_mode": "foreground",
-        "action": "press",
-    });
-    if let Some(wid) = window_id {
-        click_args["window_id"] = serde_json::json!(wid);
-    }
-    if let Some(ref s) = session {
-        click_args["session"] = serde_json::json!(s);
-    }
-    if let Some(ref s) = session_id {
-        click_args["_session_id"] = serde_json::json!(s);
-    }
-    if from_zoom {
-        click_args["from_zoom"] = serde_json::json!(true);
-    }
-    let focus = click::ClickTool::new(state.clone())
-        .invoke(click_args)
-        .await;
-    if focus.is_error == Some(true) {
-        return Err(focus);
-    }
-    // Brief settle so the renderer registers focus before the keystrokes.
+    request.focus_only = false;
+    request.delivery_mode = DeliveryMode::Foreground;
+    click
+        .pixel_click(request)
+        .await
+        .map_err(PixelClickError::into_tool_result)?;
     tokio::time::sleep(std::time::Duration::from_millis(120)).await;
     Ok(())
 }
 
-/// Confirm that a focus pixel-click actually moved the application's focused
-/// element onto the clicked point.
-///
-/// The background focus-click reports `effect:"unverifiable"`, so this is the
-/// read-back that lets [`focus_by_pixel`] decide whether the cheap rung worked
-/// or the real-click fallback is still required. It reuses the same
-/// window-local-pixels → screen translation the click itself used, so the
-/// comparison is in one coordinate space.
-///
-/// Returns `false` whenever the answer cannot be established (no window id,
-/// untranslatable frame, unreadable focused element or rect). That is the
-/// conservative direction: an unprovable focus escalates to the stronger rung
-/// rather than being reported as success.
-async fn pixel_focus_landed(pid: i32, window_id: Option<u32>, x: f64, y: f64) -> bool {
-    let Some(wid) = window_id else {
+async fn pixel_focus_landed(
+    pid: i32,
+    window_id: Option<u32>,
+    (screen_x, screen_y): (f64, f64),
+) -> bool {
+    if window_id.is_none() {
         return false;
-    };
-    tokio::task::spawn_blocking(move || {
-        let Ok(frame) = px_frame::resolve_window_px_frame(pid, wid) else {
+    }
+    tokio::task::spawn_blocking(move || unsafe {
+        let Some(focused) = crate::ax::bindings::focused_element_of_pid(pid) else {
             return false;
         };
-        let (screen_x, screen_y, _, _) = frame.to_screen(x, y);
-        unsafe {
-            let Some(focused) = crate::ax::bindings::focused_element_of_pid(pid) else {
-                return false;
-            };
-            let rect = crate::ax::bindings::element_screen_rect(focused);
-            core_foundation::base::CFRelease(focused as core_foundation::base::CFTypeRef);
-            let Some(rect) = rect else {
-                return false;
-            };
-            point_within_rect(rect, screen_x, screen_y)
-        }
+        let rect = (crate::ax::exact_target::element_window_id(focused) == window_id)
+            .then(|| crate::ax::bindings::element_screen_rect(focused))
+            .flatten();
+        core_foundation::base::CFRelease(focused as core_foundation::base::CFTypeRef);
+        let Some(rect) = rect else {
+            return false;
+        };
+        point_within_rect(rect, screen_x, screen_y)
     })
     .await
     .unwrap_or(false)

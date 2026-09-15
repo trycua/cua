@@ -481,7 +481,11 @@ impl Tool for HotkeyTool {
         )
         .await;
 
-        let changes = super::finish_window_observation(snapshot, &args).await;
+        let changes = super::finish_window_observation(
+            snapshot,
+            args.bool_or("_skip_window_change_detection", false),
+        )
+        .await;
 
         match result {
             Ok(Ok(())) => {

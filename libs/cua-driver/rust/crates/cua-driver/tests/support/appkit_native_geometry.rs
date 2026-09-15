@@ -479,7 +479,28 @@ fn run_native_geometry_mismatch(foreground: bool) {
                 selection.text()
             );
             assert_eq!(selection.action_route(), Some("accessibility"));
-            fixture_state(&directory, |state| state["selected"] == true);
+            let selected = fixture_state(&directory, |state| state["selected"] == true);
+            let scroll_before = selected["native_scroll_y"].as_f64().unwrap();
+            let semantic_scroll = driver.call(
+                "scroll",
+                serde_json::json!({
+                    "pid":harness.pid, "window_id":wid,
+                    "element_token":element_token_by_id(&snapshot, "geometry-native-text"),
+                    "direction":"down", "by":"page", "amount":1
+                }),
+            );
+            save_response(&directory, "semantic-scroll.json", &semantic_scroll);
+            assert!(
+                !semantic_scroll.is_error(),
+                "independent native AX scroll: {}",
+                semantic_scroll.text()
+            );
+            assert_eq!(semantic_scroll.structured()["path"], "ax");
+            fixture_state(&directory, |state| {
+                state["native_scroll_y"]
+                    .as_f64()
+                    .is_some_and(|y| y > scroll_before)
+            });
             let response = driver.call(
                 "click",
                 serde_json::json!({

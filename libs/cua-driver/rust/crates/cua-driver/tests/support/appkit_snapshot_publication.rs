@@ -486,6 +486,16 @@ fn harness_appkit_cancelled_geometry_capture_preserves_published_token() {
         assert!(!first.is_error, "initial SDK capture: {}", first.text);
         let first: serde_json::Value =
             serde_json::from_str(first.structured_json.as_ref().unwrap()).unwrap();
+        assert_eq!(first["screenshot_frame_valid"], true,
+            "embedded SDK test host needs its own authorized capture context; daemon grants are not sufficient: {}",
+            first["screenshot_error"]);
+        assert!(
+            first["elements"]
+                .as_array()
+                .is_some_and(|elements| !elements.is_empty()),
+            "embedded SDK test host has no usable exact-window AX surface: {}",
+            first["degraded_reason"]
+        );
         assert_eq!(first["native_window_geometry"]["status"], "aligned");
         let token = first["elements"]
             .as_array()

@@ -70,6 +70,7 @@ final class NativeGeometryFixture: NSObject {
     private let directory: URL
     private let counterLabel = NSTextField(labelWithString: "geometry_count=0")
     private var counter = 0
+    private let textScroll: NSScrollView?
     private let selectable = NativeGeometryRow(frame: NSRect(x: 190, y: 222, width: 150, height: 18))
     private var webScroll = -1.0
     private let webObserver = NativeGeometryWebObserver()
@@ -81,6 +82,7 @@ final class NativeGeometryFixture: NSObject {
         self.directory = directory
         let includeWeb = ProcessInfo.processInfo.environment["CUA_APPKIT_GEOMETRY_NO_WEB"] != "1"
         web = includeWeb ? WKWebView(frame: NSRect(x: 200, y: 20, width: 140, height: 200)) : nil
+        textScroll = includeWeb ? NSScrollView(frame: NSRect(x: 20, y: 22, width: 160, height: 36)) : nil
         webScroll = includeWeb ? -1 : 0
         window = NativeGeometryWindow(
             contentRect: NSRect(x: 100, y: 100, width: 360, height: 240),
@@ -123,22 +125,36 @@ final class NativeGeometryFixture: NSObject {
             self?.publish()
         }
         if let web {
-        let scripts = web.configuration.userContentController
-        scripts.add(webObserver, name: "geometry")
-        scripts.addUserScript(WKUserScript(source: """
-            const publish = () => window.webkit.messageHandlers.geometry.postMessage(window.scrollY);
-            window.addEventListener('load', publish);
-            window.addEventListener('scroll', publish);
-            """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
-        web.loadHTMLString("""
-            <!doctype html><html lang="en"><head><title>Geometry scroll probe</title></head>
-            <body style="margin:0"><div style="height:800px">Native reveal probe</div>
-            <button aria-label="Geometry reveal target">Reveal target</button>
-            <div style="height:200px"></div></body></html>
-            """, baseURL: nil)
-        content.addSubview(web)
+            let scripts = web.configuration.userContentController
+            scripts.add(webObserver, name: "geometry")
+            scripts.addUserScript(WKUserScript(source: """
+                const publish = () => window.webkit.messageHandlers.geometry.postMessage(window.scrollY);
+                window.addEventListener('load', publish);
+                window.addEventListener('scroll', publish);
+                """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            web.loadHTMLString("""
+                <!doctype html><html lang="en"><head><title>Geometry scroll probe</title></head>
+                <body style="margin:0"><div style="height:800px">Native reveal probe</div>
+                <button aria-label="Geometry reveal target">Reveal target</button>
+                <div style="height:200px"></div></body></html>
+                """, baseURL: nil)
+            content.addSubview(web)
         }
-        counterLabel.frame = NSRect(x: 20, y: 30, width: 160, height: 24)
+        if let textScroll {
+            let text = NSTextView(frame: NSRect(x: 0, y: 0, width: 140, height: 2400))
+            text.string = (0..<100).map { "Native line \($0)" }.joined(separator: "\n")
+            text.isEditable = false
+            text.setAccessibilityIdentifier("geometry-native-text")
+            textScroll.documentView = text
+            textScroll.hasVerticalScroller = true
+            textScroll.autohidesScrollers = false
+            textScroll.scrollerStyle = .legacy
+            textScroll.contentView.postsBoundsChangedNotifications = true
+            NotificationCenter.default.addObserver(self, selector: #selector(didScroll(_:)),
+                name: NSView.boundsDidChangeNotification, object: textScroll.contentView)
+            content.addSubview(textScroll)
+        }
+        counterLabel.frame = NSRect(x: 20, y: 3, width: 160, height: 16)
         content.addSubview(counterLabel)
         window.contentView = content
         window.onInput = { [weak self] in self?.publish() }
@@ -177,6 +193,8 @@ final class NativeGeometryFixture: NSObject {
 
     @objc private func disagree() { setGeometry(mismatched: true) }
 
+    @objc private func didScroll(_ notification: Notification) { publish() }
+
     private func setGeometry(mismatched: Bool = false, unavailable: Bool = false, delay: Double = 0) {
         window.reportsMismatch = mismatched
         window.reportsUnavailable = unavailable
@@ -203,6 +221,7 @@ final class NativeGeometryFixture: NSObject {
                 "counter": counter,
                 "selected": selectable.selected,
                 "web_scroll_y": webScroll,
+                "native_scroll_y": textScroll?.documentVisibleRect.origin.y ?? 0,
                 "input_events": window.inputEvents
             ], options: [.sortedKeys])
             try data.write(to: directory.appendingPathComponent("state.json"), options: .atomic)

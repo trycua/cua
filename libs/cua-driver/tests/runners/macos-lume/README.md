@@ -572,14 +572,33 @@ or an incorrect harness cannot fall back to running the full suite. AppKit
 selection requires `--retry-only`; full-matrix automatic retry eligibility is
 unchanged.
 
-The `macos-appkit-native-geometry-mismatch-px-background` cell uses an opt-in
-AppKit fixture that changes its reported accessibility frame without resizing
-the compositor window. A real middle-click first calibrates the fixture's native
-input journal. The test then requires retained PNG/tree output, a working semantic
-button action, and a pixel refusal with no additional native input or background
-focus/cursor/stacking violations. Raw responses, PNG and fixture state are retained
-under the cell's recording directory. This is controlled native disagreement
-coverage, not a Stage Manager reproduction or tolerance calibration.
+The `macos-appkit-native-geometry-mismatch-px-background` and
+`macos-appkit-native-geometry-mismatch-px-foreground` cells use an opt-in AppKit
+fixture that changes its reported accessibility frame without resizing the
+compositor window. Real middle-click reception and WebKit reveal/scroll calibrate
+the native input and reveal oracles. The cells require retained PNG/tree output,
+independent AXPress/AXSelected/native text scrolling, and pointer-family refusals
+without additional native input or focus/cursor/stacking violations. Duplicate
+transport events establish reception, not exact-one-click delivery. Raw responses,
+PNG and fixture state remain under the cell's recording directory. This is
+controlled native disagreement coverage, not Stage Manager or tolerance calibration.
+
+`macos-appkit-geometry-availability-px-foreground` uses a pure AppKit accessory
+application to isolate single-window inference from the regular application's
+auxiliary window surfaces. It requires an inferred mismatch refusal, preserved
+observation and input with unavailable metadata, delayed metadata degradation,
+and fresh aligned recovery. It does not relax production ambiguity checks or
+claim a hard end-to-end latency bound from the injected delay.
+
+`macos-appkit-snapshot-publication-ax-foreground` changes geometry during a blocked
+PNG write and verifies unstable observation plus retained-token publication order.
+`macos-appkit-geometry-snapshot-cancellation-ax-foreground` exercises the public
+embedded SDK, not the daemon proxy. Its test host requires its own authorized
+Accessibility and Screen Recording context through maintainer-approved setup.
+Successful daemon preflight does not establish that authority. Missing SDK-host
+authority fails the observation precondition; it is neither cancellation evidence
+nor a passing/ignored cell. Resolve that prerequisite before full certification;
+do not substitute another backend or silently repair TCC.
 
 ## Test the runner itself
 

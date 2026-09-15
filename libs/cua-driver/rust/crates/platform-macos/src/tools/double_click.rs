@@ -245,7 +245,7 @@ impl Tool for DoubleClickTool {
         );
 
         let fg = delivery_mode.is_foreground() && window_id.is_some();
-        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<bool> {
             let do_click = move || -> anyhow::Result<()> {
                 if let Some(wid) = window_id {
                     crate::input::mouse::click_at_xy_with_window_local(
@@ -264,16 +264,15 @@ impl Tool for DoubleClickTool {
                 }
             };
             // Foreground rung: brief front → double-click → restore prior frontmost.
+            // Returns whether the window was ACTUALLY fronted, so the
+            // reported `path` honestly reflects the rung that ran.
             match (fg, window_id) {
-                (true, Some(wid)) => {
-                    crate::input::skylight::with_foreground_assist(
-                        pid as libc::pid_t,
-                        wid,
-                        do_click,
-                    )?;
-                    Ok(())
-                }
-                _ => do_click(),
+                (true, Some(wid)) => crate::input::skylight::with_foreground_assist(
+                    pid as libc::pid_t,
+                    wid,
+                    do_click,
+                ),
+                _ => do_click().map(|_| false),
             }
         })
         .await;
@@ -284,9 +283,9 @@ impl Tool for DoubleClickTool {
             ""
         };
         match result {
-            Ok(Ok(())) => ToolResult::text(format!("✅ Double-clicked at ({screen_x:.1}, {screen_y:.1}){mode_label}."))
+            Ok(Ok(fronted)) => ToolResult::text(format!("✅ Double-clicked at ({screen_x:.1}, {screen_y:.1}){mode_label}."))
                 .with_structured(serde_json::json!({
-                    "path": if fg { "cgevent_fg" } else { "cgevent" }, "verified": false, "effect": "unverifiable"
+                    "path": if fg && fronted { "cgevent_fg" } else { "cgevent" }, "verified": false, "effect": "unverifiable"
                 })),
             Ok(Err(e)) => ToolResult::error(format!("Double-click failed: {e}")),
             Err(e)     => ToolResult::error(format!("Task error: {e}")),

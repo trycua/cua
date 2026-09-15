@@ -630,6 +630,22 @@ fn native_cell_id(toolkit: &str, action: &str, targeting: Targeting, delivery: D
     .replace('_', "-")
 }
 
+/// The compositor-owned cursor oracle is trustworthy only where the harness
+/// can calibrate it: everywhere off Wayland, and on Hyprland sessions that
+/// expose the global cursor. Generic Wayland sessions stay explicitly
+/// unsupported instead of silently accepting an uncalibrated observer.
+fn cursor_oracle_required(display_server: DisplayServer, wayland_session: Option<&str>) -> bool {
+    display_server != DisplayServer::Wayland
+        || wayland_session.is_some_and(|session| session.eq_ignore_ascii_case("hyprland"))
+}
+
+/// Whether the current session's background contracts must attach the
+/// `Cursor` preservation oracle.
+pub fn native_cursor_oracle_required() -> bool {
+    let wayland_session = std::env::var("CUA_E2E_WAYLAND_SESSION").ok();
+    cursor_oracle_required(DisplayServer::current(), wayland_session.as_deref())
+}
+
 pub fn native_background_case(
     toolkit: &str,
     action: &str,
@@ -642,7 +658,7 @@ pub fn native_background_case(
         OracleKind::ZOrder,
         OracleKind::NoLeakedInput,
     ];
-    if DisplayServer::current() != DisplayServer::Wayland {
+    if native_cursor_oracle_required() {
         oracles.push(OracleKind::Cursor);
     }
     CaseSpec::delivered(
@@ -2989,6 +3005,20 @@ mod tests {
     }
 
     #[test]
+    fn cursor_oracle_is_required_only_for_hyprland_wayland() {
+        assert!(cursor_oracle_required(
+            DisplayServer::Wayland,
+            Some("hyprland")
+        ));
+        assert!(!cursor_oracle_required(
+            DisplayServer::Wayland,
+            Some("sway")
+        ));
+        assert!(!cursor_oracle_required(DisplayServer::Wayland, None));
+        assert!(cursor_oracle_required(DisplayServer::X11, None));
+    }
+
+    #[test]
     fn native_case_builders_encode_delivery_and_oracle_contracts() {
         let background =
             native_background_case("wpf", "left_click", Targeting::Ax, DriverRoute::UiaInvoke);
@@ -3001,11 +3031,14 @@ mod tests {
             OracleKind::FixtureState,
             OracleKind::Focus,
             OracleKind::ZOrder,
-            OracleKind::Cursor,
             OracleKind::NoLeakedInput,
         ] {
             assert!(background.oracles.contains(&oracle));
         }
+        assert_eq!(
+            background.oracles.contains(&OracleKind::Cursor),
+            native_cursor_oracle_required()
+        );
         background.validate().expect("background case is valid");
 
         let foreground = native_foreground_case(

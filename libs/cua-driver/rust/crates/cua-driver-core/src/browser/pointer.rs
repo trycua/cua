@@ -17,7 +17,7 @@ use crate::tool::{ProtectedResourceOwnership, Tool, ToolDef};
 use crate::tool_args::ArgsExt;
 
 use super::cdp_ws::CdpConnection;
-use super::engine::{BrowserEngine, ValidatedTab};
+use super::engine::{BrowserEngine, FrameSessionLease, ValidatedTab};
 use super::platform::BrowserVisualActionKind;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::required_session_schema;
@@ -211,7 +211,7 @@ struct ResolvedRef {
     external: String,
     backend_node_id: i64,
     frame: FrameRef,
-    cdp_session: String,
+    cdp_session: FrameSessionLease,
 }
 
 fn same_exact_frame(left: &FrameRef, right: &FrameRef) -> bool {
@@ -332,6 +332,7 @@ impl BrowserPointerTool {
         validated: &ValidatedTab,
         external: &str,
         action: PointerAction,
+        proven_frame: Option<&ResolvedRef>,
     ) -> Result<ResolvedRef, ToolResult> {
         let entry = self
             .engine
@@ -351,11 +352,20 @@ impl BrowserPointerTool {
             )
             .to_tool_result());
         }
-        let cdp_session = self
-            .engine
-            .frame_session_for_mutation(session, target_id, tab_id, validated, &entry.frame)
-            .await
-            .map_err(|refusal| refusal.to_tool_result())?;
+        // A two-ref action in one exact frame needs only one frame proof and,
+        // for an OOPIF, one owned child attachment. Chromium does not
+        // re-announce an already attached target when auto-attach is enabled
+        // a second time, so share the first lease instead of rediscovering it.
+        let cdp_session = if let Some(proven) =
+            proven_frame.filter(|proven| same_exact_frame(&proven.frame, &entry.frame))
+        {
+            proven.cdp_session.clone()
+        } else {
+            self.engine
+                .frame_session_for_mutation(session, target_id, tab_id, validated, &entry.frame)
+                .await
+                .map_err(|refusal| refusal.to_tool_result())?
+        };
         Ok(ResolvedRef {
             external: external.to_owned(),
             backend_node_id: entry.backend_node_id,
@@ -402,17 +412,19 @@ impl BrowserPointerTool {
     ) -> ToolResult {
         let conn = &validated.conn;
         let object_id =
-            match resolve_object(conn, &origin.cdp_session, origin.backend_node_id).await {
+            match resolve_object(conn, origin.cdp_session.as_str(), origin.backend_node_id).await {
                 Ok(id) => id,
                 Err(result) => return result,
             };
 
-        if let Ok((x, y)) = point_for_ref(conn, &origin.cdp_session, origin.backend_node_id).await {
+        if let Ok((x, y)) =
+            point_for_ref(conn, origin.cdp_session.as_str(), origin.backend_node_id).await
+        {
             self.engine
                 .visualize_browser_action(
                     session,
                     validated,
-                    &origin.cdp_session,
+                    origin.cdp_session.as_str(),
                     x,
                     y,
                     visual_kind(request.action),
@@ -441,7 +453,7 @@ impl BrowserPointerTool {
                 let destination_argument = if let Some(destination) = destination {
                     let object_id = match resolve_object(
                         conn,
-                        &destination.cdp_session,
+                        destination.cdp_session.as_str(),
                         destination.backend_node_id,
                     )
                     .await
@@ -471,7 +483,7 @@ impl BrowserPointerTool {
 
         match conn
             .call(
-                Some(&origin.cdp_session),
+                Some(origin.cdp_session.as_str()),
                 "Runtime.callFunctionOn",
                 json!({
                     "objectId": object_id,
@@ -570,7 +582,13 @@ impl BrowserPointerTool {
         let origin = match (&request.origin, origin_ref) {
             (Location::Coordinates(x, y), None) => (*x, *y),
             (Location::Ref(_), Some(reference)) => {
-                match point_for_ref(conn, &reference.cdp_session, reference.backend_node_id).await {
+                match point_for_ref(
+                    conn,
+                    reference.cdp_session.as_str(),
+                    reference.backend_node_id,
+                )
+                .await
+                {
                     Ok(point) => point,
                     Err(result) => return result,
                 }
@@ -580,7 +598,13 @@ impl BrowserPointerTool {
         let destination = match (&request.destination, destination_ref) {
             (Some(Location::Coordinates(x, y)), None) => Some((*x, *y)),
             (Some(Location::Ref(_)), Some(reference)) => {
-                match point_for_ref(conn, &reference.cdp_session, reference.backend_node_id).await {
+                match point_for_ref(
+                    conn,
+                    reference.cdp_session.as_str(),
+                    reference.backend_node_id,
+                )
+                .await
+                {
                     Ok(point) => Some(point),
                     Err(result) => return result,
                 }
@@ -657,7 +681,7 @@ impl BrowserPointerTool {
             frame: origin_ref
                 .map(|reference| reference.frame.clone())
                 .unwrap_or_else(FrameRef::main_unproven),
-            cdp_session: cdp_session.to_owned(),
+            cdp_session: FrameSessionLease::tab(cdp_session.to_owned()),
         };
         ToolResult::text(format!(
             "dispatched trusted {} in {}",
@@ -804,6 +828,7 @@ impl Tool for BrowserPointerTool {
                     &validated,
                     external,
                     request.action,
+                    None,
                 )
                 .await
             {
@@ -821,6 +846,7 @@ impl Tool for BrowserPointerTool {
                     &validated,
                     external,
                     request.action,
+                    origin_ref.as_ref(),
                 )
                 .await
             {
@@ -832,7 +858,7 @@ impl Tool for BrowserPointerTool {
 
         if let (Some(origin), Some(destination)) = (&origin_ref, &destination_ref) {
             if !same_exact_frame(&origin.frame, &destination.frame)
-                || origin.cdp_session != destination.cdp_session
+                || origin.cdp_session.as_str() != destination.cdp_session.as_str()
             {
                 return BrowserRefusal::new(
                     BrowserRefusalCode::BrowserWrongTargetRefused,

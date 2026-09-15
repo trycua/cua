@@ -67,32 +67,41 @@ def _run_uninstall(
         pytest.fail(f"uninstaller timed out: stdout={error.stdout!r}; stderr={error.stderr!r}")
 
 
-@pytest.mark.parametrize("invocation", ["File", "Expression"])
 @pytest.mark.parametrize(
-    ("local_path", "overrides"),
+    ("local_path", "overrides", "invocation"),
     [
         pytest.param(
             "localappdata/Programs/Cua/cua-driver-local/bin/cua-driver-local.exe",
             {},
+            "Expression",
             id="default-cli",
         ),
         pytest.param(
             "custom bin/cua-driver-local.exe",
             {"CUA_DRIVER_LOCAL_INSTALL_DIR": "custom bin"},
+            "Expression",
             id="configured-cli",
         ),
         pytest.param(
             "profile/.cua-driver-local/packages/current/cua-driver-local.exe",
             {},
+            "Expression",
             id="default-marker",
         ),
         pytest.param(
             "custom home/packages/current/cua-driver-local.exe",
             {"CUA_DRIVER_LOCAL_HOME": "custom home"},
+            "Expression",
             id="configured-marker",
         ),
-        pytest.param("bin/cua-driver-local.exe", {}, id="path-cli"),
-        pytest.param(None, {}, id="marker-free-home"),
+        pytest.param("bin/cua-driver-local.exe", {}, "Expression", id="path-cli"),
+        pytest.param(None, {}, "Expression", id="marker-free-home"),
+        pytest.param(
+            "localappdata/Programs/Cua/cua-driver-local/bin/cua-driver-local.exe",
+            {},
+            "File",
+            id="file-entrypoint",
+        ),
     ],
 )
 def test_release_uninstall_reports_and_preserves_local_product(

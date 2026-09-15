@@ -698,7 +698,7 @@ impl Tool for GetWindowStateTool {
                 "screenshot_out_file":{"type":"string",
                     "description":"When set, write the PNG to this file path (~ expanded) instead of embedding base64 in the response. The structured output carries screenshot_file_path instead."},
                 "query":{"type":"string","description":"Optional case-insensitive substring. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count."},
-                "max_elements":{"type":"integer","minimum":1,"description":"Cap on total AT-SPI nodes walked. Omit for the default (5 000). Lower for huge web/Electron trees."},
+                "max_elements":{"type":"integer","minimum":1,"description":"Cap on the AT-SPI nodes walked inside the requested window. Omit for the default (5 000). Lower for huge web/Electron trees. Other windows of the same application are still walked, because element indices are application-wide."},
                 "max_depth":{"type":"integer","minimum":1,"description":"Cap on the AT-SPI tree walk depth. Omit for the default (uncapped). Lower for deeply nested apps."},
                 "max_dimension":{"type":"integer","minimum":1,"description":"Optional cap on the returned screenshot's long edge, in pixels (aspect ratio preserved) — the cheap path for a small preview. Applied on top of the configured max_image_dimension ceiling; the tighter wins. Omit for the configured default."}
             },"additionalProperties":false}),
@@ -888,14 +888,18 @@ impl Tool for GetWindowStateTool {
                         header + &tr.tree_markdown,
                     ));
                     structured["element_count"] = json!(count);
-                    // AT-SPI's current bounded walker does not surface an
-                    // exhaustive-walk proof. Keep negative existence unknown.
-                    structured["elements_complete"] = json!(false);
                     structured["tree_markdown"] = json!(tr.tree_markdown);
 
                     let target_scoped = !(crate::wayland::is_wayland()
                         && crate::wayland::hyprland::is_session())
                         || tr.window_scoped;
+                    let truncation = tr.truncation;
+                    structured["elements_complete"] =
+                        json!(source_trusted && target_scoped && truncation.is_none());
+                    structured["truncated"] = json!(truncation.is_some());
+                    if let Some(reason) = truncation {
+                        structured["truncation_reason"] = json!(reason.as_str());
+                    }
                     if !observation_only && !target_scoped {
                         state.element_cache.remove(pid as i32, xid);
                     }

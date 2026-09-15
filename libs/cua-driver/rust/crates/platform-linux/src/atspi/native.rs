@@ -531,7 +531,7 @@ async fn collect_visited<'a>(
 ) -> Result<Option<Vec<Visited<'a>>>> {
     collect_visited_bounded(conn, pid, 0, None, None)
         .await
-        .map(|walked| walked.map(|(visited, _)| visited))
+        .map(|walked| walked.map(|tree| tree.visited))
 }
 
 /// Screen-space distance between an AT-SPI frame's extents and a native
@@ -677,10 +677,141 @@ async fn resolve_window_frame(
     resolved
 }
 
+/// Why a bounded walk did not enumerate the frame the caller asked about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WalkStopReason {
+    /// `max_elements` was spent inside the requested frame.
+    NodeBudget,
+    /// The loop guard for nodes outside the requested frame ran out before the
+    /// walk reached it.
+    LoopGuard,
+    /// The walk's time budget expired.
+    Deadline,
+    /// The application stopped answering AT-SPI at all.
+    Unresponsive,
+    /// `max_depth` skipped the children of a node in the requested frame.
+    DepthLimit,
+    /// A node in the requested frame could not be read, so its subtree is
+    /// missing.
+    NodeUnreadable,
+    /// No AT-SPI walk happened: the snapshot is the X11 property fallback,
+    /// which enumerates no controls at all.
+    AccessibilityUnavailable,
+}
+
+impl WalkStopReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NodeBudget => "node_budget",
+            Self::LoopGuard => "loop_guard",
+            Self::Deadline => "deadline",
+            Self::Unresponsive => "application_unresponsive",
+            Self::DepthLimit => "depth_limit",
+            Self::NodeUnreadable => "node_unreadable",
+            Self::AccessibilityUnavailable => "accessibility_unavailable",
+        }
+    }
+}
+
+/// Guard against pathological/looping trees — the historical hard-coded walk
+/// budget, and still the default when a caller names no cap.
+const LOOP_GUARD_NODES: usize = 5000;
+
+/// One bounded walk's node budget, split by whether a node belongs to the
+/// frame the caller asked about.
+///
+/// Element indices are application-wide, so a node outside the requested
+/// frame cannot be skipped without renumbering every element emitted after
+/// it. The caller's cap therefore bounds the frame they asked about, and
+/// nodes elsewhere draw on the loop guard.
+struct FrameBudget {
+    scoped_frame: Option<usize>,
+    in_frame: usize,
+    elsewhere: usize,
+}
+
+impl FrameBudget {
+    fn new(max_elements: Option<usize>, scoped_frame: Option<usize>) -> Self {
+        Self {
+            scoped_frame,
+            in_frame: max_elements.unwrap_or(LOOP_GUARD_NODES),
+            elsewhere: LOOP_GUARD_NODES,
+        }
+    }
+
+    /// Whether `frame_ordinal` is what the caller asked about. Every node is
+    /// in scope for an application-scoped walk.
+    fn in_scope(&self, frame_ordinal: usize) -> bool {
+        self.scoped_frame
+            .is_none_or(|scoped| scoped == frame_ordinal)
+    }
+
+    /// Charge one visited node, or name the budget that ran out.
+    fn charge(&mut self, in_scope: bool) -> Result<(), WalkStopReason> {
+        let (budget, exhausted) = if in_scope {
+            (&mut self.in_frame, WalkStopReason::NodeBudget)
+        } else {
+            (&mut self.elsewhere, WalkStopReason::LoopGuard)
+        };
+        match budget.checked_sub(1) {
+            Some(remaining) => {
+                *budget = remaining;
+                Ok(())
+            }
+            None => Err(exhausted),
+        }
+    }
+}
+
+/// What one bounded walk gave up, if anything.
+#[derive(Default)]
+struct WalkVerdict {
+    /// Why the walk exited early. Every `break` in the traversal records one.
+    stop: Option<WalkStopReason>,
+    /// `max_depth` skipped the children of a node in the requested frame.
+    depth_limited_in_scope: bool,
+    /// A node in the requested frame could not be read, so its whole subtree
+    /// is missing from the walk.
+    unreadable_in_scope: bool,
+}
+
+impl WalkVerdict {
+    /// The verdict over the requested frame. `None` only when the walk
+    /// enumerated every child of every node in it.
+    ///
+    /// `unwalked_in_scope` is whether in-scope work was still on the stack
+    /// when the traversal exited; a walk that stopped once the requested
+    /// frame was fully visited gave up nothing the caller can see.
+    fn truncation(&self, unwalked_in_scope: bool) -> Option<WalkStopReason> {
+        if unwalked_in_scope {
+            Some(self.stop.unwrap_or(WalkStopReason::NodeBudget))
+        } else if self.depth_limited_in_scope {
+            Some(WalkStopReason::DepthLimit)
+        } else if self.unreadable_in_scope {
+            Some(WalkStopReason::NodeUnreadable)
+        } else {
+            None
+        }
+    }
+}
+
+/// One depth-first walk, and how much of the requested frame it proved.
+struct CollectedTree<'a> {
+    visited: Vec<Visited<'a>>,
+    /// `Some` when the caller's `xid` resolved to exactly one application
+    /// top-level. The index space stays application-wide either way.
+    scoped_frame: Option<usize>,
+    /// `None` when the walk enumerated every child of every node in the
+    /// requested frame, so a control it did not report does not exist.
+    truncation: Option<WalkStopReason>,
+}
+
 /// `collect_visited` with caller-supplied caps.
-/// - `max_elements = None` keeps the historical 5 000-node budget.
+/// - `max_elements` bounds the frame `xid` resolved to (see [`FrameBudget`]);
+///   `None` keeps the historical 5 000-node budget for it.
 /// - `max_depth = None` keeps depth uncapped (the historical behaviour);
 ///   `Some(d)` skips enqueueing children whose depth would exceed `d`.
+///
 /// Issue #22865: caps protect against Electron / large web apps that produce
 /// 10k+ element trees and blow context windows.
 async fn collect_visited_bounded<'a>(
@@ -689,7 +820,7 @@ async fn collect_visited_bounded<'a>(
     xid: u64,
     max_elements: Option<usize>,
     max_depth: Option<usize>,
-) -> Result<Option<(Vec<Visited<'a>>, Option<usize>)>> {
+) -> Result<Option<CollectedTree<'a>>> {
     let app = match app_for_pid(conn, pid).await? {
         Some(a) => a,
         None => return Ok(None),
@@ -729,9 +860,8 @@ async fn collect_visited_bounded<'a>(
         .collect();
 
     let mut visited: Vec<Visited<'a>> = Vec::new();
-    // Guard against pathological/looping trees. Defaults to 5 000 (the
-    // historical hard-coded budget); callers can override via max_elements.
-    let mut budget = max_elements.unwrap_or(5000usize);
+    let mut budget = FrameBudget::new(max_elements, scoped_frame);
+    let mut verdict = WalkVerdict::default();
     // Time budget alongside the node budget: when an app is unresponsive to
     // AT-SPI (most commonly because it holds a modal grab and isn't servicing
     // D-Bus), every per-node `call()` burns the full CALL_TIMEOUT before being
@@ -749,15 +879,17 @@ async fn collect_visited_bounded<'a>(
     let mut consecutive_timeouts = 0u32;
 
     while let Some((oref, depth, inherited_web_doc, frame_ordinal)) = stack.pop() {
-        if budget == 0 {
-            dlog!("node budget exhausted; truncating walk");
+        let in_scope = budget.in_scope(frame_ordinal);
+        if let Err(reason) = budget.charge(in_scope) {
+            dlog!("{} exhausted; truncating walk", reason.as_str());
+            verdict.stop = Some(reason);
             break;
         }
         if std::time::Instant::now() >= deadline {
             dlog!("collect_visited time budget exhausted; returning partial walk");
+            verdict.stop = Some(WalkStopReason::Deadline);
             break;
         }
-        budget -= 1;
         // WebKitGTK publishes its embedded page on a distinct WebProcess
         // D-Bus peer and can expose blank role names for the entire subtree.
         // The peer identity is therefore the reliable document boundary when
@@ -774,15 +906,18 @@ async fn collect_visited_bounded<'a>(
             Some(Ok(a)) => a,
             Some(Err(error)) => {
                 dlog!("  accessible_for failed: {error:#}");
+                verdict.unreadable_in_scope |= in_scope;
                 continue;
             }
             None => {
+                verdict.unreadable_in_scope |= in_scope;
                 consecutive_timeouts += 1;
                 if consecutive_timeouts >= 3 {
                     dlog!(
                         "{} consecutive AT-SPI timeouts (accessible_for); app unresponsive, bailing walk",
                         consecutive_timeouts
                     );
+                    verdict.stop = Some(WalkStopReason::Unresponsive);
                     break;
                 }
                 continue;
@@ -799,17 +934,20 @@ async fn collect_visited_bounded<'a>(
             // A completed-but-errored call is node-specific; keep walking.
             Some(Err(error)) => {
                 dlog!("  get_interfaces failed: {error:#}");
+                verdict.unreadable_in_scope |= in_scope;
                 continue;
             }
             // A timeout means the app didn't answer in CALL_TIMEOUT. A run of
             // these means the whole app is wedged — bail so callers fall back.
             None => {
+                verdict.unreadable_in_scope |= in_scope;
                 consecutive_timeouts += 1;
                 if consecutive_timeouts >= 3 {
                     dlog!(
                         "{} consecutive AT-SPI timeouts; app unresponsive, bailing walk",
                         consecutive_timeouts
                     );
+                    verdict.stop = Some(WalkStopReason::Unresponsive);
                     break;
                 }
                 continue;
@@ -936,15 +1074,22 @@ async fn collect_visited_bounded<'a>(
         // Honor max_depth (#22865): skip enqueueing descendants whose depth
         // would exceed the cap.
         let descend = max_depth.map(|d| depth + 1 <= d).unwrap_or(true);
-        if descend {
-            match children_r {
-                Some(Ok(children)) => {
-                    for c in children.into_iter().rev() {
-                        stack.push((c, depth + 1, child_in_web_doc, frame_ordinal));
-                    }
+        match children_r {
+            Some(Ok(children)) if descend => {
+                for c in children.into_iter().rev() {
+                    stack.push((c, depth + 1, child_in_web_doc, frame_ordinal));
                 }
-                Some(Err(error)) => dlog!("  get_children failed: {error:#}"),
-                None => dlog!("  get_children timed out"),
+            }
+            Some(Ok(children)) => {
+                verdict.depth_limited_in_scope |= in_scope && !children.is_empty()
+            }
+            Some(Err(error)) => {
+                dlog!("  get_children failed: {error:#}");
+                verdict.unreadable_in_scope |= in_scope;
+            }
+            None => {
+                dlog!("  get_children timed out");
+                verdict.unreadable_in_scope |= in_scope;
             }
         }
 
@@ -969,8 +1114,20 @@ async fn collect_visited_bounded<'a>(
         });
     }
 
-    dlog!("walked pid {pid}: {} node(s)", visited.len());
-    Ok(Some((visited, scoped_frame)))
+    let unwalked_in_scope = stack
+        .iter()
+        .any(|(_, _, _, frame_ordinal)| budget.in_scope(*frame_ordinal));
+    let truncation = verdict.truncation(unwalked_in_scope);
+    dlog!(
+        "walked pid {pid}: {} node(s), truncation={:?}",
+        visited.len(),
+        truncation.map(WalkStopReason::as_str)
+    );
+    Ok(Some(CollectedTree {
+        visited,
+        scoped_frame,
+        truncation,
+    }))
 }
 
 /// Render visited nodes into the markdown + node list `walk_tree` returns.
@@ -1159,6 +1316,10 @@ pub struct WalkedTree {
     /// top-level and the snapshot contains only that window's nodes. False
     /// means the snapshot spans every window the application publishes.
     pub window_scoped: bool,
+    /// `None` when the walk enumerated every child of every node in the
+    /// snapshot's scope, so a control missing from `nodes` does not exist in
+    /// it. `Some(reason)` names what the walk gave up instead.
+    pub truncation: Option<WalkStopReason>,
 }
 
 /// Walk the AT-SPI tree with caller-supplied node + depth caps.
@@ -1197,9 +1358,14 @@ pub(super) fn walk_tree_bounded_with_timeout(
                 return Ok(None);
             }
         };
-        let Some((visited, scoped_frame)) = walked else {
+        let Some(walked) = walked else {
             return Ok(None);
         };
+        let CollectedTree {
+            visited,
+            scoped_frame,
+            truncation,
+        } = walked;
         let walk_elapsed = walk_started.elapsed();
         let (markdown, nodes) = render(&visited, scoped_frame);
         let bounds_started = std::time::Instant::now();
@@ -1239,6 +1405,7 @@ pub(super) fn walk_tree_bounded_with_timeout(
             nodes,
             bounds,
             window_scoped: scoped_frame.is_some(),
+            truncation,
         }))
     })
 }
@@ -2645,11 +2812,14 @@ pub fn perform_action_at_screen_point(
     bounded(
         async {
             let conn = shared_connection().await?;
-            let (visited, scoped_frame) =
-                match collect_visited_bounded(conn, pid, xid, None, None).await? {
-                    Some(walked) => walked,
-                    None => return Ok(None),
-                };
+            let CollectedTree {
+                visited,
+                scoped_frame,
+                ..
+            } = match collect_visited_bounded(conn, pid, xid, None, None).await? {
+                Some(walked) => walked,
+                None => return Ok(None),
+            };
 
             // Share snapshot correlation and geometry, including renderer-frame
             // rebasing and embedded WebProcess insets. Bounds retain application-
@@ -2873,7 +3043,11 @@ pub fn get_element_bounds_for_window(
     bounded(
         async {
             let conn = shared_connection().await?;
-            let (visited, scoped_frame) = collect_visited_bounded(conn, pid, xid, None, None)
+            let CollectedTree {
+                visited,
+                scoped_frame,
+                ..
+            } = collect_visited_bounded(conn, pid, xid, None, None)
                 .await?
                 .context("no AT-SPI application")?;
             let scope =
@@ -4108,5 +4282,75 @@ mod coord_tests {
             "activate".to_owned(),
         ];
         assert_eq!(activation_index("button", &sparse), Some(2));
+    }
+}
+
+#[cfg(test)]
+mod walk_budget_tests {
+    use super::{FrameBudget, WalkStopReason, WalkVerdict, LOOP_GUARD_NODES};
+
+    #[test]
+    fn a_node_cap_bounds_the_requested_frame_and_not_its_siblings() {
+        let mut budget = FrameBudget::new(Some(2), Some(1));
+        assert!(!budget.in_scope(0));
+        assert!(budget.in_scope(1));
+
+        for _ in 0..LOOP_GUARD_NODES {
+            assert_eq!(budget.charge(false), Ok(()));
+        }
+        assert_eq!(budget.charge(true), Ok(()));
+        assert_eq!(budget.charge(true), Ok(()));
+        assert_eq!(budget.charge(true), Err(WalkStopReason::NodeBudget));
+        assert_eq!(budget.charge(false), Err(WalkStopReason::LoopGuard));
+    }
+
+    #[test]
+    fn an_application_scoped_walk_charges_every_node_to_the_cap() {
+        let mut budget = FrameBudget::new(Some(1), None);
+        assert!(budget.in_scope(7));
+        assert_eq!(budget.charge(true), Ok(()));
+        assert_eq!(budget.charge(true), Err(WalkStopReason::NodeBudget));
+    }
+
+    #[test]
+    fn an_uncapped_walk_keeps_the_historical_node_budget() {
+        let mut budget = FrameBudget::new(None, None);
+        for _ in 0..LOOP_GUARD_NODES {
+            assert_eq!(budget.charge(true), Ok(()));
+        }
+        assert_eq!(budget.charge(true), Err(WalkStopReason::NodeBudget));
+    }
+
+    #[test]
+    fn completeness_survives_only_a_walk_that_gave_nothing_up_in_scope() {
+        assert_eq!(WalkVerdict::default().truncation(false), None);
+
+        let stopped = WalkVerdict {
+            stop: Some(WalkStopReason::Deadline),
+            ..Default::default()
+        };
+        assert_eq!(stopped.truncation(true), Some(WalkStopReason::Deadline));
+        assert_eq!(stopped.truncation(false), None);
+        assert_eq!(
+            WalkVerdict::default().truncation(true),
+            Some(WalkStopReason::NodeBudget)
+        );
+
+        let depth_limited = WalkVerdict {
+            depth_limited_in_scope: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            depth_limited.truncation(false),
+            Some(WalkStopReason::DepthLimit)
+        );
+        let unreadable = WalkVerdict {
+            unreadable_in_scope: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            unreadable.truncation(false),
+            Some(WalkStopReason::NodeUnreadable)
+        );
     }
 }

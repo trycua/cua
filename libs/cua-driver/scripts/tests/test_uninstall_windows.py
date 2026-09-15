@@ -13,6 +13,7 @@ pytestmark = pytest.mark.skipif(
 )
 UNINSTALL = Path(__file__).resolve().parents[1] / "uninstall.ps1"
 FIXTURE = Path(__file__).with_name("uninstall-windows-fixture.ps1")
+DEFAULT_LOCAL_CLI = "localappdata/Programs/Cua/cua-driver-local/bin/cua-driver-local.exe"
 
 
 def _run_uninstall(
@@ -70,12 +71,7 @@ def _run_uninstall(
 @pytest.mark.parametrize(
     ("local_path", "overrides", "invocation"),
     [
-        pytest.param(
-            "localappdata/Programs/Cua/cua-driver-local/bin/cua-driver-local.exe",
-            {},
-            "Expression",
-            id="default-cli",
-        ),
+        pytest.param(DEFAULT_LOCAL_CLI, {}, "Expression", id="default-cli"),
         pytest.param(
             "custom bin/cua-driver-local.exe",
             {"CUA_DRIVER_LOCAL_INSTALL_DIR": "custom bin"},
@@ -96,12 +92,7 @@ def _run_uninstall(
         ),
         pytest.param("bin/cua-driver-local.exe", {}, "Expression", id="path-cli"),
         pytest.param(None, {}, "Expression", id="marker-free-home"),
-        pytest.param(
-            "localappdata/Programs/Cua/cua-driver-local/bin/cua-driver-local.exe",
-            {},
-            "File",
-            id="file-entrypoint",
-        ),
+        pytest.param(DEFAULT_LOCAL_CLI, {}, "File", id="file-entrypoint"),
     ],
 )
 def test_release_uninstall_reports_and_preserves_local_product(

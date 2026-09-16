@@ -1,26 +1,28 @@
-use super::AtspiNode;
+use super::{AtspiIdentity, AtspiNode};
 use cua_driver_core::element_cache::{ElementCacheCore, SnapshotPayload};
+use std::collections::HashMap;
 
 pub struct CachedSnapshot {
-    elements: Vec<usize>,
+    elements: HashMap<usize, AtspiIdentity>,
 }
 
 impl CachedSnapshot {
     pub fn from_nodes(nodes: &[AtspiNode]) -> Self {
-        let mut elements: Vec<_> = nodes.iter().filter_map(|node| node.element_index).collect();
-        elements.sort_unstable();
-        elements.dedup();
+        let elements = nodes
+            .iter()
+            .filter_map(|node| Some((node.element_index?, node.identity.clone()?)))
+            .collect();
         Self { elements }
     }
 }
 
 impl SnapshotPayload for CachedSnapshot {
-    type Element = usize;
+    type Element = AtspiIdentity;
     fn len(&self) -> usize {
         self.elements.len()
     }
-    fn retain(&self, index: usize) -> Option<usize> {
-        self.elements.binary_search(&index).ok().map(|_| index)
+    fn retain(&self, index: usize) -> Option<AtspiIdentity> {
+        self.elements.get(&index).cloned()
     }
 }
 
@@ -43,6 +45,12 @@ mod tests {
             description: None,
             actions: Vec::new(),
             element_key: 999,
+            identity: Some(AtspiIdentity {
+                bus_name: ":1.1".into(),
+                path: format!("/node/{index}"),
+                frame_bus_name: ":1.1".into(),
+                frame_path: "/frame".into(),
+            }),
             depth: 0,
             parent_element_index: None,
             in_web_content: false,
@@ -58,7 +66,7 @@ mod tests {
                 .resolve_element_args(42, None, Some(&token_for(id, index)), None, None, "click")
                 .unwrap();
             assert!(
-                matches!(resolved, ResolvedElement::Element { element, .. } if element == index)
+                matches!(resolved, ResolvedElement::Element { element, .. } if element.path == format!("/node/{index}"))
             );
         }
         for index in [0, 1, 8, 999] {
@@ -74,10 +82,32 @@ mod tests {
         unindexed.element_index = None;
         let payload = CachedSnapshot::from_nodes(&[node(11), unindexed, node(7), node(11)]);
         assert_eq!(payload.len(), 2);
-        assert_eq!(payload.retain(7), Some(7));
-        assert_eq!(payload.retain(11), Some(11));
+        assert_eq!(payload.retain(7).unwrap().path, "/node/7");
+        assert_eq!(payload.retain(11).unwrap().path, "/node/11");
         assert_eq!(payload.retain(8), None);
         assert_eq!(payload.retain(0), None);
+    }
+
+    #[test]
+    fn reordered_live_index_cannot_retarget_an_observed_control() {
+        let cache = ElementCache::new();
+        let observed = cache.publish(42, 7, CachedSnapshot::from_nodes(&[node(5)]));
+        let mut replacement = node(5);
+        replacement.identity.as_mut().unwrap().path = "/node/replacement".into();
+        let current = cache.publish(42, 7, CachedSnapshot::from_nodes(&[replacement]));
+
+        // The former observation is invalidated rather than resolving index 5
+        // to the replacement. The current token retains the replacement's own
+        // object address for the X11 click resolver to match directly.
+        assert!(cache
+            .resolve_element_args(42, None, Some(&token_for(observed, 5)), None, None, "click")
+            .is_err());
+        let current = cache
+            .resolve_element_args(42, None, Some(&token_for(current, 5)), None, None, "click")
+            .unwrap();
+        assert!(
+            matches!(current, ResolvedElement::Element { element, .. } if element.path == "/node/replacement")
+        );
     }
 
     #[test]
@@ -111,9 +141,9 @@ mod tests {
             target,
             ResolvedElement::Element {
                 window_id: Some(7),
-                element: 3,
+                element,
                 ..
-            }
+            } if element.path == "/node/3"
         ));
     }
 
@@ -134,7 +164,7 @@ mod tests {
             )
             .unwrap();
         assert!(
-            matches!(target, ResolvedElement::Element { window_id: Some(id), element: 11, .. } if id == window)
+            matches!(target, ResolvedElement::Element { window_id: Some(id), element, .. } if id == window && element.path == "/node/11")
         );
         assert!(cache
             .resolve_element_args(42, None, Some(&token_for(high, 11)), None, Some(7), "click")

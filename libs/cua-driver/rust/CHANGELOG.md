@@ -6,6 +6,16 @@
 
 * **cua-driver:** deliver X11 key-down before the tap delay and finish background keyboard delivery before closing the input connection.
 
+## [0.28.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.28.1...cua-driver-rs-v0.28.2) (2026-09-15)
+
+
+### Bug Fixes
+
+* **cua-driver:** capture macOS desktops without relying on PATH ([#3755](https://github.com/trycua/cua/issues/3755)) ([f67be12](https://github.com/trycua/cua/commit/f67be123e198f322ba22ead5aff54f2ed119b366))
+* **cua-driver:** preserve semantic Hyprland AX scrolling ([#3820](https://github.com/trycua/cua/issues/3820)) ([72b8707](https://github.com/trycua/cua/commit/72b8707cfbdfa3cec5b3f563acdd62ac42aee266)), closes [#3819](https://github.com/trycua/cua/issues/3819)
+* **cua-driver:** route background text through Hyprland input ([#3877](https://github.com/trycua/cua/issues/3877)) ([42d764b](https://github.com/trycua/cua/commit/42d764bb19e9873b581d7147453942484dc4839b))
+* **cua-driver:** unify desktop snapshot identity and payload ownership ([#3616](https://github.com/trycua/cua/issues/3616)) ([a8a7b1e](https://github.com/trycua/cua/commit/a8a7b1e5e53fe8284de04dcac4f04c14b53fd0a1))
+
 ## [0.28.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.28.0...cua-driver-rs-v0.28.1) (2026-09-12)
 
 

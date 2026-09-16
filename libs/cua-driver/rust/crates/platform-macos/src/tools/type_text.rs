@@ -1490,7 +1490,7 @@ fn await_typed_delivery(
 }
 
 /// Poll the target's read-back until it proves complete delivery or the
-/// deadline passes, and report the strongest reading observed.
+/// deadline passes, and report the value the field settled on.
 ///
 /// Both delivery rungs need this: neither a posted keystroke nor an accepted
 /// `AXSelectedText` write is applied by the time the call that sent it
@@ -1506,6 +1506,7 @@ fn await_typed_progress(
     mut read_value: impl FnMut() -> Option<String>,
 ) -> TypedProgress {
     let mut best_partial = None;
+    let mut last_readable;
     let started = std::time::Instant::now();
     let mut deadline = deadline;
     loop {
@@ -1515,22 +1516,29 @@ fn await_typed_progress(
             TypedProgress::Partial(delivered) => {
                 best_partial =
                     Some(best_partial.map_or(delivered, |best: usize| best.max(delivered)));
+                last_readable = Some(TypedProgress::Partial(delivered));
             }
-            TypedProgress::Unverifiable => return TypedProgress::Unverifiable,
             TypedProgress::Unchanged => {
                 // A readable unchanged value is an observed zero-character
                 // delivery, not an unverifiable success.
                 best_partial.get_or_insert(0);
+                last_readable = Some(TypedProgress::Unchanged);
                 if best_partial == Some(0) && started.elapsed() >= UNCHANGED_GIVE_UP {
                     deadline = std::time::Instant::now();
                 }
             }
+            TypedProgress::Unverifiable => {
+                if best_partial.is_none() {
+                    return TypedProgress::Unverifiable;
+                }
+                last_readable = None;
+            }
         }
         if std::time::Instant::now() >= deadline {
-            return match best_partial {
+            return last_readable.unwrap_or(match best_partial {
                 Some(delivered) if delivered > 0 => TypedProgress::Partial(delivered),
                 _ => TypedProgress::Unchanged,
-            };
+            });
         }
         std::thread::sleep(DELIVERY_DRAIN_POLL_INTERVAL);
     }
@@ -2723,6 +2731,70 @@ mod tests {
             ),
             TypedProgress::Unchanged
         );
+    }
+
+    #[test]
+    fn a_partial_the_field_discards_is_not_a_partial_delivery() {
+        let mut reads = 0;
+        let progress = await_typed_progress(
+            Some(""),
+            "10600 North Tantau Avenue",
+            std::time::Instant::now() + std::time::Duration::from_millis(250),
+            || {
+                reads += 1;
+                Some(if reads == 1 {
+                    "10600 North Ta".to_owned()
+                } else {
+                    String::new()
+                })
+            },
+        );
+        assert_eq!(progress, TypedProgress::Unchanged);
+        assert!(reads > 1, "the drain read the field {reads} time(s)");
+    }
+
+    #[test]
+    fn a_partial_the_settled_read_still_shows_is_reported() {
+        assert_eq!(
+            await_typed_progress(
+                Some(""),
+                "10600 North Tantau Avenue",
+                std::time::Instant::now() + std::time::Duration::from_millis(250),
+                || Some("10600 North Ta".to_owned())
+            ),
+            TypedProgress::Partial(14)
+        );
+    }
+
+    #[test]
+    fn an_unreadable_settled_read_falls_back_to_the_partial_observed() {
+        let mut reads = 0;
+        let progress = await_typed_progress(
+            Some(""),
+            "10600 North Tantau Avenue",
+            std::time::Instant::now() + std::time::Duration::from_millis(250),
+            || {
+                reads += 1;
+                (reads == 1).then(|| "10600 North Ta".to_owned())
+            },
+        );
+        assert_eq!(progress, TypedProgress::Partial(14));
+    }
+
+    #[test]
+    fn a_field_that_never_reads_is_unverifiable_without_draining() {
+        let mut reads = 0;
+        let progress = await_typed_progress(
+            Some(""),
+            "payload",
+            std::time::Instant::now() + std::time::Duration::from_secs(5),
+            || {
+                reads += 1;
+                None
+            },
+        );
+        assert_eq!(progress, TypedProgress::Unverifiable);
+        assert_eq!(reads, 1);
     }
 
     #[test]

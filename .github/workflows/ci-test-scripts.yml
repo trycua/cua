@@ -62,6 +62,43 @@ jobs:
         run: python -m pip install pytest
       - name: Test Windows release uninstall reporting
         run: python -m pytest libs/cua-driver/scripts/tests/test_uninstall_windows.py -v
+      - name: Test native runner prototype
+        shell: powershell
+        run: '& ./libs/cua-driver/scripts/tests/uninstall-windows-regression.ps1'
+      - name: Verify native runner failure controls
+        shell: python
+        run: |
+          from pathlib import Path
+          import hashlib
+          import os
+          import subprocess
+          import urllib.request
+          baseline = urllib.request.urlopen("https://raw.githubusercontent.com/trycua/cua/42d764bb19e9873b581d7147453942484dc4839b/libs/cua-driver/scripts/uninstall.ps1", timeout=30).read()
+          assert hashlib.sha256(baseline).hexdigest() == "191c86cbae38b449f6ce69e833d3945691308776e7be70052866469dd52576a6"
+          path = Path("libs/cua-driver/scripts/uninstall.ps1")
+          original = path.read_bytes()
+          notice = b"if ($LocalSurvivor) {"
+          punctuation = b"not a reparse point) - skipping"
+          assert original.count(notice) == original.count(punctuation) == 1
+          controls = [
+              ("pre-fix main", baseline, "default-cli", "missing survivor notice"),
+              ("missing notice", original.replace(notice, b"if ($false) {"), "default-cli", "missing survivor notice"),
+              ("local removal", original.replace(notice, notice + b"\n    Remove-Item -LiteralPath $LocalSurvivor -Force"), "default-cli", "local artifact changed"),
+              ("BOM expression", b"\xef\xbb\xbf" + original, "default-cli", "CommandNotFoundException"),
+              ("false positive", original.replace(notice, b"if ($true) {"), "marker-free-home", "false survivor notice"),
+              ("ANSI file parsing", original.replace(punctuation, b"not a reparse point) \xe2\x80\x94 skipping"), "file-entrypoint", "ParserError"),
+              ("file exit failure", original + b"\nexit 23\n", "file-entrypoint", "uninstaller failed"),
+          ]
+          powershell = str(Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe")
+          try:
+              for name, source, selector, expected in controls:
+                  path.write_bytes(source)
+                  result = subprocess.run([powershell, "-NoProfile", "-NonInteractive", "-File", "libs/cua-driver/scripts/tests/uninstall-windows-regression.ps1", "-CaseName", selector], capture_output=True, text=True, timeout=60)
+                  print(name, result.stdout, result.stderr, sep="\n")
+                  assert result.returncode != 0
+                  assert expected in result.stdout + result.stderr
+          finally:
+              path.write_bytes(original)
 
   test:
     runs-on: ubuntu-latest

@@ -8,6 +8,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from mcp import ClientSession, StdioServerParameters
@@ -19,6 +20,23 @@ from core import Candidate, build_candidates, choose_mock, classify, validate_ch
 def fixture_state(fixture_url: str) -> dict[str, str | None]:
     with urlopen(f"{fixture_url.rstrip('/')}/state", timeout=2) as response:
         return json.loads(response.read())
+
+
+def validate_fixture_url(value: str) -> str:
+    parsed = urlsplit(value)
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
+        or parsed.username
+        or parsed.password
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise argparse.ArgumentTypeError(
+            "fixture URL must be an HTTP loopback origin such as http://127.0.0.1:8765/"
+        )
+    return value.rstrip("/") + "/"
 
 
 def reset_fixture(fixture_url: str) -> None:
@@ -227,7 +245,9 @@ async def run(args: argparse.Namespace) -> str:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--provider", choices=("mock", "live"), default="mock")
-    parser.add_argument("--fixture-url", default="http://127.0.0.1:8765/")
+    parser.add_argument(
+        "--fixture-url", type=validate_fixture_url, default="http://127.0.0.1:8765/"
+    )
     parser.add_argument("--token")
     parser.add_argument("--max-steps", type=int, default=4)
     parser.add_argument("--dry-run", action="store_true")

@@ -24,6 +24,7 @@ class CoreTest(unittest.TestCase):
         candidates = build_candidates(self.snapshot(), "expected")
         choice, confidence, probabilities = choose_mock(candidates)
         self.assertEqual(choice, "type-verification-value")
+        self.assertEqual(candidates[0].arguments["ref"], "p1:0")
         self.assertEqual(confidence, 1.0)
         self.assertEqual(probabilities[choice], 1.0)
 

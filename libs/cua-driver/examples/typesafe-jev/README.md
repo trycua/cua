@@ -23,7 +23,8 @@ through an independent `/state` endpoint. Each runner:
    response or a screenshot as proof of success.
 
 The MCP connection stays open across the entire loop. This preserves the
-implicit Cua Driver session and avoids rebuilding tool state for every step.
+explicit named Cua Driver session and avoids rebuilding tool state for every
+step.
 Page references are snapshot-bound, so the runners take another snapshot after
 the page changes rather than reusing an older reference.
 
@@ -102,8 +103,9 @@ Record live verification separately when you run it with a valid key.
 ## MCP, CLI, and OCR boundaries
 
 The Python and TypeScript programs are the two complete agent loops. They use a
-persistent MCP transport because browser targets and snapshot refs belong to
-one Driver session. Use the Cua Driver CLI for installation and diagnostics,
+persistent MCP transport and repeat one explicit session label because browser
+targets and snapshot refs belong to that session. Use the Cua Driver CLI for
+installation and diagnostics,
 for example `cua-driver doctor` and `cua-driver status`, rather than maintaining
 a third copy of the loop.
 

@@ -46,10 +46,29 @@ function parseArgs(argv: string[]): Arguments {
   if (!Number.isInteger(result.maxSteps) || result.maxSteps < 1) {
     throw new Error('--max-steps must be a positive integer');
   }
+  result.fixtureUrl = validateFixtureUrl(result.fixtureUrl);
   return result;
 }
 
-class Driver {
+export function validateFixtureUrl(value: string): string {
+  const parsed = new URL(value);
+  const loopback = new Set(['127.0.0.1', 'localhost', '[::1]']);
+  if (
+    parsed.protocol !== 'http:' ||
+    !loopback.has(parsed.hostname) ||
+    parsed.username ||
+    parsed.password ||
+    (parsed.pathname !== '' && parsed.pathname !== '/') ||
+    parsed.search ||
+    parsed.hash
+  ) {
+    throw new Error('fixture URL must be an HTTP loopback origin such as http://127.0.0.1:8765/');
+  }
+  parsed.pathname = '/';
+  return parsed.toString();
+}
+
+export class Driver {
   constructor(
     private readonly client: Client,
     private readonly session: string

@@ -3,7 +3,7 @@ import test from 'node:test';
 import { TypeSafeClient } from '@typesafe-ai/sdk';
 
 import { buildCandidates, chooseMock, classify, validateChoice } from './core.js';
-import { chooseWithTypeSafe } from './run.js';
+import { chooseWithTypeSafe, Driver, validateFixtureUrl } from './run.js';
 
 function snapshot(value: string | null = null) {
   return {
@@ -19,6 +19,7 @@ function snapshot(value: string | null = null) {
 test('mock types before submitting', () => {
   const candidates = buildCandidates(snapshot(), 'expected');
   assert.equal(chooseMock(candidates).choice, 'type-verification-value');
+  assert.equal(candidates[0].arguments.ref, 'p1:0');
 });
 
 test('mock submits once the value matches', () => {
@@ -69,4 +70,26 @@ test('live adapter sends one Choice keyed by executable candidate id', async () 
     new Set(Object.keys(requestBody?.questions.driver_action.criteria)),
     new Set(['type-verification-value', 'abstain'])
   );
+});
+
+test('driver repeats the explicit session label', async () => {
+  const calls: unknown[] = [];
+  const client = {
+    callTool: async (request: unknown) => {
+      calls.push(request);
+      return { isError: false, structuredContent: { status: 'ok' } };
+    },
+  };
+  const driver = new Driver(client as never, 'jev-test');
+  await driver.call('browser_type', { ref: 'p2:0' });
+  assert.deepEqual(calls, [
+    { name: 'browser_type', arguments: { ref: 'p2:0', session: 'jev-test' } },
+  ]);
+});
+
+test('fixture URL is confined to loopback HTTP', () => {
+  assert.equal(validateFixtureUrl('http://127.0.0.1:8765'), 'http://127.0.0.1:8765/');
+  for (const value of ['https://127.0.0.1/', 'http://example.com/', 'http://localhost/api/']) {
+    assert.throws(() => validateFixtureUrl(value));
+  }
 });

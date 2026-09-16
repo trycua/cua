@@ -769,7 +769,7 @@ pub(super) fn target_in_web_area(
     pid: i32,
     element_ptr_and_idx: Option<(usize, Option<usize>)>,
     window_id: Option<u32>,
-) -> bool {
+) -> Option<bool> {
     use crate::ax::bindings::AXUIElementCopyAttributeValue;
     use core_foundation::base::{CFTypeRef, TCFType};
     use core_foundation::string::CFString;
@@ -778,33 +778,32 @@ pub(super) fn target_in_web_area(
         // focused element (owned — must release when done). A window-addressed
         // request may only classify from the window's OWN focused element; a
         // pid-global focused element can belong to a same-process sibling and
-        // sibling state must never vouch for the target. When window-bound
-        // reacquisition fails, fail closed: report web content (untrusted
-        // read-back) rather than trusting an unproven surface.
+        // sibling state must never vouch for the target.
         let (start, start_owned) = match element_ptr_and_idx {
             Some((ptr, _)) => (ptr as AXUIElementRef, false),
-            None => match window_id {
-                Some(wid) => match crate::ax::exact_target::focused_element_in_window(pid, wid) {
-                    Some(el) => (el, true),
-                    None => return true,
-                },
-                None => match focused_element_of_pid(pid) {
-                    Some(el) => (el, true),
-                    None => return true,
-                },
-            },
+            None => {
+                let focused = match window_id {
+                    Some(wid) => crate::ax::exact_target::focused_element_in_window(pid, wid),
+                    None => focused_element_of_pid(pid),
+                };
+                (focused?, true)
+            }
         };
         let parent_attr = CFString::new("AXParent");
         let mut cur = start;
         let mut cur_owned = start_owned;
-        let mut found = true;
+        let mut found = None;
         for _ in 0..40 {
             match copy_string_attr(cur, "AXRole").as_deref() {
-                Some("AXWebArea") | None => break,
-                Some("AXWindow") | Some("AXApplication") => {
-                    found = false;
+                Some("AXWebArea") => {
+                    found = Some(true);
                     break;
                 }
+                Some("AXWindow") | Some("AXApplication") => {
+                    found = Some(false);
+                    break;
+                }
+                None => break,
                 _ => {}
             }
             let mut parent: CFTypeRef = std::ptr::null_mut();
@@ -877,7 +876,7 @@ fn cgevent_type_verified(
     Ok(await_typed_delivery(before, text, deadline, || {
         let trusted = element_ptr_and_idx
             .is_some_and(|(ptr, _)| crate::input::ax_actions::is_element_focused(pid, ptr))
-            && !target_in_web_area(pid, element_ptr_and_idx, window_id);
+            && target_in_web_area(pid, element_ptr_and_idx, window_id) == Some(false);
         trusted.then(|| read_axvalue(element_ptr_and_idx)).flatten()
     }))
 }
@@ -929,7 +928,7 @@ fn type_text_blocking(
     };
     let element_ptr_and_idx =
         element_ptr_and_idx.or_else(|| focused_guard.as_ref().map(|guard| (guard.as_ptr(), None)));
-    let before = (!target_in_web_area(pid, element_ptr_and_idx, window_id))
+    let before = (target_in_web_area(pid, element_ptr_and_idx, window_id) == Some(false))
         .then(|| read_axvalue(element_ptr_and_idx))
         .flatten();
 
@@ -1081,7 +1080,8 @@ fn type_text_blocking(
         let element = ptr as AXUIElementRef;
         let err = unsafe { set_string_attr(element, "AXSelectedText", text) };
         let after = unsafe { copy_string_attr(element, "AXValue") };
-        let trusted = !target_in_web_area(pid, Some((element as usize, idx_opt)), window_id);
+        let trusted =
+            target_in_web_area(pid, Some((element as usize, idx_opt)), window_id) == Some(false);
         let progress = ax_write_progress(err, before.as_deref(), after.as_deref(), text, trusted);
         if let Some(progress) = progress {
             return Ok(TypeTextDelivery::Typed(TypeTextOutcome {
@@ -1200,7 +1200,7 @@ mod tests {
 
     #[test]
     fn missing_target_ancestry_cannot_confirm_cached_text() {
-        let trusted = !target_in_web_area(-1, None, None);
+        let trusted = target_in_web_area(-1, None, None) == Some(false);
         let progress =
             ax_write_progress(kAXErrorSuccess, Some(""), Some("text"), "text", trusted).unwrap();
         let result = text_result(

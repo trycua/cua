@@ -126,6 +126,11 @@ int main() {
     }
     check(!input_layout_qualified(InputRoute::primary_foreground, true, false));
     check(input_layout_qualified(InputRoute::primary_foreground, true, true));
+    check(kAgentKeymap.rules == "evdev");
+    check(kAgentKeymap.model == "pc105");
+    check(kAgentKeymap.layout == "us");
+    check(kAgentKeymap.variant.empty());
+    check(kAgentKeymap.options.empty());
 
     ForegroundGuard guard{.exact_root = true};
     check(guard.can_activate());

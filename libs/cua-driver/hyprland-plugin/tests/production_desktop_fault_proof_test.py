@@ -49,8 +49,8 @@ def restoration():
 
 
 def options(restored=True):
-    values = {'kb_rules': 'evdev', 'kb_model': 'pc105', 'kb_layout': 'us' if restored else 'de',
-              'kb_variant': '', 'kb_options': '', 'kb_file': ''}
+    values = {'kb_rules': 'evdev', 'kb_model': 'pc105', 'kb_layout': 'us',
+              'kb_variant': '', 'kb_options': '' if restored else 'ctrl:nocaps', 'kb_file': ''}
     return {key: {'option': 'input:' + key, 'str': value, 'set': True} for key, value in values.items()}
 
 
@@ -73,7 +73,7 @@ def layout_refusal():
 
 
 def keymap_record():
-    return {**record(), 'kind': 'keymap', 'config': {'sha256': proof.digest(proof.KEYMAP_DE.encode())},
+    return {**record(), 'kind': 'keymap', 'config': {'sha256': proof.digest(proof.KEYMAP_CAPS_CTRL.encode())},
             'before': keymap_status(1), 'gate_status': keymap_status(1), 'after': keymap_status(2),
             'keymap_before': options(), 'keymap_after': options(False), 'wrong_layout': layout_refusal()}
 
@@ -483,6 +483,18 @@ class MotionGateTests(unittest.TestCase):
 
 
 class KeymapTests(unittest.TestCase):
+    def test_supported_user_remap_fixtures_keep_us_layout_and_change_only_options(self):
+        self.assertEqual(set(proof.KEYMAP_REMAPS), {'caps_to_ctrl', 'caps_to_super'})
+        self.assertIn('kb_layout = "us"', proof.KEYMAP_CAPS_CTRL)
+        self.assertIn('kb_options = "ctrl:nocaps"', proof.KEYMAP_CAPS_CTRL)
+        self.assertIn('kb_layout = "us"', proof.KEYMAP_CAPS_SUPER)
+        self.assertIn('kb_options = "caps:super"', proof.KEYMAP_CAPS_SUPER)
+        for fixture in proof.KEYMAP_REMAPS.values():
+            self.assertIn('kb_rules = "evdev"', fixture)
+            self.assertIn('kb_model = "pc105"', fixture)
+            self.assertIn('kb_variant = ""', fixture)
+            self.assertIn('kb_file = ""', fixture)
+
     def test_idle_baseline_allows_only_unreserved_inert_hover_on_either_lane(self):
         for lane in (0, 1):
             passive = keymap_status(1)
@@ -532,7 +544,7 @@ class KeymapTests(unittest.TestCase):
     def test_keymap_plan_requires_its_own_exact_include(self):
         proof.validate_plan(plan('keymap'))
         for kind, data in (('keymap', proof.ENABLED), ('config_disable', proof.KEYMAP_US),
-                           ('keymap', proof.KEYMAP_DE), ('keymap', proof.KEYMAP_US + '-- extra\n')):
+                           ('keymap', proof.KEYMAP_CAPS_CTRL), ('keymap', proof.KEYMAP_US + '-- extra\n')):
             candidate = plan(kind)
             candidate['config']['sha256'] = proof.digest(data.encode())
             with self.subTest(kind=kind, data=data), self.assertRaises(AssertionError):
@@ -811,7 +823,7 @@ class SafetyTests(unittest.TestCase):
                 stack.enter_context(patch.object(proof, '_reload', side_effect=TimeoutError('lost') if failure == 'reload' else lambda *_: keymap_status(3)))
                 readback = stack.enter_context(patch.object(proof, 'keymap_options', return_value=options()))
                 proof._replace(config, False)
-                self.assertEqual(Path(config['path']).read_bytes(), proof.KEYMAP_DE.encode())
+                self.assertEqual(Path(config['path']).read_bytes(), proof.KEYMAP_CAPS_CTRL.encode())
                 if failure == 'unrelated':
                     Path(config['path']).write_bytes(proof.DISABLED.encode())
                 if failure == 'wrong_stage':
@@ -1054,7 +1066,7 @@ class SafetyTests(unittest.TestCase):
                 stack.enter_context(patch.object(proof.time, 'monotonic_ns', side_effect=[5, 6, 7]))
                 replace = stack.enter_context(patch.object(proof, '_replace', side_effect=lambda *_args, **kwargs: kwargs['before_replace']()))
                 stack.enter_context(patch.object(proof, '_reload', return_value=keymap_status(1 if failure == 'not_compiled' else 2)))
-                stack.enter_context(patch.object(proof, 'file_identity', return_value={'sha256': proof.digest(proof.KEYMAP_DE.encode())}))
+                stack.enter_context(patch.object(proof, 'file_identity', return_value={'sha256': proof.digest(proof.KEYMAP_CAPS_CTRL.encode())}))
                 if failure:
                     with self.assertRaises(AssertionError):
                         fault.inject(Mock(), trace(ACTIVE[:1]), Mock(done=Mock(return_value=False)), Mock())
@@ -1105,7 +1117,7 @@ class RunnerTests(unittest.TestCase):
 
     def test_reconnect_without_reset_restore_before_snapshot_and_new_action(self):
         cases = [(kind, failure, 'cleared') for kind in ('config_disable', 'keymap') for failure in (None, 'inject', 'restore', 'recovery')]
-        cases += [('keymap', 'refusal', 'cleared'), ('keymap', 'cancel', 'cleared')]
+        cases += [('keymap', 'cancel', 'cleared')]
         cases += [(kind, failure, 'retained_inert') for kind in ('config_disable', 'keymap')
                   for failure in (None, 'recovery', 'snapshot_leave')]
         for kind, failure, policy in cases:
@@ -1139,10 +1151,10 @@ class RunnerTests(unittest.TestCase):
                 fault.restore.side_effect = restore
                 stack.enter_context(patch.object(proof, 'ConfigFault', return_value=fault))
                 stack.enter_context(patch.object(proof, 'provenance', return_value={'files': {}}))
-                agent, observer, fresh, refused = client(100), client(101), client(102), client(103)
+                agent, observer, fresh = client(100), client(101), client(102)
                 agent.tool.return_value = {}
                 observer.tool.return_value = {'structuredContent': {'screen_width': 1920, 'screen_height': 1080}}
-                stack.enter_context(patch.object(proof, 'DirectMCP', side_effect=[agent, observer, refused, fresh] if kind == 'keymap' else [agent, observer, fresh]))
+                stack.enter_context(patch.object(proof, 'DirectMCP', side_effect=[agent, observer, fresh]))
                 def snapshot(*_args, **_kwargs):
                     order.append('snapshot')
                     return target_snapshot('snapshot-' + str(len(order)), runtime=101, observed_ns=14_000_000)
@@ -1176,13 +1188,6 @@ class RunnerTests(unittest.TestCase):
                     observations = [cancelled, observed, cancelled, last]
                 second = Mock(hello={'protocol': 3}, collect=Mock(side_effect=observations))
                 stack.enter_context(patch.object(proof, 'connect_trace', side_effect=[first, second]))
-                def refuse(*args):
-                    order.append('refusal')
-                    self.assertEqual(agent.process.poll(), 0)
-                    if failure == 'refusal':
-                        raise AssertionError('wrong layout did not refuse')
-                    return fault_record['wrong_layout'] if policy == 'retained_inert' else layout_refusal()
-                probe = stack.enter_context(patch.object(proof, 'refuse_new_action', side_effect=refuse))
                 def recover(*args):
                     order.append('recovery')
                     if failure == 'recovery':
@@ -1198,15 +1203,10 @@ class RunnerTests(unittest.TestCase):
                 self.assertFalse(any(call.args == ('TRACE_START',) for call in second.exchange.call_args_list))
                 self.assertEqual(agent.process.poll(), 0)
                 self.assertEqual(observer.process.poll(), 0)
-                if failure not in ('inject', 'restore', 'refusal', 'cancel', 'snapshot_leave'):
+                if failure not in ('inject', 'restore', 'cancel', 'snapshot_leave'):
                     self.assertLess(order.index('restore'), len(order) - 1 - order[::-1].index('snapshot'))
                     self.assertLess(order.index('restore'), order.index('recovery'))
                     self.assertTrue((args.evidence / 'pre-recovery-prefix.json').is_file())
-                if kind == 'keymap' and failure not in ('inject', 'cancel'):
-                    self.assertLess(order.index('refusal'), order.index('restore'))
-                    self.assertEqual(refused.process.poll(), 0)
-                if kind == 'config_disable' or failure in ('inject', 'cancel'):
-                    probe.assert_not_called()
                 if policy == 'retained_inert' and failure != 'snapshot_leave':
                     self.assertEqual(fault.record['target_before']['snapshot_id'], 'prepared')
                     self.assertEqual(fault.record['target_after']['pid'], candidate['agents'][0]['target']['pid'])

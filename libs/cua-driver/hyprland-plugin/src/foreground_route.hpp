@@ -9,6 +9,16 @@
 namespace cua::hyprland {
 enum class InputRoute { unbound, independent, primary_foreground };
 
+struct AgentKeymapConfig {
+    std::string_view rules;
+    std::string_view model;
+    std::string_view layout;
+    std::string_view variant;
+    std::string_view options;
+};
+
+inline constexpr AgentKeymapConfig kAgentKeymap{"evdev", "pc105", "us", "", ""};
+
 enum class ForegroundFailureReason {
     none, exact_root, primary_binding, peer_conflict, physical_keys, physical_buttons,
     grab, dnd, constraint, keyboard_focus, pointer_focus, lease, client_dead,

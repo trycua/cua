@@ -277,12 +277,14 @@ identity refuses. Package eligibility does not certify every LibreOffice
 application or operation.
 
 The plugin separately binds the exact live native surface and checks geometry,
-desktop availability, primary-client and other-lane conflicts, and the compiled
-default `evdev`/`pc105`/`us` keymap. The candidate excludes variants, options,
-remaps, multiple layout groups, missing keyboards, Unicode, IME input,
-arbitrary held-key streams, and modified pointer gestures. Chromium, Electron,
-and XWayland raw background input are outside this scope. AT-SPI routes retain
-their separate behavior.
+desktop availability, and primary-client and other-lane conflicts. Each
+background lane publishes a private canonical `evdev`/`pc105`/`us` keymap, so
+user options such as Caps Lock remapped to Ctrl or Super do not alter agent key
+semantics. A physical keymap transition cancels existing authority; use a fresh
+action afterward. Multiple agent layout groups, Unicode, IME input, arbitrary
+held-key streams, and modified pointer gestures remain outside this scope.
+Chromium, Electron, and XWayland raw background input are outside this scope.
+AT-SPI routes retain their separate behavior.
 
 Two compositor seats, `Cua-Agent` and `Cua-Agent-2`, persist across configuration
 disable/re-enable. Each connection claims one lane, and each admitted action
@@ -302,7 +304,9 @@ native harness covers defined GTK3, Electron, and Tauri foreground cases. It ref
 held physical input, grabs, constraints, drag-and-drop, ambiguous primary seat
 bindings, and non-neutral keyboard modifiers. Background refusal never selects
 this route automatically. Driver expands bounded ASCII text under the exact
-US keymap; Unicode and IME remain outside its raw-input scope.
+US keymap; Unicode and IME remain outside its raw-input scope. Foreground
+pointer-only actions are layout-independent, but foreground keyboard actions
+still require the canonical physical US map.
 
 The retained bounded app evidence at source
 `f180e8828b8f31cc153e3c44eaa89a9c13c5bc68` includes instrumented Calc/Inkscape
@@ -354,7 +358,7 @@ ask the user.
 |---|---|---|
 | X11/Openbox | AT-SPI trees and actions, foreground pointer and keyboard input, window and desktop capture, and video | Raw background delivery remains toolkit-specific; unsupported shapes refuse |
 | Sway/wlroots | AT-SPI, native discovery, full-display and cropped-window screencopy, foreground input, semantic background actions, and video | Raw background pointer and keyboard input remains focus-bound |
-| Hyprland/Omarchy | Experimental source candidate with separate discovery-foundation and bounded two-seat app evidence | Default plugin is discovery-only; raw background v3 qualification is limited to the exact native Calc/Inkscape packages and plain US keymap; complete native harness and release acceptance are separate gates |
+| Hyprland/Omarchy | Experimental source candidate with separate discovery-foundation and bounded two-seat app evidence | Default plugin is discovery-only; raw background v3 qualification is limited to the exact native Calc/Inkscape packages and a private agent US keymap; user Caps-to-Ctrl/Super remaps do not alter agent semantics; complete native harness and release acceptance are separate gates |
 | GNOME/Mutter | AT-SPI, WinRects geometry and activation, capture, and portal/libei foreground input | Requires the helper and portal grant; portal video parity remains open |
 | KDE/KWin | AT-SPI and generic discovery where exposed | Target-specific activation and behavioral coverage remain experimental |
 | Nested `cua-compositor` | Versioned direct per-surface input, native GTK 31/31, capture/scope 5/5, and partial Electron coverage | The complete shared matrix remains experimental; do not infer standard-Wayland support |

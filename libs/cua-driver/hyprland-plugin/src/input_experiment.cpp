@@ -251,7 +251,8 @@ struct InputExperiment::Impl {
     static bool canonical_us_keymap(xkb_context* context, xkb_keymap* map) {
         // Compare canonical compiled content, not a layout display name. This
         // deliberately excludes variants, options, remaps, and multiple groups.
-        const xkb_rule_names names{"evdev", "pc105", "us", "", ""};
+        const xkb_rule_names names{kAgentKeymap.rules.data(), kAgentKeymap.model.data(),
+            kAgentKeymap.layout.data(), kAgentKeymap.variant.data(), kAgentKeymap.options.data()};
         auto* reference = xkb_keymap_new_from_names(context, &names, XKB_KEYMAP_COMPILE_NO_FLAGS);
         if (!reference) return false;
         char* actual = xkb_keymap_get_as_string(map, XKB_KEYMAP_FORMAT_TEXT_V1);
@@ -279,7 +280,8 @@ struct InputExperiment::Impl {
     }
     void initialize_agent_keymap() {
         if (keyboard_state) return;
-        const xkb_rule_names names{"evdev", "pc105", "us", "", ""};
+        const xkb_rule_names names{kAgentKeymap.rules.data(), kAgentKeymap.model.data(),
+            kAgentKeymap.layout.data(), kAgentKeymap.variant.data(), kAgentKeymap.options.data()};
         auto* context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
         auto* map = context ? xkb_keymap_new_from_names(context, &names, XKB_KEYMAP_COMPILE_NO_FLAGS) : nullptr;
         auto* state = map ? xkb_state_new(map) : nullptr;
@@ -881,7 +883,8 @@ struct InputExperiment::Impl {
         for (const auto& p : seat->m_pointers) if (p && p->good()) foreground_pointers.push_back(p);
         for (const auto& k : seat->m_keyboards) if (k && k->good()) foreground_keyboards.push_back(k);
         if (needs_pointer && foreground_pointers.empty()) throw ForegroundFailure{ForegroundFailureReason::pointer_resources};
-        if (foreground_keyboards.empty()) throw ForegroundFailure{ForegroundFailureReason::keyboard_resources};
+        if (needs_keyboard && foreground_keyboards.empty())
+            throw ForegroundFailure{ForegroundFailureReason::keyboard_resources};
         foreground_modifiers = {};
         if (needs_keyboard) {
             foreground_modifiers = {physical->m_modifiersState.depressed, physical->m_modifiersState.latched,

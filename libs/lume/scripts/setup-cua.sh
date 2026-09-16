@@ -615,8 +615,11 @@ configure_system() {
     python3 << PYEOF
 password = "$VM_PASSWORD"
 key = bytes.fromhex("7d895223d2bcddeaa3b91f")
-padded_len = ((len(password) + 11) // 12) * 12
-padded = password + "\x00" * (padded_len - len(password))
+# Pad the PLAINTEXT with NULs, then XOR the whole buffer: the padding must
+# become key bytes on the wire so loginwindow's decoder terminates there.
+# Always pad by at least one byte — a password whose length is already a
+# multiple of 12 still needs a terminator, so it gets a full extra block.
+padded = password + "\x00" * (12 - len(password) % 12)
 result = bytearray()
 for i, char in enumerate(padded.encode("utf-8")):
     result.append(char ^ key[i % len(key)])

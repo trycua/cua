@@ -27,6 +27,7 @@ mod history_runtime;
 mod jev;
 mod mcp_envelope;
 mod mcp_http;
+mod policy_tool;
 mod private_worker;
 mod proxy;
 mod release_channel;

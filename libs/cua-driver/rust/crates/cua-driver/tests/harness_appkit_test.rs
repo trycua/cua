@@ -1440,6 +1440,12 @@ fn harness_appkit_double_click_px_background() {
                 "AppKit double click failed: {}",
                 response.text()
             );
+            assert_eq!(
+                response.structured()["synthetic_target_focus"],
+                true,
+                "background double click must exercise target-only synthetic focus: {}",
+                response.raw
+            );
             std::thread::sleep(Duration::from_millis(250));
             let receiver_snapshot = snapshot_elements(driver, pid, wid);
             let receiver = receiver_snapshot.tree_text();
@@ -1504,8 +1510,7 @@ fn harness_appkit_slider_drag_px_background() {
         "slider_drag",
         Targeting::Px,
         DriverRoute::MacosCgEventPid,
-    )
-    .expecting_refusal(vec![RefusalCode::BackgroundUnavailable]);
+    );
     run_case(case, |pid, wid, driver| {
         let pre = snapshot_elements(driver, pid, wid);
         assert!(pre.tree_text().contains("slider_value=0"));
@@ -1535,29 +1540,24 @@ fn harness_appkit_slider_drag_px_background() {
         )
         .unwrap_or_else(|error| panic!("background desktop contract failed: {error}"));
         assert!(
-            response.is_error(),
-            "AppKit background drag unexpectedly reported delivery: {}",
+            !response.is_error(),
+            "AppKit background drag failed: {}",
             response.text()
         );
         assert_eq!(
-            response.structured()["code"].as_str(),
-            Some("background_unavailable"),
-            "AppKit background drag returned the wrong refusal: {}",
-            response.text()
+            response.structured()["synthetic_target_focus"],
+            true,
+            "background drag must exercise target-only synthetic focus: {}",
+            response.raw
         );
         std::thread::sleep(Duration::from_millis(200));
         assert!(
-            snapshot_elements(driver, pid, wid)
+            !snapshot_elements(driver, pid, wid)
                 .tree_text()
                 .contains("slider_value=0"),
-            "refused AppKit background drag changed the slider"
+            "AppKit background drag did not move the slider"
         );
         passed.push(OracleKind::FixtureState);
-        Observation::refused(
-            RefusalCode::BackgroundUnavailable,
-            passed,
-            response.text(),
-            Evidence::default(),
-        )
+        Observation::delivered_with_fixture_state(passed)
     });
 }

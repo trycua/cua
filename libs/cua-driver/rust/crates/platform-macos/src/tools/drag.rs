@@ -27,6 +27,28 @@ pub struct DragTool {
     pub state: Arc<ToolState>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WindowDragRoute {
+    TargetOnlyBackground,
+    ForegroundHid,
+}
+
+fn window_drag_route(
+    foreground_requested: bool,
+    window_id: Option<u32>,
+) -> Result<WindowDragRoute, &'static str> {
+    if window_id.is_none() {
+        return Err(
+            "Window-scoped drag requires window_id so delivery stays bound to one exact window.",
+        );
+    }
+    if foreground_requested {
+        Ok(WindowDragRoute::ForegroundHid)
+    } else {
+        Ok(WindowDragRoute::TargetOnlyBackground)
+    }
+}
+
 impl DragTool {
     pub fn new(state: Arc<ToolState>) -> Self {
         Self { state }
@@ -49,6 +71,9 @@ fn def() -> &'static ToolDef {
              mouseDragged events linearly interpolated along the path. Increase both for \
              slower, more human drags; decrease for snap gestures.\n\n\
              `modifier` keys (cmd/shift/option/ctrl) are held across the entire gesture.\n\n\
+             On macOS, background window delivery requires an exact `window_id`; the driver \
+             keeps the real foreground unchanged, establishes target-only synthetic focus, \
+             and posts the gesture to that pid/window without CDP.\n\n\
              When `from_zoom` is true, coordinates are in the last zoom image for this \
              pid; the driver maps them back to window coordinates before dispatching."
             .into(),
@@ -183,18 +208,7 @@ impl Tool for DragTool {
             Ok(v) => v,
             Err(e) => return e,
         };
-        // delivery_mode: foreground briefly fronts the window before the
-        // press-drag-release gesture (the explicit last resort for surfaces
-        // that drop background CGEvents), via the same skylight assist click
-        // uses. Requires a window_id to have a window to front.
         let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
-        if !delivery_mode.is_foreground() {
-            return ToolResult::error(
-                "Background drag is unavailable on macOS; use delivery_mode:\"foreground\"."
-                    .to_owned(),
-            )
-            .with_structured(serde_json::json!({ "code": "background_unavailable" }));
-        }
         // Coerce integer or float from JSON for coordinate fields.
         let coerce = |key: &str| -> Option<f64> {
             args.opt_f64(key)
@@ -219,6 +233,13 @@ impl Tool for DragTool {
         };
 
         let window_id = args.opt_u64("window_id").map(|v| v as u32);
+        let route = match window_drag_route(delivery_mode.is_foreground(), window_id) {
+            Ok(route) => route,
+            Err(message) => {
+                return ToolResult::error(message)
+                    .with_structured(serde_json::json!({ "code": "exact_window_required" }));
+            }
+        };
         let duration_ms = args.u64_or("duration_ms", 500);
         let steps = args.u64_or("steps", 20) as usize;
         let from_zoom = args.bool_or("from_zoom", false);
@@ -295,9 +316,43 @@ impl Tool for DragTool {
         let prior_front = apps::frontmost_pid();
         let snapshot = WindowChangeDetector::snapshot(prior_front);
 
+        let synthetic_focus_context = if route == WindowDragRoute::TargetOnlyBackground {
+            let wid = window_id.expect("route selection requires window_id");
+            match tokio::task::spawn_blocking(move || {
+                crate::input::mouse::prepare_background_pixel_click(pid, wid)
+            })
+            .await
+            {
+                Ok(Ok(context)) => context,
+                Ok(Err(error)) => {
+                    return ToolResult::error(format!(
+                        "Background drag target-only focus failed before dispatch: {error}"
+                    ))
+                    .with_structured(serde_json::json!({
+                        "code": "background_unavailable",
+                        "effect": "refused",
+                        "input_posted": false
+                    }));
+                }
+                Err(error) => {
+                    return ToolResult::error(format!(
+                        "Background drag target-only focus task failed before dispatch: {error}"
+                    ))
+                    .with_structured(serde_json::json!({
+                        "code": "background_unavailable",
+                        "effect": "refused",
+                        "input_posted": false
+                    }));
+                }
+            }
+        } else {
+            None
+        };
+        let used_synthetic_target_focus = synthetic_focus_context.is_some();
+
         // Dispatch blocking drag synthesis.
         let mods_owned = modifiers.clone();
-        let fg = delivery_mode.is_foreground() && window_id.is_some();
+        let fg = route == WindowDragRoute::ForegroundHid;
         let cursor_for_drag = cursor_key.clone();
         crate::cursor::overlay::send_command(
             cursor_key.clone(),
@@ -355,6 +410,7 @@ impl Tool for DragTool {
                             &m,
                             button,
                             fg,
+                            synthetic_focus_context,
                             move |x, y| {
                                 crate::cursor::overlay::send_command(
                                     cursor_for_drag.clone(),
@@ -416,28 +472,70 @@ impl Tool for DragTool {
         };
 
         let mode_label = if fg {
-            " (delivery_mode:foreground)"
+            "foreground HID"
         } else {
-            ""
+            "background PID-routed CGEvent"
         };
         match result {
             Ok(Ok(())) => ToolResult::text(format!(
                 "✅ Posted drag{btn_suffix}{mod_suffix} to pid {pid} \
                  from window-pixel ({}, {}) → ({}, {}), \
                  screen ({}, {}) → ({}, {}) \
-                 in {duration_ms}ms / {steps} steps{mode_label} \
-                 (background CGEvent; not driver-verified — confirm via screenshot).{}",
-                from_x as i64, from_y as i64,
-                to_x   as i64, to_y   as i64,
-                from_sx as i64, from_sy as i64,
-                to_sx   as i64, to_sy   as i64,
+                 in {duration_ms}ms / {steps} steps \
+                 ({mode_label}; not driver-verified — confirm via screenshot).{}",
+                from_x as i64,
+                from_y as i64,
+                to_x as i64,
+                to_y as i64,
+                from_sx as i64,
+                from_sy as i64,
+                to_sx as i64,
+                to_sy as i64,
                 changes.result_suffix(),
             ))
             .with_structured(serde_json::json!({
-                "path": if fg { "cgevent_fg" } else { "cgevent" }, "verified": false, "effect": "unverifiable"
+                "path": if fg { "cgevent_fg" } else { "cgevent" },
+                "verified": false,
+                "effect": "unverifiable",
+                "synthetic_target_focus": used_synthetic_target_focus
             })),
             Ok(Err(e)) => ToolResult::error(format!("drag failed: {e}")),
-            Err(e)     => ToolResult::error(format!("Task error: {e}")),
+            Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{def, window_drag_route, WindowDragRoute};
+
+    #[test]
+    fn exact_window_selects_background_target_only_or_foreground_hid() {
+        assert_eq!(
+            window_drag_route(false, Some(42)),
+            Ok(WindowDragRoute::TargetOnlyBackground)
+        );
+        assert_eq!(
+            window_drag_route(true, Some(42)),
+            Ok(WindowDragRoute::ForegroundHid)
+        );
+    }
+
+    #[test]
+    fn window_drag_refuses_unbound_delivery_before_input() {
+        assert_eq!(
+            window_drag_route(false, None),
+            Err("Window-scoped drag requires window_id so delivery stays bound to one exact window.")
+        );
+        assert_eq!(
+            window_drag_route(true, None),
+            window_drag_route(false, None)
+        );
+    }
+
+    #[test]
+    fn schema_documents_non_cdp_background_delivery() {
+        assert!(def().description.contains("target-only synthetic focus"));
+        assert!(def().description.contains("without CDP"));
     }
 }

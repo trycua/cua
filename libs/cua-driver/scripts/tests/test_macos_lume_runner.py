@@ -1496,6 +1496,19 @@ def test_a_green_run_writes_an_empty_failure_record(tmp_path: Path) -> None:
     assert record["report_failed"] is False
 
 
+def test_native_matrix_includes_text_outcome_regression() -> None:
+    loop = re.search(
+        r"for appkit_test in(.*?); do(.*?)\bdone\b",
+        RUN_RUST_E2E.read_text(encoding="utf-8"),
+        re.DOTALL,
+    )
+    assert loop is not None
+    selectors = loop[1].replace("\\", "").split()
+    assert "text_outcomes::harness_appkit_text_outcomes_match_independent_state" in selectors
+    assert "--test harness_appkit_test" in loop[2]
+    assert '--ignored --exact "${appkit_test}"' in loop[2]
+
+
 def test_namespaced_lane_writes_a_complete_artifact_safe_log(tmp_path: Path) -> None:
     selector = "snapshot_publication::harness_appkit_pending_snapshot_cannot_retarget_token"
     completed = _run(

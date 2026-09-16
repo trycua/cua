@@ -444,9 +444,7 @@ fn text_result(
             detail: "The addressed native field contains the inserted text.".into(),
         });
     }
-    if effect != ActionEffect::Unverifiable {
-        record.delivered_count = count;
-    }
+    record.delivered_count = count;
     let result = if effect == ActionEffect::Partial {
         ToolResult::error(format!(
             "type_text incomplete: observed {} of {char_count} character(s){}; observe the target before retrying{suffix}",
@@ -491,7 +489,6 @@ const KEY_DOWN_GAP_MS: u64 = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TextDeliveryRoute {
-    AtomicAx,
     UnicodeSynthesis,
     PhysicalSynthesis,
 }
@@ -524,11 +521,7 @@ fn synthesis_preflight(
     requested_chars: usize,
     delay_ms: u64,
 ) -> Option<SynthesisRefusal> {
-    if route == TextDeliveryRoute::AtomicAx {
-        return None;
-    }
     let per_character_ms = match route {
-        TextDeliveryRoute::AtomicAx => unreachable!(),
         // PID-routed and desktop Unicode paths post one key-down and one
         // key-up, sleeping 8ms after the down and max(delay, 8) after the up.
         TextDeliveryRoute::UnicodeSynthesis => {
@@ -727,30 +720,35 @@ fn typed_progress(before: Option<&str>, after: Option<&str>, text: &str) -> Type
     if text.is_empty() {
         return TypedProgress::Complete;
     }
-    let Some(after) = after else {
-        return TypedProgress::Unverifiable;
-    };
-    let Some(before) = before else {
+    let Some((before, after)) = before.zip(after) else {
         return TypedProgress::Unverifiable;
     };
     if before == after {
         return TypedProgress::Unchanged;
     }
+    let Some(inserted) = after
+        .len()
+        .checked_sub(before.len())
+        .and_then(|n| text.get(..n))
+    else {
+        return TypedProgress::Unverifiable;
+    };
     let common_prefix: usize = before
         .chars()
         .zip(after.chars())
         .take_while(|(before, after)| before == after)
         .map(|(character, _)| character.len_utf8())
         .sum();
-    let Some(inserted) = after[common_prefix..].strip_suffix(&before[common_prefix..]) else {
-        return TypedProgress::Unverifiable;
-    };
-    if inserted == text {
-        TypedProgress::Complete
-    } else if !inserted.is_empty() && text.starts_with(inserted) {
-        TypedProgress::Partial(inserted.chars().count())
-    } else {
+    let matches_insertion = after
+        .get(..common_prefix + inserted.len())
+        .and_then(|prefix| prefix.rfind(inserted))
+        .is_some_and(|offset| before[offset..] == after[offset + inserted.len()..]);
+    if !matches_insertion {
         TypedProgress::Unverifiable
+    } else if inserted == text {
+        TypedProgress::Complete
+    } else {
+        TypedProgress::Partial(inserted.chars().count())
     }
 }
 
@@ -1258,6 +1256,44 @@ mod tests {
     }
 
     #[test]
+    fn native_insertions_with_overlapping_prefixes_publish_exact_progress() {
+        for (before, after, text, effect, count) in [
+            ("a", "aba", "ab", "confirmed", 2),
+            ("ab", "abcab", "abc", "confirmed", 3),
+            ("cat", "catapultcat", "catapult", "confirmed", 8),
+            ("za", "zaba", "ab", "confirmed", 2),
+            ("é", "é🙂é", "é🙂", "confirmed", 2),
+            ("ê", "éê", "é", "confirmed", 1),
+            ("abc", "abcab", "ab", "confirmed", 2),
+            ("aaa", "aaaaa", "aa", "confirmed", 2),
+            ("a", "aba", "abc", "partial", 2),
+            ("a", "aab", "abc", "partial", 2),
+        ] {
+            let progress =
+                ax_write_progress(kAXErrorSuccess, Some(before), Some(after), text, true).unwrap();
+            let result = text_result(
+                TypeTextOutcome {
+                    detail: String::new(),
+                    transport: ActionTransport::MacosAxValue,
+                    delivery: ActualDelivery::Background,
+                    progress,
+                },
+                text.chars().count(),
+                false,
+                "",
+            );
+            let action = public_action(&result);
+            assert_eq!(
+                action["effect"], effect,
+                "{before:?} -> {after:?}, request {text:?}"
+            );
+            assert_eq!(action["delivery"]["delivered_count"], count);
+            assert_eq!(result.is_error == Some(true), effect == "partial");
+            assert!(action.get("escalation").is_none());
+        }
+    }
+
+    #[test]
     fn uncertain_ax_errors_stop_while_unsupported_attributes_allow_synthesis() {
         use crate::ax::bindings::{kAXErrorAttributeUnsupported, kAXErrorFailure};
         assert!(ax_write_progress(
@@ -1360,7 +1396,16 @@ mod tests {
 
     #[test]
     fn preexisting_text_and_unrelated_growth_do_not_confirm_an_insertion() {
-        for (before, after, text) in [("marker", "marker", "marker"), ("", "other", "marker")] {
+        for (before, after, text) in [
+            ("marker", "marker", "marker"),
+            ("", "other", "marker"),
+            ("a", "ba", "ab"),
+            ("é", "ê", "x"),
+            ("a", "a🙂", "é"),
+            ("ab", "b", "marker"),
+            ("ab", "axb", "marker"),
+            ("ab", "abmarkerx", "marker"),
+        ] {
             let progress =
                 await_typed_delivery(Some(before), text, std::time::Instant::now(), || {
                     Some(after.into())
@@ -1485,12 +1530,25 @@ mod tests {
 
     #[test]
     fn large_atomic_ax_payloads_are_not_subject_to_the_synthesis_budget() {
-        assert!(synthesis_preflight(TextDeliveryRoute::AtomicAx, 100_000, 200).is_none());
-        assert_eq!(
-            typed_progress(Some(""), Some(&"x".repeat(11_500)), &"x".repeat(11_500)),
-            TypedProgress::Complete,
-            "a successful one-call AX insertion remains eligible regardless of size"
+        let text = "x".repeat(11_500);
+        let progress = ax_write_progress(kAXErrorSuccess, Some(""), Some(&text), &text, true)
+            .expect("a confirmed AX write must stop before synthesis");
+        let result = text_result(
+            TypeTextOutcome {
+                detail: String::new(),
+                transport: ActionTransport::MacosAxValue,
+                delivery: ActualDelivery::Background,
+                progress,
+            },
+            11_500,
+            false,
+            "",
         );
+        assert_ne!(result.is_error, Some(true));
+        let action = public_action(&result);
+        assert_eq!(action["effect"], "confirmed");
+        assert_eq!(action["delivery"]["delivered_count"], 11_500);
+        assert!(action.get("escalation").is_none());
     }
 
     #[test]

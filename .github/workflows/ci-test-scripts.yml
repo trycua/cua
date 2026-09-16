@@ -46,6 +46,19 @@ on:
       - "scripts/ci/macos/**"
 
 jobs:
+  windows-uninstall:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Test Windows release uninstall reporting
+        shell: powershell
+        run: '& ./libs/cua-driver/scripts/tests/uninstall-windows-regression.ps1'
+
   test:
     runs-on: ubuntu-latest
 

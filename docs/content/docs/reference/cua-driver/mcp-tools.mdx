@@ -326,6 +326,8 @@ Use for: marquee/lasso selection, drag-and-drop, resizing via a handle, scrubbin
 
 `modifier` keys (cmd/shift/option/ctrl) are held across the entire gesture.
 
+On macOS, background window delivery requires an exact `window_id`; the driver keeps the real foreground unchanged, establishes target-only synthetic focus, and posts the gesture to that pid/window without CDP.
+
 When `from_zoom` is true, coordinates are in the last zoom image for this pid; the driver maps them back to window coordinates before dispatching.
 
 **Arguments:**

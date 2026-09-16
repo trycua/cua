@@ -623,6 +623,7 @@ pub fn drag_at_xy(
         modifiers,
         button,
         foreground_release,
+        None,
         |_, _| {},
     )
 }
@@ -647,6 +648,7 @@ pub fn drag_at_xy_observed<F>(
     modifiers: &[&str],
     button: DragButton,
     foreground_release: bool,
+    focus_context: Option<crate::input::skylight::SyntheticTargetFocusContext>,
     mut observe: F,
 ) -> anyhow::Result<()>
 where
@@ -763,6 +765,10 @@ where
     // after this function returns, so let the target consume the release and
     // complete pointer capture before that restore.
     std::thread::sleep(std::time::Duration::from_millis(100));
+
+    if let Some(context) = focus_context {
+        crate::input::skylight::end_synthetic_target_focus(context)?;
+    }
 
     Ok(())
 }

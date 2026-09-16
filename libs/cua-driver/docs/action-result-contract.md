@@ -55,6 +55,20 @@ The invariants are:
 - `partial` has `delivery.delivered_count`;
 - `refused` has neither delivery nor evidence.
 
+## macOS text insertion
+
+`type_text` keeps uncertain delivery `unverifiable`: missing, unchanged, or
+untrusted readback does not establish zero delivery or `delivery_failed`.
+Web-content AX values are not renderer evidence, and another focused field
+cannot confirm the addressed insertion. Unverifiable results omit delivered
+counts and retry escalation.
+
+An accepted or uncertain atomic AX write is not replayed through keystrokes.
+A known unsupported attribute can still fall back to bounded synthesis.
+Observe the target before retrying; uncertainty alone does not authorize a
+suffix retry. Trusted partial insertion retains the `type_text_incomplete`
+error, but marks it non-retryable and omits `retry_from_character`.
+
 ## Window target resolution
 
 Window-scoped actions accept a PID without `window_id` only when that process

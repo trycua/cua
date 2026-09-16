@@ -1543,6 +1543,14 @@
               "null"
             ]
           },
+          "collapsed_rows": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "degraded": {
             "type": [
               "boolean",

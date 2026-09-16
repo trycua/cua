@@ -80,7 +80,15 @@ fn def() -> &'static ToolDef {
             context-window blow-up on Electron / Obsidian / large web apps that \
             produce 10k+ element trees. When applied, BOTH the markdown \
             and the structured elements are truncated identically. Omit both for \
-            current default behaviour (≤2 000 elements, depth ≤25).".into(),
+            current default behaviour (≤2 000 elements, depth ≤25).\n\n\
+            A scrolling table/outline/list keeps every row in its accessibility \
+            tree but only builds the ones on screen, so reading the rest costs \
+            tens of milliseconds each and starves the rest of the window. Rows \
+            the container reports as not visible and not selected are left \
+            unread: the tree states the count per container, and \
+            `collapsed_rows` reports the total. Off-screen rows are not \
+            clickable anyway — scroll, or use the window's own search field, to \
+            bring one into view before acting on it.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "required": ["pid", "window_id"],
@@ -559,6 +567,7 @@ impl Tool for GetWindowStateTool {
             "total_element_count": element_count,
             "returned_element_count": filtered_element_count,
             "elements_complete": elements_complete,
+            "collapsed_rows": tree_result.as_ref().map_or(0, |r| r.collapsed_rows),
             "tree_markdown": tree_md,
             "elements": elements_json,
             "_note": "Prefer `elements` — `tree_markdown` will continue to work \

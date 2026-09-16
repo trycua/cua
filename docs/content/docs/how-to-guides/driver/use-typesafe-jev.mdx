@@ -1,0 +1,136 @@
+---
+title: 'Use TypeSafe Jev with Cua Driver'
+description: 'Run a bounded browser action loop with deterministic mock choices or optional live Jev decisions.'
+---
+
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+
+Use the standalone TypeSafe Jev example to choose one typed browser action at a
+time, perform it through Cua Driver, and verify the result against an
+independent local endpoint. The Python and TypeScript versions implement the
+same loop.
+
+## Get the example
+
+Clone Cua and enter the example directory:
+
+```bash
+git clone https://github.com/trycua/cua.git
+cd cua/libs/cua-driver/examples/typesafe-jev
+```
+
+Install Cua Driver so that `cua-driver` is on `PATH`. You also need Python 3.10
+or later with `uv`, Node.js 20 or later, npm, and a Chromium-based browser that
+Cua Driver can prepare.
+
+Install the dependencies:
+
+```bash
+uv sync
+npm install
+```
+
+## Start the local fixture
+
+Start the loopback-only fixture in a separate terminal:
+
+```bash
+python3 fixture_server.py
+```
+
+Leave the fixture running. Its `/state` endpoint reports the last submitted
+value, which provides proof outside the Cua Driver action response and browser
+image.
+
+## Run the credential-free proof
+
+The mock provider makes deterministic typed choices through the same provider
+boundary as the live integration. It exercises the local control loop without
+calling Jev or requiring `TYPESAFE_API_KEY`.
+
+<Tabs groupId="language" persist items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+
+```bash
+uv run python/run.py --provider mock
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```bash
+npm run demo:mock
+```
+
+  </Tab>
+</Tabs>
+
+The runner creates a Driver-owned isolated Chromium profile, opens the fixture,
+and keeps one `cua-driver mcp` connection alive for the complete task. Before
+each action, it captures a browser snapshot and gives the provider a bounded
+choice. After the page changes, it uses the next snapshot's page references for
+`browser_type` or `browser_click`; it does not reuse stale references.
+
+Success requires the exact value to appear at `/state`. The action response
+alone does not establish that the page accepted the mutation.
+
+The mock result proves deterministic local integration. It does not prove live
+Jev availability, authentication, latency, or decision quality.
+
+## Verify the same loop with live Jev
+
+If you have a TypeSafe credential, export it only in the terminal that runs the
+example:
+
+```bash
+export TYPESAFE_API_KEY=YOUR_TYPESAFE_API_KEY
+```
+
+Then run the live provider:
+
+<Tabs groupId="language" persist items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+
+```bash
+uv run python/run.py --provider live
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```bash
+npm run demo:live
+```
+
+  </Tab>
+</Tabs>
+
+The provider sends the task state and typed choice question to TypeSafe. Jev
+returns one bounded choice; it does not control the MCP lifecycle or perform the
+desktop action. Cua Driver acts on the choice, and the fixture's `/state`
+endpoint remains the final verification source.
+
+Use the live route only when sending the fixture or page state to the configured
+provider is appropriate. A successful mock run is not evidence that a live Jev
+request succeeded.
+
+## Run the credential-free checks
+
+Run the focused test suites without setting `TYPESAFE_API_KEY`:
+
+```bash
+uv run python -m unittest discover -s python/tests
+npm test
+npm run typecheck
+```
+
+The example complements
+[PR #3914](https://github.com/trycua/cua/pull/3914), which proposes an optional
+Jev policy head inside Cua Driver. This example instead composes the public
+TypeSafe SDKs with the existing Cua Driver MCP tools and keeps the complete
+decide-act-verify loop in application code.
+
+The example was inspired by the MIT-licensed
+[`awlevin/typesafe-computer-use`](https://github.com/awlevin/typesafe-computer-use)
+project. Its implementation uses Cua Driver's current typed browser and MCP
+contracts rather than copying that project's source.

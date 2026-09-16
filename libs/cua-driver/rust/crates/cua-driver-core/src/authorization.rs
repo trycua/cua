@@ -925,7 +925,12 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "history_query" => RiskClass::R2,
 
         // External/file side effects or generic compound action surfaces.
-        "get_desktop_state"
+        // `suggest_action` sits here because it egresses a projection of
+        // the window's accessibility tree to a third-party policy model:
+        // no local side effect, but the strongest data-movement class on
+        // the surface.
+        "suggest_action"
+        | "get_desktop_state"
         | "get_window_state"
         | "kill_app"
         | "stop_recording"

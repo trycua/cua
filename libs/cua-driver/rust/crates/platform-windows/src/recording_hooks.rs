@@ -11,7 +11,6 @@
 #[cfg(target_os = "windows")]
 use crate::uia::element_resolver::{ElementBackend, FreshUiaElements};
 
-#[cfg(target_os = "windows")]
 use cua_driver_core::recording::ScreenshotCapture;
 
 #[cfg(target_os = "windows")]

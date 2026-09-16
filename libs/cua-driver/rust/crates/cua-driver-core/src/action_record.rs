@@ -1342,6 +1342,56 @@ mod tests {
     }
 
     #[test]
+    fn a_rejected_set_value_publishes_a_proved_noop_and_a_pixel_retarget() {
+        // A set_value whose AXValue read-back returned the pre-write value
+        // must publish a proved no-op and point at a pixel retarget, not an
+        // unverifiable result that invites a blind foreground retype. The
+        // producer side lives in platform-macos; this asserts the public
+        // projection a caller actually receives.
+        let rejected_write = ActionExecutionRecord::from_legacy(
+            "set_value",
+            &serde_json::json!({ "pid": 4711, "window_id": 82, "element_index": 12 }),
+            &serde_json::json!({
+                "path": "ax",
+                "verified": false,
+                "effect": "suspected_noop",
+                "escalation": { "recommended": "px", "reason": "read-back returned the pre-write value" }
+            }),
+        )
+        .expect("set_value legacy payload projects")
+        .public_result()
+        .expect("public projection");
+        assert_eq!(
+            rejected_write.effect,
+            cua_driver_contract::ActionEffect::SuspectedNoop
+        );
+        let escalation = rejected_write.escalation.expect("a proved no-op escalates");
+        assert_eq!(
+            escalation.target,
+            cua_driver_contract::ActionEscalationTarget::Pixel
+        );
+        assert_eq!(
+            escalation.reason,
+            cua_driver_contract::ActionEscalationReason::SuspectedNoop
+        );
+
+        // The unreadable and moved-but-different cases stay unverifiable, so
+        // the stronger claim is reserved for the case with evidence.
+        let unverifiable = ActionExecutionRecord::from_legacy(
+            "set_value",
+            &serde_json::json!({ "pid": 4711, "window_id": 82, "element_index": 12 }),
+            &serde_json::json!({ "path": "ax", "verified": false, "effect": "unverifiable" }),
+        )
+        .expect("set_value legacy payload projects")
+        .public_result()
+        .expect("public projection");
+        assert_eq!(
+            unverifiable.effect,
+            cua_driver_contract::ActionEffect::Unverifiable
+        );
+    }
+
+    #[test]
     fn escalation_projection_preserves_decision_critical_reasons() {
         use cua_driver_contract::{ActionEscalationReason, ActionEscalationTarget};
 

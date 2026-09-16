@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 
 const TIMEOUT: Duration = Duration::from_secs(3);
 const CANCELLATION_POLL: Duration = Duration::from_millis(25);
-const TEXT_ACTION_GAP: Duration = Duration::from_millis(10);
+const TEXT_ACTION_GAP: Duration = Duration::from_millis(25);
 const MAX_PACKET: usize = 2048;
 const MAX_LANES: usize = 2;
 const MAX_STALE_GEOMETRY_RETRIES: usize = 1;

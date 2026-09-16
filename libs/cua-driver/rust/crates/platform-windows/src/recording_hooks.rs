@@ -1,13 +1,5 @@
 //! Recording callbacks exposed to `cua_driver_core::recording`.
 //!
-//! Two hooks:
-//!  - `app_state_json_for` — produces `app_state.json` bytes for a turn folder.
-//!  - `element_window_local_xy` — resolves `element_index` to a click point in
-//!    window-local screenshot-pixel coordinates so `click.png` is also written
-//!    on UIA/MSAA-indexed clicks (not just pixel-addressed ones).
-
-#[cfg(target_os = "windows")]
-#[cfg(target_os = "windows")]
 #[cfg(target_os = "windows")]
 use crate::uia::element_resolver::{ElementBackend, FreshUiaElements};
 
@@ -75,8 +67,6 @@ pub fn screenshot_for_recording(window_id: Option<u64>, pid: Option<i64>) -> Scr
     }
 }
 
-/// Called on the dispatch task after scrolling has resolved the final point.
-/// Keep capture inside the lazy callback so private/unrecorded turns do no work.
 #[cfg(target_os = "windows")]
 pub(crate) fn capture_dispatch_click_target(window_id: u64, pid: u32, x: i32, y: i32) {
     cua_driver_core::recording::capture_dispatch_click_target(window_id, i64::from(pid), || {
@@ -110,46 +100,7 @@ pub fn app_state_json_for(window_id: Option<u64>, pid: Option<i64>) -> Option<Ve
 }
 
 #[cfg(target_os = "windows")]
-pub fn element_window_local_xy(
-    pid: i64,
-    args: &serde_json::Value,
-    capture_point: bool,
-) -> Option<(u64, Option<(f64, f64)>)> {
-    let pid_u32 = u32::try_from(pid).ok()?;
-    let resolved = crate::uia::element_resolver::resolve_element_args(
-        pid_u32 as i32,
-        args.get("element_index")
-            .and_then(|value| value.as_u64())
-            .map(|value| value as usize),
-        args.get("element_token").and_then(|value| value.as_str()),
-        args.get("snapshot_id").and_then(|value| value.as_str()),
-        args.get("window_id").and_then(|value| value.as_u64()),
-        "recording",
-    )
-    .ok()?;
-    let cua_driver_core::element_token::ResolvedElement::Element {
-        window_id: Some(window_id),
-        element,
-        ..
-    } = resolved
-    else {
-        return None;
-    };
-    if !capture_point {
-        return Some((window_id, None));
-    }
-    let (sx, sy) = element.center;
-    // The freshly resolved center is in SCREEN coords. Convert to window-local pixel
-    // coords by subtracting the window's screen origin (GetWindowRect-equivalent
-    // in WindowInfo). Windows captures at logical pixels so no scale factor.
-    let wins = crate::win32::list_windows(Some(pid_u32));
-    let point = wins
-        .iter()
-        .find(|w| w.hwnd == window_id)
-        .filter(|_| element.rect.is_some())
-        .map(|win| ((sx - win.x) as f64, (sy - win.y) as f64));
-    Some((window_id, point))
-}
+pub use cua_driver_core::element_token::recording_target as element_window_local_xy;
 
 #[cfg(not(target_os = "windows"))]
 pub fn app_state_json_for(_window_id: Option<u64>, _pid: Option<i64>) -> Option<Vec<u8>> {

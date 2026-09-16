@@ -132,10 +132,10 @@ pub unsafe fn scroll_element(
     amount: u32,
 ) -> anyhow::Result<()> {
     if element_ptr == 0 {
-        anyhow::bail!("cached UIA scroll element is null");
+        anyhow::bail!("retained UIA scroll element is null");
     }
     let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-    let elem: IUIAutomationElement = IUIAutomationElement::from_raw(element_ptr as *mut _);
+    let elem = std::mem::ManuallyDrop::new(IUIAutomationElement::from_raw(element_ptr as *mut _));
     let pattern = elem
         .GetCurrentPattern(UIA_ScrollPatternId)
         .map_err(|e| anyhow::anyhow!("UIA ScrollPattern unavailable: {e}"))?;
@@ -150,15 +150,29 @@ pub unsafe fn scroll_element(
         other => anyhow::bail!("unknown scroll direction {other:?}"),
     };
     let horizontal = matches!(direction, "left" | "right");
-    for _ in 0..amount.max(1) {
+    let unknown = |error: anyhow::Error| {
+        cua_driver_core::protocol::ToolResult::native_action_error(
+            format!(
+                "native scroll outcome is unknown ({error}); inspect fresh state and do not replay"
+            ),
+            cua_driver_core::action_record::ActionTransport::WindowsUiaScroll,
+        )
+    };
+    for dispatched in 0..amount.max(1) {
+        cua_driver_core::tool::check_native_dispatch().map_err(|error| {
+            if dispatched == 0 {
+                error
+            } else {
+                unknown(error)
+            }
+        })?;
         let result = if horizontal {
             scroll.Scroll(vertical, ScrollAmount_NoAmount)
         } else {
             scroll.Scroll(ScrollAmount_NoAmount, vertical)
         };
-        result.map_err(|e| anyhow::anyhow!("UIA scroll failed: {e}"))?;
+        result.map_err(|error| unknown(error.into()))?;
     }
-    std::mem::forget(elem);
     Ok(())
 }
 

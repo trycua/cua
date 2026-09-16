@@ -32,6 +32,7 @@ pub fn is_screen_sharing_pid(pid: i32) -> bool {
 
 /// Press and release a single key, delivered to `pid` without stealing focus.
 pub fn press_key(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
+    cua_driver_core::tool::check_native_dispatch()?;
     // Handle "+" / "plus" → Shift+= (US keyboard layout).
     if key == "+" || key.to_lowercase() == "plus" {
         let flags = modifier_flags(&["shift"]);
@@ -53,10 +54,12 @@ pub fn press_key(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result<()> 
 
 /// Type a string character-by-character to `pid`.
 pub fn type_text(pid: i32, text: &str) -> anyhow::Result<()> {
+    cua_driver_core::tool::check_native_dispatch()?;
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
 
     for ch in text.chars() {
+        cua_driver_core::tool::check_native_dispatch()?;
         let ch_str = ch.to_string();
         let down = CGEvent::new_keyboard_event(source.clone(), 0, true)
             .map_err(|_| anyhow::anyhow!("CGEvent keyboard down failed"))?;
@@ -81,10 +84,12 @@ pub fn type_text(pid: i32, text: &str) -> anyhow::Result<()> {
 /// Type a string character-by-character with an extra `inter_char_delay_ms`
 /// pause after each character (on top of the internal 8 ms down/up gap).
 pub fn type_text_with_delay(pid: i32, text: &str, inter_char_delay_ms: u64) -> anyhow::Result<()> {
+    cua_driver_core::tool::check_native_dispatch()?;
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
 
     for ch in text.chars() {
+        cua_driver_core::tool::check_native_dispatch()?;
         let ch_str = ch.to_string();
         let down = CGEvent::new_keyboard_event(source.clone(), 0, true)
             .map_err(|_| anyhow::anyhow!("CGEvent keyboard down failed"))?;
@@ -111,6 +116,7 @@ pub fn type_text_with_delay(pid: i32, text: &str, inter_char_delay_ms: u64) -> a
 
 /// Send a key combination (hotkey) to `pid`.
 pub fn hotkey(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
+    cua_driver_core::tool::check_native_dispatch()?;
     press_key(pid, key, modifiers)
 }
 
@@ -121,6 +127,7 @@ pub fn hotkey(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
 /// sees those events. Without the envelope the path goes through IOHIDPostEvent
 /// so NSApplication.sendEvent: dispatches NSMenu key equivalents.
 pub fn hotkey_no_auth(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
+    cua_driver_core::tool::check_native_dispatch()?;
     let key_code = key_name_to_code(key)?;
     let flags = modifier_flags(modifiers);
     post_key_no_auth(pid, key_code, true, flags)?;
@@ -132,6 +139,7 @@ pub fn hotkey_no_auth(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result
 /// Press and release a single key to `pid` WITHOUT the auth-message envelope.
 /// Works for single keys as well as combinations (same as hotkey_no_auth for single key).
 pub fn press_key_no_auth(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
+    cua_driver_core::tool::check_native_dispatch()?;
     let key_code = key_name_to_code(key)?;
     let flags = modifier_flags(modifiers);
     post_key_no_auth(pid, key_code, true, flags)?;
@@ -147,6 +155,7 @@ pub fn press_key_no_auth(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Res
 /// invoking it; unlike the PID-routed helpers above, the HID queue itself has
 /// no process addressing.
 pub fn press_key_global(key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
+    cua_driver_core::tool::check_native_dispatch()?;
     use core_graphics::event::CGEventTapLocation;
 
     let key_code = key_name_to_code(key)?;
@@ -270,10 +279,13 @@ fn post_global_key(
     flags: CGEventFlags,
     tap: core_graphics::event::CGEventTapLocation,
 ) -> anyhow::Result<()> {
+    if key_down {
+        cua_driver_core::tool::check_native_dispatch()?;
+    }
     let event = CGEvent::new_keyboard_event(source.clone(), key_code, key_down)
         .map_err(|_| anyhow::anyhow!("CGEvent keyboard event creation failed"))?;
     event.set_flags(flags);
-    event.post(tap);
+    super::post_native_event(&event, tap);
     Ok(())
 }
 
@@ -287,7 +299,7 @@ fn release_global_modifiers(
         active_flags.remove(flag);
         if let Ok(event) = CGEvent::new_keyboard_event(source.clone(), key_code, false) {
             event.set_flags(active_flags);
-            event.post(tap);
+            super::post_native_event(&event, tap);
         }
         std::thread::sleep(std::time::Duration::from_millis(8));
     }
@@ -359,23 +371,25 @@ fn release_pid_modifiers(
 /// queue. This is the desktop-scope counterpart to PID-routed `type_text` and
 /// mirrors computer-server's frontmost pynput typing behavior.
 pub fn type_text_global(text: &str, inter_char_delay_ms: u64) -> anyhow::Result<()> {
+    cua_driver_core::tool::check_native_dispatch()?;
     use core_graphics::event::CGEventTapLocation;
 
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
     for ch in text.chars() {
+        cua_driver_core::tool::check_native_dispatch()?;
         let value = ch.to_string();
         let down = CGEvent::new_keyboard_event(source.clone(), 0, true)
             .map_err(|_| anyhow::anyhow!("CGEvent keyboard down failed"))?;
         down.set_string(&value);
         down.set_flags(CGEventFlags::CGEventFlagNull);
-        down.post(CGEventTapLocation::HID);
+        super::post_native_event(&down, CGEventTapLocation::HID);
         std::thread::sleep(std::time::Duration::from_millis(8));
         let up = CGEvent::new_keyboard_event(source.clone(), 0, false)
             .map_err(|_| anyhow::anyhow!("CGEvent keyboard up failed"))?;
         up.set_string(&value);
         up.set_flags(CGEventFlags::CGEventFlagNull);
-        up.post(CGEventTapLocation::HID);
+        super::post_native_event(&up, CGEventTapLocation::HID);
         std::thread::sleep(std::time::Duration::from_millis(inter_char_delay_ms.max(8)));
     }
     Ok(())
@@ -390,6 +404,7 @@ pub fn type_text_global(text: &str, inter_char_delay_ms: u64) -> anyhow::Result<
 /// payload carried by keycode 0, so the ordinary text synthesis path cannot be
 /// used for them.
 pub fn type_text_physical_global(text: &str, inter_char_delay_ms: u64) -> anyhow::Result<()> {
+    cua_driver_core::tool::check_native_dispatch()?;
     use core_graphics::event::CGEventTapLocation;
 
     // Validate the complete payload before posting its first event. A string
@@ -399,12 +414,13 @@ pub fn type_text_physical_global(text: &str, inter_char_delay_ms: u64) -> anyhow
         .map(physical_text_events)
         .collect::<anyhow::Result<Vec<_>>>()?;
     for events in event_groups {
+        cua_driver_core::tool::check_native_dispatch()?;
         let native_events = events
             .iter()
             .map(|event| create_bare_keyboard_event(event.key_code, event.key_down))
             .collect::<anyhow::Result<Vec<_>>>()?;
         for cg_event in native_events {
-            cg_event.post(CGEventTapLocation::HID);
+            super::post_native_event(&cg_event, CGEventTapLocation::HID);
             std::thread::sleep(std::time::Duration::from_millis(8));
         }
         if inter_char_delay_ms > 8 {
@@ -420,6 +436,7 @@ pub fn type_text_physical_global(text: &str, inter_char_delay_ms: u64) -> anyhow
 /// event-type overrides are applied; CoreGraphics derives those from the
 /// virtual key transitions and its default source state.
 pub fn press_key_bare_global(key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
+    cua_driver_core::tool::check_native_dispatch()?;
     use core_graphics::event::CGEventTapLocation;
 
     let key_code = key_name_to_code(key)?;
@@ -437,8 +454,9 @@ pub fn press_key_bare_global(key: &str, modifiers: &[&str]) -> anyhow::Result<()
         .into_iter()
         .map(|(code, down)| create_bare_keyboard_event(code, down))
         .collect::<anyhow::Result<Vec<_>>>()?;
+    cua_driver_core::tool::check_native_dispatch()?;
     for event in events {
-        event.post(CGEventTapLocation::HID);
+        super::post_native_event(&event, CGEventTapLocation::HID);
         std::thread::sleep(std::time::Duration::from_millis(8));
     }
     Ok(())
@@ -594,11 +612,14 @@ pub(super) fn post_keyboard_event(pid: i32, event: &CGEvent) {
     let event_ptr = event.as_ptr() as *mut std::ffi::c_void;
     // attachAuthMessage = true: required for Chromium keyboard on macOS 14+.
     if !crate::input::skylight::post_to_pid(pid as libc::pid_t, event_ptr, true) {
-        event.post_to_pid(pid as libc::pid_t);
+        super::post_native_event_to_pid(&event, pid as libc::pid_t);
     }
 }
 
 fn post_key(pid: i32, key_code: u16, key_down: bool, flags: CGEventFlags) -> anyhow::Result<()> {
+    if key_down {
+        cua_driver_core::tool::check_native_dispatch()?;
+    }
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
     let event = CGEvent::new_keyboard_event(source, key_code, key_down)
@@ -617,6 +638,9 @@ fn post_key_no_auth(
     key_down: bool,
     flags: CGEventFlags,
 ) -> anyhow::Result<()> {
+    if key_down {
+        cua_driver_core::tool::check_native_dispatch()?;
+    }
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
     let event = CGEvent::new_keyboard_event(source, key_code, key_down)
@@ -625,7 +649,7 @@ fn post_key_no_auth(
     let event_ptr = event.as_ptr() as *mut std::ffi::c_void;
     // attach_auth_message = false → IOHIDPostEvent path → NSMenu fires
     if !crate::input::skylight::post_to_pid(pid as libc::pid_t, event_ptr, false) {
-        event.post_to_pid(pid as libc::pid_t);
+        super::post_native_event_to_pid(&event, pid as libc::pid_t);
     }
     Ok(())
 }

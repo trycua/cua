@@ -664,7 +664,7 @@ fn invoke_operation(
                     "click",
                     serde_json::json!({
                         "pid": pid as i64, "window_id": window_id,
-                        "element_index": index, "snapshot_id": pre.snapshot_id(),
+                        "element_token": pre.element_token(index), "snapshot_id": pre.snapshot_id(),
                         "delivery_mode": mode
                     }),
                 ),
@@ -682,7 +682,7 @@ fn invoke_operation(
                     "type_text",
                     serde_json::json!({
                         "pid": pid as i64, "window_id": window_id,
-                        "element_index": index, "snapshot_id": pre.snapshot_id(),
+                        "element_token": pre.element_token(index), "snapshot_id": pre.snapshot_id(),
                         "text": text, "delivery_mode": mode
                     }),
                 ),
@@ -700,7 +700,7 @@ fn invoke_operation(
                     "set_value",
                     serde_json::json!({
                         "pid": pid as i64, "window_id": window_id,
-                        "element_index": index, "snapshot_id": pre.snapshot_id(),
+                        "element_token": pre.element_token(index), "snapshot_id": pre.snapshot_id(),
                         "value": value
                     }),
                 ),
@@ -862,7 +862,7 @@ fn invoke_operation(
                 "click",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": window_id,
-                    "element_index": index, "snapshot_id": pre.snapshot_id(),
+                    "element_token": pre.element_token(index), "snapshot_id": pre.snapshot_id(),
                     "delivery_mode": mode
                 }),
             );

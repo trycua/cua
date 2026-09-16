@@ -112,11 +112,11 @@ impl UiaSingleFlight {
         let worker_gate = Arc::clone(self);
         let spawn = thread::Builder::new()
             .name(format!("cua-uia-{stage}"))
-            .spawn(move || {
+            .spawn(cua_driver_core::tool::bind_native(move || {
                 let _guard = InFlightGuard { gate: worker_gate };
                 let result = f(worker_cancelled);
                 let _ = tx.send(result);
-            });
+            }));
 
         if let Err(e) = spawn {
             self.in_flight.store(false, Ordering::Release);
@@ -581,7 +581,7 @@ fn try_invoke_in_window_at_point_unbounded(
         // UWP foreground-steal bypass: gate the entire activation block on
         // `is_xaml_host_hwnd(hwnd)`. For non-XAML hosts the closure is a
         // straight passthrough.
-        crate::uia::fg_bypass::run_with_uwp_bypass(hwnd, || {
+        let activate = || {
             if cancelled.load(Ordering::Acquire) {
                 return Timeout;
             }
@@ -619,7 +619,11 @@ fn try_invoke_in_window_at_point_unbounded(
                     Unavailable
                 }
             }
+        };
+        crate::uia::fg_bypass::run_with_uwp_bypass(hwnd, || {
+            Ok::<_, windows::core::Error>(activate())
         })
+        .unwrap_or(Timeout)
     }
 }
 

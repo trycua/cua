@@ -93,8 +93,17 @@ impl Drop for DisabledHwndGuard {
 /// cua-driver-uia.exe (UIAccess-manifested worker) and route UIA
 /// activations through it. See PR #1699 bg-modality tests for the
 /// regression guards.
-pub fn run_with_uwp_bypass<T>(host_hwnd: isize, action: impl FnOnce() -> T) -> T {
+pub fn run_with_uwp_bypass<T, E: From<windows::core::Error>>(
+    host_hwnd: isize,
+    action: impl FnOnce() -> Result<T, E>,
+) -> Result<T, E> {
+    if !cua_driver_core::tool::native_dispatch_allowed() {
+        return Err(windows::core::Error::from_hresult(windows::Win32::Foundation::E_ABORT).into());
+    }
     let _guard = make_guard(host_hwnd);
+    if !cua_driver_core::tool::native_dispatch_allowed() {
+        return Err(windows::core::Error::from_hresult(windows::Win32::Foundation::E_ABORT).into());
+    }
     action()
 }
 

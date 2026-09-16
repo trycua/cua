@@ -11,9 +11,8 @@
 
 use anyhow::Result;
 
-pub mod element_resolver;
 pub mod native;
-pub use native::ensure_listener_active;
+pub use native::{element_resolver, ensure_listener_active};
 
 #[derive(Clone, Debug)]
 pub struct AtspiNode {
@@ -59,6 +58,7 @@ pub struct AtspiTreeResult {
     /// snapshot of a multi-window app carries every window's controls; callers
     /// that act on behalf of an exact native window must require this.
     pub window_scoped: bool,
+    pub complete: bool,
 }
 
 /// Walk the AT-SPI tree for a window identified by (pid, xid).
@@ -88,6 +88,7 @@ pub(crate) fn walk_tree_for_recording(
                 trusted: true,
                 degraded_reason: None,
                 window_scoped: walked.window_scoped,
+                complete: walked.complete,
             };
         }
     }
@@ -136,6 +137,7 @@ pub fn walk_tree_bounded(
                         trusted: true,
                         degraded_reason: None,
                         window_scoped: walked.window_scoped,
+                        complete: walked.complete,
                     };
                 }
             }
@@ -158,12 +160,15 @@ pub fn walk_tree_bounded(
 /// is true when the actuated node looked like a silent no-op (a passive
 /// display role, or no advertised action), so the caller can surface
 /// `effect: "suspected_noop"`.
-pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
+pub fn perform_action(
+    pid: u32,
+    idx: impl Into<element_resolver::ElementRef>,
+) -> Result<(String, bool)> {
     native::perform_action(pid, idx)
 }
 
 /// Give an indexed AT-SPI element keyboard focus without activating its window.
-pub fn focus_element(pid: u32, idx: usize) -> Result<bool> {
+pub fn focus_element(pid: u32, idx: impl Into<element_resolver::ElementRef>) -> Result<bool> {
     native::focus_element(pid, idx)
 }
 
@@ -171,7 +176,7 @@ pub use native::ScrollProgress;
 
 pub fn scroll_element(
     pid: u32,
-    idx: usize,
+    idx: impl Into<element_resolver::ElementRef>,
     direction: &str,
     amount: usize,
     by: cua_driver_contract::ScrollBy,
@@ -220,14 +225,22 @@ pub fn type_into_editable(pid: u32, text: &str) -> Result<()> {
 }
 
 /// Type into the exact indexed editable from the caller's accessibility snapshot.
-pub fn type_into_editable_at(pid: u32, idx: usize, text: &str) -> Result<()> {
+pub fn type_into_editable_at(
+    pid: u32,
+    idx: impl Into<element_resolver::ElementRef>,
+    text: &str,
+) -> Result<()> {
     native::type_into_editable_at(pid, idx, text)
 }
 
 /// Set the text value of element `idx` within pid's app tree via AT-SPI.
 /// Tries `EditableText.set_text_contents(value)` first, then
 /// `Value.set_current_value(float)`.
-pub fn set_value(pid: u32, idx: usize, value: &str) -> Result<()> {
+pub fn set_value(
+    pid: u32,
+    idx: impl Into<element_resolver::ElementRef>,
+    value: &str,
+) -> Result<()> {
     native::set_value(pid, idx, value)
 }
 
@@ -277,6 +290,7 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
                 trusted: false,
                 degraded_reason: None,
                 window_scoped: false,
+                complete: false,
             }
         }
     };
@@ -338,6 +352,7 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
         // proving anything a caller acts on.
         window_scoped: true,
         degraded_reason: None,
+        complete: false,
     }
 }
 

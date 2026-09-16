@@ -235,7 +235,7 @@ pub(crate) fn background_refusal_result(
 /// target-bound verification.
 pub(crate) struct BackgroundMutationLease {
     pid: i32,
-    _guard: tokio::sync::OwnedMutexGuard<()>,
+    _guard: std::sync::Arc<tokio::sync::OwnedMutexGuard<()>>,
 }
 
 impl BackgroundMutationLease {
@@ -301,7 +301,9 @@ pub(crate) async fn gate_background_window_action(
 pub(crate) async fn acquire_background_mutation(pid: i32) -> BackgroundMutationLease {
     BackgroundMutationLease {
         pid,
-        _guard: crate::background_mutation::acquire(pid).await,
+        _guard: cua_driver_core::tool::retain_native_resource(
+            crate::background_mutation::acquire(pid).await,
+        ),
     }
 }
 

@@ -1129,6 +1129,12 @@ pub fn with_x11_foreground<T>(
     unsafe {
         x11::xlib::XGetInputFocus(display, &mut prior_core_focus, &mut prior_revert);
     }
+    if let Err(error) = cua_driver_core::tool::check_native_dispatch() {
+        unsafe {
+            x11::xlib::XCloseDisplay(display);
+        }
+        return Err(error);
+    }
     ewmh_activate_window(display, xid as x11::xlib::Window, prior.unwrap_or(0));
     unsafe {
         x11::xlib::XSync(display, 0);
@@ -1904,6 +1910,7 @@ pub fn send_focus_out(xid: u64) -> Result<()> {
 
 /// Send a button click (down + up) to a window at window-local coordinates.
 pub fn send_click(xid: u64, x: i32, y: i32, count: usize, button: u8) -> Result<()> {
+    cua_driver_core::tool::check_native_dispatch()?;
     send_click_with_modifiers(xid, x, y, count, button, &[])
 }
 
@@ -1918,6 +1925,7 @@ pub fn send_click_with_modifiers(
     button: u8,
     modifiers: &[&str],
 ) -> Result<()> {
+    cua_driver_core::tool::check_native_dispatch()?;
     let (conn, _) = connect_x11_for_input()?;
     let root = conn.setup().roots[0].root;
     let modifier_state = modifiers_to_state(modifiers);
@@ -1958,6 +1966,7 @@ pub fn send_click_with_modifiers(
             same_screen: true,
         };
 
+        cua_driver_core::tool::check_native_dispatch()?;
         conn.send_event(false, target.window, EventMask::BUTTON_PRESS, &press)?;
         sleep(Duration::from_millis(CLICK_DELAY_MS));
         conn.send_event(false, target.window, EventMask::BUTTON_RELEASE, &release)?;
@@ -2011,6 +2020,7 @@ pub fn send_drag(
         state: KeyButMask::from(0u16),
         same_screen: true,
     };
+    cua_driver_core::tool::check_native_dispatch()?;
     conn.send_event(false, press_target.window, EventMask::BUTTON_PRESS, &press)?;
     conn.flush()?;
     sleep(Duration::from_millis(CLICK_DELAY_MS));
@@ -2089,6 +2099,7 @@ pub fn send_button_down(xid: u64, x: i32, y: i32, button: u8) -> Result<()> {
         state: KeyButMask::from(0u16),
         same_screen: true,
     };
+    cua_driver_core::tool::check_native_dispatch()?;
     conn.send_event(false, target.window, EventMask::BUTTON_PRESS, &press)?;
     conn.flush()?;
     Ok(())
@@ -2200,6 +2211,7 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
             same_screen: true,
         };
 
+        cua_driver_core::tool::check_native_dispatch()?;
         conn.send_event(false, window, EventMask::KEY_PRESS, &press)?;
         // Start the hold interval after sending the press, not while it is buffered.
         conn.flush()?;
@@ -2235,6 +2247,7 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
         .and_then(|s| s.iter().copied().find(|&k| k != 0))
         .unwrap_or(50);
     for ch in text.chars() {
+        cua_driver_core::tool::check_native_dispatch()?;
         let cp = match ch {
             '\n' => 0xff0d, // XK_Return
             '\t' => 0xff09, // XK_Tab
@@ -2276,6 +2289,7 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
 /// that lack a keysym borrow a spare keycode (xdotool-style) via
 /// [`keycode_for_keysym`]; the returned guards restore the map on drop.
 pub fn send_key_xtest(key: &str, modifiers: &[&str]) -> Result<()> {
+    cua_driver_core::tool::check_native_dispatch()?;
     use x11rb::protocol::xtest::ConnectionExt as _;
     let (conn, _) = connect_x11_for_input()?;
     let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
@@ -2327,6 +2341,7 @@ pub fn send_key_xtest(key: &str, modifiers: &[&str]) -> Result<()> {
         None
     };
 
+    cua_driver_core::tool::check_native_dispatch()?;
     // Press modifiers (+ auto-Shift), tap the key, release in reverse order.
     for &kc in &mod_keycodes {
         conn.xtest_fake_input(KEY_PRESS_EVENT, kc, 0, x11rb::NONE, 0, 0, 0)?;
@@ -2378,6 +2393,7 @@ pub fn send_key_xtest(key: &str, modifiers: &[&str]) -> Result<()> {
 /// by vision on the whole screen and issues a real screen-absolute pointer
 /// click. `button` is an X button number (1=left, 2=middle, 3=right).
 pub fn send_click_xtest_desktop(x: i32, y: i32, button: u8, count: usize) -> Result<()> {
+    cua_driver_core::tool::check_native_dispatch()?;
     send_click_xtest_desktop_with_modifiers(x, y, button, count, &[])
 }
 
@@ -2390,6 +2406,7 @@ pub fn send_click_xtest_desktop_with_modifiers(
     count: usize,
     modifiers: &[&str],
 ) -> Result<()> {
+    cua_driver_core::tool::check_native_dispatch()?;
     use x11rb::protocol::xtest::ConnectionExt as _;
     let (conn, screen_num) = connect_x11_for_input()?;
     let root = conn.setup().roots[screen_num].root;
@@ -2415,6 +2432,7 @@ pub fn send_click_xtest_desktop_with_modifiers(
         conn.xtest_fake_input(MOTION_NOTIFY_EVENT, 0, 0, root, x as i16, y as i16, 0)?;
         let count = count.max(1);
         for click_index in 0..count {
+            cua_driver_core::tool::check_native_dispatch()?;
             conn.xtest_fake_input(BUTTON_PRESS_EVENT, button, 0, root, x as i16, y as i16, 0)?;
             conn.xtest_fake_input(BUTTON_RELEASE_EVENT, button, 0, root, x as i16, y as i16, 0)?;
             if click_index + 1 < count {
@@ -2479,6 +2497,7 @@ pub fn send_scroll_xtest_desktop(x: i32, y: i32, direction: &str, amount: usize)
     let root = conn.setup().roots[screen_num].root;
     conn.xtest_fake_input(MOTION_NOTIFY_EVENT, 0, 0, root, x as i16, y as i16, 0)?;
     for _ in 0..amount.max(1) {
+        cua_driver_core::tool::check_native_dispatch()?;
         conn.xtest_fake_input(BUTTON_PRESS_EVENT, button, 0, root, x as i16, y as i16, 0)?;
         conn.xtest_fake_input(BUTTON_RELEASE_EVENT, button, 0, root, x as i16, y as i16, 0)?;
     }
@@ -2558,6 +2577,7 @@ pub fn send_drag_xtest_desktop(
 
 /// Send a named key press to a window.
 pub fn send_key(xid: u64, key: &str, modifiers: &[&str]) -> Result<()> {
+    cua_driver_core::tool::check_native_dispatch()?;
     send_key_to_target(xid, None, key, modifiers)
 }
 
@@ -2566,6 +2586,7 @@ pub fn send_key(xid: u64, key: &str, modifiers: &[&str]) -> Result<()> {
 /// Chromium renderers receive the event on their input surface rather than on
 /// the native top-level wrapper.
 pub fn send_key_at(xid: u64, x: i32, y: i32, key: &str, modifiers: &[&str]) -> Result<()> {
+    cua_driver_core::tool::check_native_dispatch()?;
     send_key_to_target(xid, Some((x, y)), key, modifiers)
 }
 
@@ -2575,6 +2596,7 @@ fn send_key_to_target(
     key: &str,
     modifiers: &[&str],
 ) -> Result<()> {
+    cua_driver_core::tool::check_native_dispatch()?;
     let (conn, _) = connect_x11_for_input()?;
     let target = point
         .map(|(x, y)| resolve_event_target(&conn, xid, x, y))

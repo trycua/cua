@@ -259,7 +259,7 @@ fn harness_winui3_type_text() {
         let resp = driver.call(
             "type_text",
             serde_json::json!({
-                "pid": pid as i64, "window_id": wid, "element_index": idx,
+                "pid": pid as i64, "window_id": wid, "element_token": snap.element_token(idx),
                 "snapshot_id": snap.snapshot_id(),
                 "text": "winui3-typed", "delivery_mode": "background"
             }),
@@ -293,7 +293,7 @@ fn harness_winui3_xaml_popup_open() {
             let response = driver.call(
                 "click",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": idx,
+                    "pid": pid as i64, "window_id": wid, "element_token": snap.element_token(idx),
                     "snapshot_id": snap.snapshot_id(),
                     "delivery_mode": "background"
                 }),
@@ -336,7 +336,7 @@ fn harness_winui3_checkbox_toggle() {
             let response = driver.call(
                 "click",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": idx,
+                    "pid": pid as i64, "window_id": wid, "element_token": snap.element_token(idx),
                     "snapshot_id": snap.snapshot_id(),
                     "delivery_mode": "background"
                 }),
@@ -376,7 +376,7 @@ fn harness_winui3_radio_select() {
             let response = driver.call(
                 "click",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": idx,
+                    "pid": pid as i64, "window_id": wid, "element_token": snap.element_token(idx),
                     "snapshot_id": snap.snapshot_id(),
                     "delivery_mode": "background"
                 }),
@@ -428,7 +428,7 @@ fn harness_winui3_slider_set_value() {
             let resp = driver.call(
                 "set_value",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": idx,
+                    "pid": pid as i64, "window_id": wid, "element_token": snap.element_token(idx),
                     "snapshot_id": snap.snapshot_id(),
                     "value": "42"
                 }),
@@ -475,7 +475,7 @@ fn harness_winui3_combo_select() {
             let expand = driver.call(
                 "click",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": combo_idx,
+                    "pid": pid as i64, "window_id": wid, "element_token": snap.element_token(combo_idx),
                     "snapshot_id": snap.snapshot_id(),
                     "delivery_mode": "background"
                 }),
@@ -493,7 +493,7 @@ fn harness_winui3_combo_select() {
             let select = driver.call(
                 "click",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": item_idx,
+                    "pid": pid as i64, "window_id": wid, "element_token": snap2.element_token(item_idx),
                     "snapshot_id": snap2.snapshot_id(),
                     "delivery_mode": "background"
                 }),

@@ -163,7 +163,7 @@ fn agent_cursor_overlay_obeys_untargeted_and_targeted_z_order() {
             serde_json::json!({
                 "pid": target.pid,
                 "window_id": target.native_id,
-                "element_index": button_index,
+                "element_token": target_state.element_token(button_index),
                 "snapshot_id": target_state.snapshot_id(),
                 "delivery_mode": "background",
                 "cursor_id": cursor_id

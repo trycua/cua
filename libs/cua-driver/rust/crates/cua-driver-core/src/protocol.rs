@@ -308,6 +308,13 @@ pub struct ToolResult {
     pub action_record: Option<crate::action_record::ActionExecutionRecord>,
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("{message}")]
+struct NativeActionError {
+    message: String,
+    transport: crate::action_record::ActionTransport,
+}
+
 impl ToolResult {
     pub fn text(msg: impl Into<String>) -> Self {
         Self {
@@ -327,6 +334,47 @@ impl ToolResult {
     pub fn with_structured(mut self, v: Value) -> Self {
         self.structured_content = Some(v);
         self
+    }
+
+    pub fn native_action_error(
+        message: impl Into<String>,
+        transport: crate::action_record::ActionTransport,
+    ) -> anyhow::Error {
+        NativeActionError {
+            message: message.into(),
+            transport,
+        }
+        .into()
+    }
+
+    pub fn from_native_error(
+        error: anyhow::Error,
+        requested: crate::action_record::RequestedDelivery,
+    ) -> Self {
+        match error.downcast_ref::<NativeActionError>() {
+            Some(native) => {
+                Self::native_outcome_unknown(native.message.clone(), native.transport, requested)
+            }
+            None => Self::error(error.to_string()),
+        }
+    }
+
+    pub fn native_outcome_unknown(
+        message: impl Into<String>,
+        transport: crate::action_record::ActionTransport,
+        requested: crate::action_record::RequestedDelivery,
+    ) -> Self {
+        use crate::action_record::{ActionEffect, ActionExecutionRecord, ActualDelivery};
+        let record =
+            ActionExecutionRecord::builder(ActionEffect::Unverifiable, transport, requested)
+                .actual_delivery(ActualDelivery::Unknown)
+                .build()
+                .expect("unknown native outcome");
+        let public = serde_json::to_value(record.public_result().expect("unknown native result"))
+            .expect("action result");
+        Self::error(message)
+            .with_structured(public)
+            .with_action_record(record)
     }
 
     pub fn with_action_record(

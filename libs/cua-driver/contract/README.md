@@ -15,6 +15,8 @@ surface through their runtime's existing MCP client.
 
 ## Scope and compatibility
 
+Native element actions require identity-bearing observed tokens. Index/snapshot pairs are observation metadata, not an action address. See the [stateless targeting migration](../docs/stateless-element-targeting.md) for resolution semantics, native limitations, and release implications.
+
 The typed slice covers the cross-platform session lifecycle tools:
 
 - `start_session`

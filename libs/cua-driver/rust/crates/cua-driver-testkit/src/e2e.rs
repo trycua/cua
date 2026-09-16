@@ -1737,7 +1737,24 @@ fn validate_click_source(
 fn semantic_action_without_point(action: &Value) -> bool {
     let args = &action["arguments"];
     let truth = &action["action_truth"];
-    action["tool"] == "click"
+    let native_gesture = truth["transport"] == "macos_ax_action"
+        && truth["evidence"].as_array().is_some_and(|evidence| {
+            evidence.iter().any(|item| {
+                item["kind"] == "native_api_result"
+                    && match item["detail"].as_str() {
+                        Some("AXOpen") => {
+                            action["tool"] == "double_click"
+                                || (action["tool"] == "click" && args["count"] == 2)
+                        }
+                        Some("AXShowMenu") => {
+                            action["tool"] == "right_click"
+                                || (action["tool"] == "click" && args["button"] == "right")
+                        }
+                        _ => false,
+                    }
+            })
+        });
+    (action["tool"] == "click" || native_gesture)
         && action["result_error"] == false
         && action.get("click_point").is_none()
         && action.get("click_point_image").is_none()
@@ -1748,13 +1765,14 @@ fn semantic_action_without_point(action: &Value) -> bool {
         && args.get("x").is_none()
         && args.get("y").is_none()
         && args.get("raw").is_none_or(|value| value == false)
-        && args.get("button").is_none_or(|value| value == "left")
-        && args
-            .get("count")
-            .is_none_or(|value| value.as_u64() == Some(1))
-        && args
-            .get("click_count")
-            .is_none_or(|value| value.as_u64() == Some(1))
+        && (native_gesture
+            || (args.get("button").is_none_or(|value| value == "left")
+                && args
+                    .get("count")
+                    .is_none_or(|value| value.as_u64() == Some(1))
+                && args
+                    .get("click_count")
+                    .is_none_or(|value| value.as_u64() == Some(1))))
         && ["modifier", "modifiers"].iter().all(|key| {
             args.get(*key)
                 .is_none_or(|value| value.as_array().is_some_and(Vec::is_empty))
@@ -3140,5 +3158,30 @@ mod tests {
         assert!(environment_schema_supported(&record.schema));
         assert_eq!(record.compositor, None);
         assert!(record.input_backends.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod native_semantic_evidence_tests {
+    use super::semantic_action_without_point;
+    #[test]
+    fn native_gestures_require_the_exact_acknowledged_operation() {
+        for (tool, operation) in [("double_click", "AXOpen"), ("right_click", "AXShowMenu")] {
+            let mut action = serde_json::json!({
+                "tool":tool, "result_error":false, "arguments":{"element_token":"observed"},
+                "action_truth":{
+                    "transport":"macos_ax_action", "route":"accessibility", "effect":"unverifiable",
+                    "requested_delivery":"background", "actual_delivery":"background",
+                    "escalation":null, "fallbacks":[], "attempts":[], "delivered_count":null,
+                    "evidence":[{"kind":"native_api_result", "detail":operation}]
+                }
+            });
+            assert!(semantic_action_without_point(&action));
+            action["action_truth"]["evidence"][0]["detail"] = "AXPress".into();
+            assert!(!semantic_action_without_point(&action));
+            action["action_truth"]["evidence"][0]["detail"] = operation.into();
+            action["action_truth"]["actual_delivery"] = "unknown".into();
+            assert!(!semantic_action_without_point(&action));
+        }
     }
 }

@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use cua_driver_core::tool::spawn_native;
 use cua_driver_core::{
     protocol::ToolResult,
     tool::{Tool, ToolDef},
@@ -9,12 +10,12 @@ use std::sync::Arc;
 use super::ToolState;
 
 pub struct TypeTextCharsTool {
-    state: Arc<ToolState>,
+    _state: Arc<ToolState>,
 }
 
 impl TypeTextCharsTool {
     pub fn new(state: Arc<ToolState>) -> Self {
-        Self { state }
+        Self { _state: state }
     }
 }
 
@@ -70,20 +71,14 @@ impl Tool for TypeTextCharsTool {
             .into_owned();
         let delay_ms = args.u64_or("delay_ms", 30);
         // Surface 6: element_token / element_index precedence resolution.
-        let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id");
-        let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match crate::ax::element_resolver::resolve_element_args(
-            pid,
-            element_index_arg,
-            element_token_arg.as_deref(),
-            args.opt_str("snapshot_id").as_deref(),
-            window_id_arg,
-            "type_text_chars",
-        ) {
-            Ok(r) => r,
-            Err(e) => return e,
-        };
+        let resolved =
+            match crate::ax::element_resolver::resolve_element_args(pid, &args, "type_text_chars")
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => return e,
+            };
         let (_, window_id, element_guard) = resolved.into_parts(window_id_arg);
         let window_id = match super::native_window_id(window_id) {
             Ok(window_id) => window_id,
@@ -114,20 +109,18 @@ impl Tool for TypeTextCharsTool {
             None
         };
 
-        // Pre-focus element if requested.
-        if !type_chars_only {
-            if let Some(guard) = element_guard.as_ref().cloned() {
-                let _ = tokio::task::spawn_blocking(move || {
-                    crate::input::ax_actions::focus_element(guard.as_ptr())
-                })
-                .await;
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            }
-        }
-        drop(element_guard);
-
         let text_len = text.chars().count();
-        let result = tokio::task::spawn_blocking(move || {
+        let result = spawn_native(move || {
+            if let Some(element) = element_guard.as_ref() {
+                let pointer = element.checked_ptr()?;
+                if type_chars_only {
+                    if !crate::input::ax_actions::is_element_focused(pid, pointer) {
+                        anyhow::bail!("requested element is not focused");
+                    }
+                } else {
+                    crate::input::ax_actions::focus_target(pid, pointer)?;
+                }
+            }
             crate::input::keyboard::type_text_with_delay(pid, &text, delay_ms)
         })
         .await;

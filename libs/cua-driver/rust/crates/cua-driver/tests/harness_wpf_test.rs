@@ -532,7 +532,7 @@ fn harness_wpf_counter_invoke() {
                 driver.call(
                     "click",
                     serde_json::json!({
-                        "pid": pid as i64, "window_id": wid, "element_index": idx,
+                        "pid": pid as i64, "window_id": wid, "element_token": pre.element_token(idx),
                         "snapshot_id": pre.snapshot_id(),
                         "delivery_mode": "background"
                     }),
@@ -607,7 +607,7 @@ fn harness_wpf_minimized_element_click_refuses_without_side_effects() {
                     serde_json::json!({
                         "pid": pid as i64,
                         "window_id": wid,
-                        "element_index": idx,
+                        "element_token": ready.element_token(idx),
                         "snapshot_id": ready.snapshot_id(),
                         "delivery_mode": "background"
                     }),
@@ -728,7 +728,7 @@ fn harness_wpf_type_text() {
                 serde_json::json!({
                     "pid": pid as i64,
                     "window_id": wid,
-                    "element_index": idx,
+                    "element_token": snap.element_token(idx),
                     "snapshot_id": snap.snapshot_id(),
                     "text": "harness-typed",
                     "delivery_mode": "foreground"
@@ -784,7 +784,7 @@ fn harness_wpf_set_value() {
                     driver.call(
                         "set_value",
                         serde_json::json!({
-                            "pid": pid as i64, "window_id": wid, "element_index": idx,
+                            "pid": pid as i64, "window_id": wid, "element_token": snap.element_token(idx),
                             "snapshot_id": snap.snapshot_id(),
                             "value": "via-uia-setvalue"
                         }),
@@ -828,7 +828,7 @@ fn harness_wpf_deferred_type_text_requires_fresh_snapshot_before_retry() {
                             serde_json::json!({
                                 "pid": pid as i64,
                                 "window_id": wid,
-                                "element_index": idx,
+                                "element_token": snap.element_token(idx),
                                 "snapshot_id": snap.snapshot_id(),
                                 "text": "deferred-once",
                                 "delivery_mode": "background"
@@ -900,7 +900,7 @@ fn harness_wpf_right_click() {
             let resp = driver.call(
                 "right_click",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": idx,
+                    "pid": pid as i64, "window_id": wid, "element_token": snap.element_token(idx),
                     "snapshot_id": snap.snapshot_id(),
                     "delivery_mode": "foreground"
                 }),
@@ -944,7 +944,7 @@ fn harness_wpf_double_click() {
             let resp = driver.call(
                 "double_click",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": idx,
+                    "pid": pid as i64, "window_id": wid, "element_token": snap.element_token(idx),
                     "snapshot_id": snap.snapshot_id(),
                     "delivery_mode": "foreground"
                 }),
@@ -1059,7 +1059,6 @@ fn harness_wpf_scroll() {
         |evidence| {
             with_named_session("windows-wpf-scroll-ax-background", |pid, wid, driver| {
                 *evidence = recording_evidence(driver.recording_dir());
-                // Pre-snapshot to populate the cache + read initial offset.
                 let pre = snapshot(driver, pid, wid);
                 let pre_text = pre.text();
                 assert!(
@@ -1072,36 +1071,52 @@ fn harness_wpf_scroll() {
                         .join(" / ")
                 );
 
-                // Click into the ScrollViewer so it gets focus / its descendants
-                // become the WM_VSCROLL target.
-                let idx = ax::element_index_by_id(pre.text(), "scroll-tall")
-                    .expect("scroll-tall not in snapshot");
-                let _ = driver.call(
-                    "click",
-                    serde_json::json!({
-                        "pid": pid as i64,
-                        "window_id": wid,
-                        "element_index": idx,
-                        "snapshot_id": pre.snapshot_id(),
-                        "delivery_mode": "foreground"
-                    }),
-                );
-                std::thread::sleep(Duration::from_millis(200));
+                let scroll_target = element_token_by_id(&pre, "scroll-tall");
+                let unsupported = element_token_by_id(&pre, "btn-increment");
+                for delivery in ["background", "foreground"] {
+                    let refused = driver.call(
+                        "scroll",
+                        serde_json::json!({
+                            "pid": pid as i64,
+                            "window_id": wid,
+                            "element_token": unsupported,
+                            "direction": "down",
+                            "amount": 3,
+                            "delivery_mode": delivery
+                        }),
+                    );
+                    assert!(
+                        refused.is_error(),
+                        "unsupported element scroll must refuse: {}",
+                        refused.text()
+                    );
+                    let unchanged = snapshot(driver, pid, wid);
+                    assert!(
+                        unchanged.text().contains("scroll_offset=0"),
+                        "refused element scroll moved the window: {}",
+                        unchanged.text()
+                    );
+                }
 
-                // Scroll down 5 lines. Keep this on the default background rung: the
-                // WPF harness translates the driver's WM_VSCROLL messages into the
-                // ScrollViewer movement we assert below.
                 let (resp, passed) = observe_background(driver, pid, wid, |driver| {
                     driver.call(
                         "scroll",
                         serde_json::json!({
                             "pid": pid as i64, "window_id": wid,
-                            "direction": "down", "by": "line", "amount": 5,
+                            "element_token": scroll_target,
+                            "direction": "down", "by": "page", "amount": 5,
                             "delivery_mode": "background"
                         }),
                     )
                 });
                 assert!(!resp.is_error(), "scroll failed: {}", resp.text());
+                assert_eq!(resp.action_route(), Some("accessibility"), "{}", resp.raw);
+                assert_eq!(
+                    resp.action_delivery_mode(),
+                    Some("background"),
+                    "{}",
+                    resp.raw
+                );
                 println!("scroll down: {}", resp.text());
                 std::thread::sleep(Duration::from_millis(400));
 
@@ -1112,7 +1127,7 @@ fn harness_wpf_scroll() {
                     .any(|l| l.contains("scroll_offset=") && !l.contains("scroll_offset=0\""));
                 assert!(
                     advanced,
-                    "scroll offset did not advance after WM_VSCROLL. Lines: {}",
+                    "scroll offset did not advance after token-targeted UIA scroll. Lines: {}",
                     text.lines()
                         .filter(|l| l.contains("scroll_offset"))
                         .collect::<Vec<_>>()
@@ -1141,7 +1156,7 @@ fn harness_wpf_modal_messagebox() {
             let open = driver.call(
                 "click",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": idx,
+                    "pid": pid as i64, "window_id": wid, "element_token": snap.element_token(idx),
                     "snapshot_id": snap.snapshot_id(),
                     "delivery_mode": "foreground"
                 }),
@@ -1203,7 +1218,7 @@ fn harness_wpf_modal_messagebox() {
             let dismiss = driver.call(
                 "click",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": modal_wid, "element_index": cancel_idx,
+                    "pid": pid as i64, "window_id": modal_wid, "element_token": modal_snap.element_token(cancel_idx),
                     "snapshot_id": modal_snap.snapshot_id(),
                     "delivery_mode": "foreground"
                 }),
@@ -1236,7 +1251,7 @@ fn harness_wpf_owned_popup() {
             let open = driver.call(
                 "click",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": idx,
+                    "pid": pid as i64, "window_id": wid, "element_token": snap.element_token(idx),
                     "snapshot_id": snap.snapshot_id(),
                     "delivery_mode": "foreground"
                 }),
@@ -1296,7 +1311,7 @@ fn harness_wpf_layered_popup_capture() {
             let open = driver.call(
                 "click",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": idx,
+                    "pid": pid as i64, "window_id": wid, "element_token": snap.element_token(idx),
                     "snapshot_id": snap.snapshot_id(),
                     "delivery_mode": "foreground"
                 }),
@@ -1512,7 +1527,7 @@ fn harness_wpf_slider_increase_large() {
                 let resp = driver.call(
                     "click",
                     serde_json::json!({
-                        "pid": pid as i64, "window_id": wid, "element_index": idx,
+                        "pid": pid as i64, "window_id": wid, "element_token": snap.element_token(idx),
                         "snapshot_id": snap.snapshot_id()
                     }),
                 );
@@ -1564,7 +1579,7 @@ fn harness_wpf_checkbox_toggle() {
             let resp = driver.call(
                 "click",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": idx,
+                    "pid": pid as i64, "window_id": wid, "element_token": snap.element_token(idx),
                     "snapshot_id": snap.snapshot_id(),
                     "delivery_mode": "foreground"
                 }),
@@ -1604,7 +1619,7 @@ fn harness_wpf_radio_select() {
             let response = driver.call(
                 "click",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": idx,
+                    "pid": pid as i64, "window_id": wid, "element_token": snap.element_token(idx),
                     "snapshot_id": snap.snapshot_id(),
                     "delivery_mode": "foreground"
                 }),
@@ -1643,7 +1658,7 @@ fn harness_wpf_combo_select() {
             let expand = driver.call(
                 "click",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": combo_idx,
+                    "pid": pid as i64, "window_id": wid, "element_token": snap.element_token(combo_idx),
                     "snapshot_id": snap.snapshot_id(),
                     "action": "expand", "delivery_mode": "background"
                 }),
@@ -1657,7 +1672,7 @@ fn harness_wpf_combo_select() {
             let select = driver.call(
                 "click",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": item_idx,
+                    "pid": pid as i64, "window_id": wid, "element_token": snap2.element_token(item_idx),
                     "snapshot_id": snap2.snapshot_id(),
                     "delivery_mode": "background"
                 }),
@@ -1696,7 +1711,7 @@ fn harness_wpf_listbox_select() {
             let response = driver.call(
                 "click",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": idx,
+                    "pid": pid as i64, "window_id": wid, "element_token": snap.element_token(idx),
                     "snapshot_id": snap.snapshot_id(),
                     "delivery_mode": "foreground"
                 }),
@@ -1739,7 +1754,7 @@ fn harness_wpf_modified_click_preserves_selection() {
             let select_apple = driver.call(
                 "click",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": apple,
+                    "pid": pid as i64, "window_id": wid, "element_token": first.element_token(apple),
                     "snapshot_id": first.snapshot_id(), "delivery_mode": "foreground"
                 }),
             );
@@ -1756,7 +1771,7 @@ fn harness_wpf_modified_click_preserves_selection() {
             let refused_background = driver.call(
                 "click",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": banana,
+                    "pid": pid as i64, "window_id": wid, "element_token": second.element_token(banana),
                     "snapshot_id": second.snapshot_id(), "modifier": ["ctrl"]
                 }),
             );
@@ -1783,7 +1798,7 @@ fn harness_wpf_modified_click_preserves_selection() {
             let add_banana = driver.call(
                 "click",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": banana,
+                    "pid": pid as i64, "window_id": wid, "element_token": after_refusal.element_token(banana),
                     "snapshot_id": after_refusal.snapshot_id(), "delivery_mode": "foreground",
                     "modifier": ["ctrl"]
                 }),

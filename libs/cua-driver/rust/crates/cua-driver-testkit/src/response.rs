@@ -104,8 +104,18 @@ impl ToolResponse {
             .unwrap_or(false)
     }
 
-    /// Snapshot handle paired with numeric element indices. Element-targeted
-    /// calls in the 0.17 contract must send this value with `element_index`.
+    pub fn element_token(&self, index: u64) -> &str {
+        self.structured["elements"]
+            .as_array()
+            .and_then(|elements| {
+                elements
+                    .iter()
+                    .find(|element| element["element_index"].as_u64() == Some(index))
+            })
+            .and_then(|element| element["element_token"].as_str())
+            .expect("observed element must carry an identity-bearing token")
+    }
+
     pub fn snapshot_id(&self) -> &str {
         self.structured
             .get("snapshot_id")
@@ -117,6 +127,32 @@ impl ToolResponse {
 #[cfg(test)]
 mod tests {
     use super::ToolResponse;
+
+    #[test]
+    fn token_lookup_uses_the_original_observation_and_sparse_index() {
+        let observation = |token| {
+            ToolResponse::from_mcp(serde_json::json!({
+                "result": {"structuredContent": {"elements": [
+                    {"element_index": 9, "element_token": token}
+                ]}}
+            }))
+        };
+        let first = observation("first-token");
+        let second = observation("second-token");
+        assert_eq!(first.element_token(9), "first-token");
+        assert_eq!(second.element_token(9), "second-token");
+    }
+
+    #[test]
+    #[should_panic(expected = "observed element must carry an identity-bearing token")]
+    fn absent_token_does_not_substitute_another_observed_row() {
+        ToolResponse::from_mcp(serde_json::json!({
+            "result": {"structuredContent": {"elements": [
+                {"element_index": 9, "element_token": "other-token"}
+            ]}}
+        }))
+        .element_token(0);
+    }
 
     #[test]
     fn mcp_error_text_accepts_object_and_string_envelopes() {

@@ -25,13 +25,13 @@ fn def() -> &'static ToolDef {
         name: "get_window_state".into(),
         description: "Walk a running app's AX tree and return BOTH a structured \
             `elements` array (preferred) AND a Markdown rendering of the same tree \
-            (back-compat). Every actionable element is tagged with [element_index N] \
-            in the markdown and as `element_index` in the structured array — pass \
+            (back-compat). Every actionable element is tagged with [element_token N] \
+            in the markdown and as `element_token` in the structured array — pass \
             those indices to click, type_text, press_key, etc.\n\n\
             INVARIANT: call get_window_state once per turn per (pid, window_id) before any \
             element-indexed action. The index map is replaced by the next snapshot.\n\n\
             PREFERRED CONSUMERS read `structuredContent.elements` (one entry per \
-            indexed row with `element_index`, `role`, `label`, `value` (the \
+            indexed row with `element_token`, `role`, `label`, `value` (the \
             element's text/AXValue when present — use it to verify what a field \
             holds), `actions` (names of AX actions exposed by the element, \
             omitted when empty), `frame: {x,y,w,h}`, `parent_index`, `depth`). The markdown \
@@ -42,7 +42,7 @@ fn def() -> &'static ToolDef {
             both and cross-check (the tree lies on some surfaces: Electron \
             echo-confirms, Catalyst null values, virtualized off-viewport rows \
             with `h:1` frames). You choose the modality at ACTION time, not here: \
-            an element ax action (pass `element_index`/`element_token` → the \
+            an element ax action (pass `element_token` → the \
             accessibility rung) or an element px action (pass `x`,`y` → the pixel \
             rung, read straight off this screenshot). `capture_mode` is deprecated \
             and ignored. Pass `include_screenshot:false` to skip the grab and get \
@@ -73,7 +73,7 @@ fn def() -> &'static ToolDef {
             instead of guessing a transform; the truthful AX payload remains available.\n\n\
             Optional `query` projects both tree_markdown and structured `elements` to \
             matching lines plus their ancestor chain (case-insensitive substring). The \
-            element_index values are unchanged, the complete snapshot remains actionable, \
+            element_token values are unchanged, the complete snapshot remains actionable, \
             and `element_count` continues to report its total size; \
             `filtered_element_count` reports the projected response size.\n\n\
             Optional `max_elements` / `max_depth` bound the AX walk to mitigate \
@@ -88,7 +88,7 @@ fn def() -> &'static ToolDef {
                 "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
                 "pid": { "type": "integer", "description": "Target process ID." },
                 "window_id": { "type": "integer", "description": "Target window ID from list_windows." },
-                "query": { "type": "string", "description": "Case-insensitive filter for tree_markdown and structured elements. Returns matching actionable rows plus their actionable ancestors without renumbering element_index values." },
+                "query": { "type": "string", "description": "Case-insensitive filter for tree_markdown and structured elements. Returns matching actionable rows plus their actionable ancestors without renumbering element_token values." },
                 "capture_mode": cua_driver_core::capture_mode::capture_mode_schema(),
                 "include_accessibility_tree": {
                     "type": "boolean",

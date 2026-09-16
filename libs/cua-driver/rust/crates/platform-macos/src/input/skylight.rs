@@ -313,6 +313,16 @@ unsafe fn extract_event_record(event_ptr: *mut c_void) -> *mut c_void {
 /// Returns `true` when `SLEventPostToPid` resolved and the post was attempted.
 /// Returns `false` when the SPI is absent — caller falls back to `CGEvent::post_to_pid`.
 pub(super) fn post_to_pid(pid: pid_t, event_ptr: *mut c_void, attach_auth_message: bool) -> bool {
+    use foreign_types::ForeignType;
+    if event_ptr.is_null() {
+        return false;
+    }
+    let event = std::mem::ManuallyDrop::new(unsafe {
+        core_graphics::event::CGEvent::from_ptr(event_ptr.cast())
+    });
+    if !super::native_event_allowed(&event) {
+        return true;
+    }
     let post_fn = match post_to_pid_fn() {
         Some(f) => f,
         None => return false,
@@ -347,7 +357,11 @@ pub(super) fn post_to_pid(pid: pid_t, event_ptr: *mut c_void, attach_auth_messag
         }
     }
 
-    unsafe { post_fn(pid, event_ptr) };
+    super::post_native_event_with(
+        &event,
+        || super::capture_native_pointer(&event, Some(pid)),
+        || unsafe { post_fn(pid, event_ptr) },
+    );
     true
 }
 
@@ -696,6 +710,7 @@ pub fn with_foreground_assist(
     target_wid: u32,
     body: impl FnOnce() -> anyhow::Result<()>,
 ) -> anyhow::Result<bool> {
+    cua_driver_core::tool::check_native_dispatch()?;
     let set_front = match set_front_process_fn() {
         Some(f) => f,
         None => {
@@ -786,6 +801,7 @@ pub fn with_foreground_hid_activation(
     target_wid: u32,
     action: impl FnOnce() -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
+    cua_driver_core::tool::check_native_dispatch()?;
     let set_front = set_front_process_fn()
         .ok_or_else(|| anyhow::anyhow!("foreground HID delivery is unavailable"))?;
 
@@ -857,6 +873,7 @@ pub fn with_menu_shortcut_activation(
     target_wid: u32,
     action: impl FnOnce() -> anyhow::Result<()>,
 ) -> anyhow::Result<bool> {
+    cua_driver_core::tool::check_native_dispatch()?;
     let set_front = match set_front_process_fn() {
         Some(f) => f,
         None => {

@@ -222,6 +222,7 @@ pub fn wait_for_focused_descendant(hwnd: u64, timeout: Duration) -> Option<u64> 
 
 /// Post a Unicode character as WM_CHAR.
 pub fn post_char(hwnd: u64, ch: char) -> Result<()> {
+    cua_driver_core::tool::check_native_dispatch()?;
     if let Some(msg) = crate::input::post_message_blocked_by_uipi(hwnd) {
         anyhow::bail!(msg);
     }
@@ -231,7 +232,7 @@ pub fn post_char(hwnd: u64, ch: char) -> Result<()> {
     let h = focused_descendant(h_parent).unwrap_or(h_parent);
     let code = ch as u32 as usize;
     unsafe {
-        PostMessageW(h, WM_CHAR, WPARAM(code), LPARAM(1))?;
+        crate::input::post_message_checked(h, WM_CHAR, WPARAM(code), LPARAM(1))?;
     }
     Ok(())
 }
@@ -254,7 +255,7 @@ unsafe fn post_enter_keystroke(h: HWND) -> Result<()> {
     let scan = MapVirtualKeyW(vk.0 as u32, MAPVK_VK_TO_VSC);
     let lp_down = 1u32 | (scan << 16);
     let lp_up = lp_down | (1u32 << 30) | (1u32 << 31);
-    PostMessageW(
+    crate::input::post_message_checked(
         h,
         WM_KEYDOWN,
         WPARAM(vk.0 as usize),
@@ -268,7 +269,7 @@ unsafe fn post_enter_keystroke(h: HWND) -> Result<()> {
     // next character — visible in the "ABC\nDEF\nGHI" repro as "ABC / DEF /
     // (gap) / HI".
     sleep(Duration::from_millis(KEY_DELAY_MS));
-    PostMessageW(h, WM_KEYUP, WPARAM(vk.0 as usize), LPARAM(lp_up as isize))?;
+    crate::input::post_message_checked(h, WM_KEYUP, WPARAM(vk.0 as usize), LPARAM(lp_up as isize))?;
     Ok(())
 }
 
@@ -278,6 +279,7 @@ unsafe fn post_enter_keystroke(h: HWND) -> Result<()> {
 /// (see [`post_enter_keystroke`]) instead of literal `WM_CHAR(0x0A/0x0D)`,
 /// which most rich-text Win32 controls drop.
 pub fn post_type_text(hwnd: u64, text: &str) -> Result<()> {
+    cua_driver_core::tool::check_native_dispatch()?;
     post_type_text_with_delay(hwnd, text, 0)
 }
 
@@ -288,6 +290,7 @@ pub fn post_type_text(hwnd: u64, text: &str) -> Result<()> {
 /// (see [`post_enter_keystroke`]) — see the LibreOffice screenshot in
 /// the PR description for the bug this fixes.
 pub fn post_type_text_with_delay(hwnd: u64, text: &str, inter_char_ms: u64) -> Result<()> {
+    cua_driver_core::tool::check_native_dispatch()?;
     if let Some(msg) = crate::input::post_message_blocked_by_uipi(hwnd) {
         anyhow::bail!(msg);
     }
@@ -321,7 +324,7 @@ pub fn post_type_text_with_delay(hwnd: u64, text: &str, inter_char_ms: u64) -> R
                 prev_was_cr = false;
                 let code = ch as u32 as usize;
                 unsafe {
-                    PostMessageW(h, WM_CHAR, WPARAM(code), LPARAM(1))?;
+                    crate::input::post_message_checked(h, WM_CHAR, WPARAM(code), LPARAM(1))?;
                 }
                 sleep(Duration::from_millis(KEY_DELAY_MS + inter_char_ms));
             }
@@ -332,6 +335,7 @@ pub fn post_type_text_with_delay(hwnd: u64, text: &str, inter_char_ms: u64) -> R
 
 /// Press a named key (and optional modifiers) via WM_KEYDOWN/WM_KEYUP.
 pub fn post_key(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<()> {
+    cua_driver_core::tool::check_native_dispatch()?;
     if let Some(msg) = crate::input::post_message_blocked_by_uipi(hwnd) {
         anyhow::bail!(msg);
     }
@@ -369,7 +373,7 @@ pub fn post_key(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<()> {
         // Press modifiers.
         for mvk in &mod_vks {
             let ms = MapVirtualKeyW(mvk.0 as u32, MAPVK_VK_TO_VSC);
-            PostMessageW(
+            crate::input::post_message_checked(
                 target,
                 down_msg,
                 WPARAM(mvk.0 as usize),
@@ -377,7 +381,7 @@ pub fn post_key(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<()> {
             )?;
         }
         // Press key.
-        PostMessageW(
+        crate::input::post_message_checked(
             target,
             down_msg,
             WPARAM(vk.0 as usize),
@@ -385,7 +389,7 @@ pub fn post_key(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<()> {
         )?;
         sleep(Duration::from_millis(KEY_DELAY_MS));
         // Release key.
-        PostMessageW(
+        crate::input::post_message_checked(
             target,
             up_msg,
             WPARAM(vk.0 as usize),
@@ -394,7 +398,7 @@ pub fn post_key(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<()> {
         // Release modifiers (reverse order).
         for mvk in mod_vks.iter().rev() {
             let ms = MapVirtualKeyW(mvk.0 as u32, MAPVK_VK_TO_VSC);
-            PostMessageW(
+            crate::input::post_message_checked(
                 target,
                 up_msg,
                 WPARAM(mvk.0 as usize),
@@ -427,6 +431,7 @@ pub fn post_key(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<()> {
 /// worker, the foreground swap may silently fail and SendInput land on the
 /// wrong window. Callers should funnel hotkey calls through the uia worker.
 pub fn send_key_synthesized(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<()> {
+    cua_driver_core::tool::check_native_dispatch()?;
     send_key_synthesized_after_focus(hwnd, key, modifiers, || Ok(()))
 }
 
@@ -443,6 +448,7 @@ pub fn send_key_synthesized_after_focus(
     modifiers: &[&str],
     focus: impl FnOnce() -> Result<()>,
 ) -> Result<()> {
+    cua_driver_core::tool::check_native_dispatch()?;
     let target = HWND(hwnd as *mut _);
     if target.0.is_null() {
         bail!("invalid target hwnd");
@@ -472,7 +478,7 @@ pub fn send_key_synthesized_after_focus(
     }
 
     with_confirmed_foreground(target, "key delivery", focus, || unsafe {
-        let sent = SendInput(&events, std::mem::size_of::<INPUT>() as i32);
+        let sent = crate::input::send_input_checked(&events, std::mem::size_of::<INPUT>() as i32);
         if sent as usize != events.len() {
             bail!(
                 "SendInput inserted only {sent} of {} events. Likely cause: \
@@ -498,6 +504,7 @@ pub fn send_key_synthesized_after_focus(
 /// of a false success. Required for VCL/LibreOffice document grids and other
 /// targets where PostMessage WM_CHAR is silently dropped.
 pub fn send_text_synthesized(hwnd: u64, text: &str) -> Result<()> {
+    cua_driver_core::tool::check_native_dispatch()?;
     send_text_synthesized_after_focus(hwnd, text, || Ok(()))
 }
 
@@ -508,6 +515,7 @@ pub fn send_text_synthesized_after_focus(
     text: &str,
     focus: impl FnOnce() -> Result<()>,
 ) -> Result<()> {
+    cua_driver_core::tool::check_native_dispatch()?;
     let target = HWND(hwnd as *mut _);
     if target.0.is_null() {
         bail!("invalid target hwnd");
@@ -549,7 +557,7 @@ pub fn send_text_synthesized_after_focus(
     }
 
     with_confirmed_foreground(target, "text delivery", focus, || unsafe {
-        let sent = SendInput(&events, std::mem::size_of::<INPUT>() as i32);
+        let sent = crate::input::send_input_checked(&events, std::mem::size_of::<INPUT>() as i32);
         if sent as usize != events.len() {
             bail!(
                 "SendInput inserted only {sent} of {} key events. Likely cause: \

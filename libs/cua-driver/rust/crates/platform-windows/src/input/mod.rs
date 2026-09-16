@@ -157,3 +157,43 @@ pub fn post_message_blocked_by_uipi(hwnd: u64) -> Option<String> {
         None
     }
 }
+
+pub(crate) unsafe fn send_input_checked(
+    inputs: &[windows::Win32::UI::Input::KeyboardAndMouse::INPUT],
+    size: i32,
+) -> u32 {
+    use windows::Win32::UI::Input::KeyboardAndMouse::*;
+    let releases_only = inputs.iter().all(|input| match input.r#type {
+        INPUT_KEYBOARD => input.Anonymous.ki.dwFlags.0 & KEYEVENTF_KEYUP.0 != 0,
+        INPUT_MOUSE => {
+            let flags = input.Anonymous.mi.dwFlags;
+            let releases =
+                MOUSEEVENTF_LEFTUP | MOUSEEVENTF_RIGHTUP | MOUSEEVENTF_MIDDLEUP | MOUSEEVENTF_XUP;
+            flags.0 != 0 && (flags.0 & releases.0) == flags.0
+        }
+        _ => false,
+    });
+    if !releases_only && !cua_driver_core::tool::native_dispatch_allowed() {
+        return 0;
+    }
+    SendInput(inputs, size)
+}
+
+pub(crate) unsafe fn post_message_checked(
+    hwnd: windows::Win32::Foundation::HWND,
+    message: u32,
+    wparam: windows::Win32::Foundation::WPARAM,
+    lparam: windows::Win32::Foundation::LPARAM,
+) -> windows::core::Result<()> {
+    use windows::Win32::UI::WindowsAndMessaging::*;
+    let cleanup = matches!(
+        message,
+        WM_KEYUP | WM_SYSKEYUP | WM_LBUTTONUP | WM_RBUTTONUP | WM_MBUTTONUP | WM_XBUTTONUP
+    );
+    if !cleanup && !cua_driver_core::tool::native_dispatch_allowed() {
+        return Err(windows::core::Error::from_hresult(
+            windows::Win32::Foundation::E_ABORT,
+        ));
+    }
+    PostMessageW(hwnd, message, wparam, lparam)
+}

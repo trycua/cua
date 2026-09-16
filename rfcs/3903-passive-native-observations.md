@@ -6,7 +6,7 @@ created: 2026-09-16
 last_updated: 2026-09-16
 status: review
 discussion: https://github.com/trycua/cua/issues/3903
-rfc_pr:
+rfc_pr: https://github.com/trycua/cua/pull/3904
 implementation:
   - https://github.com/trycua/cua/issues/2958
 supersedes:

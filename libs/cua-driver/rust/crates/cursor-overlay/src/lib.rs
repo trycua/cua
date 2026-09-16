@@ -20,7 +20,7 @@ pub mod z_order;
 
 pub use badge_glyphs::{BadgeChip, BadgeGlyph};
 pub use bezier::CubicBezier;
-pub use motion::{MotionConfig, Spring};
+pub use motion::{motion_spec, parse_motion_spec, MotionConfig, MotionSpec, Spring};
 pub use path_planner::{PathPlanner, PathState, PlannedPath};
 pub use render_state::{
     paint_cursor, render_frame, FocusRect, RenderStateCore, SESSION_BADGE_FADE_SECS,
@@ -381,11 +381,11 @@ pub enum OverlayCommand {
 /// coordinate. Keeping this transform here prevents platform-specific drag
 /// loops from drifting apart.
 pub fn track_pointer_command(x: f64, y: f64) -> OverlayCommand {
-    const CLICK_OFFSET: f64 = 16.0;
+    let offset = motion::click_offset();
     let heading = std::f64::consts::FRAC_PI_4;
     OverlayCommand::SnapTo {
-        x: x + heading.cos() * CLICK_OFFSET,
-        y: y + heading.sin() * CLICK_OFFSET,
+        x: x + heading.cos() * offset,
+        y: y + heading.sin() * offset,
         heading_radians: Some(heading),
     }
 }

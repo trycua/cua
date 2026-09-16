@@ -40,6 +40,7 @@ if (-not $FixtureRoot) {
             $Start.WorkingDirectory = $Root
             $Start.RedirectStandardOutput = $true
             $Start.RedirectStandardError = $true
+            $Start.RedirectStandardInput = $true
             $Start.EnvironmentVariables.Clear()
             $Start.EnvironmentVariables['SystemRoot'] = $env:SystemRoot
             $Start.EnvironmentVariables['CUA_UNINSTALL_FIXTURE_ROOT'] = $Root
@@ -59,6 +60,7 @@ if (-not $FixtureRoot) {
             }
             $Child = [Diagnostics.Process]::Start($Start)
             try {
+                $Child.StandardInput.Close()
                 $Stdout = $Child.StandardOutput.ReadToEndAsync()
                 $Stderr = $Child.StandardError.ReadToEndAsync()
                 if (-not $Child.WaitForExit(30000)) {
@@ -128,7 +130,7 @@ if ($FixtureCase['Command']) {
         $FixtureSucceeded = $?
     }
     Assert-Fixture $FixtureSucceeded 'uninstaller failed'
-    $FixtureOutput = $FixtureOutput | Out-String
+    $FixtureOutput = ($FixtureOutput | ForEach-Object { $_.ToString() }) -join "`n"
     Assert-Fixture (-not (Test-Path -LiteralPath $FixtureRelease)) 'release payload remains'
     foreach ($Path in $FixtureFiles) {
         Assert-Fixture ((Test-Path -LiteralPath $Path) -and [IO.File]::ReadAllText($Path) -eq 'fixture payload') "local artifact changed: $Path"
@@ -136,7 +138,7 @@ if ($FixtureCase['Command']) {
     $Notice = 'source-built cua-driver-local installation remains'
     if ($FixtureCase['Local']) {
         Assert-Fixture ($FixtureOutput.Contains($Notice)) 'missing survivor notice'
-        Assert-Fixture ($FixtureOutput.Contains((Join-Path $FixtureRoot $FixtureCase['Local']))) 'missing survivor path'
+        Assert-Fixture ($FixtureOutput.Contains((Join-Path $FixtureRoot $FixtureCase['Local']))) "missing survivor path: $FixtureOutput"
         Assert-Fixture ($FixtureOutput.Contains('.\libs\cua-driver\scripts\uninstall-local.ps1')) 'missing removal instruction'
     } else {
         Assert-Fixture (-not $FixtureOutput.Contains($Notice)) 'false survivor notice'

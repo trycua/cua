@@ -31,6 +31,7 @@
 #include <openssl/evp.h>
 #endif
 #include <sys/random.h>
+#include <sys/mman.h>
 #include <xkbcommon/xkbcommon.h>
 
 #include <algorithm>
@@ -190,7 +191,7 @@ struct InputExperiment::Impl {
     wl_global* global = nullptr;
     OwnedSocketPath socket_path;
     std::string_view socket_cleanup = "not_bound";
-    std::string path, epoch = nonce(), keymap_text;
+    std::string path, epoch = nonce(), keymap_text, physical_keymap_text;
     std::vector<unsigned char> public_key;
     std::vector<std::unique_ptr<Client>> clients;
     std::vector<std::unique_ptr<Seat>> seats;
@@ -213,6 +214,9 @@ struct InputExperiment::Impl {
     xkb_context* xkb_context_ = nullptr;
     xkb_keymap* keymap = nullptr;
     xkb_state* keyboard_state = nullptr;
+    xkb_context* physical_xkb_context = nullptr;
+    xkb_keymap* physical_keymap = nullptr;
+    xkb_state* physical_keyboard_state = nullptr;
     int keymap_fd = -1;
     bool retired = false, suspended = true, us_keymap = false, physical_keymap_present = false;
     WP<IKeyboard> physical_keyboard;
@@ -222,6 +226,7 @@ struct InputExperiment::Impl {
     PrimaryTrace* trace = nullptr;
     bool foreground_started = false, foreground_activating = false;
     bool foreground_keyboard_used = false;
+    bool foreground_needs_keyboard = false;
     bool foreground_needs_pointer = false;
     WP<CWLSurfaceResource> foreground_surface;
     WP<CWLSeatResource> foreground_seat;
@@ -255,13 +260,62 @@ struct InputExperiment::Impl {
         std::free(actual); std::free(expected); xkb_keymap_unref(reference);
         return matches;
     }
+    static int create_keymap_file(std::string_view text) {
+        const auto fd = memfd_create("cua-agent-keymap", MFD_CLOEXEC);
+        std::string payload(text);
+        payload.push_back('\0');
+        if (fd < 0 || ftruncate(fd, static_cast<off_t>(payload.size())) != 0) {
+            if (fd >= 0) close(fd);
+            throw std::runtime_error("agent keymap file unavailable");
+        }
+        std::size_t offset = 0;
+        while (offset < payload.size()) {
+            const auto written = pwrite(fd, payload.data() + offset, payload.size() - offset, static_cast<off_t>(offset));
+            if (written < 0 && errno == EINTR) continue;
+            if (written <= 0) { close(fd); throw std::runtime_error("agent keymap write failed"); }
+            offset += static_cast<std::size_t>(written);
+        }
+        return fd;
+    }
+    void initialize_agent_keymap() {
+        if (keyboard_state) return;
+        const xkb_rule_names names{"evdev", "pc105", "us", "", ""};
+        auto* context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+        auto* map = context ? xkb_keymap_new_from_names(context, &names, XKB_KEYMAP_COMPILE_NO_FLAGS) : nullptr;
+        auto* state = map ? xkb_state_new(map) : nullptr;
+        char* serialized = map ? xkb_keymap_get_as_string(map, XKB_KEYMAP_FORMAT_TEXT_V1) : nullptr;
+        if (!state || !serialized) {
+            std::free(serialized);
+            if (state) xkb_state_unref(state);
+            if (map) xkb_keymap_unref(map);
+            if (context) xkb_context_unref(context);
+            throw std::runtime_error("agent US keymap unavailable");
+        }
+        std::string text(serialized);
+        std::free(serialized);
+        int fd = -1;
+        try {
+            fd = create_keymap_file(text);
+        } catch (...) {
+            xkb_state_unref(state);
+            xkb_keymap_unref(map);
+            xkb_context_unref(context);
+            throw;
+        }
+        xkb_context_ = context;
+        keymap = map;
+        keyboard_state = state;
+        keymap_text = std::move(text);
+        keymap_fd = fd;
+    }
     bool layout_qualified() const {
         if (!kProduction) return true;
         const auto keyboard = g_pSeatManager->m_keyboard.lock();
-        return physical_keymap_present && us_keymap && keyboard_state && keyboard &&
-            keyboard->m_xkbKeymapV1FD.get() >= 0 && keyboard->m_xkbKeymapV1String == keymap_text;
+        return physical_keymap_present && us_keymap && physical_keyboard_state && keyboard &&
+            keyboard->m_xkbKeymapV1FD.get() >= 0 && keyboard->m_xkbKeymapV1String == physical_keymap_text;
     }
     void sync_keymap() {
+        initialize_agent_keymap();
         const auto keyboard = g_pSeatManager->m_keyboard.lock();
         if (physical_keyboard != keyboard) {
             if (physical_keymap_present) desktop_transition();
@@ -278,36 +332,26 @@ struct InputExperiment::Impl {
             return;
         }
         physical_keymap_present = true;
-        if (keyboard_state && keymap_text == keyboard->m_xkbKeymapV1String) return;
-        // Prepare a complete replacement before retiring the old independent
-        // state. Keep our own fd: primary keyboard replacement must not leave
-        // later seat bindings referring to a closed compositor fd.
+        if (physical_keyboard_state && physical_keymap_text == keyboard->m_xkbKeymapV1String) return;
+        // Foreground keyboard delivery uses the primary seat. Keep a separate
+        // compiled state for it; the background seats retain their fixed US map.
         auto* context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
         auto* map = context ? xkb_keymap_new_from_string(context, keyboard->m_xkbKeymapV1String.c_str(),
             XKB_KEYMAP_FORMAT_TEXT_V1, XKB_KEYMAP_COMPILE_NO_FLAGS) : nullptr;
         auto* state = map ? xkb_state_new(map) : nullptr;
-        const auto fd = fcntl(keyboard->m_xkbKeymapV1FD.get(), F_DUPFD_CLOEXEC, 0);
-        if (!state || fd < 0) {
-            if (fd >= 0) close(fd);
+        if (!state) {
             if (state) xkb_state_unref(state);
             if (map) xkb_keymap_unref(map);
             if (context) xkb_context_unref(context);
-            throw std::runtime_error("independent XKB state unavailable");
+            throw std::runtime_error("primary XKB state unavailable");
         }
         desktop_transition();
-        if (keyboard_state) xkb_state_unref(keyboard_state);
-        if (keymap) xkb_keymap_unref(keymap);
-        if (xkb_context_) xkb_context_unref(xkb_context_);
-        if (keymap_fd >= 0) close(keymap_fd);
-        keyboard_state = state; keymap = map; xkb_context_ = context; keymap_fd = fd;
+        if (physical_keyboard_state) xkb_state_unref(physical_keyboard_state);
+        if (physical_keymap) xkb_keymap_unref(physical_keymap);
+        if (physical_xkb_context) xkb_context_unref(physical_xkb_context);
+        physical_keyboard_state = state; physical_keymap = map; physical_xkb_context = context;
         us_keymap = !kProduction || canonical_us_keymap(context, map);
-        keymap_text = keyboard->m_xkbKeymapV1String;
-        for (auto& k : keyboards)
-            if (!k->dead && k->wl->resource())
-                k->wl->sendKeymap(WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1, keymap_fd, keymap_text.size() + 1);
-        for (auto& seat : seats)
-            if (!seat->dead && seat->wl->resource())
-                seat->wl->sendCapabilities(static_cast<wl_seat_capability>(WL_SEAT_CAPABILITY_POINTER | WL_SEAT_CAPABILITY_KEYBOARD));
+        physical_keymap_text = keyboard->m_xkbKeymapV1String;
     }
     void start() {
         sync_keymap();
@@ -390,6 +434,9 @@ struct InputExperiment::Impl {
         if (keyboard_state) xkb_state_unref(keyboard_state);
         if (keymap) xkb_keymap_unref(keymap);
         if (xkb_context_) xkb_context_unref(xkb_context_);
+        if (physical_keyboard_state) xkb_state_unref(physical_keyboard_state);
+        if (physical_keymap) xkb_keymap_unref(physical_keymap);
+        if (physical_xkb_context) xkb_context_unref(physical_xkb_context);
         if (keymap_fd >= 0) close(keymap_fd);
     }
     std::uint32_t serial() const { return wl_display_next_serial(g_pCompositor->m_wlDisplay); }
@@ -573,6 +620,8 @@ struct InputExperiment::Impl {
         held_keys.clear();
         if (keyboard_state) xkb_state_unref(keyboard_state);
         keyboard_state = keymap ? xkb_state_new(keymap) : nullptr;
+        if (physical_keyboard_state) xkb_state_unref(physical_keyboard_state);
+        physical_keyboard_state = physical_keymap ? xkb_state_new(physical_keymap) : nullptr;
     }
     void retire_grant() {
         lease = nullptr; capabilities = 0; grant.reset(); expires = {};
@@ -786,7 +835,8 @@ struct InputExperiment::Impl {
         if (lease != &c) throw ForegroundFailure{ForegroundFailureReason::lease};
         if (c.dead) throw ForegroundFailure{ForegroundFailureReason::client_dead};
         if (!available()) throw ForegroundFailure{ForegroundFailureReason::session_unavailable};
-        if (!layout_qualified()) throw ForegroundFailure{ForegroundFailureReason::unsupported_layout};
+        if (!input_layout_qualified(c.route, foreground_needs_keyboard, layout_qualified()))
+            throw ForegroundFailure{ForegroundFailureReason::unsupported_layout};
         if (Clock::now() >= expires) throw ForegroundFailure{ForegroundFailureReason::lease_expired};
         const auto failure = foreground_guard(c).dispatch_failure(foreground_needs_pointer);
         if (failure != ForegroundFailureReason::none) throw ForegroundFailure{failure};
@@ -813,14 +863,15 @@ struct InputExperiment::Impl {
         foreground_pointers.clear(); foreground_keyboards.clear(); foreground_surface.reset(); foreground_seat.reset();
         foreground_started = false;
         foreground_keyboard_used = false;
+        foreground_needs_keyboard = false;
     }
     void start_foreground(Client& c, double x, double y, bool needs_pointer, bool needs_keyboard) {
         const auto root = c.surface.lock();
         const auto physical = g_pSeatManager->m_keyboard.lock();
         const auto failure = foreground_guard(c).activation_failure();
         if (failure != ForegroundFailureReason::none) throw ForegroundFailure{failure};
-        if (!physical) throw ForegroundFailure{ForegroundFailureReason::physical_keyboard};
-        if (!keyboard_state) throw ForegroundFailure{ForegroundFailureReason::keyboard_state};
+        if (needs_keyboard && !physical) throw ForegroundFailure{ForegroundFailureReason::physical_keyboard};
+        if (needs_keyboard && !physical_keyboard_state) throw ForegroundFailure{ForegroundFailureReason::keyboard_state};
         if (needs_pointer && !g_pSeatManager->m_mouse) throw ForegroundFailure{ForegroundFailureReason::physical_pointer};
         const Vector2D local{x + c.geometry[0] - c.geometry[4], y + c.geometry[1] - c.geometry[5]};
         if (needs_pointer && (!point(c, x, y) || root->at(local, true).first != root)) throw ForegroundFailure{ForegroundFailureReason::pointer_target};
@@ -831,22 +882,26 @@ struct InputExperiment::Impl {
         for (const auto& k : seat->m_keyboards) if (k && k->good()) foreground_keyboards.push_back(k);
         if (needs_pointer && foreground_pointers.empty()) throw ForegroundFailure{ForegroundFailureReason::pointer_resources};
         if (foreground_keyboards.empty()) throw ForegroundFailure{ForegroundFailureReason::keyboard_resources};
-        foreground_modifiers = {physical->m_modifiersState.depressed, physical->m_modifiersState.latched,
-            physical->m_modifiersState.locked, physical->m_modifiersState.group};
-        for (const auto& kb : g_pInputManager->m_keyboards) {
-            if (!kb->m_enabled || !kb->shareStates() || (kb->isVirtual() && g_pInputManager->shouldIgnoreVirtualKeyboard(kb))) continue;
-            foreground_modifiers[0] |= kb->m_modifiersState.depressed;
-            foreground_modifiers[1] |= kb->m_modifiersState.latched;
-            foreground_modifiers[2] |= kb->m_modifiersState.locked;
-        }
+        foreground_modifiers = {};
         if (needs_keyboard) {
+            foreground_modifiers = {physical->m_modifiersState.depressed, physical->m_modifiersState.latched,
+                physical->m_modifiersState.locked, physical->m_modifiersState.group};
+            for (const auto& kb : g_pInputManager->m_keyboards) {
+                if (!kb->m_enabled || !kb->shareStates() ||
+                    (kb->isVirtual() && g_pInputManager->shouldIgnoreVirtualKeyboard(kb))) continue;
+                foreground_modifiers[0] |= kb->m_modifiersState.depressed;
+                foreground_modifiers[1] |= kb->m_modifiersState.latched;
+                foreground_modifiers[2] |= kb->m_modifiersState.locked;
+            }
             const auto modifier_failure = foreground_key_modifier_failure(foreground_modifiers);
             if (modifier_failure != ForegroundFailureReason::none) throw ForegroundFailure{modifier_failure};
+            xkb_state_update_mask(physical_keyboard_state, foreground_modifiers[0], foreground_modifiers[1],
+                foreground_modifiers[2], 0, 0, foreground_modifiers[3]);
         }
-        xkb_state_update_mask(keyboard_state, foreground_modifiers[0], foreground_modifiers[1], foreground_modifiers[2], 0, 0, foreground_modifiers[3]);
         foreground_surface = root;
         foreground_seat = seat;
         foreground_needs_pointer = needs_pointer;
+        foreground_needs_keyboard = needs_keyboard;
         c.foreground_attempted = true;
         foreground_started = true;
         foreground_activating = true;
@@ -894,15 +949,15 @@ struct InputExperiment::Impl {
     void foreground_key(Client& c, std::uint32_t code, bool pressed) {
         require_foreground(c);
         foreground_keyboard_used = true;
-        xkb_state_update_key(keyboard_state, code + 8, pressed ? XKB_KEY_DOWN : XKB_KEY_UP);
+        xkb_state_update_key(physical_keyboard_state, code + 8, pressed ? XKB_KEY_DOWN : XKB_KEY_UP);
         if (pressed) held_keys.push_back(code); else std::erase(held_keys, code);
         for (const auto& weak : foreground_keyboards) {
             const auto k = weak.lock(); if (!k || !k->good()) throw ForegroundFailure{ForegroundFailureReason::keyboard_resources};
             k->sendKey(event_ms(), code, pressed ? WL_KEYBOARD_KEY_STATE_PRESSED : WL_KEYBOARD_KEY_STATE_RELEASED);
-            k->sendMods(xkb_state_serialize_mods(keyboard_state, XKB_STATE_MODS_DEPRESSED),
-                xkb_state_serialize_mods(keyboard_state, XKB_STATE_MODS_LATCHED),
-                xkb_state_serialize_mods(keyboard_state, XKB_STATE_MODS_LOCKED),
-                xkb_state_serialize_layout(keyboard_state, XKB_STATE_LAYOUT_EFFECTIVE));
+            k->sendMods(xkb_state_serialize_mods(physical_keyboard_state, XKB_STATE_MODS_DEPRESSED),
+                xkb_state_serialize_mods(physical_keyboard_state, XKB_STATE_MODS_LATCHED),
+                xkb_state_serialize_mods(physical_keyboard_state, XKB_STATE_MODS_LOCKED),
+                xkb_state_serialize_layout(physical_keyboard_state, XKB_STATE_LAYOUT_EFFECTIVE));
         }
     }
     bool pointer_enter(Client& c, double x, double y) {
@@ -942,8 +997,8 @@ struct InputExperiment::Impl {
         held_button = pressed ? value : 0;
     }
     bool keyboard_enter(Client& c) {
-        const auto root = c.surface.lock(); const auto physical = g_pSeatManager->m_keyboard.lock();
-        if (!root || !physical || physical->m_xkbKeymapV1String != keymap_text || !keyboard_state) return false;
+        const auto root = c.surface.lock();
+        if (!root || !keyboard_state) return false;
         unsigned count = 0;
         for (auto& k : keyboards) {
             if (k->dead || !k->wl->resource() || k->wl->client() != root->client()) continue;
@@ -1030,7 +1085,7 @@ struct InputExperiment::Impl {
             if (kProduction && (!InputGrant::single_operation(requested_cap) ||
                 (requested_cap == 16 && route != InputRoute::primary_foreground))) { invalidate(c); send(c, refusal("unsupported")); return; }
             if (kProduction && !available()) { invalidate(c, false); send(c, refusal("session_unavailable")); return; }
-            if (!layout_qualified()) { invalidate(c, false); send(c, refusal("unsupported_layout")); return; }
+            if (!input_layout_qualified(route, requested_cap == 2, layout_qualified())) { invalidate(c, false); send(c, refusal("unsupported_layout")); return; }
             const auto pid = number(f[1]); const auto address = number(f[2], 16);
             PHLWINDOW window;
             for (const auto& w : Desktop::windowState()->windows())
@@ -1090,7 +1145,7 @@ struct InputExperiment::Impl {
         if (c.token.empty() || f[2] != c.token || !refresh(c)) { send(c, refusal("stale_target")); return; }
         if (number(f[3]) != c.revision) { if (kProduction) revoke("stale_geometry"); send(c, refusal("stale_geometry")); return; }
         if (!available()) { revoke("session_unavailable", true); send(c, refusal("session_unavailable")); return; }
-        if (!layout_qualified()) { revoke("unsupported_layout", true); send(c, refusal("unsupported_layout")); return; }
+        if (!input_layout_qualified(c.route, cap == 2, layout_qualified())) { revoke("unsupported_layout", true); send(c, refusal("unsupported_layout")); return; }
         if (lease && Clock::now() >= expires) revoke("lease_expired");
         if (drag) { send(c, refusal("lease_busy")); return; }
         if (lease != &c || !(capabilities & cap) || (kProduction && !grant.permits(cap, Clock::now()))) {
@@ -1225,9 +1280,11 @@ struct InputExperiment::Impl {
     }
     void guard_targets() {
         if (lease) {
+            const bool keyboard_action = (capabilities & 2) != 0 || foreground_needs_keyboard;
             if (lease->dead) revoke("disconnected", true);
             else if (Clock::now() >= expires) revoke("lease_expired");
-            else if (!available() || !layout_qualified()) revoke("cancelled", true);
+            else if (!available() || !input_layout_qualified(lease->route, keyboard_action, layout_qualified()))
+                revoke("cancelled", true);
             else if (!refresh(*lease) || primary_conflict(*lease) || agent_conflict(*lease) ||
                 (drag && !drag->geometry.matches(lease->revision))) revoke("cancelled");
         }

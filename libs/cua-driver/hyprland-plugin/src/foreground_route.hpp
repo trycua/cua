@@ -101,6 +101,10 @@ inline bool bind_input_route(InputRoute& bound, InputRoute requested) {
     return true;
 }
 
+inline bool input_layout_qualified(InputRoute route, bool keyboard_action, bool primary_layout_qualified) {
+    return route != InputRoute::primary_foreground || !keyboard_action || primary_layout_qualified;
+}
+
 struct ForegroundGuard {
     bool exact_root = false;
     bool primary_binding = true;

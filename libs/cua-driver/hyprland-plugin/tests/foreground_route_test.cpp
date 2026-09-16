@@ -117,6 +117,16 @@ int main() {
     route = InputRoute::independent;
     check(!bind_input_route(route, InputRoute::primary_foreground));
 
+    // Background input uses the agent seat's private keymap. The primary
+    // layout matters only for foreground keyboard delivery.
+    for (const bool primary_layout : {false, true}) {
+        check(input_layout_qualified(InputRoute::independent, false, primary_layout));
+        check(input_layout_qualified(InputRoute::independent, true, primary_layout));
+        check(input_layout_qualified(InputRoute::primary_foreground, false, primary_layout));
+    }
+    check(!input_layout_qualified(InputRoute::primary_foreground, true, false));
+    check(input_layout_qualified(InputRoute::primary_foreground, true, true));
+
     ForegroundGuard guard{.exact_root = true};
     check(guard.can_activate());
     check(!guard.can_dispatch());

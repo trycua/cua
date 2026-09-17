@@ -543,18 +543,6 @@ mod list_windows_tests {
 
 // ── get_window_state ─────────────────────────────────────────────────────────
 
-/// Fold a per-call `max_dimension` cap with the configured
-/// `max_image_dimension` ceiling. `resize_png_if_needed` treats `0` as "no
-/// limit", so an unlimited ceiling defers to the per-call cap; otherwise the
-/// tighter (smaller, non-zero) of the two wins.
-fn fold_max_dimension(ceiling: u32, per_call: Option<u32>) -> u32 {
-    match per_call {
-        Some(md) if ceiling == 0 => md,
-        Some(md) => ceiling.min(md),
-        None => ceiling,
-    }
-}
-
 /// Build a single structured element entry for `get_window_state`.
 /// Returns `None` when the node has no `element_index` (non-actionable rows).
 fn build_element_entry(
@@ -680,7 +668,8 @@ impl Tool for GetWindowStateTool {
                 "query":{"type":"string","description":"Optional case-insensitive substring. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count."},
                 "max_elements":{"type":"integer","minimum":1,"description":"Cap on total AT-SPI nodes walked. Omit for the default (5 000). Lower for huge web/Electron trees."},
                 "max_depth":{"type":"integer","minimum":1,"description":"Cap on the AT-SPI tree walk depth. Omit for the default (uncapped). Lower for deeply nested apps."},
-                "max_dimension":{"type":"integer","minimum":1,"description":"Optional cap on the returned screenshot's long edge, in pixels (aspect ratio preserved) — the cheap path for a small preview. Applied on top of the configured max_image_dimension ceiling; the tighter wins. Omit for the configured default."}
+                "max_dimension":{"type":"integer","minimum":1,"description":"Legacy optional cap on the returned screenshot's long edge. Applied on top of the configured max_image_dimension ceiling when max_image_dimension is omitted."},
+                "max_image_dimension":{"type":"integer","minimum":0,"description":"Per-call long-edge override. This value wins over configured and legacy limits; 0 returns native-resolution PNG bytes. Omit to preserve configured behavior."}
             },"additionalProperties":false}),
             read_only: true, destructive: false, idempotent: false, open_world: false,
         })
@@ -696,15 +685,31 @@ impl Tool for GetWindowStateTool {
             Ok(v) => v,
             Err(e) => return e,
         };
-        // Optional per-call cap on the returned screenshot's long edge, folded
-        // with the configured ceiling below (the tighter wins).
+        // Retain the legacy additive cap, but let the canonical per-call field
+        // replace the configured ceiling entirely (including 0 = native size).
         let max_dimension = args
             .get("max_dimension")
             .and_then(|v| v.as_u64())
             .map(|v| v.max(1) as u32);
+        let max_image_dimension = match args.get("max_image_dimension") {
+            None => None,
+            Some(value) => match value.as_u64().and_then(|value| u32::try_from(value).ok()) {
+                Some(value) => Some(value),
+                None => {
+                    return ToolResult::error(
+                        "get_window_state.max_image_dimension must be an integer from 0 through 4294967295.",
+                    )
+                    .with_structured(json!({ "code": "invalid_arguments" }))
+                }
+            },
+        };
         let max_dim = {
             let cfg = self.state.config.read().unwrap();
-            fold_max_dimension(cfg.max_image_dimension, max_dimension)
+            crate::capture_action_frame::resolve_max_image_dimension(
+                cfg.max_image_dimension,
+                max_dimension,
+                max_image_dimension,
+            )
         };
         // `capture_mode` is DEPRECATED and ignored — get_window_state always
         // returns BOTH the AT-SPI tree and a screenshot now, so the agent grounds
@@ -10733,6 +10738,23 @@ mod session_cursor_target_tests {
             .expect("pointer action records its position independently of rendering");
         assert!(cursor.config.enabled, "input must revive its agent cursor");
         assert_eq!(cursor.x.zip(cursor.y), Some((123.0, 456.0)));
+    }
+}
+
+#[cfg(test)]
+mod window_capture_dimension_tests {
+    use super::{GetWindowStateTool, ToolState};
+    use cua_driver_core::tool::Tool;
+
+    #[test]
+    fn schema_exposes_zero_as_native_resolution() {
+        let tool = GetWindowStateTool {
+            state: ToolState::new(),
+        };
+        assert_eq!(
+            tool.def().input_schema["properties"]["max_image_dimension"]["minimum"],
+            0
+        );
     }
 }
 

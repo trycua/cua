@@ -8,6 +8,18 @@ fn window_target(pid: u32, window_id: u64) -> CaptureTarget {
     CaptureTarget::Window { pid, window_id }
 }
 
+pub fn resolve_max_image_dimension(
+    configured: u32,
+    legacy_max_dimension: Option<u32>,
+    max_image_dimension: Option<u32>,
+) -> u32 {
+    max_image_dimension.unwrap_or_else(|| match legacy_max_dimension {
+        Some(value) if configured == 0 => value,
+        Some(value) => configured.min(value),
+        None => configured,
+    })
+}
+
 fn publish(
     service: &CaptureService,
     args: &Value,
@@ -247,5 +259,21 @@ mod tests {
             admit_desktop_click(&service, &args("desktop"), &id, 2.0, 1.0).unwrap(),
             (2.0, 1.0)
         );
+    }
+
+    #[test]
+    fn explicit_image_dimension_override_wins_including_native_zero() {
+        assert_eq!(
+            resolve_max_image_dimension(1568, Some(800), Some(2048)),
+            2048
+        );
+        assert_eq!(resolve_max_image_dimension(1568, Some(800), Some(0)), 0);
+    }
+
+    #[test]
+    fn omitted_image_dimension_override_preserves_existing_behavior() {
+        assert_eq!(resolve_max_image_dimension(1568, None, None), 1568);
+        assert_eq!(resolve_max_image_dimension(0, None, None), 0);
+        assert_eq!(resolve_max_image_dimension(1568, Some(800), None), 800);
     }
 }

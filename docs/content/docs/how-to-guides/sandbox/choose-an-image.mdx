@@ -18,7 +18,7 @@ for architecture, guest services, and verification limits. A registry reference
 does not prove that the guest is accessible, bootable, or ready for your client.
 Declaring a service port does not install the service.
 
-In `cua-sandbox` 0.4.3, Fleet rejects SDK builder customization and
+In `cua-sandbox` 0.7.0, Fleet rejects SDK builder customization and
 snapshot-derived image inputs. Local builder methods do not publish an artifact
 or run during a Fleet claim. See [Sandbox runtime support](/reference/sandbox-sdk/runtime-support#image-customization)
 for the versioned contract and [How Fleet images work](/concepts/how-fleet-images-work)
@@ -38,9 +38,9 @@ for the published-artifact model.
 3. Use the built-in constructor for a mapped artifact, or copy the exact registry
    reference into `Image.from_registry()`. Set the guest OS and `kind='vm'`
    explicitly. Use a digest when you need an identity independent of tag changes.
-4. Follow [Create a sandbox pool with Python](/how-to-guides/sandbox/create-pool-with-python) to apply
-   the image and claim a replica. Confirm registry access, guest readiness, and
-   the operation your workload needs before reusing that pool.
+4. Follow [Create Fleet capacity](/how-to-guides/sandbox/create-fleet-capacity) to apply the
+   image, then [claim a Sandbox](/how-to-guides/sandbox/claim-a-sandbox). Confirm registry access,
+   guest readiness, and the operation your workload needs before reusing that pool.
 
 The Ubuntu SDK mapping and dashboard default select different tags. Check the
 [Ubuntu image details](/reference/sandbox-sdk/os-image-catalog#ubuntu-2404) and use

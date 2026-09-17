@@ -42,6 +42,8 @@ src/session.cpp
 src/status.cpp
 tests/cmake-api/CMakeLists.txt
 tests/cmake-api/include/src/plugins/PluginAPI.hpp
+tests/desktop_fault_policy_fixture.cpp
+tests/desktop_fault_policy_test.py
 tests/drag_geometry_test.cpp
 tests/foreground_route_test.cpp
 tests/input_grant_test.cpp

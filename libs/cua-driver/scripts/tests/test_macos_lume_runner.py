@@ -22,6 +22,10 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 RUN_ALL = REPO_ROOT / "libs/cua-driver/tests/runners/macos-lume/run-all.sh"
 SEED_TCC = REPO_ROOT / "libs/cua-driver/tests/runners/macos-lume/seed-tcc.sh"
 SEED_TCC_GUEST = REPO_ROOT / "libs/cua-driver/tests/runners/macos-lume/seed-tcc-guest.sh"
+HARNESS_GUIDE = REPO_ROOT / "libs/cua-driver/docs/test-harnesses-guide.md"
+PUBLIC_LUME_TEST_GUIDE = (
+    REPO_ROOT / "docs/content/docs/how-to-guides/driver/run-tests-in-macos-lume-vm.mdx"
+)
 RUN_RUST_E2E = REPO_ROOT / "scripts/ci/macos/run-rust-e2e.sh"
 ELECTRON_BUILD = REPO_ROOT / "libs/cua-driver/tests/fixtures/apps/cross-platform/electron/build.sh"
 ELECTRON_LOCK = (
@@ -315,6 +319,21 @@ def test_tcc_host_seed_accepts_multiple_vms() -> None:
     assert 'for vm in "${VMS[@]}"; do' in text
     assert "seed-tcc-guest.sh" in text
     assert "CUA_TCC_READ_SUDO_PASSWORD=1" in text
+
+
+@pytest.mark.parametrize(
+    "document",
+    [HARNESS_GUIDE, PUBLIC_LUME_TEST_GUIDE],
+    ids=lambda path: path.name,
+)
+def test_harness_guides_route_automated_tcc_through_guarded_helper(document: Path) -> None:
+    text = document.read_text(encoding="utf-8")
+    assert "tests/runners/macos-lume/seed-tcc.sh" in text
+    assert "VirtualMac" in text
+    assert "SIP" in text
+    assert "certificate" in text
+    assert "TCC.db" in text
+    assert "rows alone" in text or "helper exit alone" in text
 
 
 def test_tcc_host_seed_runs_the_guest_helper_once_per_vm(tmp_path: Path) -> None:
@@ -1477,14 +1496,45 @@ def test_a_green_run_writes_an_empty_failure_record(tmp_path: Path) -> None:
     assert record["report_failed"] is False
 
 
+def test_namespaced_lane_writes_a_complete_artifact_safe_log(tmp_path: Path) -> None:
+    selector = "snapshot_publication::harness_appkit_pending_snapshot_cannot_retarget_token"
+    completed = _run(
+        RUN_RUST_E2E,
+        'ARTIFACT_DIR="$TEST_ARTIFACT_DIR"\nRUST_ROOT="$TEST_ARTIFACT_DIR"\n'
+        'run_test "appkit-$TEST_SELECTOR" bash -c '
+        '\'printf "%s\\n" "$@"; printf "stderr\\n" >&2\' -- --exact "$TEST_SELECTOR"\n',
+        env={"TEST_ARTIFACT_DIR": str(tmp_path), "TEST_SELECTOR": selector},
+    )
+    assert completed.returncode == 0, completed.stderr
+    log = tmp_path / (
+        "appkit-snapshot_publication__harness_appkit_pending_snapshot_cannot_retarget_token.log"
+    )
+    assert list(tmp_path.iterdir()) == [log]
+    assert log.read_text() == f"--exact\n{selector}\nstderr\n"
+
+
+@pytest.mark.parametrize("character", list('":<>|*?\r\n/\\'))
+def test_lane_log_replaces_nonportable_characters(tmp_path: Path, character: str) -> None:
+    completed = _run(
+        RUN_RUST_E2E,
+        'ARTIFACT_DIR="$TEST_ARTIFACT_DIR"\nRUST_ROOT="$TEST_ARTIFACT_DIR"\n'
+        'run_test "$TEST_LABEL" printf "%s\\n" evidence\n',
+        env={"TEST_ARTIFACT_DIR": str(tmp_path), "TEST_LABEL": f"left{character}right"},
+    )
+    assert completed.returncode == 0, completed.stderr
+    log = tmp_path / "left_right.log"
+    assert list(tmp_path.iterdir()) == [log]
+    assert log.read_text() == "evidence\n"
+
+
 def test_lane_bookkeeping_records_only_failing_lanes(tmp_path: Path) -> None:
     artifact_dir = tmp_path / "artifacts"
     artifact_dir.mkdir()
     completed = _run(
         RUN_RUST_E2E,
         'ARTIFACT_DIR="$TEST_ARTIFACT_DIR"\nRUST_ROOT="$TEST_ARTIFACT_DIR"\n'
-        "run_test green true\n"
-        "run_test red false\n"
+        "run_test green-09.v1 true\n"
+        "run_test red::lane false\n"
         'printf "count=%s\\n" "$FAILURE_COUNT"\n'
         'printf "lanes=%s\\n" "${FAILED_LANES[*]}"\n',
         env={"TEST_ARTIFACT_DIR": str(artifact_dir)},
@@ -1492,6 +1542,6 @@ def test_lane_bookkeeping_records_only_failing_lanes(tmp_path: Path) -> None:
     assert completed.returncode == 0, completed.stderr
     fields = _fields(completed.stdout)
     assert fields["count"] == "1"
-    assert fields["lanes"] == "red"
-    assert (artifact_dir / "green.log").exists()
-    assert (artifact_dir / "red.log").exists()
+    assert fields["lanes"] == "red::lane"
+    assert (artifact_dir / "green-09.v1.log").exists()
+    assert (artifact_dir / "red__lane.log").exists()

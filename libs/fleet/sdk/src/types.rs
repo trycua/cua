@@ -341,6 +341,11 @@ pub struct HttpRequest {
     #[serde(default)]
     #[uniffi(default = None)]
     pub timeout_secs: Option<u64>,
+    /// Maximum bytes delivered in the response body. Absent preserves the
+    /// historical unbounded response behavior.
+    #[serde(default)]
+    #[uniffi(default = None)]
+    pub max_response_bytes: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]

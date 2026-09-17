@@ -15,8 +15,10 @@ use serde_json::{json, Value};
 
 const TIMEOUT: Duration = Duration::from_secs(3);
 const CANCELLATION_POLL: Duration = Duration::from_millis(25);
+const TEXT_ACTION_GAP: Duration = Duration::from_millis(25);
 const MAX_PACKET: usize = 2048;
 const MAX_LANES: usize = 2;
+const MAX_STALE_GEOMETRY_RETRIES: usize = 1;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DeliveryRoute {
@@ -52,10 +54,10 @@ fn validate_target_route(target: &Value, route: DeliveryRoute) -> Result<()> {
 
 /// Validate the whole string before dispatching any keys. Physical key delivery
 /// uses the compositor's keyboard layout; these codes describe US ASCII keys.
-pub(crate) fn foreground_text_actions(text: &str) -> Result<Vec<Action>> {
+pub(crate) fn text_actions(text: &str) -> Result<Vec<Action>> {
     ensure!(
         text.len() <= 4096 && text.is_ascii(),
-        "foreground text requires at most 4096 ASCII bytes"
+        "Hyprland text requires at most 4096 ASCII bytes"
     );
     text.bytes()
         .map(|byte| {
@@ -100,7 +102,7 @@ pub(crate) fn foreground_text_actions(text: &str) -> Result<Vec<Action>> {
                 b'*' => (9, true),
                 b'(' => (10, true),
                 b')' => (11, true),
-                _ => bail!("unsupported foreground text control character"),
+                _ => bail!("unsupported Hyprland text control character"),
             };
             Ok(Action::TextKey { keycode, shift })
         })
@@ -570,12 +572,21 @@ impl Client {
         started: Option<tokio::sync::oneshot::Sender<()>>,
         route: DeliveryRoute,
     ) -> Result<Value> {
+        self.execute_routed_with_attest(action, started, route, Self::attest)
+    }
+
+    fn execute_routed_with_attest(
+        &mut self,
+        action: Action,
+        started: Option<tokio::sync::oneshot::Sender<()>>,
+        route: DeliveryRoute,
+        attest: fn(&Self) -> Result<()>,
+    ) -> Result<Value> {
         self.cancellation.check()?;
         ensure!(self.lane.is_some(), "isolated input lane is not claimed");
         self.check_route(route)?;
         ensure!(
-            route == DeliveryRoute::Foreground
-                || !matches!(&action, Action::Activate | Action::TextKey { .. }),
+            route == DeliveryRoute::Foreground || !matches!(&action, Action::Activate),
             "action requires foreground input"
         );
         ensure!(
@@ -583,37 +594,54 @@ impl Client {
             "input route is immutable"
         );
         self.delivery_route = Some(route);
-        // Foreground attests once per logical call in dispatch_in_slot, before
-        // any text keys. Each key still needs a fresh exact target grant below.
-        if route == DeliveryRoute::Background {
-            self.attest()?;
-        }
-        let target = self.bind_target(&action, route)?;
-        if target["ok"] == false {
-            return Ok(target);
-        }
-        let token = hex_field(&target, "target")?;
-        let revision = target["revision"]
-            .as_u64()
-            .context("missing target revision")?;
-        let width = target["width"].as_f64().context("missing target width")?;
-        let height = target["height"].as_f64().context("missing target height")?;
-        ensure!(
-            width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0,
-            "invalid target geometry"
-        );
-        self.sequence = self.sequence.checked_add(1).context("sequence exhausted")?;
         let is_drag = matches!(&action, Action::Drag { .. });
-        let packet = action.packet(self.sequence, &token, revision, width, height)?;
-        let mut reply = self.dispatch_routed(&packet, is_drag, started, route)?;
-        if reply["ok"] == false && self.protocol == InputProtocol::Experiment {
-            // Never report a pending operator grant as successful dispatch.
-            reply["epoch"] = json!(self.epoch);
-            reply["challenge"] = json!(self.challenge);
-            reply["target"] = json!(token);
-            reply["revision"] = json!(revision);
+        let mut started = started;
+        for attempt in 0..=MAX_STALE_GEOMETRY_RETRIES {
+            // Foreground's first attestation covers the whole logical call.
+            // A retry must establish fresh compositor identity before it can
+            // request another exact target grant. Background attests here on
+            // every attempt because it has no call-level attestation.
+            if route == DeliveryRoute::Background || attempt > 0 {
+                attest(self)?;
+            }
+            let target = self.bind_target(&action, route)?;
+            if target["ok"] == false {
+                return Ok(target);
+            }
+            let token = hex_field(&target, "target")?;
+            let revision = target["revision"]
+                .as_u64()
+                .context("missing target revision")?;
+            let width = target["width"].as_f64().context("missing target width")?;
+            let height = target["height"].as_f64().context("missing target height")?;
+            ensure!(
+                width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0,
+                "invalid target geometry"
+            );
+            self.sequence = self.sequence.checked_add(1).context("sequence exhausted")?;
+            let packet = action.packet(self.sequence, &token, revision, width, height)?;
+            let mut reply =
+                self.dispatch_routed_with_started(&packet, is_drag, &mut started, route)?;
+            if self.protocol == InputProtocol::Production
+                && reply["ok"] == false
+                && reply["code"] == "stale_geometry"
+                && reply["detail"] == "stale_geometry"
+                && reply.get("effect").is_none()
+                && reply.get("delivery").is_none()
+                && attempt < MAX_STALE_GEOMETRY_RETRIES
+            {
+                continue;
+            }
+            if reply["ok"] == false && self.protocol == InputProtocol::Experiment {
+                // Never report a pending operator grant as successful dispatch.
+                reply["epoch"] = json!(self.epoch);
+                reply["challenge"] = json!(self.challenge);
+                reply["target"] = json!(token);
+                reply["revision"] = json!(revision);
+            }
+            return Ok(reply);
         }
-        Ok(reply)
+        unreachable!("bounded stale geometry retry loop always returns")
     }
 
     #[cfg(test)]
@@ -630,7 +658,17 @@ impl Client {
         &self,
         packet: &str,
         is_drag: bool,
-        started: Option<tokio::sync::oneshot::Sender<()>>,
+        mut started: Option<tokio::sync::oneshot::Sender<()>>,
+        route: DeliveryRoute,
+    ) -> Result<Value> {
+        self.dispatch_routed_with_started(packet, is_drag, &mut started, route)
+    }
+
+    fn dispatch_routed_with_started(
+        &self,
+        packet: &str,
+        is_drag: bool,
+        started: &mut Option<tokio::sync::oneshot::Sender<()>>,
         route: DeliveryRoute,
     ) -> Result<Value> {
         let deadline = Instant::now() + TIMEOUT;
@@ -654,7 +692,7 @@ impl Client {
                     0,
                 ));
             }
-            if let Some(started) = started {
+            if let Some(started) = started.take() {
                 let _ = started.send(());
             }
             reply = self
@@ -733,7 +771,7 @@ impl Action {
     }
 
     fn packet(
-        self,
+        &self,
         sequence: u64,
         token: &str,
         revision: u64,
@@ -751,8 +789,8 @@ impl Action {
         Ok(match self {
             Self::Activate => format!("ACTIVATE {prefix}"),
             Self::TextKey { keycode, shift } => {
-                ensure!((1..=57).contains(&keycode), "unsupported text key");
-                format!("KEY {prefix} {keycode} {}", u8::from(shift))
+                ensure!((1..=57).contains(keycode), "unsupported text key");
+                format!("KEY {prefix} {keycode} {}", u8::from(*shift))
             }
             Self::Click {
                 x,
@@ -760,12 +798,12 @@ impl Action {
                 button,
                 count,
             } => {
-                point(x, y)?;
+                point(*x, *y)?;
                 ensure!(
-                    (1..=2).contains(&count),
+                    (1..=2).contains(count),
                     "isolated input supports only single or double clicks"
                 );
-                let button = match button {
+                let button = match *button {
                     1 => 272,
                     2 => 274,
                     3 => 273,
@@ -774,7 +812,7 @@ impl Action {
                 format!("CLICK {prefix} {x} {y} {button} {count}")
             }
             Self::Key { key, modifiers } => {
-                let keycode = super::key_to_evdev(&key)
+                let keycode = super::key_to_evdev(key)
                     .context("key has no evdev mapping; Unicode text is unsupported")?;
                 let mut mask = 0;
                 for modifier in modifiers {
@@ -793,9 +831,9 @@ impl Action {
                 direction,
                 amount,
             } => {
-                let (x, y) = position.unwrap_or((width / 2.0, height / 2.0));
+                let (x, y) = (*position).unwrap_or((width / 2.0, height / 2.0));
                 point(x, y)?;
-                ensure!((1..=100).contains(&amount), "unsupported scroll amount");
+                ensure!((1..=100).contains(amount), "unsupported scroll amount");
                 let (axis, sign) = match direction.as_str() {
                     "up" => (0, -1),
                     "down" => (0, 1),
@@ -803,7 +841,7 @@ impl Action {
                     "right" => (1, 1),
                     _ => bail!("unsupported scroll direction"),
                 };
-                let value = amount as i32 * 10 * sign;
+                let value = *amount as i32 * 10 * sign;
                 format!("SCROLL {prefix} {x} {y} {axis} {value}")
             }
             Self::Drag {
@@ -811,10 +849,10 @@ impl Action {
                 to: (x2, y2),
                 duration_ms,
             } => {
-                point(x1, y1)?;
-                point(x2, y2)?;
+                point(*x1, *y1)?;
+                point(*x2, *y2)?;
                 ensure!(
-                    (50..=2000).contains(&duration_ms),
+                    (50..=2000).contains(duration_ms),
                     "isolated drag duration must be 50–2000 ms"
                 );
                 format!("DRAG {prefix} {x1} {y1} {x2} {y2} {duration_ms}")
@@ -1015,8 +1053,47 @@ pub(crate) fn execute_foreground_text(
     text: &str,
     cancellation: ActionCancellation,
 ) -> Result<Value> {
-    let actions = foreground_text_actions(text)?;
-    ensure!(!actions.is_empty(), "foreground text must not be empty");
+    execute_text_routed(
+        owner,
+        pid,
+        address,
+        text,
+        cancellation,
+        DeliveryRoute::Foreground,
+    )
+}
+
+pub(crate) fn execute_background_text(
+    owner: Option<String>,
+    pid: u32,
+    address: u64,
+    text: &str,
+    cancellation: ActionCancellation,
+) -> Result<Value> {
+    execute_text_routed(
+        owner,
+        pid,
+        address,
+        text,
+        cancellation,
+        DeliveryRoute::Background,
+    )
+}
+
+fn execute_text_routed(
+    owner: Option<String>,
+    pid: u32,
+    address: u64,
+    text: &str,
+    cancellation: ActionCancellation,
+    route: DeliveryRoute,
+) -> Result<Value> {
+    let actions = text_actions(text)?;
+    ensure!(
+        !actions.is_empty(),
+        "{} text must not be empty",
+        route.mode()
+    );
     execute_actions_routed(
         owner,
         pid,
@@ -1024,7 +1101,7 @@ pub(crate) fn execute_foreground_text(
         actions,
         None,
         cancellation,
-        DeliveryRoute::Foreground,
+        route,
         true,
     )
 }
@@ -1083,41 +1160,64 @@ fn execute_actions_routed(
     slot.as_mut()
         .context("missing input connection")?
         .cancellation = cancellation;
+    dispatch_actions_in_slot(&mut slot, actions, started, route, text, Client::attest)
+}
+
+fn dispatch_actions_in_slot(
+    slot: &mut Option<Client>,
+    actions: Vec<Action>,
+    started: Option<tokio::sync::oneshot::Sender<()>>,
+    route: DeliveryRoute,
+    text: bool,
+    attest: fn(&Client) -> Result<()>,
+) -> Result<Value> {
     dispatch_in_slot(
-        &mut slot,
+        slot,
         |client| {
             if route == DeliveryRoute::Foreground {
-                client.attest()?;
+                attest(client)?;
             }
             Ok(())
         },
         |client| {
             if !text {
-                return client.execute_routed(
+                return client.execute_routed_with_attest(
                     actions.into_iter().next().context("missing input action")?,
                     started,
                     route,
+                    attest,
                 );
             }
-            execute_text_actions(actions, |action| client.execute_routed(action, None, route))
+            execute_text_actions(actions, route, |action| {
+                client.execute_routed_with_attest(action, None, route, attest)
+            })
         },
     )
 }
 
 fn execute_text_actions(
     actions: Vec<Action>,
+    route: DeliveryRoute,
     mut dispatch: impl FnMut(Action) -> Result<Value>,
 ) -> Result<Value> {
-    let route = DeliveryRoute::Foreground;
     let mut delivered = 0u32;
-    for action in actions {
+    let action_count = actions.len();
+    for (index, action) in actions.into_iter().enumerate() {
         match dispatch(action) {
             Ok(mut reply) if reply["ok"] == false => {
                 reply["effect"] = json!(if delivered > 0 { "partial" } else { "none" });
                 reply["delivery"] = json!({"mode":route.mode(),"delivered_count":delivered});
                 return Ok(reply);
             }
-            Ok(_) => delivered += 1,
+            Ok(_) => {
+                delivered += 1;
+                // The compositor acknowledgement is not a client-processing
+                // fence. Give the target event loop a bounded turn before the
+                // next character so native GTK clients do not drop a burst.
+                if index + 1 < action_count {
+                    std::thread::sleep(TEXT_ACTION_GAP);
+                }
+            }
             Err(error) => {
                 if let Some(unknown) = error.downcast_ref::<DispatchUnknown>() {
                     return Err(unknown_dispatch(
@@ -1184,9 +1284,76 @@ fn terminal_connection_result(value: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
     use std::os::fd::FromRawFd;
     const TOKEN: &str = "0123456789abcdef0123456789abcdef";
     static POOL_TEST_LOCK: Mutex<()> = Mutex::new(());
+    thread_local! {
+        static TEST_ATTESTATIONS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    fn record_test_attestation(_: &Client) -> Result<()> {
+        TEST_ATTESTATIONS.set(TEST_ATTESTATIONS.get() + 1);
+        Ok(())
+    }
+
+    fn reset_test_attestations() {
+        TEST_ATTESTATIONS.set(0);
+    }
+
+    fn test_attestations() -> usize {
+        TEST_ATTESTATIONS.get()
+    }
+
+    fn production_test_client() -> (Client, socket2::Socket) {
+        let (mut client, peer) = test_connection();
+        client.protocol = InputProtocol::Production;
+        client.foreground_supported = true;
+        client.lane = Some(0);
+        (client, peer)
+    }
+
+    fn target_command(route: DeliveryRoute) -> &'static str {
+        match route {
+            DeliveryRoute::Foreground => "FOREGROUND_TARGET 1 1 2",
+            DeliveryRoute::Background => "TARGET 1 1 2",
+        }
+    }
+
+    fn serve_key_target(
+        peer: &socket2::Socket,
+        route: DeliveryRoute,
+        sequence: u64,
+        revision: u64,
+    ) {
+        let token = format!("{sequence:032x}");
+        assert_eq!(read_packet(peer), target_command(route));
+        peer.send(
+            json!({"ok":true,"route":route.acknowledgement(),"target":token,
+                "revision":revision,"width":100,"height":100})
+            .to_string()
+            .as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(
+            read_packet(peer),
+            format!("KEY {sequence} {token} {revision} 30 0")
+        );
+    }
+
+    fn dispatch_production_key(slot: &mut Option<Client>, route: DeliveryRoute) -> Result<Value> {
+        dispatch_actions_in_slot(
+            slot,
+            vec![Action::Key {
+                key: "a".into(),
+                modifiers: vec![],
+            }],
+            None,
+            route,
+            false,
+            record_test_attestation,
+        )
+    }
 
     #[test]
     fn foreground_text_attests_each_logical_call_once_and_binds_every_key() {
@@ -1237,9 +1404,11 @@ mod tests {
                     Ok(())
                 },
                 |client| {
-                    execute_text_actions(foreground_text_actions(text).unwrap(), |action| {
-                        client.execute_routed(action, None, DeliveryRoute::Foreground)
-                    })
+                    execute_text_actions(
+                        text_actions(text).unwrap(),
+                        DeliveryRoute::Foreground,
+                        |action| client.execute_routed(action, None, DeliveryRoute::Foreground),
+                    )
                 },
             )
             .unwrap();
@@ -1247,6 +1416,68 @@ mod tests {
             assert_eq!(attestations, call + 2);
             assert!(slot.is_some());
         }
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn text_result_reports_the_selected_delivery_route() {
+        for route in [DeliveryRoute::Background, DeliveryRoute::Foreground] {
+            let result = execute_text_actions(text_actions("abc").unwrap(), route, |_| {
+                Ok(json!({
+                    "ok": true,
+                    "effect": "unverifiable",
+                    "route": route.acknowledgement()
+                }))
+            })
+            .unwrap();
+            assert_eq!(result["route"], route.acknowledgement());
+            assert_eq!(result["delivery"]["mode"], route.mode());
+            assert_eq!(result["delivery"]["delivered_count"], 3);
+        }
+    }
+
+    #[test]
+    fn text_dispatch_paces_acknowledged_keys() {
+        let started = Instant::now();
+        let result = execute_text_actions(
+            text_actions("abc").unwrap(),
+            DeliveryRoute::Background,
+            |_| Ok(json!({"ok":true})),
+        )
+        .unwrap();
+        assert_eq!(result["delivery"]["delivered_count"], 3);
+        assert!(started.elapsed() >= TEXT_ACTION_GAP + TEXT_ACTION_GAP);
+    }
+
+    #[test]
+    fn background_text_binds_each_key_to_the_exact_target() {
+        reset_test_attestations();
+        let (client, peer) = production_test_client();
+        let server = std::thread::spawn(move || {
+            for sequence in 1..=3 {
+                serve_key_target(&peer, DeliveryRoute::Background, sequence, sequence);
+                peer.send(br#"{"ok":true,"effect":"unverifiable","route":"synthetic_events"}"#)
+                    .unwrap();
+            }
+        });
+        let mut slot = Some(client);
+        let result = dispatch_actions_in_slot(
+            &mut slot,
+            text_actions("aaa").unwrap(),
+            None,
+            DeliveryRoute::Background,
+            true,
+            record_test_attestation,
+        )
+        .unwrap();
+        assert_eq!(result["route"], "synthetic_events");
+        assert_eq!(
+            result["delivery"],
+            json!({"mode":"background","delivered_count":3})
+        );
+        assert_eq!(test_attestations(), 3);
+        assert!(slot.is_some());
+        drop(slot);
         server.join().unwrap();
     }
 
@@ -1318,9 +1549,11 @@ mod tests {
             &mut slot,
             |_| Ok(()),
             |client| {
-                execute_text_actions(foreground_text_actions("abc").unwrap(), |action| {
-                    client.execute_routed(action, None, DeliveryRoute::Foreground)
-                })
+                execute_text_actions(
+                    text_actions("abc").unwrap(),
+                    DeliveryRoute::Foreground,
+                    |action| client.execute_routed(action, None, DeliveryRoute::Foreground),
+                )
             },
         )
         .unwrap();
@@ -1369,9 +1602,11 @@ mod tests {
             &mut slot,
             |_| Ok(()),
             |client| {
-                execute_text_actions(foreground_text_actions("abc").unwrap(), |action| {
-                    client.execute_routed(action, None, DeliveryRoute::Foreground)
-                })
+                execute_text_actions(
+                    text_actions("abc").unwrap(),
+                    DeliveryRoute::Foreground,
+                    |action| client.execute_routed(action, None, DeliveryRoute::Foreground),
+                )
             },
         )
         .unwrap();
@@ -1451,6 +1686,101 @@ mod tests {
                 expected_ok
             );
             drop(client);
+            server.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn production_entry_bounds_stale_geometry_retry_with_fresh_authority() {
+        for (route, succeeds) in [
+            (DeliveryRoute::Foreground, true),
+            (DeliveryRoute::Background, true),
+            (DeliveryRoute::Foreground, false),
+            (DeliveryRoute::Background, false),
+        ] {
+            reset_test_attestations();
+            let (client, peer) = production_test_client();
+            let acknowledgement = route.acknowledgement();
+            let server = std::thread::spawn(move || {
+                for (sequence, revision) in [(1, 11), (2, 22)] {
+                    serve_key_target(&peer, route, sequence, revision);
+                    let reply = if sequence == 2 && succeeds {
+                        json!({"ok":true,"effect":"unverifiable","route":acknowledgement})
+                    } else {
+                        json!({"ok":false,"code":"stale_geometry","detail":"stale_geometry"})
+                    };
+                    peer.send(reply.to_string().as_bytes()).unwrap();
+                }
+                let mut byte = [0u8];
+                assert_eq!(
+                    unsafe { libc::recv(peer.as_raw_fd(), byte.as_mut_ptr().cast(), 1, 0) },
+                    0
+                );
+            });
+
+            let mut slot = Some(client);
+            let reply = dispatch_production_key(&mut slot, route).unwrap();
+            assert_eq!(reply["ok"], succeeds);
+            if !succeeds {
+                assert_eq!(reply["code"], "stale_geometry");
+                assert!(reply.get("effect").is_none());
+                assert!(reply.get("delivery").is_none());
+            }
+            assert_eq!(slot.as_ref().unwrap().sequence, 2);
+            assert_eq!(test_attestations(), 2);
+            drop(slot);
+            server.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn production_entry_never_retries_an_uncertain_dispatch() {
+        for route in [DeliveryRoute::Foreground, DeliveryRoute::Background] {
+            reset_test_attestations();
+            let (client, peer) = production_test_client();
+            let server = std::thread::spawn(move || {
+                serve_key_target(&peer, route, 1, 11);
+                peer.send(b"not-json").unwrap();
+                let mut byte = [0u8];
+                assert_eq!(
+                    unsafe { libc::recv(peer.as_raw_fd(), byte.as_mut_ptr().cast(), 1, 0) },
+                    0
+                );
+            });
+
+            let mut slot = Some(client);
+            let error = dispatch_production_key(&mut slot, route).unwrap_err();
+            assert!(error.is::<DispatchUnknown>());
+            assert!(slot.is_none());
+            assert_eq!(test_attestations(), 1);
+            server.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn production_entry_retries_only_the_canonical_stale_geometry_refusal() {
+        for route in [DeliveryRoute::Foreground, DeliveryRoute::Background] {
+            reset_test_attestations();
+            let (client, peer) = production_test_client();
+            let server = std::thread::spawn(move || {
+                serve_key_target(&peer, route, 1, 11);
+                peer.send(br#"{"ok":false,"code":"stale_geometry","detail":"geometry_changed"}"#)
+                    .unwrap();
+                let mut byte = [0u8];
+                assert_eq!(
+                    unsafe { libc::recv(peer.as_raw_fd(), byte.as_mut_ptr().cast(), 1, 0) },
+                    0
+                );
+            });
+
+            let mut slot = Some(client);
+            let reply = dispatch_production_key(&mut slot, route).unwrap();
+            assert_eq!(reply["ok"], false);
+            assert_eq!(reply["code"], "stale_geometry");
+            assert_eq!(reply["detail"], "geometry_changed");
+            assert_eq!(slot.as_ref().unwrap().sequence, 1);
+            assert_eq!(test_attestations(), 1);
+            drop(slot);
             server.join().unwrap();
         }
     }
@@ -1568,9 +1898,11 @@ mod tests {
                 0
             );
         });
-        let error = execute_text_actions(foreground_text_actions("abc").unwrap(), |_| {
-            client.dispatch_routed("KEY synthetic", false, None, DeliveryRoute::Foreground)
-        })
+        let error = execute_text_actions(
+            text_actions("abc").unwrap(),
+            DeliveryRoute::Foreground,
+            |_| client.dispatch_routed("KEY synthetic", false, None, DeliveryRoute::Foreground),
+        )
         .unwrap_err();
         assert_eq!(
             error
@@ -1597,16 +1929,13 @@ mod tests {
     }
 
     #[test]
-    fn foreground_text_is_bounded_and_fully_prevalidated() {
+    fn hyprland_text_is_bounded_and_fully_prevalidated() {
         for text in ["valid prefix\u{00e9}", "valid prefix\0", "\r", "\u{007f}"] {
-            assert!(foreground_text_actions(text).is_err());
+            assert!(text_actions(text).is_err());
         }
-        assert!(foreground_text_actions(&"a".repeat(4097)).is_err());
-        assert_eq!(
-            foreground_text_actions(&"a".repeat(4096)).unwrap().len(),
-            4096
-        );
-        let actions = foreground_text_actions("Aa!? \t\n").unwrap();
+        assert!(text_actions(&"a".repeat(4097)).is_err());
+        assert_eq!(text_actions(&"a".repeat(4096)).unwrap().len(), 4096);
+        let actions = text_actions("Aa!? \t\n").unwrap();
         let packets: Vec<_> = actions
             .into_iter()
             .map(|action| action.packet(1, TOKEN, 1, 1.0, 1.0).unwrap())
@@ -1618,7 +1947,7 @@ mod tests {
             assert_eq!(*packet, format!("KEY 1 {TOKEN} 1 {suffix}"));
         }
         assert_eq!(
-            foreground_text_actions(&(32u8..127).map(char::from).collect::<String>())
+            text_actions(&(32u8..127).map(char::from).collect::<String>())
                 .unwrap()
                 .len(),
             95
@@ -1629,15 +1958,21 @@ mod tests {
     fn foreground_text_stops_after_refusal_or_cancellation_without_replay() {
         for cancel in [false, true] {
             let mut calls = 0;
-            let reply = execute_text_actions(foreground_text_actions("abc").unwrap(), |_| {
-                calls += 1;
-                match calls {
-                    1 => Ok(json!({"ok":true})),
-                    2 if cancel => Err(ActionCancelled.into()),
-                    2 => Ok(json!({"ok":false,"code":"target_changed","detail":"target_changed"})),
-                    _ => panic!("replayed text after interrupted dispatch"),
-                }
-            })
+            let reply = execute_text_actions(
+                text_actions("abc").unwrap(),
+                DeliveryRoute::Foreground,
+                |_| {
+                    calls += 1;
+                    match calls {
+                        1 => Ok(json!({"ok":true})),
+                        2 if cancel => Err(ActionCancelled.into()),
+                        2 => Ok(
+                            json!({"ok":false,"code":"target_changed","detail":"target_changed"}),
+                        ),
+                        _ => panic!("replayed text after interrupted dispatch"),
+                    }
+                },
+            )
             .unwrap();
             assert_eq!(calls, 2);
             assert_eq!(reply["ok"], false);
@@ -1653,14 +1988,18 @@ mod tests {
     #[test]
     fn foreground_text_unknown_delivery_keeps_only_acknowledged_key_count() {
         let mut calls = 0;
-        let error = execute_text_actions(foreground_text_actions("abc").unwrap(), |_| {
-            calls += 1;
-            if calls == 1 {
-                Ok(json!({"ok":true}))
-            } else {
-                Err(unknown_dispatch(anyhow::anyhow!("peer closed"), 0))
-            }
-        })
+        let error = execute_text_actions(
+            text_actions("abc").unwrap(),
+            DeliveryRoute::Foreground,
+            |_| {
+                calls += 1;
+                if calls == 1 {
+                    Ok(json!({"ok":true}))
+                } else {
+                    Err(unknown_dispatch(anyhow::anyhow!("peer closed"), 0))
+                }
+            },
+        )
         .unwrap_err();
         assert_eq!(calls, 2);
         assert_eq!(

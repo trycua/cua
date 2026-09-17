@@ -24,10 +24,10 @@ jobs:
           - som
           - cua-auto
         include:
-          # computer-server's VNC backend tests assert what vncdotool puts on
-          # the wire, so the job needs the package's own `vnc` extra.
+          # Exercise the real pinned Driver state contract and what the VNC
+          # backend puts on the wire, using the package's own extras.
           - package: computer-server
-            extras: "[vnc]"
+            extras: "[driver,vnc]"
 
     steps:
       - name: Checkout code

@@ -23,7 +23,8 @@ fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefus
 }
 
 fn normalized_text(node: &AXNode) -> String {
-    [
+    let mut parts = Vec::new();
+    for text in [
         node.title.as_deref(),
         node.value.as_deref(),
         node.description.as_deref(),
@@ -31,10 +32,13 @@ fn normalized_text(node: &AXNode) -> String {
     ]
     .into_iter()
     .flatten()
-    .collect::<Vec<_>>()
-    .join(" ")
-    .trim()
-    .to_ascii_lowercase()
+    {
+        let text = text.trim().to_ascii_lowercase();
+        if !text.is_empty() && !parts.contains(&text) {
+            parts.push(text);
+        }
+    }
+    parts.join(" ")
 }
 
 fn release_actionable_nodes(nodes: &[AXNode]) {

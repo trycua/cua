@@ -54,7 +54,7 @@ Default tests should be headless and safe for CI:
 
 ```bash
 cargo test -p cua-driver-core
-cargo test -p cua-driver --test protocol_mcp_test
+cargo test -p cua-driver --test protocol_schema_test
 ```
 
 GUI and VM-backed tests are marked `#[ignore]` and require harness apps from

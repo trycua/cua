@@ -17,6 +17,23 @@ SPEC.loader.exec_module(MODULE)
 
 
 class TestMergeReleasePleaseManifests(unittest.TestCase):
+    def test_sandbox_release_preserves_other_components_and_new_manifest_entries(self) -> None:
+        current = {
+            "libs/cua-driver": "0.25.0",
+            "libs/lume": "0.5.3",
+            "libs/python/cua-sandbox": "0.4.3",
+            "future/component": "1.0.0",
+        }
+        stale = {
+            "libs/cua-driver": "0.24.0",
+            "libs/lume": "0.5.2",
+            "libs/python/cua-sandbox": "0.5.0",
+        }
+        self.assertEqual(
+            MODULE.merge_component_versions(current, stale, ["sandbox"]),
+            {**current, "libs/python/cua-sandbox": "0.5.0"},
+        )
+
     def test_lume_release_keeps_newer_driver_version_from_main(self) -> None:
         main_manifest = {
             "libs/cua-driver": "0.11.0",

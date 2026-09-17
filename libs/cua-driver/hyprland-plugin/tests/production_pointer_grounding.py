@@ -7,8 +7,7 @@ These helpers inspect synthetic documents, not arbitrary application content.
 import math
 import re
 
-from production_app_smoke import (GroundingUnavailable, calc_formula_selection,
-                                  inkscape_selection_command, rows)
+from production_app_smoke import GroundingUnavailable, calc_formula_selection, rows
 
 
 STAGES = {
@@ -210,6 +209,29 @@ def blue_rectangle(snapshot, image):
             'center': [(left + right) // 2, (top + bottom) // 2]}
 
 
+def inkscape_unselected(snapshot):
+    """Prove the fixture's positive unselected status, not a keyboard command.
+
+    Pixel selection does not use Edit > Select All. Native background snapshots
+    can omit that menu while exposing the object and its exact unselected status.
+    Both projections must identify the object; missing status is never treated
+    as evidence that the object is unselected.
+    """
+    objects = [row for row in rows(snapshot) if row.get('role') == 'table cell'
+               and row.get('label') == 'smoke-rectangle']
+    if len(objects) != 1 or objects[0].get('enabled') is not True:
+        return False
+    lines = [line.strip() for line in snapshot.get('tree_markdown', '').splitlines()]
+    status = ('- label = "No objects selected. Click, Shift+click, Alt+scroll mouse '
+              'on top of objects, or drag around objects to select."')
+    conflicts = ('- label = "Rectangle  in root. Click selection again to toggle scale/rotation handles."',
+                 '- label = "Center of transformation: drag to reposition; scaling, rotation '
+                 'and skew with Shift also uses this center"')
+    prefix = f'- [{objects[0].get("element_index")}] table cell "smoke-rectangle" '
+    return (lines.count(status) == 1 and sum(line.startswith(prefix) for line in lines) == 1
+            and not any(line in conflicts for line in lines))
+
+
 def action(snapshot, image, app, stage):
     checked_snapshot(snapshot, image, app)
     if stage not in STAGES[app]:
@@ -229,7 +251,7 @@ def action(snapshot, image, app, stage):
     else:
         oracle['rectangle'] = blue_rectangle(snapshot, image)
         if stage == 'click_rectangle':
-            if not inkscape_selection_command(snapshot, rows(snapshot)):
+            if not inkscape_unselected(snapshot):
                 raise GroundingUnavailable('click proof needs the unselected synthetic rectangle')
             oracle['geometry'] = None
         else:

@@ -394,7 +394,7 @@ class OrchestrationTests(unittest.TestCase):
             self.assertEqual(observed['observer'],
                              [default, bounded] if case == 'managed_deny' else [])
             for index, (name, tool) in enumerate(calls):
-                if tool not in ('press_key', 'hotkey'):
+                if tool not in ('type_text', 'press_key', 'hotkey'):
                     continue
                 observer = 'observer' if name == 'denied' else name
                 self.assertEqual(calls[index - 1], (observer, 'get_window_state'))
@@ -411,7 +411,7 @@ class OrchestrationTests(unittest.TestCase):
             self.assertEqual(status, 1)
             self.assertEqual(report['error']['type'], 'GroundingUnavailable')
             self.assertEqual([(name, tool) for name, tool in calls
-                              if tool in ('press_key', 'hotkey')], expected_actions)
+                              if tool in ('type_text', 'press_key', 'hotkey')], expected_actions)
             self.assertNotIn('response', report['actions'][-1])
 
     def test_inkscape_missing_selection_status_refuses_before_right_without_retry(self):
@@ -424,7 +424,7 @@ class OrchestrationTests(unittest.TestCase):
             'type': 'GroundingUnavailable',
             'message': 'cannot prove the single rectangle is selected before Right'})
         self.assertEqual([(name, tool) for name, tool in calls
-                          if tool in ('press_key', 'hotkey')], [('control', 'hotkey')])
+                          if tool in ('type_text', 'press_key', 'hotkey')], [('control', 'hotkey')])
         default = {**report['plan']['target'], 'session': 'policy-proof'}
         control = next(client for client in clients if client.name == 'control')
         self.assertEqual(control.snapshots,
@@ -440,14 +440,15 @@ class OrchestrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             status, report, calls, clients = self.exercise(Path(temporary))
         self.assertEqual(status, 0, report.get('error'))
-        self.assertEqual(report['verification']['positive_control']['text'], 'a')
+        self.assertEqual(report['verification']['positive_control']['text'], 'abc')
         self.assertEqual([client.name for client in clients], ['observer', 'denied', 'control'])
         self.assertTrue(all(client.profile['mode'] == 'unrestricted' for client in clients))
-        actions = [(name, tool) for name, tool in calls if tool in ('press_key', 'hotkey')]
-        self.assertEqual(actions, [('denied', 'press_key'), ('control', 'press_key'),
+        actions = [(name, tool) for name, tool in calls
+                   if tool in ('type_text', 'press_key', 'hotkey')]
+        self.assertEqual(actions, [('denied', 'type_text'), ('control', 'type_text'),
                                    ('control', 'press_key'), ('control', 'hotkey')])
         for index, (name, tool) in enumerate(calls):
-            if tool not in ('press_key', 'hotkey'):
+            if tool not in ('type_text', 'press_key', 'hotkey'):
                 continue
             observer = 'observer' if name == 'denied' else name
             self.assertEqual(calls[index - 1], (observer, 'get_window_state'))
@@ -460,7 +461,7 @@ class OrchestrationTests(unittest.TestCase):
                 status, report, calls, clients = self.exercise(Path(temporary), failure)
             self.assertEqual(status, 1)
             self.assertEqual([client.name for client in clients], ['observer', 'denied'])
-            self.assertEqual(sum(tool == 'press_key' for _, tool in calls), 1)
+            self.assertEqual(sum(tool == 'type_text' for _, tool in calls), 1)
             self.assertIn('after', report['actions'][0])
             self.assertEqual(calls[-1], ('trace', 'TRACE_STOP'))
             if failure == 'unknown':
@@ -472,7 +473,7 @@ class OrchestrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             status, report, calls, clients = self.exercise(Path(temporary), 'foreground_target')
         self.assertEqual(status, 1)
-        self.assertFalse(any(tool in ('press_key', 'hotkey') for _, tool in calls))
+        self.assertFalse(any(tool in ('type_text', 'press_key', 'hotkey') for _, tool in calls))
         self.assertIn('target is the primary client', report['error']['message'])
 
 

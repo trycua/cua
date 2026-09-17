@@ -55,6 +55,7 @@ type CredentialURLs struct {
 	Metabase    string
 	Usage       string
 	Meter       string
+	Submitter   string
 }
 
 type migrationFile struct {
@@ -163,6 +164,7 @@ var expectedCredentialRoles = map[string]string{
 	"metabase":    "k8s_metabase",
 	"usage":       "cyclops_usage_reader",
 	"meter":       "cyclops_meter_writer",
+	"submitter":   "cyclops_submitter",
 }
 
 const selectAppliedMigrationsStatement = `select version, filename, sha256 from cyclops_migrations.applied_migrations order by application_order`
@@ -484,6 +486,7 @@ func parseCredentialURLs(urls CredentialURLs) ([]credential, error) {
 		{Name: "metabase", URL: urls.Metabase},
 		{Name: "usage", URL: urls.Usage},
 		{Name: "meter", URL: urls.Meter},
+		{Name: "submitter", URL: urls.Submitter},
 	}
 
 	credentials := make([]credential, 0, len(inputs))
@@ -519,6 +522,7 @@ func staticRoleContracts() []staticRoleContract {
 		{role: "k8s_metabase", login: true, connectionLimit: -1, validUntil: staticRoleValidUntilInfinity},
 		{role: "cyclops_usage_reader", login: true, connectionLimit: -1, validUntil: staticRoleValidUntilInfinity},
 		{role: "cyclops_meter_writer", login: true, connectionLimit: -1, validUntil: staticRoleValidUntilInfinity},
+		{role: "cyclops_submitter", login: true, connectionLimit: -1, validUntil: staticRoleValidUntilInfinity},
 	}
 }
 
@@ -795,6 +799,8 @@ func expectedReportingACLs() []reportingACL {
 		{object: reportingObject{kind: reportingObjectRelation, schema: "billing_meter", name: "reservation_hour_fact"}, owner: "billing_meter_owner", privilege: reportingPrivilegeSelect, grantee: "k8s_metabase", grantor: "billing_meter_owner"},
 		{object: reportingObject{kind: reportingObjectRelation, schema: "billing_meter", name: "reservation_hour_current"}, owner: "billing_meter_owner", privilege: reportingPrivilegeSelect, grantee: "k8s_metabase", grantor: "billing_meter_owner"},
 		{object: reportingObject{kind: reportingObjectRelation, schema: "billing_meter", name: "reservation_hour_collection_current"}, owner: "billing_meter_owner", privilege: reportingPrivilegeSelect, grantee: "k8s_metabase", grantor: "billing_meter_owner"},
+		{object: reportingObject{kind: reportingObjectRelation, schema: "billing_meter", name: "stripe_submission_batch"}, owner: "billing_meter_owner", privilege: reportingPrivilegeSelect, grantee: "k8s_metabase", grantor: "billing_meter_owner"},
+		{object: reportingObject{kind: reportingObjectRelation, schema: "billing_meter", name: "stripe_submission"}, owner: "billing_meter_owner", privilege: reportingPrivilegeSelect, grantee: "k8s_metabase", grantor: "billing_meter_owner"},
 		{object: reportingObject{kind: reportingObjectSchema, schema: "k8s_reporting"}, owner: "k8s_reporting_owner", privilege: reportingPrivilegeUsage, grantee: "k8s_metabase", grantor: "k8s_reporting_owner"},
 		{object: reportingObject{kind: reportingObjectRelation, schema: "k8s_reporting", name: "current_resources"}, owner: "k8s_reporting_owner", privilege: reportingPrivilegeSelect, grantee: "k8s_metabase", grantor: "k8s_reporting_owner"},
 		{object: reportingObject{kind: reportingObjectRelation, schema: "k8s_reporting", name: "hourly_reservation_usage"}, owner: "k8s_reporting_owner", privilege: reportingPrivilegeSelect, grantee: "k8s_metabase", grantor: "k8s_reporting_owner"},

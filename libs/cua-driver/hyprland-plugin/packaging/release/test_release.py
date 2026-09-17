@@ -106,6 +106,8 @@ class ReleaseTest(unittest.TestCase):
         for command in (
             configure,
             ["cmake", "--build", str(build), "--target", "cua_hyprland_foreground_route_test"],
+            ["ctest", "--test-dir", str(build), "--output-on-failure", "--no-tests=error",
+             "-R", "^cua_hyprland_desktop_fault_policy_test$"],
         ):
             result = subprocess.run(command, capture_output=True, text=True, timeout=120)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

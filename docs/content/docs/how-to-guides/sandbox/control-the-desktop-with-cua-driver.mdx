@@ -1,0 +1,112 @@
+---
+title: Control the desktop with Cua Driver
+description: Connect the typed Cua Driver SDK to a claimed Cloud Fleet computer.
+---
+
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+
+Cua Driver provides typed desktop inspection and control. Use the Sandbox
+interfaces backed by `computer-server` for shell commands, files, and
+interactive terminals; the Driver connection does not replace those APIs.
+
+Python uses the Sandbox SDK, while TypeScript uses the Fleet SDK for hosted
+lifecycle and routing. The TypeScript Fleet SDK is not a TypeScript Sandbox
+SDK. Both examples below connect Driver to the same advertised guest service.
+
+## Prerequisites
+
+- An authenticated Cloud Fleet client and a live claim. The Python example
+  starts with the `Pool` object for that capacity; the TypeScript example starts
+  with its Fleet `client` and `claim`.
+- A guest service named `mcp` that advertises the typed Driver envelope
+  extension, `capabilities.experimental["ai.cua.driver.envelopes"].version == 1`.
+  An ordinary MCP tools endpoint is not enough.
+- Guest permissions for the desktop operation you call. Connecting Driver does
+  not elevate permissions or make every operation available on every desktop.
+
+No Fleet image is implied to provide this capability. Qualify the exact guest
+artifact and matching Driver bindings before relying on it.
+
+## Connect and inspect the desktop
+
+<Tabs groupId="language" persist items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+
+Install the Sandbox SDK with its optional Driver dependency:
+
+```bash
+python -m pip install --extra-index-url https://wheels.cua.ai/simple 'cua-sandbox[driver]'
+```
+
+Claim from the existing pool, then connect the typed Driver through its
+advertised `mcp` service:
+
+```python
+from cua_driver import GetScreenSizeInput
+
+
+async def inspect_desktop(pool):
+    async with pool.claim(service="server") as sb:
+        # sb.shell, sb.files, and sb.terminal continue to use computer-server.
+        async with sb.driver.connect(service="mcp", transport="mcp") as driver:
+            result = await driver.get_screen_size(
+                GetScreenSizeInput(session=None)
+            )
+            if result.is_error:
+                raise RuntimeError(result.text)
+            print(result.text)
+```
+
+Exiting the inner context closes Driver before the outer claim context releases
+the claim.
+
+  </Tab>
+  <Tab value="TypeScript">
+
+The helper is Node-only. Install the Fleet lifecycle SDK and Cua Driver:
+
+```bash
+npm install @trycua/fleet @trycua/cua-driver
+```
+
+Given the claim your application created, wait for its sandbox and connect the
+typed Driver:
+
+```ts
+import { GetScreenSizeInput } from '@trycua/cua-driver';
+import { connectFleetDriver } from '@trycua/cua-driver/fleet';
+
+let connection: Awaited<ReturnType<typeof connectFleetDriver>> | undefined;
+
+try {
+  const sandbox = await client.waitClaim(claim);
+  connection = await connectFleetDriver({ client, sandbox });
+
+  const result = await connection.driver.getScreenSize(
+    GetScreenSizeInput.new({ session: undefined })
+  );
+  if (result.isError) throw new Error(result.text);
+  console.log(result.text);
+} finally {
+  try {
+    if (connection) await connection.close();
+  } finally {
+    await client.deleteClaim(claim);
+  }
+}
+```
+
+`connectFleetDriver({ client, sandbox })` selects the advertised `mcp` service
+by default. Pass `service` only when the pool deliberately uses another name;
+the guest under that name must advertise the same typed envelope capability.
+Closing the connection does not release the claim, so the example awaits
+`close()` before `deleteClaim()`.
+
+  </Tab>
+</Tabs>
+
+The returned object is the typed Cua Driver interface, not a wrapper around MCP
+tools. Keep the claim and authenticated client alive for the whole Driver
+connection. Copy any results you need out of the guest, close Driver, and only
+then release the claim. Releasing a claim first can interrupt cleanup and leave
+the outcome of an in-flight desktop action uncertain.

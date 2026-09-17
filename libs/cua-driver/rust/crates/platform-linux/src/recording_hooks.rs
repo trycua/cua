@@ -71,16 +71,40 @@ pub fn screenshot_for_recording(window_id: Option<u64>, pid: Option<i64>) -> Opt
 }
 
 #[cfg(target_os = "linux")]
-pub fn element_window_local_xy(window_id: u64, pid: i64, element_index: u32) -> Option<(f64, f64)> {
-    if tokio::runtime::Handle::try_current().is_ok() {
-        return std::thread::spawn(move || {
-            element_window_local_xy_blocking(window_id, pid, element_index)
-        })
-        .join()
-        .ok()
-        .flatten();
-    }
-    element_window_local_xy_blocking(window_id, pid, element_index)
+pub fn element_window_local_xy(
+    pid: i64,
+    args: &serde_json::Value,
+    capture_point: bool,
+) -> Option<(u64, Option<(f64, f64)>)> {
+    use cua_driver_core::tool_args::ArgsExt;
+    let cache = cua_driver_core::element_cache::current_runtime_cache::<
+        crate::atspi::cache::CachedSnapshot,
+    >()?;
+    let resolved = cache
+        .resolve_element_args(
+            i32::try_from(pid).ok()?,
+            args.opt_u64("element_index").map(|index| index as usize),
+            args.get("element_token")
+                .and_then(serde_json::Value::as_str),
+            args.get("snapshot_id").and_then(serde_json::Value::as_str),
+            args.opt_u64("window_id"),
+            "recording",
+        )
+        .ok()?;
+    let (index, window, _) = resolved.into_parts(None);
+    let window_id = window?;
+    let element_index = u32::try_from(index?).ok()?;
+    let point = if !capture_point {
+        None
+    } else if tokio::runtime::Handle::try_current().is_ok() {
+        std::thread::spawn(move || element_window_local_xy_blocking(window_id, pid, element_index))
+            .join()
+            .ok()
+            .flatten()
+    } else {
+        element_window_local_xy_blocking(window_id, pid, element_index)
+    };
+    Some((window_id, point))
 }
 
 #[cfg(target_os = "linux")]
@@ -201,10 +225,10 @@ pub fn screenshot_for_recording(_window_id: Option<u64>, _pid: Option<i64>) -> O
 
 #[cfg(not(target_os = "linux"))]
 pub fn element_window_local_xy(
-    _window_id: u64,
     _pid: i64,
-    _element_index: u32,
-) -> Option<(f64, f64)> {
+    _args: &serde_json::Value,
+    _capture_point: bool,
+) -> Option<(u64, Option<(f64, f64)>)> {
     None
 }
 

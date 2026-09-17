@@ -78,6 +78,23 @@ pub fn parse_typed_projection<T: cua_driver_contract::ToolInput>(
     parse_typed_input(tool_name, Value::Object(projected))
 }
 
+/// Keep the released desktop-coordinate wire parser independent of the SDK's
+/// explicit addressing API. Native handlers still accept legacy scope/defaults.
+pub fn parse_legacy_click_input(
+    args: &Value,
+) -> Result<cua_driver_contract::LegacyClickInput, ToolResult> {
+    const FIELDS: &[&str] = &["x", "y", "target", "scope", "session", "button", "count"];
+    let Some(source) = args.as_object() else {
+        return parse_typed_input("click", args.clone());
+    };
+    let projected = source
+        .iter()
+        .filter(|(name, _)| FIELDS.contains(&name.as_str()))
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect();
+    parse_typed_input("click", Value::Object(projected))
+}
+
 /// Remove transport-reserved arguments supplied by a public caller. Trusted
 /// ingress code calls this before injecting session or approval context, so a
 /// tool request cannot forge underscore-prefixed transport evidence.
@@ -89,8 +106,8 @@ pub fn sanitize_reserved_args(args: &mut Value) {
 
 #[cfg(test)]
 mod reserved_args_tests {
-    use super::{parse_typed_input, parse_typed_projection, sanitize_reserved_args};
-    use cua_driver_contract::{ClickButton, ClickInput, GetScreenSizeInput, SetWindowFrameInput};
+    use super::{parse_legacy_click_input, parse_typed_input, sanitize_reserved_args};
+    use cua_driver_contract::{ClickButton, GetScreenSizeInput, SetWindowFrameInput};
     use serde_json::json;
 
     #[test]
@@ -159,27 +176,23 @@ mod reserved_args_tests {
     }
 
     #[test]
-    fn typed_projection_preserves_rich_platform_fields_without_bypassing_portable_types() {
-        let input = parse_typed_projection::<ClickInput>(
-            "click",
-            &json!({
-                "x": 10,
-                "y": 20.5,
-                "scope": "desktop",
-                "button": "right",
-                "pid": 42,
-                "delivery_mode": "foreground"
-            }),
-        )
+    fn legacy_click_projection_preserves_wire_defaults_and_validates_coordinates() {
+        let input = parse_legacy_click_input(&json!({
+            "x": 10,
+            "y": 20.5,
+            "scope": "desktop",
+            "button": "right",
+            "pid": 42,
+            "delivery_mode": "foreground"
+        }))
         .expect("rich fields are projected away");
         assert_eq!(input.x, 10.0);
         assert_eq!(input.button, Some(ClickButton::Right));
 
-        let error = parse_typed_projection::<ClickInput>(
-            "click",
-            &json!({"x": "10", "y": 20, "scope": "desktop", "pid": 42}),
-        )
-        .expect_err("portable field types are still enforced");
+        assert!(input.target.is_none());
+        let error =
+            parse_legacy_click_input(&json!({"x": "10", "y": 20, "scope": "desktop", "pid": 42}))
+                .expect_err("portable field types are still enforced");
         assert_eq!(error.is_error, Some(true));
         assert_eq!(
             error

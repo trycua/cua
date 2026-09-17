@@ -17,11 +17,16 @@ fn run(home: &Path, args: &[&str]) -> Output {
 }
 
 fn current_target() -> String {
-    let suffix = match std::env::consts::OS {
-        "macos" => "apple-darwin",
-        "windows" => "pc-windows-msvc",
-        "linux" => "unknown-linux-gnu",
-        other => other,
+    let suffix = if cfg!(target_os = "macos") {
+        "apple-darwin"
+    } else if cfg!(all(target_os = "windows", target_env = "msvc")) {
+        "pc-windows-msvc"
+    } else if cfg!(all(target_os = "linux", target_env = "musl")) {
+        "unknown-linux-musl"
+    } else if cfg!(all(target_os = "linux", target_env = "gnu")) {
+        "unknown-linux-gnu"
+    } else {
+        panic!("unsupported extension-manager test target")
     };
     format!("{}-{suffix}", std::env::consts::ARCH)
 }
@@ -31,24 +36,24 @@ fn fixture_archive(directory: &Path) -> PathBuf {
     let digest = format!("{:x}", Sha256::digest(payload));
     let manifest = serde_json::to_vec_pretty(&json!({
         "schema_version": 1,
-        "id": "perception",
+        "id": "local-prototype",
         "version": "1.2.3",
         "driver_version": format!("={}", env!("CARGO_PKG_VERSION")),
         "protocol_version": 1,
         "target": current_target(),
-        "entrypoint": "bin/cua-perception",
+        "entrypoint": "bin/local-extension",
         "files": [{
-            "path": "bin/cua-perception",
+            "path": "bin/local-extension",
             "sha256": digest,
             "executable": true
         }]
     }))
     .unwrap();
-    let path = directory.join("perception.tar.gz");
+    let path = directory.join("local-extension.tar.gz");
     let encoder = GzEncoder::new(fs::File::create(&path).unwrap(), Compression::default());
     let mut builder = tar::Builder::new(encoder);
     append(&mut builder, "extension.json", &manifest);
-    append(&mut builder, "bin/cua-perception", payload);
+    append(&mut builder, "bin/local-extension", payload);
     builder.finish().unwrap();
     path
 }
@@ -64,6 +69,7 @@ fn append(builder: &mut tar::Builder<GzEncoder<fs::File>>, path: &str, bytes: &[
 }
 
 #[test]
+#[cfg(not(windows))]
 fn status_and_path_report_exact_active_version() {
     let temp = TempDir::new().unwrap();
     let home = temp.path().join("driver-home");
@@ -75,10 +81,17 @@ fn status_and_path_report_exact_active_version() {
         String::from_utf8_lossy(&list.stderr)
     );
     let list_json: Value = serde_json::from_slice(&list.stdout).unwrap();
-    assert_eq!(list_json[0]["id"], "perception");
+    assert_eq!(list_json[0]["id"], "local-prototype");
     assert_eq!(list_json[0]["installed"], false);
+    let list_detail = list_json[0]["detail"].as_str().unwrap();
+    assert!(list_detail.contains("unsigned, untrusted"));
+    assert!(list_detail.contains("archive-provided hashes do not authenticate"));
+    let plain_list = run(&home, &["extension", "list"]);
+    let plain_list = String::from_utf8_lossy(&plain_list.stdout);
+    assert!(plain_list.contains("unsigned, untrusted"));
+    assert!(plain_list.contains("archive-provided hashes do not authenticate"));
 
-    let absent = run(&home, &["extension", "status", "perception", "--json"]);
+    let absent = run(&home, &["extension", "status", "local-prototype", "--json"]);
     assert!(
         absent.status.success(),
         "{}",
@@ -94,7 +107,7 @@ fn status_and_path_report_exact_active_version() {
         &[
             "extension",
             "install",
-            "perception",
+            "local-prototype",
             "--archive",
             archive.to_str().unwrap(),
         ],
@@ -104,8 +117,12 @@ fn status_and_path_report_exact_active_version() {
         "{}",
         String::from_utf8_lossy(&install.stderr)
     );
+    let install_stdout = String::from_utf8_lossy(&install.stdout);
+    assert!(install_stdout.contains("unsigned, untrusted local code"));
+    assert!(install_stdout.contains("self-asserted"));
+    assert!(install_stdout.contains("do not establish provenance"));
 
-    let status = run(&home, &["extension", "status", "perception", "--json"]);
+    let status = run(&home, &["extension", "status", "local-prototype", "--json"]);
     assert!(
         status.status.success(),
         "{}",
@@ -114,8 +131,15 @@ fn status_and_path_report_exact_active_version() {
     let status_json: Value = serde_json::from_slice(&status.stdout).unwrap();
     assert_eq!(status_json["active_version"], "1.2.3");
     assert_eq!(status_json["healthy"], true);
+    let status_detail = status_json["detail"].as_str().unwrap();
+    assert!(status_detail.contains("unsigned, untrusted"));
+    assert!(status_detail.contains("archive-provided hashes do not authenticate"));
+    let plain_status = run(&home, &["extension", "status", "local-prototype"]);
+    let plain_status = String::from_utf8_lossy(&plain_status.stdout);
+    assert!(plain_status.contains("unsigned, untrusted"));
+    assert!(plain_status.contains("archive-provided hashes do not authenticate"));
 
-    let path = run(&home, &["extension", "path", "perception"]);
+    let path = run(&home, &["extension", "path", "local-prototype"]);
     assert!(
         path.status.success(),
         "{}",
@@ -124,6 +148,66 @@ fn status_and_path_report_exact_active_version() {
     let actual = String::from_utf8(path.stdout).unwrap();
     assert_eq!(
         Path::new(actual.trim()),
-        home.join("extensions/perception/versions/1.2.3")
+        home.join("extensions/local-prototype/versions/1.2.3")
     );
+}
+
+#[test]
+fn help_and_manifests_state_the_untrusted_prototype_contract() {
+    let temp = TempDir::new().unwrap();
+    let home = temp.path().join("driver-home");
+
+    let help = run(&home, &["--help"]);
+    let help = String::from_utf8_lossy(&help.stdout);
+    assert!(help.contains("UNSIGNED, UNTRUSTED LOCAL CODE PROTOTYPE"));
+    assert!(help.contains("self-asserted"));
+    assert!(help.contains("unsupported on Windows"));
+    assert!(!help.contains("extension uninstall"));
+
+    let manifest = run(&home, &["manifest"]);
+    let manifest = String::from_utf8_lossy(&manifest.stdout).to_lowercase();
+    assert!(manifest.contains("unsigned, untrusted local-code"));
+    assert!(manifest.contains("self-asserted"));
+    assert!(manifest.contains("uninstall is intentionally unavailable"));
+
+    let docs = run(&home, &["dump-docs", "--type", "commands"]);
+    let docs = String::from_utf8_lossy(&docs.stdout).to_lowercase();
+    assert!(docs.contains("unsigned, untrusted local extension prototype"));
+    assert!(docs.contains("self-asserted"));
+    assert!(docs.contains("uninstall is intentionally absent"));
+}
+
+#[test]
+fn cli_rejects_ambiguous_extension_arguments() {
+    let temp = TempDir::new().unwrap();
+    let home = temp.path().join("driver-home");
+    for args in [
+        vec!["extension", "list", "extra"],
+        vec!["extension", "status", "--json", "--json"],
+        vec!["extension", "install", "local-prototype", "--archive"],
+        vec!["extension", "uninstall", "local-prototype"],
+    ] {
+        let output = run(&home, &args);
+        assert!(!output.status.success(), "accepted {args:?}");
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_refuses_extension_mutation() {
+    let temp = TempDir::new().unwrap();
+    let home = temp.path().join("driver-home");
+    let archive = fixture_archive(temp.path());
+    let output = run(
+        &home,
+        &[
+            "extension",
+            "install",
+            "local-prototype",
+            "--archive",
+            archive.to_str().unwrap(),
+        ],
+    );
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unsupported on Windows"));
 }

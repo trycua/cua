@@ -28,8 +28,11 @@ to use Jev. You can run the connection check without a key.
 After installation, open a new terminal on the computer Cua Driver controls.
 Use your platform's setup below, then follow the shared steps in that terminal.
 Commands outside the platform tabs work in both POSIX shells and PowerShell.
-The current runnable preview uses browser DOM evidence. Screenshot perception
-is planned follow-up work and is not part of this guide.
+The current runnable preview uses browser DOM evidence. See
+[Capture and delivery modalities](/concepts/capture-and-delivery-modalities) for
+the observation modes Cua Driver supports today. Screenshot parsing with the
+optional Cua Perception work is planned follow-up work and is not part of this
+guide.
 
 ## 1. Check Cua Driver
 
@@ -94,15 +97,12 @@ For native Wayland, follow the
 
 ## 2. Download the example
 
-These commands use the open public-preview branch so its dependencies and
-commands match this guide. Start in a directory where `cua-jev-use` does not
-already exist:
+These commands use the canonical `main` branch. Start in a directory where
+`cua-jev-use` does not already exist:
 
 ```bash
 git clone --depth 1 https://github.com/trycua/cua.git cua-jev-use
 cd cua-jev-use
-git fetch --depth 1 origin feat/cua-driver-typesafe-jev-demo
-git switch --detach FETCH_HEAD
 cd libs/cua-driver/examples/jev-use
 uv sync --frozen --python 3.12
 ```

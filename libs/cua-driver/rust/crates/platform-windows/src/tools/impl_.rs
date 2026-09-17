@@ -507,7 +507,7 @@ fn is_windowless_desktop_action(args: &serde_json::Value) -> bool {
     has_num("x") && has_num("y")
 }
 
-// ── DriverConfig + ResizeRegistry + ZoomRegistry ─────────────────────────────
+// ── DriverConfig + ZoomRegistry ─────────────────────────────────────────────
 
 #[derive(Clone)]
 pub struct DriverConfig {
@@ -545,27 +545,6 @@ pub fn load_driver_config() -> DriverConfig {
         }
     }
     cfg
-}
-
-pub struct ResizeRegistry {
-    ratios: std::sync::Mutex<std::collections::HashMap<u32, f64>>,
-}
-
-impl ResizeRegistry {
-    pub fn new() -> Self {
-        Self {
-            ratios: std::sync::Mutex::new(Default::default()),
-        }
-    }
-    pub fn set_ratio(&self, pid: u32, ratio: f64) {
-        self.ratios.lock().unwrap().insert(pid, ratio);
-    }
-    pub fn clear_ratio(&self, pid: u32) {
-        self.ratios.lock().unwrap().remove(&pid);
-    }
-    pub fn ratio(&self, pid: u32) -> Option<f64> {
-        self.ratios.lock().unwrap().get(&pid).copied()
-    }
 }
 
 /// Per-process zoom context — stores padded crop origin and resize scale from
@@ -609,7 +588,6 @@ impl ZoomRegistry {
 pub struct ToolState {
     pub element_cache: Arc<ElementCache>,
     pub cursor_registry: Arc<CursorRegistry>,
-    pub resize_registry: Arc<ResizeRegistry>,
     pub zoom_registry: Arc<ZoomRegistry>,
     pub config: Arc<RwLock<DriverConfig>>,
 }
@@ -619,11 +597,23 @@ impl ToolState {
         Arc::new(Self {
             element_cache: Arc::new(ElementCache::new()),
             cursor_registry: Arc::new(CursorRegistry::new()),
-            resize_registry: Arc::new(ResizeRegistry::new()),
             zoom_registry: Arc::new(ZoomRegistry::new()),
             config: Arc::new(RwLock::new(load_driver_config())),
         })
     }
+}
+
+fn screenshot_scale(
+    state: &ToolState,
+    args: &Value,
+    pid: u32,
+    window_id: Option<u64>,
+) -> Result<f64, ToolResult> {
+    state.element_cache.screenshot_scale_or_refusal(
+        pid as i32,
+        window_id,
+        args.get("_session_id").and_then(Value::as_str),
+    )
 }
 
 // ── list_apps ────────────────────────────────────────────────────────────────
@@ -1336,6 +1326,7 @@ impl Tool for GetWindowStateTool {
         // We don't read the arg; it stays in the schema only so old callers don't
         // trip additionalProperties:false.
         let query = args.opt_str("query");
+        let session_id = args.opt_str("_session_id");
         let screenshot_out_file = args.opt_str("screenshot_out_file");
         // Optional caps — when omitted, fall back to the walker's built-in
         // defaults (#22865). minimum:1 enforced in the schema, but defend
@@ -1466,6 +1457,10 @@ impl Tool for GetWindowStateTool {
             Ok((tree_opt, screenshot_opt, screenshot_err)) => {
                 let mut content = Vec::new();
                 let mut structured = json!({ "window_id": hwnd, "pid": pid });
+                let screenshot_scale = screenshot_opt.as_ref().map(|(_, _, w, _, original_w)| {
+                    original_w.map_or(1.0, |ow| ow as f64 / *w as f64)
+                });
+                let mut published_snapshot = false;
 
                 if let Some((tr, payload)) = tree_opt {
                     let is_msaa = tr.nodes.iter().any(|node| node.msaa_role.is_some());
@@ -1486,7 +1481,17 @@ impl Tool for GetWindowStateTool {
                     structured["tree_markdown"] = json!(tr.tree_markdown);
 
                     let snapshot_id = (!observation_only)
-                        .then(|| state.element_cache.publish(pid as i32, hwnd, payload));
+                        .then(|| {
+                            state.element_cache.publish_for_session(
+                                pid as i32,
+                                hwnd,
+                                payload,
+                                session_id.as_deref(),
+                                screenshot_scale,
+                            )
+                        })
+                        .flatten();
+                    published_snapshot = snapshot_id.is_some();
 
                     // Structured `elements` array — preferred consumption
                     // path. Shape matches the cross-platform spec:
@@ -1553,16 +1558,21 @@ impl Tool for GetWindowStateTool {
                     }
                 }
 
-                if let Some((b64_opt, file_path, w, h, orig_w)) = screenshot_opt {
-                    if !observation_only {
-                        if let Some(ow) = orig_w {
-                            if w > 0 {
-                                state.resize_registry.set_ratio(pid, ow as f64 / w as f64);
-                            }
-                        } else {
-                            state.resize_registry.clear_ratio(pid);
-                        }
-                    }
+                if !observation_only && !published_snapshot && screenshot_scale.is_some() {
+                    let payload = crate::uia::cache::CachedSnapshot::from_nodes(
+                        &[],
+                        crate::uia::cache::SnapshotKind::Uia,
+                    );
+                    state.element_cache.publish_for_session(
+                        pid as i32,
+                        hwnd,
+                        payload,
+                        session_id.as_deref(),
+                        screenshot_scale,
+                    );
+                }
+
+                if let Some((b64_opt, file_path, w, h, _orig_w)) = screenshot_opt {
                     // base64 is embedded only when no out_file was given (vision
                     // path). With `screenshot_out_file` the bytes went to disk and
                     // we surface the path instead — never both. Keep a text content
@@ -3869,7 +3879,11 @@ impl Tool for ClickTool {
                         ))
                     }
                 }
-            } else if let Some(ratio) = self.state.resize_registry.ratio(pid) {
+            } else if !args.bool_or("_native_coordinates", false) {
+                let ratio = match screenshot_scale(&self.state, &args, pid, Some(hwnd)) {
+                    Ok(ratio) => ratio,
+                    Err(refusal) => return refusal,
+                };
                 px *= ratio;
                 py *= ratio;
             }
@@ -4352,6 +4366,7 @@ async fn focus_by_pixel(
     session: Option<String>,
     session_id: Option<String>,
     from_zoom: bool,
+    native_coordinates: bool,
 ) -> Result<(), ToolResult> {
     let mut click_args = json!({
         "pid": pid, "x": x, "y": y,
@@ -4368,6 +4383,9 @@ async fn focus_by_pixel(
     }
     if from_zoom {
         click_args["from_zoom"] = json!(true);
+    }
+    if native_coordinates {
+        click_args["_native_coordinates"] = json!(true);
     }
     let focus = ClickTool {
         state: state.clone(),
@@ -4603,6 +4621,7 @@ impl Tool for TypeTextTool {
                     args.opt_str("session"),
                     args.opt_str("_session_id"),
                     from_zoom,
+                    false,
                 )
                 .await
                 {
@@ -5361,6 +5380,7 @@ impl Tool for PressKeyTool {
                     args.opt_str("session"),
                     args.opt_str("_session_id"),
                     from_zoom,
+                    false,
                 )
                 .await
                 {
@@ -5441,11 +5461,7 @@ impl Tool for PressKeyTool {
                 Ok(point) => point,
                 Err(result) => return result,
             };
-            let (mut px, mut py) = screen_to_bitmap(hwnd, cx, cy);
-            if let Some(ratio) = self.state.resize_registry.ratio(pid) {
-                px = (px as f64 / ratio).round() as i32;
-                py = (py as f64 / ratio).round() as i32;
-            }
+            let (px, py) = screen_to_bitmap(hwnd, cx, cy);
             // Release the outer guard before the shared pixel helper. ClickTool
             // owns a guard around the click itself, then releases it before its
             // renderer settle period. This is the exact route already proven by
@@ -5461,6 +5477,7 @@ impl Tool for PressKeyTool {
                 args.opt_str("session"),
                 args.opt_str("_session_id"),
                 false,
+                true,
             )
             .await
             {
@@ -5798,6 +5815,7 @@ impl Tool for HotkeyTool {
                     args.opt_str("session"),
                     args.opt_str("_session_id"),
                     from_zoom,
+                    false,
                 )
                 .await
                 {
@@ -6976,7 +6994,11 @@ impl Tool for DoubleClickTool {
                         ))
                     }
                 }
-            } else if let Some(ratio) = self.state.resize_registry.ratio(pid) {
+            } else {
+                let ratio = match screenshot_scale(&self.state, &args, pid, Some(hwnd)) {
+                    Ok(ratio) => ratio,
+                    Err(refusal) => return refusal,
+                };
                 px *= ratio;
                 py *= ratio;
             }
@@ -7344,7 +7366,11 @@ impl Tool for RightClickTool {
                         ))
                     }
                 }
-            } else if let Some(ratio) = self.state.resize_registry.ratio(pid) {
+            } else {
+                let ratio = match screenshot_scale(&self.state, &args, pid, Some(hwnd)) {
+                    Ok(ratio) => ratio,
+                    Err(refusal) => return refusal,
+                };
                 px *= ratio;
                 py *= ratio;
             }
@@ -7595,7 +7621,11 @@ impl Tool for DragTool {
                     ))
                 }
             }
-        } else if let Some(ratio) = self.state.resize_registry.ratio(pid) {
+        } else {
+            let ratio = match screenshot_scale(&self.state, &args, pid, hwnd_opt) {
+                Ok(ratio) => ratio,
+                Err(refusal) => return refusal,
+            };
             from_x *= ratio;
             from_y *= ratio;
             to_x *= ratio;
@@ -8890,11 +8920,10 @@ impl Tool for ZoomTool {
         // runs on a fresh native-resolution capture. Scale by the stored resize
         // ratio so the crop lands on the intended region; the zoom context then
         // holds native-pixel values, which is what `from_zoom` clicks expect.
-        let ratio = self
-            .state
-            .resize_registry
-            .ratio(raw_pid as u32)
-            .unwrap_or(1.0);
+        let ratio = match screenshot_scale(&self.state, &args, raw_pid as u32, Some(hwnd)) {
+            Ok(ratio) => ratio,
+            Err(refusal) => return refusal,
+        };
         let (nx1, ny1, nx2, ny2) = (x1 * ratio, y1 * ratio, x2 * ratio, y2 * ratio);
 
         let state = self.state.clone();
@@ -10087,8 +10116,10 @@ pub fn build_registry_with_provider(
     // deregisters when that runtime's registry is dropped. Mirrors the macOS
     // `register_all` session_end hook (platform-macos/src/tools/mod.rs).
     let cursor_registry = state.cursor_registry.clone();
+    let element_cache = state.element_cache.clone();
     let session_end_hook =
         cua_driver_core::session::register_scoped_session_end_hook(move |session_id| {
+            element_cache.retire_session_screenshots(session_id);
             cursor_registry.remove(session_id);
             crate::overlay::remove_cursor(session_id.to_owned());
         });

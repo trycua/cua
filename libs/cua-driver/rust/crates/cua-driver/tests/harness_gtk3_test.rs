@@ -650,7 +650,64 @@ fn invoke_operation(
         Delivery::Foreground => "foreground",
         Delivery::NotApplicable => unreachable!("catalog operations require delivery"),
     };
-    let pre = snapshot(driver, pid, window_id);
+    let resize_probe = !expect_refusal
+        && matches!(
+            row.operation,
+            Operation::PxClick {
+                button: "left",
+                count: 1,
+                ..
+            }
+        );
+    if resize_probe {
+        let config = driver.call(
+            "set_config",
+            serde_json::json!({"max_image_dimension": 200}),
+        );
+        assert!(
+            !config.is_error(),
+            "small capture config: {}",
+            config.text()
+        );
+    }
+    let mut pre = snapshot(driver, pid, window_id);
+    let _observer = if let Operation::PxClick { target, .. } = row.operation {
+        resize_probe.then(|| {
+            let small_width = pre.structured()["screenshot_width"]
+                .as_u64()
+                .expect("small screenshot width");
+            let (x, y, width, height) = element_rect(driver, pid, window_id, &pre, target);
+            let mut observer = driver
+                .spawn_peer_unrecorded()
+                .expect("start independent capture client on the same daemon");
+            let config = observer.call("set_config", serde_json::json!({"max_image_dimension": 0}));
+            assert!(
+                !config.is_error(),
+                "native capture config: {}",
+                config.text()
+            );
+            let other = snapshot(&mut observer, pid, window_id);
+            assert!(
+                other.structured()["screenshot_width"]
+                    .as_u64()
+                    .expect("native screenshot width")
+                    > small_width
+            );
+            let stale = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid as i64, "window_id": window_id,
+                    "x": x + width / 2.0, "y": y + height / 2.0,
+                    "delivery_mode": mode
+                }),
+            );
+            assert_eq!(stale.structured()["code"], "screenshot_context_missing");
+            pre = snapshot(driver, pid, window_id);
+            observer
+        })
+    } else {
+        None
+    };
     assert!(
         !ax::looks_empty(pre.tree_text()),
         "required GTK3 AT-SPI tree is empty"

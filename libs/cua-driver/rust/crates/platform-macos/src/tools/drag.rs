@@ -253,7 +253,11 @@ impl Tool for DragTool {
                     ))
                 }
             }
-        } else if let Some(ratio) = self.state.resize_registry.ratio(pid, window_id) {
+        } else {
+            let ratio = match super::screenshot_scale(&self.state, &args, pid, window_id) {
+                Ok(ratio) => ratio,
+                Err(refusal) => return refusal,
+            };
             from_x *= ratio;
             from_y *= ratio;
             to_x *= ratio;

@@ -28,7 +28,7 @@ def digest(data: bytes) -> str:
 def fixture(tmp_path: Path) -> tuple[Path, Path]:
     payload = tmp_path / "payload-root"
     values = {
-        "payload/worker": b"worker-v1\n",
+        "payload/worker": b"#!/bin/sh\n[ -f fail-gates ] && exit 7\ncase \"$1\" in --health|--self-test|--real-parse-self-test|--mismatch-rejection-self-test) exit 0;; *) exit 2;; esac\n",
         "payload/libonnxruntime.so": b"runtime-v1\n",
         "payload/NOTICE": b"Apache-2.0 notice\n",
         "payload/model.onnx": b"model\n",
@@ -140,6 +140,8 @@ def fixture(tmp_path: Path) -> tuple[Path, Path]:
             "schemaVersion": 1,
             "sources": [{
                 "artifact": "cua-perception-source.tar",
+                "artifactSha256": digest(values["payload/source.tar"]),
+                "artifactSize": len(values["payload/source.tar"]),
                 "repository": "https://github.com/trycua/cua",
                 "revision": "a" * 40,
                 "license": "Apache-2.0",
@@ -155,6 +157,7 @@ def fixture(tmp_path: Path) -> tuple[Path, Path]:
         "schemaVersion": 1,
         "component": "cua-perception",
         "version": (CONTROL / "VERSION").read_text().strip(),
+        "driverVersion": ">=0.28.2",
         "sourceSha": "a" * 40,
         "target": target,
         "protocol": {"name": "cua-perception-worker", "version": 1},
@@ -200,9 +203,19 @@ def test_packages_deterministically_with_catalog_sbom_and_redacted_provenance(tm
     repeated = release.package_candidate(manifest, payload, second)
     assert archive.read_bytes() == repeated.read_bytes()
     assert (first / "checksums.txt").read_text().startswith(release.file_digest(archive))
-    catalog = json.loads((first / "catalog-input.json").read_text())
+    catalog = json.loads((first / "catalog-payload.json").read_text())
     provenance = json.loads((first / "provenance.redacted.json").read_text())
-    assert catalog["signatureRequired"] is True and catalog["candidate"] is True
+    assert catalog["publisher_id"] == "cua"
+    assert catalog["key_id"] == "cua-extension-ed25519-2026-01"
+    assert catalog["archive_sha256"] == release.file_digest(archive)
+    assert catalog["next_key"] is None
+    assert list(catalog) == [
+        "schema_version", "catalog_version", "expires_unix", "publisher_id",
+        "publisher_name", "key_id", "extension_id", "version", "target",
+        "archive", "archive_size", "archive_sha256", "manifest_sha256",
+        "license", "source", "corresponding_source_uri",
+        "corresponding_source_revision", "provenance", "next_key",
+    ]
     assert "absolutePaths" in provenance["redactions"]
     assert str(tmp_path) not in json.dumps(provenance)
     with tarfile.open(archive) as candidate:
@@ -213,11 +226,25 @@ def test_packages_deterministically_with_catalog_sbom_and_redacted_provenance(tm
         "review-recordings/linux-review.mp4",
         "metadata/sbom.spdx.json",
         "metadata/runtime-contract.json",
+        "extension.json",
     } <= set(names)
-    assert catalog["releaseStatus"] == "staging-candidate"
+    with tarfile.open(archive) as candidate:
+        extension_bytes = candidate.extractfile("extension.json").read()
+        extension = json.loads(extension_bytes)
+        archived_files = {
+            member.name for member in candidate.getmembers()
+            if member.isfile() and member.name != "extension.json"
+        }
+    assert {item["path"] for item in extension["files"]} == archived_files
+    assert catalog["manifest_sha256"] == digest(extension_bytes)
+    assert catalog["extension_id"] == "cua-perception"
     runtime_contract = json.loads((first / "runtime-contract.json").read_text())
     assert runtime_contract["rejectMismatch"] is True
     assert len(runtime_contract["models"]) == 3
+    release.verify_checksums(first / "checksums.txt")
+    (first / "runtime-contract.json").write_text("tampered\n")
+    with pytest.raises(release.CandidateError, match="checksum verification failed"):
+        release.verify_checksums(first / "checksums.txt")
 
 
 @pytest.mark.parametrize("field", ["sha256", "size", "protocolVersion", "target"])
@@ -245,6 +272,32 @@ def test_model_requires_redistributable_ledger(tmp_path: Path) -> None:
     (payload / "model-ledger.json").write_text(json.dumps(ledger))
     with pytest.raises(release.CandidateError, match="model-ledger.schema.json"):
         release.load_and_validate_manifest(manifest_path, payload)
+
+
+def test_source_ledger_must_bind_hash_size_revision_and_bundled_offer(tmp_path: Path) -> None:
+    payload, manifest_path = fixture(tmp_path)
+    ledger_path = payload / "source-ledger.json"
+    original = json.loads(ledger_path.read_text())
+    for field, value in (
+        ("artifactSha256", "0" * 64),
+        ("artifactSize", 999),
+        ("revision", "b" * 40),
+        ("sourceOfferStatus", "external-review-required"),
+    ):
+        ledger = json.loads(json.dumps(original))
+        ledger["sources"][0][field] = value
+        ledger_path.write_text(json.dumps(ledger))
+        with pytest.raises(release.CandidateError):
+            release.load_and_validate_manifest(manifest_path, payload)
+        ledger_path.write_text(json.dumps(original))
+
+
+def test_release_gates_execute_worker_instead_of_trusting_reports(tmp_path: Path) -> None:
+    payload, manifest_path = fixture(tmp_path)
+    release.run_candidate_gates(manifest_path, payload)
+    (payload / "fail-gates").write_text("fail\n")
+    with pytest.raises(release.CandidateError, match="executed health gate failed"):
+        release.run_candidate_gates(manifest_path, payload)
 
 
 def test_driver_archive_exclusion_is_enforced(tmp_path: Path) -> None:
@@ -282,8 +335,23 @@ def test_workflows_are_valid_and_candidate_workflow_cannot_publish() -> None:
     assert "github_release.py" not in candidate and "gh release" not in candidate
     assert "contents: write" not in candidate
     assert "STAGING-cua-perception-candidate" in candidate
-    assert "openssl dgst -sha256 -verify" in candidate
-    assert "sha256sum --check checksums.txt" in candidate
+    assert "crypto.verify(null, payloadBytes, publicKey, signature)" in candidate
+    assert "PERCEPTION_ED25519_PRIVATE_KEY_BASE64" in candidate
+    assert "openssl genpkey" not in candidate
+    assert "verify-checksums" in candidate
+
+
+def test_trust_root_and_rfc8032_vector_match_extension_manager_contract() -> None:
+    trust = json.loads((CONTROL / "trust-root.json").read_text())
+    vector = json.loads((CONTROL / "ed25519-test-vector.json").read_text())
+    Draft202012Validator(json.loads((CONTROL / "trust-root.schema.json").read_text())).validate(trust)
+    assert trust["activeKeyId"] == "cua-extension-ed25519-2026-01"
+    assert trust["keys"][0]["publicKeyBase64"] == "dB7E/36fTXLiHPfr8ya4i4TFbssU/jpO9zrS8gl4bsQ="
+    assert trust["rotation"]["privateKeysStoredInRepository"] is False
+    assert trust["keys"][0]["validFromUnix"] == 1735689600
+    assert trust["keys"][0]["validUntilUnix"] == 2082758400
+    assert vector["publicKeyHex"] == "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
+    assert len(vector["signatureBase64"]) == 88
 
 
 def test_driver_workflow_never_packages_perception() -> None:

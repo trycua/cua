@@ -1,0 +1,22 @@
+{
+  "$schema": "./trust-root.schema.json",
+  "schemaVersion": 1,
+  "publisherId": "cua",
+  "activeKeyId": "cua-extension-ed25519-2026-01",
+  "keys": [
+    {
+      "keyId": "cua-extension-ed25519-2026-01",
+      "algorithm": "Ed25519",
+      "publicKeyBase64": "dB7E/36fTXLiHPfr8ya4i4TFbssU/jpO9zrS8gl4bsQ=",
+      "status": "active",
+      "validFromUnix": 1735689600,
+      "validUntilUnix": 2082758400,
+      "replaces": null
+    }
+  ],
+  "rotation": {
+    "minimumOverlapDays": 30,
+    "nextKeyId": null,
+    "privateKeysStoredInRepository": false
+  }
+}

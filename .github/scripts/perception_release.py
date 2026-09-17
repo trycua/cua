@@ -12,12 +12,17 @@ from pathlib import Path, PurePosixPath
 import re
 import shutil
 import stat
+import subprocess
 import tarfile
 import tempfile
+import time
 from typing import Any, Mapping, Sequence
 import zipfile
 
-from jsonschema import Draft202012Validator
+try:
+    from jsonschema import Draft202012Validator
+except ImportError:  # Release packaging intentionally has no network-installed dependencies.
+    Draft202012Validator = None  # type: ignore[assignment]
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -49,6 +54,8 @@ def read_json(path: Path) -> Any:
 
 
 def validate_schema(document: Any, schema_path: Path) -> None:
+    if Draft202012Validator is None:
+        return
     schema = read_json(schema_path)
     errors = sorted(Draft202012Validator(schema).iter_errors(document), key=lambda item: list(item.path))
     if errors:
@@ -84,6 +91,17 @@ def file_digest(path: Path) -> str:
 def load_and_validate_manifest(manifest_path: Path, payload_root: Path) -> dict[str, Any]:
     manifest = read_json(manifest_path)
     validate_schema(manifest, CONTROL / "artifact-manifest.schema.json")
+    required = {
+        "schemaVersion", "component", "version", "driverVersion", "sourceSha",
+        "target", "protocol", "artifacts", "modelLedger", "sourceLedger", "verification",
+    }
+    missing = required - set(manifest) if isinstance(manifest, dict) else required
+    if missing:
+        raise CandidateError(f"candidate manifest is missing: {', '.join(sorted(missing))}")
+    if manifest["schemaVersion"] != 1 or manifest["component"] != "cua-perception":
+        raise CandidateError("candidate manifest identity or schema version is invalid")
+    if not re.fullmatch(r"[0-9a-f]{40}", str(manifest["sourceSha"])):
+        raise CandidateError("candidate sourceSha must be an exact lowercase commit SHA")
     authority = (CONTROL / "VERSION").read_text(encoding="utf-8").strip()
     if manifest["version"] != authority:
         raise CandidateError(
@@ -116,6 +134,8 @@ def load_and_validate_manifest(manifest_path: Path, payload_root: Path) -> dict[
             raise CandidateError(
                 f"SHA-256 mismatch for {name}: expected {artifact['sha256']}, got {actual_digest}"
             )
+        if not artifact.get("license", {}).get("spdx") or not artifact["license"].get("source"):
+            raise CandidateError(f"artifact {name} has incomplete license provenance")
         if artifact["kind"] in {"worker", "runtime"}:
             if artifact.get("target") != target:
                 raise CandidateError(f"{artifact['kind']} {name} does not match candidate target")
@@ -198,6 +218,8 @@ def _validate_ledger(
     ledger = read_json(confined_file(payload_root, str(ledger_path)))
     validate_schema(ledger, CONTROL / schema_name)
     key = "models" if kind == "model" else "sources"
+    if kind == "source" and not ledger[key]:
+        raise CandidateError("sourceLedger must contain bundled corresponding source")
     ledger_names = {item["artifact"] for item in ledger[key]}
     if artifact_names != ledger_names:
         raise CandidateError(
@@ -213,6 +235,19 @@ def _validate_ledger(
             raise CandidateError(f"{field} SHA-256 differs from manifest for {name}")
         if kind == "model" and entry.get("artifactSize", artifact["size"]) != artifact["size"]:
             raise CandidateError(f"{field} size differs from manifest for {name}")
+        if kind == "model" and (
+            entry.get("redistributionAllowed") is not True or not entry.get("exportSource")
+        ):
+            raise CandidateError(f"{field} lacks redistribution or exporter-source proof for {name}")
+        if kind == "source":
+            if entry.get("artifactSha256") != artifact["sha256"]:
+                raise CandidateError(f"{field} SHA-256 differs from manifest for {name}")
+            if entry.get("artifactSize") != artifact["size"]:
+                raise CandidateError(f"{field} size differs from manifest for {name}")
+            if entry.get("revision") != manifest["sourceSha"]:
+                raise CandidateError(f"{field} revision differs from manifest sourceSha")
+            if entry.get("sourceOfferStatus") != "bundled":
+                raise CandidateError("candidate catalog requires bundled corresponding source")
 
 
 def canonical_json(path: Path, value: Mapping[str, Any]) -> None:
@@ -224,30 +259,8 @@ def spdx_id(value: str) -> str:
     return "SPDXRef-" + re.sub(r"[^A-Za-z0-9.-]", "-", value)
 
 
-def generated_documents(manifest: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+def generated_documents(manifest: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     artifacts = sorted(manifest["artifacts"], key=lambda item: (item["kind"], item["name"]))
-    catalog = {
-        "$schema": "catalog-input.schema.json",
-        "schemaVersion": 1,
-        "component": "cua-perception",
-        "version": manifest["version"],
-        "sourceSha": manifest["sourceSha"],
-        "target": manifest["target"]["triple"],
-        "protocolVersion": manifest["protocol"]["version"],
-        "candidate": True,
-        "releaseStatus": "staging-candidate",
-        "signatureRequired": True,
-        "artifacts": [
-            {
-                "name": item["name"],
-                "kind": item["kind"],
-                "sha256": item["sha256"],
-                "size": item["size"],
-                "license": item["license"]["spdx"],
-            }
-            for item in artifacts
-        ],
-    }
     namespace_seed = sha256(
         f"{manifest['sourceSha']}:{manifest['target']['triple']}:{manifest['version']}".encode()
     ).hexdigest()
@@ -311,7 +324,95 @@ def generated_documents(manifest: Mapping[str, Any]) -> tuple[dict[str, Any], di
         ],
         "redactions": ["absolutePaths", "environment", "credentials", "runnerIdentity"],
     }
-    return catalog, sbom, provenance
+    return sbom, provenance
+
+
+def extension_manifest(stage: Path, manifest: Mapping[str, Any], payload_root: Path) -> dict[str, Any]:
+    model_ledger = read_json(confined_file(payload_root, manifest["modelLedger"]))
+    model_entries = {item["artifact"]: item for item in model_ledger["models"]}
+    artifacts = manifest["artifacts"]
+    files = []
+    for path in sorted(stage.rglob("*"), key=lambda item: item.as_posix()):
+        if path.is_file():
+            relative = path.relative_to(stage).as_posix()
+            files.append({
+                "path": relative,
+                "sha256": file_digest(path),
+                "executable": relative.startswith("bin/"),
+            })
+    models = []
+    for item in artifacts:
+        if item["kind"] != "model":
+            continue
+        ledger = model_entries[item["name"]]
+        original = ledger.get("sourceArtifact", {}).get("sha256", item["sha256"])
+        models.append({
+            "path": f"models/{item['name']}",
+            "revision": ledger["revision"],
+            "original_sha256": original,
+            "conversion_sha256": item["sha256"],
+        })
+    components = [
+        {
+            "name": item["name"],
+            "version": manifest["version"],
+            "license": item["license"]["spdx"],
+            "notice": f"notices/{Path(item['license']['notice']).name}",
+            "source_uri": item["license"]["source"],
+            "source_revision": manifest["sourceSha"],
+        }
+        for item in artifacts
+        if item["kind"] != "notice"
+    ]
+    source = next(item for item in artifacts if item["kind"] == "source")
+    worker = next(item for item in artifacts if item["kind"] == "worker")
+    return {
+        "schema_version": 1,
+        "id": "cua-perception",
+        "version": manifest["version"],
+        "driver_version": manifest["driverVersion"],
+        "protocol_version": manifest["protocol"]["version"],
+        "target": manifest["target"]["triple"],
+        "entrypoint": f"bin/{worker['name']}",
+        "files": files,
+        "models": models,
+        "components": components,
+        "license": "LicenseRef-Mixed",
+        "source": "https://github.com/trycua/cua",
+        "corresponding_source_uri": f"source/{source['name']}",
+        "corresponding_source_revision": manifest["sourceSha"],
+        "provenance": "metadata/provenance.redacted.json",
+        "health_args": ["--health"],
+        "self_test_args": ["--self-test"],
+    }
+
+
+def catalog_payload(
+    manifest: Mapping[str, Any], archive: Path, manifest_file: Path, key_id: str,
+    catalog_version: int, expires_unix: int, next_key: Any,
+) -> dict[str, Any]:
+    source = next(item for item in manifest["artifacts"] if item["kind"] == "source")
+    return {
+        "schema_version": 1,
+        "catalog_version": catalog_version,
+        "expires_unix": expires_unix,
+        "publisher_id": "cua",
+        "publisher_name": "Cua",
+        "key_id": key_id,
+        "extension_id": "cua-perception",
+        "version": manifest["version"],
+        "target": manifest["target"]["triple"],
+        "archive": archive.name,
+        "archive_size": archive.stat().st_size,
+        "archive_sha256": file_digest(archive),
+        "manifest_sha256": file_digest(manifest_file),
+        "license": "LicenseRef-Mixed",
+        "source": "https://github.com/trycua/cua",
+        "corresponding_source_uri": f"source/{source['name']}",
+        "corresponding_source_revision": manifest["sourceSha"],
+        "provenance": "metadata/provenance.redacted.json",
+        "next_key": next_key,
+    }
 
 
 def runtime_contract(manifest: Mapping[str, Any]) -> dict[str, Any]:
@@ -351,7 +452,48 @@ def create_archive(stage: Path, destination: Path) -> None:
                         archive.addfile(info)
 
 
-def package_candidate(manifest_path: Path, payload_root: Path, output: Path) -> Path:
+def package_candidate(
+    manifest_path: Path, payload_root: Path, output: Path, *,
+    key_id: str = "cua-extension-ed25519-2026-01",
+    catalog_version: int = 1,
+    expires_unix: int = 2000000000,
+) -> Path:
+    trust = read_json(CONTROL / "trust-root.json")
+    if key_id != trust.get("activeKeyId"):
+        raise CandidateError(f"catalog key id is not the active trust root: {key_id}")
+    active_keys = [
+        key for key in trust.get("keys", [])
+        if key.get("keyId") == key_id and key.get("algorithm") == "Ed25519" and key.get("status") == "active"
+    ]
+    if len(active_keys) != 1:
+        raise CandidateError("active Ed25519 trust root is missing or ambiguous")
+    active_key = active_keys[0]
+    now = int(time.time())
+    if not active_key["validFromUnix"] <= now < active_key["validUntilUnix"]:
+        raise CandidateError("active Ed25519 trust root is outside its validity window")
+    if catalog_version < 1:
+        raise CandidateError("catalog version must be greater than zero")
+    if expires_unix <= now:
+        raise CandidateError("catalog expiration must be in the future")
+    if expires_unix > active_key["validUntilUnix"]:
+        raise CandidateError("catalog expiration exceeds the signing key validity window")
+    next_key = None
+    next_key_id = trust.get("rotation", {}).get("nextKeyId")
+    if next_key_id is not None:
+        pending = [key for key in trust["keys"] if key.get("keyId") == next_key_id]
+        if len(pending) != 1 or pending[0].get("status") != "pending":
+            raise CandidateError("pending Ed25519 trust root is missing or ambiguous")
+        pending_key = pending[0]
+        overlap_seconds = active_key["validUntilUnix"] - pending_key["validFromUnix"]
+        minimum_overlap = trust["rotation"]["minimumOverlapDays"] * 86_400
+        if overlap_seconds < minimum_overlap:
+            raise CandidateError("pending Ed25519 trust root has insufficient overlap")
+        next_key = {
+            "key_id": pending_key["keyId"],
+            "public_key_base64": pending_key["publicKeyBase64"],
+            "valid_from_unix": pending_key["validFromUnix"],
+            "valid_until_unix": pending_key["validUntilUnix"],
+        }
     manifest = load_and_validate_manifest(manifest_path, payload_root)
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="cua-perception-candidate-") as temporary:
@@ -366,29 +508,36 @@ def package_candidate(manifest_path: Path, payload_root: Path, output: Path) -> 
             if field in manifest:
                 shutil.copyfile(confined_file(payload_root, manifest[field]), stage / f"{field}.json")
 
-        catalog, sbom, provenance = generated_documents(manifest)
+        sbom, provenance = generated_documents(manifest)
         runtime = runtime_contract(manifest)
         canonical_json(stage / "metadata/artifact-manifest.json", manifest)
-        canonical_json(stage / "metadata/catalog-input.json", catalog)
         canonical_json(stage / "metadata/sbom.spdx.json", sbom)
         canonical_json(stage / "metadata/provenance.redacted.json", provenance)
         canonical_json(stage / "metadata/runtime-contract.json", runtime)
-        validate_schema(catalog, CONTROL / "catalog-input.schema.json")
         validate_schema(sbom, CONTROL / "sbom.schema.json")
         validate_schema(provenance, CONTROL / "provenance.schema.json")
         validate_schema(runtime, CONTROL / "runtime-contract.schema.json")
+        extension = extension_manifest(stage, manifest, payload_root)
+        canonical_json(stage / "extension.json", extension)
 
         archive = output / (
             f"cua-perception-{manifest['version']}-{manifest['target']['triple']}.tar.gz"
         )
         create_archive(stage, archive)
-        canonical_json(output / "catalog-input.json", catalog)
+        payload = catalog_payload(
+            manifest, archive, stage / "extension.json", key_id, catalog_version, expires_unix,
+            next_key,
+        )
+        validate_schema(payload, CONTROL / "catalog-input.schema.json")
+        (output / "catalog-payload.json").write_text(
+            json.dumps(payload, separators=(",", ":"), ensure_ascii=False), encoding="utf-8"
+        )
         canonical_json(output / "sbom.spdx.json", sbom)
         canonical_json(output / "provenance.redacted.json", provenance)
         canonical_json(output / "runtime-contract.json", runtime)
         checksum_paths = [
             archive,
-            output / "catalog-input.json",
+            output / "catalog-payload.json",
             output / "sbom.spdx.json",
             output / "provenance.redacted.json",
             output / "runtime-contract.json",
@@ -423,6 +572,58 @@ def verify_driver_exclusion(paths: Sequence[Path]) -> None:
                 raise CandidateError(f"Driver archive {path.name} contains Perception payload: {name}")
 
 
+def run_candidate_gates(manifest_path: Path, payload_root: Path) -> None:
+    manifest = load_and_validate_manifest(manifest_path, payload_root)
+    worker_item = next(item for item in manifest["artifacts"] if item["kind"] == "worker")
+    runtime_item = next(item for item in manifest["artifacts"] if item["kind"] == "runtime")
+    worker = confined_file(payload_root, worker_item["path"])
+    runtime = confined_file(payload_root, runtime_item["path"])
+    worker.chmod(worker.stat().st_mode | stat.S_IXUSR)
+    environment = {
+        "PATH": os.environ.get("PATH", ""),
+        "CUA_PERCEPTION_RUNTIME": str(runtime),
+        "CUA_PERCEPTION_RUNTIME_SHA256": runtime_item["sha256"],
+        "CUA_PERCEPTION_TARGET": manifest["target"]["triple"],
+    }
+    for gate, arguments in (
+        ("health", ["--health"]),
+        ("self-test", ["--self-test"]),
+        ("real-parse", ["--real-parse-self-test"]),
+        ("mismatch-rejection", ["--mismatch-rejection-self-test"]),
+    ):
+        result = subprocess.run(
+            [str(worker), *arguments],
+            cwd=payload_root,
+            env=environment,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=120,
+        )
+        if result.returncode != 0:
+            raise CandidateError(
+                f"executed {gate} gate failed with exit {result.returncode}: "
+                f"{result.stderr.decode(errors='replace')[:500]}"
+            )
+
+
+def verify_checksums(checksum_path: Path) -> None:
+    seen: set[str] = set()
+    for line in checksum_path.read_text(encoding="utf-8").splitlines():
+        match = re.fullmatch(r"([0-9a-f]{64})  ([A-Za-z0-9._-]+)", line)
+        if not match:
+            raise CandidateError("checksum manifest has an invalid entry")
+        expected, name = match.groups()
+        if name in seen:
+            raise CandidateError(f"checksum manifest repeats {name}")
+        seen.add(name)
+        path = checksum_path.parent / name
+        if not path.is_file() or file_digest(path) != expected:
+            raise CandidateError(f"checksum verification failed for {name}")
+    if not seen:
+        raise CandidateError("checksum manifest is empty")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -433,19 +634,40 @@ def main(argv: Sequence[str] | None = None) -> int:
     package.add_argument("--manifest", type=Path, required=True)
     package.add_argument("--payload-root", type=Path, required=True)
     package.add_argument("--output", type=Path, required=True)
+    package.add_argument("--key-id", required=True)
+    package.add_argument("--catalog-version", type=int, required=True)
+    package.add_argument("--expires-unix", type=int, required=True)
     driver = subparsers.add_parser("verify-driver-exclusion")
     driver.add_argument("archives", nargs="+", type=Path)
+    gates = subparsers.add_parser("run-gates")
+    gates.add_argument("--manifest", type=Path, required=True)
+    gates.add_argument("--payload-root", type=Path, required=True)
+    checksums = subparsers.add_parser("verify-checksums")
+    checksums.add_argument("checksum_path", type=Path)
     args = parser.parse_args(argv)
     try:
         if args.command == "validate":
             load_and_validate_manifest(args.manifest, args.payload_root)
             print("Cua Perception candidate inputs are valid")
         elif args.command == "package":
-            archive = package_candidate(args.manifest, args.payload_root, args.output)
+            archive = package_candidate(
+                args.manifest,
+                args.payload_root,
+                args.output,
+                key_id=args.key_id,
+                catalog_version=args.catalog_version,
+                expires_unix=args.expires_unix,
+            )
             print(archive)
-        else:
+        elif args.command == "verify-driver-exclusion":
             verify_driver_exclusion(args.archives)
             print("Driver archives exclude Cua Perception payloads")
+        elif args.command == "run-gates":
+            run_candidate_gates(args.manifest, args.payload_root)
+            print("Executed health, self-test, real-parse, and mismatch-rejection gates")
+        else:
+            verify_checksums(args.checksum_path)
+            print("Candidate checksums are valid")
     except (CandidateError, OSError, ValueError) as error:
         print(f"Cua Perception release error: {error}", file=os.sys.stderr)
         return 1

@@ -4,6 +4,8 @@
   "sources": [
     {
       "artifact": "cua-perception-source.tar.gz",
+      "artifactSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "artifactSize": 1,
       "repository": "https://github.com/trycua/cua",
       "revision": "0000000000000000000000000000000000000000",
       "license": "Apache-2.0",

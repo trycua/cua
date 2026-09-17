@@ -3,6 +3,7 @@
   "schemaVersion": 1,
   "component": "cua-perception",
   "version": "0.1.0",
+  "driverVersion": ">=0.28.2",
   "sourceSha": "0000000000000000000000000000000000000000",
   "target": { "triple": "x86_64-unknown-linux-gnu", "os": "linux", "arch": "x86_64" },
   "protocol": { "name": "cua-perception-worker", "version": 1 },

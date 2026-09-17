@@ -13,9 +13,11 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["artifact", "repository", "revision", "license", "durableLocation", "sourceOfferStatus"],
+        "required": ["artifact", "artifactSha256", "artifactSize", "repository", "revision", "license", "durableLocation", "sourceOfferStatus"],
         "properties": {
           "artifact": { "type": "string", "minLength": 1 },
+          "artifactSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "artifactSize": { "type": "integer", "minimum": 1 },
           "repository": { "type": "string", "minLength": 1 },
           "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
           "license": { "type": "string", "minLength": 1 },

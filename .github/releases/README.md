@@ -18,9 +18,17 @@ The candidate workflow accepts prebuilt payloads. It does not download model
 weights or compile product code. Every supplied worker, runtime, model, notice,
 and source file must be declared with its exact size, SHA-256, license source,
 target, and protocol version as applicable. Models and bundled source also need
-complete ledgers. The workflow emits a deterministic archive, SPDX SBOM,
-signature-ready catalog input, redacted provenance, and checksums as retained CI
-artifacts only.
+complete ledgers. The workflow emits a deterministic archive, SPDX SBOM, signed
+catalog, redacted provenance, and checksums as retained CI artifacts only.
+
+Candidate catalogs use the same Ed25519 envelope consumed by Cua Driver's
+extension manager: `{ "payload": <compact catalog payload>,
+"signature_algorithm": "ed25519", "signature": <base64> }`. The active public
+key and rotation window are recorded in `cua-perception/trust-root.json`; the
+matching private key is never generated,
+stored, or uploaded by this repository. Candidate jobs receive it from an
+external reviewed secret as base64-encoded PKCS#8 PEM and refuse keys whose
+derived public key differs from the active trust root.
 
 Candidate evidence is artifact-scoped. A passing metadata check is not a claim
 that a future hosted or Fleet distribution satisfies a source-offer obligation.

@@ -11,6 +11,21 @@ on:
         description: "Exact source commit used to produce the supplied payload"
         required: true
         type: string
+      target_os:
+        description: "linux, macos, or windows runner family"
+        required: true
+        type: string
+      catalog_version:
+        description: "Monotonic extension catalog version"
+        required: true
+        type: number
+      expires_unix:
+        description: "Catalog expiration as Unix seconds"
+        required: true
+        type: number
+    secrets:
+      PERCEPTION_ED25519_PRIVATE_KEY_BASE64:
+        required: true
 
 permissions:
   contents: read
@@ -22,9 +37,12 @@ concurrency:
 jobs:
   package:
     name: verify and package supplied payload
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.target_os == 'windows' && 'windows-latest' || inputs.target_os == 'macos' && 'macos-latest' || 'ubuntu-latest' }}
+    defaults:
+      run:
+        shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           ref: ${{ inputs.source_ref }}
           persist-credentials: false
@@ -37,15 +55,12 @@ jobs:
           test "$SOURCE_REF" = "$(git rev-parse HEAD)"
           test "$SOURCE_REF" = "$(git rev-parse --verify "${SOURCE_REF}^{commit}")"
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.11"
 
-      - name: Install schema validator
-        run: python -m pip install --disable-pip-version-check jsonschema==4.23.0
-
       - name: Download supplied release payload
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: ${{ inputs.payload_artifact }}
           path: perception-input
@@ -56,45 +71,92 @@ jobs:
         run: |
           set -euo pipefail
           test "$(jq -r .sourceSha perception-input/release-input.json)" = "$SOURCE_REF"
+          test "$(jq -r .target.os perception-input/release-input.json)" = "${{ inputs.target_os }}"
           python3 .github/scripts/perception_release.py validate \
             --manifest perception-input/release-input.json \
             --payload-root perception-input
 
+      - name: Execute target worker release gates
+        run: |
+          python3 .github/scripts/perception_release.py run-gates \
+            --manifest perception-input/release-input.json \
+            --payload-root perception-input
+
       - name: Build deterministic candidate and evidence
+        env:
+          CATALOG_VERSION: ${{ inputs.catalog_version }}
+          EXPIRES_UNIX: ${{ inputs.expires_unix }}
         run: |
           python3 .github/scripts/perception_release.py package \
             --manifest perception-input/release-input.json \
             --payload-root perception-input \
-            --output perception-candidate
+            --output perception-candidate \
+            --key-id cua-extension-ed25519-2026-01 \
+            --catalog-version "$CATALOG_VERSION" \
+            --expires-unix "$EXPIRES_UNIX"
 
       - name: Verify exact candidate hashes
         working-directory: perception-candidate
-        run: sha256sum --check checksums.txt
+        run: python3 "$GITHUB_WORKSPACE/.github/scripts/perception_release.py" verify-checksums checksums.txt
 
-      - name: Sign staging candidate archive and catalog manifest
+      - name: Sign extension-manager catalog with external Ed25519 key
+        env:
+          PRIVATE_KEY_BASE64: ${{ secrets.PERCEPTION_ED25519_PRIVATE_KEY_BASE64 }}
         working-directory: perception-candidate
         run: |
           set -euo pipefail
-          ARCHIVE=$(find . -maxdepth 1 -name 'cua-perception-*.tar.gz' -print -quit)
-          test -n "$ARCHIVE"
-          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 \
-            -out staging-candidate-signing-key.pem
-          openssl pkey -in staging-candidate-signing-key.pem -pubout \
-            -out staging-candidate-signing-key.pub.pem
-          openssl dgst -sha256 -sign staging-candidate-signing-key.pem \
-            -out "${ARCHIVE}.sig" "$ARCHIVE"
-          openssl dgst -sha256 -sign staging-candidate-signing-key.pem \
-            -out catalog-input.json.sig catalog-input.json
-          openssl dgst -sha256 -verify staging-candidate-signing-key.pub.pem \
-            -signature "${ARCHIVE}.sig" "$ARCHIVE"
-          openssl dgst -sha256 -verify staging-candidate-signing-key.pub.pem \
-            -signature catalog-input.json.sig catalog-input.json
-          rm staging-candidate-signing-key.pem
-          sha256sum "$ARCHIVE" catalog-input.json *.sig \
-            staging-candidate-signing-key.pub.pem > signed-candidate-checksums.txt
+          node <<'JS'
+          const crypto = require("node:crypto");
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const encodedKey = process.env.PRIVATE_KEY_BASE64;
+          if (!encodedKey || !/^[A-Za-z0-9+/]+={0,2}$/.test(encodedKey)) {
+            throw new Error("private signing key is not canonical base64");
+          }
+          const keyBytes = Buffer.from(encodedKey, "base64");
+          if (keyBytes.toString("base64") !== encodedKey) {
+            throw new Error("private signing key is not canonical base64");
+          }
+          const privateKey = crypto.createPrivateKey(keyBytes);
+          if (privateKey.asymmetricKeyType !== "ed25519") {
+            throw new Error("private signing key is not Ed25519");
+          }
+          const publicKey = crypto.createPublicKey(privateKey);
+          const publicDer = publicKey.export({format: "der", type: "spki"});
+          const derivedPublic = publicDer.subarray(-32).toString("base64");
+          const trustPath = path.join(
+            process.env.GITHUB_WORKSPACE,
+            ".github/releases/cua-perception/trust-root.json",
+          );
+          const trust = JSON.parse(fs.readFileSync(trustPath, "utf8"));
+          const trustedKeys = trust.keys.filter((key) => key.keyId === trust.activeKeyId);
+          if (trustedKeys.length !== 1 || derivedPublic !== trustedKeys[0].publicKeyBase64) {
+            throw new Error("private signing key does not match the active trust root");
+          }
+          const payloadBytes = fs.readFileSync("catalog-payload.json");
+          const signature = crypto.sign(null, payloadBytes, privateKey);
+          if (signature.length !== 64 || !crypto.verify(null, payloadBytes, publicKey, signature)) {
+            throw new Error("Ed25519 catalog signature verification failed");
+          }
+          fs.writeFileSync("catalog.signature", signature);
+          fs.writeFileSync(
+            "signed-catalog.json",
+            `{"payload":${payloadBytes.toString("utf8")},` +
+              `"signature_algorithm":"ed25519",` +
+              `"signature":${JSON.stringify(signature.toString("base64"))}}\n`,
+          );
+          JS
+          python3 - <<'PY'
+          from hashlib import sha256
+          from pathlib import Path
+          paths = [Path(name) for name in ("signed-catalog.json", "catalog-payload.json", "catalog.signature")]
+          Path("signed-candidate-checksums.txt").write_text(
+              "".join(f"{sha256(path.read_bytes()).hexdigest()}  {path.name}\n" for path in paths)
+          )
+          PY
 
       - name: Preserve candidate without publishing
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: STAGING-cua-perception-candidate-${{ inputs.source_ref }}
           path: perception-candidate/

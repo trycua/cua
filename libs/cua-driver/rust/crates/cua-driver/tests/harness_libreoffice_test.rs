@@ -60,11 +60,10 @@ use cua_driver_testkit::{Driver, McpDriver, ToolResponse};
 fn msaa_pixel_click_args(
     pid: u32,
     wid: u64,
-    snapshot: &ToolResponse,
+    state: &serde_json::Value,
     index: u64,
     dropdown: bool,
 ) -> serde_json::Value {
-    let state = snapshot.structured();
     let element = state["elements"]
         .as_array()
         .unwrap()
@@ -145,17 +144,17 @@ fn refuse_token_then_click_pixel(
     );
     driver.call(
         "click",
-        msaa_pixel_click_args(pid, wid, snapshot, index, dropdown),
+        msaa_pixel_click_args(pid, wid, snapshot.structured(), index, dropdown),
     )
 }
 
 #[test]
 fn msaa_pixel_targets_use_observed_frame_and_screenshot_scale() {
-    let snapshot = ToolResponse::from_mcp(serde_json::json!({"result": {"structuredContent": {
+    let snapshot = serde_json::json!({
         "window_bounds": {"x": -200, "y": 100, "width": 400, "height": 200},
         "screenshot_width": 200, "screenshot_height": 100,
         "elements": [{"element_index": 9, "frame": {"x": -160, "y": 120, "width": 40, "height": 20}}]
-    }}}));
+    });
     assert_eq!(
         msaa_pixel_click_args(7, 8, &snapshot, 9, true),
         serde_json::json!({
@@ -168,9 +167,7 @@ fn msaa_pixel_targets_use_observed_frame_and_screenshot_scale() {
 #[test]
 #[should_panic(expected = "observed MSAA element must exist")]
 fn msaa_pixel_target_never_substitutes_a_different_row() {
-    let snapshot = ToolResponse::from_mcp(serde_json::json!({"result": {"structuredContent": {
-        "elements": [{"element_index": 9}]
-    }}}));
+    let snapshot = serde_json::json!({"elements": [{"element_index": 9}]});
     msaa_pixel_click_args(7, 8, &snapshot, 0, false);
 }
 

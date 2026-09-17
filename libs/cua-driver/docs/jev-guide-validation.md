@@ -125,6 +125,36 @@ are deliberately distinct. New evidence must identify both.
 
 Acceptance: a fresh reader can identify what they will build, what to install,
 which commands to run, and how to recognize success without knowing the prior
-conversation. Rerun the guide with a fresh agent, check docs syntax/hygiene/links
-and build, and inspect the revised page through the local preview. Retain the
-prior verification history here, not in the public walkthrough.
+conversation. The revision reduces the page from 2,193 to 958 whitespace-delimited
+words and removes the unrelated model/tool comparisons and PR-specific framing.
+
+A sixth isolated agent followed guide candidate
+`ec42a58a8b61824ccf0bacf8460d2fc3996e541f` without intervention. It downloaded the
+pinned example, installed locked dependencies in a fresh checkout, and completed
+`runs/connection-check` (1/1), `runs/jev-example` (2/2), and
+`runs/both-languages` (4/4). Three of the seven cases used live Jev. All recorded
+two real actions in the expected order and exact independently observed tokens.
+The parent audit separately checked the seven retained logs, complete summaries,
+closed fixture ports, unchanged tracked source, and absence of the credential
+value from the transcript and report. Pre-provisioned host prerequisites remain
+as described above; this was not a factory-clean installation test.
+
+Bash-fence syntax, docs hygiene, internal links, Driver generator drift, and the
+production build passed. The revised local preview was loaded in a new isolated
+Chrome profile and captured from its exact native window. Native accessibility
+readback confirmed the guide title and absence of the old literal Mermaid block.
+No production-site rendering claim or visual-model inspection is implied.
+
+| Retained artifact | SHA-256 |
+| --- | --- |
+| Revised guide | `73ffdd9bfea070d5180672214f70663cc93f7c65634e1d811e15588990a60608` |
+| Fresh-agent transcript | `3b2bd7486fbfc76650eeb45d96f60a5a88f628f54eaae76203d7d967aca21866` |
+| Fresh-agent report | `c972f02eac6194f54167225391a40832be66ebb3f7f72e14e6656e99729b2159` |
+| Local preview screenshot | `eda3b4fea13b6a78d61e2e1b863d9dc56386463809bf5c427f33d59113b507b9` |
+
+The final follow-up only records this evidence; the tested guide and executable
+example are unchanged. The first parent audit used the wrong JSONL event name
+(`action` instead of `step`); correcting that audit required no live rerun.
+Existing Node/npm notices and Rust dead-code/linker warnings remained non-blocking.
+No Driver runtime, dependency lock, installation policy, or security setting was
+changed. Prior verification history stays in this report, outside the walkthrough.

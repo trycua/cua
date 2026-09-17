@@ -245,11 +245,24 @@ def test_plan_builds_only_for_declared_relevant_changes(monkeypatch: pytest.Monk
         if command == "merge-base":
             assert args == ("--is-ancestor", previous_sha, source_sha)
             return ""
-        assert command == "diff"
-        assert "libs/cua-driver" in args
-        return "libs/cua-driver/rust/crates/cua-driver/src/main.rs"
+        raise AssertionError((command, args))
 
     monkeypatch.setattr(release_channels, "_git", fake_git)
+    monkeypatch.setattr(
+        release_channels.release_attribution,
+        "commits_in_range",
+        lambda _root, _previous, _source, paths, excluded, companions: (
+            [
+                release_channels.release_attribution.CommitRecord(
+                    "deadbeef", "fix(cua-driver): preserve input", ""
+                )
+            ]
+            if "libs/cua-driver" in paths
+            and "libs/cua-driver/rust/crates/cua-perception" in excluded
+            and "libs/cua-driver/rust/Cargo.toml" in companions
+            else []
+        ),
+    )
     plan = plan_nightly(
         "cua-driver-rs",
         source_sha,
@@ -269,6 +282,82 @@ def test_plan_builds_only_for_declared_relevant_changes(monkeypatch: pytest.Monk
     assert plan["reason"] == "relevant-changes"
     assert plan["previousNightlyTag"] == ("nightly-cua-driver-rs-v0.19.4-nightly.20260811.41")
     assert plan["attributionBaseTag"] == plan["previousNightlyTag"]
+
+
+def test_driver_plan_ignores_perception_only_changes(monkeypatch: pytest.MonkeyPatch):
+    previous_sha = "b" * 40
+    source_sha = "c" * 40
+
+    def fake_git(_root, command, *args):
+        if command == "rev-list":
+            return previous_sha
+        if command == "merge-base":
+            return ""
+        raise AssertionError((command, args))
+
+    monkeypatch.setattr(release_channels, "_git", fake_git)
+    monkeypatch.setattr(
+        release_channels.release_attribution,
+        "commits_in_range",
+        lambda _root, _previous, _source, paths, excluded, companions: (
+            []
+            if "libs/cua-driver" in paths
+            and "libs/cua-driver/rust/crates/cua-perception" in excluded
+            and "libs/cua-driver/rust/Cargo.toml" in companions
+            else [object()]
+        ),
+    )
+    plan = plan_nightly(
+        "cua-driver-rs",
+        source_sha,
+        "20260812",
+        "45",
+        [
+            {
+                "tag_name": "nightly-cua-driver-rs-v0.19.4-nightly.20260811.41",
+                "draft": False,
+                "published_at": "2026-08-11T04:17:00Z",
+            }
+        ],
+        registry_path=REGISTRY,
+        root=ROOT,
+    )
+    assert plan["shouldBuild"] is False
+    assert plan["reason"] == "component-unchanged"
+
+
+def test_first_driver_nightly_ignores_perception_only_changes(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    source_sha = "c" * 40
+
+    def fake_git(_root, command, *args):
+        if command == "rev-list":
+            assert args == ("-n", "1", "cua-driver-rs-v0.28.2")
+            return "b" * 40
+        if command == "merge-base":
+            return ""
+        raise AssertionError((command, args))
+
+    monkeypatch.setattr(release_channels, "_git", fake_git)
+    monkeypatch.setattr(
+        release_channels.release_attribution,
+        "commits_in_range",
+        lambda _root, previous, _source, _paths, _excluded, _companions: (
+            [] if previous == "cua-driver-rs-v0.28.2" else [object()]
+        ),
+    )
+    plan = plan_nightly(
+        "cua-driver-rs",
+        source_sha,
+        "20260812",
+        "46",
+        [],
+        registry_path=REGISTRY,
+        root=ROOT,
+    )
+    assert plan["shouldBuild"] is False
+    assert plan["reason"] == "component-unchanged"
 
 
 def test_plan_holds_before_build_for_unresolved_attribution(
@@ -366,6 +455,14 @@ def test_manifest_uses_stable_authority_with_a_separately_versioned_asset_tree(
     (assets / "cua-driver.tar.gz").write_bytes(b"nightly")
 
     def fake_build_manifest(**kwargs):
+        assert kwargs["exclude_paths"] == [
+            "libs/cua-driver/experiments/cua-perception-inference",
+            "libs/cua-driver/rust/crates/cua-perception",
+        ]
+        assert kwargs["exclude_companion_paths"] == [
+            "libs/cua-driver/rust/Cargo.lock",
+            "libs/cua-driver/rust/Cargo.toml",
+        ]
         return {"version": kwargs["version"], "tag": kwargs["tag"]}
 
     monkeypatch.setattr(release_channels.release_attribution, "build_manifest", fake_build_manifest)

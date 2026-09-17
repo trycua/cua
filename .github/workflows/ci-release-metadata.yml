@@ -47,8 +47,14 @@ jobs:
         run: |
           set -euo pipefail
           PRODUCT_CHANGED=false
-          while IFS= read -r path; do
+          mapfile -t CHANGED_PATHS < <(git diff --name-only "$BASE_SHA...$HEAD_SHA")
+          CLASSIFY_ARGS=(classify-perception-diff)
+          for path in "${CHANGED_PATHS[@]}"; do
+            CLASSIFY_ARGS+=(--path "$path")
             case "$path" in
+              libs/cua-driver/rust/crates/cua-perception/*)
+                PRODUCT_CHANGED=true
+                ;;
               libs/lume/*|libs/python/cua-sandbox/*)
                 PRODUCT_CHANGED=true
                 ;;
@@ -58,8 +64,10 @@ jobs:
                 PRODUCT_CHANGED=true
                 ;;
             esac
-          done < <(git diff --name-only "$BASE_SHA...$HEAD_SHA")
+          done
+          PERCEPTION_ONLY=$(python3 .github/scripts/release_attribution.py "${CLASSIFY_ARGS[@]}")
           echo "product_changed=$PRODUCT_CHANGED" >> "$GITHUB_OUTPUT"
+          echo "perception_only=$PERCEPTION_ONLY" >> "$GITHUB_OUTPUT"
 
       - name: Validate squash-release title
         if: steps.scope.outputs.product_changed == 'true'
@@ -67,11 +75,20 @@ jobs:
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
           PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          PR_BODY: ${{ github.event.pull_request.body }}
           PR_TITLE: ${{ github.event.pull_request.title }}
+          PERCEPTION_ONLY: ${{ steps.scope.outputs.perception_only }}
           REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
-          ARGS=(validate-title --title "$PR_TITLE" --require-release)
+          ARGS=(
+            validate-title
+            --title "$PR_TITLE"
+            --require-release
+          )
+          if [[ "$PERCEPTION_ONLY" == "true" ]]; then
+            ARGS+=(--forbid-any-releasing-title --pull-body "$PR_BODY")
+          fi
           if jq -e 'index("no-release") != null' <<<"$PR_LABELS" >/dev/null; then
             ARGS+=(--allow-non-release)
           fi
@@ -111,6 +128,10 @@ jobs:
               --exclude-path libs/cua-driver/docs \
               --exclude-path libs/cua-driver/python \
               --exclude-path libs/cua-driver/tests \
+              --exclude-path libs/cua-driver/rust/crates/cua-perception \
+              --exclude-path libs/cua-driver/experiments/cua-perception-inference \
+              --exclude-companion-path libs/cua-driver/rust/Cargo.toml \
+              --exclude-companion-path libs/cua-driver/rust/Cargo.lock \
               --changelog libs/cua-driver/rust/CHANGELOG.md \
               --output /tmp/cua-driver-release-manifest.json
           fi

@@ -263,6 +263,17 @@ fn standalone_binary_reports_oversized_frame_and_terminates() {
     assert_eq!(read_frame(&mut stdout), Ok(None));
 }
 
+#[test]
+fn standalone_binary_requires_an_explicit_backend() {
+    let output = Command::new(env!("CARGO_BIN_EXE_cua-perception"))
+        .output()
+        .expect("run worker without backend arguments");
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr)
+        .contains("usage: cua-perception --fixture | --manifest <manifest.json>"));
+}
+
 fn png_crc32(bytes: &[u8]) -> u32 {
     let mut crc = u32::MAX;
     for byte in bytes {
@@ -306,6 +317,7 @@ fn response_for_png_header(width: u32, height: u32) -> Value {
 
 fn run_worker(input: &[u8]) -> Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_cua-perception"))
+        .arg("--fixture")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

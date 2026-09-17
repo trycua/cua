@@ -1,15 +1,52 @@
-use std::io::{self, Write};
+use std::{
+    env,
+    io::{self, Write},
+    path::PathBuf,
+};
 
-use cua_perception::{handle_payload, read_frame, write_frame, Response};
+use cua_perception::{read_frame, write_frame, Response, Worker};
 
 fn main() {
-    if let Err(error) = run() {
+    if let Err(error) = start() {
         eprintln!("cua-perception: {error}");
         std::process::exit(1);
     }
 }
 
-fn run() -> io::Result<()> {
+fn start() -> Result<(), String> {
+    let worker = parse_startup()?;
+    run(&worker).map_err(|error| error.to_string())
+}
+
+fn parse_startup() -> Result<Worker, String> {
+    let mut args = env::args_os().skip(1);
+    let first = args.next().ok_or_else(usage)?;
+    if first == "--fixture" {
+        if args.next().is_some() {
+            return Err(usage());
+        }
+        return Ok(Worker::fixture());
+    }
+    if first != "--manifest" {
+        return Err(usage());
+    }
+    let manifest = PathBuf::from(args.next().ok_or_else(usage)?);
+    if args.next().as_deref() != Some("--onnx-runtime-library".as_ref()) {
+        return Err(usage());
+    }
+    let runtime = PathBuf::from(args.next().ok_or_else(usage)?);
+    if args.next().is_some() {
+        return Err(usage());
+    }
+    Worker::from_manifest(&manifest, &runtime).map_err(|error| error.to_string())
+}
+
+fn usage() -> String {
+    "usage: cua-perception --fixture | --manifest <manifest.json> --onnx-runtime-library <library>"
+        .to_owned()
+}
+
+fn run(worker: &Worker) -> io::Result<()> {
     let stdin = io::stdin();
     let stdout = io::stdout();
     let mut reader = stdin.lock();
@@ -17,7 +54,7 @@ fn run() -> io::Result<()> {
 
     loop {
         let response = match read_frame(&mut reader) {
-            Ok(Some(payload)) => handle_payload(&payload),
+            Ok(Some(payload)) => worker.handle_payload(&payload),
             Ok(None) => return Ok(()),
             Err(error) => {
                 let response = Response::from_frame_error(&error);

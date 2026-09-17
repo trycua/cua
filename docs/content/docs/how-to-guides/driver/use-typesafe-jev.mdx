@@ -40,6 +40,12 @@ permission policy.
 Use a Bash terminal. Stop at any failed command before advancing. Agents with
 stateless shell tools must repeat the working directory and environment exports
 in later calls; shell variables do not persist between independent processes.
+The agent's execution environment must allow dependency downloads, loopback
+connections, and writes to its workspace, user installation/cache directories,
+and macOS's per-user temporary directory (`getconf DARWIN_USER_TEMP_DIR`). If
+an execution sandbox denies those writes, ask its operator to authorize those
+specific paths. That is separate from Cua permissions; do not use `sudo` or
+disable the sandbox as an installation workaround.
 
 ### Cua Driver and permissions
 

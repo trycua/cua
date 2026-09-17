@@ -112,16 +112,29 @@ jobs:
             libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev libei-dev \
             libx11-dev libxi-dev libxtst-dev libxext-dev libssl-dev \
             libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
-          command -v google-chrome
-          google-chrome --version
-          dpkg-query -W -f='${Status}\n' google-chrome-stable | grep -Fx 'install ok installed'
-          # Driver launches only canonical, non-redirected system payloads.
-          # Mirror the package payload under its supported Chromium location.
-          sudo install -d -o root -g root -m 0755 /usr/lib/chromium
-          sudo cp -a /opt/google/chrome/. /usr/lib/chromium/
-          sudo install -o root -g root -m 0755 /opt/google/chrome/chrome /usr/lib/chromium/chromium
-          test "$(readlink -f /usr/lib/chromium/chromium)" = /usr/lib/chromium/chromium
-          test $((8#$(stat -c %a /usr/lib/chromium/chromium) & 0022)) = 0
+          chromium_source="$(readlink -f "$(command -v chromium)")"
+          "$chromium_source" --version
+          test ! -e /usr/lib/chromium-browser
+          sudo install -d -o root -g root -m 0755 /usr/lib/chromium-browser
+          sudo cp -a "$(dirname "$chromium_source")/." /usr/lib/chromium-browser/
+          sudo install -o root -g root -m 0755 \
+            "$chromium_source" /usr/lib/chromium-browser/chromium-browser
+          sudo chown -R root:root /usr/lib/chromium-browser
+          sudo chmod -R go-w /usr/lib/chromium-browser
+
+          # Match Driver's canonical-path and full ancestor trust checks.
+          candidate=/usr/lib/chromium-browser/chromium-browser
+          test -f "$candidate" && test -x "$candidate"
+          test "$(readlink -f "$candidate")" = "$candidate"
+          path="$candidate"
+          while true; do
+            test ! -L "$path"
+            test "$(stat -c %u "$path")" -eq 0
+            test -z "$(find "$path" -maxdepth 0 -perm /022 -print -quit)"
+            test "$path" = / && break
+            path="$(dirname "$path")"
+          done
+          "$candidate" --version
       - name: Build the exact candidate Driver
         working-directory: ${{ github.workspace }}
         run: cargo build --locked --release -p cua-driver --features portal-input --manifest-path libs/cua-driver/rust/Cargo.toml

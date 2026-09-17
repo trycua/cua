@@ -108,7 +108,7 @@ Install [uv](https://docs.astral.sh/uv/getting-started/installation/) if absent:
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 if ! command -v uv >/dev/null 2>&1; then
-  curl -LsSf https://astral.sh/uv/install.sh | sh
+  curl -LsSf https://astral.sh/uv/install.sh | env UV_NO_MODIFY_PATH=1 sh
 fi
 export PATH="$HOME/.local/bin:$PATH"
 uv --version

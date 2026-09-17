@@ -332,12 +332,25 @@ fi
         self.assertIn("labeled, unlabeled", workflow)
 
     def test_agent_and_human_guidance_explain_the_release_title_contract(self) -> None:
-        for path in ("AGENTS.md", "CONTRIBUTING.md"):
-            guide = self.read(path)
-            self.assertIn("fix(cua-driver):", guide, path)
-            self.assertIn("feat(lume):", guide, path)
-            self.assertIn("no-release", guide, path)
-            self.assertIn("squash", guide, path)
+        agent_guide = self.read("AGENTS.md")
+        contribution_guide = self.read("CONTRIBUTING.md")
+
+        self.assertIn(
+            "[release-title rules](CONTRIBUTING.md#agent-assisted-contributions)",
+            agent_guide,
+        )
+        self.assertIn("Do not use `no-release`", agent_guide)
+
+        release_rules_heading = "### Agent-Assisted Contributions"
+        self.assertIn(release_rules_heading, contribution_guide)
+        release_rules = contribution_guide.split(release_rules_heading, 1)[1].split(
+            "\n### ", 1
+        )[0]
+        self.assertIn("fix(cua-driver):", release_rules)
+        self.assertIn("feat(lume):", release_rules)
+        self.assertIn("feat(cua-driver)!:", release_rules)
+        self.assertIn("no-release", release_rules)
+        self.assertIn("squash", release_rules)
 
     def test_legacy_release_routes_exclude_driver_and_lume(self) -> None:
         workflow = self.read(".github/workflows/release-bump-version.yml")

@@ -77,4 +77,11 @@ for elem in result.elements:
 
 ## License
 
-MIT License - See LICENSE file for details.
+`cua-som` is licensed under AGPL-3.0-or-later. See [LICENSE](LICENSE) for the
+complete terms. Its dependencies retain their own licenses, including
+Ultralytics under AGPL-3.0.
+
+By default, `OmniParser` can download model files from Microsoft's separate
+`OmniParser-v2.0` model repository. Those downloaded files are not relicensed by
+the `cua-som` package. Inspect the license and provenance published with the
+exact model revision before use or redistribution.

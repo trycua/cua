@@ -1,0 +1,164 @@
+---
+title: 'Parse visual regions with Cua Driver'
+description: 'Install the optional perception preview, parse one retained screenshot, take one bounded action, and reobserve.'
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Use this workflow when a window contains useful text or icons but its
+accessibility tree or typed browser state does not identify the target. Cua
+Driver keeps capture and action authority; the optional perception extension
+turns one retained screenshot into model-neutral regions.
+
+<Callout type="warning" title="Developer preview">
+  The perception extension is separate from the default Cua Driver install. Verified-catalog
+  publication and the exact initial OCR/model artifact are still pending release verification. This
+  page does not identify an artifact URL or claim that a stable release is available.
+</Callout>
+
+## Before you start
+
+Install Cua Driver and confirm that the exact build advertises both the
+extension lifecycle and `parse_visual_regions`:
+
+```bash
+cua-driver --version
+cua-driver extension list
+cua-driver describe parse_visual_regions
+```
+
+The default Driver remains MIT licensed and works without this extension. The
+extension worker and model are separate artifacts with licenses reported by
+the inspection command. Installing the preview does not add Python, and neither
+Driver nor the extension requires a Jev credential.
+
+## Inspect the extension
+
+Read the candidate metadata before changing local state:
+
+```bash
+cua-driver extension inspect perception
+```
+
+Check the exact version, platform target, capabilities, protocol range, worker
+and model sizes, hashes, install destination, licenses, publisher, and
+provenance. If authenticated metadata for the exact artifact is unavailable,
+stop. Do not substitute an unsigned archive or infer availability from a
+repository-wide release badge.
+
+## Install explicitly
+
+After reviewing the inspection output, install and verify local health:
+
+```bash
+cua-driver extension install perception
+cua-driver extension status perception
+```
+
+Installation is never triggered by capture, parsing, Driver startup, or an
+update check. A parse on a default installation returns
+`perception_not_installed`; it does not download a worker or model.
+
+## Capture a fresh target
+
+Use one persistent MCP connection or one typed SDK runtime for capture, parse,
+action, and reobservation. Do not split this loop across one-shot CLI tool
+calls: each process owns a disposable runtime, and the next process cannot
+resolve its `capture_id`.
+
+Select the exact window first, then capture it. The exact build's tool
+description is authoritative for the result envelope:
+
+```text
+state = get_window_state({"pid":844,"window_id":10725})
+```
+
+Retain the returned `capture_id`, source target, screenshot dimensions, and
+action-coordinate mapping together. A current accessibility `snapshot_id` is
+not a visual `capture_id`.
+
+Use `get_desktop_state` only when the workflow explicitly authorizes desktop
+capture and a narrower window target cannot represent the task. If the preview
+requires a native-resolution source and refuses a resized capture, follow the
+returned error and the exact build's configuration description; do not rescale
+regions yourself.
+
+## Parse bounded regions
+
+Request only the region kinds and count you need:
+
+```text
+regions = parse_visual_regions({
+  "capture_id":"capture-from-current-observation",
+  "options":{
+    "kinds":["text","icon"],
+    "min_confidence":0.5,
+    "max_regions":100
+  }
+})
+```
+
+The result binds every region to the source capture and reports half-open
+rectangles in the source PNG's pixel space: `[x, x + width)` by
+`[y, y + height)`, with `(0, 0)` at the top left. The result is an observation,
+not an action recommendation. OCR text, icon labels, confidence, grouping, and
+interactive hints do not prove that a region accepts input.
+
+## Construct one bounded action
+
+Prefer a current accessibility element or typed browser ref when it identifies
+the same control. When a pixel action is necessary:
+
+1. Choose one region from the current parse result.
+2. Confirm its capture ID, target, and screenshot dimensions match the retained
+   observation.
+3. Map a point inside its bounds through the returned action-coordinate mapping.
+4. Construct one complete Driver action locally, including the exact target and
+   delivery mode.
+5. Dispatch at most one action derived from that capture.
+
+Do not let a model or remote chooser invent a Driver tool name, arguments, or
+coordinates. Do not reuse the capture for a second action.
+
+## Reobserve and verify
+
+Take a fresh observation after every action attempt, including a timeout,
+unknown result, partial delivery, or suspected no-op. Verify the task's actual
+postcondition from current accessibility, browser, application, or visual
+state. A delivered click is not proof that the intended control changed.
+
+Also reobserve after a resize, move, scroll, navigation, display-layout change,
+or target-identity change. Never replay an action from stale regions.
+
+## Recover from errors
+
+| Error                                                                                       | Response                                                                                        |
+| ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `perception_not_installed`                                                                  | Continue without the extension, or return to inspection before an explicit install.             |
+| `capture_not_found`, `capture_expired`, `capture_stale`, `capture_generation_mismatch`      | Capture again and parse the new ID.                                                             |
+| `unsupported_target`, `unsupported_platform`                                                | Use accessibility, browser state, or caller-owned visual reasoning and preserve the limitation. |
+| `incompatible_protocol`, `artifact_invalid`                                                 | Stop using the extension and inspect its installed version and provenance.                      |
+| `worker_launch_failed`, `worker_crashed`, `worker_cancelled`, `timeout`, `inference_failed` | Do not act from a partial result; reobserve before a bounded retry or fallback.                 |
+| `invalid_frame`, `resource_limit_exceeded`                                                  | Use a supported native-resolution capture or narrow the parse request.                          |
+
+The worker receives only the admitted screenshot and bounded parse options. It
+does not receive desktop capture, accessibility, browser, input,
+credential-store, or action authority.
+
+## Update or remove the preview
+
+Inspect replacement metadata before updating:
+
+```bash
+cua-driver extension inspect perception
+cua-driver extension update perception
+cua-driver extension status perception
+```
+
+Remove extension-owned artifacts when they are no longer needed:
+
+```bash
+cua-driver extension remove perception
+```
+
+Removal does not alter the default Driver or external `cua-som` installations.

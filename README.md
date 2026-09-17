@@ -170,8 +170,14 @@ MIT License — see [LICENSE](LICENSE.md) for details.
 Third-party components have their own licenses:
 
 - [Kasm](libs/kasm/LICENSE) (MIT)
-- [OmniParser](https://github.com/microsoft/OmniParser/blob/master/LICENSE) (CC-BY-4.0)
-- Optional `cua-agent[omni]` includes ultralytics (AGPL-3.0)
+- [`cua-som`](libs/python/som) is an optional package licensed under
+  AGPL-3.0-or-later. It depends on Ultralytics, which is distributed under
+  AGPL-3.0.
+- The Microsoft OmniParser repository [states
+  CC-BY-4.0](https://github.com/microsoft/OmniParser/blob/master/LICENSE) for its
+  repository content. Model files downloaded from the separate OmniParser model
+  repository are distinct artifacts; verify the terms published with the exact
+  model revision before redistributing them.
 
 ## Trademarks
 

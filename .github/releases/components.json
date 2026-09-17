@@ -23,6 +23,14 @@
         ".github/workflows/cd-rust-cua-driver.yml",
         ".github/workflows/nightly-cua-driver.yml"
       ],
+      "changeDetectionExcludePaths": [
+        "libs/cua-driver/rust/crates/cua-perception",
+        "libs/cua-driver/experiments/cua-perception-inference"
+      ],
+      "changeDetectionCompanionPaths": [
+        "libs/cua-driver/rust/Cargo.toml",
+        "libs/cua-driver/rust/Cargo.lock"
+      ],
       "buildVersionSites": [
         {
           "kind": "plain",

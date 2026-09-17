@@ -36,7 +36,7 @@ fn def() -> &'static ToolDef {
             holds), `actions` (names of the standard AX actions the element \
             exposes, omitted when empty), `custom_actions` (the application's \
             own secondary actions, each `{name, raw}`: `name` is the label a \
-            person reads, `raw` is the string to pass back as `click`'s \
+            person reads, and either form can be passed back as `click`'s \
             `action` to perform it), `frame: {x,y,w,h}`, `parent_index`, \
             `depth`). The markdown \
             `tree_markdown` stays available \

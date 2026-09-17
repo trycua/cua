@@ -1195,18 +1195,21 @@ fn perform_ax_click(
     modifiers: &[String],
     foreground: bool,
 ) -> anyhow::Result<(String, bool, bool, bool, bool)> {
-    let ax_action = map_action(action_str);
     let element = element_ptr as AXUIElementRef;
+
+    // Capture advertised actions BEFORE dispatching so we can detect silent no-ops
+    // (AX returns success even when the element doesn't advertise the action), and
+    // so a custom action the element publishes can be addressed by its readable
+    // name as well as by the envelope macOS dispatches.
+    let advertised = unsafe { copy_action_names(element) };
+    let ax_action = crate::ax::actions::custom_wire_name(&advertised, action_str)
+        .unwrap_or(map_action(action_str));
 
     // Check the live value immediately before dispatch. Foreground assist can
     // enable menu items that were disabled in the cached snapshot, while a
     // background transition can disable them after that snapshot. macOS may
     // otherwise return success for a disabled action that did nothing.
     crate::input::ax_actions::ensure_ax_action_enabled(element_ptr, ax_action)?;
-
-    // Capture advertised actions BEFORE dispatching so we can detect silent no-ops
-    // (AX returns success even when the element doesn't advertise the action).
-    let advertised = unsafe { copy_action_names(element) };
 
     let role = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
     let title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();

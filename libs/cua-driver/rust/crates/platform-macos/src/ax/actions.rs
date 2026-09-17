@@ -16,6 +16,17 @@ impl ElementActions {
     }
 }
 
+/// The envelope macOS expects for one of this element's published custom
+/// actions, addressed either by the readable `name` a consumer reads or by the
+/// `raw` envelope itself. Standard AX names are not resolved here.
+pub fn custom_wire_name<'a>(advertised: &'a [String], action: &str) -> Option<&'a str> {
+    advertised
+        .iter()
+        .filter(|raw| !raw.starts_with("AX"))
+        .find(|raw| raw.as_str() == action || custom_action_name(raw) == action)
+        .map(String::as_str)
+}
+
 pub fn split(advertised: Vec<String>) -> ElementActions {
     let mut actions = ElementActions::default();
     for raw in advertised {
@@ -63,6 +74,24 @@ mod tests {
                 raw: "Name:Move Down\nTarget:0x0\nSelector:(null)".to_owned(),
             }]
         );
+    }
+
+    #[test]
+    fn a_published_custom_action_is_addressable_by_its_name_or_its_envelope() {
+        let envelope = "Name:Move Down\nTarget:0x0\nSelector:(null)";
+        let names = advertised(&["AXShowMenu", envelope]);
+        assert_eq!(custom_wire_name(&names, envelope), Some(envelope));
+        assert_eq!(
+            custom_wire_name(&names, "Move Down"),
+            Some(envelope),
+            "the readable name every consumer sees dispatches the envelope"
+        );
+        assert_eq!(
+            custom_wire_name(&names, "AXShowMenu"),
+            None,
+            "a standard AX name is not a custom action"
+        );
+        assert_eq!(custom_wire_name(&names, "Move Up"), None);
     }
 
     #[test]

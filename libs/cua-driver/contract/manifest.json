@@ -88,6 +88,10 @@
             ],
             "type": "string"
           },
+          "detect_window_change": {
+            "default": null,
+            "type": "boolean"
+          },
           "element_token": {
             "default": null,
             "type": "string"
@@ -462,6 +466,9 @@
               "middle"
             ],
             "type": "string"
+          },
+          "detect_window_change": {
+            "type": "boolean"
           },
           "duration_ms": {
             "maximum": 10000,
@@ -1868,6 +1875,9 @@
       "input_schema": {
         "additionalProperties": false,
         "properties": {
+          "detect_window_change": {
+            "type": "boolean"
+          },
           "keys": {
             "items": {
               "type": "string"
@@ -2857,6 +2867,9 @@
       "input_schema": {
         "additionalProperties": false,
         "properties": {
+          "detect_window_change": {
+            "type": "boolean"
+          },
           "key": {
             "type": "string"
           },
@@ -3085,6 +3098,9 @@
               "page"
             ],
             "type": "string"
+          },
+          "detect_window_change": {
+            "type": "boolean"
           },
           "direction": {
             "enum": [
@@ -3937,6 +3953,9 @@
       "input_schema": {
         "additionalProperties": false,
         "properties": {
+          "detect_window_change": {
+            "type": "boolean"
+          },
           "scope": {
             "const": "desktop",
             "description": "Deprecated flat desktop target retained for wire compatibility."

@@ -104,6 +104,10 @@ fn def() -> &'static ToolDef {
     })
 }
 
+fn activation_needed(prior_front: Option<i32>, target_pid: i32) -> bool {
+    prior_front != Some(target_pid)
+}
+
 #[async_trait]
 impl Tool for DragTool {
     fn def(&self) -> &ToolDef {
@@ -321,8 +325,10 @@ impl Tool for DragTool {
                             // gesture begins. The SkyLight flash can be
                             // unavailable for Electron child windows; the
                             // documented Cocoa activation is the fallback.
-                            apps::activate_pid(pid);
-                            std::thread::sleep(std::time::Duration::from_millis(40));
+                            if activation_needed(prior_front, pid) {
+                                apps::activate_pid(pid);
+                                std::thread::sleep(std::time::Duration::from_millis(40));
+                            }
                             let observed_cursor = cursor_for_drag.clone();
                             return crate::input::mouse::drag_at_xy_foreground_observed(
                                 from_sx,
@@ -439,5 +445,17 @@ impl Tool for DragTool {
             Ok(Err(e)) => ToolResult::error(format!("drag failed: {e}")),
             Err(e)     => ToolResult::error(format!("Task error: {e}")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_target_that_is_already_frontmost_is_not_activated_again() {
+        assert!(!activation_needed(Some(758), 758));
+        assert!(activation_needed(Some(12), 758));
+        assert!(activation_needed(None, 758));
     }
 }

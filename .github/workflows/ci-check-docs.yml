@@ -94,6 +94,20 @@ jobs:
       - name: Verify docs extraction preserves policy-filtered discovery
         if: steps.scope.outputs.selected == 'true' && matrix.library == 'cua-driver'
         run: node docs/node_modules/tsx/dist/cli.mjs --test scripts/docs-generators/cua-driver-policy.test.ts scripts/docs-generators/cua-driver-policy-binary.test.ts
+      - name: Capture native reference input
+        if: always() && steps.scope.outputs.selected == 'true' && matrix.library == 'cua-driver'
+        run: |
+          binary="libs/cua-driver/rust/target/release/cua-driver"
+          if [[ "${{ runner.os }}" == "Windows" ]]; then binary="$binary.exe"; fi
+          if [[ -f "$binary" ]]; then
+            "$binary" dump-docs --type all --pretty > "$RUNNER_TEMP/cua-driver-docs-${{ matrix.platform }}.json"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.scope.outputs.selected == 'true' && matrix.library == 'cua-driver'
+        with:
+          name: cua-driver-docs-${{ matrix.platform }}
+          path: ${{ runner.temp }}/cua-driver-docs-${{ matrix.platform }}.json
+          if-no-files-found: ignore
 
   check-docs-sync:
     name: Check Documentation Sync

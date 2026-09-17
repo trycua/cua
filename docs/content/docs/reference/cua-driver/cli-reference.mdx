@@ -462,6 +462,100 @@ Report local skill-pack and per-agent link state.
 
 Print the local skill-pack path.
 
+### `cua-driver extension`
+
+Inspect or store an unsigned, untrusted local extension prototype.
+
+Archive hashes are self-asserted by the same untrusted archive: they can detect later corruption but do not authenticate a publisher or establish artifact provenance. Mutation is unsupported on Windows. Uninstall is intentionally absent until descriptor-relative recursive deletion has a reviewed cross-platform design.
+
+#### `cua-driver extension list`
+
+List registry-known extensions and local state.
+
+**Flags:**
+
+| Name | Description |
+| ---- | ----------- |
+| `--json` | Emit machine-readable output. |
+
+#### `cua-driver extension info`
+
+Describe one registry-known extension.
+
+**Arguments:**
+
+| Name | Type | Required | Description |
+| ---- | ---- | -------- | ----------- |
+| `<name>` | String | Yes | Registry extension name. |
+
+**Flags:**
+
+| Name | Description |
+| ---- | ----------- |
+| `--json` | Emit machine-readable output. |
+
+#### `cua-driver extension status`
+
+Verify installed extension state; absence is healthy.
+
+**Arguments:**
+
+| Name | Type | Required | Description |
+| ---- | ---- | -------- | ----------- |
+| `<name>` | String | No | Optional registry extension name. |
+
+**Flags:**
+
+| Name | Description |
+| ---- | ----------- |
+| `--json` | Emit machine-readable output. |
+
+#### `cua-driver extension install`
+
+Store and activate unsigned, untrusted local code.
+
+Hashes are self-asserted and do not establish provenance. Unsupported on Windows.
+
+**Arguments:**
+
+| Name | Type | Required | Description |
+| ---- | ---- | -------- | ----------- |
+| `<name>` | String | Yes | Registry extension name. |
+
+**Options:**
+
+| Name | Type | Default | Description |
+| ---- | ---- | ------- | ----------- |
+| `--archive` | String | — | Unsigned local tar.gz archive. |
+
+#### `cua-driver extension update`
+
+Store and activate unsigned, untrusted local code.
+
+Hashes are self-asserted and do not establish provenance. Unsupported on Windows.
+
+**Arguments:**
+
+| Name | Type | Required | Description |
+| ---- | ---- | -------- | ----------- |
+| `<name>` | String | Yes | Registry extension name. |
+
+**Options:**
+
+| Name | Type | Default | Description |
+| ---- | ---- | ------- | ----------- |
+| `--archive` | String | — | Unsigned local tar.gz archive. |
+
+#### `cua-driver extension path`
+
+Print the exact active version directory.
+
+**Arguments:**
+
+| Name | Type | Required | Description |
+| ---- | ---- | -------- | ----------- |
+| `<name>` | String | Yes | Registry extension name. |
+
 ### `cua-driver manifest`
 
 Emit a stable JSON description of the CLI surface.

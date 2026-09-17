@@ -251,10 +251,13 @@ fn ensure_private_directory_path(path: &Path) -> Result<Dir> {
 
 fn sync_cap_dir(dir: &Dir) -> Result<()> {
     #[cfg(unix)]
-    dir.try_clone()?
-        .into_std_file()
-        .sync_all()
-        .context("sync containing directory")?;
+    {
+        let mut options = CapOpenOptions::new();
+        options.read(true).follow(FollowSymlinks::No);
+        dir.open_with(".", &options)?
+            .sync_all()
+            .context("sync containing directory")?;
+    }
     Ok(())
 }
 

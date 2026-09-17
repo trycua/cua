@@ -1512,8 +1512,7 @@ impl Tool for GetWindowStateTool {
                     structured["elements"] = json!(elements);
                     // Surface 6: snapshot id mirror for debug correlation.
                     if let Some(snapshot_id) = snapshot_id {
-                        structured["snapshot_id"] =
-                            json!(snapshot_id.to_owned().trim_end_matches(":0").to_string());
+                        structured["snapshot_id"] = json!(snapshot_id);
                     }
                     structured["_note"] = json!(
                         "Prefer `elements` — `tree_markdown` will continue to work \

@@ -11,7 +11,7 @@ Driver keeps capture and action authority; the optional perception extension
 turns one retained screenshot into model-neutral regions.
 
 <Callout type="warning" title="Developer preview">
-  The perception extension is separate from the default Cua Driver install. Verified-catalog
+  The `cua-perception` extension is separate from the default Cua Driver install. Verified-catalog
   publication and the exact initial OCR/model artifact are still pending release verification. This
   page does not identify an artifact URL or claim that a stable release is available.
 </Callout>
@@ -27,17 +27,22 @@ cua-driver extension list
 cua-driver describe parse_visual_regions
 ```
 
-The default Driver remains MIT licensed and works without this extension. The
-extension worker and model are separate artifacts with licenses reported by
-the inspection command. Installing the preview does not add Python, and neither
-Driver nor the extension requires a Jev credential.
+The default local Driver remains MIT licensed and works without this extension.
+The final packaged worker and model license set, notices, and source obligations
+are pending packaging and release verification. Inspect the exact catalog,
+manifest, and built artifact rather than applying the Driver license to those
+artifacts. A hosted or Fleet deployment that exposes AGPL-covered perception
+remotely also needs a separately reviewed source-offer path before release.
+Installing the preview does not add Python, and neither Driver nor the extension
+requires a Jev credential.
 
 ## Inspect the extension
 
-Read the candidate metadata before changing local state:
+Use the catalog distributed with the reviewed release candidate, then read the
+candidate metadata before changing local state:
 
 ```bash
-cua-driver extension inspect perception
+cua-driver extension inspect cua-perception --catalog <catalog.json>
 ```
 
 Check the exact version, platform target, capabilities, protocol range, worker
@@ -51,13 +56,13 @@ repository-wide release badge.
 After reviewing the inspection output, install and verify local health:
 
 ```bash
-cua-driver extension install perception
-cua-driver extension status perception
+cua-driver extension install cua-perception --catalog <catalog.json>
+cua-driver extension status cua-perception
 ```
 
 Installation is never triggered by capture, parsing, Driver startup, or an
-update check. A parse on a default installation returns
-`perception_not_installed`; it does not download a worker or model.
+update check. A parse on a default installation returns `not_installed`; it does
+not download a worker or model.
 
 ## Capture a fresh target
 
@@ -134,7 +139,7 @@ or target-identity change. Never replay an action from stale regions.
 
 | Error                                                                                       | Response                                                                                        |
 | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `perception_not_installed`                                                                  | Continue without the extension, or return to inspection before an explicit install.             |
+| `not_installed`                                                                             | Continue without the extension, or return to inspection before an explicit install.             |
 | `capture_not_found`, `capture_expired`, `capture_stale`, `capture_generation_mismatch`      | Capture again and parse the new ID.                                                             |
 | `unsupported_target`, `unsupported_platform`                                                | Use accessibility, browser state, or caller-owned visual reasoning and preserve the limitation. |
 | `incompatible_protocol`, `artifact_invalid`                                                 | Stop using the extension and inspect its installed version and provenance.                      |
@@ -150,15 +155,15 @@ credential-store, or action authority.
 Inspect replacement metadata before updating:
 
 ```bash
-cua-driver extension inspect perception
-cua-driver extension update perception
-cua-driver extension status perception
+cua-driver extension inspect cua-perception --catalog <catalog.json>
+cua-driver extension update cua-perception --catalog <catalog.json>
+cua-driver extension status cua-perception
 ```
 
 Remove extension-owned artifacts when they are no longer needed:
 
 ```bash
-cua-driver extension remove perception
+cua-driver extension remove cua-perception
 ```
 
 Removal does not alter the default Driver or external `cua-som` installations.

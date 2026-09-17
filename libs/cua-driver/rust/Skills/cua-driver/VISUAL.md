@@ -6,18 +6,22 @@ tool returns model-neutral observations. It does not decide that a region is
 interactive, choose an action, or grant permission to act.
 
 This capability is a developer preview delivered by the separately installed
-`perception` extension. It is absent from the default Cua Driver installation.
-The default driver, its SDKs, and this repository remain MIT licensed; an
-extension inspection must report the licenses for the exact worker and model
-artifacts separately.
+`cua-perception` extension. It is absent from the default Cua Driver
+installation. The default local Driver remains MIT licensed. The final packaged
+worker and model license set, notices, and source obligations are pending
+packaging and release verification; inspect the exact catalog, manifest, and
+built artifact rather than assuming that the Driver license applies to those
+artifacts. A hosted or Fleet deployment that exposes AGPL-covered perception
+remotely also needs a separately reviewed source-offer path before release.
 
 ## Inspect before installing
 
-Never install the extension merely because a parse returned
-`perception_not_installed`. First inspect the exact candidate:
+Never install the extension merely because a parse returned `not_installed`.
+Use the catalog distributed with the reviewed release candidate, then inspect
+the exact candidate:
 
 ```bash
-cua-driver extension inspect perception
+cua-driver extension inspect cua-perception --catalog <catalog.json>
 ```
 
 Review its version, target, capabilities, protocol range, worker and model
@@ -25,13 +29,14 @@ sizes, hashes, destination, licenses, publisher, and provenance. Installation
 must be an explicit caller decision after that review:
 
 ```bash
-cua-driver extension install perception
-cua-driver extension status perception
+cua-driver extension install cua-perception --catalog <catalog.json>
+cua-driver extension status cua-perception
 ```
 
-Use `cua-driver extension update perception` only after inspecting the proposed
-replacement. Use `cua-driver extension remove perception` to remove extension-
-owned artifacts when they are not in use.
+Use `cua-driver extension update cua-perception --catalog <catalog.json>` only
+after inspecting the proposed replacement. Use
+`cua-driver extension remove cua-perception` to remove extension-owned artifacts
+when they are not in use.
 
 Verified-catalog publication and the exact initial OCR/model artifact are still
 pending release verification. If `inspect` cannot present authenticated
@@ -83,7 +88,7 @@ move, scroll, navigation, display-layout change, or target-identity change.
 
 ## Handle failures by category
 
-- `perception_not_installed`: the optional extension is absent. Continue with
+- `not_installed`: the optional `cua-perception` extension is absent. Continue with
   accessibility, browser, or caller-owned visual reasoning unless the user has
   chosen to inspect and install the preview.
 - `capture_not_found`, `capture_expired`, `capture_stale`, or

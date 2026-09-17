@@ -2384,8 +2384,8 @@ export type GetWindowStateInput = {
     maxDepth?: number,
     maxDimension?: number,
     /**
-     * Optional per-call long-edge ceiling. Omit it to preserve the configured
-     * session or global image dimension behavior.
+     * Optional per-call long-edge ceiling. Zero requests native resolution;
+     * omit it to preserve the configured session or global behavior.
      */
     maxImageDimension?: number
 }

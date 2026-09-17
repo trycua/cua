@@ -1519,8 +1519,8 @@
             "type": "integer"
           },
           "max_image_dimension": {
-            "description": "Optional per-call long-edge ceiling. Omit it to preserve the configured\nsession or global image dimension behavior.",
-            "minimum": 1,
+            "description": "Optional per-call long-edge ceiling. Zero requests native resolution;\nomit it to preserve the configured session or global behavior.",
+            "minimum": 0,
             "type": "integer"
           },
           "pid": {

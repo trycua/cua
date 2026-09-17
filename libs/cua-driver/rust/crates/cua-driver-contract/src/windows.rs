@@ -19,6 +19,9 @@ fn pid_schema(_: &mut SchemaGenerator) -> Schema {
 fn positive_integer_schema(_: &mut SchemaGenerator) -> Schema {
     json_schema!({"type":"integer", "minimum":1})
 }
+fn nonnegative_integer_schema(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({"type":"integer", "minimum":0})
+}
 
 fn nullable_pid_schema(_: &mut SchemaGenerator) -> Schema {
     json_schema!({"type":["integer","null"], "minimum":0, "maximum":4294967295_u64})
@@ -89,10 +92,10 @@ pub struct GetWindowStateInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "positive_integer_schema")]
     pub max_dimension: Option<u32>,
-    /// Optional per-call long-edge ceiling. Omit it to preserve the configured
-    /// session or global image dimension behavior.
+    /// Optional per-call long-edge ceiling. Zero requests native resolution;
+    /// omit it to preserve the configured session or global behavior.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(schema_with = "positive_integer_schema")]
+    #[schemars(schema_with = "nonnegative_integer_schema")]
     pub max_image_dimension: Option<u32>,
 }
 
@@ -102,14 +105,7 @@ impl ToolInput for GetWindowStateInput {
         if self.pid == 0 || self.window_id == 0 {
             return Err("window observation requires positive process and window IDs".into());
         }
-        if [
-            self.max_elements,
-            self.max_depth,
-            self.max_dimension,
-            self.max_image_dimension,
-        ]
-        .contains(&Some(0))
-        {
+        if [self.max_elements, self.max_depth, self.max_dimension].contains(&Some(0)) {
             return Err("window observation limits must be positive".into());
         }
         if self.include_accessibility_tree == Some(false) && self.include_screenshot == Some(false)
@@ -412,8 +408,19 @@ mod tests {
         );
         assert_eq!(
             GetWindowStateInput::input_schema()["properties"]["max_image_dimension"]["minimum"],
+            0
+        );
+        assert_eq!(
+            GetWindowStateInput::input_schema()["properties"]["max_dimension"]["minimum"],
             1
         );
+        let native_resolution: GetWindowStateInput = serde_json::from_value(json!({
+            "pid": 7,
+            "window_id": 9,
+            "max_image_dimension": 0
+        }))
+        .unwrap();
+        native_resolution.validate().unwrap();
         assert_eq!(ListAppsInput::input_schema()["properties"], json!({}));
     }
 

@@ -1,0 +1,20 @@
+[package]
+name = "cua-perception"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Fixture-only visual perception worker protocol skeleton with no platform integration"
+
+[[bin]]
+name = "cua-perception"
+path = "src/main.rs"
+
+[dependencies]
+base64.workspace = true
+image.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true

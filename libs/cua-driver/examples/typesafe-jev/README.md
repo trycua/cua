@@ -8,6 +8,11 @@ You can run the complete deterministic proof without credentials or network
 access to Jev. If you have a TypeSafe API key, you can separately verify the
 same loop against the live Jev service.
 
+**Starting without prior context?** Follow the complete
+[step-by-step setup guide](../../../../docs/content/docs/how-to-guides/driver/use-typesafe-jev.mdx).
+It includes the unmerged-PR checkout, macOS permissions, Python provisioning,
+secure credential entry, exact expected results, independent checks, and cleanup.
+
 ## What the example proves
 
 The local fixture contains a small browser task and exposes its submitted value
@@ -30,21 +35,28 @@ the page changes rather than reusing an older reference.
 
 ## Install the prerequisites
 
-Install Cua Driver so that `cua-driver` is on `PATH`. You also need Python 3.10
-or later with `uv`, Node.js 20 or later, npm, and a Chromium-based browser that
-Cua Driver can prepare.
+Install Cua Driver so that `cua-driver` is on `PATH`, or set `CUA_DRIVER_BIN`
+to its absolute executable path. You need an unlocked desktop and a signed
+Chromium-based browser that Cua Driver can prepare. Python with `uv` supplies
+the fixture and Python agent. Node.js 20 or later and npm are needed only for
+the optional TypeScript agent.
 
-From this directory, install the Python and TypeScript dependencies:
+From this directory, install the locked Python dependencies:
 
 ```bash
-uv sync
-npm install
+uv sync --frozen --python 3.12
+```
+
+For the TypeScript agent, also run:
+
+```bash
+npm ci
 ```
 
 Start the loopback-only fixture in a separate terminal:
 
 ```bash
-python3 fixture_server.py
+uv run --frozen --python 3.12 python fixture_server.py
 ```
 
 The fixture prints its local URL. Leave it running while you run either demo.

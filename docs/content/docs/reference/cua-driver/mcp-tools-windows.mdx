@@ -571,13 +571,13 @@ Coordinates `x1, y1, x2, y2` are in the same pixel space as the screenshot retur
 
 A 20% padding is automatically added on every side of the requested region so the target remains visible even if the caller's coordinates are slightly off.
 
-After a zoom, pass `from_zoom=true` to click/type_text to auto-translate coordinates back to full-window space.
+After a zoom, pass `from_zoom=true` to click/type_text to auto-translate coordinates back to full-window space. Coordinate actions return `screenshot_context_missing` when the latest snapshot does not contain a screenshot owned by this session. `from_zoom` actions return `zoom_context_missing` when the zoom was never created or was replaced; call `get_window_state`, then `zoom`, again on the same connection.
 
-Windows-specific: `window_id` is the canonical addressing field (HWND). `pid` is also required (used to scope the zoom translation registry, matching Swift's per-pid zoom context).
+Windows-specific: `window_id` is the canonical addressing field (HWND). `pid` is preferred when available; otherwise the driver resolves the unique current snapshot owned by this session and window.
 
 **Arguments:**
 
-- `pid` (integer, optional): Target process ID. Validated in code (an explicit "Missing required integer field pid" error when absent); kept out of `required` to match the shared cross-platform zoom contract.
+- `pid` (integer, optional): Optional target process ID. When omitted, the unique current snapshot for this session and HWND is used.
 - `window_id` (integer, required): HWND of the target window.
 - `x1` (number, required): Left edge of the region (resized-image pixels).
 - `x2` (number, required): Right edge of the region (resized-image pixels).

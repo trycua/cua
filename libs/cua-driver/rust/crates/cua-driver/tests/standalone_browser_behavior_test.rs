@@ -1995,7 +1995,7 @@ fn run_challenge_positive(spec: &BrowserSpec) {
                 "{}",
                 refused.raw
             );
-            let resumed = fixture.driver.call(
+            let resume_refused = fixture.driver.call(
                 "browser_resume",
                 serde_json::json!({
                     "target_id": target,
@@ -2005,12 +2005,33 @@ fn run_challenge_positive(spec: &BrowserSpec) {
                     "session": session,
                 }),
             );
-            assert_eq!(resumed.structured()["cleared"], true, "{}", resumed.raw);
             assert_eq!(
-                resumed.structured()["action_dispatched"],
-                false,
+                resume_refused.structured()["status"],
+                "refused",
                 "{}",
-                resumed.raw
+                resume_refused.raw
+            );
+            assert_eq!(
+                resume_refused.structured()["refusal"]["code"],
+                "authorization_required",
+                "{}",
+                resume_refused.raw
+            );
+
+            let still_blocked = fixture.driver.call(
+                "browser_navigate",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": tab,
+                    "url": fixture.server.page_url(),
+                    "session": session,
+                }),
+            );
+            assert_eq!(
+                still_blocked.structured()["refusal"]["code"],
+                "browser_origin_blocked",
+                "{}",
+                still_blocked.raw
             );
 
             Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())

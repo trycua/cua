@@ -59,20 +59,17 @@ pub(crate) fn resolve_fresh(
             "current accessibility state is not scoped to window_id {window_id}"
         ));
     }
-    target
-        .resolve_unique(
-            tree.nodes.iter().filter_map(|node| {
-                node.element_index
-                    .map(|index| (identity_for_node(node), (index, node.identity.clone())))
-            }),
-            tree.complete,
-        )?
-        .map(|(index, identity)| {
-            identity
-                .map(|identity| (index, identity))
-                .ok_or_else(|| "matched element has no native AT-SPI identity".into())
-        })
-        .transpose()
+    match target.resolve_unique(
+        tree.nodes.into_iter().filter_map(|node| {
+            node.element_index
+                .map(|index| (identity_for_node(&node), (index, node.identity)))
+        }),
+        tree.complete,
+    )? {
+        None => Ok(None),
+        Some((_, None)) => Err("matched element has no native AT-SPI identity".into()),
+        Some((index, Some(identity))) => Ok(Some((index, identity))),
+    }
 }
 #[cfg(test)]
 mod tests {

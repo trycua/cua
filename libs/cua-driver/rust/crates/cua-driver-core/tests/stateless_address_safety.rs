@@ -42,6 +42,34 @@ fn incomplete_walk_cannot_prove_a_unique_identity() {
 }
 
 #[test]
+fn missing_native_identity_still_counts_as_an_ambiguous_match() {
+    let snapshot = element_token::mint_snapshot_handle(42, 7);
+    let token = element_token::token_for_identity(&snapshot, 0, b"Save").unwrap();
+    let result = element_token::resolve_element_args(
+        42,
+        None,
+        Some(&token),
+        None,
+        Some(7),
+        "click",
+        |_, target| {
+            target.resolve_unique(
+                vec![
+                    (b"Save".to_vec(), None),
+                    (b"Save".to_vec(), Some(String::from("native identity"))),
+                ],
+                true,
+            )
+        },
+    );
+    assert_eq!(
+        result.unwrap_err().structured_content.unwrap()["refusal"]["code"],
+        "invalid_element_token",
+        "missing native identity must not hide a duplicate"
+    );
+}
+
+#[test]
 fn native_resolution_allows_blocking_rpc_and_preserves_token_scope() {
     with_runtime_scope("native-lookup-owner".into(), || {
         let snapshot = element_token::mint_snapshot_handle(42, 7);

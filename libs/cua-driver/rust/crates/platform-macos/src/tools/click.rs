@@ -29,6 +29,7 @@ use crate::ax::bindings::{
     element_screen_rect, kAXErrorSuccess, AXUIElementPerformAction, AXUIElementRef,
 };
 use crate::focus_guard;
+use crate::input::ax_actions::{resolve_ax_action, unknown_action_refusal};
 use crate::window_change_detector::WindowChangeDetector;
 use core_foundation::base::{CFRelease, TCFType};
 
@@ -1457,78 +1458,11 @@ mod selection_fallback_tests {
     }
 }
 
-fn map_action(action: &str) -> Option<&'static str> {
-    match action.to_lowercase().as_str() {
-        "press" | "click" => Some("AXPress"),
-        "show_menu" | "right_click" => Some("AXShowMenu"),
-        "pick" => Some("AXPick"),
-        "confirm" => Some("AXConfirm"),
-        "cancel" => Some("AXCancel"),
-        "open" => Some("AXOpen"),
-        _ => None,
-    }
-}
-
-fn resolve_ax_action<'a>(action: &'a str, advertised: &[String]) -> Option<&'a str> {
-    map_action(action).or_else(|| {
-        advertised
-            .iter()
-            .any(|name| name == action)
-            .then_some(action)
-    })
-}
-
-fn unknown_action_refusal(requested: &str, advertised: &[String]) -> anyhow::Error {
-    let advertised = if advertised.is_empty() {
-        "none".to_owned()
-    } else {
-        advertised.join(", ")
-    };
-    anyhow::anyhow!(
-        "action \"{requested}\" is neither a documented alias (press, show_menu, pick, \
-         confirm, cancel, open) nor an action this element advertises (advertised: \
-         {advertised}); nothing was dispatched"
-    )
-}
-
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn an_action_name_the_element_advertises_is_dispatched_verbatim() {
-        let advertised = vec!["AXPress".to_owned(), "AXScrollToVisible".to_owned()];
-        assert_eq!(
-            resolve_ax_action("AXScrollToVisible", &advertised),
-            Some("AXScrollToVisible")
-        );
-        assert_eq!(
-            resolve_ax_action("show_menu", &advertised),
-            Some("AXShowMenu"),
-            "a documented alias resolves without the element advertising it"
-        );
-    }
-
-    #[test]
-    fn an_unknown_action_name_is_refused_instead_of_pressed() {
-        let advertised = vec!["AXPress".to_owned(), "AXShowMenu".to_owned()];
-        assert_eq!(resolve_ax_action("AXScrollToVisible", &advertised), None);
-        assert_eq!(resolve_ax_action("wiggle", &advertised), None);
-        let refusal = unknown_action_refusal("wiggle", &advertised).to_string();
-        assert!(
-            refusal.contains("advertised: AXPress, AXShowMenu"),
-            "{refusal}"
-        );
-        assert!(refusal.contains("nothing was dispatched"), "{refusal}");
-        assert!(
-            unknown_action_refusal("wiggle", &[])
-                .to_string()
-                .contains("advertised: none"),
-            "an element with no actions still names its empty set"
-        );
-    }
 
     /// Surface 5: schema must advertise the new `button` field with the three
     /// canonical values and default to "left". Hermes / Codex / Claude Code

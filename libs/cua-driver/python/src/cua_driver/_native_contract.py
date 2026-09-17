@@ -7472,9 +7472,10 @@ class _UniffiFfiConverterOptionalTypeElementFrame(_UniffiConverterRustBuffer):
 
 @dataclass
 class WindowElement:
-    def __init__(self, *, element_index:int, role:str, depth:int, element_token:typing.Optional[str], label:typing.Optional[str], value:typing.Optional[str], value_description:typing.Optional[str], enabled:typing.Optional[bool], selected:typing.Optional[bool], in_web_content:typing.Optional[bool], actions:typing.Optional[typing.List[str]], parent_index:typing.Optional[int], frame:typing.Optional[ElementFrame], min:typing.Optional[float], max:typing.Optional[float]):
+    def __init__(self, *, element_index:int, role:str, subrole:typing.Optional[str], depth:int, element_token:typing.Optional[str], label:typing.Optional[str], value:typing.Optional[str], value_description:typing.Optional[str], enabled:typing.Optional[bool], selected:typing.Optional[bool], in_web_content:typing.Optional[bool], actions:typing.Optional[typing.List[str]], parent_index:typing.Optional[int], frame:typing.Optional[ElementFrame], min:typing.Optional[float], max:typing.Optional[float]):
         self.element_index = element_index
         self.role = role
+        self.subrole = subrole
         self.depth = depth
         self.element_token = element_token
         self.label = label
@@ -7493,11 +7494,13 @@ class WindowElement:
 
 
     def __str__(self):
-        return "WindowElement(element_index={}, role={}, depth={}, element_token={}, label={}, value={}, value_description={}, enabled={}, selected={}, in_web_content={}, actions={}, parent_index={}, frame={}, min={}, max={})".format(self.element_index, self.role, self.depth, self.element_token, self.label, self.value, self.value_description, self.enabled, self.selected, self.in_web_content, self.actions, self.parent_index, self.frame, self.min, self.max)
+        return "WindowElement(element_index={}, role={}, subrole={}, depth={}, element_token={}, label={}, value={}, value_description={}, enabled={}, selected={}, in_web_content={}, actions={}, parent_index={}, frame={}, min={}, max={})".format(self.element_index, self.role, self.subrole, self.depth, self.element_token, self.label, self.value, self.value_description, self.enabled, self.selected, self.in_web_content, self.actions, self.parent_index, self.frame, self.min, self.max)
     def __eq__(self, other):
         if self.element_index != other.element_index:
             return False
         if self.role != other.role:
+            return False
+        if self.subrole != other.subrole:
             return False
         if self.depth != other.depth:
             return False
@@ -7533,6 +7536,7 @@ class _UniffiFfiConverterTypeWindowElement(_UniffiConverterRustBuffer):
         return WindowElement(
             element_index=_UniffiFfiConverterUInt64.read(buf),
             role=_UniffiFfiConverterString.read(buf),
+            subrole=_UniffiFfiConverterOptionalString.read(buf),
             depth=_UniffiFfiConverterUInt32.read(buf),
             element_token=_UniffiFfiConverterOptionalString.read(buf),
             label=_UniffiFfiConverterOptionalString.read(buf),
@@ -7552,6 +7556,7 @@ class _UniffiFfiConverterTypeWindowElement(_UniffiConverterRustBuffer):
     def check_lower(value):
         _UniffiFfiConverterUInt64.check_lower(value.element_index)
         _UniffiFfiConverterString.check_lower(value.role)
+        _UniffiFfiConverterOptionalString.check_lower(value.subrole)
         _UniffiFfiConverterUInt32.check_lower(value.depth)
         _UniffiFfiConverterOptionalString.check_lower(value.element_token)
         _UniffiFfiConverterOptionalString.check_lower(value.label)
@@ -7570,6 +7575,7 @@ class _UniffiFfiConverterTypeWindowElement(_UniffiConverterRustBuffer):
     def write(value, buf):
         _UniffiFfiConverterUInt64.write(value.element_index, buf)
         _UniffiFfiConverterString.write(value.role, buf)
+        _UniffiFfiConverterOptionalString.write(value.subrole, buf)
         _UniffiFfiConverterUInt32.write(value.depth, buf)
         _UniffiFfiConverterOptionalString.write(value.element_token, buf)
         _UniffiFfiConverterOptionalString.write(value.label, buf)

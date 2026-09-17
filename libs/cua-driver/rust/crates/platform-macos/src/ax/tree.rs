@@ -6,7 +6,10 @@
 //!
 //! Rules (from cua-driver reference):
 //! - An element is addressable (gets an index) when it has ≥1 action name or
-//!   exposes a writable AXValue control surface.
+//!   exposes a writable AXValue control surface. Enablement does not gate it;
+//!   a disabled control is published with `enabled: false`.
+//! - A subrole is rendered only when it does not restate the role's own stem
+//!   (`AXRow` + `AXTableRow`); the element payload always carries the raw value.
 //! - Non-actionable leaf nodes with a value are rendered as `AXRole = "value"`.
 //! - AXStaticText with no title/value is omitted.
 //! - Tree is walked depth-first; element_index is assigned in DFS order.
@@ -51,6 +54,10 @@ pub struct AXNode {
     /// 0-based index (Some = actionable, None = non-actionable display-only node)
     pub element_index: Option<usize>,
     pub role: String,
+    /// AXSubrole — the control class the role alone does not name
+    /// (`AXButton` + `AXSearchField`, `AXRow` + `AXTableRow`). Read only for
+    /// addressable nodes.
+    pub subrole: Option<String>,
     /// AXTitle — shown as `"title"` in the tree line.
     pub title: Option<String>,
     /// AXValue — shown as `= "value"` in the tree line.
@@ -129,8 +136,8 @@ fn role_supports_value_addressing(role: &str) -> bool {
     )
 }
 
-fn is_addressable(actions_present: bool, value_settable: bool, enabled: Option<bool>) -> bool {
-    (actions_present || value_settable) && enabled != Some(false)
+fn is_addressable(actions_present: bool, value_settable: bool) -> bool {
+    actions_present || value_settable
 }
 
 pub struct TreeWalkResult {
@@ -444,16 +451,7 @@ unsafe fn walk_element(
     let value_settable = actions.is_empty()
         && role_supports_value_addressing(&role)
         && is_attribute_settable(element, "AXValue");
-    // A closed submenu can keep its descendants in AXChildren while reporting
-    // those controls disabled. Never assign such a row a live element index:
-    // the same native state also causes dispatch to refuse it, and exposing an
-    // index for it invites agents to retain an unusable menu target.
-    let enabled = if !actions.is_empty() || value_settable {
-        copy_bool_attr(element, "AXEnabled")
-    } else {
-        None
-    };
-    let is_actionable = is_addressable(!actions.is_empty(), value_settable, enabled);
+    let is_actionable = is_addressable(!actions.is_empty(), value_settable);
 
     if !is_actionable && !has_content && role != "AXWindow" && role != "AXSheet" {
         let children = copy_children(element);
@@ -478,6 +476,10 @@ unsafe fn walk_element(
     let frame = element_screen_rect(element);
     // Structured `elements` only contains actionable nodes. Keep all new AX
     // round-trips behind that same gate so display-only rows pay no cost.
+    let subrole = is_actionable
+        .then(|| copy_string_attr(element, "AXSubrole"))
+        .flatten()
+        .filter(|subrole| !subrole.is_empty());
     let control_state = read_control_state_if_actionable(is_actionable, || ControlState {
         value_state: copied_value
             .map(|copied| copied.state_value)
@@ -490,7 +492,7 @@ unsafe fn walk_element(
             .filter(|v| !v.is_empty()),
         min_value: copy_number_attr(element, "AXMinValue"),
         max_value: copy_number_attr(element, "AXMaxValue"),
-        enabled,
+        enabled: copy_bool_attr(element, "AXEnabled"),
         selected: copy_bool_attr(element, "AXSelected"),
     });
     let node = if is_actionable {
@@ -502,6 +504,7 @@ unsafe fn walk_element(
         AXNode {
             element_index: Some(idx),
             role: role.clone(),
+            subrole,
             title: if visible_title.is_empty() {
                 None
             } else {
@@ -536,6 +539,7 @@ unsafe fn walk_element(
         AXNode {
             element_index: None,
             role: role.clone(),
+            subrole,
             title: if visible_title.is_empty() {
                 None
             } else {
@@ -618,6 +622,10 @@ mod web_content_role_tests {
     }
 }
 
+fn restates_role(role: &str, subrole: &str) -> bool {
+    subrole.ends_with(role.strip_prefix("AX").unwrap_or(role))
+}
+
 fn format_node_line(node: &AXNode) -> String {
     let mut parts = String::new();
 
@@ -642,9 +650,16 @@ fn format_node_line(node: &AXNode) -> String {
         parts.push_str(&format!(" ({})", d));
     }
 
-    // Bracketed metadata block (identifier, help, actions).
+    // Bracketed metadata block (subrole, identifier, help, actions, enablement).
     if node.element_index.is_some() {
         let mut attrs: Vec<String> = Vec::new();
+        if let Some(subrole) = node
+            .subrole
+            .as_deref()
+            .filter(|subrole| !restates_role(&node.role, subrole))
+        {
+            attrs.push(format!("subrole={}", subrole));
+        }
         if let Some(id) = &node.identifier {
             attrs.push(format!("id={}", id));
         }
@@ -659,6 +674,9 @@ fn format_node_line(node: &AXNode) -> String {
                 .collect::<Vec<_>>()
                 .join(",");
             attrs.push(format!("actions=[{}]", action_str));
+        }
+        if node.enabled == Some(false) {
+            attrs.push("enabled=false".to_owned());
         }
         if !attrs.is_empty() {
             parts.push_str(" [");
@@ -745,12 +763,99 @@ mod tests {
     use super::*;
     use std::cell::Cell;
 
+    fn indexed_node(role: &str) -> AXNode {
+        AXNode {
+            element_index: Some(0),
+            role: role.into(),
+            subrole: None,
+            title: None,
+            value: None,
+            description: None,
+            identifier: None,
+            help: None,
+            actions: vec![],
+            element_ptr: 0,
+            depth: 0,
+            parent_element_index: None,
+            frame: None,
+            value_state: None,
+            value_description: None,
+            min_value: None,
+            max_value: None,
+            enabled: Some(true),
+            selected: None,
+            in_web_content: false,
+        }
+    }
+
+    #[test]
+    fn a_disabled_control_stays_addressable_and_its_row_reports_the_enablement() {
+        let node = AXNode {
+            subrole: Some("AXSearchField".into()),
+            description: Some("Search".into()),
+            actions: vec!["AXPress".into()],
+            enabled: Some(false),
+            ..indexed_node("AXButton")
+        };
+        assert_eq!(
+            format_node_line(&node),
+            "- [0] AXButton (Search) [subrole=AXSearchField actions=[press] enabled=false]"
+        );
+
+        let enabled = AXNode {
+            enabled: Some(true),
+            ..node.clone()
+        };
+        assert!(!format_node_line(&enabled).contains("enabled"));
+        let unreported = AXNode {
+            enabled: None,
+            ..node
+        };
+        assert!(!format_node_line(&unreported).contains("enabled"));
+    }
+
+    #[test]
+    fn a_subrole_renders_only_when_it_does_not_restate_the_role() {
+        let search = AXNode {
+            subrole: Some("AXSearchField".into()),
+            actions: vec!["AXPress".into()],
+            ..indexed_node("AXTextField")
+        };
+        assert!(
+            format_node_line(&search).contains("[subrole=AXSearchField actions=[press]]"),
+            "{}",
+            format_node_line(&search)
+        );
+
+        for (role, subrole) in [
+            ("AXRow", "AXTableRow"),
+            ("AXRow", "AXOutlineRow"),
+            ("AXWindow", "AXStandardWindow"),
+            ("AXButton", "AXButton"),
+        ] {
+            let node = AXNode {
+                subrole: Some(subrole.into()),
+                actions: vec!["AXPress".into()],
+                ..indexed_node(role)
+            };
+            assert!(
+                !format_node_line(&node).contains("subrole"),
+                "{subrole} restates {role}"
+            );
+        }
+
+        let unpublished = AXNode {
+            actions: vec!["AXPress".into()],
+            ..indexed_node("AXButton")
+        };
+        assert!(!format_node_line(&unpublished).contains("subrole"));
+    }
+
     #[test]
     fn writable_value_controls_are_addressable_without_actions() {
-        assert!(is_addressable(false, true, Some(true)));
-        assert!(is_addressable(true, false, None));
-        assert!(!is_addressable(false, false, Some(true)));
-        assert!(!is_addressable(true, false, Some(false)));
+        assert!(is_addressable(false, true));
+        assert!(is_addressable(true, false));
+        assert!(!is_addressable(false, false));
 
         for role in [
             "AXTextField",

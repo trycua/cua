@@ -14,6 +14,7 @@ implementation:
   - https://github.com/trycua/cua/pull/3933
   - https://github.com/trycua/cua/pull/3937
   - https://github.com/trycua/cua/pull/3938
+  - https://github.com/trycua/cua/pull/3939
 supersedes:
 superseded_by:
 ---

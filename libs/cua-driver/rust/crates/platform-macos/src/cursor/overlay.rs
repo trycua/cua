@@ -282,6 +282,98 @@ pub fn revive_cursor(key: CursorKey) {
     }
 }
 
+/// Resolve whether a window is painted on the user's current Space.
+///
+/// Returns `Some(true)` when the window is in the on-screen window list,
+/// `Some(false)` when it exists but lives on another Space (the fullscreen
+/// case from issue #3801: the user sits in a fullscreen app's Space while a
+/// background target lives on the desktop Space), and `None` when the window
+/// is unknown or its Space could not be determined. Callers must treat `None`
+/// as visible (fail-visible) so a missing Space query never hides the cursor
+/// in normal single-Space use.
+pub(crate) fn target_on_current_space(window_id: u32) -> Option<bool> {
+    // Ground truth first: the on-screen list is what the compositor paints
+    // right now, Space metadata or not.
+    if crate::windows::visible_windows()
+        .iter()
+        .any(|window| window.window_id == window_id)
+    {
+        return Some(true);
+    }
+    // Not painted: ask the full enumeration (all Spaces) where it lives.
+    // `on_current_space` is `Some(false)` for an off-Space window and `None`
+    // when the Skylight Space query is unavailable — both handled by the
+    // fail-visible contract in `cursor_visibility`.
+    let found = crate::windows::all_windows()
+        .into_iter()
+        .find(|window| window.window_id == window_id)?;
+    found.on_current_space
+}
+
+/// Hide (`true`) or unhide (`false`) one session cursor for background work.
+///
+/// Hiding suppresses painting only: animation state, arrival signals, and the
+/// cursor registry are untouched, so action pacing and result reporting are
+/// identical with the cursor shown or hidden. The flag is sticky until a
+/// positioning command (`PinAbove` / `MoveTo` / `SnapTo`) clears it, so a
+/// `ClickPulse` or `ShowFocusRect` sent later on the same background path
+/// stays unpainted without threading a visibility boolean through every
+/// dispatch site. Never creates an entry for an ended session (resurrection
+/// guard, mirroring [`seed_start_in_map`]).
+pub(crate) fn set_cursor_background_hidden(key: &str, hidden: bool) {
+    if key.is_empty() {
+        return;
+    }
+    let Ok(mut guard) = RENDER.lock() else {
+        return;
+    };
+    let Some(map) = guard.as_mut() else {
+        return;
+    };
+    if hidden && map.ended.contains(key) {
+        return;
+    }
+    let template = map.template.clone();
+    let entry = map
+        .cursors
+        .entry(key.to_owned())
+        .or_insert_with(|| render_state_for_key(&template, key));
+    entry.background_hidden = hidden;
+}
+
+/// Pin the overlay above `window_id` and glide the session cursor there —
+/// unless this is a background delivery whose target is not painted on the
+/// current Space, in which case the cursor stays hidden instead (issue
+/// #3801: the overlay joins all Spaces, so animating would float the agent
+/// cursor over the user's unrelated foreground / fullscreen app).
+///
+/// Returns true when the cursor was shown. A `false` return still records
+/// nothing in the registry — callers keep their existing `update_position`
+/// call unconditionally so `get_agent_cursor_state` stays truthful.
+pub(crate) async fn pin_and_animate_window_action(
+    cursor_key: CursorKey,
+    window_id: Option<u32>,
+    background: bool,
+    x: f64,
+    y: f64,
+) -> bool {
+    let on_space = window_id.and_then(target_on_current_space);
+    if cua_driver_core::cursor_visibility::suppress_agent_cursor_for_background_target(
+        background, on_space,
+    ) {
+        set_cursor_background_hidden(&cursor_key, true);
+        return false;
+    }
+    if let Some(wid) = window_id {
+        send_command(
+            cursor_key.clone(),
+            cursor_overlay::OverlayCommand::PinAbove(wid as u64),
+        );
+    }
+    animate_cursor_to(cursor_key, x, y).await;
+    true
+}
+
 /// Return a snapshot of a cursor's current motion config (for use by
 /// set_agent_cursor_motion to apply partial overrides without losing other
 /// knobs). Reads the motion of the cursor `key`, falling back to the
@@ -503,6 +595,15 @@ struct RenderState {
     focus_rect: Option<[f64; 4]>,
     /// Fade progress for the focus rect: 0.0 = fully visible, 1.0 = gone.
     focus_rect_t: f64,
+    /// Background suppression (issue #3801). While set, this cursor is not
+    /// composited: a background action addresses an off-Space target and the
+    /// overlay joins all Spaces, so painting would float the cursor over the
+    /// user's unrelated foreground / fullscreen app. Set only by
+    /// [`set_cursor_background_hidden`]; cleared by the next positioning
+    /// command (`PinAbove` / `MoveTo` / `SnapTo`, see `apply_command`).
+    /// Ticks, arrival signals, and badge state keep running while hidden so
+    /// action pacing is unchanged.
+    background_hidden: bool,
 }
 
 impl RenderState {
@@ -511,6 +612,7 @@ impl RenderState {
             core: RenderStateCore::new(cfg),
             focus_rect: None,
             focus_rect_t: 1.0,
+            background_hidden: false,
         }
     }
 
@@ -541,12 +643,26 @@ impl RenderState {
         //     from the current position so the animation is continuous).
         //   - ClickPulse only updates `self.pos` if the cursor is still at
         //     the sentinel (otherwise the animation already landed it there).
+        //
+        // A positioning command (pin above a target / glide or snap to a
+        // point) is an explicit "show the cursor here": it clears background
+        // suppression (issue #3801). Pulse/highlight commands deliberately do
+        // NOT clear it, so a ClickPulse or ShowFocusRect sent later on the
+        // same suppressed background path stays unpainted.
         match cmd {
             OverlayCommand::ShowFocusRect(rect) => {
                 self.focus_rect = rect;
                 self.focus_rect_t = 0.0; // reset fade to fully visible
             }
             other => {
+                if matches!(
+                    other,
+                    OverlayCommand::PinAbove(_)
+                        | OverlayCommand::MoveTo { .. }
+                        | OverlayCommand::SnapTo { .. }
+                ) {
+                    self.background_hidden = false;
+                }
                 let _ = self.core.apply_command_base(other, true, true);
             }
         }
@@ -888,6 +1004,12 @@ fn render_loop(
                         .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
                     let backing_scale_f32 = scale as f32;
                     for (_k, rs) in &map.cursors {
+                        // Background-suppressed cursors (issue #3801) keep
+                        // their animation state but contribute no pixels, so
+                        // no agent cursor floats over the foreground app.
+                        if rs.background_hidden {
+                            continue;
+                        }
                         let focus = rs.focus_rect.map(|rect| FocusRect {
                             rect,
                             t: rs.focus_rect_t,
@@ -938,6 +1060,7 @@ fn hardware_cursor_position() -> Option<(f64, f64)> {
 fn cursor_is_externally_visible(state: &RenderState) -> bool {
     state.core.cfg.enabled
         && state.core.visible
+        && !state.background_hidden
         && state.core.pos.0 > -50.0
         && state.core.pos.1 > -50.0
         && state.core.idle_alpha >= 0.004
@@ -1570,5 +1693,85 @@ mod tests {
             rxb.try_recv(),
             Err(tokio::sync::oneshot::error::TryRecvError::Empty)
         ));
+    }
+
+    fn pin_msg(key: &str, wid: u64) -> OverlayMsg {
+        OverlayMsg::Cmd(KeyedOverlayCommand {
+            key: key.to_owned(),
+            cmd: OverlayCommand::PinAbove(wid),
+        })
+    }
+
+    fn pulse_msg(key: &str, x: f64, y: f64) -> OverlayMsg {
+        OverlayMsg::Cmd(KeyedOverlayCommand {
+            key: key.to_owned(),
+            cmd: OverlayCommand::ClickPulse { x, y },
+        })
+    }
+
+    #[test]
+    fn background_hidden_defaults_to_false() {
+        let map = empty_map();
+        assert!(!map.cursors["default"].background_hidden);
+    }
+
+    #[test]
+    fn pin_above_clears_background_hidden() {
+        // A pin above a target is an explicit "show the cursor here": it ends
+        // background suppression (issue #3801).
+        let mut map = empty_map();
+        apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
+        map.cursors.get_mut("sessA").unwrap().background_hidden = true;
+        apply_msg(&mut map, pin_msg("sessA", 7));
+        assert!(!map.cursors["sessA"].background_hidden);
+    }
+
+    #[test]
+    fn move_to_clears_background_hidden() {
+        // Gliding to a point is an explicit show — e.g. move_cursor or the
+        // next foreground action after a suppressed background one.
+        let mut map = empty_map();
+        apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
+        map.cursors.get_mut("sessA").unwrap().background_hidden = true;
+        apply_msg(&mut map, move_msg("sessA", 20.0, 20.0));
+        assert!(!map.cursors["sessA"].background_hidden);
+    }
+
+    #[test]
+    fn click_pulse_preserves_background_hidden() {
+        // The suppression guarantee: a ClickPulse sent later on the same
+        // suppressed background path must NOT unhide the cursor, or the
+        // pulse alone would still float over the fullscreen app.
+        let mut map = empty_map();
+        apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
+        map.cursors.get_mut("sessA").unwrap().background_hidden = true;
+        apply_msg(&mut map, pulse_msg("sessA", 10.0, 10.0));
+        assert!(map.cursors["sessA"].background_hidden);
+    }
+
+    #[test]
+    fn show_focus_rect_preserves_background_hidden() {
+        let mut map = empty_map();
+        apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
+        map.cursors.get_mut("sessA").unwrap().background_hidden = true;
+        apply_msg(
+            &mut map,
+            OverlayMsg::Cmd(KeyedOverlayCommand {
+                key: "sessA".to_owned(),
+                cmd: OverlayCommand::ShowFocusRect(Some([0.0, 0.0, 8.0, 8.0])),
+            }),
+        );
+        assert!(map.cursors["sessA"].background_hidden);
+    }
+
+    #[test]
+    fn hidden_cursor_is_not_externally_visible() {
+        // A background-suppressed cursor must not count as visible for
+        // lifecycle inspection or overlay raising, even while on-screen.
+        let mut map = empty_map();
+        seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
+        assert!(cursor_is_externally_visible(&map.cursors["sessA"]));
+        map.cursors.get_mut("sessA").unwrap().background_hidden = true;
+        assert!(!cursor_is_externally_visible(&map.cursors["sessA"]));
     }
 }

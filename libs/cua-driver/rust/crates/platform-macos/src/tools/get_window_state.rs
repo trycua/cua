@@ -1282,6 +1282,16 @@ fn element_entry(node: &crate::ax::tree::AXNode, snapshot_id: Option<u32>) -> se
     if !node.actions.is_empty() {
         entry["actions"] = serde_json::json!(node.actions);
     }
+    if !node.custom_actions.is_empty() {
+        entry["custom_actions"] = serde_json::json!(node
+            .custom_actions
+            .iter()
+            .map(|action| serde_json::json!({
+                "name": action.name,
+                "raw": action.raw,
+            }))
+            .collect::<Vec<_>>());
+    }
     if node.in_web_content {
         entry["in_web_content"] = serde_json::Value::Bool(true);
     }
@@ -1772,6 +1782,7 @@ mod tests {
             identifier: None,
             help: None,
             actions,
+            custom_actions: vec![],
             element_ptr: 0,
             depth,
             parent_element_index: parent,
@@ -1784,6 +1795,26 @@ mod tests {
             selected: None,
             in_web_content: false,
         }
+    }
+
+    #[test]
+    fn a_custom_action_is_published_with_the_string_that_performs_it() {
+        let mut cell = node(Some(0), "AXCell", None, 2, None, None, vec![]);
+        cell.actions = vec!["AXShowMenu".into()];
+        cell.custom_actions = crate::ax::actions::split(vec![
+            "Name:Pin List\nTarget:0x0\nSelector:(null)".into(),
+            "Name:Pin List\nTarget:0x0\nSelector:(null)".into(),
+        ])
+        .custom;
+        let entry = &build_elements_array_with_token(&[cell], None)[0];
+        assert_eq!(entry["actions"], serde_json::json!(["AXShowMenu"]));
+        assert_eq!(
+            entry["custom_actions"],
+            serde_json::json!([{
+                "name": "Pin List",
+                "raw": "Name:Pin List\nTarget:0x0\nSelector:(null)",
+            }])
+        );
     }
 
     #[test]

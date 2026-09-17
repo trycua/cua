@@ -2033,6 +2033,7 @@ mod tests {
             identifier: None,
             help: None,
             actions: actions.iter().map(|value| (*value).to_owned()).collect(),
+            custom_actions: vec![],
             element_ptr: 7,
             depth: 0,
             parent_element_index: None,

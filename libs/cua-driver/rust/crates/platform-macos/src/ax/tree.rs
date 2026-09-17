@@ -72,6 +72,7 @@ pub struct AXNode {
     pub identifier: Option<String>,
     pub help: Option<String>,
     pub actions: Vec<String>,
+    pub custom_actions: Vec<super::actions::CustomAction>,
     /// The raw AXUIElementRef pointer value, for caching.
     pub element_ptr: usize,
     /// Depth in the rendered markdown tree (matches the indent level used in
@@ -552,11 +553,30 @@ unsafe fn walk_element(
         return;
     }
 
-    // Skip pure layout containers that have no interesting content.
-    if role == "AXScrollArea" || role == "AXGroup" {
-        // Still recurse — children may be interesting. Layout containers
-        // collapse, so children inherit the parent's depth AND the same
-        // parent_index (no actionable node was emitted here).
+    // Keep AXTitle and AXDescription SEPARATE so that the tree format matches
+    // the Swift reference: title → "title", description → (description).
+    // This is critical for Calculator where AXTitle="" but AXDescription="2"
+    // (digit buttons). Merging them would produce "2" (quoted) instead of (2)
+    // (parens), breaking _find_calc_button which searches for "(2)".
+    let title = attrs.string(NodeAttr::Title);
+    // Read AXValue once with enough type information to preserve the existing
+    // string-only markdown while also exposing numeric/boolean control state.
+    let copied_value = attrs.stringish(NodeAttr::Value);
+    let value = copied_value
+        .as_ref()
+        .and_then(|copied| copied.string_value.clone());
+    let value = value.filter(|v| !v.trim().is_empty());
+    let description = attrs.string(NodeAttr::Description);
+    let identifier = attrs.string(NodeAttr::Identifier);
+    let help = attrs
+        .string(NodeAttr::Help)
+        .filter(|h| !h.trim().is_empty());
+    if (role == "AXScrollArea" || role == "AXGroup")
+        && title.as_deref().is_none_or(|s| s.trim().is_empty())
+        && description.as_deref().is_none_or(|s| s.trim().is_empty())
+        && value.is_none()
+        && help.is_none()
+    {
         let children = attrs.children();
         drop(attrs);
         for child in children {
@@ -577,26 +597,7 @@ unsafe fn walk_element(
         }
         return;
     }
-
-    // Keep AXTitle and AXDescription SEPARATE so that the tree format matches
-    // the Swift reference: title → "title", description → (description).
-    // This is critical for Calculator where AXTitle="" but AXDescription="2"
-    // (digit buttons). Merging them would produce "2" (quoted) instead of (2)
-    // (parens), breaking _find_calc_button which searches for "(2)".
-    let title = attrs.string(NodeAttr::Title);
-    // Read AXValue once with enough type information to preserve the existing
-    // string-only markdown while also exposing numeric/boolean control state.
-    let copied_value = attrs.stringish(NodeAttr::Value);
-    let value = copied_value
-        .as_ref()
-        .and_then(|copied| copied.string_value.clone());
-    let value = value.filter(|v| !v.trim().is_empty());
-    let description = attrs.string(NodeAttr::Description);
-    let identifier = attrs.string(NodeAttr::Identifier);
-    let help = attrs
-        .string(NodeAttr::Help)
-        .filter(|h| !h.trim().is_empty());
-    let actions = copy_action_names(element);
+    let advertised = super::actions::split(copy_action_names(element));
 
     // Some native controls expose no AX action names but do expose a writable
     // AXValue. Finder's transient inline-rename field is the important case:
@@ -604,7 +605,7 @@ unsafe fn walk_element(
     // field but unable to call set_value on it. Probe writability only for the
     // small family of value controls so arbitrary display nodes do not pay an
     // extra AX round trip.
-    let value_settable = actions.is_empty()
+    let value_settable = advertised.is_empty()
         && role_supports_value_addressing(&role)
         && is_attribute_settable(element, "AXValue");
     // A disabled control is still indexed and published with `enabled: false`:
@@ -613,12 +614,12 @@ unsafe fn walk_element(
     // click, right_click, double_click, set_value and type_text re-read
     // AXEnabled before dispatch and refuse a disabled token target with
     // `element_disabled` (`tools::refuse_if_disabled`).
-    let enabled = if !actions.is_empty() || value_settable {
+    let enabled = if !advertised.is_empty() || value_settable {
         attrs.bool(NodeAttr::Enabled)
     } else {
         None
     };
-    let is_actionable = is_addressable(!actions.is_empty(), value_settable);
+    let is_actionable = is_addressable(!advertised.is_empty(), value_settable);
     let identity = read_identity_attrs(is_actionable, value.is_none(), |attr| attrs.string(attr));
     let value = value.or_else(|| identity.placeholder.clone());
 
@@ -699,7 +700,8 @@ unsafe fn walk_element(
             subrole: identity.subrole,
             identifier: identifier.clone(),
             help: help.clone(),
-            actions: actions.clone(),
+            actions: advertised.standard,
+            custom_actions: advertised.custom,
             element_ptr,
             depth,
             parent_element_index: parent_index,
@@ -736,6 +738,7 @@ unsafe fn walk_element(
             identifier: identifier.clone(),
             help: help.clone(),
             actions: vec![],
+            custom_actions: vec![],
             element_ptr,
             depth,
             parent_element_index: parent_index,
@@ -870,6 +873,15 @@ fn format_node_line(node: &AXNode) -> String {
             .collect();
         if !shown.is_empty() {
             attrs.push(format!("actions=[{}]", shown.join(",")));
+        }
+        if !node.custom_actions.is_empty() {
+            let action_str = node
+                .custom_actions
+                .iter()
+                .map(|action| serde_json::json!(action.name).to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            attrs.push(format!("custom_actions=[{}]", action_str));
         }
         if !attrs.is_empty() {
             parts.push_str(" [");
@@ -1040,6 +1052,7 @@ mod tests {
             identifier: None,
             help: None,
             actions: vec!["AXPress".into()],
+            custom_actions: vec![],
             element_ptr: 0,
             depth: 2,
             parent_element_index: None,
@@ -1056,6 +1069,46 @@ mod tests {
             format_node_line(&node),
             "- [7] AXCheckBox \"Reset\" [enabled=false actions=[press]]"
         );
+    }
+
+    #[test]
+    fn a_custom_action_name_cannot_add_tree_rows() {
+        let node = AXNode {
+            element_index: Some(4),
+            role: "AXCell".into(),
+            title: None,
+            value: None,
+            description: None,
+            placeholder: None,
+            subrole: None,
+            identifier: None,
+            help: None,
+            actions: vec!["AXPress".into()],
+            custom_actions: crate::ax::actions::split(vec![
+                "Name:Pin List\nTarget:0x0\nSelector:(null)".into(),
+                "Name:Move Down\nTarget:0x0\nSelector:(null)".into(),
+            ])
+            .custom,
+            element_ptr: 0,
+            depth: 0,
+            parent_element_index: None,
+            frame: None,
+            value_state: None,
+            value_description: None,
+            min_value: None,
+            max_value: None,
+            enabled: Some(true),
+            selected: None,
+            in_web_content: false,
+        };
+        let rendered = format_node_line(&node);
+        assert_eq!(rendered.lines().count(), 1, "{rendered}");
+        assert!(rendered.contains("actions=[press]"), "{rendered}");
+        assert!(
+            rendered.contains("custom_actions=[\"Pin List\",\"Move Down\"]"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("Selector"), "{rendered}");
     }
 
     #[test]

@@ -367,11 +367,7 @@ impl Tool for GetWindowStateTool {
         // The portable `max_image_dimension` is an explicit per-call override,
         // including 0 for native resolution. Without it, preserve the existing
         // configured ceiling and legacy `max_dimension` tighter-cap behavior.
-        let max_dim = resolve_max_dimension(
-            effective_max_dim,
-            max_dimension,
-            max_image_dimension,
-        );
+        let max_dim = resolve_max_dimension(effective_max_dim, max_dimension, max_image_dimension);
         // Returns the exact delivered PNG bytes, optional file path, delivered
         // and native dimensions, the WindowServer bounds it was validated
         // against, and the raw capture's backing scale.

@@ -1,0 +1,170 @@
+name: "CI: jev-use"
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua-driver/examples/jev-use/**"
+      - "libs/cua-driver/docs/jev-use-validation.md"
+      - "docs/content/docs/how-to-guides/driver/jev-use.mdx"
+      - "docs/content/docs/how-to-guides/driver/meta.json"
+      - "skills/jev-use/**"
+      - ".github/workflows/ci-jev-use.yml"
+      - ".github/workflows/authorized-live-jev-use.yml"
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua-driver/examples/jev-use/**"
+      - "libs/cua-driver/docs/jev-use-validation.md"
+      - "docs/content/docs/how-to-guides/driver/jev-use.mdx"
+      - "docs/content/docs/how-to-guides/driver/meta.json"
+      - "skills/jev-use/**"
+      - ".github/workflows/ci-jev-use.yml"
+      - ".github/workflows/authorized-live-jev-use.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-jev-use-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: libs/cua-driver/examples/jev-use
+
+jobs:
+  unit-python:
+    name: Python unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.15"
+          enable-cache: true
+          cache-dependency-glob: libs/cua-driver/examples/jev-use/uv.lock
+      - name: Install locked Python dependencies
+        run: uv sync --frozen
+      - name: Run Python unit tests without credentials
+        env:
+          TYPESAFE_API_KEY: ""
+        run: uv run python -m unittest discover -s python/tests -v
+
+  unit-typescript:
+    name: TypeScript unit and typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: libs/cua-driver/examples/jev-use/package-lock.json
+      - name: Install locked TypeScript dependencies
+        run: npm ci --ignore-scripts
+      - name: Run TypeScript unit tests
+        env:
+          TYPESAFE_API_KEY: ""
+        run: npm test
+      - name: Typecheck
+        run: npm run typecheck
+
+  mock-e2e-linux:
+    name: Linux mock E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CUA_DRIVER_BIN: ${{ github.workspace }}/libs/cua-driver/rust/target/release/cua-driver
+      CUA_DRIVER_PERMISSION_MODE: unrestricted
+      CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS: "1"
+      CUA_E2E_BROWSER_NO_SANDBOX: "1"
+      TYPESAFE_API_KEY: ""
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.15"
+          enable-cache: true
+          cache-dependency-glob: libs/cua-driver/examples/jev-use/uv.lock
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: libs/cua-driver/examples/jev-use/package-lock.json
+      - name: Install Linux desktop dependencies
+        working-directory: ${{ github.workspace }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb dbus-x11 at-spi2-core openbox picom clang pkg-config \
+            libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev libei-dev \
+            libx11-dev libxi-dev libxtst-dev libxext-dev libssl-dev \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
+          google-chrome --version
+          chrome_payload="$(readlink -f "$(command -v google-chrome)")"
+          test "$chrome_payload" = /opt/google/chrome/google-chrome
+          sudo chown root:root /opt /opt/google /opt/google/chrome "$chrome_payload"
+          sudo chmod go-w /opt /opt/google /opt/google/chrome "$chrome_payload"
+      - name: Build the exact candidate Driver
+        working-directory: ${{ github.workspace }}
+        run: cargo build --locked --release -p cua-driver --features portal-input --manifest-path libs/cua-driver/rust/Cargo.toml
+      - name: Install locked example dependencies
+        run: |
+          uv sync --frozen
+          npm ci --ignore-scripts
+      - name: Record candidate and verify advertised tools
+        working-directory: ${{ github.workspace }}
+        run: |
+          echo "Candidate SHA: $(git rev-parse HEAD)"
+          "$CUA_DRIVER_BIN" --version
+          tools="$($CUA_DRIVER_BIN list-tools)"
+          for name in browser_prepare list_windows get_browser_state browser_navigate browser_type browser_click; do
+            grep -Fq "$name" <<< "$tools"
+          done
+      - name: Run both mock agents through MCP on X11
+        working-directory: ${{ github.workspace }}
+        run: |
+          proof="$RUNNER_TEMP/jev-use-mock-proof"
+          xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+            dbus-run-session -- bash -lc \
+            'openbox >/tmp/jev-use-openbox.log 2>&1 & picom --backend xrender --config /dev/null >/tmp/jev-use-picom.log 2>&1 & sleep 2; cd libs/cua-driver/examples/jev-use; uv run python verify_mcp_tools.py; uv run --frozen python verify_setup.py --typescript --output-dir "'$proof'"'
+      - name: Audit redacted E2E evidence
+        run: |
+          uv run python - "$RUNNER_TEMP/jev-use-mock-proof" <<'PY'
+          import json, pathlib, sys
+          root = pathlib.Path(sys.argv[1])
+          summary = json.loads((root / "summary.json").read_text())
+          assert summary["complete"] is True
+          assert summary["live_requested"] is False
+          assert summary["typescript_requested"] is True
+          assert len(summary["checks"]) == 2
+          assert {(item["language"], item["provider"], item["outcome"]) for item in summary["checks"]} == {
+              ("python", "mock", "verified"), ("typescript", "mock", "verified")
+          }
+          assert all(item["observed"] == {"submitted": "jev-guide-mock"} for item in summary["checks"])
+          forbidden = ("typesafe_api_key", "authorization", "environment", "image_base64", "screenshot")
+          for path in root.iterdir():
+              if path.name == "summary.json" or path.suffix == ".jsonl":
+                  text = path.read_text().lower()
+                  assert not any(value in text for value in forbidden), path
+          PY
+      - name: Upload redacted action evidence
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: jev-use-linux-mock
+          path: |
+            ${{ runner.temp }}/jev-use-mock-proof/summary.json
+            ${{ runner.temp }}/jev-use-mock-proof/*.jsonl
+          if-no-files-found: error
+          retention-days: 14

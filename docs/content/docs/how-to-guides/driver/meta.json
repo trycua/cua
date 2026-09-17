@@ -6,7 +6,7 @@
     "verify-a-desktop-action",
     "use-claude-agent-sdk",
     "use-codex-sdk",
-    "use-typesafe-jev",
+    "jev-use",
     "expose-mcp-from-desktop-app",
     "install-agent-skill",
     "run-in-macos-lume-vm",

@@ -167,7 +167,7 @@ async function run(args: Arguments): Promise<Outcome> {
     command: process.env.CUA_DRIVER_BIN ?? 'cua-driver',
     args: ['mcp'],
   });
-  const client = new Client({ name: 'cua-driver-typesafe-jev-example', version: '0.1.0' });
+  const client = new Client({ name: 'cua-driver-jev-use-example', version: '0.1.0' });
   const history: Record<string, unknown>[] = [];
   if (args.log) await writeFile(args.log, '', 'utf8');
   await resetFixture(args.fixtureUrl);

@@ -31,6 +31,19 @@ test('unknown or stale choices fail closed', () => {
   assert.throws(() => validateChoice('stale-action', buildCandidates(snapshot(), 'expected')));
 });
 
+test('selected id resolves to the original immutable candidate arguments', () => {
+  const candidates = buildCandidates(snapshot(), 'expected');
+  const selected = validateChoice('type-verification-value', candidates);
+  assert.equal(selected, candidates[0]);
+  assert.deepEqual(selected.arguments, {
+    target_id: 'target',
+    tab_id: 'tab',
+    ref: 'p1:0',
+    text: 'expected',
+    replace: true,
+  });
+});
+
 test('only the external oracle can verify completion', () => {
   assert.equal(classify('expected', 'expected', 1, 4), 'verified');
   assert.equal(classify('wrong', 'expected', 1, 4), 'refuted');

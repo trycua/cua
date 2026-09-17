@@ -1,13 +1,13 @@
 ---
-title: 'Use TypeSafe Jev with Cua Driver'
-description: 'Build an agent that uses Jev to choose actions and Cua Driver to fill and submit a browser form.'
+title: 'Use jev-use with Cua Driver'
+description: 'Try the jev-use public preview: TypeSafe Jev chooses bounded actions and Cua Driver fills and submits a browser form.'
 ---
 
 import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
 
-[Jev](https://typesafe.ai/) is a model that chooses between options supplied by
-your application. In this example, Jev chooses the next action and Cua Driver
-performs it in the browser.
+`jev-use` is a public-preview recipe for bounded computer use. In this example,
+[TypeSafe Jev](https://typesafe.ai/) chooses between action IDs supplied by the
+application, and Cua Driver performs the selected action in the browser.
 
 You'll run a Python agent that enters a sample value into a local form and
 clicks **Submit**. The example opens a separate browser profile, checks that the
@@ -28,6 +28,8 @@ to use Jev. You can run the connection check without a key.
 After installation, open a new terminal on the computer Cua Driver controls.
 Use your platform's setup below, then follow the shared steps in that terminal.
 Commands outside the platform tabs work in both POSIX shells and PowerShell.
+The current runnable preview uses browser DOM evidence. Screenshot perception
+is planned follow-up work and is not part of this guide.
 
 ## 1. Check Cua Driver
 
@@ -92,16 +94,16 @@ For native Wayland, follow the
 
 ## 2. Download the example
 
-These commands use a tested revision of the example so its dependencies and
-commands match this guide. Start in a directory where `cua-jev` does not
+These commands use the open public-preview branch so its dependencies and
+commands match this guide. Start in a directory where `cua-jev-use` does not
 already exist:
 
 ```bash
-git clone --depth 1 https://github.com/trycua/cua.git cua-jev
-cd cua-jev
-git fetch --depth 1 origin b0e4b6feb0064cedc4dcf04d70a0d270d0568b99
-git switch --detach FETCH_HEAD
-cd libs/cua-driver/examples/typesafe-jev
+git clone --depth 1 https://github.com/trycua/cua.git cua-jev-use
+cd cua-jev-use
+git fetch --depth 1 origin feat/cua-driver-typesafe-jev-demo
+git switch --detach origin/feat/cua-driver-typesafe-jev-demo
+cd libs/cua-driver/examples/jev-use
 uv sync --frozen --python 3.12
 ```
 

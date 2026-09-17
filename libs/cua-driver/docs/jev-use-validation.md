@@ -1,4 +1,4 @@
-# Jev setup guide: scope and verification
+# jev-use setup guide: scope and verification
 
 ## Decision and ownership
 
@@ -6,7 +6,7 @@ Refs #3915; extend the existing draft PR #3916 and its canonical branch. The mai
 
 ## Initial technical scope
 
-Expand `docs/content/docs/how-to-guides/driver/use-typesafe-jev.mdx` rather than create another integration. The primary supported walkthrough is macOS with the existing Python example; TypeScript is an optional second route. Use the checked-in SDK dependency locks and existing fixture/runner. No changes to the Driver, permissions contract, installers, or model API are planned. Rehearsal failures later justified a small managed verification entry point beside the existing fixture; it does not change either agent's decisions or actions. Link the example README back to the complete setup guide.
+The public guide now lives at `docs/content/docs/how-to-guides/driver/jev-use.mdx` and the example at `libs/cua-driver/examples/jev-use/`. Earlier entries below retain the historical paths and commit pins used when the work was still presented as `typesafe-jev`. The primary supported walkthrough is macOS with the existing Python example; TypeScript is an optional second route. Use the checked-in SDK dependency locks and existing fixture/runner. No changes to the Driver, permissions contract, installers, or model API are planned. Rehearsal failures later justified a small managed verification entry point beside the existing fixture; it does not change either agent's decisions or actions. Link the example README back to the complete setup guide.
 
 The guide must explain the agent/driver boundary, host versus controller machine, human approvals, installation and PATH, Python provisioning, signed browser prerequisite, source checkout before the PR merges, credential handling without shell-history exposure, persistent MCP ownership, fixture readiness, mock versus live proofs, independent readback, failure handling, sequential execution, and cleanup. No dependency on private experiment files, remembered PIDs, old sessions, or conversation context is allowed.
 

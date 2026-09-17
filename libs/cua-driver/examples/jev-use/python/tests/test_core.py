@@ -37,6 +37,15 @@ class CoreTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_choice("stale-action", build_candidates(self.snapshot(), "expected"))
 
+    def test_choice_resolves_to_original_candidate_arguments(self) -> None:
+        candidates = build_candidates(self.snapshot(), "expected")
+        selected = validate_choice("type-verification-value", candidates)
+        self.assertIs(selected, candidates[0])
+        self.assertEqual(
+            selected.arguments,
+            {"target_id": "target", "tab_id": "tab", "ref": "p1:0", "text": "expected", "replace": True},
+        )
+
     def test_outcome_requires_oracle_match(self) -> None:
         self.assertEqual(classify("expected", "expected", steps=1, max_steps=4), "verified")
         self.assertEqual(classify("wrong", "expected", steps=1, max_steps=4), "refuted")

@@ -64,6 +64,7 @@ def main() -> None:
     parser.add_argument('--live', action='store_true', help='also verify live Jev; requires a TypeSafe key')
     parser.add_argument('--typescript', action='store_true', help='also verify the installed TypeScript agent')
     parser.add_argument('--port', type=int, default=0, help='fixture port; defaults to an unused loopback port')
+    parser.add_argument('--max-steps', type=int, default=4, help='maximum decisions per runner')
     parser.add_argument('--output-dir', type=Path, required=True, help='new directory for evidence; existing paths are refused')
     args = parser.parse_args()
     if args.live:
@@ -80,7 +81,7 @@ def main() -> None:
                     token = f'jev-guide-{provider}'
                     log = output / f'{language}-{provider}.jsonl'
                     command = runner_command(language, provider)
-                    command += ['--fixture-url', url, '--token', token, '--max-steps', '4', '--log', str(log)]
+                    command += ['--fixture-url', url, '--token', token, '--max-steps', str(args.max_steps), '--log', str(log)]
                     result = {'language': language, 'provider': provider, **verify(command, url, token, log)}
                     summary['checks'].append(result)
                     print(json.dumps({'event': 'independently_verified', **result}), flush=True)

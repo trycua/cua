@@ -1,14 +1,19 @@
-# TypeSafe Jev with Cua Driver
+# jev-use with Cua Driver and TypeSafe Jev
 
-This standalone example uses TypeSafe Jev to choose the next browser action
+`jev-use` is a public-preview recipe that uses TypeSafe Jev to choose the next browser action
 while Cua Driver observes the page, performs that action, and verifies the
 result. Equivalent Python and TypeScript programs run the same bounded loop.
+
+The current runnable path uses fresh browser DOM evidence. Frozen
+`cua.visual_regions_v1` fixtures exercise an application-owned adapter for a
+future optional perception path; they do not run a model or prove real visual
+perception.
 
 You can run the complete deterministic proof without credentials or network
 access to Jev. If you have a TypeSafe API key, you can separately verify the
 same loop against the live Jev service.
 
-Follow the [setup guide](../../../../docs/content/docs/how-to-guides/driver/use-typesafe-jev.mdx)
+Follow the [setup guide](../../../../docs/content/docs/how-to-guides/driver/jev-use.mdx)
 for installation and your first run. The sections below cover the implementation,
 standalone runners, and development checks.
 
@@ -60,7 +65,7 @@ session accessible to the same user as Driver; native Wayland has separate
 compositor-specific requirements.
 
 Development validation evidence and environment details are recorded in the
-[validation report](../../docs/jev-guide-validation.md).
+[validation report](../../docs/jev-use-validation.md).
 
 ## Verify setup in one agent command
 
@@ -164,7 +169,7 @@ cap. `decision_ms` includes the browser snapshot as well as the provider call.
 Logs contain choices and timings, not a complete request, token-usage, or billing
 audit. The fixture tests integration rather than general agent capability.
 
-## MCP, CLI, and OCR boundaries
+## MCP, CLI, and perception boundaries
 
 The Python and TypeScript programs are the two complete agent loops. They use a
 persistent MCP transport and repeat one explicit session label because browser
@@ -173,12 +178,13 @@ installation and diagnostics,
 for example `cua-driver doctor` and `cua-driver status`, rather than maintaining
 a third copy of the loop.
 
-This fixture exposes semantic browser refs, so OCR would add weight without
-improving the proof. For canvas, streamed desktop, or other non-semantic
-surfaces, an optional OmniParser worker can enrich the observation before
-candidate construction. Keep that worker out of the base install, persist it
-across steps, pin its model/code versions and licenses, and still let Cua
-Driver own targeting, freshness, execution, and postcondition verification.
+This fixture exposes semantic browser refs, so the runnable example does not
+need screenshot perception. The checked-in `visual_regions_v1` cases are
+recorded metadata only: both language adapters validate freshness, bounds,
+confidence, overlap, and agreement before constructing a bounded visual click.
+They make no network call, import no perception implementation, and never
+claim inference quality. A live visual path remains follow-up work after the
+generic Driver perception contract ships.
 
 ## Run the checks
 

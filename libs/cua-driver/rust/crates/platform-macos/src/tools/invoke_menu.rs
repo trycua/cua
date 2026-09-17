@@ -617,10 +617,30 @@ fn listed(resolved_path: Vec<String>, items: Vec<MenuItem>) -> ToolResult {
         items.len()
     ))
     .with_structured(serde_json::json!({
-        "status": "listed",
+        "status": cua_driver_contract::LISTING_STATUS,
         "resolved_path": resolved_path,
         "items": items,
     }))
+}
+
+fn invoked() -> ToolResult {
+    ToolResult::text(
+        "Resolved the live native menu path and dispatched its final accessibility action; verify the command's semantic effect from fresh state.",
+    )
+    .with_action_record(
+        ActionExecutionRecord::builder(
+            ActionEffect::Unverifiable,
+            ActionTransport::MacosAxAction,
+            RequestedDelivery::Foreground,
+        )
+        .actual_delivery(ActualDelivery::Foreground)
+        .evidence(ActionEvidence {
+            kind: EvidenceKind::NativeApiResult,
+            detail: "Every menu hop resolved uniquely and AX accepted the final action".into(),
+        })
+        .build()
+        .expect("invoke_menu record is valid"),
+    )
 }
 
 #[async_trait]
@@ -688,23 +708,7 @@ impl Tool for InvokeMenuTool {
         .await;
 
         match outcome {
-            Ok(Ok(MenuOutcome::Invoked)) => ToolResult::text(
-                "Resolved the live native menu path and dispatched its final accessibility action; verify the command's semantic effect from fresh state.",
-            )
-            .with_action_record(
-                ActionExecutionRecord::builder(
-                    ActionEffect::Unverifiable,
-                    ActionTransport::MacosAxAction,
-                    RequestedDelivery::Foreground,
-                )
-                .actual_delivery(ActualDelivery::Foreground)
-                .evidence(ActionEvidence {
-                    kind: EvidenceKind::NativeApiResult,
-                    detail: "Every menu hop resolved uniquely and AX accepted the final action".into(),
-                })
-                .build()
-                .expect("invoke_menu record is valid"),
-            ),
+            Ok(Ok(MenuOutcome::Invoked)) => invoked(),
             Ok(Ok(MenuOutcome::Listed(items))) => listed(resolved_path, items),
             Ok(Err(refused)) => refusal(refused),
             Err(error) => refusal(MenuRefusal::plain(format!(
@@ -811,6 +815,47 @@ mod tests {
         assert_eq!(structured["items"][1]["has_submenu"], true);
         assert!(structured["items"][1].get("enabled").is_none());
         assert!(structured["items"][1].get("shortcut").is_none());
+    }
+
+    #[test]
+    fn a_listed_submenu_is_a_non_action_outcome_the_runtime_accepts() {
+        let structured = listed(
+            vec!["Card".into(), "Add Field".into()],
+            vec![MenuItem {
+                title: "Phone".into(),
+                enabled: Some(true),
+                has_submenu: false,
+                shortcut: None,
+            }],
+        )
+        .structured_content
+        .expect("structured content");
+        assert!(cua_driver_contract::is_action_listing_output(
+            "invoke_menu",
+            &structured
+        ));
+        assert_eq!(
+            cua_driver_contract::validate_success_output("invoke_menu", structured),
+            Ok(false)
+        );
+    }
+
+    #[test]
+    fn a_pressed_menu_item_still_carries_its_execution_record() {
+        let pressed = invoked();
+        assert_eq!(pressed.is_error, None);
+        assert!(pressed.structured_content.is_none());
+        let public = serde_json::to_value(
+            pressed
+                .action_record
+                .expect("execution record")
+                .public_result()
+                .expect("public projection"),
+        )
+        .expect("projection serializes");
+        assert_eq!(public["effect"], "unverifiable");
+        assert_eq!(public["route"], "accessibility");
+        assert_eq!(public["delivery"]["mode"], "foreground");
     }
 
     #[test]

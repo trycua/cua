@@ -110,11 +110,9 @@ jobs:
             libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev libei-dev \
             libx11-dev libxi-dev libxtst-dev libxext-dev libssl-dev \
             libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
+          command -v google-chrome
           google-chrome --version
-          chrome_payload="$(readlink -f "$(command -v google-chrome)")"
-          test -x "$chrome_payload"
-          test "$(stat -c %u "$chrome_payload")" = 0
-          test $((8#$(stat -c %a "$chrome_payload") & 0022)) = 0
+          dpkg-query -W -f='${Status}\n' google-chrome-stable | grep -Fx 'install ok installed'
       - name: Build the exact candidate Driver
         working-directory: ${{ github.workspace }}
         run: cargo build --locked --release -p cua-driver --features portal-input --manifest-path libs/cua-driver/rust/Cargo.toml

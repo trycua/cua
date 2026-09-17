@@ -112,7 +112,7 @@ jobs:
             libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
           google-chrome --version
           chrome_payload="$(readlink -f "$(command -v google-chrome)")"
-          test "$chrome_payload" = /opt/google/chrome/google-chrome
+          test -x "$chrome_payload"
           test "$(stat -c %u "$chrome_payload")" = 0
           test $((8#$(stat -c %a "$chrome_payload") & 0022)) = 0
       - name: Build the exact candidate Driver

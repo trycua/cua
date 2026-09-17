@@ -21,6 +21,7 @@ mod inputs;
 mod outputs;
 mod session;
 mod verification;
+mod visual;
 mod windows;
 pub use windows::*;
 
@@ -54,6 +55,13 @@ pub use verification::{
     BoundsExpectation, ElementPredicate, ElementSelector, PredicateOutcome, StatePredicate,
     UnknownReason, VerificationStatus, VerifyStateInput, VerifyStateOutput, WindowPredicate,
     VERIFY_STATE_DEFAULT_TIMEOUT_MS,
+};
+pub use visual::{
+    ParseVisualRegionsInput, ParseVisualRegionsOptions, ParseVisualRegionsOutput,
+    VisualActionCoordinateSpace, VisualCaptureProvenance, VisualCaptureSource,
+    VisualContractValidationError, VisualParseError, VisualParseErrorCode, VisualParseTiming,
+    VisualParseWarning, VisualParserMetadata, VisualRegion, VisualRegionBounds, VisualRegionKind,
+    VisualScreenshotReference, VISUAL_REGIONS_SCHEMA,
 };
 
 /// Shape version for the MCP `tools/list` result emitted by cua-driver.

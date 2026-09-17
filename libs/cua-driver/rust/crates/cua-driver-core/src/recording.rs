@@ -1783,19 +1783,16 @@ mod tests {
         setup_test_marker();
         set_element_bounds_fn(|pid, args, capture_point| {
             use crate::tool_args::ArgsExt;
-            let cache = crate::element_cache::current_runtime_cache::<
-                crate::snapshot_test_support::Payload,
-            >()?;
-            let target = cache
-                .resolve_element_args(
-                    pid as i32,
-                    args.opt_u64("element_index").map(|index| index as usize),
-                    args.get("element_token").and_then(Value::as_str),
-                    args.get("snapshot_id").and_then(Value::as_str),
-                    args.opt_u64("window_id"),
-                    "recording",
-                )
-                .ok()?;
+            let target = crate::element_token::resolve_element_args(
+                pid as i32,
+                args.opt_u64("element_index").map(|index| index as usize),
+                args.get("element_token").and_then(Value::as_str),
+                args.get("snapshot_id").and_then(Value::as_str),
+                args.opt_u64("window_id"),
+                "recording",
+                |window_id, target| Ok((window_id != 88).then_some(target.element_index)),
+            )
+            .ok()?;
             let (index, window, _) = target.into_parts(None);
             let window = window?;
             Some((
@@ -1803,8 +1800,6 @@ mod tests {
                 capture_point.then_some((window as f64 + index? as f64, pid as f64)),
             ))
         });
-        let cache = crate::snapshot_test_support::cache();
-
         let output_dir = std::env::temp_dir().join(format!(
             "cua-recording-turn-evidence-{}-{}",
             std::process::id(),
@@ -1855,8 +1850,9 @@ mod tests {
         assert_eq!(action["action_truth"]["route"], "synthetic_events");
         assert_eq!(action["action_truth"]["requested_delivery"], "background");
 
-        let snapshot_id = cache.publish(1, 77, crate::snapshot_test_support::Payload(vec![0]));
-        let token = crate::element_token::token_for(snapshot_id, 0);
+        let snapshot_id = crate::element_token::mint_snapshot_handle(1, 77);
+        let token =
+            crate::element_token::token_for_identity(&snapshot_id, 0, b"button:Save").unwrap();
         let pending = session
             .begin_turn(
                 "click",
@@ -1874,9 +1870,9 @@ mod tests {
         assert_eq!(token_action["click_point"]["y"], 1.0);
         assert!(token_turn.join("click.png").exists());
 
-        let stale_snapshot = cache.publish(1, 88, crate::snapshot_test_support::Payload(vec![0]));
-        let stale_token = crate::element_token::token_for(stale_snapshot, 0);
-        let _newer_snapshot = cache.publish(1, 88, crate::snapshot_test_support::Payload(vec![0]));
+        let stale_snapshot = crate::element_token::mint_snapshot_handle(1, 88);
+        let stale_token =
+            crate::element_token::token_for_identity(&stale_snapshot, 0, b"button:Save").unwrap();
         let pending = session
             .begin_turn(
                 "click",

@@ -308,7 +308,7 @@ impl Tool for ReplayTrajectoryTool {
                   replay cleanly. Failures are reported but don't stop replay unless \
                   `stop_on_error` is true.\n\
                 - `get_window_state` and other read-only tools are NOT currently recorded, \
-                  so replays do not re-populate the per-(pid, window_id) element cache.\n\
+                  so replays do not re-populate the current accessibility snapshot.\n\
                 - If recording is ENABLED while replay runs, the replay itself is recorded \
                   into the currently configured output directory.  That's deliberate: \
                   recording a replay against a new build and diffing the two trajectories \

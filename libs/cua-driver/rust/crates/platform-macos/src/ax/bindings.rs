@@ -147,11 +147,7 @@ use core_foundation::{array::CFArray, base::TCFType, string::CFString as CFStr};
 ///
 /// `element` must be a valid, live `AXUIElementRef` for the duration of the call.
 pub unsafe fn is_attribute_settable(element: AXUIElementRef, attr_name: &str) -> bool {
-    let attr = CFStr::new(attr_name);
-    let mut settable = 0_u8;
-    AXUIElementIsAttributeSettable(element, attr.as_concrete_TypeRef(), &mut settable)
-        == kAXErrorSuccess
-        && settable != 0
+    is_attribute_settable_checked(element, attr_name).unwrap_or(false)
 }
 
 /// Copy a string attribute from an AX element. Returns `None` on any error.
@@ -160,19 +156,7 @@ pub unsafe fn is_attribute_settable(element: AXUIElementRef, attr_name: &str) ->
 ///
 /// `element` must be a valid, live `AXUIElementRef` for the duration of the call.
 pub unsafe fn copy_string_attr(element: AXUIElementRef, attr_name: &str) -> Option<String> {
-    let attr = CFStr::new(attr_name);
-    let mut value: CFTypeRef = std::ptr::null();
-    let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
-    if err != kAXErrorSuccess || value.is_null() {
-        return None;
-    }
-    let cf_string_type_id = CFStr::type_id();
-    if core_foundation::base::CFGetTypeID(value) != cf_string_type_id {
-        CFRelease(value);
-        return None;
-    }
-    let s = CFStr::wrap_under_create_rule(value as _);
-    Some(s.to_string())
+    copy_string_attr_checked(element, attr_name).ok().flatten()
 }
 
 /// Copy a numeric attribute from an AX element as an `f64`. Returns `None` on
@@ -209,25 +193,7 @@ pub unsafe fn copy_number_attr(element: AXUIElementRef, attr_name: &str) -> Opti
 /// `element` must be a valid Accessibility object reference for the duration
 /// of this call.
 pub unsafe fn copy_bool_attr(element: AXUIElementRef, attr_name: &str) -> Option<bool> {
-    use core_foundation::boolean::CFBoolean;
-    use core_foundation::number::CFNumber;
-    let attr = CFStr::new(attr_name);
-    let mut value: CFTypeRef = std::ptr::null();
-    let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
-    if err != kAXErrorSuccess || value.is_null() {
-        return None;
-    }
-    let type_id = core_foundation::base::CFGetTypeID(value);
-    if type_id == CFBoolean::type_id() {
-        let b = CFBoolean::wrap_under_create_rule(value as _);
-        return Some(b.into());
-    }
-    if type_id == CFNumber::type_id() {
-        let n = CFNumber::wrap_under_create_rule(value as _);
-        return n.to_f64().map(|f| f != 0.0);
-    }
-    CFRelease(value);
-    None
+    copy_bool_attr_checked(element, attr_name).ok().flatten()
 }
 
 unsafe fn coerce_binary_value(value: CFTypeRef) -> Option<bool> {
@@ -340,19 +306,7 @@ pub unsafe fn copy_stringish_attr(
 ///
 /// `element` must be a valid, live `AXUIElementRef` for the duration of the call.
 pub unsafe fn copy_action_names(element: AXUIElementRef) -> Vec<String> {
-    let mut names: CFArrayRef = std::ptr::null_mut();
-    let err = AXUIElementCopyActionNames(element, &mut names);
-    if err != kAXErrorSuccess || names.is_null() {
-        return vec![];
-    }
-    // Use CFArray<CFStr> (the typed wrapper) to satisfy FromVoid bound.
-    let arr = CFArray::<CFStr>::wrap_under_create_rule(names);
-    (0..arr.len())
-        .filter_map(|i| {
-            let cf = arr.get(i)?;
-            Some(cf.to_string())
-        })
-        .collect()
+    copy_action_names_checked(element).unwrap_or_default()
 }
 
 /// Read the on-screen center of an AX element (AXPosition + AXSize → center).
@@ -754,6 +708,27 @@ mod tests {
     use core_foundation::{boolean::CFBoolean, number::CFNumber};
 
     #[test]
+    fn best_effort_readers_preserve_defaults_when_checked_reads_fail() {
+        unsafe {
+            // A valid AX reference to a nonexistent process: no desktop or
+            // accessibility permission is required to exercise failed reads.
+            let element = AXUIElementCreateApplication(i32::MAX);
+            assert!(!element.is_null());
+            let _owner =
+                core_foundation::base::CFType::wrap_under_create_rule(element as CFTypeRef);
+
+            assert!(copy_string_attr_checked(element, "AXTitle").is_err());
+            assert_eq!(copy_string_attr(element, "AXTitle"), None);
+            assert!(copy_bool_attr_checked(element, "AXEnabled").is_err());
+            assert_eq!(copy_bool_attr(element, "AXEnabled"), None);
+            assert!(copy_action_names_checked(element).is_err());
+            assert!(copy_action_names(element).is_empty());
+            assert!(is_attribute_settable_checked(element, "AXValue").is_err());
+            assert!(!is_attribute_settable(element, "AXValue"));
+        }
+    }
+
+    #[test]
     fn binary_value_accepts_booleans_and_exact_zero_or_one() {
         let true_value = CFBoolean::true_value();
         let false_value = CFBoolean::false_value();
@@ -837,4 +812,128 @@ mod tests {
         assert_eq!(false_result.string_value, None);
         assert_eq!(false_result.state_value, "0");
     }
+}
+
+unsafe fn copy_attribute(
+    element: AXUIElementRef,
+    attr_name: &str,
+) -> Result<Option<CFTypeRef>, AXError> {
+    let attr = CFStr::new(attr_name);
+    let mut value: CFTypeRef = std::ptr::null();
+    let error = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
+    if matches!(error, kAXErrorAttributeUnsupported | kAXErrorNoValue) {
+        return Ok(None);
+    }
+    if error != kAXErrorSuccess || value.is_null() {
+        return Err(if error == kAXErrorSuccess {
+            kAXErrorFailure
+        } else {
+            error
+        });
+    }
+    Ok(Some(value))
+}
+
+pub unsafe fn copy_string_attr_checked(
+    element: AXUIElementRef,
+    attr_name: &str,
+) -> Result<Option<String>, AXError> {
+    let Some(value) = copy_attribute(element, attr_name)? else {
+        return Ok(None);
+    };
+    if core_foundation::base::CFGetTypeID(value) != CFStr::type_id() {
+        CFRelease(value);
+        return Ok(None);
+    }
+    Ok(Some(CFStr::wrap_under_create_rule(value as _).to_string()))
+}
+
+pub unsafe fn copy_bool_attr_checked(
+    element: AXUIElementRef,
+    attr_name: &str,
+) -> Result<Option<bool>, AXError> {
+    use core_foundation::{boolean::CFBoolean, number::CFNumber};
+    let Some(value) = copy_attribute(element, attr_name)? else {
+        return Ok(None);
+    };
+    let type_id = core_foundation::base::CFGetTypeID(value);
+    if type_id == CFBoolean::type_id() {
+        return Ok(Some(CFBoolean::wrap_under_create_rule(value as _).into()));
+    }
+    if type_id == CFNumber::type_id() {
+        return CFNumber::wrap_under_create_rule(value as _)
+            .to_f64()
+            .map(|number| Some(number != 0.0))
+            .ok_or(kAXErrorFailure);
+    }
+    CFRelease(value);
+    Err(kAXErrorFailure)
+}
+
+pub unsafe fn copy_action_names_checked(element: AXUIElementRef) -> Result<Vec<String>, AXError> {
+    let mut names: CFArrayRef = std::ptr::null_mut();
+    let error = AXUIElementCopyActionNames(element, &mut names);
+    if matches!(error, kAXErrorAttributeUnsupported | kAXErrorNoValue) {
+        return Ok(Vec::new());
+    }
+    if error != kAXErrorSuccess || names.is_null() {
+        return Err(if error == kAXErrorSuccess {
+            kAXErrorFailure
+        } else {
+            error
+        });
+    }
+    let array = CFArray::<CFStr>::wrap_under_create_rule(names);
+    (0..array.len())
+        .map(|i| {
+            array
+                .get(i)
+                .map(|name| name.to_string())
+                .ok_or(kAXErrorFailure)
+        })
+        .collect()
+}
+
+pub unsafe fn is_attribute_settable_checked(
+    element: AXUIElementRef,
+    attr_name: &str,
+) -> Result<bool, AXError> {
+    let attr = CFStr::new(attr_name);
+    let mut settable = 0_u8;
+    match AXUIElementIsAttributeSettable(element, attr.as_concrete_TypeRef(), &mut settable) {
+        kAXErrorSuccess => Ok(settable != 0),
+        kAXErrorAttributeUnsupported | kAXErrorNoValue => Ok(false),
+        error => Err(error),
+    }
+}
+
+pub unsafe fn copy_element_array(
+    element: AXUIElementRef,
+    attribute: &str,
+) -> Result<Vec<AXUIElementRef>, AXError> {
+    let Some(value) = copy_attribute(element, attribute)? else {
+        return Ok(Vec::new());
+    };
+    if core_foundation::base::CFGetTypeID(value) != CFArray::<CFTypeRef>::type_id() {
+        CFRelease(value);
+        return Err(kAXErrorFailure);
+    }
+    let array = CFArray::<CFTypeRef>::wrap_under_create_rule(value as _);
+    let children = (0..array.len())
+        .map(|i| array.get(i).map(|child| *child))
+        .collect::<Option<Vec<_>>>()
+        .ok_or(kAXErrorFailure)?;
+    if children
+        .iter()
+        .any(|&child| core_foundation::base::CFGetTypeID(child) != AXUIElementGetTypeID())
+    {
+        return Err(kAXErrorFailure);
+    }
+    Ok(children
+        .into_iter()
+        .map(|child| {
+            CFRetain(child);
+            child as AXUIElementRef
+        })
+        .collect())
 }

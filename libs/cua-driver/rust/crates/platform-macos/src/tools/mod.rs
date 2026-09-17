@@ -45,7 +45,7 @@ use cua_driver_core::{
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::{ax::cache::ElementCache, cursor::state::CursorRegistry};
+use crate::cursor::state::CursorRegistry;
 
 fn native_window_id(
     window_id: Option<u64>,
@@ -262,7 +262,7 @@ async fn decide_background_window_action(
         decide_background_input, BackgroundInputDecision, ExactWindowTarget,
     };
     let element_guard =
-        element_ptr.map(|ptr| unsafe { crate::ax::cache::RetainedElement::retain(ptr) });
+        element_ptr.map(|ptr| unsafe { crate::ax::element_resolver::RetainedElement::retain(ptr) });
     let facts = match tokio::task::spawn_blocking(move || {
         let element_ptr = element_guard.as_ref().map(|guard| guard.as_ptr());
         crate::ax::exact_target::gather_background_facts(pid, window_id, element_ptr)
@@ -524,7 +524,7 @@ impl ZoomRegistry {
 /// by this to recover original (native) window-local pixel coordinates.
 /// Mirrors Swift's `ImageResizeRegistry`.
 ///
-/// Keyed per window, matching the element cache and the element-token
+/// Keyed per window, matching the element resolver and the element-token
 /// registry. A pid-only key leaked the ratio recorded while snapshotting
 /// window A into pixel clicks aimed at window B of the same pid, sending them
 /// off-target (issue #2237).
@@ -745,7 +745,6 @@ impl Default for SessionConfigRegistry {
 
 /// Shared state passed to all tools.
 pub struct ToolState {
-    pub element_cache: Arc<ElementCache>,
     pub cursor_registry: Arc<CursorRegistry>,
     pub zoom_registry: Arc<ZoomRegistry>,
     pub resize_registry: Arc<ResizeRegistry>,
@@ -784,7 +783,6 @@ impl ToolState {
         host_bundle_id: Option<String>,
     ) -> Self {
         Self {
-            element_cache: Arc::new(ElementCache::new()),
             cursor_registry: Arc::new(CursorRegistry::new()),
             zoom_registry: Arc::new(ZoomRegistry::new()),
             resize_registry: Arc::new(ResizeRegistry::new()),
@@ -880,10 +878,6 @@ pub fn register_all(
             }
         });
     }
-    // Share the element cache with the recording-hook layer so it can
-    // resolve element_index → window-local screenshot coords for click.png.
-    crate::recording_hooks::set_element_cache(state.element_cache.clone());
-
     // Drop a disconnecting session's config overrides + owned cursor on
     // `session_end`. The daemon fans the session id out to this hook;
     // recording ownership is handled separately on the core RecordingSession.

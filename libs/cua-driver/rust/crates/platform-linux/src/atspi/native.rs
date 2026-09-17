@@ -564,7 +564,7 @@ async fn collect_visited<'a>(
 ) -> Result<Option<Vec<Visited<'a>>>> {
     collect_visited_bounded(conn, pid, 0, None, None)
         .await
-        .map(|walked| walked.map(|(visited, _)| visited))
+        .map(|walked| walked.map(|(visited, _, _)| visited))
 }
 
 /// Screen-space distance between an AT-SPI frame's extents and a native
@@ -722,7 +722,7 @@ async fn collect_visited_bounded<'a>(
     xid: u64,
     max_elements: Option<usize>,
     max_depth: Option<usize>,
-) -> Result<Option<(Vec<Visited<'a>>, Option<usize>)>> {
+) -> Result<Option<(Vec<Visited<'a>>, Option<usize>, bool)>> {
     let app = match app_for_pid(conn, pid).await? {
         Some(a) => a,
         None => return Ok(None),
@@ -736,12 +736,20 @@ async fn collect_visited_bounded<'a>(
     // chrome. `frame_ordinal` is the seed's position in `get_children()` order
     // and is likewise inherited, so every node carries the identity of the
     // top-level window it belongs to.
+    let mut complete = true;
     let seeds: Vec<RawObjectRef> = match call(app.get_children()).await {
         Some(Ok(children)) => children
             .into_iter()
-            .filter_map(|child| RawObjectRef::from_atspi(&child))
+            .filter_map(|child| {
+                let reference = RawObjectRef::from_atspi(&child);
+                complete &= reference.is_some();
+                reference
+            })
             .collect(),
-        _ => Vec::new(),
+        _ => {
+            complete = false;
+            Vec::new()
+        }
     };
 
     // Resolve which seed is the caller's window before walking, from the same
@@ -786,10 +794,12 @@ async fn collect_visited_bounded<'a>(
     while let Some((oref, depth, inherited_web_doc, frame_ordinal)) = stack.pop() {
         if budget == 0 {
             dlog!("node budget exhausted; truncating walk");
+            complete = false;
             break;
         }
         if std::time::Instant::now() >= deadline {
             dlog!("collect_visited time budget exhausted; returning partial walk");
+            complete = false;
             break;
         }
         budget -= 1;
@@ -816,6 +826,7 @@ async fn collect_visited_bounded<'a>(
             Some(Ok(a)) => a,
             Some(Err(error)) => {
                 dlog!("  accessible_for failed: {error:#}");
+                complete = false;
                 continue;
             }
             None => {
@@ -825,8 +836,10 @@ async fn collect_visited_bounded<'a>(
                         "{} consecutive AT-SPI timeouts (accessible_for); app unresponsive, bailing walk",
                         consecutive_timeouts
                     );
+                    complete = false;
                     break;
                 }
+                complete = false;
                 continue;
             }
         };
@@ -841,6 +854,7 @@ async fn collect_visited_bounded<'a>(
             // A completed-but-errored call is node-specific; keep walking.
             Some(Err(error)) => {
                 dlog!("  get_interfaces failed: {error:#}");
+                complete = false;
                 continue;
             }
             // A timeout means the app didn't answer in CALL_TIMEOUT. A run of
@@ -852,8 +866,10 @@ async fn collect_visited_bounded<'a>(
                         "{} consecutive AT-SPI timeouts; app unresponsive, bailing walk",
                         consecutive_timeouts
                     );
+                    complete = false;
                     break;
                 }
+                complete = false;
                 continue;
             }
         };
@@ -872,6 +888,10 @@ async fn collect_visited_bounded<'a>(
             call(acc.get_state()),
             call(raw_children(zconn, &oref)),
         );
+        complete &= matches!(&role_r, Some(Ok(_)))
+            && matches!(&name_r, Some(Ok(_)))
+            && matches!(&state_r, Some(Ok(_)))
+            && matches!(&children_r, Some(Ok(_)));
         let role = match role_r {
             Some(Ok(r)) => r,
             _ => String::new(),
@@ -923,7 +943,13 @@ async fn collect_visited_bounded<'a>(
             if let Some(Ok(proxies)) = call(acc.proxies()).await {
                 if has_action {
                     if let Some(Ok(ap)) = call(proxies.action()).await {
-                        let n = call(ap.n_actions()).await.and_then(|r| r.ok()).unwrap_or(0);
+                        let n = call(ap.n_actions())
+                            .await
+                            .and_then(|r| r.ok())
+                            .unwrap_or_else(|| {
+                                complete = false;
+                                0
+                            });
                         for i in 0..n {
                             // Preserve the AT-SPI action index even when an
                             // individual name lookup fails. `do_action` takes
@@ -934,9 +960,14 @@ async fn collect_visited_bounded<'a>(
                                 call(ap.get_name(i))
                                     .await
                                     .and_then(|result| result.ok())
-                                    .unwrap_or_default(),
+                                    .unwrap_or_else(|| {
+                                        complete = false;
+                                        String::new()
+                                    }),
                             );
                         }
+                    } else {
+                        complete = false;
                     }
                 }
                 if has_value {
@@ -954,15 +985,26 @@ async fn collect_visited_bounded<'a>(
                         let count = call(tp.character_count())
                             .await
                             .and_then(|r| r.ok())
-                            .unwrap_or(0);
+                            .unwrap_or_else(|| {
+                                if name.trim().is_empty() {
+                                    complete = false;
+                                }
+                                0
+                            });
                         if count > 0 {
                             let end = count.min(4096);
                             if let Some(Ok(t)) = call(tp.get_text(0, end)).await {
                                 text_content = t;
+                            } else if name.trim().is_empty() {
+                                complete = false;
                             }
                         }
+                    } else if name.trim().is_empty() {
+                        complete = false;
                     }
                 }
+            } else if has_action || (has_text && name.trim().is_empty()) {
+                complete = false;
             }
         }
 
@@ -978,6 +1020,9 @@ async fn collect_visited_bounded<'a>(
         // Honor max_depth (#22865): skip enqueueing descendants whose depth
         // would exceed the cap.
         let descend = max_depth.map(|d| depth + 1 <= d).unwrap_or(true);
+        if !descend && !matches!(&children_r, Some(Ok(children)) if children.is_empty()) {
+            complete = false;
+        }
         if descend {
             match children_r {
                 Some(Ok(children)) => {
@@ -1020,7 +1065,7 @@ async fn collect_visited_bounded<'a>(
     }
 
     dlog!("walked pid {pid}: {} node(s)", visited.len());
-    Ok(Some((visited, scoped_frame)))
+    Ok(Some((visited, scoped_frame, complete)))
 }
 
 /// Render visited nodes into the markdown + node list `walk_tree` returns.
@@ -1210,6 +1255,8 @@ pub struct WalkedTree {
     /// top-level and the snapshot contains only that window's nodes. False
     /// means the snapshot spans every window the application publishes.
     pub window_scoped: bool,
+    /// False when a limit or failed identity/topology read left an incomplete walk.
+    pub complete: bool,
 }
 
 /// Walk the AT-SPI tree with caller-supplied node + depth caps.
@@ -1248,7 +1295,7 @@ pub(super) fn walk_tree_bounded_with_timeout(
                 return Ok(None);
             }
         };
-        let Some((visited, scoped_frame)) = walked else {
+        let Some((visited, scoped_frame, complete)) = walked else {
             return Ok(None);
         };
         let walk_elapsed = walk_started.elapsed();
@@ -1290,6 +1337,7 @@ pub(super) fn walk_tree_bounded_with_timeout(
             nodes,
             bounds,
             window_scoped: scoped_frame.is_some(),
+            complete,
         }))
     })
 }
@@ -2136,7 +2184,7 @@ pub fn resolve_observed_click_target(
     bounded(
         async {
             let conn = shared_connection().await?;
-            let (visited, scoped_frame) = collect_visited_bounded(conn, pid, xid, None, None)
+            let (visited, scoped_frame, _) = collect_visited_bounded(conn, pid, xid, None, None)
                 .await?
                 .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
             let frame_ordinal = scoped_frame
@@ -2913,7 +2961,7 @@ pub fn perform_action_at_screen_point(
     bounded(
         async {
             let conn = shared_connection().await?;
-            let (visited, scoped_frame) =
+            let (visited, scoped_frame, _) =
                 match collect_visited_bounded(conn, pid, xid, None, None).await? {
                     Some(walked) => walked,
                     None => return Ok(None),
@@ -3141,7 +3189,7 @@ pub fn get_element_bounds_for_window(
     bounded(
         async {
             let conn = shared_connection().await?;
-            let (visited, scoped_frame) = collect_visited_bounded(conn, pid, xid, None, None)
+            let (visited, scoped_frame, _) = collect_visited_bounded(conn, pid, xid, None, None)
                 .await?
                 .context("no AT-SPI application")?;
             let scope =

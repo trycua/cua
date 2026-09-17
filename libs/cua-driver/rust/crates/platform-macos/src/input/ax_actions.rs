@@ -217,7 +217,7 @@ pub fn ensure_ax_action_enabled(element_ptr: usize, action: &str) -> anyhow::Res
     ensure_ax_enabled(enabled, action)
 }
 
-/// Perform an AX action on a cached element.
+/// Perform an AX action on a freshly resolved element.
 pub fn perform_ax_action(element_ptr: usize, action: &str) -> anyhow::Result<()> {
     let ax_action = map_action(action);
     ensure_ax_action_enabled(element_ptr, ax_action)?;

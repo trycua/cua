@@ -2,7 +2,7 @@
 //!
 //! Two addressing modes:
 //!
-//! * **AX path** (`element_index` + `window_id`): performs AXAction on the cached
+//! * **AX path** (`element_index` + `window_id`): performs AXAction on the freshly resolved
 //!   element. Fires via AX RPC — the target app never needs to be frontmost.
 //!   Extra behaviors vs. the naive dispatch:
 //!   - AXTextField / AXTextArea: 800 ms post-click delay for WebKit DOM focus settle.
@@ -126,16 +126,15 @@ fn def() -> &'static ToolDef {
         name: "click".into(),
         description:
             "Click against a target pid. **Prefer `element_token` over pixel \
-             coordinates** — the token works on backgrounded / minimized / hidden / \
-             off-Space windows, identifies one exact snapshot element, and tells \
-             you what you're clicking via the cached element's role + label. Reach for \
+             coordinates** — the token describes the observed element, and fresh \
+             accessibility state must identify a unique match. Availability depends on \
+             the current native window and provider. Reach for \
              `x, y` only when the target is a canvas / video / WebGL / custom-drawn surface \
              that doesn't appear in the AX tree.\n\n\
              Two addressing modes:\n\n\
-             - element_token, or element_index + snapshot_id (from get_window_state): AX action path. \
-               Works on backgrounded/hidden windows. No cursor move, no focus steal. \
-               The snapshot cache is scoped per (pid, window_id) and is replaced by the \
-               next snapshot of the same window — re-snapshot every turn before clicking.\n\n\
+             - element_token (from get_window_state): native element path. Requires a \
+               unique match in a complete current accessibility tree. Another observation \
+               alone does not invalidate the token. Index plus snapshot_id alone is refused.\n\n\
              - x, y (window-local screenshot pixels, top-left origin of the PNG returned \
                by get_window_state): CGEvent path. Synthesizes mouse events and posts to \
                pid. Use modifier for cmd/shift/option/ctrl. Needs a visible on-screen \
@@ -350,14 +349,16 @@ impl Tool for ClickTool {
         let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id");
         let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match crate::ax::element_resolver::resolve_element_args(
             pid,
             element_index_arg,
             element_token_arg.as_deref(),
             args.opt_str("snapshot_id").as_deref(),
             window_id_arg,
             "click",
-        ) {
+        )
+        .await
+        {
             Ok(r) => r,
             Err(e) => return e,
         };

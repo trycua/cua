@@ -1957,7 +1957,7 @@ fn run_native_omnibox_select_all(spec: &BrowserSpec) {
             serde_json::json!({
                 "pid": fixture.pid as i64,
                 "window_id": fixture.window_id,
-                "element_index": index,
+                "element_token": snapshot.element_token(index),
                 "snapshot_id": snapshot.snapshot_id(),
                 "value": initial,
             }),

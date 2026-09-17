@@ -229,11 +229,11 @@ accepts it. Omit it to use the authenticated transport's implicit lifecycle sess
 
 ### `click`
 
-Click against a target pid. **Prefer `element_token` over pixel coordinates** — the token works on backgrounded / minimized / hidden / off-Space windows, identifies one exact snapshot element, and tells you what you're clicking via the cached element's role + label. Reach for `x, y` only when the target is a canvas / video / WebGL / custom-drawn surface that doesn't appear in the AX tree.
+Click against a target pid. **Prefer `element_token` over pixel coordinates** — the token describes the observed element, and fresh accessibility state must identify a unique match. Availability depends on the current native window and provider. Reach for `x, y` only when the target is a canvas / video / WebGL / custom-drawn surface that doesn't appear in the AX tree.
 
 Two addressing modes:
 
-- element_token, or element_index + snapshot_id (from get_window_state): AX action path. Works on backgrounded/hidden windows. No cursor move, no focus steal. The snapshot cache is scoped per (pid, window_id) and is replaced by the next snapshot of the same window — re-snapshot every turn before clicking.
+- element_token (from get_window_state): native element path. Requires a unique match in a complete current accessibility tree. Another observation alone does not invalidate the token. Index plus snapshot_id alone is refused.
 
 - x, y (window-local screenshot pixels, top-left origin of the PNG returned by get_window_state): CGEvent path. Synthesizes mouse events and posts to pid. Use modifier for cmd/shift/option/ctrl. Needs a visible on-screen window to anchor the conversion.
 
@@ -248,14 +248,14 @@ from_zoom: set true after a zoom call to auto-translate zoom-image pixel coordin
 - `count` (integer, optional): Click count (pixel path only). Default 1.
 - `debug_image_out` (string, optional): Optional file path. When set on a pixel-addressed click, captures a fresh screenshot, draws a red crosshair at (x, y), and writes the PNG. Use to verify coordinate spaces. Requires window_id; incompatible with from_zoom.
 - `delivery_mode` (string, optional): Best-effort-background ladder rung (default "background"). "background": perform the AX action or post the CGEvent without fronting. "foreground": briefly front the window, act, let transient UI settle, then restore the prior frontmost app. Requires window_id. Modified clicks require "foreground" so macOS observes physical modifier-key state. A generic click has no independent postcondition read-back, except selection of list-like AX rows whose AXSelected state can be confirmed; otherwise confirm the effect from a fresh state snapshot. Use the agent loop: background AX (element_index) → snapshot → background pixel (x/y) → snapshot → delivery_mode:"foreground".
-- `element_index` (integer, optional): Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
-- `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.
+- `element_index` (integer, optional): Element index from get_window_state, retained as observation metadata. Native actions require an identity-bearing `element_token`; element_index plus snapshot_id alone is not accepted.
+- `element_token` (string, optional): Opaque authenticated element address from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. The address requires a unique match in a complete current accessibility tree. Another observation alone does not invalidate it.
 - `from_zoom` (boolean, optional): When true, x and y are in the last zoom image for this pid; driver translates back to full-window coordinates.
 - `modifier` (array of string, optional): Modifier keys: cmd, shift, option/alt, ctrl.
 - `pid` (integer, optional): Target process ID.
 - `scope` (string, optional): Coordinate frame for a windowless screen-absolute click (default "window"). Pass "desktop" when sending x,y with NO pid/window_id — the coordinates are then true screen pixels (read from get_desktop_state with scope="desktop"). Per-call; not a setting.
 - `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
-- `snapshot_id` (string, optional): Snapshot handle from get_window_state. Required when targeting by element_index; stale snapshots fail closed.
+- `snapshot_id` (string, optional): Authenticated runtime-, process-, and window-bound snapshot handle from get_window_state. This handle plus element_index does not identify a native control; use its element_token.
 - `target` (window target or desktop target, optional): Exact capture/input target selected independently for each action.
 
 `display_id="primary"` is the portable desktop target in this release.
@@ -276,11 +276,11 @@ Pixel path (x, y provided): two down/up pairs ~80 ms apart at the given coordina
 **Arguments:**
 
 - `delivery_mode` (string, optional): Best-effort-background ladder rung (default "background"). "background": inject without fronting or raising the target — no focus steal. "foreground": briefly front the target, act, then restore the prior frontmost — the explicit last resort when a background attempt didn't land. Re-call with "foreground" only for the action that needs it.
-- `element_index` (integer, optional): Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
-- `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.
+- `element_index` (integer, optional): Element index from get_window_state, retained as observation metadata. Native actions require an identity-bearing `element_token`; element_index plus snapshot_id alone is not accepted.
+- `element_token` (string, optional): Opaque authenticated element address from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. The address requires a unique match in a complete current accessibility tree. Another observation alone does not invalidate it.
 - `pid` (integer, required)
 - `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
-- `snapshot_id` (string, optional): Snapshot handle from get_window_state. Required when targeting by element_index; stale snapshots fail closed.
+- `snapshot_id` (string, optional): Authenticated runtime-, process-, and window-bound snapshot handle from get_window_state. This handle plus element_index does not identify a native control; use its element_token.
 - `window_id` (integer, optional): CGWindowID. Required when element_index is used. Optional when element_token is supplied (the token carries it).
 - `x` (number, optional): Screen X coordinate (pixel path).
 - `y` (number, optional): Screen Y coordinate (pixel path).
@@ -293,21 +293,21 @@ Pixel path (x, y provided): two down/up pairs ~80 ms apart at the given coordina
 
 Right-click against a target pid. Two addressing modes:
 
-- `element_index` + `window_id` (from the last `get_window_state` snapshot) — performs `AXShowMenu` on the cached element. Pure AX RPC, works on backgrounded / hidden windows, no cursor move or focus steal. Requires a prior `get_window_state(pid, window_id)` in this turn.
+- `element_token` from `get_window_state` — performs `AXShowMenu` on a uniquely matched element in a complete current accessibility tree. Another observation alone does not invalidate it. Native availability still applies.
 
-- `x`, `y` — synthesizes `rightMouseDown` / `rightMouseUp` CGEvent pair posted to the pid. Driver converts image-pixel → screen-point internally. `modifier` forces the CGEvent path (AX actions don't propagate modifier keys).
+- `x`, `y` — synthesizes `rightMouseDown` / `rightMouseUp` CGEvent pair posted to the pid. Driver converts image-pixel → screen-point internally. In pixel mode, `modifier` applies to the CGEvent path.
 
-Exactly one of `element_index` or (`x` AND `y`) must be provided. `pid` always required. `window_id` required when `element_index` is used.
+Provide `element_token` or (`x` AND `y`). `pid` is always required. If supplied with a token, `window_id` must agree with it.
 
 **Arguments:**
 
 - `delivery_mode` (string, optional): Best-effort-background ladder rung (default "background"). "background": inject without fronting or raising the target — no focus steal. "foreground": briefly front the target, act, then restore the prior frontmost — the explicit last resort when a background attempt didn't land. Re-call with "foreground" only for the action that needs it.
-- `element_index` (integer, optional): Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
-- `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.
+- `element_index` (integer, optional): Element index from get_window_state, retained as observation metadata. Native actions require an identity-bearing `element_token`; element_index plus snapshot_id alone is not accepted.
+- `element_token` (string, optional): Opaque authenticated element address from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. The address requires a unique match in a complete current accessibility tree. Another observation alone does not invalidate it.
 - `modifier` (array of string, optional): Modifier keys held during the right-click: cmd/shift/option/ctrl. Pixel path only.
 - `pid` (integer, required): Target process ID.
 - `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
-- `snapshot_id` (string, optional): Snapshot handle from get_window_state. Required when targeting by element_index; stale snapshots fail closed.
+- `snapshot_id` (string, optional): Authenticated runtime-, process-, and window-bound snapshot handle from get_window_state. This handle plus element_index does not identify a native control; use its element_token.
 - `window_id` (integer, optional): CGWindowID. Required when element_index is used. Optional when element_token is supplied (the token carries it).
 - `x` (number, optional): X in window-local screenshot pixels. Must be provided together with y.
 - `y` (number, optional): Y in window-local screenshot pixels. Must be provided together with x.
@@ -366,12 +366,12 @@ WEB CONTENT (Chromium/WebKit/Electron — browser tabs, Slack, VS Code, X's comp
 
 - `delay_ms` (integer, optional): Milliseconds between characters in the CGEvent fallback path. Default 30. Ignored when the AX path succeeds. range: 0–200
 - `delivery_mode` (string, optional): Best-effort-background ladder rung (default "background"). "background": AX insert, then CGEvent keystrokes if needed — no focus steal; native controls can be confirmed via AXValue read-back, while web-content writes remain effect:"unverifiable". "foreground": briefly front the window, type, restore the prior frontmost — the explicit last resort for focus-sensitive surfaces (e.g. WhatsApp/Catalyst) where background keystrokes don't land. Re-call with "foreground" when a background attempt remains unverifiable and a fresh snapshot shows the text did not appear.
-- `element_index` (integer, optional): Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
-- `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.
+- `element_index` (integer, optional): Element index from get_window_state, retained as observation metadata. Native actions require an identity-bearing `element_token`; element_index plus snapshot_id alone is not accepted.
+- `element_token` (string, optional): Opaque authenticated element address from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. The address requires a unique match in a complete current accessibility tree. Another observation alone does not invalidate it.
 - `pid` (integer, optional): Target process ID.
 - `scope` (string, optional): Use desktop with no pid/window_id to type into the frontmost application. default: `"window"`
 - `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
-- `snapshot_id` (string, optional): Snapshot handle from get_window_state. Required when targeting by element_index; stale snapshots fail closed.
+- `snapshot_id` (string, optional): Authenticated runtime-, process-, and window-bound snapshot handle from get_window_state. This handle plus element_index does not identify a native control; use its element_token.
 - `target` (window target or desktop target, optional): Exact capture/input target selected independently for each action.
 
 `display_id="primary"` is the portable desktop target in this release.
@@ -397,14 +397,14 @@ A key press is confirmed only when a bounded native AX value/selection read-back
 **Arguments:**
 
 - `delivery_mode` (string, optional): Best-effort-background ladder rung (default "background"). "background": inject without fronting or raising the target — no focus steal. "foreground": briefly front the target, act, then restore the prior frontmost — the explicit last resort when a background attempt didn't land. Re-call with "foreground" only for the action that needs it.
-- `element_index` (integer, optional): Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
-- `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.
+- `element_index` (integer, optional): Element index from get_window_state, retained as observation metadata. Native actions require an identity-bearing `element_token`; element_index plus snapshot_id alone is not accepted.
+- `element_token` (string, optional): Opaque authenticated element address from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. The address requires a unique match in a complete current accessibility tree. Another observation alone does not invalidate it.
 - `key` (string, required): Key name: return, tab, escape, up, down, etc.
 - `modifiers` (array of string, optional): Modifier keys: cmd, shift, option/alt, ctrl, fn.
 - `pid` (integer, optional)
 - `scope` (string, optional): Use desktop with no pid/window_id to send the key to the frontmost application. default: `"window"`
 - `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
-- `snapshot_id` (string, optional): Snapshot handle from get_window_state. Required when targeting by element_index; stale snapshots fail closed.
+- `snapshot_id` (string, optional): Authenticated runtime-, process-, and window-bound snapshot handle from get_window_state. This handle plus element_index does not identify a native control; use its element_token.
 - `target` (window target or desktop target, optional): Exact capture/input target selected independently for each action.
 
 `display_id="primary"` is the portable desktop target in this release.
@@ -431,13 +431,13 @@ Recognized modifiers: cmd/command, shift, option/alt, ctrl/control, fn. Non-modi
 **Arguments:**
 
 - `delivery_mode` (string, optional): Best-effort-background ladder rung (default "background"). "background": inject without fronting or raising the target — no focus steal. "foreground": briefly front the target, act, then restore the prior frontmost — the explicit last resort when a background attempt didn't land. Re-call with "foreground" only for the action that needs it.
-- `element_index` (integer, optional): Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
-- `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.
+- `element_index` (integer, optional): Element index from get_window_state, retained as observation metadata. Native actions require an identity-bearing `element_token`; element_index plus snapshot_id alone is not accepted.
+- `element_token` (string, optional): Opaque authenticated element address from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. The address requires a unique match in a complete current accessibility tree. Another observation alone does not invalidate it.
 - `keys` (array of string, required): Modifier(s) and one non-modifier key, e.g. ["cmd", "c"]. items: 2–unbounded
 - `pid` (integer, optional): Target process ID.
 - `scope` (string, optional): Use desktop with no pid/window_id to send the chord to the frontmost application. default: `"window"`
 - `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
-- `snapshot_id` (string, optional): Snapshot handle from get_window_state. Required when targeting by element_index; stale snapshots fail closed.
+- `snapshot_id` (string, optional): Authenticated runtime-, process-, and window-bound snapshot handle from get_window_state. This handle plus element_index does not identify a native control; use its element_token.
 - `target` (window target or desktop target, optional): Exact capture/input target selected independently for each action.
 
 `display_id="primary"` is the portable desktop target in this release.
@@ -463,11 +463,11 @@ For free-form text entry into web inputs, prefer `type_text_chars` which synthes
 
 **Arguments:**
 
-- `element_index` (integer, optional): Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
-- `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.
+- `element_index` (integer, optional): Element index from get_window_state, retained as observation metadata. Native actions require an identity-bearing `element_token`; element_index plus snapshot_id alone is not accepted.
+- `element_token` (string, optional): Opaque authenticated element address from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. The address requires a unique match in a complete current accessibility tree. Another observation alone does not invalidate it.
 - `pid` (integer, required)
 - `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
-- `snapshot_id` (string, optional): Snapshot handle from get_window_state. Required when targeting by element_index; stale snapshots fail closed.
+- `snapshot_id` (string, optional): Authenticated runtime-, process-, and window-bound snapshot handle from get_window_state. This handle plus element_index does not identify a native control; use its element_token.
 - `value` (string, required): New value. AX will coerce to the element's native type.
 - `window_id` (integer, optional): CGWindowID for the window whose get_window_state produced the element_index. Required when element_index is used; optional when element_token is supplied (the token carries it).
 
@@ -491,12 +491,12 @@ Mapping: by='page' → larger step; by='line' → smaller step; amount = number 
 - `by` (string, optional): Scroll granularity. Default: line.
 - `delivery_mode` (string, optional): Best-effort-background ladder rung (default "background"). "background": inject without fronting or raising the target — no focus steal. "foreground": briefly front the target, act, then restore the prior frontmost — the explicit last resort when a background attempt didn't land. Re-call with "foreground" only for the action that needs it.
 - `direction` (string, required): Scroll direction.
-- `element_index` (integer, optional): Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
-- `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.
+- `element_index` (integer, optional): Element index from get_window_state, retained as observation metadata. Native actions require an identity-bearing `element_token`; element_index plus snapshot_id alone is not accepted.
+- `element_token` (string, optional): Opaque authenticated element address from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. The address requires a unique match in a complete current accessibility tree. Another observation alone does not invalidate it.
 - `pid` (integer, optional)
 - `scope` (string, optional): Use desktop with x,y and no pid/window_id for native get_desktop_state screenshot coordinates. default: `"window"`
 - `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
-- `snapshot_id` (string, optional): Snapshot handle from get_window_state. Required when targeting by element_index; stale snapshots fail closed.
+- `snapshot_id` (string, optional): Authenticated runtime-, process-, and window-bound snapshot handle from get_window_state. This handle plus element_index does not identify a native control; use its element_token.
 - `target` (window target or desktop target, optional): Exact capture/input target selected independently for each action.
 
 `display_id="primary"` is the portable desktop target in this release.
@@ -652,7 +652,7 @@ Replay a recorded trajectory by re-invoking every turn's tool call in lexical or
 
 Caveats:
 - Element-indexed actions (`click({pid, element_index})` etc.) will fail because element indices are per-snapshot and don't survive across sessions. Pixel clicks (`click({pid, x, y})`) and all keyboard tools replay cleanly. Failures are reported but don't stop replay unless `stop_on_error` is true.
-- `get_window_state` and other read-only tools are NOT currently recorded, so replays do not re-populate the per-(pid, window_id) element cache.
+- `get_window_state` and other read-only tools are NOT currently recorded, so replays do not re-populate the current accessibility snapshot.
 - If recording is ENABLED while replay runs, the replay itself is recorded into the currently configured output directory.  That's deliberate: recording a replay against a new build and diffing the two trajectories is the regression-test workflow.
 
 **Arguments:**

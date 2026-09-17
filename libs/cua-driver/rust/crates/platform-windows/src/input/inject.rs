@@ -386,7 +386,7 @@ unsafe fn target_visible_at_point(target: HWND, sx: i32, sy: i32) -> bool {
 
 /// True when screen point `(x, y)` lies within `hwnd`'s window rectangle.
 ///
-/// Guards **element_index** clicks: an element's cached center can fall outside
+/// Guards **element_index** clicks: an element's resolved center can fall outside
 /// its own window when the element is scrolled out of a ScrollViewer or pushed
 /// off-screen (e.g. a tall form on a small display). Tapping the raw coordinate
 /// then lands on whatever is actually there — the taskbar, the desktop, another

@@ -87,6 +87,7 @@ unsafe fn walk_unsafe(hwnd: u64) -> UiaTreeResult {
                 "- Window <SAL/VCL — MSAA fallback failed (AccessibleObjectFromWindow hr={hr:?})>\n"
             ),
             nodes: Vec::new(),
+            complete: false,
         };
     }
     let root: IAccessible = IAccessible::from_raw(raw_root);
@@ -110,6 +111,8 @@ unsafe fn walk_unsafe(hwnd: u64) -> UiaTreeResult {
     UiaTreeResult {
         tree_markdown,
         nodes,
+        // This observation walker does not attest traversal completeness.
+        complete: false,
     }
 }
 

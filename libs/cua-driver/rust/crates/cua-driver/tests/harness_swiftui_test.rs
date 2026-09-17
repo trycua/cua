@@ -266,7 +266,7 @@ fn harness_swiftui_counter_background() {
                 serde_json::json!({
                     "pid": pid as i64,
                     "window_id": wid,
-                    "element_index": index,
+                    "element_token": pre.element_token(index),
                     "snapshot_id": pre.snapshot_id(),
                     "action": "press",
                     "delivery_mode": "background"
@@ -303,7 +303,7 @@ fn harness_swiftui_set_value_background() {
                 serde_json::json!({
                     "pid": pid as i64,
                     "window_id": wid,
-                    "element_index": index,
+                    "element_token": pre.element_token(index),
                     "snapshot_id": pre.snapshot_id(),
                     "value": "swiftui-cua"
                 }),
@@ -354,7 +354,7 @@ fn harness_swiftui_popover_foreground() {
             serde_json::json!({
                 "pid": pid as i64,
                 "window_id": wid,
-                "element_index": trigger_idx,
+                "element_token": snap_pre.element_token(trigger_idx),
                 "snapshot_id": snap_pre.snapshot_id(),
                 "action": "press",
                 "delivery_mode": "foreground"

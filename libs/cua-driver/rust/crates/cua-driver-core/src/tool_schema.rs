@@ -91,13 +91,13 @@ pub fn scope_schema() -> Value {
     })
 }
 
-/// `element_index` — the integer handle from the last get_window_state.
+/// `element_index` — observation metadata, not a native target identity.
 pub fn element_index_schema() -> Value {
     json!({
         "type": "integer",
-        "description": "Element index from get_window_state. Requires the \
-            matching `snapshot_id` alongside it. Prefer `element_token`, \
-            which carries both values."
+        "description": "Element index from get_window_state, retained as observation metadata. \
+            Native actions require an identity-bearing `element_token`; \
+            element_index plus snapshot_id alone is not accepted."
     })
 }
 
@@ -105,9 +105,10 @@ pub fn element_index_schema() -> Value {
 pub fn snapshot_id_schema() -> Value {
     json!({
         "type": "string",
-        "pattern": "^s[0-9a-f]{8}$",
-        "description": "Snapshot handle from get_window_state. Required when \
-            targeting by element_index; stale snapshots fail closed."
+        "pattern": "^sa1\\.[0-9a-f]{32}\\.[0-9]+\\.[0-9a-f]{16}\\.[0-9a-f]{8}\\.[0-9a-f]{32}$",
+        "description": "Authenticated runtime-, process-, and window-bound snapshot handle \
+            from get_window_state. This handle plus element_index does not identify \
+            a native control; use its element_token."
     })
 }
 
@@ -115,10 +116,11 @@ pub fn snapshot_id_schema() -> Value {
 pub fn element_token_schema() -> Value {
     json!({
         "type": "string",
-        "description": "Opaque per-snapshot element handle from \
+        "description": "Opaque authenticated element address from \
             `structuredContent.elements[].element_token`. If element_index, \
-            snapshot_id, or window_id are also supplied they must agree. Returns \
-            an explicit stale error once a newer snapshot supersedes it."
+            snapshot_id, or window_id are also supplied they must agree. The \
+            address requires a unique match in a complete current accessibility tree. \
+            Another observation alone does not invalidate it."
     })
 }
 

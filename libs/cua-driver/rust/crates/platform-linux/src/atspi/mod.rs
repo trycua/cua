@@ -11,9 +11,8 @@
 
 use anyhow::Result;
 
-pub mod cache;
+pub mod element_resolver;
 pub mod native;
-pub use cache::ElementCache;
 pub use native::{ensure_listener_active, resolve_observed_click_target, ObservedClickTarget};
 
 /// No input has been delivered; this control needs a real pointer click.
@@ -93,6 +92,7 @@ pub struct AtspiTreeResult {
     /// snapshot of a multi-window app carries every window's controls; callers
     /// that act on behalf of an exact native window must require this.
     pub window_scoped: bool,
+    pub complete: bool,
 }
 
 /// Walk the AT-SPI tree for a window identified by (pid, xid).
@@ -122,6 +122,7 @@ pub(crate) fn walk_tree_for_recording(
                 trusted: true,
                 degraded_reason: None,
                 window_scoped: walked.window_scoped,
+                complete: walked.complete,
             };
         }
     }
@@ -170,6 +171,7 @@ pub fn walk_tree_bounded(
                         trusted: true,
                         degraded_reason: None,
                         window_scoped: walked.window_scoped,
+                        complete: walked.complete,
                     };
                 }
             }
@@ -311,6 +313,7 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
                 trusted: false,
                 degraded_reason: None,
                 window_scoped: false,
+                complete: false,
             }
         }
     };
@@ -372,6 +375,7 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
         // one window by construction — but `trusted: false` still bars it from
         // proving anything a caller acts on.
         window_scoped: true,
+        complete: false,
         degraded_reason: None,
     }
 }

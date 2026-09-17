@@ -1,4 +1,4 @@
-//! AX tree walker: produces the treeMarkdown string and element cache.
+//! AX tree walker: produces the treeMarkdown string and element resolver.
 //!
 //! Format (matching libs/cua-driver exactly):
 //!   `INDENT- [N] AXRole "Title" [value="..." actions=[...]]`
@@ -135,7 +135,7 @@ fn is_addressable(actions_present: bool, value_settable: bool, enabled: Option<b
 pub struct TreeWalkResult {
     pub tree_markdown: String,
     pub nodes: Vec<AXNode>,
-    /// True when the walk was cut short by the MAX_ELEMENTS cap.
+    /// True when a traversal limit or failed accessibility read left the tree incomplete.
     pub truncated: bool,
     /// Whether the requested `window_id` actually resolved to an AX surface,
     /// and if not, why. `None` when no `window_id` was requested.
@@ -225,8 +225,8 @@ pub fn walk_tree_bounded(
         // Union AXChildren + AXWindows — the only way to see background windows.
         // AXChildren omits windows when the app isn't frontmost (AppKit limitation).
         // AXWindows returns the window list regardless of activation state.
-        let from_children = copy_children(app_elem);
-        let from_windows = copy_ax_windows(app_elem);
+        let from_children = walk_value(copy_element_array(app_elem, "AXChildren"), &mut truncated);
+        let from_windows = walk_value(copy_element_array(app_elem, "AXWindows"), &mut truncated);
 
         let mut top_level = from_children;
         for w in from_windows {
@@ -255,9 +255,15 @@ pub fn walk_tree_bounded(
                 .iter()
                 .map(|&child| {
                     set_messaging_timeout(child);
-                    let role = copy_string_attr(child, "AXRole").unwrap_or_default();
-                    let subrole = copy_string_attr(child, "AXSubrole");
-                    let identifier = copy_string_attr(child, "AXIdentifier");
+                    let role =
+                        walk_value(copy_string_attr_checked(child, "AXRole"), &mut truncated)
+                            .unwrap_or_default();
+                    let subrole =
+                        walk_value(copy_string_attr_checked(child, "AXSubrole"), &mut truncated);
+                    let identifier = walk_value(
+                        copy_string_attr_checked(child, "AXIdentifier"),
+                        &mut truncated,
+                    );
                     // Match AX window element → CGWindowID via private SPI.
                     // Only windows carry one, so skip the round-trip elsewhere.
                     let ax_window_id = if role == "AXWindow" {
@@ -321,12 +327,9 @@ pub fn walk_tree_bounded(
     };
 
     if truncated_flag {
-        tree_markdown.push_str(&format!(
-            "\n⚠️  AX tree truncated at {max_elements} nodes \
-             (app has a very large accessibility tree — Arc, Electron, or similar). \
-             Element indices above are still valid. Use pixel clicks for elements \
-             not visible in this partial tree."
-        ));
+        tree_markdown.push_str(
+            "\n⚠️  AX tree is incomplete: a traversal limit or accessibility read failed.",
+        );
     }
 
     TreeWalkResult {
@@ -335,6 +338,13 @@ pub fn walk_tree_bounded(
         truncated: truncated_flag,
         window_scope,
     }
+}
+
+fn walk_value<T: Default>(result: Result<T, AXError>, incomplete: &mut bool) -> T {
+    result.unwrap_or_else(|_| {
+        *incomplete = true;
+        T::default()
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -352,6 +362,7 @@ unsafe fn walk_element(
     max_depth: usize,
 ) {
     if depth > max_depth {
+        *truncated = true;
         return;
     }
     // Enforce total-node cap — mirrors Swift's maxElements guard.
@@ -366,7 +377,8 @@ unsafe fn walk_element(
     // element, so every descendant must be bounded before any attribute read.
     set_messaging_timeout(element);
 
-    let role = copy_string_attr(element, "AXRole").unwrap_or_else(|| "AXUnknown".into());
+    let role = walk_value(copy_string_attr_checked(element, "AXRole"), truncated)
+        .unwrap_or_else(|| "AXUnknown".into());
 
     let in_web_content = in_web_content || is_web_content_role(&role);
 
@@ -375,7 +387,7 @@ unsafe fn walk_element(
         // Still recurse — children may be interesting. Layout containers
         // collapse, so children inherit the parent's depth AND the same
         // parent_index (no actionable node was emitted here).
-        let children = copy_children(element);
+        let children = walk_value(copy_element_array(element, "AXChildren"), truncated);
         for child in children {
             walk_element(
                 child,
@@ -400,7 +412,7 @@ unsafe fn walk_element(
     // This is critical for Calculator where AXTitle="" but AXDescription="2"
     // (digit buttons). Merging them would produce "2" (quoted) instead of (2)
     // (parens), breaking _find_calc_button which searches for "(2)".
-    let title = copy_string_attr(element, "AXTitle");
+    let title = walk_value(copy_string_attr_checked(element, "AXTitle"), truncated);
     // Read AXValue once with enough type information to preserve the existing
     // string-only markdown while also exposing numeric/boolean control state.
     let copied_value = copy_stringish_attr(element, "AXValue");
@@ -411,10 +423,13 @@ unsafe fn walk_element(
     let value = value
         .filter(|v| !v.trim().is_empty())
         .or_else(|| copy_string_attr(element, "AXPlaceholderValue"));
-    let description = copy_string_attr(element, "AXDescription");
-    let identifier = copy_string_attr(element, "AXIdentifier");
+    let description = walk_value(
+        copy_string_attr_checked(element, "AXDescription"),
+        truncated,
+    );
+    let identifier = walk_value(copy_string_attr_checked(element, "AXIdentifier"), truncated);
     let help = copy_string_attr(element, "AXHelp").filter(|h| !h.trim().is_empty());
-    let actions = copy_action_names(element);
+    let actions = walk_value(copy_action_names_checked(element), truncated);
 
     let visible_title = title.as_deref().unwrap_or("").trim().to_owned();
     let visible_description = description.as_deref().unwrap_or("").trim().to_owned();
@@ -430,20 +445,20 @@ unsafe fn walk_element(
     // extra AX round trip.
     let value_settable = actions.is_empty()
         && role_supports_value_addressing(&role)
-        && is_attribute_settable(element, "AXValue");
+        && walk_value(is_attribute_settable_checked(element, "AXValue"), truncated);
     // A closed submenu can keep its descendants in AXChildren while reporting
     // those controls disabled. Never assign such a row a live element index:
     // the same native state also causes dispatch to refuse it, and exposing an
     // index for it invites agents to retain an unusable menu target.
     let enabled = if !actions.is_empty() || value_settable {
-        copy_bool_attr(element, "AXEnabled")
+        walk_value(copy_bool_attr_checked(element, "AXEnabled"), truncated)
     } else {
         None
     };
     let is_actionable = is_addressable(!actions.is_empty(), value_settable, enabled);
 
     if !is_actionable && !has_content && role != "AXWindow" && role != "AXSheet" {
-        let children = copy_children(element);
+        let children = walk_value(copy_element_array(element, "AXChildren"), truncated);
         for child in children {
             walk_element(
                 child,
@@ -485,7 +500,7 @@ unsafe fn walk_element(
     let node = if is_actionable {
         let idx = *counter;
         *counter += 1;
-        // Retain so the element stays alive in the cache after `copy_children`
+        // Retain so the element stays alive after the tree walk after `copy_children`
         // releases the per-child ref at the end of the caller's loop.
         CFRetain(element as CFTypeRef);
         AXNode {
@@ -566,7 +581,7 @@ unsafe fn walk_element(
     lines.push((depth, line));
     nodes.push(node);
 
-    let children = copy_children(element);
+    let children = walk_value(copy_element_array(element, "AXChildren"), truncated);
     for child in children {
         walk_element(
             child,
@@ -734,6 +749,39 @@ fn leading_indent_depth(line: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn depth_cut_is_reported_as_incomplete() {
+        let mut incomplete = false;
+        unsafe {
+            // The depth guard must return before touching this pointer.
+            walk_element(
+                std::ptr::null_mut(),
+                1,
+                None,
+                false,
+                &mut Vec::new(),
+                &mut Vec::new(),
+                &mut 0,
+                &mut 0,
+                &mut incomplete,
+                10,
+                0,
+            );
+        }
+        assert!(incomplete);
+    }
+
+    #[test]
+    fn failed_identity_read_is_not_a_missing_attribute() {
+        let mut incomplete = false;
+        let missing: Option<String> = walk_value(Ok(None), &mut incomplete);
+        assert!(missing.is_none());
+        assert!(!incomplete);
+        let failed: Option<String> = walk_value(Err(kAXErrorFailure), &mut incomplete);
+        assert!(failed.is_none());
+        assert!(incomplete);
+    }
     use std::cell::Cell;
 
     #[test]

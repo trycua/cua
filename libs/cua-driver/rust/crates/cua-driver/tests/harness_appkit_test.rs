@@ -627,7 +627,7 @@ fn harness_appkit_stale_element_token_fails_closed() {
             assert_ne!(first.snapshot_id(), newer.snapshot_id());
             let refused = driver.call(
                 "click",
-                serde_json::json!({"pid": pid as i64, "element_token": token}),
+                serde_json::json!({"pid": pid as i64, "element_token": format!("{token}invalid")}),
             );
             assert!(
                 refused.is_error(),
@@ -636,7 +636,7 @@ fn harness_appkit_stale_element_token_fails_closed() {
             );
             assert_eq!(
                 refused.structured()["refusal"]["code"].as_str(),
-                Some("stale_element_token")
+                Some("invalid_element_token")
             );
             let refused_index = driver.call(
                 "click",
@@ -653,13 +653,24 @@ fn harness_appkit_stale_element_token_fails_closed() {
             );
             assert_eq!(
                 refused_index.structured()["refusal"]["code"].as_str(),
-                Some("stale_element_token")
+                Some("element_identity_required")
             );
             let post = snapshot_elements(driver, pid, wid);
             assert!(
                 post.tree_text().contains("counter=0"),
-                "stale targeting mutated counter"
+                "refused targeting mutated counter"
             );
+            let previous = driver.call(
+                "click",
+                serde_json::json!({"pid": pid as i64, "element_token": token}),
+            );
+            assert!(
+                !previous.is_error(),
+                "another observation must not invalidate an unchanged target: {}",
+                previous.text()
+            );
+            let post = snapshot_elements(driver, pid, wid);
+            assert!(post.tree_text().contains("counter=1"));
             let fresh_token = element_token_by_id(&post, "btn-increment");
             let delivered = driver.call(
                 "click",
@@ -673,7 +684,7 @@ fn harness_appkit_stale_element_token_fails_closed() {
             let deadline = std::time::Instant::now() + Duration::from_secs(5);
             loop {
                 let recovered = snapshot_elements(driver, pid, wid);
-                if recovered.tree_text().contains("counter=1") {
+                if recovered.tree_text().contains("counter=2") {
                     break;
                 }
                 assert!(
@@ -768,7 +779,7 @@ fn harness_appkit_text_input() {
                 serde_json::json!({
                     "pid": pid as i64,
                     "window_id": wid,
-                    "element_index": idx,
+                    "element_token": snap_pre.element_token(idx),
                     "snapshot_id": snap_pre.snapshot_id(),
                     "value": "hello-cua"
                 }),
@@ -1101,7 +1112,7 @@ fn harness_appkit_type_text_background() {
             let resp = driver.call(
                 "type_text",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": idx,
+                    "pid": pid as i64, "window_id": wid, "element_token": snap_pre.element_token(idx),
                     "snapshot_id": snap_pre.snapshot_id(),
                     "text": "kbd-cua", "delivery_mode": "background"
                 }),
@@ -1143,7 +1154,7 @@ fn harness_appkit_scroll_foreground() {
                 serde_json::json!({
                     "pid": pid as i64,
                     "window_id": wid,
-                    "element_index": index,
+                    "element_token": pre.element_token(index),
                     "snapshot_id": pre.snapshot_id(),
                     "direction": "down",
                     "amount": 5,
@@ -1183,7 +1194,7 @@ fn harness_appkit_scroll_background() {
             serde_json::json!({
                 "pid": pid as i64,
                 "window_id": wid,
-                "element_index": index,
+                "element_token": pre.element_token(index),
                 "snapshot_id": pre.snapshot_id(),
                 "direction": "down",
                 "amount": 5,
@@ -1234,7 +1245,7 @@ fn harness_appkit_counter() {
                 serde_json::json!({
                     "pid": pid as i64,
                     "window_id": wid,
-                    "element_index": idx,
+                    "element_token": snap_pre.element_token(idx),
                     "snapshot_id": snap_pre.snapshot_id(),
                     "action": "press",
                     "delivery_mode": "background"

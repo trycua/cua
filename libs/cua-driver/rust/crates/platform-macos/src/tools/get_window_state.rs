@@ -289,7 +289,7 @@ impl Tool for GetWindowStateTool {
             .map(|v| v.max(1) as usize)
             .unwrap_or(crate::ax::tree::DEFAULT_MAX_DEPTH);
 
-        let (tree_result, prepared_snapshot) = if want_tree {
+        let (tree_result, fresh_elements) = if want_tree {
             let q = query.clone();
             // Keep the product deadline below the public client's 25-second
             // deadline so callers receive a structured driver error. The AX
@@ -303,7 +303,7 @@ impl Tool for GetWindowStateTool {
                     max_elements,
                     max_depth,
                 );
-                let payload = crate::ax::cache::CachedSnapshot::from_nodes(&tree.nodes);
+                let payload = crate::ax::element_resolver::FreshAxElements::from_nodes(&tree.nodes);
                 (tree, payload)
             });
             match tokio::time::timeout(std::time::Duration::from_secs(20), walk_future).await {
@@ -336,10 +336,6 @@ impl Tool for GetWindowStateTool {
         // `window_scope` is None only when no window_id was requested, which
         // this tool never does — so treat that as resolved.
         let scope_matched = window_scope.as_ref().is_none_or(|s| s.is_matched());
-
-        if !scope_matched && !observation_only {
-            self.state.element_cache.remove(pid, u64::from(window_id));
-        }
 
         // Capture the screenshot and deliver it alongside the tree — the
         // grounding frame the agent cross-checks the (sometimes-lying) tree
@@ -521,12 +517,11 @@ impl Tool for GetWindowStateTool {
             .map(|r| r.tree_markdown.clone())
             .unwrap_or_default();
 
-        let snapshot_id = prepared_snapshot
+        let snapshot_id = fresh_elements
+            .as_ref()
             .filter(|_| scope_matched && !observation_only)
-            .map(|payload| {
-                self.state
-                    .element_cache
-                    .publish(pid, u64::from(window_id), payload)
+            .map(|_| {
+                cua_driver_core::element_token::mint_snapshot_handle(pid, u64::from(window_id))
             });
 
         // Build the structured `elements` array — one entry per actionable
@@ -535,11 +530,12 @@ impl Tool for GetWindowStateTool {
         // alongside for back-compat with existing text-parsing callers
         // (Hermes' regex parser, Codex, Claude Code) and is signalled as
         // preferred-for-back-compat-only via the `_note` field below.
-        let elements_json: Vec<serde_json::Value> = match (snapshot_id, tree_result.as_ref()) {
-            (Some(sid), Some(r)) => build_elements_array_with_token(&r.nodes, Some(sid)),
-            (None, Some(r)) if scope_matched => build_elements_array_with_token(&r.nodes, None),
-            _ => Vec::new(),
-        };
+        let elements_json: Vec<serde_json::Value> =
+            match (snapshot_id.as_deref(), tree_result.as_ref()) {
+                (Some(sid), Some(r)) => build_elements_array_with_token(&r.nodes, Some(sid)),
+                (None, Some(r)) if scope_matched => build_elements_array_with_token(&r.nodes, None),
+                _ => Vec::new(),
+            };
         let elements_json = cua_driver_core::element_query::project_elements_for_query(
             elements_json,
             query.as_deref(),
@@ -575,10 +571,7 @@ impl Tool for GetWindowStateTool {
         // Additive — old consumers ignore it. Absent when no snapshot was
         // registered (unresolved window scope).
         if let Some(sid) = snapshot_id {
-            structured["snapshot_id"] =
-                serde_json::json!(cua_driver_core::element_token::token_for(sid, 0)
-                    .trim_end_matches(":0")
-                    .to_string());
+            structured["snapshot_id"] = serde_json::json!(sid);
         }
         // Best-effort-background ladder, rung (2). Both rungs point the agent at
         // the same next move: an empty AX tree means element_index has nothing
@@ -709,7 +702,7 @@ impl Tool for GetWindowStateTool {
 /// clicked by `element_index`. Both refusals name the exact retry, matching the
 /// remedy-in-the-refusal shape the rest of the driver uses.
 ///
-/// The owner pid is REPORTED, not followed: `element_cache`, the element-token
+/// The owner pid is REPORTED, not followed: the stateless element-token
 /// registry and `ResizeRegistry` are all keyed on the caller-supplied pid, so
 /// walking under `owner_pid` while echoing the requested pid would hand back
 /// indices the caller replays against the wrong key. One retry with the named
@@ -812,7 +805,7 @@ fn degradation_for(
 /// omitted to match the contract on the tool description.
 pub(crate) fn build_elements_array_with_token(
     nodes: &[crate::ax::tree::AXNode],
-    snapshot_id: Option<u32>,
+    snapshot_id: Option<&str>,
 ) -> Vec<serde_json::Value> {
     nodes
         .iter()
@@ -842,7 +835,12 @@ pub(crate) fn build_elements_array_with_token(
             // `element_token` module.
             if let Some(sid) = snapshot_id {
                 entry["element_token"] =
-                    serde_json::json!(cua_driver_core::element_token::token_for(sid, idx));
+                    serde_json::json!(cua_driver_core::element_token::token_for_identity(
+                        sid,
+                        idx,
+                        &crate::ax::element_resolver::identity_for_node(node)
+                    )
+                    .expect("fresh snapshot handle"));
             }
             if let Some(label) = label {
                 entry["label"] = serde_json::Value::String(label);
@@ -1488,39 +1486,17 @@ mod tests {
 
     #[test]
     fn build_elements_array_with_token_emits_element_token_per_row() {
-        let cache = crate::ax::cache::ElementCache::new();
         let pid = 0x6abc_0001_i32;
         let nodes = vec![
             node(Some(0), "AXButton", Some("A"), 1, None, None, vec![]),
             node(Some(1), "AXButton", Some("B"), 1, None, None, vec![]),
-            node(Some(2), "AXButton", Some("C"), 1, None, None, vec![]),
         ];
-        let sid = cache.publish(pid, 9, crate::ax::cache::CachedSnapshot::from_nodes(&nodes));
-        let entries = build_elements_array_with_token(&nodes, Some(sid));
-        assert_eq!(entries.len(), 3);
-        // Every entry must have BOTH fields (additive contract).
-        for e in &entries {
-            assert!(
-                e.get("element_index").is_some(),
-                "element_index must remain"
-            );
-            let tok = e
-                .get("element_token")
-                .and_then(|v| v.as_str())
-                .expect("element_token must be a string");
-            assert!(tok.starts_with('s'), "token must use the 's' prefix: {tok}");
-            assert!(tok.contains(':'), "token must be `s{{hex}}:{{idx}}`: {tok}");
-        }
-        for e in &entries {
-            let idx = e["element_index"].as_u64().unwrap() as usize;
-            let tok = e["element_token"].as_str().unwrap();
-            let (resolved_idx, wid, _) = cache
-                .resolve_element_args(pid, None, Some(tok), None, None, "click")
-                .expect("token must resolve")
-                .into_parts(None);
-            assert_eq!(wid, Some(9));
-            assert_eq!(resolved_idx, Some(idx));
-        }
+        let sid = cua_driver_core::element_token::mint_snapshot_handle(pid, 9);
+        let entries = build_elements_array_with_token(&nodes, Some(&sid));
+        assert_eq!(entries.len(), 2);
+        assert!(entries
+            .iter()
+            .all(|entry| entry["element_token"].as_str().is_some()));
     }
 
     #[test]

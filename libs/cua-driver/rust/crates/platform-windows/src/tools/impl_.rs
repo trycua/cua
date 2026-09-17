@@ -30,11 +30,11 @@ fn pin_overlay_above(key: &str, hwnd: u64) {
 }
 
 /// Resolve the screen point a coordinate action should actuate at, scrolling
-/// the target element into view first when its cached center lands off-screen.
+/// the target element into view first when its freshly resolved center lands off-screen.
 ///
-/// The element cache captures each element's center at walk time. On a short
+/// The element resolver captures each element's center at walk time. On a short
 /// display a tall window reflows so some controls sit below the visible area;
-/// their cached center then falls outside the window rect and a raw tap would
+/// their freshly resolved center then falls outside the window rect and a raw tap would
 /// land on the taskbar / another window instead of the control. Before failing,
 /// we ask the control to scroll itself visible via UIA
 /// `ScrollItemPattern::ScrollIntoView` (the control drives its own
@@ -51,7 +51,7 @@ fn pin_overlay_above(key: &str, hwnd: u64) {
 /// window. MSAA-walked elements are skipped (no ScrollItemPattern) and keep the
 /// existing failure.
 fn resolve_onscreen_point_with_scroll(
-    admitted: &Option<crate::uia::cache::RetainedElement>,
+    admitted: &Option<crate::uia::element_resolver::RetainedElement>,
     hwnd: u64,
     idx: usize,
     cx: i32,
@@ -329,7 +329,6 @@ use cua_driver_core::{
 use serde_json::{json, Value};
 use std::sync::{Arc, RwLock};
 
-use crate::uia::ElementCache;
 use cursor_overlay::CursorRegistry;
 use windows::core::Interface as _;
 
@@ -607,7 +606,6 @@ impl ZoomRegistry {
 }
 
 pub struct ToolState {
-    pub element_cache: Arc<ElementCache>,
     pub cursor_registry: Arc<CursorRegistry>,
     pub resize_registry: Arc<ResizeRegistry>,
     pub zoom_registry: Arc<ZoomRegistry>,
@@ -617,7 +615,6 @@ pub struct ToolState {
 impl ToolState {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
-            element_cache: Arc::new(ElementCache::new()),
             cursor_registry: Arc::new(CursorRegistry::new()),
             resize_registry: Arc::new(ResizeRegistry::new()),
             zoom_registry: Arc::new(ZoomRegistry::new()),
@@ -1122,7 +1119,7 @@ fn fold_max_dimension(ceiling: u32, per_call: Option<u32>) -> u32 {
 /// Returns `None` when the node has no `element_index` (non-actionable rows).
 fn build_element_entry(
     n: &crate::uia::UiaNode,
-    snapshot_id: Option<u32>,
+    snapshot_id: Option<&str>,
 ) -> Option<serde_json::Value> {
     let idx = n.element_index?;
     // `label`: name → value → automation_id → help_text.
@@ -1138,7 +1135,12 @@ fn build_element_entry(
         "depth": n.depth,
     });
     if let Some(snapshot_id) = snapshot_id {
-        entry["element_token"] = json!(cua_driver_core::element_token::token_for(snapshot_id, idx));
+        entry["element_token"] = json!(cua_driver_core::element_token::token_for_identity(
+            snapshot_id,
+            idx,
+            &crate::uia::element_resolver::identity_for_node(n)
+        )
+        .expect("fresh snapshot handle"));
     }
     if n.in_web_content {
         entry["in_web_content"] = json!(true);
@@ -1195,11 +1197,10 @@ impl Tool for GetWindowStateTool {
             description: "Walk a running app's UIA tree and return BOTH a structured \
                 `elements` array (preferred) AND a Markdown rendering of the same tree \
                 (back-compat). Every actionable element is tagged with [element_index N] \
-                in the markdown and as `element_index` in the structured array — pass \
-                those indices to `click`, `type_text`, `scroll`, etc.\n\n\
-                INVARIANT: call `get_window_state` once per turn per (pid, window_id) before \
-                any element-indexed action against that window. The index map is replaced by \
-                the next snapshot of the same (pid, window_id).\n\n\
+                in the markdown and as `element_index` in the structured array. Indices \
+                are observation metadata: use get_window_state to obtain identity-bearing \
+                element_token values for native actions. Another observation alone does \
+                not invalidate a token; action-time matching must be complete and unique.\n\n\
                 PREFERRED CONSUMERS read `structuredContent.elements` (one entry per \
                 indexed row with `element_index`, `role`, `label`, `value`, `enabled`, \
                 `selected`, `actions` (names of UIA patterns exposed as actions, \
@@ -1395,11 +1396,12 @@ impl Tool for GetWindowStateTool {
             };
             let tree_result = tree_result.map(|tree| {
                 let kind = if tree.nodes.iter().any(|node| node.msaa_role.is_some()) {
-                    crate::uia::cache::SnapshotKind::Msaa
+                    crate::uia::element_resolver::ElementBackend::Msaa
                 } else {
-                    crate::uia::cache::SnapshotKind::Uia
+                    crate::uia::element_resolver::ElementBackend::Uia
                 };
-                let payload = crate::uia::cache::CachedSnapshot::from_nodes(&tree.nodes, kind);
+                let payload =
+                    crate::uia::element_resolver::FreshUiaElements::from_nodes(&tree.nodes, kind);
                 (tree, payload)
             });
             // Capture screenshot AND any error message so the response can
@@ -1485,8 +1487,10 @@ impl Tool for GetWindowStateTool {
                     structured["elements_complete"] = json!(false);
                     structured["tree_markdown"] = json!(tr.tree_markdown);
 
-                    let snapshot_id = (!observation_only)
-                        .then(|| state.element_cache.publish(pid as i32, hwnd, payload));
+                    let snapshot_id = (!observation_only).then(|| {
+                        cua_driver_core::element_token::mint_snapshot_handle(pid as i32, hwnd)
+                    });
+                    let _payload = payload;
 
                     // Structured `elements` array — preferred consumption
                     // path. Shape matches the cross-platform spec:
@@ -1496,7 +1500,7 @@ impl Tool for GetWindowStateTool {
                     let elements: Vec<serde_json::Value> = tr
                         .nodes
                         .iter()
-                        .filter_map(|n| build_element_entry(n, snapshot_id))
+                        .filter_map(|n| build_element_entry(n, snapshot_id.as_deref()))
                         .collect();
                     let elements = cua_driver_core::element_query::project_elements_for_query(
                         elements,
@@ -1508,10 +1512,7 @@ impl Tool for GetWindowStateTool {
                     structured["elements"] = json!(elements);
                     // Surface 6: snapshot id mirror for debug correlation.
                     if let Some(snapshot_id) = snapshot_id {
-                        structured["snapshot_id"] =
-                            json!(cua_driver_core::element_token::token_for(snapshot_id, 0)
-                                .trim_end_matches(":0")
-                                .to_string());
+                        structured["snapshot_id"] = json!(snapshot_id);
                     }
                     structured["_note"] = json!(
                         "Prefer `elements` — `tree_markdown` will continue to work \
@@ -3061,19 +3062,15 @@ impl Tool for ClickTool {
             // primitive with two addressing modes — element_index via UIA, or
             // window-local pixel coords via PostMessage).  Windows-only schema
             // extras (`button`, no `modifier`/`action`/`debug_image_out`) apply here.
-            description: "Left-click against a target pid. **Prefer `element_index` over \
-                pixel coordinates** — element_index works on backgrounded / minimized / \
-                hidden / off-desktop windows, surfaces a stable handle that survives \
-                rebuilds, and tells you what you're clicking via the cached element's \
-                role + label. Reach for `x, y` only when the target is a canvas / video / \
-                WebGL / custom-drawn surface that doesn't appear in the UIA tree.\n\n\
+            description: "Left-click against a target pid. Prefer `element_token` from \
+                get_window_state for native controls; use x/y for canvas or custom-drawn \
+                content absent from UIA. Tokens describe observed controls, not persistent \
+                handles or guaranteed background/minimized-window access.\n\n\
                 Two addressing modes:\n\n\
-                - `element_index` + `window_id` (from the last `get_window_state` snapshot \
-                of that window) — performs the UIA Invoke pattern on the cached element via \
-                PostMessage. No cursor move, no focus steal. Requires a prior \
-                `get_window_state(pid, window_id)` in this turn; the element_index cache \
-                is scoped per (pid, window_id) and is replaced by the next snapshot of the \
-                same window.\n\n\
+                - `element_token`: requires a unique match in a complete current UIA tree \
+                for its window. Another observation alone does not invalidate it. \
+                Index plus snapshot_id alone is refused. An explicit window_id must \
+                agree with the token. Native delivery restrictions still apply.\n\n\
                 - `x`, `y` (window-local screenshot pixels, top-left origin of the PNG \
                 returned by `get_window_state`). On `delivery_mode:\"background\"` (the \
                 default), cua-driver FIRST does a UIA hit-test at the resolved \
@@ -3097,7 +3094,7 @@ impl Tool for ClickTool {
                 with `pid X has no on-screen window` otherwise).\n\n\
                 Exactly one of `element_index` or (`x` AND `y`) must be provided. \
                 `pid` is required for window scope and omitted for desktop scope. `window_id` is required when \
-                `element_index` is used (scopes the cache lookup). After a `zoom` call, \
+                `element_index` is used (scopes element resolution). After a `zoom` call, \
                 pass `from_zoom=true` to auto-translate zoom-image coords back to \
                 full-window space.\n\n\
                 Windows-only convenience: `button: \"left\"|\"right\"|\"middle\"` switches \
@@ -3128,7 +3125,7 @@ impl Tool for ClickTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use crate::input::delivery::{DeliveryMode, EventKind};
-        use crate::uia::cache::SnapshotKind;
+        use crate::uia::element_resolver::ElementBackend;
         use cua_driver_core::tool_args::ArgsExt;
         let cursor_key = resolve_cursor_key(&args);
 
@@ -3236,14 +3233,16 @@ impl Tool for ClickTool {
         // Surface 6: element_token / element_index precedence resolution.
         // Windows uses u64 HWND but the token registry stores u32; truncate
         // through the same path get_window_state used when registering.
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match crate::uia::element_resolver::resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
             args.opt_str("snapshot_id").as_deref(),
             args.opt_u64("window_id"),
             "click",
-        ) {
+        )
+        .await
+        {
             Ok(r) => r,
             Err(e) => return e,
         };
@@ -3338,7 +3337,7 @@ impl Tool for ClickTool {
             // ── MSAA dispatch (SAL/VCL targets) ────────────────────────────
             // For MSAA elements, route by role:
             //   - `action:"expand"` on BUTTONDROPDOWN → SendInput at the
-            //     cached rect's right-edge (the dropdown arrow half).
+            //     resolved rect's right-edge (the dropdown arrow half).
             //     Opens the picker (e.g. LO Writer Font Color → SALTMPSUBFRAME).
             //   - default action / `"invoke"` → SendInput at center
             //     (matches `accDoDefaultAction` semantics for VCL controls
@@ -3346,7 +3345,7 @@ impl Tool for ClickTool {
             //     `accDoDefaultAction` here because LO's MSAA impl applies
             //     the change asynchronously and returns S_OK either way,
             //     so the visible behavior is the same as a center click.
-            if let Some((SnapshotKind::Msaa, role)) = admitted
+            if let Some((ElementBackend::Msaa, role)) = admitted
                 .as_ref()
                 .map(|element| (element.kind, element.msaa_role))
             {
@@ -3375,7 +3374,7 @@ impl Tool for ClickTool {
                         }
                         None => {
                             return ToolResult::error(format!(
-                                "MSAA element [{idx}] has no cached rect — \
+                                "MSAA element [{idx}] has no resolved rect — \
                                  cannot dispatch action:\"expand\". Re-run \
                                  get_window_state to refresh the cache."
                             ));
@@ -3392,7 +3391,7 @@ impl Tool for ClickTool {
                         Some(v) => v,
                         None => {
                             return ToolResult::error(format!(
-                                "MSAA element [{idx}] not in cache for hwnd={hwnd}. \
+                                "MSAA element [{idx}] not present in current accessibility state for hwnd={hwnd}. \
                              Call get_window_state first."
                             ))
                         }
@@ -3444,12 +3443,12 @@ impl Tool for ClickTool {
                 };
             }
 
-            // UIA path: get cached center (no COM call needed — captured at walk time).
+            // UIA path: get freshly resolved center (no COM call needed — captured at walk time).
             let (cx, cy) = match admitted.as_ref().map(|element| element.center) {
                 Some(v) => v,
                 None => {
                     return ToolResult::error(format!(
-                        "Element {idx} not in cache for hwnd={hwnd}. Call get_window_state first."
+                        "Element {idx} not present in current accessibility state for hwnd={hwnd}. Call get_window_state first."
                     ))
                 }
             };
@@ -3489,7 +3488,9 @@ impl Tool for ClickTool {
                         };
 
                         let retained = admitted.as_ref().ok_or_else(|| {
-                            anyhow::anyhow!("element [{idx}] is not in the UIA cache")
+                            anyhow::anyhow!(
+                                "element [{idx}] is not present in the current UIA state"
+                            )
                         })?;
                         if !retained.is_uia() {
                             anyhow::bail!("element [{idx}] is not a UIA element");
@@ -3529,7 +3530,7 @@ impl Tool for ClickTool {
             }
 
             // delivery_mode:"foreground" — skip UIA Invoke and use SendInput at the
-            // cached element center. The caller explicitly chose foreground
+            // freshly resolved element center. The caller explicitly chose foreground
             // delivery; UIA Invoke would be background-safe (which they
             // rejected) and might fail on elements that don't support
             // InvokePattern anyway.
@@ -3676,7 +3677,7 @@ impl Tool for ClickTool {
                     return Ok(BackgroundElementClick::Inject { x: cx, y: cy, failed_calls });
                 }
                 if use_uia_invoke {
-                    // Retain the element out of the cache (AddRef under the
+                    // Retain the freshly resolved element (AddRef under the
                     // cache lock) so it can't be freed by a concurrent
                     // get_window_state on the same (pid, hwnd) while this click
                     // is mid-flight (use-after-free → daemon crash). The guard
@@ -3953,7 +3954,7 @@ impl Tool for ClickTool {
             }
 
             // delivery_mode:"background" on WinUI3 for double / right / middle (pixel
-            // path, no element_index → no cached element to UIA-Invoke): these
+            // path, no element_index → no freshly resolved element to UIA-Invoke): these
             // can't both land and hold the contract on WinUI3 (posted input is
             // ignored, the pen injector steals foreground) → structured error.
             if delivery == DeliveryMode::Background
@@ -4391,7 +4392,7 @@ pub struct TypeTextTool {
 }
 
 fn wait_for_cached_element_keyboard_focus(
-    admitted: &Option<crate::uia::cache::RetainedElement>,
+    admitted: &Option<crate::uia::element_resolver::RetainedElement>,
     timeout: std::time::Duration,
 ) -> bool {
     let deadline = std::time::Instant::now() + timeout;
@@ -4416,7 +4417,7 @@ fn wait_for_cached_element_keyboard_focus(
 /// bounded fallback. Both routes require `CurrentHasKeyboardFocus` read-back
 /// before any keyboard input is allowed to leave the driver.
 fn focus_cached_element_for_foreground(
-    admitted: &Option<crate::uia::cache::RetainedElement>,
+    admitted: &Option<crate::uia::element_resolver::RetainedElement>,
     hwnd: u64,
     element_index: usize,
     click_point: Option<(i32, i32)>,
@@ -4426,7 +4427,7 @@ fn focus_cached_element_for_foreground(
     // disabled foreground window immediately loses foreground on Windows,
     // which would make the enclosing verify-before-SendInput transaction
     // fail closed. The foreground route has already activated the exact HWND,
-    // so focus the cached element directly and verify it below.
+    // so focus the freshly resolved element directly and verify it below.
     let set_focus = admitted
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("missing admitted element"))
@@ -4560,14 +4561,16 @@ impl Tool for TypeTextTool {
         };
         let pid = raw_pid as u32;
         // Surface 6: element_token / element_index precedence resolution.
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match crate::uia::element_resolver::resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
             args.opt_str("snapshot_id").as_deref(),
             args.opt_u64("window_id"),
             "type_text",
-        ) {
+        )
+        .await
+        {
             Ok(r) => r,
             Err(e) => return e,
         };
@@ -4615,7 +4618,7 @@ impl Tool for TypeTextTool {
 
         if elem_idx.is_some() && hwnd_opt.is_none() {
             return ToolResult::error(
-                "window_id is required when element_index is used — the element_index cache \
+                "window_id is required when element_index is used — the element address \
                  is scoped per (pid, window_id). Pass the same window_id you used in \
                  `get_window_state`.",
             );
@@ -4709,7 +4712,7 @@ impl Tool for TypeTextTool {
                     Some(center) => center,
                     None => {
                         return ToolResult::error(format!(
-                        "Element {idx} not in cache for hwnd={hwnd}. Call get_window_state first."
+                        "Element {idx} not present in current accessibility state for hwnd={hwnd}. Call get_window_state first."
                     ))
                     }
                 };
@@ -4766,7 +4769,7 @@ impl Tool for TypeTextTool {
 
         // Glide the agent cursor onto the field being typed into, so the viewer
         // can see *where* the agent is typing — same visual feedback as a click.
-        // Only when an element_index is supplied (we have its cached center);
+        // Only when an element_index is supplied (we have its freshly resolved center);
         // the focused-element path has no resolvable position to point at.
         if let Some(element) = admitted.as_ref() {
             let (cx, cy) = element.center;
@@ -4800,7 +4803,7 @@ impl Tool for TypeTextTool {
                 let admitted = admitted.clone();
                 move || {
                     let _admission = &admitted;
-                    // Retain the element under the cache lock so a concurrent
+                    // Retain the element during fresh resolution so a concurrent
                     // get_window_state snapshot-replace on the same (pid, hwnd)
                     // can't Release it to zero while this SetValue is in flight.
                     // The guard is held for the whole closure.
@@ -4950,7 +4953,7 @@ impl Tool for TypeTextTool {
             let admitted = admitted.clone();
             move || {
                 let _admission = &admitted;
-                // Prefer a focus-independent read of the *specific* cached element
+                // Prefer a focus-independent read of the *specific* freshly resolved element
                 // when we have its index; only fall back to the (flaky, focus-
                 // dependent) system focused element when typing into "whatever is
                 // focused" with no element_index.
@@ -5137,17 +5140,17 @@ fn classify_value_write_readback(
     }
 }
 
-/// Read a **specific cached element's** text value by its `element_index`,
+/// Read a **specific freshly resolved element's** text value by its `element_index`,
 /// for type_text read-back verification. Tries `ValuePattern.CurrentValue`
 /// then falls back to `TextPattern` document text. Unlike
 /// [`read_focused_value_uia`] this is **focus-independent**: it reads the exact
-/// element the caller typed into (by handle, from the per-(pid,window) cache),
+/// element the caller typed into (by handle, from the current accessibility state),
 /// so it works whether or not the target is the foreground window. Returns
-/// `None` if the index isn't cached or the element exposes no readable text
+/// `None` if the index is not present in current accessibility state or the element exposes no readable text
 /// pattern. Mirrors the cache-retain + `mem::forget` discipline of the
 /// ValuePattern.SetValue path so the cached COM ref isn't released.
 fn read_cached_element_value(
-    admitted: &Option<crate::uia::cache::RetainedElement>,
+    admitted: &Option<crate::uia::element_resolver::RetainedElement>,
 ) -> Option<String> {
     use windows::core::Interface;
     use windows::Win32::UI::Accessibility::{
@@ -5242,7 +5245,7 @@ impl Tool for PressKeyTool {
                 end, pageup, pagedown, f1-f12, plus any letter or digit. Optional `modifiers` \
                 array takes ctrl/shift/alt/win. For true combinations (ctrl+c), `hotkey` is a \
                 cleaner surface.\n\n\
-                `element_index` focuses the cached UIA element before sending the key; the \
+                `element_index` focuses the freshly resolved UIA element before sending the key; the \
                 top-level window remains backgrounded when delivery_mode is background.".into(),
             input_schema: json!({
                 "type":"object","required":["key"],"properties":{
@@ -5310,14 +5313,16 @@ impl Tool for PressKeyTool {
         };
         let pid = raw_pid as u32;
         // Surface 6: element_token / element_index precedence resolution.
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match crate::uia::element_resolver::resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
             args.opt_str("snapshot_id").as_deref(),
             args.opt_u64("window_id"),
             "press_key",
-        ) {
+        )
+        .await
+        {
             Ok(r) => r,
             Err(e) => return e,
         };
@@ -5327,7 +5332,7 @@ impl Tool for PressKeyTool {
         // same validation.
         if elem_idx.is_some() && hwnd_opt.is_none() {
             return ToolResult::error(
-                "window_id is required when element_index is used — the element_index cache \
+                "window_id is required when element_index is used — the element address \
                  is scoped per (pid, window_id). Pass the same window_id you used in \
                  `get_window_state`.",
             );
@@ -5413,7 +5418,7 @@ impl Tool for PressKeyTool {
         // can activate their frame from UIA SetFocus even under
         // WS_EX_NOACTIVATE. Their proven-safe pixel route establishes renderer
         // focus with a posted click, so reuse that route at the AX element's
-        // cached center.
+        // freshly resolved center.
         let background_webview_focus = elem_idx.is_some()
             && delivery == DeliveryMode::Background
             && crate::input::has_chromium_descendant(hwnd);
@@ -5427,7 +5432,7 @@ impl Tool for PressKeyTool {
         if let Some(idx) = elem_idx.filter(|_| background_webview_focus) {
             let Some((cx, cy)) = admitted.as_ref().map(|element| element.center) else {
                 return ToolResult::error(format!(
-                    "Element {idx} not in cache for hwnd={hwnd}. Call get_window_state first."
+                    "Element {idx} not present in current accessibility state for hwnd={hwnd}. Call get_window_state first."
                 ));
             };
             let (cx, cy) = match resolve_onscreen_point_with_scroll(
@@ -5720,21 +5725,23 @@ impl Tool for HotkeyTool {
             Err(e) => return e,
         };
         let pid = raw_pid as u32;
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match crate::uia::element_resolver::resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|value| value as usize),
             args.opt_str("element_token").as_deref(),
             args.opt_str("snapshot_id").as_deref(),
             args.opt_u64("window_id"),
             "hotkey",
-        ) {
+        )
+        .await
+        {
             Ok(resolved) => resolved,
             Err(error) => return error,
         };
         let (elem_idx, hwnd_opt, admitted) = resolved.into_parts(args.opt_u64("window_id"));
         if elem_idx.is_some() && hwnd_opt.is_none() {
             return ToolResult::error(
-                "window_id is required when element_index is used — the element_index cache \
+                "window_id is required when element_index is used — the element address \
                  is scoped per (pid, window_id). Pass the same window_id you used in \
                  `get_window_state`.",
             );
@@ -6005,14 +6012,16 @@ impl Tool for SetValueTool {
             None => return ToolResult::error("Missing required string field value."),
         };
         // Surface 6: element_token / element_index precedence resolution.
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match crate::uia::element_resolver::resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
             args.opt_str("snapshot_id").as_deref(),
             args.opt_u64("window_id"),
             "set_value",
-        ) {
+        )
+        .await
+        {
             Ok(r) => r,
             Err(e) => return e,
         };
@@ -6044,7 +6053,7 @@ impl Tool for SetValueTool {
         // Glide the agent cursor onto the target element before writing its
         // value, so a value write gets the same visual feedback as a click —
         // the viewer can see *where* the agent is acting. No-op when the
-        // overlay is disabled or the element has no cached center.
+        // overlay is disabled or the element has no freshly resolved center.
         {
             let (cx, cy) = admitted.center;
             pin_overlay_above(&cursor_key, hwnd);
@@ -6246,21 +6255,23 @@ impl Tool for ScrollTool {
         let direction_display = direction.clone();
         let by_display = by.clone();
         // Surface 6: element_token / element_index precedence resolution.
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match crate::uia::element_resolver::resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
             args.opt_str("snapshot_id").as_deref(),
             args.opt_u64("window_id"),
             "scroll",
-        ) {
+        )
+        .await
+        {
             Ok(r) => r,
             Err(e) => return e,
         };
         let (elem_idx, hwnd_opt, admitted) = resolved.into_parts(args.opt_u64("window_id"));
         if elem_idx.is_some() && hwnd_opt.is_none() {
             return ToolResult::error(
-                "window_id is required when element_index is used — the element_index cache \
+                "window_id is required when element_index is used — the element address \
                  is scoped per (pid, window_id). Pass the same window_id you used in \
                  `get_window_state`.",
             );
@@ -6321,7 +6332,7 @@ impl Tool for ScrollTool {
                 move || {
                     let _admission = &admitted;
                     let retained = admitted.as_ref().ok_or_else(|| {
-                        anyhow::anyhow!("element [{idx}] is not in the UIA cache")
+                        anyhow::anyhow!("element [{idx}] is not present in the current UIA state")
                     })?;
                     if !retained.is_uia() {
                         anyhow::bail!("element [{idx}] is not a UIA scroll element");
@@ -6605,9 +6616,9 @@ async fn chromium_click_short_circuit(
 /// what makes Windows refuse the self-activation — the same guard ClickTool
 /// already relies on for single-click. Runs blocking COM, so call inside
 /// `spawn_blocking`. Returns `Some(Ok)` on success, `Some(Err)` if Invoke
-/// failed, `None` if the element isn't cached or has no InvokePattern.
+/// failed, `None` if the element is not present in current accessibility state or has no InvokePattern.
 fn winui3_uia_multi_invoke(
-    admitted: &Option<crate::uia::cache::RetainedElement>,
+    admitted: &Option<crate::uia::element_resolver::RetainedElement>,
     hwnd: u64,
     count: usize,
 ) -> Option<anyhow::Result<()>> {
@@ -6641,9 +6652,9 @@ fn winui3_uia_multi_invoke(
         }
         Some(res)
     })();
-    // The cache owns this element's ref (AddRef'd under the cache lock by
+    // The resolver guard owns this element's ref (AddRef'd during fresh resolution by
     // get_element_retained); `from_raw` took ownership without AddRef, so forget
-    // it to avoid double-releasing the cache's ref.
+    // it to avoid double-releasing the resolver guard's ref.
     std::mem::forget(elem);
     outcome
 }
@@ -6655,7 +6666,7 @@ fn winui3_uia_multi_invoke(
 ///    Invoke (lands + holds the no-foreground contract; see
 ///    [`winui3_uia_multi_invoke`]).
 ///  - **everything else** — right/middle click, double-click without an
-///    invokable cached element, any drag — cannot both land AND hold the
+///    invokable freshly resolved element, any drag — cannot both land AND hold the
 ///    contract on WinUI3: UIA has no right-click/drag analogue, the content
 ///    island ignores posted `WM_*BUTTON`, and the pointer injector
 ///    click-activates the frame. So we return the structured
@@ -6666,7 +6677,7 @@ fn winui3_uia_multi_invoke(
 /// Returns `None` for non-WinUI3 targets (caller falls through to its normal
 /// routing).
 async fn winui3_background_gesture(
-    admitted: &Option<crate::uia::cache::RetainedElement>,
+    admitted: &Option<crate::uia::element_resolver::RetainedElement>,
     pid: u32,
     hwnd: u64,
     idx: Option<usize>,
@@ -6767,14 +6778,16 @@ impl Tool for DoubleClickTool {
         let pid = raw_pid as u32;
         use cua_driver_core::tool_args::ArgsExt;
         // Surface 6: element_token / element_index precedence resolution.
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match crate::uia::element_resolver::resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
             args.opt_str("snapshot_id").as_deref(),
             args.opt_u64("window_id"),
             "double_click",
-        ) {
+        )
+        .await
+        {
             Ok(r) => r,
             Err(e) => return e,
         };
@@ -6799,7 +6812,7 @@ impl Tool for DoubleClickTool {
         }
         if elem_idx.is_some() && hwnd_opt.is_none() {
             return ToolResult::error(
-                "window_id is required when element_index is used — the element_index cache \
+                "window_id is required when element_index is used — the element address \
                  is scoped per (pid, window_id). Pass the same window_id you used in \
                  `get_window_state`.",
             );
@@ -6834,7 +6847,7 @@ impl Tool for DoubleClickTool {
                 Some(v) => v,
                 None => {
                     return ToolResult::error(format!(
-                        "Element {idx} not in cache for hwnd={hwnd}. Call get_window_state first."
+                        "Element {idx} not present in current accessibility state for hwnd={hwnd}. Call get_window_state first."
                     ))
                 }
             };
@@ -6862,7 +6875,7 @@ impl Tool for DoubleClickTool {
             // delivery_mode:"background" (default) on WinUI3: the pen/touch injector
             // click-activates the content island (8/8 foreground steals) and
             // posted WM_*BUTTON to the frame/island no-ops (measured). A double
-            // UIA Invoke on the cached element is the only contract-holding way
+            // UIA Invoke on the freshly resolved element is the only contract-holding way
             // to land the double-click — it fires the XAML Click handler twice
             // → last_action=double_click, held non-activatable so no foreground
             // swap. If the element has no InvokePattern, a background double-
@@ -6905,7 +6918,7 @@ impl Tool for DoubleClickTool {
                     Err(e) => ToolResult::error(format!("Task error: {e}")),
                 };
             }
-            // delivery_mode:"foreground" — route through SendInput at the cached coords.
+            // delivery_mode:"foreground" — route through SendInput at the freshly resolved coordinates.
             if delivery == DeliveryMode::Foreground {
                 let prev_fg_addr = unsafe {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
@@ -6946,7 +6959,7 @@ impl Tool for DoubleClickTool {
                     let _admission = &admitted;
                     crate::input::post_click_screen(hwnd, cx, cy, 2, "left")?;
                     // Swift text format 1:1: `"✅ Posted double-click to [N] role \"title\" at screen-point (X, Y)."`.
-                    // UIA role/title placeholder pending element-cache enrichment.
+                    // UIA role/title placeholder pending element-address enrichment.
                     Ok(format!(
                         "✅ Posted double-click to [{idx}] at screen-point ({cx}, {cy})."
                     ))
@@ -6992,7 +7005,7 @@ impl Tool for DoubleClickTool {
             );
             // delivery_mode:"background" on WinUI3 (pixel path, no element_index): a
             // background double-click on WinUI3 only lands via UIA Invoke on a
-            // cached element, which the pixel path doesn't have → structured
+            // freshly resolved element, which the pixel path doesn't have → structured
             // error (caller retries with delivery_mode:foreground or uses element_index).
             if delivery == DeliveryMode::Background {
                 if let Some(r) =
@@ -7102,10 +7115,10 @@ impl Tool for RightClickTool {
             // Description ported from Swift `RightClickTool.swift` semantics.
             // Windows uses PostMessage(WM_RBUTTONDOWN/UP); the AXShowMenu
             // analogue (UIA ShowContextMenu) is not yet wired up, so element
-            // path falls through to the pixel recipe at the cached center.
+            // path falls through to the pixel recipe at the freshly resolved center.
             description: "Right-click against a target pid. Two addressing modes:\n\n\
                 - `element_index` + `window_id` (from the last `get_window_state` snapshot \
-                of that window) — posts WM_RBUTTONDOWN/UP at the element's cached on-screen \
+                of that window) — posts WM_RBUTTONDOWN/UP at the element's resolved on-screen \
                 center via PostMessage. (Windows has no AXShowMenu analogue wired up yet; \
                 Swift's AX-action path falls through to the same pixel recipe on non-\
                 advertising elements, so user-visible behavior matches.)\n\n\
@@ -7142,14 +7155,16 @@ impl Tool for RightClickTool {
         let pid = raw_pid as u32;
         use cua_driver_core::tool_args::ArgsExt;
         // Surface 6: element_token / element_index precedence resolution.
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match crate::uia::element_resolver::resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
             args.opt_str("snapshot_id").as_deref(),
             args.opt_u64("window_id"),
             "right_click",
-        ) {
+        )
+        .await
+        {
             Ok(r) => r,
             Err(e) => return e,
         };
@@ -7174,7 +7189,7 @@ impl Tool for RightClickTool {
         }
         if elem_idx.is_some() && hwnd_opt.is_none() {
             return ToolResult::error(
-                "window_id is required when element_index is used — the element_index cache \
+                "window_id is required when element_index is used — the element address \
                  is scoped per (pid, window_id). Pass the same window_id you used in \
                  `get_window_state`.",
             );
@@ -7209,7 +7224,7 @@ impl Tool for RightClickTool {
                 Some(v) => v,
                 None => {
                     return ToolResult::error(format!(
-                        "Element {idx} not in cache for hwnd={hwnd}. Call get_window_state first."
+                        "Element {idx} not present in current accessibility state for hwnd={hwnd}. Call get_window_state first."
                     ))
                 }
             };
@@ -7316,7 +7331,7 @@ impl Tool for RightClickTool {
                     crate::input::post_click_screen(hwnd, cx, cy, 1, "right")?;
                     // Match Swift's element-path text 1:1
                     // (`"✅ Shown menu for [N] role \"title\"."`).  UIA role/title
-                    // placeholder pending element-cache enrichment.
+                    // placeholder pending element-address enrichment.
                     Ok(format!("✅ Shown menu for [{idx}] (screen ({cx}, {cy}))."))
                 }
             })
@@ -10074,10 +10089,6 @@ pub fn build_registry_with_provider(
             },
         ))
     };
-    // Share the element cache with the recording-hook layer so it can
-    // resolve element_index → window-local screenshot coords for click.png.
-    crate::recording_hooks::set_element_cache(state.element_cache.clone());
-
     // Drop a session's owned cursor on `session_end` (explicit end_session, the
     // CLI `session end` verb, or the daemon idle-TTL sweep). The session id IS
     // the cursor key (caller-declared `session`), so this prunes the metadata

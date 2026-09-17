@@ -4548,24 +4548,24 @@ resources:
     #[tokio::test]
     async fn element_tokens_are_bound_to_the_dispatch_runtime_generation() {
         let pid = 8_675_309;
-        let (first_cache, token) = DISPATCH_RUNTIME_SCOPE
+        let token = DISPATCH_RUNTIME_SCOPE
             .scope("token-dispatch-runtime-a".to_owned(), async {
-                let cache = crate::snapshot_test_support::cache();
-                let snapshot =
-                    cache.publish(pid, 44, crate::snapshot_test_support::Payload(vec![0]));
-                (cache, crate::element_token::token_for(snapshot, 0))
-            })
-            .await;
-        let second_cache = DISPATCH_RUNTIME_SCOPE
-            .scope("token-dispatch-runtime-b".to_owned(), async {
-                crate::snapshot_test_support::cache()
+                let snapshot = crate::element_token::mint_snapshot_handle(pid, 44);
+                crate::element_token::token_for_identity(&snapshot, 0, b"button:Save").unwrap()
             })
             .await;
         let structured = DISPATCH_RUNTIME_SCOPE
             .scope("token-dispatch-runtime-b".to_owned(), async {
-                second_cache
-                    .resolve_element_args(pid, None, Some(&token), None, None, "click")
-                    .unwrap_err()
+                crate::element_token::resolve_element_args::<usize, _>(
+                    pid,
+                    None,
+                    Some(&token),
+                    None,
+                    None,
+                    "click",
+                    |_, target| Ok(Some(target.element_index)),
+                )
+                .unwrap_err()
             })
             .await
             .structured_content
@@ -4578,10 +4578,17 @@ resources:
             structured.pointer("/refusal/code"),
             Some(&serde_json::Value::String("generation_mismatch".into()))
         );
-
         let owner = DISPATCH_RUNTIME_SCOPE
             .scope("token-dispatch-runtime-a".to_owned(), async {
-                first_cache.resolve_element_args(pid, None, Some(&token), None, None, "click")
+                crate::element_token::resolve_element_args(
+                    pid,
+                    None,
+                    Some(&token),
+                    None,
+                    None,
+                    "click",
+                    |_, target| Ok(Some(target.element_index)),
+                )
             })
             .await;
         assert!(matches!(

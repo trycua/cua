@@ -29,15 +29,14 @@ fn def() -> &'static ToolDef {
         name: "right_click".into(),
         description:
             "Right-click against a target pid. Two addressing modes:\n\n\
-             - `element_index` + `window_id` (from the last `get_window_state` snapshot) — \
-               performs `AXShowMenu` on the cached element. Pure AX RPC, works on backgrounded / \
-               hidden windows, no cursor move or focus steal. Requires a prior \
-               `get_window_state(pid, window_id)` in this turn.\n\n\
+             - `element_token` from `get_window_state` — performs `AXShowMenu` on a \
+               uniquely matched element in a complete current accessibility tree. Another \
+               observation alone does not invalidate it. Native availability still applies.\n\n\
              - `x`, `y` — synthesizes `rightMouseDown` / `rightMouseUp` CGEvent pair posted \
                to the pid. Driver converts image-pixel → screen-point internally. \
-               `modifier` forces the CGEvent path (AX actions don't propagate modifier keys).\n\n\
-             Exactly one of `element_index` or (`x` AND `y`) must be provided. `pid` always \
-             required. `window_id` required when `element_index` is used."
+               In pixel mode, `modifier` applies to the CGEvent path.\n\n\
+             Provide `element_token` or (`x` AND `y`). `pid` is always required. \
+             If supplied with a token, `window_id` must agree with it."
             .into(),
         input_schema: serde_json::json!({
             "type": "object",
@@ -99,14 +98,16 @@ impl Tool for RightClickTool {
         let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id");
         let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match crate::ax::element_resolver::resolve_element_args(
             pid,
             element_index_arg,
             element_token_arg.as_deref(),
             args.opt_str("snapshot_id").as_deref(),
             window_id_arg,
             "right_click",
-        ) {
+        )
+        .await
+        {
             Ok(r) => r,
             Err(e) => return e,
         };

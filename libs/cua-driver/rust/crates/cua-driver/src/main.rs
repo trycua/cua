@@ -23,6 +23,7 @@ mod check_update_tool;
 mod cli;
 mod doctor;
 mod driver_service_http;
+mod extension_manager;
 mod history_runtime;
 mod mcp_envelope;
 mod mcp_http;
@@ -811,6 +812,9 @@ fn main() {
         cli::Command::Skills { subcommand, flags } => {
             skills::run(&subcommand, &flags);
         }
+        cli::Command::Extension { args } => {
+            extension_manager::run(&args);
+        }
         cli::Command::CursorTheme { args } => {
             run_cursor_theme_command(&args);
         }
@@ -1098,6 +1102,10 @@ fn main() -> anyhow::Result<()> {
         }
         cli::Command::Skills { subcommand, flags } => {
             skills::run(&subcommand, &flags);
+            return Ok(());
+        }
+        cli::Command::Extension { args } => {
+            extension_manager::run(&args);
             return Ok(());
         }
         cli::Command::CursorTheme { args } => {

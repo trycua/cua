@@ -231,6 +231,7 @@ const PRIVATE_OBSERVATION_OPERATIONS: &[&str] = &[
     "get_desktop_state",
     "get_accessibility_tree",
     "get_window_state",
+    "parse_visual_regions",
     "verify_state",
     "list_apps",
     "list_windows",
@@ -922,7 +923,8 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "browser_type"
         | "browser_pointer"
         | "history_status"
-        | "history_query" => RiskClass::R2,
+        | "history_query"
+        | "parse_visual_regions" => RiskClass::R2,
 
         // External/file side effects or generic compound action surfaces.
         "get_desktop_state"

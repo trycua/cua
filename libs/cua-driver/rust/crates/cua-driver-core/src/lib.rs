@@ -47,9 +47,8 @@ pub mod authorization;
 pub mod background_input;
 pub mod browser;
 pub mod capture_mode;
-// Compiled for cross-platform validation before the RFC-approved runtime wires it in.
-#[allow(dead_code)]
 pub(crate) mod capture_registry;
+pub mod capture_runtime;
 pub mod capture_scope;
 pub mod cdp;
 pub mod clipboard;
@@ -69,6 +68,8 @@ pub mod history;
 pub mod image_utils;
 pub mod mcp_result;
 pub mod page;
+pub mod perception_client;
+pub mod perception_tools;
 pub mod pip_hook;
 pub mod policy;
 pub mod protocol;

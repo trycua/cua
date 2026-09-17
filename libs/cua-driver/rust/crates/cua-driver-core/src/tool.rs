@@ -348,6 +348,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
             "screen.capture",
             "screen.capture.window",
         ],
+        "parse_visual_regions" => &["screen.perception.visual_regions"],
 
         // ── apps / windows ───────────────────────────────────────────
         "launch_app" => &["app.launch"],
@@ -634,6 +635,7 @@ pub struct ToolRegistry {
     cursor_outcome_readers: Vec<crate::session::CursorOutcomeReaderRegistration>,
     _recording_state_readers: Vec<crate::session::RecordingStateReaderRegistration>,
     runtime_cleanups: Vec<RuntimeCleanup>,
+    capture_service: Arc<crate::capture_runtime::CaptureService>,
     /// Runtime-owned protected-consent broker shared by every resource
     /// adapter. Keeping it at the canonical dispatch boundary prevents
     /// browser, desktop, and file adapters from growing independent provider
@@ -653,6 +655,7 @@ impl ToolRegistry {
     pub fn new_with_protected_consent_provider(
         provider: Option<Arc<dyn crate::consent::ProtectedConsentProvider>>,
     ) -> Self {
+        let capture_service = Arc::new(crate::capture_runtime::CaptureService::default());
         let approval_broker = Arc::new(crate::consent::ApprovalBroker::new(provider));
         let protected_resource_grants = Arc::new(crate::consent::ProtectedResourceGrants::new(
             approval_broker.clone(),
@@ -661,10 +664,14 @@ impl ToolRegistry {
             Arc::new(crate::consent::ProtectedResourceOwnershipStore::default());
         let weak_grants = Arc::downgrade(&protected_resource_grants);
         let weak_ownership = Arc::downgrade(&protected_resource_ownership);
+        let weak_captures = Arc::downgrade(&capture_service);
         let session_end_hook =
             crate::session::register_scoped_session_end_hook(move |session_id| {
                 if let Some(ownership) = weak_ownership.upgrade() {
                     ownership.remove_session(session_id);
+                }
+                if let Some(captures) = weak_captures.upgrade() {
+                    captures.retire_session_id(session_id);
                 }
                 let Some(grants) = weak_grants.upgrade() else {
                     return;
@@ -701,6 +708,7 @@ impl ToolRegistry {
             cursor_outcome_readers: Vec::new(),
             _recording_state_readers: vec![recording_state_reader],
             runtime_cleanups: Vec::new(),
+            capture_service,
             approval_broker,
             protected_resource_grants,
             protected_resource_ownership,
@@ -714,6 +722,11 @@ impl ToolRegistry {
     /// trusted runtime.
     pub fn approval_broker(&self) -> Arc<crate::consent::ApprovalBroker> {
         self.approval_broker.clone()
+    }
+
+    /// Return the immutable-capture service owned by this runtime registry.
+    pub fn capture_service(&self) -> Arc<crate::capture_runtime::CaptureService> {
+        self.capture_service.clone()
     }
 
     pub fn protected_resource_grants(&self) -> Arc<crate::consent::ProtectedResourceGrants> {
@@ -859,6 +872,29 @@ impl ToolRegistry {
         self.register(Box::new(ListSessionsTool));
         self.register(Box::new(GetSessionStateTool));
         self.register(Box::new(EndSessionTool));
+    }
+
+    pub fn register_perception_tool(&mut self, client: crate::perception_client::PerceptionClient) {
+        let captures = self.capture_service();
+        let resolve_binding = Arc::new(move |args: &Value| {
+            captures.binding_from_args(args).map_err(|error| {
+                crate::perception_client::error(
+                    cua_driver_contract::VisualParseErrorCode::CaptureGenerationMismatch,
+                    "capture session binding is unavailable",
+                    false,
+                    Some(error.to_string()),
+                )
+            })
+        });
+        self.register_perception_tool_with_binding_resolver(client, resolve_binding);
+    }
+
+    pub fn register_perception_tool_with_binding_resolver(
+        &mut self,
+        client: crate::perception_client::PerceptionClient,
+        resolve_binding: crate::perception_tools::CaptureBindingResolver,
+    ) {
+        crate::perception_tools::register_perception_tool(self, client, resolve_binding);
     }
 
     /// Wire up the replay tool's weak self-reference.
@@ -5113,6 +5149,7 @@ mod capability_tests {
         "browser_pointer",
         "history_status",
         "history_query",
+        "parse_visual_regions",
     ];
 
     /// All capability tokens in the canonical vocabulary. Any token
@@ -5141,6 +5178,7 @@ mod capability_tests {
         "screen.capture.region",
         "screen.dimensions",
         "screen.cursor.position",
+        "screen.perception.visual_regions",
         // accessibility
         "accessibility.tree",
         "accessibility.tree.structured",

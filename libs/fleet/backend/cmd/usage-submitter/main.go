@@ -72,6 +72,10 @@ func run(ctx context.Context, now func() time.Time) error {
 		return err
 	}
 	defer store.Close()
+	if err := waitForWebIdentityToken(ctx, cfg.tokenWait); err != nil {
+		span.SetStatus(codes.Error, "web identity token unavailable")
+		return err
+	}
 	archiver, err := submitter.NewS3Archiver(ctx)
 	if err != nil {
 		span.SetStatus(codes.Error, "archive initialization failed")
@@ -133,7 +137,42 @@ func run(ctx context.Context, now func() time.Time) error {
 
 type config struct {
 	databaseURL string
+	tokenWait   time.Duration
 	submitter   submitter.Config
+}
+
+// waitForWebIdentityToken blocks until the file named by
+// AWS_WEB_IDENTITY_TOKEN_FILE is non-empty. The Keycloak token refresher
+// sidecar writes it shortly after pod start, and the distroless image has no
+// shell to do this wait in the manifest. Unset means no federation is
+// configured and nothing is waited for.
+func waitForWebIdentityToken(ctx context.Context, timeout time.Duration) error {
+	path := os.Getenv("AWS_WEB_IDENTITY_TOKEN_FILE")
+	if path == "" {
+		return nil
+	}
+	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		info, statErr := os.Stat(path)
+		if statErr == nil && info.Size() > 0 {
+			return nil
+		}
+		if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+			return fmt.Errorf("stat web identity token %s: %w", path, statErr)
+		}
+		// statErr is nil (empty file) or ErrNotExist here; keep it in the chain
+		// so the eventual timeout says which.
+		if time.Now().After(deadline) {
+			return errors.Join(fmt.Errorf("web identity token %s was not written within %s", path, timeout), statErr)
+		}
+		select {
+		case <-ctx.Done():
+			return errors.Join(fmt.Errorf("waiting for web identity token: %w", ctx.Err()), statErr)
+		case <-ticker.C:
+		}
+	}
 }
 
 func loadConfig() (config, error) {
@@ -171,6 +210,9 @@ func loadConfig() (config, error) {
 		return config{}, err
 	}
 	if cfg.submitter.Lookback, err = durationEnv("SUBMIT_LOOKBACK", cfg.submitter.Lookback); err != nil {
+		return config{}, err
+	}
+	if cfg.tokenWait, err = durationEnv("AWS_WEB_IDENTITY_TOKEN_WAIT", 2*time.Minute); err != nil {
 		return config{}, err
 	}
 	if raw := os.Getenv("SUBMIT_DRY_RUN"); raw != "" {

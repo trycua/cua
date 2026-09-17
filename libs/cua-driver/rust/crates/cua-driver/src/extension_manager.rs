@@ -26,6 +26,9 @@ const INSTALL_RECORD_NAME: &str = ".install.json";
 const ACTIVE_NAME: &str = "active.json";
 const ACTIVE_BACKUP_NAME: &str = "active.backup.json";
 const ACTIVE_NEW_NAME: &str = "active.new.json";
+const TRUST_NAME: &str = ".publisher-trust.json";
+const TRUST_NEW_NAME: &str = ".publisher-trust.new.json";
+const TRUST_BACKUP_NAME: &str = ".publisher-trust.backup.json";
 const MANIFEST_SCHEMA_VERSION: u32 = 1;
 const CATALOG_SCHEMA_VERSION: u32 = 1;
 // The initial lifecycle targets one executable plus a moderate model bundle.
@@ -42,6 +45,8 @@ const VERIFIED_PUBLISHER_ID: &str = "cua";
 const VERIFIED_PUBLISHER_NAME: &str = "Cua";
 const VERIFIED_KEY_ID: &str = "cua-extension-ed25519-2026-01";
 // The corresponding private key is held outside this repository.
+const VERIFIED_KEY_VALID_FROM_UNIX: u64 = 1_735_689_600; // 2025-01-01
+const VERIFIED_KEY_VALID_UNTIL_UNIX: u64 = 2_082_758_400; // 2036-01-01
 const VERIFIED_PUBLIC_KEY: [u8; 32] = [
     0x74, 0x1e, 0xc4, 0xff, 0x7e, 0x9f, 0x4d, 0x72, 0xe2, 0x1c, 0xf7, 0xeb, 0xf3, 0x26, 0xb8, 0x8b,
     0x84, 0xc5, 0x6e, 0xcb, 0x14, 0xfe, 0x3a, 0x4e, 0xf7, 0x3a, 0xd2, 0xf2, 0x09, 0x78, 0x6e, 0xc4,
@@ -119,7 +124,28 @@ struct ComponentLicense {
 #[serde(deny_unknown_fields)]
 struct SignedCatalog {
     payload: CatalogPayload,
+    signature_algorithm: String,
     signature: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct PublisherKey {
+    key_id: String,
+    public_key_base64: String,
+    valid_from_unix: u64,
+    valid_until_unix: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct PublisherTrust {
+    schema_version: u32,
+    publisher_id: String,
+    generation: u64,
+    highest_catalog_version: u64,
+    current_key: PublisherKey,
+    pending_key: Option<PublisherKey>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -143,6 +169,8 @@ struct CatalogPayload {
     corresponding_source_uri: String,
     corresponding_source_revision: String,
     provenance: String,
+    #[serde(default)]
+    next_key: Option<PublisherKey>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -157,6 +185,7 @@ struct InstallSource {
     archive: PathBuf,
     trust: TrustClass,
     catalog: Option<CatalogPayload>,
+    trust_update: Option<PublisherTrust>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -178,6 +207,8 @@ struct InstallRecord {
     key_id: Option<String>,
     archive_sha256: String,
     catalog_version: Option<u64>,
+    #[serde(default)]
+    publisher_trust: Option<PublisherTrust>,
 }
 
 #[derive(Debug, Serialize)]
@@ -324,6 +355,8 @@ fn open_directory_path_nofollow(path: &Path) -> Result<Dir> {
         directory = directory.open_dir_nofollow(&name).with_context(|| {
             format!("open directory component {:?} in {}", name, path.display())
         })?;
+        #[cfg(windows)]
+        windows_reject_reparse_directory(&directory)?;
     }
     Ok(directory)
 }
@@ -343,6 +376,8 @@ fn ensure_private_directory_path(path: &Path) -> Result<Dir> {
                 })
             }
         };
+        #[cfg(windows)]
+        windows_reject_reparse_directory(&directory)?;
     }
     verify_cap_directory_permissions_portable(&directory)?;
     Ok(directory)
@@ -384,7 +419,7 @@ fn run_inner(args: &[String]) -> Result<()> {
         ),
         "inspect" => {
             let entry = registry_entry(required_id(id, "inspect")?)?;
-            let source = resolve_install_source(entry, &parsed)?;
+            let source = resolve_install_source(entry, &parsed, &store)?;
             let inspected = inspect_without_mutation(entry, &source)?;
             print_preview(entry, &inspected, &source, json)
         }
@@ -396,7 +431,7 @@ fn run_inner(args: &[String]) -> Result<()> {
             ensure_mutations_supported()?;
             let id = required_id(id, subcommand)?;
             let entry = registry_entry(id)?;
-            let source = resolve_install_source(entry, &parsed)?;
+            let source = resolve_install_source(entry, &parsed, &store)?;
             let inspected = inspect_without_mutation(entry, &source)?;
             print_preview(entry, &inspected, &source, false)?;
             let installed = store.install_source(entry, &source, subcommand == "update")?;
@@ -567,9 +602,6 @@ fn parse_command(args: &[String]) -> Result<ParsedCommand> {
 }
 
 fn ensure_mutations_supported() -> Result<()> {
-    #[cfg(windows)]
-    bail!("extension install/update/remove is unsupported on Windows until opened-handle reparse-point and ACL enforcement is implemented");
-    #[cfg(not(windows))]
     Ok(())
 }
 
@@ -641,7 +673,11 @@ fn trust_label(trust: &TrustClass) -> &'static str {
     }
 }
 
-fn resolve_install_source(entry: &RegistryEntry, parsed: &ParsedCommand) -> Result<InstallSource> {
+fn resolve_install_source(
+    entry: &RegistryEntry,
+    parsed: &ParsedCommand,
+    store: &ExtensionStore,
+) -> Result<InstallSource> {
     if parsed.allow_unsigned_local {
         let archive = parsed.archive.clone().ok_or_else(|| {
             anyhow!("developer mode requires --archive <path> with --allow-unsigned-local")
@@ -650,6 +686,7 @@ fn resolve_install_source(entry: &RegistryEntry, parsed: &ParsedCommand) -> Resu
             archive,
             trust: TrustClass::DeveloperUnsignedLocal,
             catalog: None,
+            trust_update: None,
         });
     }
     if parsed.archive.is_some() {
@@ -662,7 +699,8 @@ fn resolve_install_source(entry: &RegistryEntry, parsed: &ParsedCommand) -> Resu
     let bytes = read_small_local_file(catalog_path)?;
     let signed: SignedCatalog =
         serde_json::from_slice(&bytes).context("parse signed extension catalog")?;
-    verify_catalog(entry, &signed)?;
+    let trust = store.load_publisher_trust()?;
+    let trust_update = verify_catalog_at(entry, &signed, &trust, unix_now()?)?;
     let archive_rel = safe_relative_path(Path::new(&signed.payload.archive))?;
     if archive_rel.as_os_str().is_empty() || archive_rel != Path::new(&signed.payload.archive) {
         bail!("catalog archive path must be canonical and relative");
@@ -675,23 +713,39 @@ fn resolve_install_source(entry: &RegistryEntry, parsed: &ParsedCommand) -> Resu
         archive,
         trust: TrustClass::PublisherVerified,
         catalog: Some(signed.payload),
+        trust_update: Some(trust_update),
     })
 }
 
-fn verify_catalog(entry: &RegistryEntry, signed: &SignedCatalog) -> Result<()> {
+fn verify_catalog_at(
+    entry: &RegistryEntry,
+    signed: &SignedCatalog,
+    trust: &PublisherTrust,
+    now: u64,
+) -> Result<PublisherTrust> {
     let payload = &signed.payload;
+    if signed.signature_algorithm != "ed25519" {
+        bail!("unsupported catalog signature algorithm");
+    }
     if payload.schema_version != CATALOG_SCHEMA_VERSION {
         bail!("unsupported catalog schema {}", payload.schema_version);
     }
     if payload.catalog_version == 0 {
         bail!("catalog version must be greater than zero");
     }
-    validate_catalog_freshness(payload)?;
+    validate_catalog_freshness_at(payload, now)?;
     if payload.publisher_id != VERIFIED_PUBLISHER_ID
         || payload.publisher_name != VERIFIED_PUBLISHER_NAME
-        || payload.key_id != VERIFIED_KEY_ID
+        || trust.publisher_id != VERIFIED_PUBLISHER_ID
     {
         bail!("catalog publisher identity is not trusted");
+    }
+    if payload.catalog_version <= trust.highest_catalog_version {
+        bail!(
+            "catalog anti-rollback version {} must be newer than trusted version {}",
+            payload.catalog_version,
+            trust.highest_catalog_version
+        );
     }
     if payload.extension_id != entry.id {
         bail!("catalog extension id does not match requested extension");
@@ -722,8 +776,110 @@ fn verify_catalog(entry: &RegistryEntry, signed: &SignedCatalog) -> Result<()> {
             bail!("catalog {name} must not be empty");
         }
     }
+    let (signing_key, promote_pending) = if payload.key_id == trust.current_key.key_id {
+        (&trust.current_key, false)
+    } else if trust
+        .pending_key
+        .as_ref()
+        .is_some_and(|key| key.key_id == payload.key_id)
+    {
+        (
+            trust.pending_key.as_ref().expect("checked pending key"),
+            true,
+        )
+    } else {
+        bail!("catalog signing key is unknown or has been retired");
+    };
+    validate_publisher_key(signing_key)?;
+    if now < signing_key.valid_from_unix {
+        bail!("catalog signing key is not valid yet");
+    }
+    if now >= signing_key.valid_until_unix {
+        bail!("catalog signing key has expired");
+    }
+    let public_key = decode_publisher_key(signing_key)?;
     let message = serde_json::to_vec(payload)?;
-    verify_ed25519_signature(&VERIFIED_PUBLIC_KEY, &message, &signed.signature)
+    verify_ed25519_signature(&public_key, &message, &signed.signature)?;
+
+    let mut updated = trust.clone();
+    if promote_pending {
+        updated.current_key = signing_key.clone();
+        updated.pending_key = None;
+        updated.generation = updated
+            .generation
+            .checked_add(1)
+            .ok_or_else(|| anyhow!("publisher key generation overflow"))?;
+    }
+    if let Some(next) = &payload.next_key {
+        validate_publisher_key(next)?;
+        if next.key_id == updated.current_key.key_id {
+            bail!("next publisher key must differ from the current key");
+        }
+        if next.valid_from_unix >= next.valid_until_unix
+            || next.valid_from_unix >= updated.current_key.valid_until_unix
+        {
+            bail!("next publisher key has an invalid rotation window");
+        }
+        match &updated.pending_key {
+            Some(existing) if existing != next => {
+                bail!("catalog attempts to replace a pending publisher key")
+            }
+            _ => updated.pending_key = Some(next.clone()),
+        }
+    }
+    updated.highest_catalog_version = payload.catalog_version;
+    Ok(updated)
+}
+
+fn initial_publisher_trust() -> PublisherTrust {
+    PublisherTrust {
+        schema_version: 1,
+        publisher_id: VERIFIED_PUBLISHER_ID.to_owned(),
+        generation: 1,
+        highest_catalog_version: 0,
+        current_key: PublisherKey {
+            key_id: VERIFIED_KEY_ID.to_owned(),
+            public_key_base64: BASE64.encode(VERIFIED_PUBLIC_KEY),
+            valid_from_unix: VERIFIED_KEY_VALID_FROM_UNIX,
+            valid_until_unix: VERIFIED_KEY_VALID_UNTIL_UNIX,
+        },
+        pending_key: None,
+    }
+}
+
+fn validate_publisher_trust(trust: &PublisherTrust) -> Result<()> {
+    if trust.schema_version != 1
+        || trust.publisher_id != VERIFIED_PUBLISHER_ID
+        || trust.generation == 0
+    {
+        bail!("publisher trust state is invalid");
+    }
+    validate_publisher_key(&trust.current_key)?;
+    if let Some(pending) = &trust.pending_key {
+        validate_publisher_key(pending)?;
+        if pending.key_id == trust.current_key.key_id
+            || pending.valid_from_unix >= trust.current_key.valid_until_unix
+        {
+            bail!("publisher trust rotation state is invalid");
+        }
+    }
+    Ok(())
+}
+
+fn validate_publisher_key(key: &PublisherKey) -> Result<()> {
+    if key.key_id.trim().is_empty() || key.valid_from_unix >= key.valid_until_unix {
+        bail!("publisher key metadata is invalid");
+    }
+    decode_publisher_key(key).map(|_| ())
+}
+
+fn decode_publisher_key(key: &PublisherKey) -> Result<[u8; 32]> {
+    let bytes = BASE64
+        .decode(&key.public_key_base64)
+        .context("publisher key is not valid base64")?;
+    bytes
+        .try_into()
+        .map_err(|_| anyhow!("publisher Ed25519 key must be 32 bytes"))
 }
 
 fn verify_ed25519_signature(public_key: &[u8], message: &[u8], signature: &str) -> Result<()> {
@@ -736,10 +892,17 @@ fn verify_ed25519_signature(public_key: &[u8], message: &[u8], signature: &str) 
 }
 
 fn validate_catalog_freshness(payload: &CatalogPayload) -> Result<()> {
-    let now = std::time::SystemTime::now()
+    validate_catalog_freshness_at(payload, unix_now()?)
+}
+
+fn unix_now() -> Result<u64> {
+    Ok(std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .context("system clock precedes the Unix epoch")?
-        .as_secs();
+        .as_secs())
+}
+
+fn validate_catalog_freshness_at(payload: &CatalogPayload, now: u64) -> Result<()> {
     if payload.expires_unix <= now {
         bail!("signed extension catalog has expired");
     }
@@ -892,6 +1055,67 @@ impl ExtensionStore {
         self.extension_dir(id).join("versions")
     }
 
+    fn load_publisher_trust(&self) -> Result<PublisherTrust> {
+        if !self.root.exists() {
+            return Ok(initial_publisher_trust());
+        }
+        let root = open_directory_path_nofollow(&self.root)?;
+        verify_cap_directory_permissions_portable(&root)?;
+        let active = private_regular_file_or_missing_at(&root, TRUST_NAME)?;
+        let backup = private_regular_file_or_missing_at(&root, TRUST_BACKUP_NAME)?;
+        if !active && backup {
+            bail!("publisher trust update is interrupted; run an extension mutation to recover it");
+        }
+        if !active {
+            return Ok(initial_publisher_trust());
+        }
+        let trust: PublisherTrust =
+            serde_json::from_slice(&read_small_file_at(&root, Path::new(TRUST_NAME))?)
+                .context("parse publisher trust state")?;
+        validate_publisher_trust(&trust)?;
+        Ok(trust)
+    }
+
+    fn recover_publisher_trust_locked(&self, root: &Dir) -> Result<()> {
+        let active = private_regular_file_or_missing_at(root, TRUST_NAME)?;
+        let backup = private_regular_file_or_missing_at(root, TRUST_BACKUP_NAME)?;
+        if !active && backup {
+            root.rename(TRUST_BACKUP_NAME, root, TRUST_NAME)
+                .context("restore interrupted publisher trust state")?;
+        } else if active && backup {
+            root.remove_file(TRUST_BACKUP_NAME)
+                .context("remove stale publisher trust backup")?;
+        }
+        if private_regular_file_or_missing_at(root, TRUST_NEW_NAME)? {
+            root.remove_file(TRUST_NEW_NAME)
+                .context("remove stale publisher trust candidate")?;
+        }
+        sync_cap_dir(root)
+    }
+
+    fn commit_publisher_trust_locked(&self, root: &Dir, trust: &PublisherTrust) -> Result<()> {
+        validate_publisher_trust(trust)?;
+        self.recover_publisher_trust_locked(root)?;
+        write_new_file_at(root, TRUST_NEW_NAME, &serde_json::to_vec_pretty(trust)?)?;
+        let had_active = private_regular_file_or_missing_at(root, TRUST_NAME)?;
+        if had_active {
+            root.rename(TRUST_NAME, root, TRUST_BACKUP_NAME)
+                .context("back up publisher trust state")?;
+        }
+        if let Err(error) = root.rename(TRUST_NEW_NAME, root, TRUST_NAME) {
+            let _ = root.remove_file(TRUST_NEW_NAME);
+            if had_active {
+                root.rename(TRUST_BACKUP_NAME, root, TRUST_NAME)
+                    .context("restore publisher trust state")?;
+            }
+            return Err(error).context("activate publisher trust state");
+        }
+        if had_active {
+            root.remove_file(TRUST_BACKUP_NAME)?;
+        }
+        sync_cap_dir(root)
+    }
+
     fn recover_activation_locked(&self, root: &Dir, id: &str) -> Result<()> {
         let Some(extension) = open_private_subdirectory_if_present(root, id)? else {
             return Ok(());
@@ -924,6 +1148,33 @@ impl ExtensionStore {
                 .remove_file(ACTIVE_NEW_NAME)
                 .with_context(|| format!("remove stale activation candidate for {id}"))?;
             sync_cap_dir(&extension)?;
+        }
+        Ok(())
+    }
+
+    fn recover_publisher_trust_from_active_locked(&self, root: &Dir, id: &str) -> Result<()> {
+        let Some(pointer) = self.active_pointer_locked(root, id)? else {
+            return Ok(());
+        };
+        let extension = root.open_dir_nofollow(id)?;
+        let version = extension
+            .open_dir_nofollow("versions")?
+            .open_dir_nofollow(&pointer.version)?;
+        let manifest = verify_installed_version_at(&version, registry_entry(id)?, None)?;
+        let record = read_install_record_at(&version, id, &manifest.version)?;
+        let Some(candidate) = record.publisher_trust else {
+            return Ok(());
+        };
+        if Some(candidate.highest_catalog_version) != record.catalog_version {
+            bail!("installed publisher trust does not match its catalog version");
+        }
+        let current = self.load_publisher_trust()?;
+        if candidate.highest_catalog_version > current.highest_catalog_version {
+            self.commit_publisher_trust_locked(root, &candidate)?;
+        } else if candidate.highest_catalog_version == current.highest_catalog_version
+            && candidate != current
+        {
+            bail!("installed publisher trust conflicts with durable trust state");
         }
         Ok(())
     }
@@ -975,7 +1226,9 @@ impl ExtensionStore {
         is_update: bool,
     ) -> Result<InstalledVersion> {
         let lock = self.lock(entry.id)?;
+        self.recover_publisher_trust_locked(&lock.root)?;
         self.recover_activation_locked(&lock.root, entry.id)?;
+        self.recover_publisher_trust_from_active_locked(&lock.root, entry.id)?;
         let active = self.active_pointer_locked(&lock.root, entry.id)?;
         if is_update && active.is_none() {
             bail!("{} is not installed; use extension install", entry.id);
@@ -1092,6 +1345,9 @@ impl ExtensionStore {
             &version_text,
             ActivationFailpoint::None,
         )?;
+        if let Some(trust) = &source.trust_update {
+            self.commit_publisher_trust_locked(&lock.root, trust)?;
+        }
         Ok(InstalledVersion {
             version: version_text,
             path: destination,
@@ -1107,6 +1363,7 @@ impl ExtensionStore {
                 archive: archive.to_owned(),
                 trust: TrustClass::DeveloperUnsignedLocal,
                 catalog: None,
+                trust_update: None,
             },
             is_update,
         )
@@ -1189,6 +1446,7 @@ impl ExtensionStore {
     fn active_path(&self, id: &str) -> Result<Option<PathBuf>> {
         let lock = self.lock(id)?;
         self.recover_activation_locked(&lock.root, id)?;
+        self.recover_publisher_trust_from_active_locked(&lock.root, id)?;
         let Some(pointer) = self.active_pointer_locked(&lock.root, id)? else {
             return Ok(None);
         };
@@ -1233,6 +1491,7 @@ impl ExtensionStore {
         };
         let pointer = match self
             .recover_activation_locked(&lock.root, entry.id)
+            .and_then(|()| self.recover_publisher_trust_from_active_locked(&lock.root, entry.id))
             .and_then(|()| self.active_pointer_locked(&lock.root, entry.id))
         {
             Ok(pointer) => pointer,
@@ -1332,6 +1591,7 @@ impl ExtensionStore {
     fn remove(&self, entry: &RegistryEntry) -> Result<()> {
         let lock = self.lock(entry.id)?;
         self.recover_activation_locked(&lock.root, entry.id)?;
+        self.recover_publisher_trust_from_active_locked(&lock.root, entry.id)?;
         let Some(extension) = open_private_subdirectory_if_present(&lock.root, entry.id)? else {
             bail!("{} is not installed", entry.id);
         };
@@ -1381,6 +1641,13 @@ fn inspect_archive(
     let metadata = file
         .metadata()
         .with_context(|| format!("inspect archive {}", path.display()))?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt as _;
+        if metadata.file_attributes() & 0x400 != 0 {
+            bail!("archive is a Windows reparse point: {}", path.display());
+        }
+    }
     if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
         bail!("archive is not a regular local file: {}", path.display());
     }
@@ -1646,6 +1913,7 @@ fn write_install_record_at(
             .catalog
             .as_ref()
             .map(|catalog| catalog.catalog_version),
+        publisher_trust: source.trust_update.clone(),
     };
     write_new_file_at(
         root,
@@ -1669,6 +1937,8 @@ fn write_new_file_at(directory: &Dir, path: &str, bytes: &[u8]) -> Result<()> {
         options.mode(0o600);
     }
     let mut file = directory.open_with(path, &options)?;
+    #[cfg(windows)]
+    windows_secure_handle(&file)?;
     file.write_all(bytes)?;
     file.sync_all()?;
     Ok(())
@@ -1801,18 +2071,30 @@ fn read_install_record_at(root: &Dir, id: &str, version: &str) -> Result<Install
     match record.trust {
         TrustClass::PublisherVerified => {
             if record.publisher_id.as_deref() != Some(VERIFIED_PUBLISHER_ID)
-                || record.key_id.as_deref() != Some(VERIFIED_KEY_ID)
+                || record.key_id.as_deref().is_none_or(str::is_empty)
             {
                 bail!("verified install record has an untrusted publisher identity");
             }
             if record.catalog_version.is_none() {
                 bail!("verified install record has no catalog anti-rollback version");
             }
+            let trust = record.publisher_trust.as_ref().ok_or_else(|| {
+                anyhow!("verified install record has no publisher trust snapshot")
+            })?;
+            validate_publisher_trust(trust)?;
+            if Some(trust.highest_catalog_version) != record.catalog_version
+                || Some(trust.current_key.key_id.as_str()) != record.key_id.as_deref()
+                    && trust.pending_key.as_ref().map(|key| key.key_id.as_str())
+                        != record.key_id.as_deref()
+            {
+                bail!("verified install record publisher trust does not match its catalog");
+            }
         }
         TrustClass::DeveloperUnsignedLocal => {
             if record.publisher_id.is_some()
                 || record.key_id.is_some()
                 || record.catalog_version.is_some()
+                || record.publisher_trust.is_some()
             {
                 bail!("developer install record cannot claim a verified publisher");
             }
@@ -1894,6 +2176,8 @@ fn stream_archive_file_at<R: Read>(
         options.mode(0o600);
     }
     let mut file = root.open_with(path, &options)?;
+    #[cfg(windows)]
+    windows_secure_handle(&file)?;
     let mut hasher = Sha256::new();
     let mut copied = 0_u64;
     let mut buffer = [0_u8; 64 * 1024];
@@ -1983,6 +2267,11 @@ fn create_private_subdirectory(parent: &Dir, name: &std::ffi::OsStr) -> Result<(
     }
     #[cfg(not(unix))]
     parent.create_dir(name)?;
+    #[cfg(windows)]
+    {
+        let directory = parent.open_dir_nofollow(name)?;
+        windows_secure_handle(&directory)?;
+    }
     sync_cap_dir(parent)
 }
 
@@ -2044,7 +2333,12 @@ fn verify_private_cap_file_permissions(file: &cap_std::fs::File, path: &str) -> 
     Ok(())
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn verify_private_cap_file_permissions(file: &cap_std::fs::File, path: &str) -> Result<()> {
+    windows_verify_file_handle(file).with_context(|| format!("verify Windows ACL for {path}"))
+}
+
+#[cfg(all(not(unix), not(windows)))]
 fn verify_private_cap_file_permissions(_file: &cap_std::fs::File, _path: &str) -> Result<()> {
     Ok(())
 }
@@ -2055,6 +2349,7 @@ fn remove_cap_subdirectory(parent: &Dir, name: &std::ffi::OsStr) -> Result<()> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error.into()),
     };
+    verify_cap_directory_permissions_portable(&opened)?;
     inspect_owned_tree(&opened)?;
     opened.remove_open_dir_all()?;
     sync_cap_dir(parent)
@@ -2064,6 +2359,16 @@ fn inspect_owned_tree(directory: &Dir) -> Result<()> {
     for child in directory.entries()? {
         let child = child?;
         let file_type = child.file_type()?;
+        #[cfg(windows)]
+        {
+            use cap_std::fs::MetadataExt as _;
+            if child.metadata()?.file_attributes() & 0x400 != 0 {
+                bail!(
+                    "refusing to delete extension directory containing reparse point {:?}",
+                    child.file_name()
+                );
+            }
+        }
         if file_type.is_symlink() {
             bail!(
                 "refusing to delete extension directory containing symbolic link {:?}",
@@ -2071,11 +2376,14 @@ fn inspect_owned_tree(directory: &Dir) -> Result<()> {
             );
         }
         if file_type.is_dir() {
-            inspect_owned_tree(&directory.open_dir_nofollow(child.file_name())?)?;
+            let opened = directory.open_dir_nofollow(child.file_name())?;
+            verify_cap_directory_permissions_portable(&opened)?;
+            inspect_owned_tree(&opened)?;
         } else if file_type.is_file() {
             let mut options = CapOpenOptions::new();
             options.read(true).follow(FollowSymlinks::No);
-            drop(child.open_with(&options)?);
+            let file = child.open_with(&options)?;
+            verify_private_cap_file_permissions(&file, &child.file_name().to_string_lossy())?;
         } else {
             bail!(
                 "refusing to delete extension directory containing special file {:?}",
@@ -2108,7 +2416,15 @@ fn set_private_file_permissions_at(root: &Dir, path: &Path, executable: bool) ->
     Ok(())
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn set_private_file_permissions_at(root: &Dir, path: &Path, _executable: bool) -> Result<()> {
+    let mut options = CapOpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
+    let file = root.open_with(path, &options)?;
+    windows_secure_handle(&file)
+}
+
+#[cfg(all(not(unix), not(windows)))]
 fn set_private_file_permissions_at(_root: &Dir, _path: &Path, _executable: bool) -> Result<()> {
     Ok(())
 }
@@ -2140,7 +2456,15 @@ fn verify_expected_file_permissions_at(root: &Dir, path: &Path, executable: bool
     Ok(())
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn verify_expected_file_permissions_at(root: &Dir, path: &Path, _executable: bool) -> Result<()> {
+    let mut options = CapOpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
+    let file = root.open_with(path, &options)?;
+    windows_verify_file_handle(&file)
+}
+
+#[cfg(all(not(unix), not(windows)))]
 fn verify_expected_file_permissions_at(_root: &Dir, _path: &Path, _executable: bool) -> Result<()> {
     Ok(())
 }
@@ -2168,6 +2492,8 @@ fn open_lock_file_at(dir: &Dir, name: &str) -> Result<fs::File> {
     }
     match dir.open_with(name, &create) {
         Ok(file) => {
+            #[cfg(windows)]
+            windows_secure_handle(&file)?;
             verify_private_cap_file_permissions(&file, name)?;
             sync_cap_dir(dir)?;
             Ok(file.into_std())
@@ -2199,6 +2525,331 @@ fn verify_cap_directory_permissions(directory: &Dir) -> Result<()> {
     Ok(())
 }
 
+#[cfg(windows)]
+fn windows_verify_file_handle(file: &cap_std::fs::File) -> Result<()> {
+    use cap_std::fs::MetadataExt as _;
+    if file.metadata()?.file_attributes() & 0x400 != 0 {
+        bail!("extension file is a Windows reparse point");
+    }
+    use std::os::windows::io::AsRawHandle as _;
+    windows_verify_security(file.as_raw_handle().cast())
+}
+
+#[cfg(windows)]
+fn windows_verify_directory_handle(directory: &Dir) -> Result<()> {
+    windows_reject_reparse_directory(directory)?;
+    use std::os::windows::io::AsRawHandle as _;
+    windows_verify_security(directory.as_raw_handle().cast())
+}
+
+#[cfg(windows)]
+fn windows_reject_reparse_directory(directory: &Dir) -> Result<()> {
+    use cap_std::fs::MetadataExt as _;
+    if directory.dir_metadata()?.file_attributes() & 0x400 != 0 {
+        bail!("extension directory is a Windows reparse point");
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn windows_secure_handle<T: std::os::windows::io::AsRawHandle>(handle: &T) -> Result<()> {
+    windows_set_private_security(handle.as_raw_handle().cast())?;
+    windows_verify_security(handle.as_raw_handle().cast())
+}
+
+#[cfg(windows)]
+#[repr(C)]
+struct WindowsAcl {
+    revision: u8,
+    sbz1: u8,
+    size: u16,
+    ace_count: u16,
+    sbz2: u16,
+}
+
+#[cfg(windows)]
+#[repr(C)]
+struct WindowsAceHeader {
+    ace_type: u8,
+    ace_flags: u8,
+    ace_size: u16,
+}
+
+#[cfg(windows)]
+#[repr(C)]
+struct WindowsAccessAllowedAce {
+    header: WindowsAceHeader,
+    mask: u32,
+    sid_start: u32,
+}
+
+#[cfg(windows)]
+unsafe fn windows_current_user_sid() -> Result<Vec<u8>> {
+    #[repr(C)]
+    struct SidAndAttributes {
+        sid: *mut std::ffi::c_void,
+        attributes: u32,
+    }
+    #[repr(C)]
+    struct TokenUser {
+        user: SidAndAttributes,
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetCurrentProcess() -> *mut std::ffi::c_void;
+        fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
+    }
+    #[link(name = "advapi32")]
+    extern "system" {
+        fn OpenProcessToken(
+            process: *mut std::ffi::c_void,
+            desired_access: u32,
+            token: *mut *mut std::ffi::c_void,
+        ) -> i32;
+        fn GetTokenInformation(
+            token: *mut std::ffi::c_void,
+            class: u32,
+            information: *mut std::ffi::c_void,
+            length: u32,
+            required: *mut u32,
+        ) -> i32;
+        fn GetLengthSid(sid: *mut std::ffi::c_void) -> u32;
+    }
+    let mut token = std::ptr::null_mut();
+    if OpenProcessToken(GetCurrentProcess(), 0x0008, &mut token) == 0 {
+        bail!("open current process token for extension ACL");
+    }
+    let mut required = 0;
+    let _ = GetTokenInformation(token, 1, std::ptr::null_mut(), 0, &mut required);
+    let mut buffer = vec![0_u8; required as usize];
+    let ok = required != 0
+        && GetTokenInformation(
+            token,
+            1,
+            buffer.as_mut_ptr().cast(),
+            required,
+            &mut required,
+        ) != 0;
+    let _ = CloseHandle(token);
+    if !ok {
+        bail!("read current process user SID for extension ACL");
+    }
+    let token_user = std::ptr::read_unaligned(buffer.as_ptr().cast::<TokenUser>());
+    let length = GetLengthSid(token_user.user.sid);
+    if length == 0 {
+        bail!("current process user SID is invalid");
+    }
+    Ok(std::slice::from_raw_parts(token_user.user.sid.cast::<u8>(), length as usize).to_vec())
+}
+
+#[cfg(windows)]
+unsafe fn windows_sid_string(sid: *mut std::ffi::c_void) -> Result<String> {
+    #[link(name = "advapi32")]
+    extern "system" {
+        fn ConvertSidToStringSidW(sid: *mut std::ffi::c_void, value: *mut *mut u16) -> i32;
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn LocalFree(memory: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+    }
+    let mut value = std::ptr::null_mut();
+    if ConvertSidToStringSidW(sid, &mut value) == 0 || value.is_null() {
+        bail!("convert current user SID for extension ACL");
+    }
+    let length = (0..).find(|&index| *value.add(index) == 0).unwrap_or(0);
+    let result = String::from_utf16_lossy(std::slice::from_raw_parts(value, length));
+    let _ = LocalFree(value.cast());
+    Ok(result)
+}
+
+#[cfg(windows)]
+fn windows_set_private_security(handle: *mut std::ffi::c_void) -> Result<()> {
+    unsafe {
+        #[link(name = "advapi32")]
+        extern "system" {
+            fn ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                value: *const u16,
+                revision: u32,
+                descriptor: *mut *mut std::ffi::c_void,
+                size: *mut u32,
+            ) -> i32;
+            fn GetSecurityDescriptorDacl(
+                descriptor: *mut std::ffi::c_void,
+                present: *mut i32,
+                dacl: *mut *mut WindowsAcl,
+                defaulted: *mut i32,
+            ) -> i32;
+            fn SetSecurityInfo(
+                handle: *mut std::ffi::c_void,
+                object_type: i32,
+                information: u32,
+                owner: *mut std::ffi::c_void,
+                group: *mut std::ffi::c_void,
+                dacl: *mut WindowsAcl,
+                sacl: *mut WindowsAcl,
+            ) -> u32;
+        }
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn ReOpenFile(
+                original: *mut std::ffi::c_void,
+                desired_access: u32,
+                share_mode: u32,
+                flags: u32,
+            ) -> *mut std::ffi::c_void;
+            fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
+            fn LocalFree(memory: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+        }
+        let user = windows_current_user_sid()?;
+        let user_ptr = user.as_ptr().cast_mut().cast();
+        let sddl = format!(
+            "D:P(A;;FA;;;{})(A;;FA;;;SY)(A;;FA;;;BA)",
+            windows_sid_string(user_ptr)?
+        );
+        let wide = sddl
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        let mut descriptor = std::ptr::null_mut();
+        if ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            wide.as_ptr(),
+            1,
+            &mut descriptor,
+            std::ptr::null_mut(),
+        ) == 0
+        {
+            bail!("build private extension ACL");
+        }
+        let mut present = 0;
+        let mut defaulted = 0;
+        let mut dacl = std::ptr::null_mut();
+        let got_dacl =
+            GetSecurityDescriptorDacl(descriptor, &mut present, &mut dacl, &mut defaulted);
+        let result = if got_dacl == 0 || present == 0 || dacl.is_null() {
+            Err(anyhow!("private extension ACL has no DACL"))
+        } else {
+            let security_handle = ReOpenFile(handle, 0x0004_0000, 0x7, 0);
+            if security_handle.is_null() || security_handle as isize == -1 {
+                let _ = LocalFree(descriptor);
+                bail!("reopen extension object for Windows ACL update");
+            }
+            let status = SetSecurityInfo(
+                security_handle,
+                1,
+                0x4 | 0x8000_0000,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                dacl,
+                std::ptr::null_mut(),
+            );
+            let _ = CloseHandle(security_handle);
+            if status == 0 {
+                Ok(())
+            } else {
+                Err(anyhow!(
+                    "set private extension ACL failed with Windows error {status}"
+                ))
+            }
+        };
+        let _ = LocalFree(descriptor);
+        result
+    }
+}
+
+#[cfg(windows)]
+fn windows_verify_security(handle: *mut std::ffi::c_void) -> Result<()> {
+    unsafe {
+        #[link(name = "advapi32")]
+        extern "system" {
+            fn GetSecurityInfo(
+                handle: *mut std::ffi::c_void,
+                object_type: i32,
+                information: u32,
+                owner: *mut *mut std::ffi::c_void,
+                group: *mut *mut std::ffi::c_void,
+                dacl: *mut *mut WindowsAcl,
+                sacl: *mut *mut WindowsAcl,
+                descriptor: *mut *mut std::ffi::c_void,
+            ) -> u32;
+            fn GetSecurityDescriptorControl(
+                descriptor: *mut std::ffi::c_void,
+                control: *mut u16,
+                revision: *mut u32,
+            ) -> i32;
+            fn GetAce(acl: *const WindowsAcl, index: u32, ace: *mut *mut std::ffi::c_void) -> i32;
+            fn EqualSid(left: *mut std::ffi::c_void, right: *mut std::ffi::c_void) -> i32;
+            fn IsWellKnownSid(sid: *mut std::ffi::c_void, kind: i32) -> i32;
+        }
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn LocalFree(memory: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+        }
+        let user = windows_current_user_sid()?;
+        let user_ptr = user.as_ptr().cast_mut().cast();
+        let mut owner = std::ptr::null_mut();
+        let mut dacl = std::ptr::null_mut();
+        let mut descriptor = std::ptr::null_mut();
+        let status = GetSecurityInfo(
+            handle,
+            1,
+            0x1 | 0x4,
+            &mut owner,
+            std::ptr::null_mut(),
+            &mut dacl,
+            std::ptr::null_mut(),
+            &mut descriptor,
+        );
+        if status != 0 {
+            bail!("read extension ACL failed with Windows error {status}");
+        }
+        let result = (|| -> Result<()> {
+            if owner.is_null() || EqualSid(owner, user_ptr) == 0 {
+                bail!("extension object is not owned by the current Windows user");
+            }
+            if dacl.is_null() {
+                bail!("extension object has an unprotected or absent Windows DACL");
+            }
+            let mut control = 0_u16;
+            let mut revision = 0_u32;
+            if GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) == 0
+                || control & 0x1000 == 0
+            {
+                bail!("extension object Windows DACL is not protected");
+            }
+            let mut user_full_control = false;
+            for index in 0..(*dacl).ace_count as u32 {
+                let mut raw = std::ptr::null_mut();
+                if GetAce(dacl, index, &mut raw) == 0 || raw.is_null() {
+                    bail!("read extension Windows ACL entry");
+                }
+                let ace = &*(raw.cast::<WindowsAccessAllowedAce>());
+                if ace.header.ace_type == 1 {
+                    continue;
+                }
+                if ace.header.ace_type != 0 {
+                    bail!("extension Windows ACL contains an unsupported allow entry");
+                }
+                let sid = std::ptr::addr_of!(ace.sid_start).cast_mut().cast();
+                let is_user = EqualSid(sid, user_ptr) != 0;
+                let is_system = IsWellKnownSid(sid, 22) != 0;
+                let is_admin = IsWellKnownSid(sid, 26) != 0;
+                if !is_user && !is_system && !is_admin {
+                    bail!("extension Windows ACL grants access to an untrusted principal");
+                }
+                if is_user && ace.mask & 0x001f_01ff == 0x001f_01ff {
+                    user_full_control = true;
+                }
+            }
+            if !user_full_control {
+                bail!("extension Windows ACL does not grant the owner full control");
+            }
+            Ok(())
+        })();
+        let _ = LocalFree(descriptor);
+        result
+    }
+}
+
 fn safe_relative_path(path: &Path) -> Result<PathBuf> {
     let mut result = PathBuf::new();
     for component in path.components() {
@@ -2224,7 +2875,10 @@ fn verify_cap_directory_permissions_portable(directory: &Dir) -> Result<()> {
 }
 
 #[cfg(not(unix))]
-fn verify_cap_directory_permissions_portable(_directory: &Dir) -> Result<()> {
+fn verify_cap_directory_permissions_portable(directory: &Dir) -> Result<()> {
+    #[cfg(windows)]
+    return windows_verify_directory_handle(directory);
+    #[cfg(not(windows))]
     Ok(())
 }
 
@@ -2643,12 +3297,6 @@ mod tests {
 
     #[test]
     fn mutation_platform_contract_is_explicit() {
-        #[cfg(windows)]
-        assert!(ensure_mutations_supported()
-            .unwrap_err()
-            .to_string()
-            .contains("unsupported on Windows"));
-        #[cfg(not(windows))]
         assert!(ensure_mutations_supported().is_ok());
     }
 
@@ -2810,6 +3458,43 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn rejects_windows_junctions_and_broad_acl_entries() {
+        let temp = TempDir::new().unwrap();
+        let store = ExtensionStore::new(temp.path().join("extensions"));
+        let root = ensure_private_directory_path(&store.root).unwrap();
+        let external = temp.path().join("external");
+        fs::create_dir(&external).unwrap();
+        let junction = store.root.join("junction");
+        let linked = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&junction)
+            .arg(&external)
+            .output()
+            .unwrap();
+        assert!(
+            linked.status.success(),
+            "{}",
+            String::from_utf8_lossy(&linked.stderr)
+        );
+        assert!(open_directory_path_nofollow(&junction).is_err());
+
+        write_new_file_at(&root, "owned", b"content").unwrap();
+        let file = store.root.join("owned");
+        let acl = std::process::Command::new("icacls")
+            .arg(&file)
+            .args(["/grant", "*S-1-1-0:(W)"])
+            .output()
+            .unwrap();
+        assert!(
+            acl.status.success(),
+            "{}",
+            String::from_utf8_lossy(&acl.stderr)
+        );
+        assert!(private_regular_file_or_missing_at(&root, "owned").is_err());
+    }
+
     #[cfg(unix)]
     #[test]
     fn retained_directory_handle_survives_name_swap_without_touching_replacement() {
@@ -2918,6 +3603,140 @@ mod tests {
             &signature
         )
         .is_err());
+    }
+
+    fn test_catalog_payload(key_id: &str, version: u64) -> CatalogPayload {
+        CatalogPayload {
+            schema_version: CATALOG_SCHEMA_VERSION,
+            catalog_version: version,
+            expires_unix: 900,
+            publisher_id: VERIFIED_PUBLISHER_ID.to_owned(),
+            publisher_name: VERIFIED_PUBLISHER_NAME.to_owned(),
+            key_id: key_id.to_owned(),
+            extension_id: "cua-perception".to_owned(),
+            version: format!("1.0.{version}"),
+            target: current_target().unwrap(),
+            archive: "extension.tar.gz".to_owned(),
+            archive_size: 1,
+            archive_sha256: "0".repeat(64),
+            manifest_sha256: "1".repeat(64),
+            license: "Apache-2.0".to_owned(),
+            source: "https://github.com/trycua/cua".to_owned(),
+            corresponding_source_uri: "https://github.com/trycua/cua".to_owned(),
+            corresponding_source_revision: "test".to_owned(),
+            provenance: "test catalog".to_owned(),
+            next_key: None,
+        }
+    }
+
+    fn test_publisher_key(
+        key_id: &str,
+        pair: &ring::signature::Ed25519KeyPair,
+        valid_from_unix: u64,
+        valid_until_unix: u64,
+    ) -> PublisherKey {
+        use ring::signature::KeyPair as _;
+        PublisherKey {
+            key_id: key_id.to_owned(),
+            public_key_base64: BASE64.encode(pair.public_key().as_ref()),
+            valid_from_unix,
+            valid_until_unix,
+        }
+    }
+
+    fn sign_test_catalog(
+        pair: &ring::signature::Ed25519KeyPair,
+        payload: CatalogPayload,
+    ) -> SignedCatalog {
+        SignedCatalog {
+            signature_algorithm: "ed25519".to_owned(),
+            signature: BASE64.encode(pair.sign(&serde_json::to_vec(&payload).unwrap()).as_ref()),
+            payload,
+        }
+    }
+
+    #[test]
+    fn publisher_key_rotation_enforces_windows_and_rollback() {
+        let current = ring::signature::Ed25519KeyPair::from_seed_unchecked(&[7; 32]).unwrap();
+        let next = ring::signature::Ed25519KeyPair::from_seed_unchecked(&[9; 32]).unwrap();
+        let current_key = test_publisher_key("current", &current, 100, 800);
+        let next_key = test_publisher_key("next", &next, 200, 900);
+        let trust = PublisherTrust {
+            schema_version: 1,
+            publisher_id: VERIFIED_PUBLISHER_ID.to_owned(),
+            generation: 1,
+            highest_catalog_version: 0,
+            current_key: current_key.clone(),
+            pending_key: None,
+        };
+        let entry = registry_entry("cua-perception").unwrap();
+
+        let valid = sign_test_catalog(&current, test_catalog_payload("current", 1));
+        let accepted = verify_catalog_at(entry, &valid, &trust, 150).unwrap();
+        assert_eq!(accepted.highest_catalog_version, 1);
+
+        let mut tampered = valid.clone();
+        tampered.payload.archive_size = 2;
+        assert!(verify_catalog_at(entry, &tampered, &trust, 150)
+            .unwrap_err()
+            .to_string()
+            .contains("signature verification"));
+
+        let mut rotation_payload = test_catalog_payload("current", 2);
+        rotation_payload.next_key = Some(next_key.clone());
+        let rotation = sign_test_catalog(&current, rotation_payload);
+        let pending = verify_catalog_at(entry, &rotation, &trust, 150).unwrap();
+        assert_eq!(pending.pending_key.as_ref().unwrap().key_id, "next");
+
+        let next_catalog = sign_test_catalog(&next, test_catalog_payload("next", 3));
+        assert!(verify_catalog_at(entry, &next_catalog, &pending, 199)
+            .unwrap_err()
+            .to_string()
+            .contains("not valid yet"));
+        let promoted = verify_catalog_at(entry, &next_catalog, &pending, 250).unwrap();
+        assert_eq!(promoted.current_key.key_id, "next");
+        assert_eq!(promoted.generation, 2);
+        assert!(promoted.pending_key.is_none());
+
+        let retired = sign_test_catalog(&current, test_catalog_payload("current", 4));
+        assert!(verify_catalog_at(entry, &retired, &promoted, 300)
+            .unwrap_err()
+            .to_string()
+            .contains("retired"));
+
+        let rollback = sign_test_catalog(&next, test_catalog_payload("next", 3));
+        assert!(verify_catalog_at(entry, &rollback, &promoted, 300)
+            .unwrap_err()
+            .to_string()
+            .contains("anti-rollback"));
+
+        let expired_trust = PublisherTrust {
+            current_key: test_publisher_key("expired", &current, 100, 200),
+            ..trust
+        };
+        let expired = sign_test_catalog(&current, test_catalog_payload("expired", 5));
+        assert!(verify_catalog_at(entry, &expired, &expired_trust, 200)
+            .unwrap_err()
+            .to_string()
+            .contains("expired"));
+    }
+
+    #[test]
+    fn publisher_trust_state_is_durable_and_recovers_backup() {
+        let temp = TempDir::new().unwrap();
+        let store = ExtensionStore::new(temp.path().join("extensions"));
+        let root = ensure_private_directory_path(&store.root).unwrap();
+        let mut trust = initial_publisher_trust();
+        trust.highest_catalog_version = 7;
+        store.commit_publisher_trust_locked(&root, &trust).unwrap();
+        assert_eq!(store.load_publisher_trust().unwrap(), trust);
+
+        root.rename(TRUST_NAME, &root, TRUST_BACKUP_NAME).unwrap();
+        write_new_file_at(&root, TRUST_NEW_NAME, b"interrupted").unwrap();
+        store.recover_publisher_trust_locked(&root).unwrap();
+        assert_eq!(store.load_publisher_trust().unwrap(), trust);
+        assert!(!store.root.join(TRUST_BACKUP_NAME).exists());
+        assert!(!store.root.join(TRUST_NEW_NAME).exists());
     }
 
     #[test]

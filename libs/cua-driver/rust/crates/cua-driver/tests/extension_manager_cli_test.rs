@@ -32,7 +32,16 @@ fn current_target() -> String {
 }
 
 fn fixture_archive(directory: &Path, version: &str) -> PathBuf {
-    let payload = b"#!/bin/sh\nexit 0\n";
+    let payload: &[u8] = if cfg!(windows) {
+        b"@exit /b 0\r\n"
+    } else {
+        b"#!/bin/sh\nexit 0\n"
+    };
+    let entrypoint = if cfg!(windows) {
+        "bin/cua-perception.cmd"
+    } else {
+        "bin/cua-perception"
+    };
     let digest = format!("{:x}", Sha256::digest(payload));
     let manifest = serde_json::to_vec_pretty(&json!({
         "schema_version": 1,
@@ -41,8 +50,8 @@ fn fixture_archive(directory: &Path, version: &str) -> PathBuf {
         "driver_version": format!("={}", env!("CARGO_PKG_VERSION")),
         "protocol_version": 1,
         "target": current_target(),
-        "entrypoint": "bin/cua-perception",
-        "files": [{"path": "bin/cua-perception", "sha256": digest, "executable": true}],
+        "entrypoint": entrypoint,
+        "files": [{"path": entrypoint, "sha256": digest, "executable": true}],
         "models": [],
         "components": [{
             "name": "cua-perception", "version": version, "license": "Apache-2.0",
@@ -62,7 +71,7 @@ fn fixture_archive(directory: &Path, version: &str) -> PathBuf {
     let encoder = GzEncoder::new(fs::File::create(&path).unwrap(), Compression::default());
     let mut builder = tar::Builder::new(encoder);
     append(&mut builder, "extension.json", &manifest);
-    append(&mut builder, "bin/cua-perception", payload);
+    append(&mut builder, entrypoint, payload);
     builder.finish().unwrap();
     path
 }
@@ -78,7 +87,6 @@ fn append(builder: &mut tar::Builder<GzEncoder<fs::File>>, path: &str, bytes: &[
 }
 
 #[test]
-#[cfg(not(windows))]
 fn developer_lifecycle_is_explicit_previewed_and_removable() {
     let temp = TempDir::new().unwrap();
     let home = temp.path().join("driver-home");
@@ -219,6 +227,7 @@ fn signed_catalog_rejects_forgery_before_state_creation() {
             "corresponding_source_revision": "integration-fixture",
             "provenance": "forged test catalog"
         },
+        "signature_algorithm": "ed25519",
         "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
     });
     let catalog_path = temp.path().join("catalog.json");
@@ -282,36 +291,5 @@ fn cli_rejects_ambiguous_extension_arguments() {
     ] {
         let output = run(&home, &args);
         assert!(!output.status.success(), "accepted {args:?}");
-    }
-}
-
-#[cfg(windows)]
-#[test]
-fn windows_refuses_every_extension_mutation() {
-    let temp = TempDir::new().unwrap();
-    let home = temp.path().join("driver-home");
-    let archive = fixture_archive(temp.path(), "1.2.3");
-    for args in [
-        vec![
-            "extension",
-            "install",
-            "cua-perception",
-            "--archive",
-            archive.to_str().unwrap(),
-            "--allow-unsigned-local",
-        ],
-        vec![
-            "extension",
-            "update",
-            "cua-perception",
-            "--archive",
-            archive.to_str().unwrap(),
-            "--allow-unsigned-local",
-        ],
-        vec!["extension", "remove", "cua-perception"],
-    ] {
-        let output = run(&home, &args);
-        assert!(!output.status.success());
-        assert!(String::from_utf8_lossy(&output.stderr).contains("unsupported on Windows"));
     }
 }

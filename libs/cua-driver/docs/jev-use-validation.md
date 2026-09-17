@@ -297,23 +297,22 @@ No lost evidence was reconstructed or represented as retained.
 ### Credential-free Linux workflow follow-up
 
 The branch remains based on `origin/main`
-`aca1985ffc4061d580218f5f850ac57132d90e36`. Exact head
-`c4b860515ae5c0cf31d7a36cd17cdb11f6163f2c` ran credential-free workflow
-`CI: jev-use` as GitHub Actions run `35237096608`. Both unit jobs passed, and
-the Linux job built that exact Driver and verified its advertised MCP tools.
-The action loop then failed before its first navigation because the bound
-browser tab had an unknown active state. This supersedes no earlier desktop or
-live proof and is not recorded as a passing Linux action-loop run.
+`aca1985ffc4061d580218f5f850ac57132d90e36`. Exact executable candidate
+`545c52a27192906cfad6802646f18a025f309f8a` passed credential-free workflow
+`CI: jev-use` as GitHub Actions run `35238509486`. Both unit jobs passed. The
+Linux job built that exact Driver, verified its advertised MCP tools, ran the
+Python and TypeScript mock agents through persistent MCP under X11, confirmed
+both independent loopback `/state` postconditions, audited the redacted
+evidence, and uploaded the proof artifact.
 
-The pending candidate accepts the first bound tab when no tab is explicitly
-active, matching the Driver contract's unknown-active-state behavior, while
-still preferring an active tab when one is known. It applies the same selection
-to Python and TypeScript. The workflow also gives the isolated bootstrap tab a
+The candidate accepts the first bound tab when no tab is explicitly active,
+matching the Driver contract's unknown-active-state behavior, while still
+preferring an active tab when one is known. It applies the same selection to
+Python and TypeScript. The workflow also gives the isolated bootstrap tab a
 stable title and verifies that title over DevTools before starting the MCP
 agents. Local verification passed 19 Python tests, nine TypeScript tests,
 TypeScript typechecking, workflow YAML parsing, and `git diff --check`. No live
-provider workflow was dispatched. A new exact-head GitHub run is still required
-before claiming the Linux mock action loop passes.
+provider workflow was dispatched.
 
 The current guide uses `FETCH_HEAD` after its single-ref shallow fetch so the
 detached checkout does not depend on a remote-tracking ref that a default

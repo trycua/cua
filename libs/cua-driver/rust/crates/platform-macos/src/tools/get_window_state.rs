@@ -947,6 +947,9 @@ fn element_entry(node: &crate::ax::tree::AXNode, snapshot_id: Option<u32>) -> se
         "role": node.role,
         "depth": node.depth,
     });
+    if let Some(subrole) = &node.subrole {
+        entry["subrole"] = serde_json::Value::String(subrole.clone());
+    }
     if let Some(idx) = node.element_index {
         entry["element_index"] = serde_json::json!(idx);
         // Surface 6: opaque token paired to the integer index.
@@ -1229,6 +1232,7 @@ mod tests {
         AXNode {
             element_index: idx,
             role: role.into(),
+            subrole: None,
             title: title.map(|s| s.to_string()),
             value: None,
             description: None,
@@ -1438,6 +1442,33 @@ mod tests {
         nodes[0].value_state = Some("0".into());
         let entry = &build_elements_array_with_token(&nodes, None)[0];
         assert_eq!(entry["selected"], false);
+    }
+
+    #[test]
+    fn a_disabled_control_is_published_with_its_subrole_and_enablement() {
+        let mut nodes = vec![node(
+            Some(0),
+            "AXButton",
+            None,
+            3,
+            None,
+            None,
+            vec!["AXPress".into()],
+        )];
+        nodes[0].subrole = Some("AXSearchField".into());
+        nodes[0].enabled = Some(false);
+        let entries = build_elements_array_with_token(&nodes, None);
+        assert_eq!(entries.len(), 1, "a disabled control is still published");
+        assert_eq!(entries[0]["element_index"], 0);
+        assert_eq!(entries[0]["subrole"], "AXSearchField");
+        assert_eq!(entries[0]["enabled"], false);
+
+        nodes[0].subrole = None;
+        let without = build_elements_array_with_token(&nodes, None);
+        assert!(
+            without[0].get("subrole").is_none(),
+            "an app that publishes no subrole gets no key"
+        );
     }
 
     #[test]

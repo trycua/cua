@@ -392,6 +392,7 @@ mod tests {
         AXNode {
             element_index: (!actions.is_empty()).then_some(0),
             role: role.to_owned(),
+            subrole: None,
             title: title.map(str::to_owned),
             value: None,
             description: None,

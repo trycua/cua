@@ -15,7 +15,14 @@ pub trait SnapshotPayload: Send + Sync + 'static {
 struct Snapshot<S> {
     id: u32,
     window_id: u64,
+    screenshot_owner: Option<String>,
+    screenshot_scale: Option<f64>,
     payload: S,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ScreenshotContextError {
+    ReplacedOrUnavailable,
 }
 
 pub struct ElementCacheCore<S: SnapshotPayload> {
@@ -32,8 +39,29 @@ impl<S: SnapshotPayload> ElementCacheCore<S> {
     }
 
     pub fn publish(&self, pid: i32, window_id: u64, payload: S) -> u32 {
+        self.publish_for_session(pid, window_id, payload, None, None)
+            .expect("anonymous snapshot publication cannot be retired")
+    }
+
+    /// Publish the latest runtime-owned snapshot and its screenshot coordinate frame.
+    ///
+    /// `screenshot_scale` is the native-image-width / delivered-image-width ratio.
+    /// A `None` scale deliberately records that the latest observation did not
+    /// deliver an actionable screenshot. Publications completing after their
+    /// owning session ended are discarded instead of resurrecting retired state.
+    pub fn publish_for_session(
+        &self,
+        pid: i32,
+        window_id: u64,
+        payload: S,
+        session: Option<&str>,
+        screenshot_scale: Option<f64>,
+    ) -> Option<u32> {
         let (id, replaced, evicted) = {
             let mut inner = self.inner.lock().unwrap();
+            if session.is_some_and(crate::session::is_session_ended) {
+                return None;
+            }
             let lane = inner.entry(pid).or_default();
             let replaced = lane
                 .iter()
@@ -44,12 +72,99 @@ impl<S: SnapshotPayload> ElementCacheCore<S> {
             lane.push(Snapshot {
                 id,
                 window_id,
+                screenshot_owner: session.map(str::to_owned),
+                screenshot_scale,
                 payload,
             });
             (id, replaced, evicted)
         };
         drop((replaced, evicted));
-        id
+        Some(id)
+    }
+
+    /// Resolve the screenshot transform from the same authoritative latest
+    /// snapshot used for element tokens.
+    ///
+    /// No snapshot preserves the legacy native-pixel fallback. Once a snapshot
+    /// exists, a different owner or a newer observation without a screenshot
+    /// makes older image coordinates stale and must be refused.
+    pub fn screenshot_scale(
+        &self,
+        pid: i32,
+        window_id: Option<u64>,
+        session: Option<&str>,
+    ) -> Result<Option<f64>, ScreenshotContextError> {
+        let inner = self.inner.lock().unwrap();
+        let Some(lane) = inner.get(&pid) else {
+            return Ok(None);
+        };
+        if let Some(window_id) = window_id {
+            let Some(snapshot) = lane.iter().find(|entry| entry.window_id == window_id) else {
+                return Ok(None);
+            };
+            if snapshot.screenshot_owner.as_deref() != session {
+                return Err(ScreenshotContextError::ReplacedOrUnavailable);
+            }
+            return snapshot
+                .screenshot_scale
+                .map(Some)
+                .ok_or(ScreenshotContextError::ReplacedOrUnavailable);
+        }
+        let mut agreed = None;
+        for snapshot in lane {
+            if snapshot.screenshot_owner.as_deref() != session {
+                return Err(ScreenshotContextError::ReplacedOrUnavailable);
+            }
+            let scale = snapshot
+                .screenshot_scale
+                .ok_or(ScreenshotContextError::ReplacedOrUnavailable)?;
+            match agreed {
+                None => agreed = Some(scale),
+                Some(previous) if (previous - scale).abs() < 1e-9 => {}
+                Some(_) => return Err(ScreenshotContextError::ReplacedOrUnavailable),
+            }
+        }
+        Ok(agreed)
+    }
+
+    pub fn screenshot_scale_or_refusal(
+        &self,
+        pid: i32,
+        window_id: Option<u64>,
+        session: Option<&str>,
+    ) -> Result<f64, ToolResult> {
+        match self.screenshot_scale(pid, window_id, session) {
+            Ok(scale) => Ok(scale.unwrap_or(1.0)),
+            Err(ScreenshotContextError::ReplacedOrUnavailable) => Err(ToolResult::error(
+                "The latest snapshot for this window does not contain a screenshot owned by this session. Call get_window_state with a screenshot on the same connection before using pixels."
+            ).with_structured(serde_json::json!({
+                "code": "screenshot_context_missing",
+                "pid": pid,
+                "window_id": window_id
+            }))),
+        }
+    }
+
+    pub fn retire_session_screenshots(&self, session: &str) -> usize {
+        let retired = {
+            let mut inner = self.inner.lock().unwrap();
+            let mut retired = Vec::new();
+            for lane in inner.values_mut() {
+                let mut index = 0;
+                while index < lane.len() {
+                    if lane[index].screenshot_owner.as_deref() == Some(session) {
+                        retired.push(lane.remove(index));
+                    } else {
+                        index += 1;
+                    }
+                }
+            }
+            inner.retain(|_, lane| !lane.is_empty());
+            retired
+        };
+        let count = retired.len();
+        drop(retired);
+        count
     }
 
     pub fn resolve_element_args(
@@ -258,6 +373,107 @@ mod tests {
         assert!(cache
             .resolve_element_args(9, None, Some(&token_for(id, 5)), None, None, "click")
             .is_err());
+    }
+
+    #[test]
+    fn screenshot_coordinates_never_borrow_another_sessions_latest_transform() {
+        let cache = ElementCacheCore::new();
+        cache.publish_for_session(10, 20, Payload(vec![]), Some("client-a"), Some(7.35));
+        assert_eq!(
+            cache.screenshot_scale(10, Some(20), Some("client-a")),
+            Ok(Some(7.35))
+        );
+
+        cache.publish_for_session(10, 20, Payload(vec![]), Some("client-b"), Some(1.0));
+        assert_eq!(
+            cache.screenshot_scale(10, Some(20), Some("client-b")),
+            Ok(Some(1.0))
+        );
+        assert_eq!(
+            cache.screenshot_scale(10, Some(20), Some("client-a")),
+            Err(ScreenshotContextError::ReplacedOrUnavailable)
+        );
+        let refusal = cache
+            .screenshot_scale_or_refusal(10, Some(20), Some("client-a"))
+            .expect_err("stale image coordinates must be refused");
+        assert_eq!(
+            refusal.structured_content.as_ref().unwrap()["code"],
+            "screenshot_context_missing"
+        );
+    }
+
+    #[test]
+    fn screenshot_transforms_are_independent_across_windows() {
+        let cache = ElementCacheCore::new();
+        cache.publish_for_session(10, 20, Payload(vec![]), Some("client-a"), Some(7.35));
+        cache.publish_for_session(10, 21, Payload(vec![]), Some("client-b"), Some(2.0));
+        assert_eq!(
+            cache.screenshot_scale(10, Some(20), Some("client-a")),
+            Ok(Some(7.35))
+        );
+        assert_eq!(
+            cache.screenshot_scale(10, Some(21), Some("client-b")),
+            Ok(Some(2.0))
+        );
+    }
+
+    #[test]
+    fn same_session_latest_snapshot_replaces_or_refuses_older_image_context() {
+        let cache = ElementCacheCore::new();
+        cache.publish_for_session(10, 20, Payload(vec![]), Some("client-a"), Some(7.35));
+        cache.publish_for_session(10, 20, Payload(vec![]), Some("client-a"), Some(1.0));
+        assert_eq!(
+            cache.screenshot_scale(10, Some(20), Some("client-a")),
+            Ok(Some(1.0)),
+            "a newer native capture replaces the older resized frame"
+        );
+
+        cache.publish_for_session(10, 20, Payload(vec![]), Some("client-a"), None);
+        assert_eq!(
+            cache.screenshot_scale(10, Some(20), Some("client-a")),
+            Err(ScreenshotContextError::ReplacedOrUnavailable),
+            "a newer tree-only observation retires the older image frame"
+        );
+    }
+
+    #[test]
+    fn session_retirement_removes_only_snapshots_owned_by_that_session() {
+        let cache = ElementCacheCore::new();
+        cache.publish_for_session(10, 20, Payload(vec![]), Some("ending"), Some(7.35));
+        cache.publish_for_session(10, 21, Payload(vec![]), Some("survivor"), Some(2.0));
+        assert_eq!(cache.retire_session_screenshots("ending"), 1);
+        assert_eq!(
+            cache.screenshot_scale(10, Some(20), Some("ending")),
+            Ok(None)
+        );
+        assert_eq!(
+            cache.screenshot_scale(10, Some(21), Some("survivor")),
+            Ok(Some(2.0))
+        );
+    }
+
+    #[test]
+    fn capture_completing_after_session_end_is_not_published() {
+        let cache = ElementCacheCore::new();
+        let session = format!("snapshot-late-capture-{}", uuid::Uuid::new_v4());
+        assert!(crate::session::fire_session_end(&session));
+        assert_eq!(
+            cache.publish_for_session(10, 20, Payload(vec![]), Some(&session), Some(7.35)),
+            None
+        );
+        assert_eq!(
+            cache.screenshot_scale(10, Some(20), Some(&session)),
+            Ok(None)
+        );
+    }
+
+    #[test]
+    fn no_snapshot_keeps_legacy_native_pixel_fallback() {
+        let cache = ElementCacheCore::<Payload>::new();
+        assert_eq!(
+            cache.screenshot_scale(10, Some(20), Some("client-a")),
+            Ok(None)
+        );
     }
 
     struct DropCounter {

@@ -52,7 +52,7 @@ fn pid_window_guarded<T: Tool + 'static>(
     ))
 }
 
-// ── DriverConfig + ResizeRegistry + ZoomRegistry ─────────────────────────────
+// ── DriverConfig + ZoomRegistry ─────────────────────────────────────────────
 
 #[derive(Clone)]
 pub struct DriverConfig {
@@ -88,27 +88,6 @@ pub fn load_driver_config() -> DriverConfig {
         }
     }
     cfg
-}
-
-pub struct ResizeRegistry {
-    ratios: std::sync::Mutex<std::collections::HashMap<u32, f64>>,
-}
-
-impl ResizeRegistry {
-    pub fn new() -> Self {
-        Self {
-            ratios: std::sync::Mutex::new(Default::default()),
-        }
-    }
-    pub fn set_ratio(&self, pid: u32, ratio: f64) {
-        self.ratios.lock().unwrap().insert(pid, ratio);
-    }
-    pub fn clear_ratio(&self, pid: u32) {
-        self.ratios.lock().unwrap().remove(&pid);
-    }
-    pub fn ratio(&self, pid: u32) -> Option<f64> {
-        self.ratios.lock().unwrap().get(&pid).copied()
-    }
 }
 
 /// Per-process zoom context — stores padded crop origin and resize scale from
@@ -152,7 +131,6 @@ impl ZoomRegistry {
 pub struct ToolState {
     pub element_cache: Arc<ElementCache>,
     pub cursor_registry: Arc<CursorRegistry>,
-    pub resize_registry: Arc<ResizeRegistry>,
     pub zoom_registry: Arc<ZoomRegistry>,
     pub mouse_hold: std::sync::Mutex<std::collections::HashMap<String, MouseHoldState>>,
     pub config: Arc<RwLock<DriverConfig>>,
@@ -174,12 +152,24 @@ impl ToolState {
         Arc::new(Self {
             element_cache,
             cursor_registry: Arc::new(CursorRegistry::new()),
-            resize_registry: Arc::new(ResizeRegistry::new()),
             zoom_registry: Arc::new(ZoomRegistry::new()),
             mouse_hold: std::sync::Mutex::new(Default::default()),
             config: Arc::new(RwLock::new(load_driver_config())),
         })
     }
+}
+
+fn screenshot_scale(
+    state: &ToolState,
+    args: &Value,
+    pid: u32,
+    window_id: Option<u64>,
+) -> Result<f64, ToolResult> {
+    state.element_cache.screenshot_scale_or_refusal(
+        pid as i32,
+        window_id,
+        args.get("_session_id").and_then(Value::as_str),
+    )
 }
 
 // ── list_apps ────────────────────────────────────────────────────────────────
@@ -734,6 +724,7 @@ impl Tool for GetWindowStateTool {
         // We don't even read the arg; it stays in the schema only so old callers
         // don't trip additionalProperties:false.
         let query = args.opt_str("query");
+        let session_id = args.opt_str("_session_id");
         // include_screenshot (default true) — the perf opt-out. The tree+screenshot
         // pair is the default; `include_screenshot:false` skips the grab and returns
         // tree only (the cheap re-index path before an element ax action). A
@@ -874,6 +865,10 @@ impl Tool for GetWindowStateTool {
             Ok(Ok((tree_opt, shot_opt, bounds, screenshot_error))) => {
                 let mut content = Vec::new();
                 let mut structured = json!({ "window_id": xid, "pid": pid });
+                let screenshot_scale = shot_opt.as_ref().map(|(_, _, w, _, original_w)| {
+                    original_w.map_or(1.0, |ow| ow as f64 / *w as f64)
+                });
+                let mut published_snapshot = false;
 
                 if let Some(tr) = tree_opt {
                     let source_trusted = tr.trusted;
@@ -899,13 +894,18 @@ impl Tool for GetWindowStateTool {
                     if !observation_only && !target_scoped {
                         state.element_cache.remove(pid as i32, xid);
                     }
-                    let snapshot_id = (!observation_only && target_scoped).then(|| {
-                        state.element_cache.publish(
-                            pid as i32,
-                            xid,
-                            crate::atspi::cache::CachedSnapshot::from_nodes(&tr.nodes),
-                        )
-                    });
+                    let snapshot_id = (!observation_only && target_scoped)
+                        .then(|| {
+                            state.element_cache.publish_for_session(
+                                pid as i32,
+                                xid,
+                                crate::atspi::cache::CachedSnapshot::from_nodes(&tr.nodes),
+                                session_id.as_deref(),
+                                screenshot_scale,
+                            )
+                        })
+                        .flatten();
+                    published_snapshot = snapshot_id.is_some();
 
                     // Structured `elements` array: one entry per actionable node.
                     // Shape: `{element_index, element_token, role, label,
@@ -991,16 +991,17 @@ impl Tool for GetWindowStateTool {
                     }
                 }
 
-                if let Some((b64_opt, file_path, w, h, orig_w)) = shot_opt {
-                    if !observation_only {
-                        if let Some(ow) = orig_w {
-                            if w > 0 {
-                                state.resize_registry.set_ratio(pid, ow as f64 / w as f64);
-                            }
-                        } else {
-                            state.resize_registry.clear_ratio(pid);
-                        }
-                    }
+                if !observation_only && !published_snapshot && screenshot_scale.is_some() {
+                    state.element_cache.publish_for_session(
+                        pid as i32,
+                        xid,
+                        crate::atspi::cache::CachedSnapshot::from_nodes(&[]),
+                        session_id.as_deref(),
+                        screenshot_scale,
+                    );
+                }
+
+                if let Some((b64_opt, file_path, w, h, _orig_w)) = shot_opt {
                     // ax mode + screenshot_out_file writes the PNG to disk and
                     // returns b64=None — never embed the image bytes in that case.
                     // Keep a text content part when the image went to disk so the
@@ -2579,6 +2580,32 @@ fn type_text_routes_isolated_background_before_generic_wayland_refusal() {
 
 #[cfg(test)]
 #[test]
+fn coordinate_click_keeps_wayland_background_refusal_ahead_of_screenshot_context() {
+    let source = include_str!("impl_.rs");
+    let invoke = source
+        .rsplit_once("impl Tool for ClickTool {")
+        .unwrap()
+        .1
+        .split_once("impl Tool for TypeTextTool {")
+        .unwrap()
+        .0
+        .split_once("// Coordinate-based path.")
+        .unwrap()
+        .1;
+    let wayland = invoke
+        .find("unavailable_wayland_focused_input_background")
+        .expect("coordinate clicks must retain the native Wayland refusal");
+    let screenshot = invoke
+        .find("screenshot_scale(&self.state")
+        .expect("coordinate clicks must resolve snapshot-owned image context");
+    assert!(
+        wayland < screenshot,
+        "unsupported Wayland background delivery must refuse before image context"
+    );
+}
+
+#[cfg(test)]
+#[test]
 fn isolated_hyprland_refused_partial_and_unknown_outcomes_stay_distinct() {
     let busy = isolated_hyprland_result(Err(crate::wayland::hyprland_input::LaneBusy.into()));
     let content = busy.structured_content.as_ref().unwrap();
@@ -3802,6 +3829,11 @@ impl Tool for ClickTool {
             Some(v) => v,
             None => return ToolResult::error("Provide either element_index or window_id + x/y."),
         };
+        if !isolated_background {
+            if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, true) {
+                return refusal;
+            }
+        }
         let from_zoom = args.bool_or("from_zoom", false);
         let mut x = args.f64_or("x", 0.0);
         let mut y = args.f64_or("y", 0.0);
@@ -3818,7 +3850,11 @@ impl Tool for ClickTool {
                     ))
                 }
             }
-        } else if let Some(ratio) = self.state.resize_registry.ratio(pid) {
+        } else {
+            let ratio = match screenshot_scale(&self.state, &args, pid, Some(xid)) {
+                Ok(ratio) => ratio,
+                Err(refusal) => return refusal,
+            };
             x *= ratio;
             y *= ratio;
         }
@@ -5914,7 +5950,10 @@ impl Tool for ScrollTool {
                 // Pixel targets use the latest screenshot's coordinate frame.
                 // Apply the same buffer-to-window ratio as click/drag before
                 // positioning either the agent cursor or the input device.
-                let ratio = self.state.resize_registry.ratio(pid).unwrap_or(1.0);
+                let ratio = match screenshot_scale(&self.state, &args, pid, Some(xid)) {
+                    Ok(ratio) => ratio,
+                    Err(refusal) => return refusal,
+                };
                 Some((x * ratio, y * ratio))
             }
             (None, None) => None,
@@ -6441,7 +6480,11 @@ impl Tool for DoubleClickTool {
                     ))
                 }
             }
-        } else if let Some(ratio) = self.state.resize_registry.ratio(pid) {
+        } else {
+            let ratio = match screenshot_scale(&self.state, &args, pid, Some(xid)) {
+                Ok(ratio) => ratio,
+                Err(refusal) => return refusal,
+            };
             x *= ratio;
             y *= ratio;
         }
@@ -6680,7 +6723,11 @@ impl Tool for RightClickTool {
                     ))
                 }
             }
-        } else if let Some(ratio) = self.state.resize_registry.ratio(pid) {
+        } else {
+            let ratio = match screenshot_scale(&self.state, &args, pid, Some(xid)) {
+                Ok(ratio) => ratio,
+                Err(refusal) => return refusal,
+            };
             x *= ratio;
             y *= ratio;
         }
@@ -6929,7 +6976,11 @@ impl Tool for DragTool {
                     ))
                 }
             }
-        } else if let Some(ratio) = self.state.resize_registry.ratio(pid) {
+        } else {
+            let ratio = match screenshot_scale(&self.state, &args, pid, args.opt_u64("window_id")) {
+                Ok(ratio) => ratio,
+                Err(refusal) => return refusal,
+            };
             from_x *= ratio;
             from_y *= ratio;
             to_x *= ratio;
@@ -7392,7 +7443,11 @@ impl Tool for MouseButtonDownTool {
                     ))
                 }
             }
-        } else if let Some(ratio) = self.state.resize_registry.ratio(pid) {
+        } else {
+            let ratio = match screenshot_scale(&self.state, &args, pid, Some(xid)) {
+                Ok(ratio) => ratio,
+                Err(refusal) => return refusal,
+            };
             x *= ratio;
             y *= ratio;
         }
@@ -7538,7 +7593,11 @@ impl Tool for MouseDragTool {
                     .with_structured(mouse_hold_json(&cursor_id, Some(&hold)))
                 }
             }
-        } else if let Some(ratio) = self.state.resize_registry.ratio(hold.pid) {
+        } else {
+            let ratio = match screenshot_scale(&self.state, &args, hold.pid, Some(hold.xid)) {
+                Ok(ratio) => ratio,
+                Err(refusal) => return refusal,
+            };
             to_x *= ratio;
             to_y *= ratio;
         }
@@ -7744,7 +7803,11 @@ impl Tool for MouseButtonUpTool {
                     .with_structured(mouse_hold_json(&cursor_id, Some(&hold)))
                 }
             }
-        } else if let Some(ratio) = self.state.resize_registry.ratio(hold.pid) {
+        } else {
+            let ratio = match screenshot_scale(&self.state, &args, hold.pid, Some(hold.xid)) {
+                Ok(ratio) => ratio,
+                Err(refusal) => return refusal,
+            };
             x *= ratio;
             y *= ratio;
         }
@@ -9807,7 +9870,9 @@ pub fn build_registry_with_provider(
                     // translating to the recording's full-output image.
                     if args.bool_or("from_zoom", false) {
                         (x, y) = state.zoom_registry.get(pid)?.zoom_to_window(x, y);
-                    } else if let Some(ratio) = state.resize_registry.ratio(pid) {
+                    } else if let Ok(ratio) =
+                        screenshot_scale(&state, args, pid, args.opt_u64("window_id"))
+                    {
                         x *= ratio;
                         y *= ratio;
                     }
@@ -9854,6 +9919,9 @@ pub fn build_registry_with_provider(
         let cursor_registry = state.cursor_registry.clone();
         let state_for_session_end = state.clone();
         cua_driver_core::session::register_scoped_session_end_hook(move |session_id| {
+            state_for_session_end
+                .element_cache
+                .retire_session_screenshots(session_id);
             cursor_registry.remove(session_id);
             crate::overlay::remove_cursor(session_id.to_owned());
             state_for_session_end

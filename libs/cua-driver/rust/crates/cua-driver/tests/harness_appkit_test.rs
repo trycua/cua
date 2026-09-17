@@ -1271,8 +1271,48 @@ fn harness_appkit_counter_px_background() {
         Targeting::Px,
         DriverRoute::MacosAxAction,
         |pid, wid, driver| {
+            let config = driver.call(
+                "set_config",
+                serde_json::json!({"max_image_dimension": 200}),
+            );
+            assert!(
+                !config.is_error(),
+                "small capture config: {}",
+                config.text()
+            );
             let pre = snapshot_elements(driver, pid, wid);
             let (x, y, width, height) = element_pixel_frame(&pre, "btn-increment");
+            let small_width = pre.structured()["screenshot_width"]
+                .as_u64()
+                .expect("small screenshot width");
+            let mut observer = driver
+                .spawn_peer_unrecorded()
+                .expect("start independent capture client on the same daemon");
+            let config = observer.call("set_config", serde_json::json!({"max_image_dimension": 0}));
+            assert!(
+                !config.is_error(),
+                "native capture config: {}",
+                config.text()
+            );
+            let other = snapshot_elements(&mut observer, pid, wid);
+            assert!(
+                other.structured()["screenshot_width"]
+                    .as_u64()
+                    .expect("native screenshot width")
+                    > small_width
+            );
+            let stale = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid as i64, "window_id": wid,
+                    "x": x + width / 2.0, "y": y + height / 2.0,
+                    "delivery_mode": "background"
+                }),
+            );
+            assert_eq!(stale.structured()["code"], "screenshot_context_missing");
+
+            let refreshed = snapshot_elements(driver, pid, wid);
+            let (x, y, width, height) = element_pixel_frame(&refreshed, "btn-increment");
             let response = driver.call(
                 "click",
                 serde_json::json!({

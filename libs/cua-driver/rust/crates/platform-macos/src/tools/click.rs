@@ -800,7 +800,11 @@ impl Tool for ClickTool {
                         ))
                     }
                 }
-            } else if let Some(ratio) = self.state.resize_registry.ratio(pid, window_id) {
+            } else {
+                let ratio = match super::screenshot_scale(&self.state, &args, pid, window_id) {
+                    Ok(ratio) => ratio,
+                    Err(refusal) => return refusal,
+                };
                 // Coordinates are in the downscaled image space; scale back to native pixels.
                 cx *= ratio;
                 cy *= ratio;

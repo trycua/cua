@@ -8,10 +8,9 @@ You can run the complete deterministic proof without credentials or network
 access to Jev. If you have a TypeSafe API key, you can separately verify the
 same loop against the live Jev service.
 
-**Starting without prior context?** Follow the complete
-[step-by-step setup guide](../../../../docs/content/docs/how-to-guides/driver/use-typesafe-jev.mdx).
-It includes the unmerged-PR checkout, macOS permissions, Python provisioning,
-secure credential entry, exact expected results, independent checks, and cleanup.
+Follow the [setup guide](../../../../docs/content/docs/how-to-guides/driver/use-typesafe-jev.mdx)
+for installation and your first run. The sections below cover the implementation,
+standalone runners, and development checks.
 
 ## What the example proves
 
@@ -135,6 +134,26 @@ to the configured provider is appropriate.
 
 The repository's credential-free checks do not establish live Jev behavior.
 Record live verification separately when you run it with a valid key.
+
+## Automation environment and diagnostics
+
+An automation host needs access to the network, loopback sockets, and writable
+workspace, package-cache, installation, and temporary directories. On macOS,
+`getconf DARWIN_USER_TEMP_DIR` identifies the system user-temp directory. If a
+shell sandbox denies installation there, ask its operator to authorize the
+specific path; do not disable the sandbox or change shared directory ownership.
+For npm, the local cache export above avoids a root-owned global cache.
+
+A run reports `verified` only after an independent fixture readback. If an action
+fails with an uncertain outcome, inspect the retained log before retrying.
+`--dry-run` on a standalone runner suppresses the candidate action but still
+resets the fixture and prepares/navigates the browser; it is not side-effect-free.
+
+The managed verifier bounds each child runner to 180 seconds. Provider SDKs may
+retry network requests, so action and process limits do not guarantee a billing
+cap. `decision_ms` includes the browser snapshot as well as the provider call.
+Logs contain choices and timings, not a complete request, token-usage, or billing
+audit. The fixture tests integration rather than general agent capability.
 
 ## MCP, CLI, and OCR boundaries
 

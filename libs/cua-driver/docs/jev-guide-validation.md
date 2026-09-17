@@ -33,7 +33,7 @@ The guide must explain the agent/driver boundary, host versus controller machine
 - Architectural simplification: added `verify_setup.py`, reusing the existing `FixtureServer` in a context-managed thread and the unmodified Python/TypeScript runners as child processes. One command now owns startup, independent HTTP verification, evidence, and cleanup. It defaults to mock, requires a key before unattended live execution, refuses existing output directories, and preserves an incomplete summary on failure. The guide no longer asks an agent to manage background PIDs across tool calls.
 - TDD: seven new real-process/HTTP checks first failed because the verifier did not exist, then passed. They cover cleanup on success/failure, exact state plus final-event requirements, false-positive rejection, child failure, and missing unattended credentials. All 15 Python tests passed. No Driver/product code or provider decision logic changed.
 
-## Completed fresh-agent verification
+## Initial fresh-agent verification
 
 Tested candidate: `bebe5e7692c6347b6a090336eac3c0ea4911ec59`.
 Guide SHA-256: `c965092c02949f1ca28a285445a28eca92f0233b8c1d04cb583c342a13102541`.
@@ -92,8 +92,9 @@ Checks passed:
 - Unrelated original-workspace staged diff preserved; phase baseline SHA-256
   `5b57ea71dbb7c83df2ae82fd7e435cf1f6ce3a5a7c1c9abc963c4f291787926f`.
 
-The only final change after this certified candidate is this evidence report;
-the executable example, dependency locks, and tested public guide are unchanged.
+At `c4e7307db52c6958a9abbd94e9fa728440e612b9`, the only change after this
+certified candidate was this evidence report. The later reader-first guide
+revision below has separate validation.
 No full Driver desktop matrix was repeated for this documentation/example-only
 follow-up. The existing PR remains draft for its normal review, not because the
 requested guide or fresh-agent verification is incomplete.
@@ -102,3 +103,28 @@ Non-blocking environment notices: the installed Driver advertises an update;
 Node reports a deprecated `module.register()` path; npm reports unapproved
 optional install scripts. The agent did not update the Driver, approve scripts,
 or change policy, and both TypeScript runtime cases passed.
+
+## Reader-first revision
+
+The maintainer's review found that the public guide exposed too much of the
+original conversation and verification process. The observable problems were
+an opening framed around what Jev is not, unrelated model/video terminology,
+PR-specific checkout instructions, raw diagram source in the local renderer,
+and extensive process/sandbox/audit details before a first useful result.
+
+Scope: rewrite the same public page around a concrete first task (fill and
+submit a form), prerequisites, four short steps, expected results, and a small
+troubleshooting section. Keep detailed execution-environment and measurement
+notes in the example README and this contributor report. Preserve contributor
+acknowledgments in the README. Do not change the agent or verifier code.
+
+The checkout now pins the already-tested example revision
+`bebe5e7692c6347b6a090336eac3c0ea4911ec59`; readers no longer need to understand
+an unmerged PR to obtain runnable code. The guide revision and example revision
+are deliberately distinct. New evidence must identify both.
+
+Acceptance: a fresh reader can identify what they will build, what to install,
+which commands to run, and how to recognize success without knowing the prior
+conversation. Rerun the guide with a fresh agent, check docs syntax/hygiene/links
+and build, and inspect the revised page through the local preview. Retain the
+prior verification history here, not in the public walkthrough.

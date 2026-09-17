@@ -5621,10 +5621,6 @@ const FfiConverterTypeVisualParseError = (() => {
 export type WindowElement = {
     elementIndex: bigint,
     role: string,
-    /**
-     * `AXSubrole` — the control class the role alone does not name
-     * (`AXButton` + `AXSearchField`).
-     */
     subrole?: string,
     depth: number,
     elementToken?: string,

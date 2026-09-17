@@ -42,6 +42,7 @@ semver = "1"
 tar = { version = "0.4", default-features = false }
 flate2 = "1"
 sha2 = { workspace = true }
+ring = "0.17"
 fs2 = { workspace = true }
 cap-std = "4.0.3"
 cap-fs-ext = "4.0.3"

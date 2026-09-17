@@ -190,9 +190,7 @@ pub enum Command {
         subcommand: String,
         flags: Vec<String>,
     },
-    /// `cua-driver extension ...` is an unsigned local-code storage prototype.
-    /// Archive hashes are self-asserted by the same untrusted archive and do
-    /// not establish publisher or artifact provenance.
+    /// Authenticated lifecycle for optional target-specific extensions.
     Extension {
         args: Vec<String>,
     },
@@ -551,21 +549,25 @@ pub fn parse_command() -> Command {
         println!("  cua-driver skills path          Print where the local skill pack lives.");
         println!("  --from main                     (install only) Fetch latest from main branch instead of the tagged release.");
         println!();
-        println!("extension options (UNSIGNED, UNTRUSTED LOCAL CODE PROTOTYPE):");
-        println!("  Archive hashes are self-asserted by that same archive; they detect corruption");
-        println!("  after storage but do not authenticate a publisher or establish provenance.");
+        println!("extension options (SIGNED TARGET-SPECIFIC CATALOGS):");
         println!(
-            "  Mutating commands are unsupported on Windows. Uninstall is intentionally absent"
+            "  Verified installs check publisher identity plus exact catalog, archive, manifest,"
         );
         println!(
-            "  until descriptor-relative recursive deletion has a reviewed cross-platform design."
+            "  file, original/converted model hashes, component notices, and source revisions."
         );
+        println!("  Inspect previews license, corresponding source, and provenance first.");
+        println!("  Mutating commands are unsupported on Windows and fail closed.");
         println!("  cua-driver extension list [--json]");
-        println!("  cua-driver extension info <name> [--json]");
-        println!("  cua-driver extension status [name] [--json]");
-        println!("  cua-driver extension install <name> --archive <extension.tar.gz>");
-        println!("  cua-driver extension update <name> --archive <extension.tar.gz>");
-        println!("  cua-driver extension path <name>");
+        println!("  cua-driver extension inspect <name> --catalog <catalog.json> [--json]");
+        println!("  cua-driver extension status [name] [--self-test] [--json]");
+        println!("  cua-driver extension install <name> --catalog <catalog.json>");
+        println!("  cua-driver extension update <name> --catalog <catalog.json>");
+        println!("  cua-driver extension remove <name>");
+        println!(
+            "  Developer only: replace --catalog with --archive <tar.gz> --allow-unsigned-local"
+        );
+        println!("  Compatibility aliases: extension info <name>; extension path <name>");
         println!();
         println!("agent authorization (serve only):");
         println!("  --permission-mode <mode>        standard (default), bounded, or unrestricted.");
@@ -2000,11 +2002,14 @@ pub fn build_manifest() -> serde_json::Value {
               "description": "Manage the cua-driver agent skill pack (install / update / uninstall / status / path).",
               "args": [ { "name": "subcommand", "type": "positional-string", "description": "install | update | uninstall | status | path. Default: status." } ] },
             { "name": "extension",
-              "description": "Unsigned, untrusted local-code storage prototype. Hashes are self-asserted by the same archive and do not establish publisher or artifact provenance; mutation is unsupported on Windows and uninstall is intentionally unavailable.",
+              "description": "Inspect and manage signed, target-specific optional extensions. Verified installs bind publisher identity, provenance, component licenses/notices, corresponding-source revisions, and exact catalog, archive, manifest, file, original-model, and converted-model hashes. Mutations fail closed on Windows.",
               "args": [
-                  { "name": "subcommand", "type": "positional-string", "description": "list | info | status | install | update | path. Default: list." },
+                  { "name": "subcommand", "type": "positional-string", "description": "list | inspect | status | install | update | remove. Default: list." },
                   { "name": "name", "type": "positional-string", "description": "Registry extension name." },
-                  { "name": "--archive", "type": "string", "description": "Store unsigned, untrusted local code from a tar.gz whose hashes are self-asserted." },
+                  { "name": "--catalog", "type": "string", "description": "Signed local catalog; its target-specific archive path is resolved relative to this file." },
+                  { "name": "--archive", "type": "string", "description": "Developer-only unsigned local archive; requires --allow-unsigned-local and cannot claim verified identity." },
+                  { "name": "--allow-unsigned-local", "type": "flag", "description": "Explicitly opt into an unverified developer install." },
+                  { "name": "--self-test", "type": "flag", "description": "Run the installed extension self-test during status." },
                   { "name": "--json", "type": "flag", "description": "Emit machine-readable inspection output." }
               ] }
         ]
@@ -4198,18 +4203,20 @@ fn cli_docs_json() -> serde_json::Value {
             },
             {
                 "name": "extension",
-                "abstract": "Inspect or store an unsigned, untrusted local extension prototype.",
-                "discussion": "Archive hashes are self-asserted by the same untrusted archive: they can detect later corruption but do not authenticate a publisher or establish artifact provenance. Mutation is unsupported on Windows. Uninstall is intentionally absent until descriptor-relative recursive deletion has a reviewed cross-platform design.",
+                "abstract": "Inspect and manage signed, target-specific optional extensions.",
+                "discussion": "Verified installs bind a pinned publisher identity to exact catalog, archive, manifest, file, original-model, and converted-model hashes plus component licenses/notices and corresponding-source revisions. Inspect previews license, source, and provenance before mutation. Explicit developer-only unsigned installs remain visibly unverified. Mutations fail closed on Windows.",
                 "arguments": no_args,
                 "options": no_options,
                 "flags": no_flags,
                 "subcommands": [
                     {"name":"list","abstract":"List registry-known extensions and local state.","discussion":"","arguments":[],"options":[],"flags":[{"name":"json","short_name":null,"help":"Emit machine-readable output.","default_value":false}],"subcommands":[]},
-                    {"name":"info","abstract":"Describe one registry-known extension.","discussion":"","arguments":[{"name":"name","help":"Registry extension name.","type":"String","is_optional":false}],"options":[],"flags":[{"name":"json","short_name":null,"help":"Emit machine-readable output.","default_value":false}],"subcommands":[]},
-                    {"name":"status","abstract":"Verify installed extension state; absence is healthy.","discussion":"","arguments":[{"name":"name","help":"Optional registry extension name.","type":"String","is_optional":true}],"options":[],"flags":[{"name":"json","short_name":null,"help":"Emit machine-readable output.","default_value":false}],"subcommands":[]},
-                    {"name":"install","abstract":"Store and activate unsigned, untrusted local code.","discussion":"Hashes are self-asserted and do not establish provenance. Unsupported on Windows.","arguments":[{"name":"name","help":"Registry extension name.","type":"String","is_optional":false}],"options":[{"name":"archive","short_name":null,"help":"Unsigned local tar.gz archive.","type":"String","default_value":null,"is_optional":false}],"flags":[],"subcommands":[]},
-                    {"name":"update","abstract":"Store and activate unsigned, untrusted local code.","discussion":"Hashes are self-asserted and do not establish provenance. Unsupported on Windows.","arguments":[{"name":"name","help":"Registry extension name.","type":"String","is_optional":false}],"options":[{"name":"archive","short_name":null,"help":"Unsigned local tar.gz archive.","type":"String","default_value":null,"is_optional":false}],"flags":[],"subcommands":[]},
-                    {"name":"path","abstract":"Print the exact active version directory.","discussion":"","arguments":[{"name":"name","help":"Registry extension name.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]}
+                    {"name":"info","abstract":"Compatibility alias for installed extension status.","discussion":"","arguments":[{"name":"name","help":"Registry extension name.","type":"String","is_optional":false}],"options":[],"flags":[{"name":"json","short_name":null,"help":"Emit machine-readable output.","default_value":false}],"subcommands":[]},
+                    {"name":"inspect","abstract":"Verify and preview license, source, provenance, and hashes without mutation.","discussion":"","arguments":[{"name":"name","help":"Registry extension name.","type":"String","is_optional":false}],"options":[{"name":"catalog","short_name":null,"help":"Signed local catalog.","type":"String","default_value":null,"is_optional":true},{"name":"archive","short_name":null,"help":"Developer-only unsigned local archive.","type":"String","default_value":null,"is_optional":true}],"flags":[{"name":"allow-unsigned-local","short_name":null,"help":"Explicitly select developer-only unverified mode.","default_value":false},{"name":"json","short_name":null,"help":"Emit machine-readable output.","default_value":false}],"subcommands":[]},
+                    {"name":"status","abstract":"Verify installed integrity and optionally run the self-test hook.","discussion":"","arguments":[{"name":"name","help":"Optional registry extension name.","type":"String","is_optional":true}],"options":[],"flags":[{"name":"self-test","short_name":null,"help":"Run the extension self-test hook.","default_value":false},{"name":"json","short_name":null,"help":"Emit machine-readable output.","default_value":false}],"subcommands":[]},
+                    {"name":"install","abstract":"Verify, stage, and durably activate an extension.","discussion":"Mutation is unsupported on Windows.","arguments":[{"name":"name","help":"Registry extension name.","type":"String","is_optional":false}],"options":[{"name":"catalog","short_name":null,"help":"Signed local catalog.","type":"String","default_value":null,"is_optional":true},{"name":"archive","short_name":null,"help":"Developer-only unsigned local archive.","type":"String","default_value":null,"is_optional":true}],"flags":[{"name":"allow-unsigned-local","short_name":null,"help":"Explicitly select developer-only unverified mode.","default_value":false}],"subcommands":[]},
+                    {"name":"update","abstract":"Verify and atomically activate a newer extension version.","discussion":"Mutation is unsupported on Windows.","arguments":[{"name":"name","help":"Registry extension name.","type":"String","is_optional":false}],"options":[{"name":"catalog","short_name":null,"help":"Signed local catalog.","type":"String","default_value":null,"is_optional":true},{"name":"archive","short_name":null,"help":"Developer-only unsigned local archive.","type":"String","default_value":null,"is_optional":true}],"flags":[{"name":"allow-unsigned-local","short_name":null,"help":"Explicitly select developer-only unverified mode.","default_value":false}],"subcommands":[]},
+                    {"name":"remove","abstract":"Remove only a fully validated, manager-owned extension tree.","discussion":"Mutation is unsupported on Windows.","arguments":[{"name":"name","help":"Registry extension name.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
+                    {"name":"path","abstract":"Compatibility command that prints the exact active version directory.","discussion":"","arguments":[{"name":"name","help":"Registry extension name.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]}
                 ]
             },
             {

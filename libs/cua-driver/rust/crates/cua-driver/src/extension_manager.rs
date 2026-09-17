@@ -1,11 +1,12 @@
-//! Local storage-format prototype for optional Driver extensions.
+//! Authenticated lifecycle for optional Driver extensions.
 //!
-//! A caller supplies an unsigned local `.tar.gz`. The manager checks its
-//! structure and hashes, but does not establish publisher or artifact
-//! provenance. Archive payloads are streamed into a private staging directory
-//! before an exact version is activated.
+//! Normal installs consume a target-specific catalog signed by a pinned
+//! publisher and verify the catalog, archive, manifest, payload, and model
+//! hashes before activation. An explicitly marked developer mode accepts a
+//! local unsigned archive, but records and reports that weaker trust class.
 
 use anyhow::{anyhow, bail, Context, Result};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::ambient_authority;
 use cap_std::fs::{Dir, OpenOptions as CapOpenOptions};
@@ -16,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -26,7 +27,8 @@ const ACTIVE_NAME: &str = "active.json";
 const ACTIVE_BACKUP_NAME: &str = "active.backup.json";
 const ACTIVE_NEW_NAME: &str = "active.new.json";
 const MANIFEST_SCHEMA_VERSION: u32 = 1;
-// The local prototype targets one executable plus a moderate model bundle.
+const CATALOG_SCHEMA_VERSION: u32 = 1;
+// The initial lifecycle targets one executable plus a moderate model bundle.
 // These defaults keep disk/memory exposure bounded without claiming support
 // for multi-tens-of-gigabytes production model distributions.
 const MAX_ARCHIVE_BYTES: u64 = 512 * 1024 * 1024;
@@ -35,7 +37,15 @@ const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 const MAX_IN_MEMORY_BYTES: u64 = 1024 * 1024;
 const MAX_FILE_COUNT: usize = 4_096;
 const MAX_ARCHIVE_PATH_BYTES: usize = 512;
-const TRUST_NOTICE: &str = "unsigned, untrusted local code; archive-provided hashes do not authenticate publisher or artifact provenance";
+const DEVELOPER_TRUST_NOTICE: &str = "developer-only unsigned local install; it is not publisher-verified and cannot be represented as verified";
+const VERIFIED_PUBLISHER_ID: &str = "cua";
+const VERIFIED_PUBLISHER_NAME: &str = "Cua";
+const VERIFIED_KEY_ID: &str = "cua-extension-ed25519-2026-01";
+// The corresponding private key is held outside this repository.
+const VERIFIED_PUBLIC_KEY: [u8; 32] = [
+    0x74, 0x1e, 0xc4, 0xff, 0x7e, 0x9f, 0x4d, 0x72, 0xe2, 0x1c, 0xf7, 0xeb, 0xf3, 0x26, 0xb8, 0x8b,
+    0x84, 0xc5, 0x6e, 0xcb, 0x14, 0xfe, 0x3a, 0x4e, 0xf7, 0x3a, 0xd2, 0xf2, 0x09, 0x78, 0x6e, 0xc4,
+];
 
 #[derive(Clone, Copy)]
 struct RegistryEntry {
@@ -46,9 +56,9 @@ struct RegistryEntry {
 }
 
 const REGISTRY: &[RegistryEntry] = &[RegistryEntry {
-    id: "local-prototype",
-    display_name: "Local Extension Prototype",
-    description: "Unsigned local archive prototype; publisher provenance is not verified.",
+    id: "cua-perception",
+    display_name: "Cua Perception",
+    description: "Optional signed perception worker and target-specific model bundle.",
     protocol_version: 1,
 }];
 
@@ -63,6 +73,17 @@ struct ExtensionManifest {
     target: String,
     entrypoint: String,
     files: Vec<ManifestFile>,
+    models: Vec<ManifestModel>,
+    components: Vec<ComponentLicense>,
+    license: String,
+    source: String,
+    corresponding_source_uri: String,
+    corresponding_source_revision: String,
+    provenance: String,
+    #[serde(default)]
+    health_args: Vec<String>,
+    #[serde(default)]
+    self_test_args: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -72,6 +93,70 @@ struct ManifestFile {
     sha256: String,
     #[serde(default)]
     executable: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ManifestModel {
+    path: String,
+    revision: String,
+    original_sha256: String,
+    conversion_sha256: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ComponentLicense {
+    name: String,
+    version: String,
+    license: String,
+    notice: String,
+    source_uri: String,
+    source_revision: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SignedCatalog {
+    payload: CatalogPayload,
+    signature: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct CatalogPayload {
+    schema_version: u32,
+    catalog_version: u64,
+    expires_unix: u64,
+    publisher_id: String,
+    publisher_name: String,
+    key_id: String,
+    extension_id: String,
+    version: String,
+    target: String,
+    archive: String,
+    archive_size: u64,
+    archive_sha256: String,
+    manifest_sha256: String,
+    license: String,
+    source: String,
+    corresponding_source_uri: String,
+    corresponding_source_revision: String,
+    provenance: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+enum TrustClass {
+    PublisherVerified,
+    DeveloperUnsignedLocal,
+}
+
+#[derive(Debug, Clone)]
+struct InstallSource {
+    archive: PathBuf,
+    trust: TrustClass,
+    catalog: Option<CatalogPayload>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -88,6 +173,11 @@ struct InstallRecord {
     id: String,
     version: String,
     manifest_sha256: String,
+    trust: TrustClass,
+    publisher_id: Option<String>,
+    key_id: Option<String>,
+    archive_sha256: String,
+    catalog_version: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -99,6 +189,10 @@ struct ExtensionInfo<'a> {
     installed: bool,
     active_version: Option<String>,
     healthy: bool,
+    trust: Option<TrustClass>,
+    publisher_id: Option<String>,
+    publisher_key_id: Option<String>,
+    catalog_version: Option<u64>,
     detail: String,
 }
 
@@ -113,6 +207,8 @@ struct ArchiveFile {
 struct InspectedArchive {
     manifest: ExtensionManifest,
     manifest_bytes: Vec<u8>,
+    archive_sha256: String,
+    archive_size: u64,
 }
 
 struct BoundedReader<R> {
@@ -156,6 +252,9 @@ struct ParsedCommand {
     subcommand: String,
     id: Option<String>,
     archive: Option<PathBuf>,
+    catalog: Option<PathBuf>,
+    allow_unsigned_local: bool,
+    self_test: bool,
     json: bool,
 }
 
@@ -277,30 +376,50 @@ fn run_inner(args: &[String]) -> Result<()> {
 
     match subcommand {
         "list" => print_infos(&store, REGISTRY, json),
-        "info" => print_info(&store, registry_entry(required_id(id, "info")?)?, json),
+        "info" => print_info(
+            &store,
+            registry_entry(required_id(id, "info")?)?,
+            false,
+            json,
+        ),
+        "inspect" => {
+            let entry = registry_entry(required_id(id, "inspect")?)?;
+            let source = resolve_install_source(entry, &parsed)?;
+            let inspected = inspect_without_mutation(entry, &source)?;
+            print_preview(entry, &inspected, &source, json)
+        }
         "status" => match id {
-            Some(id) => print_info(&store, registry_entry(id)?, json),
+            Some(id) => print_info(&store, registry_entry(id)?, parsed.self_test, json),
             None => print_infos(&store, REGISTRY, json),
         },
         "install" | "update" => {
             ensure_mutations_supported()?;
             let id = required_id(id, subcommand)?;
             let entry = registry_entry(id)?;
-            let archive = parsed.archive.as_deref().ok_or_else(|| {
-                anyhow!("{subcommand} requires --archive <path>; network download and publisher verification are not implemented")
-            })?;
-            let installed = store.install_archive(entry, archive)?;
+            let source = resolve_install_source(entry, &parsed)?;
+            let inspected = inspect_without_mutation(entry, &source)?;
+            print_preview(entry, &inspected, &source, false)?;
+            let installed = store.install_source(entry, &source, subcommand == "update")?;
             println!(
-                "{} unsigned, untrusted local code prototype {} {} at {}; hashes are self-asserted by the same archive and do not establish provenance",
+                "{} {} {} at {} ({})",
                 if subcommand == "update" {
                     "Updated"
                 } else {
-                    "Stored"
+                    "Installed"
                 },
                 id,
                 installed.version,
-                installed.path.display()
+                installed.path.display(),
+                trust_label(&source.trust),
             );
+            Ok(())
+        }
+        "remove" => {
+            ensure_mutations_supported()?;
+            let id = required_id(id, "remove")?;
+            let entry = registry_entry(id)?;
+            store.remove(entry)?;
+            println!("Removed {id}");
             Ok(())
         }
         "path" => {
@@ -320,12 +439,15 @@ fn parse_command(args: &[String]) -> Result<ParsedCommand> {
     let subcommand = args.first().map(String::as_str).unwrap_or("list");
     if !matches!(
         subcommand,
-        "list" | "info" | "status" | "install" | "update" | "path"
+        "list" | "info" | "inspect" | "status" | "install" | "update" | "remove" | "path"
     ) {
-        bail!("unknown subcommand {subcommand:?}; expected list, info, status, install, update, or path");
+        bail!("unknown subcommand {subcommand:?}; expected list, inspect, status, install, update, or remove");
     }
     let mut id = None;
     let mut archive = None;
+    let mut catalog = None;
+    let mut allow_unsigned_local = false;
+    let mut self_test = false;
     let mut json = false;
     let mut index = usize::from(!args.is_empty());
     while index < args.len() {
@@ -351,6 +473,33 @@ fn parse_command(args: &[String]) -> Result<ParsedCommand> {
                 archive = Some(PathBuf::from(next));
                 index += 2;
             }
+            "--catalog" => {
+                if catalog.is_some() {
+                    bail!("duplicate option --catalog");
+                }
+                let next = args
+                    .get(index + 1)
+                    .ok_or_else(|| anyhow!("--catalog requires a value"))?;
+                if next.starts_with('-') {
+                    bail!("--catalog requires a value");
+                }
+                catalog = Some(PathBuf::from(next));
+                index += 2;
+            }
+            "--allow-unsigned-local" => {
+                if allow_unsigned_local {
+                    bail!("duplicate flag --allow-unsigned-local");
+                }
+                allow_unsigned_local = true;
+                index += 1;
+            }
+            "--self-test" => {
+                if self_test {
+                    bail!("duplicate flag --self-test");
+                }
+                self_test = true;
+                index += 1;
+            }
             _ if value.starts_with("--archive=") => {
                 if archive.is_some() {
                     bail!("duplicate option --archive");
@@ -360,6 +509,17 @@ fn parse_command(args: &[String]) -> Result<ParsedCommand> {
                     bail!("--archive requires a value");
                 }
                 archive = Some(PathBuf::from(path));
+                index += 1;
+            }
+            _ if value.starts_with("--catalog=") => {
+                if catalog.is_some() {
+                    bail!("duplicate option --catalog");
+                }
+                let path = value.trim_start_matches("--catalog=");
+                if path.is_empty() {
+                    bail!("--catalog requires a value");
+                }
+                catalog = Some(PathBuf::from(path));
                 index += 1;
             }
             _ if value.starts_with('-') => bail!("unknown extension option {value:?}"),
@@ -373,28 +533,42 @@ fn parse_command(args: &[String]) -> Result<ParsedCommand> {
     }
     match subcommand {
         "list" if id.is_some() => bail!("list does not accept an extension name"),
-        "info" | "install" | "update" | "path" if id.is_none() => {
+        "info" | "inspect" | "install" | "update" | "remove" | "path" if id.is_none() => {
             bail!("{subcommand} requires an extension name")
         }
         _ => {}
     }
-    if !matches!(subcommand, "install" | "update") && archive.is_some() {
-        bail!("--archive is only valid with install or update");
+    if !matches!(subcommand, "inspect" | "install" | "update")
+        && (archive.is_some() || catalog.is_some() || allow_unsigned_local)
+    {
+        bail!("source options are only valid with inspect, install, or update");
     }
-    if !matches!(subcommand, "list" | "info" | "status") && json {
+    if !matches!(subcommand, "list" | "info" | "inspect" | "status") && json {
         bail!("--json is not valid with {subcommand}");
+    }
+    if self_test && subcommand != "status" {
+        bail!("--self-test is only valid with status");
+    }
+    if self_test && id.is_none() {
+        bail!("status --self-test requires an extension name");
+    }
+    if allow_unsigned_local && catalog.is_some() {
+        bail!("--allow-unsigned-local cannot be combined with --catalog");
     }
     Ok(ParsedCommand {
         subcommand: subcommand.to_owned(),
         id,
         archive,
+        catalog,
+        allow_unsigned_local,
+        self_test,
         json,
     })
 }
 
 fn ensure_mutations_supported() -> Result<()> {
     #[cfg(windows)]
-    bail!("extension install/update is unsupported on Windows until opened-handle reparse-point and ACL enforcement is implemented");
+    bail!("extension install/update/remove is unsupported on Windows until opened-handle reparse-point and ACL enforcement is implemented");
     #[cfg(not(windows))]
     Ok(())
 }
@@ -426,7 +600,7 @@ fn extension_root() -> Result<PathBuf> {
 fn print_infos(store: &ExtensionStore, entries: &[RegistryEntry], json: bool) -> Result<()> {
     let infos = entries
         .iter()
-        .map(|entry| store.info(entry))
+        .map(|entry| store.info(entry, false))
         .collect::<Result<Vec<_>>>()?;
     if json {
         println!("{}", serde_json::to_string_pretty(&infos)?);
@@ -439,8 +613,13 @@ fn print_infos(store: &ExtensionStore, entries: &[RegistryEntry], json: bool) ->
     Ok(())
 }
 
-fn print_info(store: &ExtensionStore, entry: &RegistryEntry, json: bool) -> Result<()> {
-    let info = store.info(entry)?;
+fn print_info(
+    store: &ExtensionStore,
+    entry: &RegistryEntry,
+    self_test: bool,
+    json: bool,
+) -> Result<()> {
+    let info = store.info(entry, self_test)?;
     if json {
         println!("{}", serde_json::to_string_pretty(&info)?);
     } else {
@@ -451,6 +630,245 @@ fn print_info(store: &ExtensionStore, entry: &RegistryEntry, json: bool) -> Resu
         if let Some(version) = info.active_version {
             println!("Active version: {version}");
         }
+    }
+    Ok(())
+}
+
+fn trust_label(trust: &TrustClass) -> &'static str {
+    match trust {
+        TrustClass::PublisherVerified => "publisher-verified",
+        TrustClass::DeveloperUnsignedLocal => "developer-unsigned-local",
+    }
+}
+
+fn resolve_install_source(entry: &RegistryEntry, parsed: &ParsedCommand) -> Result<InstallSource> {
+    if parsed.allow_unsigned_local {
+        let archive = parsed.archive.clone().ok_or_else(|| {
+            anyhow!("developer mode requires --archive <path> with --allow-unsigned-local")
+        })?;
+        return Ok(InstallSource {
+            archive,
+            trust: TrustClass::DeveloperUnsignedLocal,
+            catalog: None,
+        });
+    }
+    if parsed.archive.is_some() {
+        bail!("unsigned archives require the explicit developer-only --allow-unsigned-local flag");
+    }
+    let catalog_path = parsed
+        .catalog
+        .as_deref()
+        .ok_or_else(|| anyhow!("verified installs require --catalog <signed-catalog.json>"))?;
+    let bytes = read_small_local_file(catalog_path)?;
+    let signed: SignedCatalog =
+        serde_json::from_slice(&bytes).context("parse signed extension catalog")?;
+    verify_catalog(entry, &signed)?;
+    let archive_rel = safe_relative_path(Path::new(&signed.payload.archive))?;
+    if archive_rel.as_os_str().is_empty() || archive_rel != Path::new(&signed.payload.archive) {
+        bail!("catalog archive path must be canonical and relative");
+    }
+    let archive = catalog_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(archive_rel);
+    Ok(InstallSource {
+        archive,
+        trust: TrustClass::PublisherVerified,
+        catalog: Some(signed.payload),
+    })
+}
+
+fn verify_catalog(entry: &RegistryEntry, signed: &SignedCatalog) -> Result<()> {
+    let payload = &signed.payload;
+    if payload.schema_version != CATALOG_SCHEMA_VERSION {
+        bail!("unsupported catalog schema {}", payload.schema_version);
+    }
+    if payload.catalog_version == 0 {
+        bail!("catalog version must be greater than zero");
+    }
+    validate_catalog_freshness(payload)?;
+    if payload.publisher_id != VERIFIED_PUBLISHER_ID
+        || payload.publisher_name != VERIFIED_PUBLISHER_NAME
+        || payload.key_id != VERIFIED_KEY_ID
+    {
+        bail!("catalog publisher identity is not trusted");
+    }
+    if payload.extension_id != entry.id {
+        bail!("catalog extension id does not match requested extension");
+    }
+    if payload.target != current_target()? {
+        bail!("catalog target does not match the current target");
+    }
+    validate_sha256("archive", &payload.archive_sha256)?;
+    validate_sha256("manifest", &payload.manifest_sha256)?;
+    if payload.archive_size > MAX_ARCHIVE_BYTES {
+        bail!("catalog archive size exceeds the supported limit");
+    }
+    Version::parse(&payload.version).context("catalog version is not semantic versioning")?;
+    for (name, value) in [
+        ("license", payload.license.as_str()),
+        ("source", payload.source.as_str()),
+        (
+            "corresponding_source_uri",
+            payload.corresponding_source_uri.as_str(),
+        ),
+        (
+            "corresponding_source_revision",
+            payload.corresponding_source_revision.as_str(),
+        ),
+        ("provenance", payload.provenance.as_str()),
+    ] {
+        if value.trim().is_empty() {
+            bail!("catalog {name} must not be empty");
+        }
+    }
+    let message = serde_json::to_vec(payload)?;
+    verify_ed25519_signature(&VERIFIED_PUBLIC_KEY, &message, &signed.signature)
+}
+
+fn verify_ed25519_signature(public_key: &[u8], message: &[u8], signature: &str) -> Result<()> {
+    let signature = BASE64
+        .decode(signature)
+        .context("catalog signature is not valid base64")?;
+    ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, public_key)
+        .verify(message, &signature)
+        .map_err(|_| anyhow!("catalog signature verification failed"))
+}
+
+fn validate_catalog_freshness(payload: &CatalogPayload) -> Result<()> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .context("system clock precedes the Unix epoch")?
+        .as_secs();
+    if payload.expires_unix <= now {
+        bail!("signed extension catalog has expired");
+    }
+    Ok(())
+}
+
+fn inspect_without_mutation(
+    entry: &RegistryEntry,
+    source: &InstallSource,
+) -> Result<InspectedArchive> {
+    let temp_root = std::env::temp_dir().join(unique_name("cua-extension-inspect"));
+    let parent = open_directory_path_nofollow(
+        temp_root
+            .parent()
+            .ok_or_else(|| anyhow!("inspection path has no parent"))?,
+    )?;
+    let name = temp_root
+        .file_name()
+        .ok_or_else(|| anyhow!("inspection path has no name"))?;
+    create_private_subdirectory(&parent, name)?;
+    let staging = parent.open_dir_nofollow(name)?;
+    let result = inspect_archive(&source.archive, entry, &staging);
+    let cleanup = remove_cap_subdirectory(&parent, name);
+    let inspected = match (result, cleanup) {
+        (Ok(inspected), Ok(())) => inspected,
+        (Err(error), _) => return Err(error),
+        (Ok(_), Err(error)) => return Err(error),
+    };
+    validate_source_metadata(&inspected, source)?;
+    Ok(inspected)
+}
+
+fn validate_source_metadata(inspected: &InspectedArchive, source: &InstallSource) -> Result<()> {
+    if let Some(catalog) = &source.catalog {
+        validate_catalog_freshness(catalog)?;
+        let manifest = &inspected.manifest;
+        if inspected.archive_size != catalog.archive_size
+            || inspected.archive_sha256 != catalog.archive_sha256
+            || hex_sha256(&inspected.manifest_bytes) != catalog.manifest_sha256
+            || manifest.version != catalog.version
+            || manifest.license != catalog.license
+            || manifest.source != catalog.source
+            || manifest.corresponding_source_uri != catalog.corresponding_source_uri
+            || manifest.corresponding_source_revision != catalog.corresponding_source_revision
+            || manifest.provenance != catalog.provenance
+        {
+            bail!("manifest identity or provenance does not exactly match signed catalog");
+        }
+        if manifest.components.is_empty() || manifest.models.is_empty() {
+            bail!("verified perception extensions require component notices and model provenance");
+        }
+    }
+    Ok(())
+}
+
+fn print_preview(
+    entry: &RegistryEntry,
+    inspected: &InspectedArchive,
+    source: &InstallSource,
+    json: bool,
+) -> Result<()> {
+    let manifest = &inspected.manifest;
+    let preview = serde_json::json!({
+        "id": entry.id,
+        "version": manifest.version,
+        "target": manifest.target,
+        "publisher": source.catalog.as_ref().map(|catalog| catalog.publisher_name.as_str()),
+        "publisher_key_id": source.catalog.as_ref().map(|catalog| catalog.key_id.as_str()),
+        "catalog_version": source.catalog.as_ref().map(|catalog| catalog.catalog_version),
+        "catalog_expires_unix": source.catalog.as_ref().map(|catalog| catalog.expires_unix),
+        "publisher_signature_verified": source.catalog.is_some(),
+        "trust": source.trust,
+        "license": manifest.license,
+        "source": manifest.source,
+        "corresponding_source_uri": manifest.corresponding_source_uri,
+        "corresponding_source_revision": manifest.corresponding_source_revision,
+        "provenance": manifest.provenance,
+        "archive_sha256": inspected.archive_sha256,
+        "manifest_sha256": hex_sha256(&inspected.manifest_bytes),
+        "files": manifest.files,
+        "models": manifest.models,
+        "components": manifest.components,
+        "mutation_performed": false,
+    });
+    if json {
+        println!("{}", serde_json::to_string_pretty(&preview)?);
+    } else {
+        println!("Extension: {} {}", entry.id, manifest.version);
+        println!("Trust: {}", trust_label(&source.trust));
+        if let Some(catalog) = &source.catalog {
+            println!(
+                "Publisher signature: verified {} with key {} (catalog {}, expires {})",
+                catalog.publisher_name,
+                catalog.key_id,
+                catalog.catalog_version,
+                catalog.expires_unix
+            );
+        }
+        println!("License: {}", manifest.license);
+        println!("Source: {}", manifest.source);
+        println!(
+            "Corresponding source: {} @ {}",
+            manifest.corresponding_source_uri, manifest.corresponding_source_revision
+        );
+        println!("Provenance: {}", manifest.provenance);
+        for component in &manifest.components {
+            println!(
+                "Component: {} {} | {} | {} @ {} | notice: {}",
+                component.name,
+                component.version,
+                component.license,
+                component.source_uri,
+                component.source_revision,
+                component.notice
+            );
+        }
+        for model in &manifest.models {
+            println!(
+                "Model: {} @ {} | original {} | conversion {}",
+                model.path, model.revision, model.original_sha256, model.conversion_sha256
+            );
+        }
+        println!("Target: {}", manifest.target);
+        println!("Archive SHA-256: {}", inspected.archive_sha256);
+        println!(
+            "Manifest SHA-256: {}",
+            hex_sha256(&inspected.manifest_bytes)
+        );
+        println!("Preview complete; no extension state was changed.");
     }
     Ok(())
 }
@@ -550,9 +968,46 @@ impl ExtensionStore {
         Ok(InstallLock { _file: file, root })
     }
 
-    fn install_archive(&self, entry: &RegistryEntry, archive: &Path) -> Result<InstalledVersion> {
+    fn install_source(
+        &self,
+        entry: &RegistryEntry,
+        source: &InstallSource,
+        is_update: bool,
+    ) -> Result<InstalledVersion> {
         let lock = self.lock(entry.id)?;
         self.recover_activation_locked(&lock.root, entry.id)?;
+        let active = self.active_pointer_locked(&lock.root, entry.id)?;
+        if is_update && active.is_none() {
+            bail!("{} is not installed; use extension install", entry.id);
+        }
+        if !is_update && active.is_some() {
+            bail!("{} is already installed; use extension update", entry.id);
+        }
+        if let Some(pointer) = &active {
+            let extension = lock.root.open_dir_nofollow(entry.id)?;
+            let versions = extension.open_dir_nofollow("versions")?;
+            let installed = versions.open_dir_nofollow(&pointer.version)?;
+            let manifest = verify_installed_version_at(&installed, entry, None)?;
+            let record = read_install_record_at(&installed, entry.id, &manifest.version)?;
+            if record.trust == TrustClass::PublisherVerified
+                && source.trust == TrustClass::DeveloperUnsignedLocal
+            {
+                bail!("developer-only unsigned mode cannot replace a publisher-verified install");
+            }
+            if let (Some(previous), Some(next)) = (
+                record.catalog_version,
+                source
+                    .catalog
+                    .as_ref()
+                    .map(|catalog| catalog.catalog_version),
+            ) {
+                if next <= previous {
+                    bail!(
+                        "catalog anti-rollback version {next} must be newer than installed version {previous}"
+                    );
+                }
+            }
+        }
         let extension_handle = ensure_private_subdirectory(&lock.root, entry.id)?;
         let versions = self.versions_dir(entry.id);
         let versions_handle = ensure_private_subdirectory(&extension_handle, "versions")?;
@@ -562,7 +1017,7 @@ impl ExtensionStore {
         let staging_name = staging.file_name().expect("generated staging name");
         create_private_subdirectory(&staging_parent_handle, staging_name)?;
         let staging_handle = staging_parent_handle.open_dir_nofollow(staging_name)?;
-        let inspected = match inspect_archive(archive, entry, &staging_handle) {
+        let inspected = match inspect_archive(&source.archive, entry, &staging_handle) {
             Ok(inspected) => inspected,
             Err(error) => {
                 remove_cap_subdirectory(&staging_parent_handle, staging_name)?;
@@ -579,6 +1034,14 @@ impl ExtensionStore {
             }
         };
         let version_text = version.to_string();
+        if let Some(active) = &active {
+            let current = Version::parse(&active.version)?;
+            if version < current {
+                remove_cap_subdirectory(&staging_parent_handle, staging_name)?;
+                bail!("update version {version} must be newer than active version {current}");
+            }
+        }
+        validate_source_metadata(&inspected, source)?;
         let destination = versions.join(&version_text);
         match versions_handle.open_dir_nofollow(&version_text) {
             Ok(existing) => {
@@ -586,12 +1049,14 @@ impl ExtensionStore {
                 let verified =
                     verify_installed_version_at(&existing, entry, Some(&inspected.manifest_bytes));
                 let cleanup = remove_cap_subdirectory(&staging_parent_handle, staging_name);
-                verified?;
+                let manifest = verified?;
+                run_extension_hook(&destination, &manifest, true)?;
                 cleanup?;
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 let staged = (|| -> Result<()> {
-                    write_install_record_at(&staging_handle, &inspected)?;
+                    run_extension_hook(&staging, &inspected.manifest, true)?;
+                    write_install_record_at(&staging_handle, &inspected, source)?;
                     verify_installed_version_at(
                         &staging_handle,
                         entry,
@@ -631,6 +1096,20 @@ impl ExtensionStore {
             version: version_text,
             path: destination,
         })
+    }
+
+    #[cfg(test)]
+    fn install_archive(&self, entry: &RegistryEntry, archive: &Path) -> Result<InstalledVersion> {
+        let is_update = self.active_path(entry.id)?.is_some();
+        self.install_source(
+            entry,
+            &InstallSource {
+                archive: archive.to_owned(),
+                trust: TrustClass::DeveloperUnsignedLocal,
+                catalog: None,
+            },
+            is_update,
+        )
     }
 
     fn activate_locked(
@@ -732,7 +1211,7 @@ impl ExtensionStore {
         Ok(Some(path))
     }
 
-    fn info<'a>(&self, entry: &'a RegistryEntry) -> Result<ExtensionInfo<'a>> {
+    fn info<'a>(&self, entry: &'a RegistryEntry, self_test: bool) -> Result<ExtensionInfo<'a>> {
         let lock = match self.lock(entry.id) {
             Ok(lock) => lock,
             Err(error) => {
@@ -744,7 +1223,11 @@ impl ExtensionStore {
                     installed: true,
                     active_version: None,
                     healthy: false,
-                    detail: format!("unhealthy: {error:#}; {TRUST_NOTICE}"),
+                    trust: None,
+                    publisher_id: None,
+                    publisher_key_id: None,
+                    catalog_version: None,
+                    detail: format!("unhealthy: {error:#}"),
                 });
             }
         };
@@ -762,7 +1245,11 @@ impl ExtensionStore {
                     installed: true,
                     active_version: None,
                     healthy: false,
-                    detail: format!("unhealthy: {error:#}; {TRUST_NOTICE}"),
+                    trust: None,
+                    publisher_id: None,
+                    publisher_key_id: None,
+                    catalog_version: None,
+                    detail: format!("unhealthy: {error:#}"),
                 });
             }
         };
@@ -775,11 +1262,15 @@ impl ExtensionStore {
                 installed: false,
                 active_version: None,
                 healthy: true,
-                detail: format!("not installed (healthy); {TRUST_NOTICE}"),
+                trust: None,
+                publisher_id: None,
+                publisher_key_id: None,
+                catalog_version: None,
+                detail: "not installed (healthy)".to_owned(),
             });
         };
         let version = pointer.version.clone();
-        let verified = (|| -> Result<()> {
+        let verified = (|| -> Result<InstallRecord> {
             let extension = lock.root.open_dir_nofollow(entry.id)?;
             let versions = extension
                 .open_dir_nofollow("versions")
@@ -789,20 +1280,38 @@ impl ExtensionStore {
                 format!("active extension version {version} is not an owned directory")
             })?;
             verify_cap_directory_permissions_portable(&installed)?;
-            verify_installed_version_at(&installed, entry, None)?;
-            Ok(())
+            let manifest = verify_installed_version_at(&installed, entry, None)?;
+            let record = read_install_record_at(&installed, entry.id, &manifest.version)?;
+            run_extension_hook(
+                &self.versions_dir(entry.id).join(&version),
+                &manifest,
+                self_test,
+            )?;
+            Ok(record)
         })();
         match verified {
-            Ok(_) => Ok(ExtensionInfo {
-                id: entry.id,
-                display_name: entry.display_name,
-                description: entry.description,
-                protocol_version: entry.protocol_version,
-                installed: true,
-                active_version: Some(version),
-                healthy: true,
-                detail: format!("stored; local integrity checks passed; {TRUST_NOTICE}"),
-            }),
+            Ok(record) => {
+                let trust = record.trust.clone();
+                let detail = if trust == TrustClass::DeveloperUnsignedLocal {
+                    format!("healthy; local integrity checks passed; {DEVELOPER_TRUST_NOTICE}")
+                } else {
+                    "healthy; integrity and publisher verification checks passed".to_owned()
+                };
+                Ok(ExtensionInfo {
+                    id: entry.id,
+                    display_name: entry.display_name,
+                    description: entry.description,
+                    protocol_version: entry.protocol_version,
+                    installed: true,
+                    active_version: Some(version),
+                    healthy: true,
+                    detail,
+                    trust: Some(trust),
+                    publisher_id: record.publisher_id,
+                    publisher_key_id: record.key_id,
+                    catalog_version: record.catalog_version,
+                })
+            }
             Err(error) => Ok(ExtensionInfo {
                 id: entry.id,
                 display_name: entry.display_name,
@@ -811,9 +1320,55 @@ impl ExtensionStore {
                 installed: true,
                 active_version: Some(version),
                 healthy: false,
-                detail: format!("unhealthy: {error:#}; {TRUST_NOTICE}"),
+                trust: None,
+                publisher_id: None,
+                publisher_key_id: None,
+                catalog_version: None,
+                detail: format!("unhealthy: {error:#}"),
             }),
         }
+    }
+
+    fn remove(&self, entry: &RegistryEntry) -> Result<()> {
+        let lock = self.lock(entry.id)?;
+        self.recover_activation_locked(&lock.root, entry.id)?;
+        let Some(extension) = open_private_subdirectory_if_present(&lock.root, entry.id)? else {
+            bail!("{} is not installed", entry.id);
+        };
+        let names = extension
+            .entries()?
+            .map(|item| item.map(|entry| entry.file_name()))
+            .collect::<std::io::Result<BTreeSet<_>>>()?;
+        let allowed = [
+            std::ffi::OsString::from("versions"),
+            std::ffi::OsString::from(ACTIVE_NAME),
+        ]
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+        if !names.is_subset(&allowed) {
+            bail!("refusing removal because the extension directory contains unowned state");
+        }
+        if let Some(pointer) = self.active_pointer_locked(&lock.root, entry.id)? {
+            self.validate_pointer_target_locked(entry.id, &extension, ACTIVE_NAME)?;
+            validate_version_segment(&pointer.version)?;
+        }
+        if let Ok(versions) = extension.open_dir_nofollow("versions") {
+            for child in versions.entries()? {
+                let child = child?;
+                if !child.file_type()?.is_dir() {
+                    bail!("refusing removal because versions contains non-directory state");
+                }
+                let version_name = child.file_name();
+                let version_text = version_name
+                    .to_str()
+                    .ok_or_else(|| anyhow!("installed version name is not UTF-8"))?;
+                validate_version_segment(version_text)?;
+                let version = versions.open_dir_nofollow(&version_name)?;
+                verify_installed_version_at(&version, entry, None)?;
+            }
+        }
+        drop(extension);
+        remove_cap_subdirectory(&lock.root, std::ffi::OsStr::new(entry.id))
     }
 }
 
@@ -822,7 +1377,7 @@ fn inspect_archive(
     entry: &RegistryEntry,
     staging_dir: &Dir,
 ) -> Result<InspectedArchive> {
-    let file = open_existing_no_follow(path)?;
+    let mut file = open_existing_no_follow(path)?;
     let metadata = file
         .metadata()
         .with_context(|| format!("inspect archive {}", path.display()))?;
@@ -832,6 +1387,8 @@ fn inspect_archive(
     if metadata.len() > MAX_ARCHIVE_BYTES {
         bail!("archive exceeds the {MAX_ARCHIVE_BYTES} byte input limit");
     }
+    let archive_sha256 = hash_open_file(&mut file, MAX_ARCHIVE_BYTES)?;
+    file.seek(std::io::SeekFrom::Start(0))?;
     let decoder = GzDecoder::new(BoundedReader {
         inner: file,
         remaining: MAX_ARCHIVE_BYTES + 1,
@@ -905,6 +1462,8 @@ fn inspect_archive(
     Ok(InspectedArchive {
         manifest,
         manifest_bytes,
+        archive_sha256,
+        archive_size: metadata.len(),
     })
 }
 
@@ -955,17 +1514,71 @@ fn validate_manifest(
         );
     }
     safe_manifest_path(&manifest.entrypoint)?;
+    for (name, value) in [
+        ("license", manifest.license.as_str()),
+        ("source", manifest.source.as_str()),
+        (
+            "corresponding_source_uri",
+            manifest.corresponding_source_uri.as_str(),
+        ),
+        (
+            "corresponding_source_revision",
+            manifest.corresponding_source_revision.as_str(),
+        ),
+        ("provenance", manifest.provenance.as_str()),
+    ] {
+        if value.trim().is_empty() {
+            bail!("manifest {name} must not be empty");
+        }
+    }
     let mut declared = BTreeMap::new();
     for file in &manifest.files {
         safe_manifest_path(&file.path)?;
         if file.path == MANIFEST_NAME || file.path == INSTALL_RECORD_NAME {
             bail!("manifest cannot claim reserved path {:?}", file.path);
         }
-        if file.sha256.len() != 64 || !file.sha256.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            bail!("invalid SHA-256 for {}", file.path);
-        }
+        validate_sha256(&file.path, &file.sha256)?;
         if declared.insert(file.path.as_str(), file).is_some() {
             bail!("manifest declares duplicate file {}", file.path);
+        }
+    }
+    let mut model_paths = BTreeSet::new();
+    for model in &manifest.models {
+        safe_manifest_path(&model.path)?;
+        if model.revision.trim().is_empty() {
+            bail!("model {} has no immutable revision", model.path);
+        }
+        validate_sha256("model original", &model.original_sha256)?;
+        validate_sha256("model conversion", &model.conversion_sha256)?;
+        if !model_paths.insert(model.path.as_str()) {
+            bail!("manifest declares duplicate model {}", model.path);
+        }
+        let file = declared
+            .get(model.path.as_str())
+            .ok_or_else(|| anyhow!("model {} is not declared in files", model.path))?;
+        if !file.sha256.eq_ignore_ascii_case(&model.conversion_sha256) {
+            bail!(
+                "model hash does not exactly match file hash for {}",
+                model.path
+            );
+        }
+    }
+    let mut component_names = BTreeSet::new();
+    for component in &manifest.components {
+        for (field, value) in [
+            ("name", component.name.as_str()),
+            ("version", component.version.as_str()),
+            ("license", component.license.as_str()),
+            ("notice", component.notice.as_str()),
+            ("source_uri", component.source_uri.as_str()),
+            ("source_revision", component.source_revision.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                bail!("component {} has an empty {field}", component.name);
+            }
+        }
+        if !component_names.insert(component.name.as_str()) {
+            bail!("manifest declares duplicate component {}", component.name);
         }
     }
     if !declared.contains_key(manifest.entrypoint.as_str()) {
@@ -1009,12 +1622,30 @@ fn validate_manifest(
     Ok(())
 }
 
-fn write_install_record_at(root: &Dir, inspected: &InspectedArchive) -> Result<()> {
+fn write_install_record_at(
+    root: &Dir,
+    inspected: &InspectedArchive,
+    source: &InstallSource,
+) -> Result<()> {
     let record = InstallRecord {
         schema_version: MANIFEST_SCHEMA_VERSION,
         id: inspected.manifest.id.clone(),
         version: inspected.manifest.version.clone(),
         manifest_sha256: hex_sha256(&inspected.manifest_bytes),
+        trust: source.trust.clone(),
+        publisher_id: source
+            .catalog
+            .as_ref()
+            .map(|catalog| catalog.publisher_id.clone()),
+        key_id: source
+            .catalog
+            .as_ref()
+            .map(|catalog| catalog.key_id.clone()),
+        archive_sha256: inspected.archive_sha256.clone(),
+        catalog_version: source
+            .catalog
+            .as_ref()
+            .map(|catalog| catalog.catalog_version),
     };
     write_new_file_at(
         root,
@@ -1155,7 +1786,7 @@ fn installed_regular_files_at(root: &Dir) -> Result<BTreeSet<String>> {
     Ok(paths)
 }
 
-fn verify_install_record_at(root: &Dir, id: &str, version: &str) -> Result<()> {
+fn read_install_record_at(root: &Dir, id: &str, version: &str) -> Result<InstallRecord> {
     let manifest = read_small_file_at(root, Path::new(MANIFEST_NAME))?;
     let record: InstallRecord =
         serde_json::from_slice(&read_small_file_at(root, Path::new(INSTALL_RECORD_NAME))?)?;
@@ -1163,8 +1794,85 @@ fn verify_install_record_at(root: &Dir, id: &str, version: &str) -> Result<()> {
         || record.id != id
         || record.version != version
         || record.manifest_sha256 != hex_sha256(&manifest)
+        || validate_sha256("record archive", &record.archive_sha256).is_err()
     {
         bail!("install record does not verify extension ownership");
+    }
+    match record.trust {
+        TrustClass::PublisherVerified => {
+            if record.publisher_id.as_deref() != Some(VERIFIED_PUBLISHER_ID)
+                || record.key_id.as_deref() != Some(VERIFIED_KEY_ID)
+            {
+                bail!("verified install record has an untrusted publisher identity");
+            }
+            if record.catalog_version.is_none() {
+                bail!("verified install record has no catalog anti-rollback version");
+            }
+        }
+        TrustClass::DeveloperUnsignedLocal => {
+            if record.publisher_id.is_some()
+                || record.key_id.is_some()
+                || record.catalog_version.is_some()
+            {
+                bail!("developer install record cannot claim a verified publisher");
+            }
+        }
+    }
+    Ok(record)
+}
+
+fn verify_install_record_at(root: &Dir, id: &str, version: &str) -> Result<()> {
+    read_install_record_at(root, id, version).map(drop)
+}
+
+fn run_extension_hook(root: &Path, manifest: &ExtensionManifest, self_test: bool) -> Result<()> {
+    let args = if self_test {
+        &manifest.self_test_args
+    } else {
+        &manifest.health_args
+    };
+    if args.is_empty() {
+        return Ok(());
+    }
+    if args.len() > 16
+        || args
+            .iter()
+            .any(|arg| arg.len() > 4096 || arg.contains('\0'))
+    {
+        bail!("extension hook arguments exceed safe limits");
+    }
+    let entrypoint = root.join(&manifest.entrypoint);
+    let metadata =
+        fs::symlink_metadata(&entrypoint).context("inspect extension hook entrypoint")?;
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+        bail!("extension hook entrypoint is not a regular file");
+    }
+    let mut child = std::process::Command::new(entrypoint)
+        .args(args)
+        .env_clear()
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .context("run extension health hook")?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            bail!("extension hook exceeded the 10 second execution limit");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    };
+    if !status.success() {
+        bail!(
+            "extension {} hook failed with {}",
+            if self_test { "self-test" } else { "health" },
+            status
+        );
     }
     Ok(())
 }
@@ -1545,6 +2253,52 @@ fn hex_sha256(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
+fn validate_sha256(label: &str, value: &str) -> Result<()> {
+    if value.len() != 64
+        || !value.bytes().all(|byte| byte.is_ascii_hexdigit())
+        || value.bytes().any(|byte| byte.is_ascii_uppercase())
+    {
+        bail!("invalid canonical SHA-256 for {label}");
+    }
+    Ok(())
+}
+
+fn read_small_local_file(path: &Path) -> Result<Vec<u8>> {
+    let file = open_existing_no_follow(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || metadata.len() > MAX_IN_MEMORY_BYTES {
+        bail!("file is not a bounded regular file: {}", path.display());
+    }
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.take(MAX_IN_MEMORY_BYTES + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_IN_MEMORY_BYTES {
+        bail!("file exceeds the in-memory limit: {}", path.display());
+    }
+    Ok(bytes)
+}
+
+fn hash_open_file(file: &mut fs::File, limit: u64) -> Result<String> {
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || metadata.len() > limit {
+        bail!("archive exceeds the {limit} byte limit");
+    }
+    let mut hasher = Sha256::new();
+    let mut total = 0_u64;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        total += read as u64;
+        if total > limit {
+            bail!("archive exceeds the {limit} byte limit");
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
 fn unique_name(id: &str) -> String {
     let counter = UNIQUE_COUNTER.fetch_add(1, Ordering::Relaxed);
     format!("{id}-{}-{counter}", std::process::id())
@@ -1640,7 +2394,7 @@ mod tests {
         let mut builder = tar::Builder::new(encoder);
         let manifest = ExtensionManifest {
             schema_version: 1,
-            id: "local-prototype".to_owned(),
+            id: "cua-perception".to_owned(),
             version: version.to_owned(),
             driver_version: driver_version.to_owned(),
             protocol_version: protocol,
@@ -1651,6 +2405,22 @@ mod tests {
                 sha256: declared_hash.to_owned(),
                 executable,
             }],
+            models: Vec::new(),
+            components: vec![ComponentLicense {
+                name: "cua-perception".to_owned(),
+                version: version.to_owned(),
+                license: "Apache-2.0".to_owned(),
+                notice: "Copyright Cua contributors".to_owned(),
+                source_uri: "https://github.com/trycua/cua".to_owned(),
+                source_revision: "test-fixture".to_owned(),
+            }],
+            license: "Apache-2.0".to_owned(),
+            source: "https://github.com/trycua/cua".to_owned(),
+            corresponding_source_uri: "https://github.com/trycua/cua".to_owned(),
+            corresponding_source_revision: "test-fixture".to_owned(),
+            provenance: "developer test fixture".to_owned(),
+            health_args: Vec::new(),
+            self_test_args: Vec::new(),
         };
         append(
             &mut builder,
@@ -1721,24 +2491,24 @@ mod tests {
             b"worker",
         );
         let store = ExtensionStore::new(temp.path().join("extensions"));
-        let entry = registry_entry("local-prototype").unwrap();
+        let entry = registry_entry("cua-perception").unwrap();
 
         let first = store.install_archive(entry, &archive).unwrap();
         let second = store.install_archive(entry, &archive).unwrap();
 
         assert_eq!(first.path, second.path);
         assert_eq!(
-            store.active_path("local-prototype").unwrap(),
+            store.active_path("cua-perception").unwrap(),
             Some(first.path)
         );
-        assert!(store.info(entry).unwrap().healthy);
+        assert!(store.info(entry, false).unwrap().healthy);
     }
 
     #[test]
     fn rejects_corrupt_target_and_protocol_mismatches() {
         let temp = TempDir::new().unwrap();
         let store = ExtensionStore::new(temp.path().join("extensions"));
-        let entry = registry_entry("local-prototype").unwrap();
+        let entry = registry_entry("cua-perception").unwrap();
 
         let wrong_target = fixture_archive(temp.path(), "1.0.0", "wrong-target", 1, b"worker");
         assert!(store
@@ -1800,14 +2570,14 @@ mod tests {
         let bytes = fs::read(&corrupt).unwrap();
         fs::write(&corrupt, &bytes[..bytes.len() / 2]).unwrap();
         assert!(store.install_archive(entry, &corrupt).is_err());
-        assert!(store.active_path("local-prototype").unwrap().is_none());
+        assert!(store.active_path("cua-perception").unwrap().is_none());
     }
 
     #[test]
     fn malformed_manifest_version_cleans_staging() {
         let temp = TempDir::new().unwrap();
         let store = ExtensionStore::new(temp.path().join("extensions"));
-        let entry = registry_entry("local-prototype").unwrap();
+        let entry = registry_entry("cua-perception").unwrap();
         let archive = fixture_archive(
             temp.path(),
             "not-a-version",
@@ -1831,7 +2601,7 @@ mod tests {
     fn rejects_traversal_and_link_entries_and_cleans_staging() {
         let temp = TempDir::new().unwrap();
         let store = ExtensionStore::new(temp.path().join("extensions"));
-        let entry = registry_entry("local-prototype").unwrap();
+        let entry = registry_entry("cua-perception").unwrap();
 
         for kind in ["traversal", "symlink", "pax", "long-path"] {
             let archive = unsafe_archive(temp.path(), kind);
@@ -1859,18 +2629,12 @@ mod tests {
     fn strict_command_grammar_rejects_ambiguous_arguments() {
         for args in [
             vec!["list", "extra"],
-            vec!["info", "local-prototype", "extra"],
+            vec!["inspect", "cua-perception", "extra"],
             vec!["status", "--bogus"],
             vec!["status", "--json", "--json"],
-            vec!["install", "local-prototype", "--archive"],
-            vec![
-                "install",
-                "local-prototype",
-                "--archive",
-                "a",
-                "--archive=b",
-            ],
-            vec!["path", "local-prototype", "--archive=a"],
+            vec!["install", "cua-perception", "--archive"],
+            vec!["install", "cua-perception", "--archive", "a", "--archive=b"],
+            vec!["remove", "cua-perception", "--archive=a"],
         ] {
             let args = args.into_iter().map(str::to_owned).collect::<Vec<_>>();
             assert!(parse_command(&args).is_err(), "accepted {args:?}");
@@ -1892,7 +2656,7 @@ mod tests {
     fn activation_failure_restores_previous_version() {
         let temp = TempDir::new().unwrap();
         let store = ExtensionStore::new(temp.path().join("extensions"));
-        let entry = registry_entry("local-prototype").unwrap();
+        let entry = registry_entry("cua-perception").unwrap();
         let archive = fixture_archive(
             temp.path(),
             "1.0.0",
@@ -1902,11 +2666,11 @@ mod tests {
         );
         store.install_archive(entry, &archive).unwrap();
 
-        let lock = store.lock("local-prototype").unwrap();
+        let lock = store.lock("cua-perception").unwrap();
         let error = store
             .activate_locked(
                 &lock.root,
-                "local-prototype",
+                "cua-perception",
                 "2.0.0",
                 ActivationFailpoint::AfterBackup,
             )
@@ -1914,10 +2678,10 @@ mod tests {
         drop(lock);
 
         assert!(error.to_string().contains("simulated interruption"));
-        let lock = store.lock("local-prototype").unwrap();
+        let lock = store.lock("cua-perception").unwrap();
         assert_eq!(
             store
-                .active_pointer_locked(&lock.root, "local-prototype")
+                .active_pointer_locked(&lock.root, "cua-perception")
                 .unwrap()
                 .unwrap()
                 .version,
@@ -1929,7 +2693,7 @@ mod tests {
     fn recovery_validates_and_restores_interrupted_backup() {
         let temp = TempDir::new().unwrap();
         let store = ExtensionStore::new(temp.path().join("extensions"));
-        let entry = registry_entry("local-prototype").unwrap();
+        let entry = registry_entry("cua-perception").unwrap();
         let archive = fixture_archive(
             temp.path(),
             "1.0.0",
@@ -1966,14 +2730,11 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let store = ExtensionStore::new(temp.path().join("extensions"));
         let info = store
-            .info(registry_entry("local-prototype").unwrap())
+            .info(registry_entry("cua-perception").unwrap(), false)
             .unwrap();
         assert!(!info.installed);
         assert!(info.healthy);
-        assert_eq!(
-            info.detail,
-            format!("not installed (healthy); {TRUST_NOTICE}")
-        );
+        assert_eq!(info.detail, "not installed (healthy)");
     }
 
     #[cfg(unix)]
@@ -2005,7 +2766,7 @@ mod tests {
             } else {
                 ExtensionStore::new(temp.path().join("extensions"))
             };
-            let entry = registry_entry("local-prototype").unwrap();
+            let entry = registry_entry("cua-perception").unwrap();
             let archive = fixture_archive(
                 temp.path(),
                 "1.0.0",
@@ -2084,7 +2845,7 @@ mod tests {
 
         let temp = TempDir::new().unwrap();
         let store = ExtensionStore::new(temp.path().join("extensions"));
-        let entry = registry_entry("local-prototype").unwrap();
+        let entry = registry_entry("cua-perception").unwrap();
         let archive = fixture_archive(
             temp.path(),
             "1.0.0",
@@ -2135,6 +2896,119 @@ mod tests {
         assert_eq!(
             target_triple("linux", "aarch64", "musl").unwrap(),
             "aarch64-unknown-linux-musl"
+        );
+    }
+
+    #[test]
+    fn ed25519_verification_rejects_tampering() {
+        use ring::signature::{Ed25519KeyPair, KeyPair};
+
+        let seed = [
+            0x9d, 0x61, 0xb1, 0x9d, 0xef, 0xfd, 0x5a, 0x60, 0xba, 0x84, 0x4a, 0xf4, 0x92, 0xec,
+            0x2c, 0xc4, 0x44, 0x49, 0xc5, 0x69, 0x7b, 0x32, 0x69, 0x19, 0x70, 0x3b, 0xac, 0x03,
+            0x1c, 0xae, 0x7f, 0x60,
+        ];
+        let pair = Ed25519KeyPair::from_seed_unchecked(&seed).unwrap();
+        let message = b"signed target-specific extension catalog";
+        let signature = BASE64.encode(pair.sign(message).as_ref());
+        verify_ed25519_signature(pair.public_key().as_ref(), message, &signature).unwrap();
+        assert!(verify_ed25519_signature(
+            pair.public_key().as_ref(),
+            b"tampered catalog",
+            &signature
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn model_hash_must_exactly_match_the_declared_file_hash() {
+        let file_hash = hex_sha256(b"model");
+        let manifest = ExtensionManifest {
+            schema_version: MANIFEST_SCHEMA_VERSION,
+            id: "cua-perception".to_owned(),
+            version: "1.0.0".to_owned(),
+            driver_version: format!("={}", env!("CARGO_PKG_VERSION")),
+            protocol_version: 1,
+            target: current_target().unwrap(),
+            entrypoint: "bin/cua-perception".to_owned(),
+            files: vec![
+                ManifestFile {
+                    path: "bin/cua-perception".to_owned(),
+                    sha256: hex_sha256(b"worker"),
+                    executable: true,
+                },
+                ManifestFile {
+                    path: "models/parser.bin".to_owned(),
+                    sha256: file_hash.clone(),
+                    executable: false,
+                },
+            ],
+            models: vec![ManifestModel {
+                path: "models/parser.bin".to_owned(),
+                revision: "model-v1".to_owned(),
+                original_sha256: "1".repeat(64),
+                conversion_sha256: "0".repeat(64),
+            }],
+            components: vec![ComponentLicense {
+                name: "model-runtime".to_owned(),
+                version: "1.0.0".to_owned(),
+                license: "Apache-2.0".to_owned(),
+                notice: "test notice".to_owned(),
+                source_uri: "https://example.invalid/source".to_owned(),
+                source_revision: "abc123".to_owned(),
+            }],
+            license: "Apache-2.0".to_owned(),
+            source: "https://github.com/trycua/cua".to_owned(),
+            corresponding_source_uri: "https://github.com/trycua/cua".to_owned(),
+            corresponding_source_revision: "test".to_owned(),
+            provenance: "test".to_owned(),
+            health_args: Vec::new(),
+            self_test_args: Vec::new(),
+        };
+        let files = vec![
+            ArchiveFile {
+                path: MANIFEST_NAME.to_owned(),
+                sha256: "0".repeat(64),
+                size: 1,
+            },
+            ArchiveFile {
+                path: "bin/cua-perception".to_owned(),
+                sha256: hex_sha256(b"worker"),
+                size: 6,
+            },
+            ArchiveFile {
+                path: "models/parser.bin".to_owned(),
+                sha256: file_hash,
+                size: 5,
+            },
+        ];
+        assert!(
+            validate_manifest(&manifest, registry_entry("cua-perception").unwrap(), &files)
+                .unwrap_err()
+                .to_string()
+                .contains("model hash")
+        );
+    }
+
+    #[test]
+    fn removal_refuses_unowned_files() {
+        let temp = TempDir::new().unwrap();
+        let store = ExtensionStore::new(temp.path().join("extensions"));
+        let entry = registry_entry("cua-perception").unwrap();
+        let archive = fixture_archive(
+            temp.path(),
+            "1.0.0",
+            &current_target().unwrap(),
+            1,
+            b"worker",
+        );
+        store.install_archive(entry, &archive).unwrap();
+        fs::write(store.extension_dir(entry.id).join("foreign"), b"keep").unwrap();
+        let error = store.remove(entry).unwrap_err().to_string();
+        assert!(error.contains("unowned state"));
+        assert_eq!(
+            fs::read(store.extension_dir(entry.id).join("foreign")).unwrap(),
+            b"keep"
         );
     }
 }

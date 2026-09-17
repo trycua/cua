@@ -1224,6 +1224,7 @@ dependencies = [
  "platform-linux",
  "platform-macos",
  "platform-windows",
+ "ring",
  "rustix",
  "semver",
  "serde",

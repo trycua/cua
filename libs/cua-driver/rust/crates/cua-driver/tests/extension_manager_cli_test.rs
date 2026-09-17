@@ -31,29 +31,38 @@ fn current_target() -> String {
     format!("{}-{suffix}", std::env::consts::ARCH)
 }
 
-fn fixture_archive(directory: &Path) -> PathBuf {
-    let payload = b"fixture-worker";
+fn fixture_archive(directory: &Path, version: &str) -> PathBuf {
+    let payload = b"#!/bin/sh\nexit 0\n";
     let digest = format!("{:x}", Sha256::digest(payload));
     let manifest = serde_json::to_vec_pretty(&json!({
         "schema_version": 1,
-        "id": "local-prototype",
-        "version": "1.2.3",
+        "id": "cua-perception",
+        "version": version,
         "driver_version": format!("={}", env!("CARGO_PKG_VERSION")),
         "protocol_version": 1,
         "target": current_target(),
-        "entrypoint": "bin/local-extension",
-        "files": [{
-            "path": "bin/local-extension",
-            "sha256": digest,
-            "executable": true
-        }]
+        "entrypoint": "bin/cua-perception",
+        "files": [{"path": "bin/cua-perception", "sha256": digest, "executable": true}],
+        "models": [],
+        "components": [{
+            "name": "cua-perception", "version": version, "license": "Apache-2.0",
+            "notice": "Copyright Cua contributors", "source_uri": "https://github.com/trycua/cua",
+            "source_revision": "integration-fixture"
+        }],
+        "license": "Apache-2.0",
+        "source": "https://github.com/trycua/cua",
+        "corresponding_source_uri": "https://github.com/trycua/cua",
+        "corresponding_source_revision": "integration-fixture",
+        "provenance": "integration test fixture",
+        "health_args": ["health"],
+        "self_test_args": ["self-test"]
     }))
     .unwrap();
-    let path = directory.join("local-extension.tar.gz");
+    let path = directory.join(format!("cua-perception-{version}.tar.gz"));
     let encoder = GzEncoder::new(fs::File::create(&path).unwrap(), Compression::default());
     let mut builder = tar::Builder::new(encoder);
     append(&mut builder, "extension.json", &manifest);
-    append(&mut builder, "bin/local-extension", payload);
+    append(&mut builder, "bin/cua-perception", payload);
     builder.finish().unwrap();
     path
 }
@@ -70,9 +79,10 @@ fn append(builder: &mut tar::Builder<GzEncoder<fs::File>>, path: &str, bytes: &[
 
 #[test]
 #[cfg(not(windows))]
-fn status_and_path_report_exact_active_version() {
+fn developer_lifecycle_is_explicit_previewed_and_removable() {
     let temp = TempDir::new().unwrap();
     let home = temp.path().join("driver-home");
+    let archive = fixture_archive(temp.path(), "1.2.3");
 
     let list = run(&home, &["extension", "list", "--json"]);
     assert!(
@@ -81,35 +91,54 @@ fn status_and_path_report_exact_active_version() {
         String::from_utf8_lossy(&list.stderr)
     );
     let list_json: Value = serde_json::from_slice(&list.stdout).unwrap();
-    assert_eq!(list_json[0]["id"], "local-prototype");
+    assert_eq!(list_json[0]["id"], "cua-perception");
     assert_eq!(list_json[0]["installed"], false);
-    let list_detail = list_json[0]["detail"].as_str().unwrap();
-    assert!(list_detail.contains("unsigned, untrusted"));
-    assert!(list_detail.contains("archive-provided hashes do not authenticate"));
-    let plain_list = run(&home, &["extension", "list"]);
-    let plain_list = String::from_utf8_lossy(&plain_list.stdout);
-    assert!(plain_list.contains("unsigned, untrusted"));
-    assert!(plain_list.contains("archive-provided hashes do not authenticate"));
 
-    let absent = run(&home, &["extension", "status", "local-prototype", "--json"]);
-    assert!(
-        absent.status.success(),
-        "{}",
-        String::from_utf8_lossy(&absent.stderr)
+    let rejected = run(
+        &home,
+        &[
+            "extension",
+            "install",
+            "cua-perception",
+            "--archive",
+            archive.to_str().unwrap(),
+        ],
     );
-    let absent_json: Value = serde_json::from_slice(&absent.stdout).unwrap();
-    assert_eq!(absent_json["installed"], false);
-    assert_eq!(absent_json["healthy"], true);
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("--allow-unsigned-local"));
 
-    let archive = fixture_archive(temp.path());
+    let inspect = run(
+        &home,
+        &[
+            "extension",
+            "inspect",
+            "cua-perception",
+            "--archive",
+            archive.to_str().unwrap(),
+            "--allow-unsigned-local",
+            "--json",
+        ],
+    );
+    assert!(
+        inspect.status.success(),
+        "{}",
+        String::from_utf8_lossy(&inspect.stderr)
+    );
+    let preview: Value = serde_json::from_slice(&inspect.stdout).unwrap();
+    assert_eq!(preview["trust"], "developer-unsigned-local");
+    assert_eq!(preview["license"], "Apache-2.0");
+    assert_eq!(preview["mutation_performed"], false);
+    assert!(!home.join("extensions/cua-perception").exists());
+
     let install = run(
         &home,
         &[
             "extension",
             "install",
-            "local-prototype",
+            "cua-perception",
             "--archive",
             archive.to_str().unwrap(),
+            "--allow-unsigned-local",
         ],
     );
     assert!(
@@ -117,12 +146,18 @@ fn status_and_path_report_exact_active_version() {
         "{}",
         String::from_utf8_lossy(&install.stderr)
     );
-    let install_stdout = String::from_utf8_lossy(&install.stdout);
-    assert!(install_stdout.contains("unsigned, untrusted local code"));
-    assert!(install_stdout.contains("self-asserted"));
-    assert!(install_stdout.contains("do not establish provenance"));
+    assert!(String::from_utf8_lossy(&install.stdout).contains("developer-unsigned-local"));
 
-    let status = run(&home, &["extension", "status", "local-prototype", "--json"]);
+    let status = run(
+        &home,
+        &[
+            "extension",
+            "status",
+            "cua-perception",
+            "--self-test",
+            "--json",
+        ],
+    );
     assert!(
         status.status.success(),
         "{}",
@@ -130,51 +165,99 @@ fn status_and_path_report_exact_active_version() {
     );
     let status_json: Value = serde_json::from_slice(&status.stdout).unwrap();
     assert_eq!(status_json["active_version"], "1.2.3");
+    assert_eq!(status_json["trust"], "developer-unsigned-local");
     assert_eq!(status_json["healthy"], true);
-    let status_detail = status_json["detail"].as_str().unwrap();
-    assert!(status_detail.contains("unsigned, untrusted"));
-    assert!(status_detail.contains("archive-provided hashes do not authenticate"));
-    let plain_status = run(&home, &["extension", "status", "local-prototype"]);
-    let plain_status = String::from_utf8_lossy(&plain_status.stdout);
-    assert!(plain_status.contains("unsigned, untrusted"));
-    assert!(plain_status.contains("archive-provided hashes do not authenticate"));
 
-    let path = run(&home, &["extension", "path", "local-prototype"]);
+    let update_archive = fixture_archive(temp.path(), "1.2.4");
+    let update = run(
+        &home,
+        &[
+            "extension",
+            "update",
+            "cua-perception",
+            "--archive",
+            update_archive.to_str().unwrap(),
+            "--allow-unsigned-local",
+        ],
+    );
     assert!(
-        path.status.success(),
+        update.status.success(),
         "{}",
-        String::from_utf8_lossy(&path.stderr)
+        String::from_utf8_lossy(&update.stderr)
     );
-    let actual = String::from_utf8(path.stdout).unwrap();
-    assert_eq!(
-        Path::new(actual.trim()),
-        home.join("extensions/local-prototype/versions/1.2.3")
+    let updated_status = run(&home, &["extension", "status", "cua-perception", "--json"]);
+    let updated_json: Value = serde_json::from_slice(&updated_status.stdout).unwrap();
+    assert_eq!(updated_json["active_version"], "1.2.4");
+
+    let remove = run(&home, &["extension", "remove", "cua-perception"]);
+    assert!(
+        remove.status.success(),
+        "{}",
+        String::from_utf8_lossy(&remove.stderr)
     );
+    assert!(!home.join("extensions/cua-perception").exists());
 }
 
 #[test]
-fn help_and_manifests_state_the_untrusted_prototype_contract() {
+fn signed_catalog_rejects_forgery_before_state_creation() {
     let temp = TempDir::new().unwrap();
     let home = temp.path().join("driver-home");
+    let archive = fixture_archive(temp.path(), "1.2.3");
+    let archive_bytes = fs::read(&archive).unwrap();
+    let catalog = json!({
+        "payload": {
+            "schema_version": 1, "catalog_version": 1, "expires_unix": 4102444800_u64,
+            "publisher_id": "cua", "publisher_name": "Cua",
+            "key_id": "cua-extension-ed25519-2026-01", "extension_id": "cua-perception",
+            "version": "1.2.3", "target": current_target(),
+            "archive": archive.file_name().unwrap().to_str().unwrap(),
+            "archive_size": archive_bytes.len(),
+            "archive_sha256": format!("{:x}", Sha256::digest(&archive_bytes)),
+            "manifest_sha256": "00".repeat(32), "license": "Apache-2.0",
+            "source": "https://github.com/trycua/cua",
+            "corresponding_source_uri": "https://github.com/trycua/cua",
+            "corresponding_source_revision": "integration-fixture",
+            "provenance": "forged test catalog"
+        },
+        "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+    });
+    let catalog_path = temp.path().join("catalog.json");
+    fs::write(&catalog_path, serde_json::to_vec_pretty(&catalog).unwrap()).unwrap();
+    let output = run(
+        &home,
+        &[
+            "extension",
+            "install",
+            "cua-perception",
+            "--catalog",
+            catalog_path.to_str().unwrap(),
+        ],
+    );
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("signature verification failed"));
+    assert!(!home.join("extensions").exists());
+}
 
-    let help = run(&home, &["--help"]);
-    let help = String::from_utf8_lossy(&help.stdout);
-    assert!(help.contains("UNSIGNED, UNTRUSTED LOCAL CODE PROTOTYPE"));
-    assert!(help.contains("self-asserted"));
-    assert!(help.contains("unsupported on Windows"));
-    assert!(!help.contains("extension uninstall"));
+#[test]
+fn help_and_generated_surfaces_describe_the_secure_contract() {
+    let temp = TempDir::new().unwrap();
+    let home = temp.path().join("driver-home");
+    let help = String::from_utf8_lossy(&run(&home, &["--help"]).stdout).into_owned();
+    assert!(help.contains("SIGNED TARGET-SPECIFIC CATALOGS"));
+    assert!(help.contains("extension inspect"));
+    assert!(help.contains("extension remove"));
+    assert!(help.contains("--allow-unsigned-local"));
 
-    let manifest = run(&home, &["manifest"]);
-    let manifest = String::from_utf8_lossy(&manifest.stdout).to_lowercase();
-    assert!(manifest.contains("unsigned, untrusted local-code"));
-    assert!(manifest.contains("self-asserted"));
-    assert!(manifest.contains("uninstall is intentionally unavailable"));
+    let manifest = String::from_utf8_lossy(&run(&home, &["manifest"]).stdout).to_lowercase();
+    assert!(manifest.contains("signed, target-specific"));
+    assert!(manifest.contains("publisher identity"));
+    assert!(manifest.contains("developer-only unsigned"));
 
-    let docs = run(&home, &["dump-docs", "--type", "commands"]);
-    let docs = String::from_utf8_lossy(&docs.stdout).to_lowercase();
-    assert!(docs.contains("unsigned, untrusted local extension prototype"));
-    assert!(docs.contains("self-asserted"));
-    assert!(docs.contains("uninstall is intentionally absent"));
+    let docs_output = run(&home, &["dump-docs", "--type", "commands"]);
+    let docs = String::from_utf8_lossy(&docs_output.stdout).to_lowercase();
+    assert!(docs.contains("original-model, and converted-model hashes"));
+    assert!(docs.contains("component licenses/notices"));
+    assert!(docs.contains("license, source, and provenance"));
 }
 
 #[test]
@@ -184,8 +267,18 @@ fn cli_rejects_ambiguous_extension_arguments() {
     for args in [
         vec!["extension", "list", "extra"],
         vec!["extension", "status", "--json", "--json"],
-        vec!["extension", "install", "local-prototype", "--archive"],
-        vec!["extension", "uninstall", "local-prototype"],
+        vec!["extension", "install", "cua-perception", "--archive"],
+        vec![
+            "extension",
+            "install",
+            "cua-perception",
+            "--archive",
+            "x",
+            "--catalog",
+            "y",
+            "--allow-unsigned-local",
+        ],
+        vec!["extension", "path", "cua-perception"],
     ] {
         let output = run(&home, &args);
         assert!(!output.status.success(), "accepted {args:?}");
@@ -194,20 +287,31 @@ fn cli_rejects_ambiguous_extension_arguments() {
 
 #[cfg(windows)]
 #[test]
-fn windows_refuses_extension_mutation() {
+fn windows_refuses_every_extension_mutation() {
     let temp = TempDir::new().unwrap();
     let home = temp.path().join("driver-home");
-    let archive = fixture_archive(temp.path());
-    let output = run(
-        &home,
-        &[
+    let archive = fixture_archive(temp.path(), "1.2.3");
+    for args in [
+        vec![
             "extension",
             "install",
-            "local-prototype",
+            "cua-perception",
             "--archive",
             archive.to_str().unwrap(),
+            "--allow-unsigned-local",
         ],
-    );
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("unsupported on Windows"));
+        vec![
+            "extension",
+            "update",
+            "cua-perception",
+            "--archive",
+            archive.to_str().unwrap(),
+            "--allow-unsigned-local",
+        ],
+        vec!["extension", "remove", "cua-perception"],
+    ] {
+        let output = run(&home, &args);
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("unsupported on Windows"));
+    }
 }

@@ -55,9 +55,10 @@ fn def() -> &'static ToolDef {
             — the capture-only path for rendering a live window preview / \
             picture-in-picture without paying for perception. Setting BOTH \
             `include_accessibility_tree:false` and `include_screenshot:false` is an \
-            error (nothing to return). Optional `max_dimension` caps the returned \
-            screenshot's long edge in pixels (aspect preserved) for a cheap \
-            thumbnail.\n\n\
+            error (nothing to return). Optional `max_image_dimension` overrides the \
+            configured screenshot long-edge limit for this call; use 0 for native \
+            resolution. The legacy `max_dimension` remains a tighter cap for \
+            compatibility.\n\n\
             The snapshot is SCOPED to `window_id`: a window_id that no longer exists is \
             refused with `window_id_not_found`, and one owned by another process is \
             refused with `window_owner_pid_mismatch` naming the real `owner_pid` to retry \
@@ -116,6 +117,11 @@ fn def() -> &'static ToolDef {
                     "type": "integer",
                     "minimum": 1,
                     "description": "Optional cap on the returned screenshot's long edge, in pixels (aspect ratio preserved) — the cheap path for a small preview / thumbnail. Applied on top of the session/global max_image_dimension ceiling; the tighter of the two wins. Omit for the configured default."
+                },
+                "max_image_dimension": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Per-call override for the returned screenshot's long edge in pixels. An explicit value wins over the session/global setting; 0 returns native resolution. Omit to preserve configured behavior."
                 }
             },
             "additionalProperties": false
@@ -138,6 +144,14 @@ fn fold_max_dimension(ceiling: u32, per_call: Option<u32>) -> u32 {
         Some(md) => ceiling.min(md),
         None => ceiling,
     }
+}
+
+fn resolve_max_dimension(
+    configured: u32,
+    legacy_cap: Option<u32>,
+    per_call_override: Option<u32>,
+) -> u32 {
+    per_call_override.unwrap_or_else(|| fold_max_dimension(configured, legacy_cap))
 }
 
 fn chromium_browser_window(pid: i32) -> bool {
@@ -267,6 +281,10 @@ impl Tool for GetWindowStateTool {
             .get("max_dimension")
             .and_then(|v| v.as_u64())
             .map(|v| v.max(1) as u32);
+        let max_image_dimension = args
+            .get("max_image_dimension")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32);
         // Internal direct-tool mode used by verify_state. Registry ingress
         // strips underscore-prefixed arguments before public dispatch; only
         // a trusted direct in-process invocation can enable this mode.
@@ -346,9 +364,14 @@ impl Tool for GetWindowStateTool {
         // against. Skipped only when `include_screenshot:false` (and no
         // screenshot_out_file). With `screenshot_out_file` set, write to disk and
         // surface the path instead of embedding base64; otherwise embed base64.
-        // Fold the per-call `max_dimension` with the session/global ceiling
-        // (the tighter of the two wins).
-        let max_dim = fold_max_dimension(effective_max_dim, max_dimension);
+        // The portable `max_image_dimension` is an explicit per-call override,
+        // including 0 for native resolution. Without it, preserve the existing
+        // configured ceiling and legacy `max_dimension` tighter-cap behavior.
+        let max_dim = resolve_max_dimension(
+            effective_max_dim,
+            max_dimension,
+            max_image_dimension,
+        );
         // Returns the exact delivered PNG bytes, optional file path, delivered
         // and native dimensions, the WindowServer bounds it was validated
         // against, and the raw capture's backing scale.
@@ -1072,6 +1095,7 @@ mod window_scope_contract_tests {
             props.get("max_dimension").is_some(),
             "schema must advertise max_dimension"
         );
+        assert_eq!(props["max_image_dimension"]["minimum"], 0);
         let required: Vec<&str> = d.input_schema["required"]
             .as_array()
             .expect("required array")
@@ -1103,6 +1127,15 @@ mod window_scope_contract_tests {
         // No per-call cap → the ceiling passes through (0 stays unlimited).
         assert_eq!(fold_max_dimension(1600, None), 1600);
         assert_eq!(fold_max_dimension(0, None), 0);
+    }
+
+    #[test]
+    fn max_image_dimension_explicit_override_wins() {
+        assert_eq!(resolve_max_dimension(1024, None, Some(2048)), 2048);
+        assert_eq!(resolve_max_dimension(1024, Some(512), Some(2048)), 2048);
+        assert_eq!(resolve_max_dimension(1024, Some(512), Some(0)), 0);
+        assert_eq!(resolve_max_dimension(1024, Some(512), None), 512);
+        assert_eq!(resolve_max_dimension(1024, None, None), 1024);
     }
 }
 

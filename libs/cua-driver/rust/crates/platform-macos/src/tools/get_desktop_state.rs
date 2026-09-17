@@ -18,10 +18,19 @@ use cua_driver_core::{
     tool_args::parse_typed_input,
 };
 use serde_json::Value;
+use std::sync::Arc;
 
-use super::get_screen_size::main_screen_size;
+use super::{get_screen_size::main_screen_size, ToolState};
 
-pub struct GetDesktopStateTool;
+pub struct GetDesktopStateTool {
+    state: Arc<ToolState>,
+}
+
+impl GetDesktopStateTool {
+    pub fn new(state: Arc<ToolState>) -> Self {
+        Self { state }
+    }
+}
 
 static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
@@ -55,6 +64,7 @@ impl Tool for GetDesktopStateTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
+        let capture_args = args.clone();
         let input = match parse_typed_input::<GetDesktopStateInput>("get_desktop_state", args) {
             Ok(input) => input,
             Err(result) => return result,
@@ -79,29 +89,47 @@ impl Tool for GetDesktopStateTool {
         // blocking screencapture subprocess off the async runtime.
         let out_file = screenshot_out_file.clone();
         let res = tokio::task::spawn_blocking(
-            move || -> anyhow::Result<(Option<String>, Option<String>, u32, u32)> {
-                use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+            move || -> anyhow::Result<(Vec<u8>, Option<String>, u32, u32)> {
                 let png = crate::capture::screenshot_display_bytes()?;
                 let (w, h) = crate::capture::png_dimensions(&png)?;
                 if let Some(ref path) = out_file {
                     std::fs::write(path, &png)?;
-                    Ok((None, Some(path.clone()), w, h))
+                    Ok((png, Some(path.clone()), w, h))
                 } else {
-                    Ok((Some(BASE64.encode(&png)), None, w, h))
+                    Ok((png, None, w, h))
                 }
             },
         )
         .await;
 
-        let (b64_opt, file_path, screenshot_width, screenshot_height) = match res {
+        let (png, file_path, screenshot_width, screenshot_height) = match res {
             Ok(Ok(v)) => v,
             Ok(Err(e)) => return ToolResult::error(format!("Desktop screenshot failed: {e}")),
             Err(e) => return ToolResult::error(format!("Desktop screenshot task error: {e}")),
         };
 
+        let native_width = match u32::try_from(screen_width) {
+            Ok(width) => width,
+            Err(_) => return ToolResult::error("Desktop screen width is out of range."),
+        };
+        let native_height = match u32::try_from(screen_height) {
+            Ok(height) => height,
+            Err(_) => return ToolResult::error("Desktop screen height is out of range."),
+        };
+        let capture_id = match self.state.capture_bindings.publish_desktop(
+            &capture_args,
+            png.clone(),
+            (screenshot_width, screenshot_height),
+            (native_width, native_height),
+        ) {
+            Ok(capture_id) => capture_id,
+            Err(error) => return error,
+        };
+
         let mut content: Vec<Content> = Vec::new();
-        if let Some(b64) = b64_opt {
-            content.push(Content::image_png(b64));
+        if file_path.is_none() {
+            use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+            content.push(Content::image_png(BASE64.encode(&png)));
         }
         let summary = format!(
             "desktop screenshot {screenshot_width}x{screenshot_height} px \
@@ -118,6 +146,7 @@ impl Tool for GetDesktopStateTool {
             "screen_height": screen_height,
             "scale_factor": scale_factor,
             "screenshot_mime_type": "image/png",
+            "capture_id": capture_id,
         });
         if let Some(ref fp) = file_path {
             structured["screenshot_file_path"] = serde_json::json!(fp);

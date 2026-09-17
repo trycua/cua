@@ -349,8 +349,8 @@ impl Tool for GetWindowStateTool {
         // Fold the per-call `max_dimension` with the session/global ceiling
         // (the tighter of the two wins).
         let max_dim = fold_max_dimension(effective_max_dim, max_dimension);
-        // Returns the encoded/file capture, delivered dimensions, optional
-        // downscale source width, the WindowServer bounds it was validated
+        // Returns the exact delivered PNG bytes, optional file path, delivered
+        // and native dimensions, the WindowServer bounds it was validated
         // against, and the raw capture's backing scale.
         let mut screenshot_frame_error = None;
         let mut screenshot_resize_scale = None;
@@ -358,17 +358,17 @@ impl Tool for GetWindowStateTool {
             let out_file = screenshot_out_file.clone();
             let res = tokio::task::spawn_blocking(move || -> Result<
                 (
-                    Option<String>,
+                    Vec<u8>,
                     Option<String>,
                     u32,
                     u32,
-                    Option<u32>,
+                    u32,
+                    u32,
                     crate::windows::WindowBounds,
                     f64,
                 ),
                 super::px_frame::PxFrameError,
             > {
-                use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
                 let bounds = crate::windows::window_bounds_by_id(window_id)
                     .filter(|b| b.width > 0.0 && b.height > 0.0)
                     .ok_or(super::px_frame::PxFrameError::WindowNotFound { window_id })?;
@@ -398,7 +398,6 @@ impl Tool for GetWindowStateTool {
                         reason: e.to_string(),
                     }
                 })?;
-                let original_w = if w < orig_w { Some(orig_w) } else { None };
                 if let Some(ref path) = out_file {
                     std::fs::write(path, &png).map_err(|e| {
                         super::px_frame::PxFrameError::CaptureUnavailable {
@@ -407,33 +406,34 @@ impl Tool for GetWindowStateTool {
                         }
                     })?;
                     Ok((
-                        None,
+                        png,
                         Some(path.clone()),
                         w,
                         h,
-                        original_w,
+                        orig_w,
+                        orig_h,
                         bounds,
                         scale,
                     ))
                 } else {
                     Ok((
-                        Some(BASE64.encode(&png)),
+                        png,
                         None,
                         w,
                         h,
-                        original_w,
+                        orig_w,
+                        orig_h,
                         bounds,
                         scale,
                     ))
                 }
             }).await;
             match res {
-                Ok(Ok((b64, file_path, w, h, orig_w, bounds, scale))) => {
+                Ok(Ok((png, file_path, w, h, orig_w, orig_h, bounds, scale))) => {
                     if !observation_only {
-                        screenshot_resize_scale =
-                            Some(orig_w.map_or(1.0, |ow| ow as f64 / w as f64));
+                        screenshot_resize_scale = Some(orig_w as f64 / w as f64);
                     }
-                    Some((b64, file_path, w, h, bounds, scale))
+                    Some((png, file_path, w, h, orig_w, orig_h, bounds, scale))
                 }
                 Ok(Err(e)) => {
                     tracing::warn!(
@@ -452,20 +452,21 @@ impl Tool for GetWindowStateTool {
         };
 
         // Capture screenshot dimensions before consuming.
-        let screenshot_dims = screenshot.as_ref().map(|(_, _, w, h, _, _)| (*w, *h));
+        let screenshot_dims = screenshot.as_ref().map(|(_, _, w, h, _, _, _, _)| (*w, *h));
         let screenshot_file_path = screenshot
             .as_ref()
-            .and_then(|(_, fp, _, _, _, _)| fp.clone());
+            .and_then(|(_, fp, _, _, _, _, _, _)| fp.clone());
         let screenshot_frame = screenshot
             .as_ref()
-            .map(|(_, _, _, _, bounds, scale)| (bounds.clone(), *scale));
+            .map(|(_, _, _, _, _, _, bounds, scale)| (bounds.clone(), *scale));
 
         // Build response.
         let mut content: Vec<Content> = Vec::new();
 
-        if let Some((b64_opt, _file_path, w, h, _bounds, _scale)) = screenshot {
-            if let Some(b64) = b64_opt {
-                content.push(Content::image_png(b64));
+        if let Some((png, ref file_path, w, h, _, _, _, _)) = screenshot.as_ref() {
+            if file_path.is_none() {
+                use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+                content.push(Content::image_png(BASE64.encode(png)));
             }
 
             // Summary text line (matching Swift reference format).
@@ -526,6 +527,22 @@ impl Tool for GetWindowStateTool {
                 .zoom_registry
                 .retire_replaced(pid, u64::from(window_id), snapshot_id);
         }
+        let capture_id = match (snapshot_id, screenshot.as_ref()) {
+            (Some(_), Some((png, _, width, height, native_width, native_height, _, _))) => {
+                match self.state.capture_bindings.publish_window(
+                    &args,
+                    pid,
+                    window_id,
+                    png.clone(),
+                    (*width, *height),
+                    (*native_width, *native_height),
+                ) {
+                    Ok(capture_id) => Some(capture_id),
+                    Err(error) => return error,
+                }
+            }
+            _ => None,
+        };
 
         // Build the structured `elements` array — one entry per actionable
         // node, matching the order (and indices) of the markdown rendering.
@@ -577,6 +594,9 @@ impl Tool for GetWindowStateTool {
                 serde_json::json!(cua_driver_core::element_token::token_for(sid, 0)
                     .trim_end_matches(":0")
                     .to_string());
+        }
+        if let Some(capture_id) = capture_id {
+            structured["capture_id"] = serde_json::json!(capture_id);
         }
         // Best-effort-background ladder, rung (2). Both rungs point the agent at
         // the same next move: an empty AX tree means element_index has nothing

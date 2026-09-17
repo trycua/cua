@@ -1,6 +1,7 @@
 //! MCP tool implementations for macOS.
 
 mod bring_to_front;
+mod capture_binding;
 mod click;
 mod clipboard;
 mod double_click;
@@ -638,6 +639,7 @@ pub struct ToolState {
     pub element_cache: Arc<ElementCache>,
     pub cursor_registry: Arc<CursorRegistry>,
     pub zoom_registry: Arc<ZoomRegistry>,
+    pub(crate) capture_bindings: Arc<capture_binding::MacCaptureBindings>,
     /// Global, disk-persisted config — the base layer and the only one the
     /// anonymous session / CLI writes.
     pub config: Arc<std::sync::RwLock<DriverConfig>>,
@@ -672,10 +674,25 @@ impl ToolState {
         host_owns_permission_ux: bool,
         host_bundle_id: Option<String>,
     ) -> Self {
+        Self::new_with_capture_service(
+            Arc::new(cua_driver_core::capture_runtime::CaptureService::default()),
+            cursor_overlay_available,
+            host_owns_permission_ux,
+            host_bundle_id,
+        )
+    }
+
+    fn new_with_capture_service(
+        capture_service: Arc<cua_driver_core::capture_runtime::CaptureService>,
+        cursor_overlay_available: bool,
+        host_owns_permission_ux: bool,
+        host_bundle_id: Option<String>,
+    ) -> Self {
         Self {
             element_cache: Arc::new(ElementCache::new()),
             cursor_registry: Arc::new(CursorRegistry::new()),
             zoom_registry: Arc::new(ZoomRegistry::new()),
+            capture_bindings: Arc::new(capture_binding::MacCaptureBindings::new(capture_service)),
             // Load persisted config from ~/.cua-driver/config.json so that
             // `cua-driver config set` changes carry over into MCP sessions.
             config: Arc::new(std::sync::RwLock::new(load_driver_config())),
@@ -740,7 +757,8 @@ pub fn register_all(
     host_owns_permission_ux: bool,
     host_bundle_id: Option<String>,
 ) {
-    let state = Arc::new(ToolState::new(
+    let state = Arc::new(ToolState::new_with_capture_service(
+        registry.capture_service(),
         cursor_overlay_available,
         host_owns_permission_ux,
         host_bundle_id,
@@ -784,7 +802,9 @@ pub fn register_all(
     if let Some(runtime_scope) = cua_driver_core::tool::current_dispatch_runtime_scope() {
         let prefix = format!("__cua_runtime_{runtime_scope}:");
         let cursor_registry = state.cursor_registry.clone();
+        let capture_bindings = state.capture_bindings.clone();
         registry.retain_runtime_cleanup(move || {
+            capture_bindings.retire_runtime();
             for cursor in cursor_registry
                 .all_states()
                 .into_iter()
@@ -807,11 +827,13 @@ pub fn register_all(
         let element_cache = state.element_cache.clone();
         let zoom_registry = state.zoom_registry.clone();
         let cursor_registry = state.cursor_registry.clone();
+        let capture_bindings = state.capture_bindings.clone();
         let registration =
             cua_driver_core::session::register_scoped_session_end_hook(move |session_id| {
                 session_config.clear(session_id);
                 zoom_registry.retire_session(session_id);
                 element_cache.retire_session_screenshots(session_id);
+                capture_bindings.retire_session(session_id);
                 // Per-session agent cursor: the session_id is the cursor key when
                 // the caller gave no explicit cursor_id, so dropping it here both
                 // prunes the metadata registry and stops the overlay painting that
@@ -901,7 +923,9 @@ pub fn register_all(
     // triggers Claude Code's computer-use beta-tool injection (see cli.rs).
     let _ = compat;
     registry.register(Box::new(get_screen_size::GetScreenSizeTool));
-    registry.register(Box::new(get_desktop_state::GetDesktopStateTool));
+    registry.register(Box::new(get_desktop_state::GetDesktopStateTool::new(
+        state.clone(),
+    )));
     registry.register(Box::new(get_cursor_position::GetCursorPositionTool));
     registry.register(Box::new(move_cursor::MoveCursorTool::new(state.clone())));
     registry.register(Box::new(cursor_tools::SetAgentCursorEnabledTool::new(

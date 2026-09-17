@@ -165,6 +165,7 @@ fn def() -> &'static ToolDef {
                 "element_index": cua_driver_core::tool_schema::element_index_schema(),
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
                 "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
+                "capture_id": { "type": "string", "description": "Optional immutable source capture ID returned by get_window_state or get_desktop_state. With x,y, Driver atomically admits and consumes that exact capture before dispatch; stale, mismatched, or out-of-bounds captures are refused without fallback." },
                 "x":             { "type": "number",  "description": "X in screenshot pixels. A window target uses the get_window_state PNG; a desktop target uses the native get_desktop_state PNG. The driver reverses Retina backing scale and any window-image downscale." },
                 "y":             { "type": "number",  "description": "Y in screenshot pixels from the image selected by target." },
                 "action":        { "type": "string",  "description": "AX action: press, show_menu, pick, confirm, cancel, open." },
@@ -227,6 +228,11 @@ impl Tool for ClickTool {
         let has_window_id = args.get("window_id").map(|v| !v.is_null()).unwrap_or(false);
         let has_xy = args.get("x").map(|v| v.is_number()).unwrap_or(false)
             && args.get("y").map(|v| v.is_number()).unwrap_or(false);
+        let capture_id = args.opt_str("capture_id");
+        if capture_id.is_some() && !has_xy {
+            return ToolResult::error("click.capture_id requires pixel coordinates x and y.")
+                .with_structured(serde_json::json!({ "code": "invalid_arguments" }));
+        }
         if has_xy && !has_pid && !has_window_id {
             // `scope` is a per-call param now (default "window"); pass
             // scope="desktop" to enable screen-absolute clicks.
@@ -266,22 +272,32 @@ impl Tool for ClickTool {
             // screenshot width / logical screen width. This is robust even when
             // CGDisplayPixelsWide under-reports the backing scale (it returns the
             // scaled-mode point width on some Retina configs → a bogus 1.0).
-            let desktop_ratio = tokio::task::spawn_blocking(|| {
-                let logical_w =
-                    super::get_screen_size::main_screen_size().map(|(w, _, _)| w as f64);
-                let shot_w = crate::capture::screenshot_display_bytes()
-                    .ok()
-                    .and_then(|png| crate::capture::png_dimensions(&png).ok())
-                    .map(|(w, _)| w as f64);
-                match (shot_w, logical_w) {
-                    (Some(sw), Some(lw)) if lw > 0.0 && sw > lw => sw / lw,
-                    _ => 1.0,
+            let (sx, sy) = if let Some(ref capture_id) = capture_id {
+                match self
+                    .state
+                    .capture_bindings
+                    .admit_desktop_click(capture_id, &args, sx_shot, sy_shot)
+                {
+                    Ok(point) => point,
+                    Err(refusal) => return refusal,
                 }
-            })
-            .await
-            .unwrap_or(1.0);
-            let sx = sx_shot / desktop_ratio;
-            let sy = sy_shot / desktop_ratio;
+            } else {
+                let desktop_ratio = tokio::task::spawn_blocking(|| {
+                    let logical_w =
+                        super::get_screen_size::main_screen_size().map(|(w, _, _)| w as f64);
+                    let shot_w = crate::capture::screenshot_display_bytes()
+                        .ok()
+                        .and_then(|png| crate::capture::png_dimensions(&png).ok())
+                        .map(|(w, _)| w as f64);
+                    match (shot_w, logical_w) {
+                        (Some(sw), Some(lw)) if lw > 0.0 && sw > lw => sw / lw,
+                        _ => 1.0,
+                    }
+                })
+                .await
+                .unwrap_or(1.0);
+                (sx_shot / desktop_ratio, sy_shot / desktop_ratio)
+            };
             let button = match input.button.unwrap_or(ClickButton::Left) {
                 ClickButton::Left => "left",
                 ClickButton::Right => "right",
@@ -365,6 +381,12 @@ impl Tool for ClickTool {
             Err(e) => return e,
         };
         let (element_index, window_id, element_guard) = resolved.into_parts(window_id_arg);
+        if capture_id.is_some() && element_guard.is_some() {
+            return ToolResult::error(
+                "click.capture_id is valid only for the pixel x,y path, not element actions.",
+            )
+            .with_structured(serde_json::json!({ "code": "invalid_arguments" }));
+        }
         let window_id = match super::native_window_id(window_id) {
             Ok(window_id) => window_id,
             Err(error) => return error,
@@ -748,6 +770,14 @@ impl Tool for ClickTool {
         } else if let (Some(mut cx), Some(mut cy)) = (x, y) {
             // ── Pixel path ─────────────────────────────────────────────────
 
+            if capture_id.is_some() && (from_zoom || debug_image_out.is_some()) {
+                return ToolResult::error(
+                    "click.capture_id is incompatible with from_zoom and debug_image_out; \
+                     pass coordinates from the exact source capture directly.",
+                )
+                .with_structured(serde_json::json!({ "code": "invalid_arguments" }));
+            }
+
             // debug_image_out: capture fresh screenshot, overlay crosshair BEFORE
             // any coordinate translation (so it shows received coords in the same
             // space the caller was reasoning in).
@@ -792,7 +822,28 @@ impl Tool for ClickTool {
                 }
             }
 
-            if from_zoom {
+            if let Some(ref capture_id) = capture_id {
+                let wid = match window_id {
+                    Some(window_id) => window_id,
+                    None => {
+                        return ToolResult::error(
+                            "window capture_id requires the matching pid and window_id.",
+                        )
+                        .with_structured(serde_json::json!({ "code": "invalid_arguments" }));
+                    }
+                };
+                match self
+                    .state
+                    .capture_bindings
+                    .admit_window_click(capture_id, &args, pid, wid, cx, cy)
+                {
+                    Ok((action_x, action_y)) => {
+                        cx = action_x;
+                        cy = action_y;
+                    }
+                    Err(refusal) => return refusal,
+                }
+            } else if from_zoom {
                 match super::zoom_context(&self.state, &args, pid, window_id) {
                     Ok(ctx) => {
                         let (wx, wy) = ctx.zoom_to_window(cx, cy);
@@ -1502,6 +1553,7 @@ mod tests {
         assert!(enum_vals.contains(&"left"));
         assert!(enum_vals.contains(&"right"));
         assert!(enum_vals.contains(&"middle"));
+        assert_eq!(props["capture_id"]["type"], "string");
     }
 
     /// Surface 5 hard constraint: the tool description must mention the

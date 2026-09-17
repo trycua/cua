@@ -4,10 +4,9 @@
 while Cua Driver observes the page, performs that action, and verifies the
 result. Equivalent Python and TypeScript programs run the same bounded loop.
 
-The current runnable path uses fresh browser DOM evidence. Frozen
-`cua.visual_regions_v1` fixtures exercise an application-owned adapter for a
-future optional perception path; they do not run a model or prove real visual
-perception.
+The current runnable path uses fresh browser DOM and semantic evidence. Visual
+perception is a future optional adapter; this preview does not define its
+schema, run a perception model, or claim that Cua perception has shipped.
 
 You can run the complete deterministic proof without credentials or network
 access to Jev. If you have a TypeSafe API key, you can separately verify the
@@ -179,12 +178,10 @@ for example `cua-driver doctor` and `cua-driver status`, rather than maintaining
 a third copy of the loop.
 
 This fixture exposes semantic browser refs, so the runnable example does not
-need screenshot perception. The checked-in `visual_regions_v1` cases are
-recorded metadata only: both language adapters validate freshness, bounds,
-confidence, overlap, and agreement before constructing a bounded visual click.
-They make no network call, import no perception implementation, and never
-claim inference quality. A live visual path remains follow-up work after the
-generic Driver perception contract ships.
+need screenshot perception. A future optional adapter may enrich observations
+for canvas, streamed desktop, or other non-semantic surfaces after the generic
+Driver perception contract is accepted and released. This preview neither
+defines that contract nor claims inference quality or release availability.
 
 ## Run the checks
 

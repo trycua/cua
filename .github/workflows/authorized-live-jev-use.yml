@@ -7,7 +7,7 @@ on:
         description: "Full 40-character canonical repository commit SHA"
         required: true
       trusted_branch:
-        description: "Canonical branch that must contain the SHA"
+        description: "Canonical main or release branch that must contain the SHA"
         required: true
         default: "main"
       run_live:
@@ -43,8 +43,8 @@ jobs:
             echo "commit_sha must be a full 40-character SHA" >&2
             exit 2
           fi
-          if [[ ! "$TRUSTED_BRANCH" =~ ^(main|feat/[A-Za-z0-9._/-]+)$ ]]; then
-            echo "trusted_branch must be main or a canonical feat/* branch" >&2
+          if [[ ! "$TRUSTED_BRANCH" =~ ^(main|release/[A-Za-z0-9._/-]+)$ ]]; then
+            echo "trusted_branch must be main or a canonical release/* branch" >&2
             exit 2
           fi
           branch_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$TRUSTED_BRANCH" --jq .object.sha)"
@@ -61,6 +61,8 @@ jobs:
     needs: source
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # Repository administrators must create this environment with required
+    # reviewers and a TYPESAFE_API_KEY environment secret before dispatch.
     environment: jev-use-live
     env:
       CUA_DRIVER_BIN: ${{ github.workspace }}/libs/cua-driver/rust/target/release/cua-driver
@@ -95,8 +97,8 @@ jobs:
             libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
           chrome_payload="$(readlink -f "$(command -v google-chrome)")"
           test "$chrome_payload" = /opt/google/chrome/google-chrome
-          sudo chown root:root /opt /opt/google /opt/google/chrome "$chrome_payload"
-          sudo chmod go-w /opt /opt/google /opt/google/chrome "$chrome_payload"
+          test "$(stat -c %u "$chrome_payload")" = 0
+          test $((8#$(stat -c %a "$chrome_payload") & 0022)) = 0
       - name: Build candidate and install locked clients
         working-directory: ${{ github.workspace }}
         run: |
@@ -113,6 +115,8 @@ jobs:
         run: |
           mock="$RUNNER_TEMP/jev-use-mock-proof"
           live="$RUNNER_TEMP/jev-use-live-proof"
+          # Match the repository's supported Linux X11 desktop stack while
+          # keeping the live credential scoped to this reviewed step.
           xvfb-run -a --server-args="-screen 0 1920x1080x24" \
             dbus-run-session -- bash -lc \
             'openbox >/tmp/jev-use-openbox.log 2>&1 & picom --backend xrender --config /dev/null >/tmp/jev-use-picom.log 2>&1 & sleep 2; cd libs/cua-driver/examples/jev-use; uv run --frozen python verify_setup.py --typescript --max-steps 2 --output-dir "'$mock'"; uv run --frozen python verify_setup.py --live --typescript --max-steps 2 --output-dir "'$live'"'

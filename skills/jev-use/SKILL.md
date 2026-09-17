@@ -11,17 +11,18 @@ returns one candidate ID. Never let Jev invent tool names, coordinates, refs,
 targets, delivery modes, or other arguments.
 
 Use the example at `libs/cua-driver/examples/jev-use/` as the runnable reference.
-Its current live path uses browser DOM evidence. The checked-in
-`cua.visual_regions_v1` files are frozen adapter fixtures, not real perception.
+Its current live path uses browser DOM and semantic evidence. Visual perception
+is a future optional adapter whose schema and tool contract are not defined by
+this skill.
 
 ## Decision loop
 
 1. State the goal and obtain a fresh Cua Driver observation through one
    persistent CLI or MCP session.
 2. Prefer an unambiguous fresh accessibility or browser DOM token.
-3. If visual grounding is needed and the optional generic perception tool is
-   actually available, parse the current screenshot and retain its capture
-   metadata. Absence of perception is a supported state.
+3. If visual grounding is needed, use an accepted and available generic
+   perception contract when one exists, retaining the current capture metadata.
+   Otherwise reobserve or abstain rather than inventing visual evidence.
 4. Construct a bounded candidate table. Each executable candidate contains the
    complete Driver tool and arguments. Include `reobserve` and `abstain` when
    evidence can be stale, incomplete, or ambiguous.
@@ -43,8 +44,7 @@ Its current live path uses browser DOM evidence. The checked-in
   coordinate space and tied to the same target and snapshot.
 - If semantic and visual evidence disagree, or multiple regions are plausible,
   offer `reobserve` and `abstain` without inventing a mutation.
-- Do not describe fixture-backed adapters as model inference, OCR quality, or
-  proof that optional perception is installed or released.
+- Do not claim that an unreleased perception tool, schema, or adapter exists.
 
 ## Credentials and proof
 

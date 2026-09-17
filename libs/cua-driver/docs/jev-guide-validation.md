@@ -32,3 +32,73 @@ The guide must explain the agent/driver boundary, host versus controller machine
 - Candidate `98fc46ea21aa0dda48ad0a5e6caf24e2de981e32`: the fourth fresh agent's detached fixture remained reachable, but the sandbox denied PID readiness checks and cross-call process management. The parent operator verified the exact recorded command and stopped only that retained fixture. No browser or provider verification occurred. This revealed that detached-process recipes still impose an unnecessary agent-harness dependency.
 - Architectural simplification: added `verify_setup.py`, reusing the existing `FixtureServer` in a context-managed thread and the unmodified Python/TypeScript runners as child processes. One command now owns startup, independent HTTP verification, evidence, and cleanup. It defaults to mock, requires a key before unattended live execution, refuses existing output directories, and preserves an incomplete summary on failure. The guide no longer asks an agent to manage background PIDs across tool calls.
 - TDD: seven new real-process/HTTP checks first failed because the verifier did not exist, then passed. They cover cleanup on success/failure, exact state plus final-event requirements, false-positive rejection, child failure, and missing unattended credentials. All 15 Python tests passed. No Driver/product code or provider decision logic changed.
+
+## Completed fresh-agent verification
+
+Tested candidate: `bebe5e7692c6347b6a090336eac3c0ea4911ec59`.
+Guide SHA-256: `c965092c02949f1ca28a285445a28eca92f0233b8c1d04cb583c342a13102541`.
+
+The fifth rehearsal used a new ephemeral Codex CLI 0.154.0 / `gpt-6-astra`
+session, with user configuration and host skill discovery disabled. Its working
+directory initially contained only the guide. The agent received no previous
+conversation, benchmark scripts, private experiment paths, or fixes from earlier
+attempts. It cloned the public repository, followed the guide's PR fallback,
+and ran the checkout unchanged. The successful transcript contains no private
+worklog access. There was no intervention during this attempt.
+
+The human-provisioned prerequisites were the TypeSafe key in the execution
+environment, installed CuaDriver/Chrome, approved OS permissions, an unlocked
+desktop, and a shell sandbox with the documented dependency/temp/cache access.
+This is a **zero-conversation-context setup proof on a provisioned Mac**, not a
+claim to automate account creation, OS approval, or a factory-clean OS install.
+The earlier second agent performed the previously missing uv installation.
+
+Successful-run environment: Cua Driver 0.23.2 in standard mode; signed system
+Chrome; uv 0.12.15; CPython 3.12.14 in a fresh virtual environment;
+`typesafe-sdk` 0.6.0; Node 26.8.1; npm 11.19.0. Node/npm are the versions observed
+inside the verifier agent, not the parent shell's separate Node installation.
+
+| Proof directory | Independently verified cases | Result |
+| --- | --- | --- |
+| `proof-mock` | Python/mock | 1/1 |
+| `proof-live` | Python/mock, Python/live | 2/2 |
+| `proof-both` | Python/mock, Python/live, TypeScript/mock, TypeScript/live | 4/4 |
+
+Every case had exactly two recorded decisions: type the value, then submit.
+All seven runner logs ended with the expected verified event and exact token.
+The verifier independently read each value from HTTP `/state`; all three
+summaries reported `complete: true`. The three live cases are live service
+proof, not mocked SDK responses. These logs do not establish exact HTTP retry
+counts, resolved model version, token usage, or billing.
+
+The agent and parent audit separately checked the summaries/logs, unchanged
+tracked source, and closure of all three fixture ports. The parent confirmed
+that the guide and executed example files match the candidate byte-for-byte,
+and that credential values are absent from all five attempt transcripts.
+Private evidence is retained rather than publishing host paths or raw logs.
+
+Evidence fingerprints:
+
+- Successful agent transcript: `0c54f16b0170445e4702cdb096a4855827329eebb9f342c788edea0c1a5bd117`.
+- Fresh agent's final report: `7ad94c0a2479994bdca5200dde033bada6bd980d5e9ad190308c25d8d855ceca`.
+- Python/live log in the four-case proof: `a3b9fda2f46b185a0a4dac5de315e55909bfdc0dc81c7bf70016f437ae6389a4`.
+- TypeScript/live log: `4ff48370227dc80cae750806b2e93614a28213b6c2ebb02d5e8329609d19f2fa`.
+
+Checks passed:
+
+- 15 Python tests, including seven new verifier boundary/lifecycle tests.
+- 7 TypeScript tests and `tsc --noEmit`.
+- Public docs hygiene, internal links, Cua Driver generator drift, and production build.
+- Unrelated original-workspace staged diff preserved; phase baseline SHA-256
+  `5b57ea71dbb7c83df2ae82fd7e435cf1f6ce3a5a7c1c9abc963c4f291787926f`.
+
+The only final change after this certified candidate is this evidence report;
+the executable example, dependency locks, and tested public guide are unchanged.
+No full Driver desktop matrix was repeated for this documentation/example-only
+follow-up. The existing PR remains draft for its normal review, not because the
+requested guide or fresh-agent verification is incomplete.
+
+Non-blocking environment notices: the installed Driver advertises an update;
+Node reports a deprecated `module.register()` path; npm reports unapproved
+optional install scripts. The agent did not update the Driver, approve scripts,
+or change policy, and both TypeScript runtime cases passed.

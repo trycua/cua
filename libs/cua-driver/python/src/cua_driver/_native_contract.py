@@ -3084,6 +3084,42 @@ class _UniffiFfiConverterTypeDragInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalSequenceString.write(value.modifier, buf)
 
 @dataclass
+class ElementCustomAction:
+    def __init__(self, *, name:str, raw:str):
+        self.name = name
+        self.raw = raw
+
+
+
+
+    def __str__(self):
+        return "ElementCustomAction(name={}, raw={})".format(self.name, self.raw)
+    def __eq__(self, other):
+        if self.name != other.name:
+            return False
+        if self.raw != other.raw:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeElementCustomAction(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return ElementCustomAction(
+            name=_UniffiFfiConverterString.read(buf),
+            raw=_UniffiFfiConverterString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.name)
+        _UniffiFfiConverterString.check_lower(value.raw)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.name, buf)
+        _UniffiFfiConverterString.write(value.raw, buf)
+
+@dataclass
 class ElementFrame:
     def __init__(self, *, x:float, y:float, w:float, h:float):
         self.x = x
@@ -7445,6 +7481,54 @@ class _UniffiFfiConverterTypeVisualParseError(_UniffiConverterRustBuffer):
         _UniffiFfiConverterBoolean.write(value.retryable, buf)
         _UniffiFfiConverterOptionalString.write(value.detail, buf)
 
+class _UniffiFfiConverterSequenceTypeElementCustomAction(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterTypeElementCustomAction.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterTypeElementCustomAction.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterTypeElementCustomAction.read(buf) for i in range(count)
+        ]
+
+class _UniffiFfiConverterOptionalSequenceTypeElementCustomAction(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterSequenceTypeElementCustomAction.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterSequenceTypeElementCustomAction.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterSequenceTypeElementCustomAction.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
 class _UniffiFfiConverterOptionalTypeElementFrame(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
@@ -7472,7 +7556,7 @@ class _UniffiFfiConverterOptionalTypeElementFrame(_UniffiConverterRustBuffer):
 
 @dataclass
 class WindowElement:
-    def __init__(self, *, element_index:int, role:str, subrole:typing.Optional[str], depth:int, element_token:typing.Optional[str], label:typing.Optional[str], value:typing.Optional[str], value_description:typing.Optional[str], enabled:typing.Optional[bool], selected:typing.Optional[bool], in_web_content:typing.Optional[bool], actions:typing.Optional[typing.List[str]], parent_index:typing.Optional[int], frame:typing.Optional[ElementFrame], min:typing.Optional[float], max:typing.Optional[float]):
+    def __init__(self, *, element_index:int, role:str, subrole:typing.Optional[str], depth:int, element_token:typing.Optional[str], label:typing.Optional[str], value:typing.Optional[str], value_description:typing.Optional[str], enabled:typing.Optional[bool], selected:typing.Optional[bool], in_web_content:typing.Optional[bool], actions:typing.Optional[typing.List[str]], custom_actions:typing.Optional[typing.List[ElementCustomAction]], parent_index:typing.Optional[int], frame:typing.Optional[ElementFrame], min:typing.Optional[float], max:typing.Optional[float]):
         self.element_index = element_index
         self.role = role
         self.subrole = subrole
@@ -7485,6 +7569,7 @@ class WindowElement:
         self.selected = selected
         self.in_web_content = in_web_content
         self.actions = actions
+        self.custom_actions = custom_actions
         self.parent_index = parent_index
         self.frame = frame
         self.min = min
@@ -7494,7 +7579,7 @@ class WindowElement:
 
 
     def __str__(self):
-        return "WindowElement(element_index={}, role={}, subrole={}, depth={}, element_token={}, label={}, value={}, value_description={}, enabled={}, selected={}, in_web_content={}, actions={}, parent_index={}, frame={}, min={}, max={})".format(self.element_index, self.role, self.subrole, self.depth, self.element_token, self.label, self.value, self.value_description, self.enabled, self.selected, self.in_web_content, self.actions, self.parent_index, self.frame, self.min, self.max)
+        return "WindowElement(element_index={}, role={}, subrole={}, depth={}, element_token={}, label={}, value={}, value_description={}, enabled={}, selected={}, in_web_content={}, actions={}, custom_actions={}, parent_index={}, frame={}, min={}, max={})".format(self.element_index, self.role, self.subrole, self.depth, self.element_token, self.label, self.value, self.value_description, self.enabled, self.selected, self.in_web_content, self.actions, self.custom_actions, self.parent_index, self.frame, self.min, self.max)
     def __eq__(self, other):
         if self.element_index != other.element_index:
             return False
@@ -7519,6 +7604,8 @@ class WindowElement:
         if self.in_web_content != other.in_web_content:
             return False
         if self.actions != other.actions:
+            return False
+        if self.custom_actions != other.custom_actions:
             return False
         if self.parent_index != other.parent_index:
             return False
@@ -7546,6 +7633,7 @@ class _UniffiFfiConverterTypeWindowElement(_UniffiConverterRustBuffer):
             selected=_UniffiFfiConverterOptionalBoolean.read(buf),
             in_web_content=_UniffiFfiConverterOptionalBoolean.read(buf),
             actions=_UniffiFfiConverterOptionalSequenceString.read(buf),
+            custom_actions=_UniffiFfiConverterOptionalSequenceTypeElementCustomAction.read(buf),
             parent_index=_UniffiFfiConverterOptionalUInt64.read(buf),
             frame=_UniffiFfiConverterOptionalTypeElementFrame.read(buf),
             min=_UniffiFfiConverterOptionalFloat64.read(buf),
@@ -7566,6 +7654,7 @@ class _UniffiFfiConverterTypeWindowElement(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalBoolean.check_lower(value.selected)
         _UniffiFfiConverterOptionalBoolean.check_lower(value.in_web_content)
         _UniffiFfiConverterOptionalSequenceString.check_lower(value.actions)
+        _UniffiFfiConverterOptionalSequenceTypeElementCustomAction.check_lower(value.custom_actions)
         _UniffiFfiConverterOptionalUInt64.check_lower(value.parent_index)
         _UniffiFfiConverterOptionalTypeElementFrame.check_lower(value.frame)
         _UniffiFfiConverterOptionalFloat64.check_lower(value.min)
@@ -7585,6 +7674,7 @@ class _UniffiFfiConverterTypeWindowElement(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalBoolean.write(value.selected, buf)
         _UniffiFfiConverterOptionalBoolean.write(value.in_web_content, buf)
         _UniffiFfiConverterOptionalSequenceString.write(value.actions, buf)
+        _UniffiFfiConverterOptionalSequenceTypeElementCustomAction.write(value.custom_actions, buf)
         _UniffiFfiConverterOptionalUInt64.write(value.parent_index, buf)
         _UniffiFfiConverterOptionalTypeElementFrame.write(value.frame, buf)
         _UniffiFfiConverterOptionalFloat64.write(value.min, buf)
@@ -7963,6 +8053,7 @@ __all__ = [
     "CursorThemeSelection",
     "CursorVisualOutput",
     "DragInput",
+    "ElementCustomAction",
     "ElementFrame",
     "ElementSelector",
     "ElementPredicate",

@@ -307,14 +307,7 @@ impl Tool for ScrollTool {
                     }
                     Ok(Ok((false, _))) => {}
                     Ok(Err(error)) => {
-                        return ToolResult::from_native_error(
-                            error,
-                            if delivery_mode.is_foreground() {
-                                cua_driver_core::action_record::RequestedDelivery::Foreground
-                            } else {
-                                cua_driver_core::action_record::RequestedDelivery::Background
-                            },
-                        );
+                        return ToolResult::from_native_error(error, delivery_mode.into());
                     }
                     Err(error) => {
                         return ToolResult::error(format!("Native AX scroll task failed: {error}"));
@@ -416,7 +409,7 @@ impl Tool for ScrollTool {
                         return Err(ToolResult::native_outcome_unknown(
                             format!("AXScrollToVisible returned {status}; inspect fresh state and do not replay"),
                             cua_driver_core::action_record::ActionTransport::MacosAxAction,
-                            if delivery_mode.is_foreground() { cua_driver_core::action_record::RequestedDelivery::Foreground } else { cua_driver_core::action_record::RequestedDelivery::Background },
+                            delivery_mode.into(),
                         ));
                     }
                     std::thread::sleep(std::time::Duration::from_millis(40));
@@ -607,7 +600,7 @@ impl Tool for ScrollTool {
                 .with_structured(serde_json::json!({
                     "path": if fg { "cgevent_fg" } else { "cgevent" }, "verified": false, "effect": "unverifiable"
                 })),
-                Ok(Err(e)) => ToolResult::from_native_error(e, if delivery_mode.is_foreground() { cua_driver_core::action_record::RequestedDelivery::Foreground } else { cua_driver_core::action_record::RequestedDelivery::Background }),
+                Ok(Err(e)) => ToolResult::from_native_error(e, delivery_mode.into()),
                 Err(e)     => ToolResult::error(format!("Task error: {e}")),
             };
         }
@@ -699,14 +692,7 @@ impl Tool for ScrollTool {
                 changes.result_suffix()
             ))
             .with_structured(serde_json::json!({ "path": "key_events", "verified": false })),
-            Ok(Err(e)) => ToolResult::from_native_error(
-                e,
-                if delivery_mode.is_foreground() {
-                    cua_driver_core::action_record::RequestedDelivery::Foreground
-                } else {
-                    cua_driver_core::action_record::RequestedDelivery::Background
-                },
-            ),
+            Ok(Err(e)) => ToolResult::from_native_error(e, delivery_mode.into()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }

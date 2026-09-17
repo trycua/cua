@@ -92,9 +92,12 @@ impl RetainedElement {
         self.observed.element_index.unwrap()
     }
 
+    pub fn needs_foreground_pointer(&self) -> bool {
+        self.visited[self.position].has_editable || self.observed.role == "table cell"
+    }
+
     pub fn can_activate(&self) -> bool {
-        !self.visited[self.position].has_editable
-            && self.observed.role != "table cell"
+        !self.needs_foreground_pointer()
             && activation_index(&self.observed.role, &self.observed.actions).is_some()
     }
 
@@ -124,6 +127,10 @@ impl RetainedElement {
             .await
             .and_then(|index| seeds.get(index))
             .context("target window scope is unproven")?;
+        let mut identity_owners = std::collections::HashMap::new();
+        let frame = identity_ref(conn, frame, &mut identity_owners)
+            .await
+            .context("target window identity is unavailable")?;
         if frame.name != root.acc.inner().destination().as_str()
             || frame.path != root.acc.inner().path().as_str()
         {
@@ -158,7 +165,7 @@ impl RetainedElement {
             }
         }
         let mut ancestor = element.clone();
-        current.in_web_content = is_web_process_bus(ancestor.inner().destination().as_str());
+        current.in_web_content = self.visited[self.position].on_web_process_bus;
         for depth in 0..element_token::MAX_NATIVE_ANCESTORS {
             if ancestor.inner().destination().as_str() == frame.name
                 && ancestor.inner().path().as_str() == frame.path
@@ -171,9 +178,12 @@ impl RetainedElement {
             }
             let parent = RawObjectRef::from_atspi(&ancestor.parent().await?)
                 .context("target ancestry is unavailable")?;
+            current.in_web_content |= is_web_process_bus(&parent.name);
+            let parent = identity_ref(conn, &parent, &mut identity_owners)
+                .await
+                .context("target ancestor identity is unavailable")?;
             ancestor = accessible_for(conn, &parent).await?;
-            current.in_web_content |= is_web_process_bus(&parent.name)
-                || is_document_role(&ancestor.get_role_name().await?);
+            current.in_web_content |= is_document_role(&ancestor.get_role_name().await?);
         }
         anyhow::bail!("target no longer belongs to the requested window")
     }
@@ -213,12 +223,15 @@ pub async fn resolve_element_args(
             via_token,
             element,
             ..
-        } => Ok(ResolvedElement::Element {
-            window_id,
-            element_index: element.index(),
-            via_token,
-            element,
-        }),
+        } => {
+            cua_driver_core::tool::retain_native_resource(element.clone());
+            Ok(ResolvedElement::Element {
+                window_id,
+                element_index: element.index(),
+                via_token,
+                element,
+            })
+        }
         ResolvedElement::None => Ok(ResolvedElement::None),
     }
 }
@@ -250,13 +263,21 @@ pub(crate) fn resolve_fresh(
             let Some(observed) = matched else {
                 return Ok(None);
             };
-            let position = visited
-                .iter()
-                .enumerate()
-                .filter(|(_, node)| is_indexable(node))
-                .nth(observed.element_index.unwrap())
-                .map(|(position, _)| position)
-                .context("resolved native target is unavailable")?;
+            let position = unique_observed_identity_position(
+                visited.iter().enumerate().map(|(position, node)| {
+                    (
+                        position,
+                        node.identity.as_ref(),
+                        node.frame_ordinal,
+                        is_indexable(node),
+                    )
+                }),
+                observed
+                    .identity
+                    .as_ref()
+                    .context("resolved native identity is unavailable")?,
+                frame,
+            )?;
             Ok(Some(Arc::new(RetainedElement {
                 pid,
                 window,
@@ -287,6 +308,7 @@ mod tests {
             description: None,
             actions: vec!["click".into()],
             element_key: i as u64,
+            identity: None,
             depth: 0,
             parent_element_index: None,
             in_web_content: false,

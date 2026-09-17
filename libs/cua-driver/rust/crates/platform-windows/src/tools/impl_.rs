@@ -34,8 +34,6 @@ fn resolve_onscreen_point_with_scroll(
     admitted: &Option<crate::uia::element_resolver::RetainedElement>,
     hwnd: u64,
     idx: usize,
-    _cx: i32,
-    _cy: i32,
     action_verb: &str,
 ) -> Result<(i32, i32), ToolResult> {
     let retained = admitted
@@ -2905,14 +2903,22 @@ fn finish_pixel_uia_attempt(
     Some(
         ToolResult::error(format!(
             "UIA pixel click {status} for pid {pid}. No fallback input was sent. \
-         The click effect is unknown; inspect the target state before another action."
+         The click effect is unknown; inspect the target state before another action. \
+         If the provider does not recover, retry this action with delivery_mode:\"foreground\"."
         ))
         .with_structured(json!({
             "code": "background_unavailable",
             "uia_status": status,
             "path": "ax",
             "verified": false,
-            "effect": "unverifiable"
+            "effect": "unverifiable",
+            "suggestion": "Retry this action with delivery_mode:\"foreground\".",
+            "escalation": {
+                "recommended": "foreground",
+                "reason": format!(
+                    "the UIA provider is {status}; retry this action with delivery_mode:\"foreground\"."
+                ),
+            },
         })),
     )
 }
@@ -3058,7 +3064,6 @@ impl Tool for ClickTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use crate::input::delivery::{DeliveryMode, EventKind};
-        use crate::uia::element_resolver::ElementBackend;
         use cua_driver_core::tool_args::ArgsExt;
         let cursor_key = resolve_cursor_key(&args);
 
@@ -3225,12 +3230,6 @@ impl Tool for ClickTool {
             )),
             _ => None,
         };
-        // Optional `action` arg picks among the actions exposed in the
-        // accessibility tree. Today this only changes behavior for MSAA
-        // BUTTONDROPDOWN: `"expand"` clicks the right-edge (dropdown arrow
-        // half) instead of the center (press half). Defaults to first
-        // action in the element's `actions=[...]` list, which preserves
-        // existing semantics for UIA elements.
         let action_req = args
             .get("action")
             .and_then(|v| v.as_str())
@@ -3240,15 +3239,9 @@ impl Tool for ClickTool {
         let hwnd = match hwnd_opt {
             Some(h) => h,
             None => {
-                let windows = spawn_native({
-                    let admitted = admitted.clone();
-                    move || {
-                        let _admission = &admitted;
-                        crate::win32::list_windows_via_win32(Some(pid))
-                    }
-                })
-                .await
-                .unwrap_or_default();
+                let windows = spawn_native(move || crate::win32::list_windows_via_win32(Some(pid)))
+                    .await
+                    .unwrap_or_default();
                 match windows.first() {
                     Some(w) => w.hwnd,
                     None => {
@@ -3261,115 +3254,6 @@ impl Tool for ClickTool {
         };
 
         if let Some(idx) = elem_idx {
-            // ── MSAA dispatch (SAL/VCL targets) ────────────────────────────
-            // For MSAA elements, route by role:
-            //   - `action:"expand"` on BUTTONDROPDOWN → SendInput at the
-            //     resolved rect's right-edge (the dropdown arrow half).
-            //     Opens the picker (e.g. LO Writer Font Color → SALTMPSUBFRAME).
-            //   - default action / `"invoke"` → SendInput at center
-            //     (matches `accDoDefaultAction` semantics for VCL controls
-            //     and works through delivery_mode:"foreground"). We DO NOT call
-            //     `accDoDefaultAction` here because LO's MSAA impl applies
-            //     the change asynchronously and returns S_OK either way,
-            //     so the visible behavior is the same as a center click.
-            if let Some((ElementBackend::Msaa, role)) = admitted
-                .as_ref()
-                .map(|element| (element.kind, element.msaa_role))
-            {
-                const ROLE_BUTTONDROPDOWN: i32 = 0x38;
-                const ROLE_BUTTONMENU: i32 = 0x39;
-                const ROLE_BUTTONDROPDOWNGRID: i32 = 0x3A;
-                const ROLE_SPLITBUTTON: i32 = 0x3E;
-                let want_expand = action_req.as_deref() == Some("expand");
-                let is_dropdown_role = matches!(
-                    role,
-                    Some(
-                        ROLE_BUTTONDROPDOWN
-                            | ROLE_BUTTONMENU
-                            | ROLE_BUTTONDROPDOWNGRID
-                            | ROLE_SPLITBUTTON
-                    )
-                );
-                let (tx, ty) = if want_expand && is_dropdown_role {
-                    match admitted.as_ref().and_then(|element| element.rect) {
-                        Some((_l, t, r, b)) => {
-                            // Right-edge of the SplitButton — the dropdown
-                            // arrow half. -4 puts the click safely inside
-                            // the arrow region for the typical ~12-16 px
-                            // arrow width VCL uses.
-                            (r - 4, (t + b) / 2)
-                        }
-                        None => {
-                            return ToolResult::error(format!(
-                                "MSAA element [{idx}] has no resolved rect — \
-                                 cannot dispatch action:\"expand\". Re-run \
-                                 get_window_state to refresh the cache."
-                            ));
-                        }
-                    }
-                } else if want_expand && !is_dropdown_role {
-                    return ToolResult::error(format!(
-                        "action:\"expand\" requested for MSAA element [{idx}] \
-                         but its role ({role:?}) is not a dropdown button. \
-                         Use action:\"invoke\" or omit the action arg."
-                    ));
-                } else {
-                    match admitted.as_ref().map(|element| element.center) {
-                        Some(v) => v,
-                        None => {
-                            return ToolResult::error(format!(
-                                "MSAA element [{idx}] not present in current accessibility state for hwnd={hwnd}. \
-                             Call get_window_state first."
-                            ))
-                        }
-                    }
-                };
-                pin_overlay_above(&cursor_key, hwnd);
-                overlay_glide_to(&cursor_key, tx as f64, ty as f64).await;
-                crate::overlay::send_command(
-                    cursor_key.clone(),
-                    cursor_overlay::OverlayCommand::ClickPulse {
-                        x: tx as f64,
-                        y: ty as f64,
-                    },
-                );
-                let btn_fg = button.clone();
-                let prev_fg_addr = unsafe {
-                    windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
-                };
-                let mods_owned = modifiers.clone();
-                let activate = delivery == DeliveryMode::Foreground;
-                let send_result = spawn_native({
-                    let admitted = admitted.clone();
-                    move || {
-                        let _admission = &admitted;
-                        let mod_refs: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
-                        if activate {
-                            crate::input::send_click_synthesized_active_mods(
-                                hwnd, tx, ty, count, &btn_fg, &mod_refs,
-                            )
-                        } else {
-                            crate::input::send_click_synthesized_mods(
-                                hwnd, tx, ty, count, &btn_fg, &mod_refs,
-                            )
-                        }
-                    }
-                })
-                .await;
-                tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
-                let half = if want_expand { "dropdown" } else { "press" };
-                return match send_result {
-                    Ok(Ok(())) => ToolResult::text(format!(
-                        "✅ Performed SendInput click on MSAA [{idx}] {half} half at ({tx},{ty})."
-                    ))
-                    .with_structured(
-                        json!({ "path": "msaa", "verified": false, "effect": "unverifiable" }),
-                    ),
-                    Ok(Err(e)) => ToolResult::error(e.to_string()),
-                    Err(e) => ToolResult::error(format!("Task error: {e}")),
-                };
-            }
-
             // UIA path: get freshly resolved center (no COM call needed — captured at walk time).
             let (cx, cy) = match admitted.as_ref().map(|element| element.center) {
                 Some(v) => v,
@@ -3404,46 +3288,36 @@ impl Tool for ClickTool {
             // WPF/WinUI menus and tree nodes whose visual click target is
             // transient or scroll-adjusted.
             if action_req.as_deref() == Some("expand") {
-                let expand = spawn_native({
-                    let admitted = admitted.clone();
-                    move || -> anyhow::Result<()> {
-                        let _admission = &admitted;
-                        use windows::core::Interface;
-                        use windows::Win32::UI::Accessibility::{
-                            IUIAutomationElement, IUIAutomationExpandCollapsePattern,
-                            UIA_ExpandCollapsePatternId,
-                        };
+                let expand = spawn_native(move || -> anyhow::Result<()> {
+                    use windows::core::Interface;
+                    use windows::Win32::UI::Accessibility::{
+                        IUIAutomationElement, IUIAutomationExpandCollapsePattern,
+                        UIA_ExpandCollapsePatternId,
+                    };
 
-                        let retained = admitted.as_ref().ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "element [{idx}] is not present in the current UIA state"
-                            )
-                        })?;
-                        if !retained.is_uia() {
-                            anyhow::bail!("element [{idx}] is not a UIA element");
-                        }
-                        let element = std::mem::ManuallyDrop::new(unsafe {
-                            IUIAutomationElement::from_raw(retained.checked_ptr()? as *mut _)
-                        });
-                        let pattern = unsafe {
-                            element
-                                .GetCurrentPattern(UIA_ExpandCollapsePatternId)
-                                .and_then(|value| {
-                                    value.cast::<IUIAutomationExpandCollapsePattern>()
-                                })
-                        }
-                        .map_err(|error| {
-                            anyhow::anyhow!("ExpandCollapsePattern unavailable: {error}")
-                        })?;
-                        let result =
-                            crate::uia::fg_bypass::run_with_uwp_bypass(hwnd as isize, || unsafe {
-                                pattern.Expand()
-                            });
-                        std::mem::forget(element);
-                        result.map_err(|error| {
-                            anyhow::anyhow!("ExpandCollapse.Expand failed: {error}")
-                        })
+                    let retained = admitted.as_ref().ok_or_else(|| {
+                        anyhow::anyhow!("element [{idx}] is not present in the current UIA state")
+                    })?;
+                    if !retained.is_uia() {
+                        anyhow::bail!("element [{idx}] is not a UIA element");
                     }
+                    let element = std::mem::ManuallyDrop::new(unsafe {
+                        IUIAutomationElement::from_raw(retained.checked_ptr()? as *mut _)
+                    });
+                    let pattern = unsafe {
+                        element
+                            .GetCurrentPattern(UIA_ExpandCollapsePatternId)
+                            .and_then(|value| value.cast::<IUIAutomationExpandCollapsePattern>())
+                    }
+                    .map_err(|error| {
+                        anyhow::anyhow!("ExpandCollapsePattern unavailable: {error}")
+                    })?;
+                    let result =
+                        crate::uia::fg_bypass::run_with_uwp_bypass(hwnd as isize, || unsafe {
+                            pattern.Expand()
+                        });
+                    std::mem::forget(element);
+                    result.map_err(|error| anyhow::anyhow!("ExpandCollapse.Expand failed: {error}"))
                 })
                 .await;
                 return match expand {
@@ -3467,17 +3341,13 @@ impl Tool for ClickTool {
                 let prev_fg_addr = unsafe {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
                 };
-                let send_result = spawn_native({
-                    let admitted = admitted.clone();
-                    move || {
-                        let _admission = &admitted;
+                let send_result = spawn_native(move || {
                         let mod_refs: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
                         crate::input::mouse::send_click_synthesized_active_resolved(
                             hwnd, count, &btn_fg, &mod_refs,
-                            || resolve_onscreen_point_with_scroll(&admitted, hwnd, idx, cx, cy, "clicking")
+                            || resolve_onscreen_point_with_scroll(&admitted, hwnd, idx, "clicking")
                                 .map_err(|_| anyhow::anyhow!("retained target is not visibly actionable; no pointer input was sent")),
                         )
-                    }
                 })
                 .await;
                 tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
@@ -3519,16 +3389,11 @@ impl Tool for ClickTool {
                 && count == 1
                 && crate::input::is_chromium_target_window(hwnd)
             {
-                let posted = spawn_native({
-                    let admitted = admitted.clone();
-                    move || {
-                        let _admission = &admitted;
-                        let (cx, cy) = resolve_onscreen_point_with_scroll(
-                            &admitted, hwnd, idx, cx, cy, "clicking",
-                        )
-                        .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
-                        crate::input::post_click_screen(hwnd, cx, cy, count, &btn)
-                    }
+                let posted = spawn_native(move || {
+                    let (cx, cy) =
+                        resolve_onscreen_point_with_scroll(&admitted, hwnd, idx, "clicking")
+                            .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
+                    crate::input::post_click_screen(hwnd, cx, cy, count, &btn)
                 })
                 .await;
                 return match posted {
@@ -3558,7 +3423,6 @@ impl Tool for ClickTool {
             let result = spawn_native({
                 let admitted = admitted.clone();
                 move || -> anyhow::Result<BackgroundElementClick> {
-                    let _admission = &admitted;
                     let mut failed_calls = Vec::new();
                     // Direct Chromium UIA Invoke can return S_OK without firing a
                     // DOM event while occluded. Try the honest coordinate actuator
@@ -3567,10 +3431,9 @@ impl Tool for ClickTool {
                     if delivery == DeliveryMode::Background
                         && crate::input::is_chromium_target_window(hwnd)
                     {
-                        let (cx, cy) = resolve_onscreen_point_with_scroll(
-                            &admitted, hwnd, idx, cx, cy, "clicking",
-                        )
-                        .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
+                        let (cx, cy) =
+                            resolve_onscreen_point_with_scroll(&admitted, hwnd, idx, "clicking")
+                                .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
                         return Ok(BackgroundElementClick::Inject {
                             x: cx,
                             y: cy,
@@ -3600,10 +3463,9 @@ impl Tool for ClickTool {
                             EventKind::MouseClick,
                         )
                     {
-                        let (cx, cy) = resolve_onscreen_point_with_scroll(
-                            &admitted, hwnd, idx, cx, cy, "clicking",
-                        )
-                        .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
+                        let (cx, cy) =
+                            resolve_onscreen_point_with_scroll(&admitted, hwnd, idx, "clicking")
+                                .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
                         return Ok(BackgroundElementClick::Inject {
                             x: cx,
                             y: cy,
@@ -3647,18 +3509,13 @@ impl Tool for ClickTool {
             } else {
                 "PostMessage click"
             };
-            let sent = spawn_native({
-                let admitted = admitted.clone();
-                move || {
-                    let _admission = &admitted;
-                    let (x, y) =
-                        resolve_onscreen_point_with_scroll(&admitted, hwnd, idx, x, y, "clicking")
-                            .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
-                    if inject {
-                        crate::input::inject_click_screen(hwnd, x, y, count, &btn)
-                    } else {
-                        crate::input::post_click_screen(hwnd, x, y, count, &btn)
-                    }
+            let sent = spawn_native(move || {
+                let (x, y) = resolve_onscreen_point_with_scroll(&admitted, hwnd, idx, "clicking")
+                    .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
+                if inject {
+                    crate::input::inject_click_screen(hwnd, x, y, count, &btn)
+                } else {
+                    crate::input::post_click_screen(hwnd, x, y, count, &btn)
                 }
             })
             .await;
@@ -3757,15 +3614,11 @@ impl Tool for ClickTool {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
                 };
                 let mods_owned = modifiers.clone();
-                let send_result = spawn_native({
-                    let admitted = admitted.clone();
-                    move || {
-                        let _admission = &admitted;
-                        let mod_refs: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
-                        crate::input::send_click_synthesized_active_mods(
-                            hwnd, sx as i32, sy as i32, count, &btn, &mod_refs,
-                        )
-                    }
+                let send_result = spawn_native(move || {
+                    let mod_refs: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
+                    crate::input::send_click_synthesized_active_mods(
+                        hwnd, sx as i32, sy as i32, count, &btn, &mod_refs,
+                    )
                 })
                 .await;
                 tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
@@ -3807,12 +3660,8 @@ impl Tool for ClickTool {
                 && count == 1
                 && crate::input::is_chromium_target_window(hwnd)
             {
-                let posted = spawn_native({
-                    let admitted = admitted.clone();
-                    move || {
-                        let _admission = &admitted;
-                        crate::input::post_click_screen(hwnd, sx_i, sy_i, count, &btn)
-                    }
+                let posted = spawn_native(move || {
+                    crate::input::post_click_screen(hwnd, sx_i, sy_i, count, &btn)
                 })
                 .await;
                 return match posted {
@@ -3836,12 +3685,8 @@ impl Tool for ClickTool {
             if delivery == DeliveryMode::Background && crate::input::is_chromium_target_window(hwnd)
             {
                 let btn2 = btn.clone();
-                let inj = spawn_native({
-                    let admitted = admitted.clone();
-                    move || {
-                        let _admission = &admitted;
-                        crate::input::inject_click_screen(hwnd, sx as i32, sy as i32, count, &btn2)
-                    }
+                let inj = spawn_native(move || {
+                    crate::input::inject_click_screen(hwnd, sx as i32, sy as i32, count, &btn2)
                 })
                 .await;
                 return match inj {
@@ -3859,16 +3704,12 @@ impl Tool for ClickTool {
             }
             let use_uia = (btn == "left" || btn == "middle") && count == 1;
             if use_uia {
-                let outcome = spawn_native({
-                    let admitted = admitted.clone();
-                    move || {
-                        let _admission = &admitted;
-                        crate::uia::windows_enum::try_invoke_in_window_at_point(
-                            hwnd as isize,
-                            sx as i32,
-                            sy as i32,
-                        )
-                    }
+                let outcome = spawn_native(move || {
+                    crate::uia::windows_enum::try_invoke_in_window_at_point(
+                        hwnd as isize,
+                        sx as i32,
+                        sy as i32,
+                    )
                 })
                 .await
                 .unwrap_or(crate::uia::windows_enum::PointInvokeOutcome::Unavailable);
@@ -3883,12 +3724,8 @@ impl Tool for ClickTool {
                 && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
                 let btn2 = btn.clone();
-                let inj = spawn_native({
-                    let admitted = admitted.clone();
-                    move || {
-                        let _admission = &admitted;
-                        crate::input::inject_click_screen(hwnd, sx as i32, sy as i32, count, &btn2)
-                    }
+                let inj = spawn_native(move || {
+                    crate::input::inject_click_screen(hwnd, sx as i32, sy as i32, count, &btn2)
                 })
                 .await;
                 return match inj {
@@ -3914,12 +3751,8 @@ impl Tool for ClickTool {
 
             // bitmap pixels -> screen (DWM-frame origin + inset). Use
             // post_click_screen so we don't double-ClientToScreen.
-            let result = spawn_native({
-                let admitted = admitted.clone();
-                move || {
-                    let _admission = &admitted;
-                    crate::input::post_click_screen(hwnd, sx_i, sy_i, count, &btn)
-                }
+            let result = spawn_native(move || {
+                crate::input::post_click_screen(hwnd, sx_i, sy_i, count, &btn)
             })
             .await;
             match result {
@@ -3992,6 +3825,86 @@ mod pixel_click_transport_tests {
             });
         assert_eq!(fallback_calls, 1);
         assert_eq!(result.structured_content.unwrap()["path"], "post_message");
+    }
+
+    #[test]
+    fn uia_unavailable_errors_advertise_foreground_escalation() {
+        use cua_driver_core::action_record::EscalationKind;
+        use cua_driver_core::protocol::Content;
+        for (outcome, status) in [
+            (PointInvokeOutcome::Busy, "busy"),
+            (PointInvokeOutcome::Timeout, "timeout"),
+            (PointInvokeOutcome::Unavailable, "unavailable"),
+        ] {
+            let result = finish_pixel_uia_attempt(outcome, 7, 3, 4)
+                .expect("unavailable UIA must stop the route without fallback");
+            assert!(result.is_error.unwrap_or(false), "{outcome:?}");
+            let data = result
+                .structured_content
+                .as_ref()
+                .expect("structured error");
+            assert_eq!(data["code"], "background_unavailable");
+            assert_eq!(data["uia_status"], status);
+            assert_eq!(
+                data["suggestion"].as_str(),
+                Some("Retry this action with delivery_mode:\"foreground\"."),
+                "{outcome:?}"
+            );
+            assert_eq!(
+                data["escalation"]["recommended"].as_str(),
+                Some("foreground"),
+                "{outcome:?}"
+            );
+            let reason = data["escalation"]["reason"]
+                .as_str()
+                .expect("escalation reason");
+            assert!(
+                reason.contains(status),
+                "reason must name the UIA status: {reason}"
+            );
+            assert!(
+                reason.contains("delivery_mode:\"foreground\""),
+                "reason must name the next rung: {reason}"
+            );
+            let text = match &result.content[0] {
+                Content::Text { text, .. } => text,
+                _ => panic!("expected text content for {outcome:?}"),
+            };
+            assert!(
+                text.contains("No fallback input was sent"),
+                "text must keep the no-replay guarantee: {text}"
+            );
+            assert!(
+                text.contains("delivery_mode:\"foreground\""),
+                "text must surface the escalation: {text}"
+            );
+        }
+        // The completed-miss boundary is unchanged: only Miss falls through,
+        // and a delivered Invoke carries no escalation hint.
+        assert!(finish_pixel_uia_attempt(PointInvokeOutcome::Miss, 7, 3, 4).is_none());
+        let ok = finish_pixel_uia_attempt(PointInvokeOutcome::Invoked, 7, 3, 4)
+            .expect("invoked click reports success");
+        assert!(!ok.is_error.unwrap_or(false));
+        let ok_data = ok.structured_content.as_ref().expect("structured success");
+        assert!(ok_data.get("escalation").is_none());
+        assert!(ok_data.get("suggestion").is_none());
+        // The hint must flow into the existing escalation pipeline, not sit
+        // as inert metadata: Timeout (the #3621 case) normalizes to a
+        // foreground-delivery escalation on the internal record.
+        let timeout_data = finish_pixel_uia_attempt(PointInvokeOutcome::Timeout, 7, 3, 4)
+            .expect("timeout stops the route")
+            .structured_content
+            .expect("structured error");
+        let timeout_record = ActionExecutionRecord::from_legacy(
+            "click",
+            &serde_json::json!({ "delivery_mode": "background" }),
+            &timeout_data,
+        )
+        .expect("UIA timeout should normalize into the public action contract");
+        assert_eq!(
+            timeout_record.escalation.map(|escalation| escalation.kind),
+            Some(EscalationKind::RetryWithForegroundDelivery)
+        );
     }
 
     #[test]
@@ -4164,18 +4077,11 @@ fn wait_for_cached_element_keyboard_focus(
     }
 }
 
-/// Establish exact UIA child focus after the owning top-level HWND is already
-/// confirmed foreground. Chromium providers sometimes reject UIA `SetFocus`;
-/// in that case a real click at the accessibility-derived center is the
-/// bounded fallback. Both routes require `CurrentHasKeyboardFocus` read-back
-/// before any keyboard input is allowed to leave the driver.
-fn focus_cached_element_for_foreground(
+fn focus_retained_foreground(
     admitted: &Option<crate::uia::element_resolver::RetainedElement>,
     hwnd: u64,
     element_index: usize,
-    click_point: Option<(i32, i32)>,
 ) -> anyhow::Result<()> {
-    let _ = click_point;
     let element = admitted
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("missing retained element"))?;
@@ -4373,15 +4279,9 @@ impl Tool for TypeTextTool {
         let hwnd = match hwnd_opt {
             Some(h) => h,
             None => {
-                let windows = spawn_native({
-                    let admitted = admitted.clone();
-                    move || {
-                        let _admission = &admitted;
-                        crate::win32::list_windows(Some(pid))
-                    }
-                })
-                .await
-                .unwrap_or_default();
+                let windows = spawn_native(move || crate::win32::list_windows(Some(pid)))
+                    .await
+                    .unwrap_or_default();
                 match windows.first() {
                     Some(w) => w.hwnd,
                     None => {
@@ -4439,45 +4339,21 @@ impl Tool for TypeTextTool {
         // rejected (daemon not at UIAccess integrity), it returns an error
         // rather than a false success.
         if delivery == DeliveryMode::Foreground {
-            // Resolve the optional click fallback before entering the atomic
-            // activation/focus/input transaction. The focus itself happens
-            // only after exact top-level foreground is confirmed.
-            let focus_target = if let Some(idx) = elem_idx {
-                let (cx, cy) = match admitted.as_ref().map(|element| element.center) {
-                    Some(center) => center,
-                    None => {
-                        return ToolResult::error(format!(
-                        "Element {idx} not present in current accessibility state for hwnd={hwnd}. Call get_window_state first."
-                    ))
-                    }
-                };
-                let (cx, cy) = match resolve_onscreen_point_with_scroll(
-                    &admitted,
-                    hwnd,
-                    idx as usize,
-                    cx,
-                    cy,
-                    "foreground typing",
-                ) {
-                    Ok(point) => point,
-                    Err(result) => return result,
-                };
-                Some((idx as usize, (cx, cy)))
-            } else {
-                None
-            };
-            let text_fg = text.clone();
-            let r = spawn_native({
-                let admitted = admitted.clone();
-                move || {
-                    let _admission = &admitted;
-                    crate::input::send_text_synthesized_after_focus(hwnd, &text_fg, || {
-                        if let Some((idx, point)) = focus_target {
-                            focus_cached_element_for_foreground(&admitted, hwnd, idx, Some(point))?;
-                        }
-                        Ok(())
-                    })
+            if let Some(idx) = elem_idx {
+                if let Err(result) =
+                    resolve_onscreen_point_with_scroll(&admitted, hwnd, idx, "foreground typing")
+                {
+                    return result;
                 }
+            }
+            let text_fg = text.clone();
+            let r = spawn_native(move || {
+                crate::input::send_text_synthesized_after_focus(hwnd, &text_fg, || {
+                    if let Some(idx) = elem_idx {
+                        focus_retained_foreground(&admitted, hwnd, idx)?;
+                    }
+                    Ok(())
+                })
             })
             .await;
             return match r {
@@ -4538,32 +4414,25 @@ impl Tool for TypeTextTool {
         let text_for_post = text.clone();
         let verify_pid = pid;
         let verify_idx = elem_idx.map(|i| i as usize);
-        let result = spawn_native({
-            let admitted = admitted.clone();
-            move || {
-                let _admission = &admitted;
-                // Prefer a focus-independent read of the *specific* freshly resolved element
-                // when we have its index; only fall back to the (flaky, focus-
-                // dependent) system focused element when typing into "whatever is
-                // focused" with no element_index.
-                let read = |idx: Option<usize>| match idx {
-                    Some(_) => read_cached_element_value(&admitted),
-                    None => read_focused_value_uia(verify_pid),
-                };
-                let before = read(verify_idx);
-                let post_res = (|| {
-                    focus_retained_background(&admitted, hwnd)?;
-                    crate::input::post_type_text(hwnd, &text_for_post)
-                })();
-                std::thread::sleep(std::time::Duration::from_millis(40));
-                let after = read(verify_idx);
-                let observed = post_message_readback_observed(
-                    before.as_deref(),
-                    after.as_deref(),
-                    &text_for_post,
-                );
-                (post_res, before, after, observed)
-            }
+        let result = spawn_native(move || {
+            // Prefer a focus-independent read of the *specific* freshly resolved element
+            // when we have its index; only fall back to the (flaky, focus-
+            // dependent) system focused element when typing into "whatever is
+            // focused" with no element_index.
+            let read = |idx: Option<usize>| match idx {
+                Some(_) => read_cached_element_value(&admitted),
+                None => read_focused_value_uia(verify_pid),
+            };
+            let before = read(verify_idx);
+            let post_res = (|| {
+                focus_retained_background(&admitted, hwnd)?;
+                crate::input::post_type_text(hwnd, &text_for_post)
+            })();
+            std::thread::sleep(std::time::Duration::from_millis(40));
+            let after = read(verify_idx);
+            let observed =
+                post_message_readback_observed(before.as_deref(), after.as_deref(), &text_for_post);
+            (post_res, before, after, observed)
         })
         .await;
         match result {
@@ -4969,15 +4838,9 @@ impl Tool for PressKeyTool {
         let hwnd = match hwnd_opt {
             Some(h) => h,
             None => {
-                let windows = spawn_native({
-                    let admitted = admitted.clone();
-                    move || {
-                        let _admission = &admitted;
-                        crate::win32::list_windows(Some(pid))
-                    }
-                })
-                .await
-                .unwrap_or_default();
+                let windows = spawn_native(move || crate::win32::list_windows(Some(pid)))
+                    .await
+                    .unwrap_or_default();
                 match windows.first() {
                     Some(w) => w.hwnd,
                     None => {
@@ -5019,17 +4882,10 @@ impl Tool for PressKeyTool {
             None
         };
         if let Some(idx) = elem_idx.filter(|_| background_webview_focus) {
-            let Some((cx, cy)) = admitted.as_ref().map(|element| element.center) else {
-                return ToolResult::error(format!(
-                    "Element {idx} not present in current accessibility state for hwnd={hwnd}. Call get_window_state first."
-                ));
-            };
             let (cx, cy) = match resolve_onscreen_point_with_scroll(
                 &admitted,
                 hwnd,
-                idx as usize,
-                cx,
-                cy,
+                idx,
                 "focusing for key delivery",
             ) {
                 Ok(point) => point,
@@ -5063,10 +4919,7 @@ impl Tool for PressKeyTool {
         } else if elem_idx.is_some() && delivery != DeliveryMode::Foreground {
             let focused = spawn_native({
                 let admitted = admitted.clone();
-                move || {
-                    let _admission = &admitted;
-                    focus_retained_background(&admitted, hwnd)
-                }
+                move || focus_retained_background(&admitted, hwnd)
             })
             .await;
             match focused {
@@ -5080,22 +4933,14 @@ impl Tool for PressKeyTool {
         // Skipped when px-focus already fronted/clicked the target — the key then
         // goes via the plain background post path below.
         if !px_focus && delivery == DeliveryMode::Foreground {
-            let focus_target = elem_idx.map(|idx| {
-                let point = admitted.as_ref().map(|element| element.center);
-                (idx as usize, point)
-            });
-            let send_result = spawn_native({
-                let admitted = admitted.clone();
-                move || {
-                    let _admission = &admitted;
-                    let m: Vec<&str> = mods.iter().map(String::as_str).collect();
-                    crate::input::send_key_synthesized_after_focus(hwnd, &key, &m, || {
-                        if let Some((idx, point)) = focus_target {
-                            focus_cached_element_for_foreground(&admitted, hwnd, idx, point)?;
-                        }
-                        Ok(())
-                    })
-                }
+            let send_result = spawn_native(move || {
+                let m: Vec<&str> = mods.iter().map(String::as_str).collect();
+                crate::input::send_key_synthesized_after_focus(hwnd, &key, &m, || {
+                    if let Some(idx) = elem_idx {
+                        focus_retained_foreground(&admitted, hwnd, idx)?;
+                    }
+                    Ok(())
+                })
             })
             .await;
             return match send_result {
@@ -5106,16 +4951,10 @@ impl Tool for PressKeyTool {
                 Err(e)     => ToolResult::error(format!("Task error: {e}")),
             };
         }
-        let result = spawn_native({
-            let admitted = admitted.clone();
-            move || {
-                let _admission = &admitted;
-                let m: Vec<&str> = mods.iter().map(String::as_str).collect();
-                {
-                    focus_retained_background(&admitted, hwnd)?;
-                    crate::input::post_key(hwnd, &key, &m)
-                }
-            }
+        let result = spawn_native(move || {
+            let m: Vec<&str> = mods.iter().map(String::as_str).collect();
+            focus_retained_background(&admitted, hwnd)?;
+            crate::input::post_key(hwnd, &key, &m)
         })
         .await;
         match result {
@@ -5326,16 +5165,9 @@ impl Tool for HotkeyTool {
         let hwnd = match hwnd_opt {
             Some(h) => h,
             None => {
-                let pid2 = pid;
-                let windows = spawn_native({
-                    let admitted = admitted.clone();
-                    move || {
-                        let _admission = &admitted;
-                        crate::win32::list_windows(Some(pid2))
-                    }
-                })
-                .await
-                .unwrap_or_default();
+                let windows = spawn_native(move || crate::win32::list_windows(Some(pid)))
+                    .await
+                    .unwrap_or_default();
                 match windows.first() {
                     Some(w) => w.hwnd,
                     None => {
@@ -5399,15 +5231,12 @@ impl Tool for HotkeyTool {
             // bound the call so a hung provider returns an error instead of
             // blocking the daemon indefinitely. 4 s matches the budget the
             // rest of this file uses for similar UIA scans.
-            let result = spawn_native({
-                let admitted = admitted.clone();
-                move || {
-                    let _admission = &admitted;
-                    crate::uia::windows_enum::try_invoke_accelerator_in_window(
-                        hwnd as isize,
-                        &accelerator_combo,
-                    )
-                }
+            let result = spawn_native(move || {
+                let _target = admitted;
+                crate::uia::windows_enum::try_invoke_accelerator_in_window(
+                    hwnd as isize,
+                    &accelerator_combo,
+                )
             })
             .await;
             return match result {
@@ -5490,28 +5319,18 @@ impl Tool for HotkeyTool {
         // global modifier state, so Chromium never observes Ctrl+Shift+H as a
         // chord even though the renderer control is focused.
         let use_send_input = delivery == DeliveryMode::Foreground;
-        let focus_target = elem_idx.map(|idx| {
-            let point = admitted.as_ref().map(|element| element.center);
-            (idx, point)
-        });
-        let result = spawn_native({
-            let admitted = admitted.clone();
-            move || {
-                let _admission = &admitted;
-                let m: Vec<&str> = mods.iter().map(String::as_str).collect();
-                if use_send_input {
-                    crate::input::send_key_synthesized_after_focus(hwnd, &key, &m, || {
-                        if let Some((idx, point)) = focus_target {
-                            focus_cached_element_for_foreground(&admitted, hwnd, idx, point)?;
-                        }
-                        Ok(())
-                    })
-                } else {
-                    {
-                        focus_retained_background(&admitted, hwnd)?;
-                        crate::input::post_key(hwnd, &key, &m)
+        let result = spawn_native(move || {
+            let m: Vec<&str> = mods.iter().map(String::as_str).collect();
+            if use_send_input {
+                crate::input::send_key_synthesized_after_focus(hwnd, &key, &m, || {
+                    if let Some(idx) = elem_idx {
+                        focus_retained_foreground(&admitted, hwnd, idx)?;
                     }
-                }
+                    Ok(())
+                })
+            } else {
+                focus_retained_background(&admitted, hwnd)?;
+                crate::input::post_key(hwnd, &key, &m)
             }
         })
         .await;
@@ -5831,15 +5650,9 @@ impl Tool for ScrollTool {
         let hwnd = match hwnd_opt {
             Some(h) => h,
             None => {
-                let windows = spawn_native({
-                    let admitted = admitted.clone();
-                    move || {
-                        let _admission = &admitted;
-                        crate::win32::list_windows(Some(pid))
-                    }
-                })
-                .await
-                .unwrap_or_default();
+                let windows = spawn_native(move || crate::win32::list_windows(Some(pid)))
+                    .await
+                    .unwrap_or_default();
                 match windows.first() {
                     Some(w) => w.hwnd,
                     None => {
@@ -6000,15 +5813,11 @@ impl Tool for ScrollTool {
             let center = if let (Some(x), Some(y)) = (px, py) {
                 Some(bitmap_to_screen(hwnd, x as i32, y as i32))
             } else {
-                spawn_native({
-                    let admitted = admitted.clone();
-                    move || {
-                        let _admission = &admitted;
-                        crate::win32::list_windows(Some(pid))
-                            .into_iter()
-                            .find(|w| w.hwnd == hwnd)
-                            .map(|w| (w.x + w.width / 2, w.y + w.height / 2))
-                    }
+                spawn_native(move || {
+                    crate::win32::list_windows(Some(pid))
+                        .into_iter()
+                        .find(|w| w.hwnd == hwnd)
+                        .map(|w| (w.x + w.width / 2, w.y + w.height / 2))
                 })
                 .await
                 .ok()
@@ -6026,12 +5835,8 @@ impl Tool for ScrollTool {
             };
             let dir_disp = direction.clone();
             let tick_disp = ticks.abs();
-            let result = spawn_native({
-                let admitted = admitted.clone();
-                move || {
-                    let _admission = &admitted;
-                    crate::input::send_wheel_synthesized(cx, cy, ticks, horizontal)
-                }
+            let result = spawn_native(move || {
+                crate::input::send_wheel_synthesized(cx, cy, ticks, horizontal)
             })
             .await;
             return match result {
@@ -6044,51 +5849,47 @@ impl Tool for ScrollTool {
             };
         }
 
-        let result = spawn_native({
-            let admitted = admitted.clone();
-            move || -> anyhow::Result<()> {
-                let _admission = &admitted;
-                use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
-                use windows::Win32::UI::WindowsAndMessaging::{
-                    SB_LINEDOWN, SB_LINELEFT, SB_LINERIGHT, SB_LINEUP, SB_PAGEDOWN,
-                    SB_PAGELEFT, SB_PAGERIGHT, SB_PAGEUP, WM_HSCROLL, WM_VSCROLL,
-                };
+        let result = spawn_native(move || -> anyhow::Result<()> {
+            use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+            use windows::Win32::UI::WindowsAndMessaging::{
+                SB_LINEDOWN, SB_LINELEFT, SB_LINERIGHT, SB_LINEUP, SB_PAGEDOWN,
+                SB_PAGELEFT, SB_PAGERIGHT, SB_PAGEUP, WM_HSCROLL, WM_VSCROLL,
+            };
 
-                let hwnd_win = HWND(hwnd as *mut _);
-                let use_page = by == "page";
-                let (msg, code) = match (direction.as_str(), use_page) {
-                    ("up", false) => (WM_VSCROLL, SB_LINEUP),
-                    ("up", true) => (WM_VSCROLL, SB_PAGEUP),
-                    ("down", false) => (WM_VSCROLL, SB_LINEDOWN),
-                    ("down", true) => (WM_VSCROLL, SB_PAGEDOWN),
-                    ("left", false) => (WM_HSCROLL, SB_LINELEFT),
-                    ("left", true) => (WM_HSCROLL, SB_PAGELEFT),
-                    ("right", false) => (WM_HSCROLL, SB_LINERIGHT),
-                    ("right", true) => (WM_HSCROLL, SB_PAGERIGHT),
-                    _ => (WM_VSCROLL, SB_LINEDOWN),
+            let hwnd_win = HWND(hwnd as *mut _);
+            let use_page = by == "page";
+            let (msg, code) = match (direction.as_str(), use_page) {
+                ("up", false) => (WM_VSCROLL, SB_LINEUP),
+                ("up", true) => (WM_VSCROLL, SB_PAGEUP),
+                ("down", false) => (WM_VSCROLL, SB_LINEDOWN),
+                ("down", true) => (WM_VSCROLL, SB_PAGEDOWN),
+                ("left", false) => (WM_HSCROLL, SB_LINELEFT),
+                ("left", true) => (WM_HSCROLL, SB_PAGELEFT),
+                ("right", false) => (WM_HSCROLL, SB_LINERIGHT),
+                ("right", true) => (WM_HSCROLL, SB_PAGERIGHT),
+                _ => (WM_VSCROLL, SB_LINEDOWN),
+            };
+            for dispatched in 0..amount {
+                let result = unsafe {
+                    crate::input::post_message_checked(
+                        hwnd_win,
+                        msg,
+                        WPARAM(code.0 as usize),
+                        LPARAM(0),
+                    )
                 };
-                for dispatched in 0..amount {
-                    let result = unsafe {
-                        crate::input::post_message_checked(
-                            hwnd_win,
-                            msg,
-                            WPARAM(code.0 as usize),
-                            LPARAM(0),
+                result.map_err(|error| {
+                    if dispatched == 0 && error.code() == windows::Win32::Foundation::E_ABORT {
+                        error.into()
+                    } else {
+                        ToolResult::native_action_error(
+                            format!("window scroll outcome is unknown ({error}); inspect fresh state and do not replay"),
+                            cua_driver_core::action_record::ActionTransport::WindowsPostMessage,
                         )
-                    };
-                    result.map_err(|error| {
-                        if dispatched == 0 && error.code() == windows::Win32::Foundation::E_ABORT {
-                            error.into()
-                        } else {
-                            ToolResult::native_action_error(
-                                format!("window scroll outcome is unknown ({error}); inspect fresh state and do not replay"),
-                                cua_driver_core::action_record::ActionTransport::WindowsPostMessage,
-                            )
-                        }
-                    })?;
-                }
-                Ok(())
+                    }
+                })?;
             }
+            Ok(())
         })
         .await;
 
@@ -6264,15 +6065,9 @@ async fn winui3_background_gesture(
     count: usize,
     button: &str,
 ) -> Option<ToolResult> {
-    let is_w = spawn_native({
-        let admitted = admitted.clone();
-        move || {
-            let _admission = &admitted;
-            crate::input::delivery::is_winui3_target_window(hwnd)
-        }
-    })
-    .await
-    .unwrap_or(false);
+    let is_w = spawn_native(move || crate::input::delivery::is_winui3_target_window(hwnd))
+        .await
+        .unwrap_or(false);
     if !is_w {
         return None;
     }
@@ -6280,10 +6075,7 @@ async fn winui3_background_gesture(
         if let Some(idx) = idx {
             let uia = spawn_native({
                 let admitted = admitted.clone();
-                move || {
-                    let _admission = &admitted;
-                    winui3_uia_multi_invoke(&admitted, hwnd, count)
-                }
+                move || winui3_uia_multi_invoke(&admitted, hwnd, count)
             })
             .await
             .ok()

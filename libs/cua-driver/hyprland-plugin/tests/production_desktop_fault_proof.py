@@ -18,12 +18,13 @@ Config suspension disconnects the trace transport. Restore the fixture, reconnec
 without TRACE_START, and require unchanged trace history with cancellation and
 owned release BEFORE restoration. Normal Driver snapshots and one NEW action
 then prove recovery. No replay, signing, module swap, automatic wake or unlock.
-Keymap uses the separate exact KEYMAP_US include, changes only to KEYMAP_DE,
-and restores the same original US map. Exact option readback, compositor lane
-generation changes and the compiled-map-gated unsupported_layout refusal from
-a fresh normal Driver action prove invalidation; no keymap hash is exposed.
-The keymap fixture has a fixed 30-second restoration watchdog to cover the
-fresh-runtime refusal and both app snapshots; config-disable keeps 12 seconds.
+Keymap uses the separate exact KEYMAP_US include, changes only the physical
+layout, and restores the same original US map. Exact option readback and
+compositor lane generation changes prove invalidation. Fresh background input
+under a user remap is covered separately because the agent seats now keep a
+private canonical US map; this fault harness still proves cancellation and
+restoration of work active during the physical transition. The keymap fixture
+has a fixed 30-second restoration watchdog; config-disable keeps 12 seconds.
 Watchdog restoration, stale grounding, or readback crossing either deadline
 still fails the episode. Neither duration is a product cancellation limit.
 DPMS and lock are deliberately unsupported here. Portable tests prepare
@@ -64,26 +65,28 @@ import production_pointer_grounding as pointer_grounding
 
 
 KEYMAP_US = 'hl.config({input = {kb_rules = "evdev", kb_model = "pc105", kb_layout = "us", kb_variant = "", kb_options = "", kb_file = ""}})\n'
-KEYMAP_DE = 'hl.config({input = {kb_rules = "evdev", kb_model = "pc105", kb_layout = "de", kb_variant = "", kb_options = "", kb_file = ""}})\n'
+KEYMAP_CAPS_CTRL = 'hl.config({input = {kb_rules = "evdev", kb_model = "pc105", kb_layout = "us", kb_variant = "", kb_options = "ctrl:nocaps", kb_file = ""}})\n'
+KEYMAP_CAPS_SUPER = 'hl.config({input = {kb_rules = "evdev", kb_model = "pc105", kb_layout = "us", kb_variant = "", kb_options = "caps:super", kb_file = ""}})\n'
+KEYMAP_REMAPS = {'caps_to_ctrl': KEYMAP_CAPS_CTRL, 'caps_to_super': KEYMAP_CAPS_SUPER}
 WATCHDOG_SECONDS = {'config_disable': 12, 'keymap': 30}
 
 
 def fixed_bytes(kind):
     assert kind in ('config_disable', 'keymap'), 'unsupported desktop fault'
-    return (ENABLED, DISABLED) if kind == 'config_disable' else (KEYMAP_US, KEYMAP_DE)
+    return (ENABLED, DISABLED) if kind == 'config_disable' else (KEYMAP_US, KEYMAP_CAPS_CTRL)
 
 
 def keymap_options(instance, restored):
-    expected = {'kb_rules': 'evdev', 'kb_model': 'pc105', 'kb_layout': 'us' if restored else 'de',
-                'kb_variant': '', 'kb_options': '', 'kb_file': ''}
+    expected = {'kb_rules': 'evdev', 'kb_model': 'pc105', 'kb_layout': 'us',
+                'kb_variant': '', 'kb_options': '' if restored else 'ctrl:nocaps', 'kb_file': ''}
     replies = {key: json.loads(_hypr(instance, '-j', 'getoption', 'input:' + key)) for key in expected}
     verify_keymap_options(replies, restored)
     return replies
 
 
 def verify_keymap_options(replies, restored):
-    expected = {'kb_rules': 'evdev', 'kb_model': 'pc105', 'kb_layout': 'us' if restored else 'de',
-                'kb_variant': '', 'kb_options': '', 'kb_file': ''}
+    expected = {'kb_rules': 'evdev', 'kb_model': 'pc105', 'kb_layout': 'us',
+                'kb_variant': '', 'kb_options': '' if restored else 'ctrl:nocaps', 'kb_file': ''}
     assert set(replies) == set(expected), 'incomplete keymap option readback'
     for key, value in expected.items():
         assert replies[key].get('option') == 'input:' + key and replies[key].get('str') == value, \
@@ -708,21 +711,26 @@ def verify_fault(boundary, record, restoration, action):
         verify_keymap_options(restoration['keymap_options'], True)
         assert record['keymap_before'] == restoration['keymap_options'], 'original map options not restored'
         verify_keymap_transition(record['gate_status'], record['after'], policy, record['lane'])
-        refusal = record['wrong_layout']
-        assert pointer_cleanup(refusal) == policy, 'refusal changed pointer cleanup contract'
-        if policy == 'retained_inert':
-            assert refusal['lane'] == record['lane'] and refusal['target'] == record['target'] and refusal['bounds'] == record['bounds']
-            verify_retained_inert(record['after'], refusal['before'], record['lane'])
-            assert refusal['closure']['observed_ns'] < restoration['started_ns'], 'probe not closed before restoration'
-        verify_layout_refusal(refusal)
-        after, before_refusal = keymap_lanes(record['after']), keymap_lanes(refusal['before'])
-        for lane in after:
-            assert all(after[lane][key] == before_refusal[lane][key] for key in ('epoch', 'desktop_generation', 'dispatches')), \
-                'keymap state changed before fresh refusal'
-        trace_interval(record['prefix'], refusal['trace_before'])
-        trace_interval(refusal['trace_after'], boundary)
-        assert record['acknowledged_ns'] <= refusal['prepared_ns'] <= refusal['observed_ns'] < restoration['started_ns']
-        verify_keymap_transition(refusal['after'], restoration['status'], policy, record['lane'])
+        # Preserve validation of archived pre-private-keymap evidence without
+        # requiring or producing a fresh unsupported-layout probe today.
+        if 'wrong_layout' in record:
+            refusal = record['wrong_layout']
+            assert pointer_cleanup(refusal) == policy, 'refusal changed pointer cleanup contract'
+            if policy == 'retained_inert':
+                assert refusal['lane'] == record['lane'] and refusal['target'] == record['target'] and refusal['bounds'] == record['bounds']
+                verify_retained_inert(record['after'], refusal['before'], record['lane'])
+                assert refusal['closure']['observed_ns'] < restoration['started_ns'], 'probe not closed before restoration'
+            verify_layout_refusal(refusal)
+            after, before_refusal = keymap_lanes(record['after']), keymap_lanes(refusal['before'])
+            for lane in after:
+                assert all(after[lane][key] == before_refusal[lane][key] for key in ('epoch', 'desktop_generation', 'dispatches')), \
+                    'keymap state changed before fresh refusal'
+            trace_interval(record['prefix'], refusal['trace_before'])
+            trace_interval(refusal['trace_after'], boundary)
+            assert record['acknowledged_ns'] <= refusal['prepared_ns'] <= refusal['observed_ns'] < restoration['started_ns']
+            verify_keymap_transition(refusal['after'], restoration['status'], policy, record['lane'])
+        else:
+            verify_keymap_transition(record['after'], restoration['status'], policy, record['lane'])
     if policy == 'retained_inert':
         gate = keymap_lanes(record['gate_status'])
         initial = idle_lanes(record['before'])
@@ -745,8 +753,8 @@ def verify_fault(boundary, record, restoration, action):
     isolation = verify_cancelled(boundary, record, restoration['started_ns'])
     result = {'result': 'verified', 'outcome': fault_outcome(action), 'continuous_isolation': isolation,
               'synthetic_cleanup': 'verified', 'saved_document_effect': 'unproven'}
-    if record['kind'] == 'keymap':
-        result['wrong_layout'] = verify_layout_refusal(record['wrong_layout'])
+    if record['kind'] == 'keymap' and 'wrong_layout' in record:
+        result['legacy_wrong_layout'] = verify_layout_refusal(record['wrong_layout'])
     if policy == 'retained_inert':
         result['pointer_cleanup'] = {'policy': policy, 'presence_continuity': 'verified',
                                      'grounded_target_identity': 'verified', 'wayland_surface_identity': 'not_exposed'}
@@ -826,12 +834,6 @@ def run(args):
             save('keymap-cancelled-prefix.json', cancelled)
             verify_cancelled(cancelled, fault.record, time.monotonic_ns())
             close_owned(clients[0])
-            clients.append(launch('wrong-layout'))
-            fault.record['wrong_layout'] = refuse_new_action(
-                clients[-1], observer, clients[0], spec, plan['recovery']['pointer_stage'],
-                trace, fault.config, guard, save)
-            close_owned(clients[-1])
-            save('fault.json', fault.record)
         restoration = fault.restore()
         save('restoration.json', restoration)
         trace.close()

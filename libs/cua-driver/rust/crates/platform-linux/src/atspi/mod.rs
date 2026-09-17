@@ -14,6 +14,16 @@ use anyhow::Result;
 pub mod native;
 pub use native::{element_resolver, ensure_listener_active};
 
+/// Stable address on one AT-SPI bus connection, including the owning frame.
+/// Unique bus names prevent a restarted process from reusing an observed path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AtspiIdentity {
+    pub bus_name: String,
+    pub path: String,
+    pub frame_bus_name: String,
+    pub frame_path: String,
+}
+
 #[derive(Clone, Debug)]
 pub struct AtspiNode {
     pub element_index: Option<usize>,
@@ -31,6 +41,7 @@ pub struct AtspiNode {
     /// For AT-SPI: element_key = element_index as u64.
     /// For X11 fallback: element_key = xid.
     pub element_key: u64,
+    pub identity: Option<AtspiIdentity>,
     /// Depth in the markdown tree (0 = top-level window child).
     /// Defaults to 0 when not tracked (e.g. X11 fallback path).
     pub depth: usize,
@@ -325,6 +336,7 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
         },
         actions: vec!["activate".into()],
         element_key: xid,
+        identity: None,
         depth: 0,
         parent_element_index: None,
         in_web_content: false,

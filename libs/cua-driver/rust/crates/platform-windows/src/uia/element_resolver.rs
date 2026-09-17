@@ -55,8 +55,6 @@ pub struct RetainedElement {
     binding: Option<Arc<Binding>>,
     pub kind: ElementBackend,
     pub center: (i32, i32),
-    pub rect: Option<(i32, i32, i32, i32)>,
-    pub msaa_role: Option<i32>,
 }
 
 impl RetainedElement {
@@ -258,8 +256,6 @@ impl Clone for RetainedElement {
             binding: self.binding.clone(),
             kind: self.kind,
             center: self.center,
-            rect: self.rect,
-            msaa_role: self.msaa_role,
         }
     }
 }
@@ -300,8 +296,6 @@ impl FreshUiaElements {
                             binding: None,
                             kind,
                             center: (node.center_x, node.center_y),
-                            rect: node.rect,
-                            msaa_role: node.msaa_role,
                         },
                     )
                 })

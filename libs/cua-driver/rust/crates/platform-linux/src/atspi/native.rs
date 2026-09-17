@@ -21,7 +21,7 @@ use atspi::proxy::accessible::AccessibleProxy;
 use atspi::proxy::proxy_ext::ProxyExt;
 use atspi::{CoordType, Interface, State, StateSet};
 
-use super::AtspiNode;
+use super::{AtspiIdentity, AtspiNode};
 
 /// Per-call D-Bus timeout: a single unresponsive accessible (common in large,
 /// lazily-built trees like Chromium's) must not stall the whole walk.
@@ -256,6 +256,7 @@ struct Visited<'a> {
     /// tree; this is what lets a caller that named an exact native window prove
     /// which of those windows a node actually lives in.
     frame_ordinal: usize,
+    identity: Option<AtspiIdentity>,
     acc: AccessibleProxy<'a>,
 }
 
@@ -342,6 +343,38 @@ impl RawObjectRef {
             path: oref.path_as_str().to_owned(),
         })
     }
+}
+
+/// Pin well-known names to their current unique owner. A missing owner is
+/// discovery-only: indexed clicks cannot use an unproven persistent identity.
+async fn identity_ref(
+    conn: &AccessibilityConnection,
+    raw: &RawObjectRef,
+    owners: &mut std::collections::HashMap<String, Option<String>>,
+) -> Option<RawObjectRef> {
+    let owner = if raw.name.starts_with(':') {
+        raw.name.clone()
+    } else if let Some(owner) = owners.get(&raw.name) {
+        owner.clone()?
+    } else {
+        let owner = async {
+            let bus = atspi::zbus::fdo::DBusProxy::new(conn.connection())
+                .await
+                .ok()?;
+            let name = atspi::zbus::names::BusName::try_from(raw.name.as_str()).ok()?;
+            call(bus.get_name_owner(name))
+                .await?
+                .ok()
+                .map(|name| name.to_string())
+        }
+        .await;
+        owners.insert(raw.name.clone(), owner.clone());
+        owner?
+    };
+    Some(RawObjectRef {
+        name: owner,
+        path: raw.path.clone(),
+    })
 }
 
 /// Read Accessible.GetChildren without deserializing the bus-name field as a
@@ -714,7 +747,8 @@ async fn collect_visited_bounded<'a>(
     };
 
     let mut stack: Vec<(RawObjectRef, usize, bool, usize)> = seeds
-        .into_iter()
+        .iter()
+        .cloned()
         .enumerate()
         .map(|(ordinal, r)| (r, 0usize, false, ordinal))
         .rev()
@@ -722,6 +756,7 @@ async fn collect_visited_bounded<'a>(
 
     let mut visited: Vec<Visited<'a>> = Vec::new();
     let mut complete = true;
+    let mut identity_owners = std::collections::HashMap::new();
     // Guard against pathological/looping trees. Defaults to 5 000 (the
     // historical hard-coded budget); callers can override via max_elements.
     let mut budget = max_elements.unwrap_or(5000usize);
@@ -765,7 +800,15 @@ async fn collect_visited_bounded<'a>(
         // otherwise the loop never returns to the deadline check at the top and
         // the walk stalls past OP_TIMEOUT for callers without an outer guard
         // (snapshot bounds, insert_text). That was the residual #1936 hang.
-        let acc = match call(accessible_for(conn, &oref)).await {
+        let object_identity = identity_ref(conn, &oref, &mut identity_owners).await;
+        let frame_identity = identity_ref(conn, &seeds[frame_ordinal], &mut identity_owners).await;
+        complete &= object_identity.is_some() && frame_identity.is_some();
+        let acc = match call(accessible_for(
+            conn,
+            object_identity.as_ref().unwrap_or(&oref),
+        ))
+        .await
+        {
             Some(Ok(a)) => a,
             Some(Err(error)) => {
                 dlog!("  accessible_for failed: {error:#}");
@@ -970,6 +1013,14 @@ async fn collect_visited_bounded<'a>(
             in_web_doc,
             on_web_process_bus: is_web_process_bus(&oref.name),
             frame_ordinal,
+            identity: object_identity
+                .zip(frame_identity)
+                .map(|(object, frame)| AtspiIdentity {
+                    bus_name: object.name,
+                    path: object.path,
+                    frame_bus_name: frame.name,
+                    frame_path: frame.path,
+                }),
             acc,
         });
     }
@@ -1055,6 +1106,7 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
                 description: None,
                 actions: v.actions.clone(),
                 element_key: idx as u64,
+                identity: v.identity.clone(),
                 depth: v.depth,
                 parent_element_index,
                 in_web_content: v.in_web_doc,
@@ -1934,6 +1986,80 @@ pub fn perform_action(
             ))
         },
     )
+}
+
+/// Select a retained identity from a live walk. The supplied ordinal is only
+/// the position in that live walk, never the snapshot's public index.
+fn unique_observed_identity_position<'a>(
+    nodes: impl Iterator<Item = (usize, Option<&'a AtspiIdentity>, usize, bool)>,
+    identity: &AtspiIdentity,
+    expected_frame: usize,
+) -> Result<usize> {
+    let mut matches = nodes.filter(|(_, candidate, _, _)| *candidate == Some(identity));
+    let Some((position, _, frame_ordinal, indexable)) = matches.next() else {
+        anyhow::bail!("stale_element_token: observed AT-SPI object is no longer present");
+    };
+    if matches.next().is_some() || frame_ordinal != expected_frame || !indexable {
+        anyhow::bail!(
+            "stale_element_token: observed object is ambiguous, disabled or outside the target window"
+        );
+    }
+    Ok(position)
+}
+
+#[cfg(test)]
+mod observed_identity_tests {
+    use super::*;
+
+    fn identity(path: &str) -> AtspiIdentity {
+        AtspiIdentity {
+            bus_name: ":1.1".into(),
+            path: path.into(),
+            frame_bus_name: ":1.1".into(),
+            frame_path: "/frame".into(),
+        }
+    }
+
+    #[test]
+    fn live_reorder_matches_retained_identity_not_the_old_index() {
+        let observed = identity("/ok");
+        let replacement = identity("/cancel");
+        let live = vec![replacement, observed.clone()];
+        let target = unique_observed_identity_position(
+            live.iter()
+                .enumerate()
+                .map(|(position, item)| (position, Some(item), 0, true)),
+            &observed,
+            0,
+        )
+        .unwrap();
+        assert_eq!(target, 1);
+    }
+
+    #[test]
+    fn ambiguous_disabled_and_wrong_frame_identities_refuse() {
+        let observed = identity("/ok");
+        for nodes in [
+            vec![(0, Some(&observed), 0, true), (1, Some(&observed), 0, true)],
+            vec![(0, Some(&observed), 1, true)],
+            vec![(0, Some(&observed), 0, false)],
+            vec![(0, None, 0, true)],
+        ] {
+            assert!(unique_observed_identity_position(nodes.into_iter(), &observed, 0).is_err());
+        }
+    }
+
+    #[test]
+    fn removed_observed_identity_refuses_before_click() {
+        let observed = identity("/ok");
+        let replacement = identity("/cancel");
+        assert!(unique_observed_identity_position(
+            std::iter::once((0, Some(&replacement), 0, true)),
+            &observed,
+            0,
+        )
+        .is_err());
+    }
 }
 
 /// A mutation was attempted; callers must not replay through another route.

@@ -210,11 +210,7 @@ impl Tool for RightClickTool {
                 Ok(Ok(msg)) if semantic => crate::input::ax_actions::acknowledged(
                     msg,
                     "AXShowMenu",
-                    if foreground {
-                        cua_driver_core::action_record::RequestedDelivery::Foreground
-                    } else {
-                        cua_driver_core::action_record::RequestedDelivery::Background
-                    },
+                    delivery_mode.into(),
                     foreground,
                 ),
                 Ok(Ok(msg)) => ToolResult::text(msg).with_structured(serde_json::json!({
@@ -222,14 +218,7 @@ impl Tool for RightClickTool {
                     "verified": false,
                     "effect": "unverifiable"
                 })),
-                Ok(Err(error)) => ToolResult::from_native_error(
-                    error,
-                    if foreground {
-                        cua_driver_core::action_record::RequestedDelivery::Foreground
-                    } else {
-                        cua_driver_core::action_record::RequestedDelivery::Background
-                    },
-                ),
+                Ok(Err(error)) => ToolResult::from_native_error(error, delivery_mode.into()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
         }
@@ -350,14 +339,7 @@ impl Tool for RightClickTool {
                 .with_structured(serde_json::json!({
                     "path": if fg { "cgevent_fg" } else { "cgevent" }, "verified": false, "effect": "unverifiable"
                 })),
-            Ok(Err(error)) => ToolResult::from_native_error(
-                error,
-                if fg {
-                    cua_driver_core::action_record::RequestedDelivery::Foreground
-                } else {
-                    cua_driver_core::action_record::RequestedDelivery::Background
-                },
-            ),
+            Ok(Err(error)) => ToolResult::from_native_error(error, delivery_mode.into()),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }

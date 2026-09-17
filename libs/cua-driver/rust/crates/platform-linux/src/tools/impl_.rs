@@ -1112,6 +1112,7 @@ mod get_window_state_actions_tests {
             description: None,
             actions,
             element_key: 1,
+            identity: None,
             depth: 0,
             parent_element_index: None,
             in_web_content: false,
@@ -2524,6 +2525,33 @@ fn isolated_background_routes_do_not_reprobe_availability_before_primary_fallbac
 
 #[cfg(test)]
 #[test]
+fn type_text_routes_isolated_background_before_generic_wayland_refusal() {
+    let source = include_str!("impl_.rs");
+    let invoke = source
+        .rsplit_once("impl Tool for TypeTextTool {")
+        .unwrap()
+        .1
+        .split_once("impl Tool for PressKeyTool {")
+        .unwrap()
+        .0
+        .split_once("async fn invoke")
+        .unwrap()
+        .1;
+    let isolated = invoke
+        .find("isolated_hyprland_background(delivery)")
+        .expect("type_text must select isolated Hyprland background delivery");
+    let generic = invoke
+        .find("unavailable_wayland_focused_input_background")
+        .expect("type_text must retain the generic Wayland refusal");
+    assert!(
+        isolated < generic,
+        "the plugin route must run before the generic focused-input refusal"
+    );
+    assert!(invoke.contains("execute_background_text"));
+}
+
+#[cfg(test)]
+#[test]
 fn isolated_hyprland_refused_partial_and_unknown_outcomes_stay_distinct() {
     let busy = isolated_hyprland_result(Err(crate::wayland::hyprland_input::LaneBusy.into()));
     let content = busy.structured_content.as_ref().unwrap();
@@ -3220,13 +3248,13 @@ impl Tool for ClickTool {
             name: "click".into(),
             description: "Click against a target pid. **Prefer `element_token` over pixel \
                 coordinates** — element_token works on backgrounded / hidden windows, surfaces \
-                a stable handle, and tells you what you're clicking via the cached AT-SPI \
-                element's role + label. Reach for `x, y` only when the target is a canvas / \
+                the target control's current AT-SPI role and label. Reach for `x, y` \
+                only when the target is a canvas / \
                 custom-drawn surface that doesn't appear in the AT-SPI tree.\n\n\
                 Provide either (window_id + x/y) or (pid + element_token). Routes via \
-                XSendEvent (no focus steal). element address is scoped per (pid, \
-                window_id) and is replaced by the next get_window_state of the same window — \
-                re-snapshot every turn before clicking.\n\n\
+                XSendEvent (no focus steal). Tokens are scoped to the process and window, \
+                and survive later observations. Missing, changed, ambiguous, or unproven \
+                targets refuse; an uncertain action is never replayed automatically.\n\n\
                 After a zoom call, pass from_zoom=true to auto-translate zoom-image coords \
                 back to full-window space.\n\n\
                 button: \"left\" (default), \"right\", or \"middle\". Defaults to left so the \
@@ -3520,8 +3548,16 @@ impl Tool for ClickTool {
                 return refusal;
             }
 
-            // The AX route was unavailable. Fall back to a target-addressed
-            // X11 event for toolkits that accept it.
+            if !crate::wayland::is_wayland()
+                && !delivery.is_foreground()
+                && element.needs_foreground_pointer()
+            {
+                return crate::input::delivery::background_unavailable_error(
+                    crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+                );
+            }
+            let foreground_x11 =
+                delivery.is_foreground() && !crate::wayland::wayland_input_enabled();
             let result = spawn_native(move || -> anyhow::Result<()> {
                 let xid2 = element.checked_window(pid, Some(xid))?;
                 let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
@@ -3536,7 +3572,7 @@ impl Tool for ClickTool {
                 // selectable rows) expose bounds but no AT-SPI Action and
                 // ignore a targeted XSendEvent; limiting XTest to modified
                 // clicks made those rows addressable but not selectable.
-                if delivery.is_foreground() && !crate::wayland::wayland_input_enabled() {
+                if foreground_x11 {
                     crate::input::with_x11_foreground(xid2, 80, || {
                         let (_, lx, ly) =
                             element_bounds_local_coords(xid2, element.screen_bounds()?)?;
@@ -3570,7 +3606,7 @@ impl Tool for ClickTool {
                 // was fine but unconfirmable.
                 Ok(Ok(())) => {
                     let structured = json!({
-                        "path": "x11_pixel",
+                        "path": if foreground_x11 { "x11_xtest_fg" } else { "x11_pixel" },
                         "verified": false,
                         "effect": "unverifiable",
                     });
@@ -4035,6 +4071,40 @@ impl Tool for TypeTextTool {
             }
         };
         let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
+        if isolated_hyprland_background(delivery)
+            && resolved_elem_idx.is_none()
+            && args.get("x").is_none()
+            && args.get("y").is_none()
+        {
+            if xid_opt.is_none() {
+                return isolated_hyprland_refusal(
+                    "an exact window_id is required for isolated text",
+                );
+            }
+            match crate::wayland::hyprland_input::text_actions(&text) {
+                Ok(actions) if !actions.is_empty() => {}
+                Ok(_) => return isolated_hyprland_refusal("background text must not be empty"),
+                Err(error) => return isolated_hyprland_refusal(error.to_string()),
+            }
+            let owner = named_session_cursor_key(&args);
+            let (_cancellation, dispatch) =
+                match spawn_isolated_hyprland(&args, move |cancellation| {
+                    crate::wayland::hyprland_input::execute_background_text(
+                        owner,
+                        pid,
+                        xid,
+                        &text,
+                        cancellation,
+                    )
+                }) {
+                    Ok(dispatch) => dispatch,
+                    Err(refusal) => return refusal,
+                };
+            return match dispatch.await {
+                Ok(result) => isolated_hyprland_result(result),
+                Err(error) => isolated_hyprland_task_error(error, false),
+            };
+        }
         if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
             return refusal;
         }
@@ -4065,7 +4135,7 @@ impl Tool for TypeTextTool {
                     return type_resolved_text(pid, index, text).await;
                 }
             }
-            match crate::wayland::hyprland_input::foreground_text_actions(&text) {
+            match crate::wayland::hyprland_input::text_actions(&text) {
                 Ok(actions) if !actions.is_empty() => {}
                 Ok(_) => return foreground_hyprland_refusal("foreground text must not be empty"),
                 Err(error) => return foreground_hyprland_refusal(error.to_string()),

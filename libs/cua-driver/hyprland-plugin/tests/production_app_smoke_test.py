@@ -50,7 +50,7 @@ INKSCAPE_SELECTED = {
 }
 
 
-def changed_ods(original, text='a', empty_first=False):
+def changed_ods(original, text='abc', empty_first=False):
     destination = io.BytesIO()
     with zipfile.ZipFile(io.BytesIO(original)) as source, zipfile.ZipFile(destination, 'w') as target:
         for name in source.namelist():
@@ -345,17 +345,17 @@ class InputTests(unittest.TestCase):
         mcp = Mock()
         mcp.tool.side_effect = [{'structuredContent': CALC}, WINDOWS, GOOD_DELIVERY,
                                 {'structuredContent': CALC}, WINDOWS]
-        input_step(mcp, TARGET, 'cua-smoke-calc.ods', 'calc', 'insert', 'press_key', {'key': 'a'})
+        input_step(mcp, TARGET, 'cua-smoke-calc.ods', 'calc', 'insert', 'type_text', {'text': 'abc'})
         calls = mcp.tool.call_args_list
         self.assertEqual([call.args[0] for call in calls],
-                         ['get_window_state', 'list_windows', 'press_key', 'get_window_state', 'list_windows'])
-        self.assertEqual(calls[2].args[1], {**TARGET, 'key': 'a', 'delivery_mode': 'background'})
+                         ['get_window_state', 'list_windows', 'type_text', 'get_window_state', 'list_windows'])
+        self.assertEqual(calls[2].args[1], {**TARGET, 'text': 'abc', 'delivery_mode': 'background'})
 
     def test_missing_grounding_sends_no_input(self):
         mcp = Mock()
         mcp.tool.side_effect = [{'structuredContent': {**CALC, 'elements': []}}, WINDOWS]
         with self.assertRaises(GroundingUnavailable):
-            input_step(mcp, TARGET, 'cua-smoke-calc.ods', 'calc', 'insert', 'press_key', {'key': 'a'})
+            input_step(mcp, TARGET, 'cua-smoke-calc.ods', 'calc', 'insert', 'type_text', {'text': 'abc'})
         self.assertEqual(mcp.tool.call_count, 2)
 
     def test_partial_delivery_stays_failure_even_if_dialog_appears(self):
@@ -365,7 +365,7 @@ class InputTests(unittest.TestCase):
         mcp.tool.side_effect = [{'structuredContent': CALC}, WINDOWS, partial,
                                 {'structuredContent': dialog}, WINDOWS]
         with self.assertRaises(AssertionError):
-            input_step(mcp, TARGET, 'cua-smoke-calc.ods', 'calc', 'insert', 'press_key', {'key': 'a'})
+            input_step(mcp, TARGET, 'cua-smoke-calc.ods', 'calc', 'insert', 'type_text', {'text': 'abc'})
         self.assertEqual(mcp.tool.call_count, 5)
 
     def test_unknown_transport_outcome_is_not_replayed(self):
@@ -373,7 +373,7 @@ class InputTests(unittest.TestCase):
         mcp.tool.side_effect = [{'structuredContent': CALC}, WINDOWS, TimeoutError('unknown')]
         with patch('production_app_smoke.read', side_effect=OSError('unavailable')):
             with self.assertRaises(TimeoutError):
-                input_step(mcp, TARGET, 'cua-smoke-calc.ods', 'calc', 'insert', 'press_key', {'key': 'a'})
+                input_step(mcp, TARGET, 'cua-smoke-calc.ods', 'calc', 'insert', 'type_text', {'text': 'abc'})
         self.assertEqual(mcp.tool.call_count, 3)
 
 

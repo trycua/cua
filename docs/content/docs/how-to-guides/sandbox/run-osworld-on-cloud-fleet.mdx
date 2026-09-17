@@ -3,21 +3,14 @@ title: Run OSWorld on Fleet
 description: Turn the official OSWorld image into a Fleet containerDisk with Cua Driver inside, claim it from the Sandbox SDK, and run OSWorld tasks against it.
 ---
 
-import { Callout } from 'fumadocs-ui/components/callout';
-
 You start from the official [OSWorld](https://osworld-v1.xlang.ai/) Ubuntu disk,
 add the Cua Driver MCP server to it, publish it as a Fleet containerDisk, and
 drive it with the Sandbox SDK. The same script runs the disk locally under QEMU.
 
-<Callout type="info">
-  Needs `Image.from_registry(..., agent_type="osworld")`, available in
-  `cua-sandbox` on `main` after 0.5.0. Until it is released, run scripts with
-  `uv run --with /path/to/cua/libs/python/cua-sandbox`.
-</Callout>
 
 ## Before you start
 
-- Python `>=3.11,<3.14`, [`uv`](https://docs.astral.sh/uv/), and Docker.
+- Python `>=3.11,<3.14`, [`uv`](https://docs.astral.sh/uv/), Docker, and `cua-sandbox>=0.8.0`.
 - About 60 GB of free disk.
 - [Fleet credentials](/how-to-guides/sandbox/set-up-fleet-credentials) exported
   as `CUA_CLIENT_ID`, `CUA_CLIENT_SECRET`, and `CUA_TOKEN_URL`.

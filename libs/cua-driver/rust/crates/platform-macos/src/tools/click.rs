@@ -527,7 +527,7 @@ impl Tool for ClickTool {
                          (background CGEvent; not driver-verified — confirm via screenshot)."
                     ))
                     .with_structured(serde_json::json!({ "path": "cgevent", "verified": false, "effect": "unverifiable" })),
-                    Ok(Err(e)) => ToolResult::from_native_error(e, if delivery_mode.is_foreground() { cua_driver_core::action_record::RequestedDelivery::Foreground } else { cua_driver_core::action_record::RequestedDelivery::Background }),
+                    Ok(Err(e)) => ToolResult::from_native_error(e, delivery_mode.into()),
                     Err(e)     => ToolResult::error(format!("Task error: {e}")),
                 };
             }
@@ -752,25 +752,14 @@ impl Tool for ClickTool {
                         crate::input::ax_actions::acknowledged(
                             msg,
                             "AXShowMenu",
-                            if delivery_mode.is_foreground() {
-                                cua_driver_core::action_record::RequestedDelivery::Foreground
-                            } else {
-                                cua_driver_core::action_record::RequestedDelivery::Background
-                            },
+                            delivery_mode.into(),
                             fronted,
                         )
                     } else {
                         ToolResult::text(msg).with_structured(structured)
                     }
                 }
-                Ok(Err(e)) => ToolResult::from_native_error(
-                    e,
-                    if delivery_mode.is_foreground() {
-                        cua_driver_core::action_record::RequestedDelivery::Foreground
-                    } else {
-                        cua_driver_core::action_record::RequestedDelivery::Background
-                    },
-                ),
+                Ok(Err(e)) => ToolResult::from_native_error(e, delivery_mode.into()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             }
         } else if let (Some(mut cx), Some(mut cy)) = (x, y) {
@@ -1196,14 +1185,7 @@ impl Tool for ClickTool {
                         "focus_without_raise": focus_without_raise
                     }))
                 }
-                Ok(Err(e)) => ToolResult::from_native_error(
-                    e,
-                    if delivery_mode.is_foreground() {
-                        cua_driver_core::action_record::RequestedDelivery::Foreground
-                    } else {
-                        cua_driver_core::action_record::RequestedDelivery::Background
-                    },
-                ),
+                Ok(Err(e)) => ToolResult::from_native_error(e, delivery_mode.into()),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             }
         } else {

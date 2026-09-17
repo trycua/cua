@@ -220,7 +220,7 @@ impl Tool for ListAppsTool {
     }
 
     async fn invoke(&self, _args: Value) -> ToolResult {
-        let apps = spawn_native(|| -> Vec<serde_json::Value> {
+        let apps = tokio::task::spawn_blocking(|| -> Vec<serde_json::Value> {
             let procs = crate::proc_fs::list_processes();
             let installed = crate::installed_apps::list_installed_apps();
 
@@ -437,9 +437,10 @@ impl Tool for ListWindowsTool {
         use cua_driver_core::tool_args::ArgsExt;
         let filter_pid = args.opt_u64("pid").map(|v| v as u32);
         let on_screen_only = args.bool_or("on_screen_only", false);
-        let mut windows = spawn_native(move || crate::wayland::list_windows_dispatch(filter_pid))
-            .await
-            .unwrap_or_default();
+        let mut windows =
+            tokio::task::spawn_blocking(move || crate::wayland::list_windows_dispatch(filter_pid))
+                .await
+                .unwrap_or_default();
         // Exited applications can remain visible in AT-SPI/X11 as zombies;
         // never return those stale targets to callers.
         windows.retain(|window| window.pid.map_or(true, crate::proc_fs::is_process_live));
@@ -651,10 +652,10 @@ impl Tool for GetWindowStateTool {
             description: "Walk a running app's AT-SPI tree and return BOTH a \
                 structured `elements` array (preferred) AND a Markdown rendering of \
                 the same tree (back-compat). Every actionable element is tagged \
-                with [element_token N] in the markdown and as `element_token` in \
+                with [element_index N] in the markdown and as `element_index` in \
                 the structured array.\n\n\
                 PREFERRED CONSUMERS read `structuredContent.elements` (one entry \
-                per indexed row with `element_token`, `role`, `label`, `value`, \
+                per indexed row with `element_index`, `element_token`, `role`, `label`, `value`, \
                 `enabled`, `selected`, `actions` (names of AT-SPI actions exposed \
                 by the element, omitted when empty), \
                 `frame: {x,y,w,h}` when AT-SPI reports usable bounds, \
@@ -809,7 +810,7 @@ impl Tool for GetWindowStateTool {
         let state = self.state.clone();
         let query_for_walk = query.clone();
 
-        let result = spawn_native(move || -> anyhow::Result<_> {
+        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
             // Skip the AT-SPI walk on the capture-only path
             // (include_accessibility_tree:false).
             let tree_result = if want_tree {
@@ -1435,99 +1436,102 @@ impl Tool for LaunchAppTool {
             return ToolResult::error("Provide at least one of: launch_path, name, or urls.");
         }
 
-        let result = spawn_native(move || -> anyhow::Result<(String, Option<u32>, String)> {
-            // Open URLs via xdg-open.
-            if !urls.is_empty() {
-                let mut children = Vec::new();
-                for url in &urls {
-                    children.push((
-                        url.clone(),
-                        std::process::Command::new("xdg-open").arg(url).spawn()?,
+        let result = tokio::task::spawn_blocking(
+            move || -> anyhow::Result<(String, Option<u32>, String)> {
+                // Open URLs via xdg-open.
+                if !urls.is_empty() {
+                    let mut children = Vec::new();
+                    for url in &urls {
+                        children.push((
+                            url.clone(),
+                            std::process::Command::new("xdg-open").arg(url).spawn()?,
+                        ));
+                    }
+                    for (url, child) in children {
+                        if let Some(reason) = xdg_open_failure(child) {
+                            anyhow::bail!("could not open '{url}': {reason}");
+                        }
+                    }
+                    return Ok((
+                        format!("Opened {} URL(s) via xdg-open.", urls.len()),
+                        None,
+                        "xdg-open".to_owned(),
                     ));
                 }
-                for (url, child) in children {
-                    if let Some(reason) = xdg_open_failure(child) {
-                        anyhow::bail!("could not open '{url}': {reason}");
-                    }
-                }
-                return Ok((
-                    format!("Opened {} URL(s) via xdg-open.", urls.len()),
-                    None,
-                    "xdg-open".to_owned(),
-                ));
-            }
-            // launch_path > name. Both go through the same direct-exec path
-            // (so XDG `Exec=` commands round-trip), but launch_path is the
-            // canonical form preferred by list_apps callers.
-            let command = launch_path_opt.as_deref().or(name_opt.as_deref());
-            if let Some(cmd) = command {
-                match spawn_launch_command(cmd, &additional_arguments) {
-                    Ok(pid) => {
-                        return Ok((
-                            format!("✅ Launched {cmd} (pid {pid}) in background."),
-                            Some(pid),
-                            cmd.to_owned(),
-                        ));
-                    }
-                    Err(_) => {
-                        // Not an executable on PATH. Resolve the name against
-                        // installed XDG .desktop applications — the same
-                        // source list_apps reads — and run the match's Exec=.
-                        let installed = crate::installed_apps::list_installed_apps();
-                        if let Some(app) = match_installed_app(&installed, cmd) {
-                            let pid = spawn_launch_command(&app.launch_path, &additional_arguments)
-                                .map_err(|e| {
-                                    anyhow::anyhow!(
-                                        "'{cmd}' matched installed app '{}' but its launcher \
-                                         `{}` failed to start: {e}",
-                                        app.name,
-                                        app.launch_path
-                                    )
-                                })?;
+                // launch_path > name. Both go through the same direct-exec path
+                // (so XDG `Exec=` commands round-trip), but launch_path is the
+                // canonical form preferred by list_apps callers.
+                let command = launch_path_opt.as_deref().or(name_opt.as_deref());
+                if let Some(cmd) = command {
+                    match spawn_launch_command(cmd, &additional_arguments) {
+                        Ok(pid) => {
                             return Ok((
-                                format!(
-                                    "✅ Launched {} (`{}`, pid {pid}) in background — \
-                                         resolved '{cmd}' via its desktop entry.",
-                                    app.name, app.launch_path
-                                ),
+                                format!("✅ Launched {cmd} (pid {pid}) in background."),
                                 Some(pid),
-                                app.name.clone(),
+                                cmd.to_owned(),
                             ));
                         }
-                        // xdg-open handles URLs and file paths, not app
-                        // names — only fall through for something it can
-                        // plausibly open, and surface its fast non-zero
-                        // exit instead of reporting a launch that never
-                        // happened.
-                        if !cmd.contains("://") && !std::path::Path::new(cmd).exists() {
-                            anyhow::bail!(
-                                "'{cmd}' is not an executable on PATH and matches no \
+                        Err(_) => {
+                            // Not an executable on PATH. Resolve the name against
+                            // installed XDG .desktop applications — the same
+                            // source list_apps reads — and run the match's Exec=.
+                            let installed = crate::installed_apps::list_installed_apps();
+                            if let Some(app) = match_installed_app(&installed, cmd) {
+                                let pid =
+                                    spawn_launch_command(&app.launch_path, &additional_arguments)
+                                        .map_err(|e| {
+                                        anyhow::anyhow!(
+                                            "'{cmd}' matched installed app '{}' but its launcher \
+                                         `{}` failed to start: {e}",
+                                            app.name,
+                                            app.launch_path
+                                        )
+                                    })?;
+                                return Ok((
+                                    format!(
+                                        "✅ Launched {} (`{}`, pid {pid}) in background — \
+                                         resolved '{cmd}' via its desktop entry.",
+                                        app.name, app.launch_path
+                                    ),
+                                    Some(pid),
+                                    app.name.clone(),
+                                ));
+                            }
+                            // xdg-open handles URLs and file paths, not app
+                            // names — only fall through for something it can
+                            // plausibly open, and surface its fast non-zero
+                            // exit instead of reporting a launch that never
+                            // happened.
+                            if !cmd.contains("://") && !std::path::Path::new(cmd).exists() {
+                                anyhow::bail!(
+                                    "'{cmd}' is not an executable on PATH and matches no \
                                      installed .desktop application. Call list_apps and \
                                      round-trip its launch_path."
-                            );
+                                );
+                            }
+                            let child = std::process::Command::new("xdg-open").arg(cmd).spawn()?;
+                            if let Some(reason) = xdg_open_failure(child) {
+                                anyhow::bail!("could not open '{cmd}': {reason}");
+                            }
+                            // xdg-open may spawn a helper and exit, so do not
+                            // claim its pid is the app pid.
+                            return Ok((
+                                format!("Opened '{cmd}' via xdg-open."),
+                                None,
+                                cmd.to_owned(),
+                            ));
                         }
-                        let child = std::process::Command::new("xdg-open").arg(cmd).spawn()?;
-                        if let Some(reason) = xdg_open_failure(child) {
-                            anyhow::bail!("could not open '{cmd}': {reason}");
-                        }
-                        // xdg-open may spawn a helper and exit, so do not
-                        // claim its pid is the app pid.
-                        return Ok((
-                            format!("Opened '{cmd}' via xdg-open."),
-                            None,
-                            cmd.to_owned(),
-                        ));
                     }
                 }
-            }
-            unreachable!()
-        })
+                unreachable!()
+            },
+        )
         .await;
 
         match result {
             Ok(Ok((message, pid_opt, name))) => {
                 if let Some(pid) = pid_opt {
-                    let windows = spawn_native(move || {
+                    let windows = tokio::task::spawn_blocking(move || {
                         let deadline =
                             std::time::Instant::now() + std::time::Duration::from_secs(3);
                         loop {
@@ -3397,13 +3401,22 @@ impl Tool for ClickTool {
         // Surface 6: element_token / element_index precedence resolution.
         // We resolve before the legacy `opt_u64("element_index")` branch
         // so a token-only call (no integer arg) still takes the element path.
-        let resolved =
-            match crate::atspi::element_resolver::resolve_element_args(pid as i32, &args, "click")
-                .await
-            {
-                Ok(r) => r,
-                Err(e) => return e,
-            };
+        let element_token_arg = args.opt_str("element_token");
+        let window_id_arg = args.opt_u64("window_id");
+        let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
+        let resolved = match crate::atspi::element_resolver::resolve_element_args(
+            pid as i32,
+            element_index_arg,
+            element_token_arg.as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
+            window_id_arg,
+            "click",
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
         let (elem_idx_resolved, window_id_resolved, element) =
             resolved.into_parts(args.opt_u64("window_id"));
 
@@ -4037,7 +4050,10 @@ impl Tool for TypeTextTool {
         // the window_id when supplied so the caller can omit window_id.
         let resolved = match crate::atspi::element_resolver::resolve_element_args(
             pid as i32,
-            &args,
+            args.opt_u64("element_index").map(|v| v as usize),
+            args.opt_str("element_token").as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
+            args.opt_u64("window_id"),
             "type_text",
         )
         .await
@@ -4705,7 +4721,10 @@ impl Tool for PressKeyTool {
         let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
         let resolved = match crate::atspi::element_resolver::resolve_element_args(
             pid as i32,
-            &args,
+            element_index_arg,
+            element_token_arg.as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
+            window_id_arg,
             "press_key",
         )
         .await
@@ -5059,13 +5078,19 @@ impl Tool for HotkeyTool {
         let pid = args.u64_or("pid", 0) as u32;
         let window_id_arg = args.opt_u64("window_id");
         let element_index_arg = args.opt_u64("element_index").map(|value| value as usize);
-        let resolved =
-            match crate::atspi::element_resolver::resolve_element_args(pid as i32, &args, "hotkey")
-                .await
-            {
-                Ok(resolved) => resolved,
-                Err(error) => return error,
-            };
+        let resolved = match crate::atspi::element_resolver::resolve_element_args(
+            pid as i32,
+            element_index_arg,
+            args.opt_str("element_token").as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
+            window_id_arg,
+            "hotkey",
+        )
+        .await
+        {
+            Ok(resolved) => resolved,
+            Err(error) => return error,
+        };
         let resolved_element_index = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element { element, .. } => {
                 Some(element.clone())
@@ -5393,7 +5418,10 @@ impl Tool for SetValueTool {
         // Surface 6: element_token / element_index precedence resolution.
         let resolved = match crate::atspi::element_resolver::resolve_element_args(
             pid as i32,
-            &args,
+            args.opt_u64("element_index").map(|v| v as usize),
+            args.opt_str("element_token").as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
+            args.opt_u64("window_id"),
             "set_value",
         )
         .await
@@ -5620,13 +5648,19 @@ impl Tool for ScrollTool {
         // element (X11 scroll buttons go to the window root), but the
         // token still needs to be accepted + validated so a stale
         // token surfaces an error instead of silently no-op'ing.
-        let resolved =
-            match crate::atspi::element_resolver::resolve_element_args(pid as i32, &args, "scroll")
-                .await
-            {
-                Ok(r) => r,
-                Err(e) => return e,
-            };
+        let resolved = match crate::atspi::element_resolver::resolve_element_args(
+            pid as i32,
+            args.opt_u64("element_index").map(|v| v as usize),
+            args.opt_str("element_token").as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
+            args.opt_u64("window_id"),
+            "scroll",
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
         let xid_opt: Option<u64> = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => window_id
                 .map(|v| v as u64)
@@ -7535,7 +7569,7 @@ impl Tool for GetScreenSizeTool {
         if let Err(result) = parse_typed_input::<GetScreenSizeInput>("get_screen_size", args) {
             return result;
         }
-        let result = spawn_native(|| {
+        let result = tokio::task::spawn_blocking(|| {
             if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
                 // Shared manifest admission needs content-free display
                 // metadata even when this native desktop has no X11 DISPLAY.
@@ -7660,7 +7694,7 @@ impl Tool for GetDesktopStateTool {
         };
         let out_file = input.screenshot_out_file;
 
-        let result = spawn_native(move || -> anyhow::Result<_> {
+        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
             // Capture the full display at native size first. When the
             // compositor consumes logical input coordinates, normalize the
             // image below so screenshot pixels still land exactly.
@@ -7789,7 +7823,7 @@ impl Tool for GetCursorPositionTool {
                 ).with_structured(json!({ "source": "synthetic", "available": false })),
             };
         }
-        let result = spawn_native(|| {
+        let result = tokio::task::spawn_blocking(|| {
             use x11rb::connection::Connection;
             use x11rb::protocol::xproto::ConnectionExt as _;
             use x11rb::rust_connection::RustConnection;
@@ -8137,16 +8171,18 @@ impl Tool for CheckPermissionsTool {
     }
     async fn invoke(&self, _args: Value) -> ToolResult {
         // Check X11 connectivity (required for window enumeration and input injection).
-        let x11_ok = spawn_native(|| x11rb::rust_connection::RustConnection::connect(None).is_ok())
-            .await
-            .unwrap_or(false);
+        let x11_ok = tokio::task::spawn_blocking(|| {
+            x11rb::rust_connection::RustConnection::connect(None).is_ok()
+        })
+        .await
+        .unwrap_or(false);
 
         // Check AT-SPI: not merely "is there a session bus?" but "does
         // org.a11y.Bus actually answer on it?" — the previous env-var-or-
         // /run/user heuristic false-passed exactly the headless/container case
         // (/run/user exists, but no a11y bus → empty trees). Probe for real.
         let dbus_address = std::env::var("DBUS_SESSION_BUS_ADDRESS").ok();
-        let atspi_ok = spawn_native(crate::health_report::probe_a11y_bus)
+        let atspi_ok = tokio::task::spawn_blocking(crate::health_report::probe_a11y_bus)
             .await
             .unwrap_or(false);
 
@@ -8405,7 +8441,7 @@ impl Tool for GetAccessibilityTreeTool {
         })
     }
     async fn invoke(&self, _args: Value) -> ToolResult {
-        let (procs, windows) = spawn_native(|| {
+        let (procs, windows) = tokio::task::spawn_blocking(|| {
             (
                 crate::proc_fs::list_processes(),
                 crate::x11::list_windows(None),
@@ -8513,7 +8549,7 @@ impl Tool for ZoomTool {
         }
 
         let state = self.state.clone();
-        let result = spawn_native(move || {
+        let result = tokio::task::spawn_blocking(move || {
             // Route through the Wayland-aware window capture dispatcher so
             // pure-Wayland sessions surface a typed "per-window capture not
             // supported yet" error instead of accidentally calling the

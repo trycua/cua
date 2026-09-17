@@ -85,14 +85,22 @@ impl Tool for DoubleClickTool {
         let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
         // Surface 6: token / index precedence — see click.rs for the
         // canonical comment.
+        let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id");
-        let resolved =
-            match crate::ax::element_resolver::resolve_element_args(pid, &args, "double_click")
-                .await
-            {
-                Ok(r) => r,
-                Err(e) => return e,
-            };
+        let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
+        let resolved = match crate::ax::element_resolver::resolve_element_args(
+            pid,
+            element_index_arg,
+            element_token_arg.as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
+            window_id_arg,
+            "double_click",
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
         let (element_index, window_id, element_guard) = resolved.into_parts(window_id_arg);
         let window_id = match super::native_window_id(window_id) {
             Ok(window_id) => window_id,
@@ -109,22 +117,7 @@ impl Tool for DoubleClickTool {
             // advertises AXOpen uses the exact semantic route; all other
             // elements require the stricter routed-pointer proof. Do not let a
             // failed AXOpen silently cross into an ungated pointer fallback.
-            let probe_guard = element_guard.clone();
-            let has_ax_open = match spawn_native(move || -> anyhow::Result<bool> {
-                let pointer = probe_guard.checked_ptr()?;
-                Ok(unsafe {
-                    crate::ax::bindings::copy_action_names_checked(pointer as AXUIElementRef)
-                }
-                .map_err(|code| anyhow::anyhow!("native action read failed: {code}"))?
-                .iter()
-                .any(|action| action == "AXOpen"))
-            })
-            .await
-            {
-                Ok(Ok(value)) => value,
-                Ok(Err(error)) => return ToolResult::error(error.to_string()),
-                Err(error) => return ToolResult::error(error.to_string()),
-            };
+            let has_ax_open = element_guard.supports_action("AXOpen");
             let _mutation_lease = if !delivery_mode.is_foreground() {
                 let action = background_action_for_element(has_ax_open);
                 match super::gate_background_window_action(pid, wid, Some(element_ptr), action)
@@ -153,12 +146,7 @@ impl Tool for DoubleClickTool {
                     )
                 };
                 if delivery_mode.is_foreground() {
-                    let mut result = None;
-                    crate::input::skylight::with_foreground_hid_activation(pid, wid, || {
-                        result = Some(dispatch());
-                        Ok(())
-                    })?;
-                    result.ok_or_else(|| anyhow::anyhow!("native action did not start"))?
+                    crate::input::skylight::with_foreground_hid_activation(pid, wid, dispatch)
                 } else {
                     dispatch()
                 }
@@ -326,24 +314,20 @@ fn ax_double_click(
         } else {
             cua_driver_core::action_record::RequestedDelivery::Background
         };
-        let dispatch = || -> anyhow::Result<ToolResult> {
-            let element = target.checked_ptr()? as AXUIElementRef;
-            let status = unsafe { perform_action(element, "AXOpen") };
-            if status != kAXErrorSuccess {
-                return Ok(ToolResult::native_outcome_unknown(
-                    format!("AXOpen returned {status}; inspect fresh state and do not replay"),
-                    cua_driver_core::action_record::ActionTransport::MacosAxAction,
-                    requested,
-                ));
-            }
-            Ok(crate::input::ax_actions::acknowledged(
-                format!("AXOpen performed on element [{idx}]."),
-                "AXOpen",
+        let status = unsafe { perform_action(element, "AXOpen") };
+        if status != kAXErrorSuccess {
+            return Ok(ToolResult::native_outcome_unknown(
+                format!("AXOpen returned {status}; inspect fresh state and do not replay"),
+                cua_driver_core::action_record::ActionTransport::MacosAxAction,
                 requested,
-                foreground,
-            ))
-        };
-        return dispatch();
+            ));
+        }
+        return Ok(crate::input::ax_actions::acknowledged(
+            format!("AXOpen performed on element [{idx}]."),
+            "AXOpen",
+            requested,
+            foreground,
+        ));
     }
 
     // Resolve screen center and fall back to pixel double-click.

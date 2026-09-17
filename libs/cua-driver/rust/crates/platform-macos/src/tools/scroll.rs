@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use cua_driver_contract::{ScrollBy, ScrollDirection, ScrollInput};
-use cua_driver_core::tool::spawn_native;
+use cua_driver_core::tool::{bind_native, spawn_native};
 use cua_driver_core::{
     protocol::ToolResult,
     tool::{Tool, ToolDef},
@@ -210,12 +210,22 @@ impl Tool for ScrollTool {
         let by = args.str_or("by", "line");
         let amount = args.u64_or("amount", 3) as usize;
         // Surface 6: element_token / element_index precedence.
+        let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id");
-        let resolved =
-            match crate::ax::element_resolver::resolve_element_args(pid, &args, "scroll").await {
-                Ok(r) => r,
-                Err(e) => return e,
-            };
+        let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
+        let resolved = match crate::ax::element_resolver::resolve_element_args(
+            pid,
+            element_index_arg,
+            element_token_arg.as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
+            window_id_arg,
+            "scroll",
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
         let (_, window_id, pre_focus_guard) = resolved.into_parts(window_id_arg);
         let window_id = match super::native_window_id(window_id) {
             Ok(window_id) => window_id,
@@ -259,40 +269,42 @@ impl Tool for ScrollTool {
                 let direction_for_ax = direction.clone();
                 let by_for_ax = by.clone();
                 let foreground = delivery_mode.is_foreground();
-                let ax_result = spawn_native(move || -> anyhow::Result<(bool, bool)> {
-                    if foreground {
-                        let mut delivered = false;
-                        let fronted = crate::input::skylight::with_foreground_assist(
-                            pid as libc::pid_t,
-                            wid,
-                            || {
-                                delivered = unsafe {
+                let ax_result = tokio::task::spawn_blocking(bind_native(
+                    move || -> anyhow::Result<(bool, bool)> {
+                        if foreground {
+                            let mut delivered = false;
+                            let fronted = crate::input::skylight::with_foreground_assist(
+                                pid as libc::pid_t,
+                                wid,
+                                || {
+                                    delivered = unsafe {
+                                        scroll_native_text_area(
+                                            element_guard.checked_ptr()? as AXUIElementRef,
+                                            &direction_for_ax,
+                                            &by_for_ax,
+                                            amount,
+                                        )?
+                                    };
+                                    std::thread::sleep(std::time::Duration::from_millis(100));
+                                    Ok(())
+                                },
+                            )?;
+                            Ok((delivered, fronted))
+                        } else {
+                            Ok((
+                                unsafe {
                                     scroll_native_text_area(
                                         element_guard.checked_ptr()? as AXUIElementRef,
                                         &direction_for_ax,
                                         &by_for_ax,
                                         amount,
                                     )?
-                                };
-                                std::thread::sleep(std::time::Duration::from_millis(100));
-                                Ok(())
-                            },
-                        )?;
-                        Ok((delivered, fronted))
-                    } else {
-                        Ok((
-                            unsafe {
-                                scroll_native_text_area(
-                                    element_guard.checked_ptr()? as AXUIElementRef,
-                                    &direction_for_ax,
-                                    &by_for_ax,
-                                    amount,
-                                )?
-                            },
-                            false,
-                        ))
-                    }
-                })
+                                },
+                                false,
+                            ))
+                        }
+                    },
+                ))
                 .await;
                 match ax_result {
                     Ok(Ok((true, fronted))) => {
@@ -423,7 +435,11 @@ impl Tool for ScrollTool {
             match target_task.await {
                 Ok(Ok(target)) => target,
                 Ok(Err(refusal)) => return refusal,
-                Err(_) => None,
+                Err(error) => return ToolResult::native_outcome_unknown(
+                    format!("native scroll target worker failed ({error}); inspect fresh state and do not replay"),
+                    cua_driver_core::action_record::ActionTransport::MacosAxAction,
+                    delivery_mode.into(),
+                ),
             }
         } else if let (Some(mut cx), Some(mut cy)) = (x_arg, y_arg) {
             // Targeted x,y are window-local screenshot pixels and REQUIRE a

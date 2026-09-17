@@ -71,14 +71,22 @@ impl Tool for TypeTextCharsTool {
             .into_owned();
         let delay_ms = args.u64_or("delay_ms", 30);
         // Surface 6: element_token / element_index precedence resolution.
+        let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id");
-        let resolved =
-            match crate::ax::element_resolver::resolve_element_args(pid, &args, "type_text_chars")
-                .await
-            {
-                Ok(r) => r,
-                Err(e) => return e,
-            };
+        let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
+        let resolved = match crate::ax::element_resolver::resolve_element_args(
+            pid,
+            element_index_arg,
+            element_token_arg.as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
+            window_id_arg,
+            "type_text_chars",
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
         let (_, window_id, element_guard) = resolved.into_parts(window_id_arg);
         let window_id = match super::native_window_id(window_id) {
             Ok(window_id) => window_id,

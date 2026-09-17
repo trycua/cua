@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 use cua_driver_core::action_record::{ActionTransport, RequestedDelivery};
-use cua_driver_core::tool::spawn_native;
+use cua_driver_core::tool::{bind_native, spawn_native};
 
 /// Pin the agent-cursor overlay above `hwnd` in the z-order, normalising to
 /// the **root** ancestor so the pin lands on the window that actually appears
@@ -39,12 +39,10 @@ fn resolve_onscreen_point_with_scroll(
     let retained = admitted
         .as_ref()
         .ok_or_else(|| ToolResult::error("retained target is unavailable"))?;
-    let pointer = retained
-        .checked_ptr()
-        .map_err(|error| ToolResult::error(error.to_string()))?;
     let (mut x, mut y) = retained
         .current_center()
         .map_err(|error| ToolResult::error(error.to_string()))?;
+    let pointer = retained.as_ptr();
     if let Some(refusal) = minimized_element_refusal(hwnd, idx, x, y, action_verb) {
         return Err(refusal);
     }
@@ -376,10 +374,11 @@ impl Tool for ExactPidWindowTargetGuard {
                             "window_id": window_id,
                         }));
                 };
-                let owner_pid = spawn_native(move || crate::win32::window_owner_pid(window_id))
-                    .await
-                    .ok()
-                    .flatten();
+                let owner_pid =
+                    tokio::task::spawn_blocking(move || crate::win32::window_owner_pid(window_id))
+                        .await
+                        .ok()
+                        .flatten();
                 if let Err(result) = exact_window_ownership_result(pid, window_id, owner_pid) {
                     return result;
                 }
@@ -618,7 +617,7 @@ impl Tool for ListAppsTool {
         //    that launch_path. Remaining installed entries are emitted with
         //    running=false, pid=0. Remaining running pids (no installed-app
         //    match) are emitted as running=true with launch_path=null.
-        let apps = spawn_native(|| -> Vec<serde_json::Value> {
+        let apps = tokio::task::spawn_blocking(|| -> Vec<serde_json::Value> {
             use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
             use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
 
@@ -832,7 +831,7 @@ impl Tool for ListWindowsTool {
         use cua_driver_core::tool_args::ArgsExt;
         let filter_pid = args.opt_u64("pid").map(|v| v as u32);
         let on_screen_only = args.bool_or("on_screen_only", false);
-        let (mut windows, pid_to_name) = spawn_native(move || {
+        let (mut windows, pid_to_name) = tokio::task::spawn_blocking(move || {
             let wins = crate::win32::list_windows(filter_pid);
             let procs = crate::win32::list_processes();
             let map: std::collections::HashMap<u32, String> =
@@ -1133,14 +1132,11 @@ impl Tool for GetWindowStateTool {
             // macOS AppleScript hook).
             description: "Walk a running app's UIA tree and return BOTH a structured \
                 `elements` array (preferred) AND a Markdown rendering of the same tree \
-                (back-compat). Every actionable element is tagged with [element_token N] \
-                in the markdown and as `element_token` in the structured array — pass \
-                those indices to `click`, `type_text`, `scroll`, etc.\n\n\
-                INVARIANT: call `get_window_state` once per turn per (pid, window_id) before \
-                any element-indexed action against that window. The index map is replaced by \
-                the next snapshot of the same (pid, window_id).\n\n\
+                (back-compat). Every actionable element is tagged with [element_index N] \
+                in the markdown and as `element_index` in the structured array — pass \
+                its observed `element_token` to `click`, `type_text`, `scroll`, etc.\n\n\
                 PREFERRED CONSUMERS read `structuredContent.elements` (one entry per \
-                indexed row with `element_token`, `role`, `label`, `value`, `enabled`, \
+                indexed row with `element_index`, `element_token`, `role`, `label`, `value`, `enabled`, \
                 `selected`, `actions` (names of UIA patterns exposed as actions, \
                 omitted when empty), `frame: {x,y,w,h}`, `parent_index`, `depth`). The markdown \
                 `tree_markdown` stays available \
@@ -1218,12 +1214,13 @@ impl Tool for GetWindowStateTool {
                 ),
             };
         // Validate window belongs to pid — Swift's hard error.
-        let windows_for_pid = spawn_native(move || crate::win32::list_windows(Some(pid)))
-            .await
-            .unwrap_or_default();
+        let windows_for_pid =
+            tokio::task::spawn_blocking(move || crate::win32::list_windows(Some(pid)))
+                .await
+                .unwrap_or_default();
         if !windows_for_pid.iter().any(|w| w.hwnd == hwnd) {
             // Check if the window exists under a different pid.
-            let all = spawn_native(|| crate::win32::list_windows(None))
+            let all = tokio::task::spawn_blocking(|| crate::win32::list_windows(None))
                 .await
                 .unwrap_or_default();
             if let Some(w) = all.iter().find(|w| w.hwnd == hwnd) {
@@ -1246,7 +1243,7 @@ impl Tool for GetWindowStateTool {
             .iter()
             .find(|w| w.hwnd == hwnd)
             .map(|w| (w.title.clone(), w.x, w.y, w.width, w.height));
-        let app_name = spawn_native(move || {
+        let app_name = tokio::task::spawn_blocking(move || {
             crate::win32::list_processes()
                 .into_iter()
                 .find(|p| p.pid == pid)
@@ -1320,7 +1317,7 @@ impl Tool for GetWindowStateTool {
         let state = self.state.clone();
         let q = query.clone();
         let out_file = screenshot_out_file.clone();
-        let blocking = spawn_native(move || -> anyhow::Result<_> {
+        let blocking = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
             let tree_result = if do_tree {
                 Some(crate::uia::walk_tree_bounded(
                     hwnd,
@@ -2293,9 +2290,10 @@ impl Tool for LaunchAppTool {
         let pid = if let Some(aumid) = aumid_for_uwp.clone() {
             let aumid_clone = aumid.clone();
             let args_clone = extra_joined.clone();
-            let activation =
-                spawn_native(move || crate::launch_uwp::launch_uwp(&aumid_clone, &args_clone))
-                    .await;
+            let activation = tokio::task::spawn_blocking(move || {
+                crate::launch_uwp::launch_uwp(&aumid_clone, &args_clone)
+            })
+            .await;
             match activation {
                 Ok(Ok(p)) => p,
                 Ok(Err(e)) => {
@@ -2329,7 +2327,7 @@ impl Tool for LaunchAppTool {
             // UI so that case fails fast with an error code; the timeout is the
             // backstop for any *other* blocking broker dialog (SmartScreen, an
             // elevation/consent surface) so a bad target can't hang the daemon.
-            let launch = spawn_native(move || -> anyhow::Result<u32> {
+            let launch = tokio::task::spawn_blocking(move || -> anyhow::Result<u32> {
                 use windows::core::{PCWSTR, PWSTR};
                 use windows::Win32::Foundation::CloseHandle;
                 use windows::Win32::System::Threading::{
@@ -2499,7 +2497,7 @@ impl Tool for LaunchAppTool {
         if aumid_for_uwp.is_some() && !urls.is_empty() {
             let urls_clone = urls.clone();
             let n_show_for_urls = n_show;
-            let _ = spawn_native(move || {
+            let _ = tokio::task::spawn_blocking(move || {
                 use windows::core::PCWSTR;
                 use windows::Win32::UI::Shell::{ShellExecuteExW, SHELLEXECUTEINFOW};
                 fn to_wide(s: &str) -> Vec<u16> {
@@ -2552,9 +2550,10 @@ impl Tool for LaunchAppTool {
         // frame can lag the activation by a few hundred ms.
         if aumid_for_uwp.is_some() {
             for _ in 0..10 {
-                let host = spawn_native(move || crate::win32::resolve_uwp_host_window(pid))
-                    .await
-                    .unwrap_or(None);
+                let host =
+                    tokio::task::spawn_blocking(move || crate::win32::resolve_uwp_host_window(pid))
+                        .await
+                        .unwrap_or(None);
                 if let Some(w) = host {
                     windows_json = vec![json!({
                         "window_id": w.hwnd, "title": w.title,
@@ -2577,7 +2576,7 @@ impl Tool for LaunchAppTool {
             if !windows_json.is_empty() {
                 break;
             }
-            let wins = spawn_native(move || crate::win32::list_windows(Some(pid)))
+            let wins = tokio::task::spawn_blocking(move || crate::win32::list_windows(Some(pid)))
                 .await
                 .unwrap_or_default();
             if !wins.is_empty() {
@@ -2616,10 +2615,11 @@ impl Tool for LaunchAppTool {
             let max_candidate_attempts: usize = if is_slow_launcher { 30 } else { 3 };
 
             let basename_clone = basename_for_match.clone();
-            let candidates_initial =
-                spawn_native(move || crate::win32::related_processes(pid, &basename_clone))
-                    .await
-                    .unwrap_or_default();
+            let candidates_initial = tokio::task::spawn_blocking(move || {
+                crate::win32::related_processes(pid, &basename_clone)
+            })
+            .await
+            .unwrap_or_default();
 
             // For slow launchers we may also need to RE-SCAN candidates over
             // time, because the wrapper may not have spawned its child yet
@@ -2635,10 +2635,11 @@ impl Tool for LaunchAppTool {
                 while let Some(candidate_pid) = candidate_queue.pop() {
                     for _ in 0..max_candidate_attempts {
                         total_attempts += 1;
-                        let wins =
-                            spawn_native(move || crate::win32::list_windows(Some(candidate_pid)))
-                                .await
-                                .unwrap_or_default();
+                        let wins = tokio::task::spawn_blocking(move || {
+                            crate::win32::list_windows(Some(candidate_pid))
+                        })
+                        .await
+                        .unwrap_or_default();
                         if !wins.is_empty() {
                             let window_count = wins.len();
                             windows_json = wins.iter().enumerate().map(|(position, w)| json!({
@@ -2664,10 +2665,11 @@ impl Tool for LaunchAppTool {
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 total_attempts += 3; // count the 500ms wait as 3 attempts
                 let basename_rescan = basename_for_match.clone();
-                let fresh =
-                    spawn_native(move || crate::win32::related_processes(pid, &basename_rescan))
-                        .await
-                        .unwrap_or_default();
+                let fresh = tokio::task::spawn_blocking(move || {
+                    crate::win32::related_processes(pid, &basename_rescan)
+                })
+                .await
+                .unwrap_or_default();
                 let new_ones: Vec<u32> = fresh.into_iter().filter(|p| tried.insert(*p)).collect();
                 candidate_queue = new_ones;
                 // Continue the outer loop regardless — even with empty
@@ -2719,7 +2721,7 @@ impl Tool for LaunchAppTool {
             // poll window.
             let parent_pid = pid;
             let immediate_hwnds_for_poll = immediate_hwnds.clone();
-            let _ = spawn_native(move || {
+            let _ = tokio::task::spawn_blocking(move || {
                 use windows::Win32::Foundation::HWND;
                 use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_SHOWMINNOACTIVE};
                 for h in immediate_hwnds {
@@ -2768,7 +2770,7 @@ impl Tool for LaunchAppTool {
                     // Build the family pid set fresh each tick — both
                     // descendant graph and name-relatives can grow as
                     // launcher-stub chains spawn deeper children.
-                    let family_new_pids: Vec<u32> = spawn_native(move || {
+                    let family_new_pids: Vec<u32> = tokio::task::spawn_blocking(move || {
                         let related: std::collections::HashSet<u32> =
                             crate::win32::related_processes(parent_pid, &basename_clone)
                                 .into_iter()
@@ -2786,16 +2788,18 @@ impl Tool for LaunchAppTool {
                     .unwrap_or_default();
                     let mut tick_hits: usize = 0;
                     for cpid in family_new_pids {
-                        let wins = spawn_native(move || crate::win32::list_windows(Some(cpid)))
-                            .await
-                            .unwrap_or_default();
+                        let wins = tokio::task::spawn_blocking(move || {
+                            crate::win32::list_windows(Some(cpid))
+                        })
+                        .await
+                        .unwrap_or_default();
                         for w in wins {
                             let is_new = minimized.insert(w.hwnd);
                             if is_new {
                                 hit_count_total += 1;
                             }
                             let hwnd_iso = w.hwnd as usize;
-                            let restored = spawn_native(move || unsafe {
+                            let restored = tokio::task::spawn_blocking(move || unsafe {
                                 let hwnd = HWND(hwnd_iso as *mut _);
                                 if IsIconic(hwnd).as_bool() {
                                     false
@@ -2923,28 +2927,6 @@ fn finish_pixel_uia_attempt(
     )
 }
 
-enum BackgroundElementClick {
-    Unknown {
-        transport: ActionTransport,
-        error: String,
-    },
-    Semantic {
-        message: String,
-        transport: ActionTransport,
-        failed_calls: Vec<ActionTransport>,
-    },
-    Inject {
-        x: i32,
-        y: i32,
-        failed_calls: Vec<ActionTransport>,
-    },
-    Post {
-        x: i32,
-        y: i32,
-        failed_calls: Vec<ActionTransport>,
-    },
-}
-
 fn background_element_click_result(
     message: String,
     transport: ActionTransport,
@@ -2998,18 +2980,16 @@ impl Tool for ClickTool {
             // window-local pixel coords via PostMessage).  Windows-only schema
             // extras (`button`, no `modifier`/`action`/`debug_image_out`) apply here.
             description: "Left-click against a target pid. **Prefer `element_token` over \
-                pixel coordinates** — element_token works on backgrounded / minimized / \
-                hidden / off-desktop windows, surfaces a stable handle that survives \
-                rebuilds, and tells you what you're clicking via the freshly resolved element's \
-                role + label. Reach for `x, y` only when the target is a canvas / video / \
-                WebGL / custom-drawn surface that doesn't appear in the UIA tree.\n\n\
+                pixel coordinates** for accessible controls: its observed description must \
+                match a unique current element before an action is selected. It is not a \
+                durable native handle or a guarantee of background delivery. Use `x, y` for \
+                canvas / video / WebGL / custom-drawn surfaces without an accessibility peer.\n\n\
                 Two addressing modes:\n\n\
-                - `element_token` + `window_id` (from the last `get_window_state` snapshot \
-                of that window) — performs the UIA Invoke pattern on the freshly resolved element via \
-                PostMessage. No cursor move, no focus steal. Requires a prior \
-                `get_window_state(pid, window_id)` in this turn; the element address \
-                is scoped per (pid, window_id) and is replaced by the next snapshot of the \
-                same window.\n\n\
+                - `element_token` (from `get_window_state`) — resolves a unique matching \
+                current element in the token's window, then selects a supported UIA action \
+                or pointer route before dispatch. Another observation does not invalidate \
+                the token; missing, changed, ambiguous, disabled, or unproven targets refuse. \
+                An explicit `window_id` must match the token.\n\n\
                 - `x`, `y` (window-local screenshot pixels, top-left origin of the PNG \
                 returned by `get_window_state`). On `delivery_mode:\"background\"` (the \
                 default), cua-driver FIRST does a UIA hit-test at the resolved \
@@ -3171,13 +3151,19 @@ impl Tool for ClickTool {
         // Surface 6: element_token / element_index precedence resolution.
         // Windows uses u64 HWND but the token registry stores u32; truncate
         // through the same path get_window_state used when registering.
-        let resolved =
-            match crate::uia::element_resolver::resolve_element_args(pid as i32, &args, "click")
-                .await
-            {
-                Ok(r) => r,
-                Err(e) => return e,
-            };
+        let resolved = match crate::uia::element_resolver::resolve_element_args(
+            pid as i32,
+            args.opt_u64("element_index").map(|v| v as usize),
+            args.opt_str("element_token").as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
+            args.opt_u64("window_id"),
+            "click",
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
         let (elem_idx, hwnd_opt, admitted) = resolved.into_parts(args.opt_u64("window_id"));
         let x = args.opt_f64("x");
         let y = args.opt_f64("y");
@@ -3230,6 +3216,7 @@ impl Tool for ClickTool {
             )),
             _ => None,
         };
+        let _noact = cua_driver_core::tool::retain_native_resource(_noact);
         let action_req = args
             .get("action")
             .and_then(|v| v.as_str())
@@ -3288,38 +3275,45 @@ impl Tool for ClickTool {
             // WPF/WinUI menus and tree nodes whose visual click target is
             // transient or scroll-adjusted.
             if action_req.as_deref() == Some("expand") {
-                let expand = spawn_native(move || -> anyhow::Result<()> {
-                    use windows::core::Interface;
-                    use windows::Win32::UI::Accessibility::{
-                        IUIAutomationElement, IUIAutomationExpandCollapsePattern,
-                        UIA_ExpandCollapsePatternId,
-                    };
+                let expand =
+                    tokio::task::spawn_blocking(bind_native(move || -> anyhow::Result<()> {
+                        use windows::core::Interface;
+                        use windows::Win32::UI::Accessibility::{
+                            IUIAutomationElement, IUIAutomationExpandCollapsePattern,
+                            UIA_ExpandCollapsePatternId,
+                        };
 
-                    let retained = admitted.as_ref().ok_or_else(|| {
-                        anyhow::anyhow!("element [{idx}] is not present in the current UIA state")
-                    })?;
-                    if !retained.is_uia() {
-                        anyhow::bail!("element [{idx}] is not a UIA element");
-                    }
-                    let element = std::mem::ManuallyDrop::new(unsafe {
-                        IUIAutomationElement::from_raw(retained.checked_ptr()? as *mut _)
-                    });
-                    let pattern = unsafe {
-                        element
-                            .GetCurrentPattern(UIA_ExpandCollapsePatternId)
-                            .and_then(|value| value.cast::<IUIAutomationExpandCollapsePattern>())
-                    }
-                    .map_err(|error| {
-                        anyhow::anyhow!("ExpandCollapsePattern unavailable: {error}")
-                    })?;
-                    let result =
-                        crate::uia::fg_bypass::run_with_uwp_bypass(hwnd as isize, || unsafe {
-                            pattern.Expand()
+                        let retained = admitted.as_ref().ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "element [{idx}] is not present in the current UIA state"
+                            )
+                        })?;
+                        if !retained.is_uia() {
+                            anyhow::bail!("element [{idx}] is not a UIA element");
+                        }
+                        let element = std::mem::ManuallyDrop::new(unsafe {
+                            IUIAutomationElement::from_raw(retained.checked_ptr()? as *mut _)
                         });
-                    std::mem::forget(element);
-                    result.map_err(|error| anyhow::anyhow!("ExpandCollapse.Expand failed: {error}"))
-                })
-                .await;
+                        let pattern = unsafe {
+                            element
+                                .GetCurrentPattern(UIA_ExpandCollapsePatternId)
+                                .and_then(|value| {
+                                    value.cast::<IUIAutomationExpandCollapsePattern>()
+                                })
+                        }
+                        .map_err(|error| {
+                            anyhow::anyhow!("ExpandCollapsePattern unavailable: {error}")
+                        })?;
+                        let result =
+                            crate::uia::fg_bypass::run_with_uwp_bypass(hwnd as isize, || unsafe {
+                                pattern.Expand()
+                            });
+                        std::mem::forget(element);
+                        result.map_err(|error| {
+                            anyhow::anyhow!("ExpandCollapse.Expand failed: {error}")
+                        })
+                    }))
+                    .await;
                 return match expand {
                     Ok(Ok(())) => ToolResult::text(format!(
                         "✅ Expanded UIA element [{idx}] via ExpandCollapsePattern."
@@ -3420,126 +3414,57 @@ impl Tool for ClickTool {
             //   - count > 1 (double-click semantics aren't an Invoke
             //     concept — PostMessage produces the actual WM_LBUTTONDBLCLK)
             let use_uia_invoke = btn == "left" && count == 1;
-            let result = spawn_native({
-                let admitted = admitted.clone();
-                move || -> anyhow::Result<BackgroundElementClick> {
-                    let mut failed_calls = Vec::new();
-                    // Direct Chromium UIA Invoke can return S_OK without firing a
-                    // DOM event while occluded. Try the honest coordinate actuator
-                    // first: it lands while visible and reports occlusion without
-                    // raising the window when hidden.
-                    if delivery == DeliveryMode::Background
-                        && crate::input::is_chromium_target_window(hwnd)
+            let result = spawn_native(move || {
+                let chromium = crate::input::is_chromium_target_window(hwnd);
+                if use_uia_invoke && !chromium {
+                    if let Some((transport, outcome)) =
+                        admitted.as_ref().and_then(|element| element.click(hwnd))
                     {
-                        let (cx, cy) =
-                            resolve_onscreen_point_with_scroll(&admitted, hwnd, idx, "clicking")
-                                .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
-                        return Ok(BackgroundElementClick::Inject {
-                            x: cx,
-                            y: cy,
-                            failed_calls,
-                        });
+                        return match outcome {
+                            Ok(()) => background_element_click_result(
+                                format!("Performed {transport:?} on element [{idx}]."),
+                                transport,
+                                vec![],
+                            ),
+                            Err(error) => ToolResult::native_outcome_unknown(
+                                format!("native click outcome is unknown: {error}; inspect fresh state and do not replay"),
+                                transport,
+                                RequestedDelivery::Background,
+                            ),
+                        };
                     }
-                    if use_uia_invoke {
-                        if let Some((transport, outcome)) =
-                            admitted.as_ref().and_then(|element| element.click(hwnd))
-                        {
-                            return match outcome {
-                                Ok(()) => Ok(BackgroundElementClick::Semantic {
-                                    message: format!("Performed {transport:?} on element [{idx}]."),
-                                    transport,
-                                    failed_calls,
-                                }),
-                                Err(error) => Ok(BackgroundElementClick::Unknown {
-                                    transport,
-                                    error: error.to_string(),
-                                }),
-                            };
-                        }
-                    }
-                    if delivery == DeliveryMode::Background
-                        && crate::input::delivery::would_be_silently_dropped(
-                            hwnd,
-                            EventKind::MouseClick,
-                        )
-                    {
-                        let (cx, cy) =
-                            resolve_onscreen_point_with_scroll(&admitted, hwnd, idx, "clicking")
-                                .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
-                        return Ok(BackgroundElementClick::Inject {
-                            x: cx,
-                            y: cy,
-                            failed_calls,
-                        });
-                    }
-                    Ok(BackgroundElementClick::Post {
-                        x: cx,
-                        y: cy,
-                        failed_calls,
-                    })
                 }
-            })
-            .await;
-            let plan = match result {
-                Ok(Ok(plan)) => plan,
-                Ok(Err(e)) => return ToolResult::error(e.to_string()),
-                Err(e) => return ToolResult::error(format!("Task error: {e}")),
-            };
-            let (x, y, failed_calls, inject) = match plan {
-                BackgroundElementClick::Unknown { transport, error } => {
-                    return ToolResult::native_outcome_unknown(
-                        format!("native click outcome is unknown: {error}; inspect fresh state and do not replay"),
-                        transport,
-                        if delivery == DeliveryMode::Foreground { RequestedDelivery::Foreground } else { RequestedDelivery::Background },
-                    );
-                }
-                BackgroundElementClick::Semantic {
-                    message,
-                    transport,
-                    failed_calls,
-                } => {
-                    return background_element_click_result(message, transport, failed_calls);
-                }
-                BackgroundElementClick::Inject { x, y, failed_calls } => (x, y, failed_calls, true),
-                BackgroundElementClick::Post { x, y, failed_calls } => (x, y, failed_calls, false),
-            };
-            let btn = button.clone();
-            let action_name = if btn == "right" {
-                "ShowMenu"
-            } else {
-                "PostMessage click"
-            };
-            let sent = spawn_native(move || {
-                let (x, y) = resolve_onscreen_point_with_scroll(&admitted, hwnd, idx, "clicking")
-                    .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
-                if inject {
+                let inject = chromium || crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick);
+                let (x, y) = match resolve_onscreen_point_with_scroll(&admitted, hwnd, idx, "clicking") {
+                    Ok(point) => point,
+                    Err(refusal) => return refusal,
+                };
+                let sent = if inject {
                     crate::input::inject_click_screen(hwnd, x, y, count, &btn)
                 } else {
                     crate::input::post_click_screen(hwnd, x, y, count, &btn)
+                };
+                match sent {
+                    Ok(()) => {
+                        let (message, transport) = if inject {
+                            (format!("✅ Injected click on [{idx}] (screen ({x},{y}), background, no foreground swap)."),
+                                ActionTransport::WindowsTargetedInjection)
+                        } else {
+                            let action_name = if btn == "right" { "ShowMenu" } else { "PostMessage click" };
+                            (format!("✅ Performed {action_name} on [{idx}] (screen ({cx},{cy}))."),
+                                ActionTransport::WindowsPostMessage)
+                        };
+                        background_element_click_result(message, transport, vec![])
+                    }
+                    Err(error) if inject => crate::input::delivery::background_unavailable_error_with_cause(
+                        hwnd, EventKind::MouseClick, error.to_string(),
+                    ),
+                    Err(error) => ToolResult::error(error.to_string()),
                 }
             })
             .await;
-            match sent {
-                Ok(Ok(())) => {
-                    let (message, transport) = if inject {
-                        (format!("✅ Injected click on [{idx}] (screen ({x},{y}), background, no foreground swap)."),
-                            ActionTransport::WindowsTargetedInjection)
-                    } else {
-                        (
-                            format!("✅ Performed {action_name} on [{idx}] (screen ({x},{y}))."),
-                            ActionTransport::WindowsPostMessage,
-                        )
-                    };
-                    background_element_click_result(message, transport, failed_calls)
-                }
-                Ok(Err(error)) if inject => {
-                    crate::input::delivery::background_unavailable_error_with_cause(
-                        hwnd,
-                        EventKind::MouseClick,
-                        error.to_string(),
-                    )
-                }
-                Ok(Err(error)) => ToolResult::error(error.to_string()),
+            match result {
+                Ok(result) => result,
                 Err(error) => ToolResult::error(format!("Task error: {error}")),
             }
         } else if let (Some(mut px), Some(mut py)) = (x, y) {
@@ -4207,7 +4132,10 @@ impl Tool for TypeTextTool {
         // Surface 6: element_token / element_index precedence resolution.
         let resolved = match crate::uia::element_resolver::resolve_element_args(
             pid as i32,
-            &args,
+            args.opt_u64("element_index").map(|v| v as usize),
+            args.opt_str("element_token").as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
+            args.opt_u64("window_id"),
             "type_text",
         )
         .await
@@ -4776,7 +4704,10 @@ impl Tool for PressKeyTool {
         // Surface 6: element_token / element_index precedence resolution.
         let resolved = match crate::uia::element_resolver::resolve_element_args(
             pid as i32,
-            &args,
+            args.opt_u64("element_index").map(|v| v as usize),
+            args.opt_str("element_token").as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
+            args.opt_u64("window_id"),
             "press_key",
         )
         .await
@@ -5144,13 +5075,19 @@ impl Tool for HotkeyTool {
             Err(e) => return e,
         };
         let pid = raw_pid as u32;
-        let resolved =
-            match crate::uia::element_resolver::resolve_element_args(pid as i32, &args, "hotkey")
-                .await
-            {
-                Ok(resolved) => resolved,
-                Err(error) => return error,
-            };
+        let resolved = match crate::uia::element_resolver::resolve_element_args(
+            pid as i32,
+            args.opt_u64("element_index").map(|value| value as usize),
+            args.opt_str("element_token").as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
+            args.opt_u64("window_id"),
+            "hotkey",
+        )
+        .await
+        {
+            Ok(resolved) => resolved,
+            Err(error) => return error,
+        };
         let (elem_idx, hwnd_opt, admitted) = resolved.into_parts(args.opt_u64("window_id"));
         if elem_idx.is_some() && hwnd_opt.is_none() {
             return ToolResult::error(
@@ -5410,7 +5347,10 @@ impl Tool for SetValueTool {
         // Surface 6: element_token / element_index precedence resolution.
         let resolved = match crate::uia::element_resolver::resolve_element_args(
             pid as i32,
-            &args,
+            args.opt_u64("element_index").map(|v| v as usize),
+            args.opt_str("element_token").as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
+            args.opt_u64("window_id"),
             "set_value",
         )
         .await
@@ -5630,13 +5570,19 @@ impl Tool for ScrollTool {
         let direction_display = direction.clone();
         let by_display = by.clone();
         // Surface 6: element_token / element_index precedence resolution.
-        let resolved =
-            match crate::uia::element_resolver::resolve_element_args(pid as i32, &args, "scroll")
-                .await
-            {
-                Ok(r) => r,
-                Err(e) => return e,
-            };
+        let resolved = match crate::uia::element_resolver::resolve_element_args(
+            pid as i32,
+            args.opt_u64("element_index").map(|v| v as usize),
+            args.opt_str("element_token").as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
+            args.opt_u64("window_id"),
+            "scroll",
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
         let (elem_idx, hwnd_opt, admitted) = resolved.into_parts(args.opt_u64("window_id"));
         if elem_idx.is_some() && hwnd_opt.is_none() {
             return ToolResult::error(
@@ -6693,7 +6639,7 @@ impl Tool for GetDesktopStateTool {
         // Capture the FULL display at native size — no resize. Run the
         // blocking GDI capture off the async runtime.
         let out_file = screenshot_out_file.clone();
-        let res = spawn_native(
+        let res = tokio::task::spawn_blocking(
             move || -> anyhow::Result<(Option<String>, Option<String>, u32, u32)> {
                 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
                 let png = crate::capture::screenshot_display_bytes()?;
@@ -7529,7 +7475,7 @@ impl Tool for GetAccessibilityTreeTool {
         })
     }
     async fn invoke(&self, _args: Value) -> ToolResult {
-        let (procs, windows) = spawn_native(|| {
+        let (procs, windows) = tokio::task::spawn_blocking(|| {
             (
                 crate::win32::list_processes(),
                 crate::win32::list_windows(None),
@@ -7659,7 +7605,7 @@ impl Tool for ZoomTool {
         let (nx1, ny1, nx2, ny2) = (x1 * ratio, y1 * ratio, x2 * ratio, y2 * ratio);
 
         let state = self.state.clone();
-        let result = spawn_native(move || {
+        let result = tokio::task::spawn_blocking(move || {
             let png = crate::capture::screenshot_window_bytes(hwnd)?;
             cursor_overlay::capture_utils::crop_png_to_jpeg(&png, nx1, ny1, nx2, ny2, 500)
         })
@@ -8248,85 +8194,88 @@ impl Tool for BringToFrontTool {
         // trick mirrors `send_key_synthesized` (input/keyboard.rs:313-345)
         // and is validated by `flash-repro/16-edge-launch-fg.ps1` for the
         // Edge launch focus-steal recovery case.
-        let outcome = spawn_native(move || -> Result<(u64, u64, bool, bool), String> {
-            use windows::Win32::Foundation::HWND;
-            use windows::Win32::Graphics::Dwm::DwmFlush;
-            use windows::Win32::UI::WindowsAndMessaging::{
-                GetForegroundWindow, IsIconic, IsWindow, SetWindowPos, ShowWindowAsync,
-                HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_RESTORE,
-            };
+        let outcome = tokio::task::spawn_blocking(bind_native(
+            move || -> Result<(u64, u64, bool, bool), String> {
+                use windows::Win32::Foundation::HWND;
+                use windows::Win32::Graphics::Dwm::DwmFlush;
+                use windows::Win32::UI::WindowsAndMessaging::{
+                    GetForegroundWindow, IsIconic, IsWindow, SetWindowPos, ShowWindowAsync,
+                    HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+                    SW_RESTORE,
+                };
 
-            let target = HWND(hwnd as *mut _);
-            if !unsafe { IsWindow(target) }.as_bool() {
-                return Err(format!("hwnd 0x{hwnd:x} is not a valid window"));
-            }
+                let target = HWND(hwnd as *mut _);
+                if !unsafe { IsWindow(target) }.as_bool() {
+                    return Err(format!("hwnd 0x{hwnd:x} is not a valid window"));
+                }
 
-            let prev_fg = unsafe { GetForegroundWindow() };
-            let prev_fg_addr = prev_fg.0 as u64;
+                let prev_fg = unsafe { GetForegroundWindow() };
+                let prev_fg_addr = prev_fg.0 as u64;
 
-            // Iconic windows have no rendered pixels and live at the sentinel
-            // (-32000, -32000) position. Restore before changing z-order so
-            // bring_to_front is also the advertised recovery path for capture.
-            let was_minimized = unsafe { IsIconic(target) }.as_bool();
-            if was_minimized {
-                let _ = unsafe { ShowWindowAsync(target, SW_RESTORE) };
-                for _ in 0..20 {
-                    if !unsafe { IsIconic(target) }.as_bool() {
-                        break;
+                // Iconic windows have no rendered pixels and live at the sentinel
+                // (-32000, -32000) position. Restore before changing z-order so
+                // bring_to_front is also the advertised recovery path for capture.
+                let was_minimized = unsafe { IsIconic(target) }.as_bool();
+                if was_minimized {
+                    let _ = unsafe { ShowWindowAsync(target, SW_RESTORE) };
+                    for _ in 0..20 {
+                        if !unsafe { IsIconic(target) }.as_bool() {
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(25));
                     }
-                    std::thread::sleep(std::time::Duration::from_millis(25));
+                    if unsafe { IsIconic(target) }.as_bool() {
+                        return Err(format!(
+                            "restore request did not complete for minimized hwnd 0x{hwnd:x}"
+                        ));
+                    }
                 }
-                if unsafe { IsIconic(target) }.as_bool() {
-                    return Err(format!(
-                        "restore request did not complete for minimized hwnd 0x{hwnd:x}"
-                    ));
+
+                // Lock-free z-order raise FIRST: bring the window to the top of the
+                // normal band (the HWND_TOPMOST→HWND_NOTOPMOST force-to-front trick)
+                // so it's brought to the VISIBLE front even when the foreground-lock
+                // denies focus. SWP_NOACTIVATE → no focus steal; SetWindowPos z-order
+                // is not gated by the foreground-lock / UIAccess. This is the same
+                // technique the delivery_mode:"foreground" pointer path uses.
+                let raised = unsafe {
+                    let a = SetWindowPos(
+                        target,
+                        HWND_TOPMOST,
+                        0,
+                        0,
+                        0,
+                        0,
+                        SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
+                    )
+                    .is_ok();
+                    let b = SetWindowPos(
+                        target,
+                        HWND_NOTOPMOST,
+                        0,
+                        0,
+                        0,
+                        0,
+                        SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
+                    )
+                    .is_ok();
+                    a && b
+                };
+
+                // The caller explicitly requested a visible transition, so the
+                // shared foreground helper may claim the most-recent-input token.
+                let _ = unsafe { crate::input::force_foreground_assisted(target) };
+                let now_fg = unsafe { GetForegroundWindow() };
+
+                // A restored HWND can stop reporting iconic before its compositor
+                // surface is painted. Flush DWM before returning, but do not make
+                // the restore operation depend on any particular capture backend.
+                // Capture has its own WGC fallback for freshly restored surfaces.
+                if was_minimized {
+                    let _ = unsafe { DwmFlush() };
                 }
-            }
-
-            // Lock-free z-order raise FIRST: bring the window to the top of the
-            // normal band (the HWND_TOPMOST→HWND_NOTOPMOST force-to-front trick)
-            // so it's brought to the VISIBLE front even when the foreground-lock
-            // denies focus. SWP_NOACTIVATE → no focus steal; SetWindowPos z-order
-            // is not gated by the foreground-lock / UIAccess. This is the same
-            // technique the delivery_mode:"foreground" pointer path uses.
-            let raised = unsafe {
-                let a = SetWindowPos(
-                    target,
-                    HWND_TOPMOST,
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
-                )
-                .is_ok();
-                let b = SetWindowPos(
-                    target,
-                    HWND_NOTOPMOST,
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
-                )
-                .is_ok();
-                a && b
-            };
-
-            // The caller explicitly requested a visible transition, so the
-            // shared foreground helper may claim the most-recent-input token.
-            let _ = unsafe { crate::input::force_foreground_assisted(target) };
-            let now_fg = unsafe { GetForegroundWindow() };
-
-            // A restored HWND can stop reporting iconic before its compositor
-            // surface is painted. Flush DWM before returning, but do not make
-            // the restore operation depend on any particular capture backend.
-            // Capture has its own WGC fallback for freshly restored surfaces.
-            if was_minimized {
-                let _ = unsafe { DwmFlush() };
-            }
-            Ok((prev_fg_addr, now_fg.0 as u64, raised, was_minimized))
-        })
+                Ok((prev_fg_addr, now_fg.0 as u64, raised, was_minimized))
+            },
+        ))
         .await;
 
         match outcome {
@@ -8463,7 +8412,7 @@ impl Tool for KillAppTool {
         // Run the syscalls on a blocking thread — TerminateProcess + the
         // WaitForSingleObject confirmation are both blocking, and we don't
         // want to stall the tokio reactor.
-        let outcome = spawn_native(move || -> Result<(), String> {
+        let outcome = tokio::task::spawn_blocking(move || -> Result<(), String> {
             use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
             use windows::Win32::System::Threading::{
                 OpenProcess, TerminateProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
@@ -8575,7 +8524,7 @@ impl Tool for DebugWindowInfoTool {
             }
         };
 
-        let outcome = spawn_native(move || -> serde_json::Value {
+        let outcome = tokio::task::spawn_blocking(move || -> serde_json::Value {
             use std::collections::HashSet;
             use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, BOOL, TRUE};
             use windows::Win32::System::Com::{

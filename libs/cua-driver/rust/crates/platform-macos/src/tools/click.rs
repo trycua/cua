@@ -363,12 +363,22 @@ impl Tool for ClickTool {
         // BEFORE the pixel-path fallback. Token wins on disagreement; a
         // stale token returns an explicit error instead of silently
         // falling back to the integer (Surface 6 hard constraint).
+        let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id");
-        let resolved =
-            match crate::ax::element_resolver::resolve_element_args(pid, &args, "click").await {
-                Ok(r) => r,
-                Err(e) => return e,
-            };
+        let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
+        let resolved = match crate::ax::element_resolver::resolve_element_args(
+            pid,
+            element_index_arg,
+            element_token_arg.as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
+            window_id_arg,
+            "click",
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
         let (element_index, window_id, element_guard) = resolved.into_parts(window_id_arg);
         let window_id = match super::native_window_id(window_id) {
             Ok(window_id) => window_id,

@@ -796,11 +796,11 @@ fn await_window_focused(pid: libc::pid_t, window_id: u32) -> bool {
 /// currently frontmost. The short settles keep the target frontmost until
 /// WindowServer has routed both sides of the key chord, then restore the prior
 /// process even when the action fails.
-pub fn with_foreground_hid_activation(
+pub fn with_foreground_hid_activation<T>(
     target_pid: libc::pid_t,
     target_wid: u32,
-    action: impl FnOnce() -> anyhow::Result<()>,
-) -> anyhow::Result<()> {
+    action: impl FnOnce() -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
     cua_driver_core::tool::check_native_dispatch()?;
     let set_front = set_front_process_fn()
         .ok_or_else(|| anyhow::anyhow!("foreground HID delivery is unavailable"))?;

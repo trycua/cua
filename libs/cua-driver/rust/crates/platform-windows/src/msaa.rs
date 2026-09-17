@@ -97,7 +97,7 @@ unsafe fn walk_unsafe(hwnd: u64) -> UiaTreeResult {
     let mut counter = 0usize;
     let mut total = 0usize;
 
-    let complete = walk(
+    walk(
         &root,
         0,
         None,
@@ -111,7 +111,7 @@ unsafe fn walk_unsafe(hwnd: u64) -> UiaTreeResult {
     UiaTreeResult {
         tree_markdown,
         nodes,
-        complete,
+        complete: false,
     }
 }
 
@@ -124,9 +124,9 @@ unsafe fn walk(
     lines: &mut Vec<(usize, String)>,
     counter: &mut usize,
     total: &mut usize,
-) -> bool {
+) {
     if depth >= MAX_DEPTH || *total >= MAX_TOTAL_ELEMENTS {
-        return false;
+        return;
     }
     *total += 1;
 
@@ -168,15 +168,8 @@ unsafe fn walk(
 
     let control_type = role_to_control_type(role_int.unwrap_or(0));
     let actions = actions_for(role_int.unwrap_or(0), default_action.as_deref());
-    let enabled = acc
-        .get_accState(&self_var)
-        .ok()
-        .and_then(|state| variant_to_i32(&state))
-        .map(|state| state & windows::Win32::UI::Controls::STATE_SYSTEM_UNAVAILABLE.0 as i32 == 0);
-    let is_actionable = !actions.is_empty() && enabled == Some(true);
+    let is_actionable = !actions.is_empty();
     let has_content = name.is_some();
-    let mut complete = role_int.is_some() && enabled.is_some();
-    let mut next_parent = parent_index;
 
     if is_actionable || has_content {
         // Retain the IAccessible pointer for the cache. Mirror what the UIA
@@ -190,50 +183,97 @@ unsafe fn walk(
             .map(|(l, t, r, b)| ((l + r) / 2, (t + b) / 2))
             .unwrap_or((0, 0));
 
-        let element_index = is_actionable.then(|| {
-            let index = *counter;
+        let node = if is_actionable {
+            let idx = *counter;
             *counter += 1;
-            index
-        });
-        let node = UiaNode {
-            element_index,
-            control_type,
-            name,
-            value: None,
-            automation_id: None,
-            help_text: None,
-            actions: if is_actionable { actions } else { Vec::new() },
-            enabled,
-            selected: None,
-            element_ptr: ptr,
-            center_x: if is_actionable { center_x } else { 0 },
-            center_y: if is_actionable { center_y } else { 0 },
-            rect,
-            msaa_role: role_int,
-            depth,
-            parent_element_index: parent_index,
-            in_web_content: false,
+            UiaNode {
+                element_index: Some(idx),
+                control_type: control_type.clone(),
+                name: name.clone(),
+                value: None,
+                automation_id: None,
+                help_text: None,
+                actions: actions.clone(),
+                enabled: None,
+                selected: None,
+                element_ptr: ptr,
+                center_x,
+                center_y,
+                rect,
+                msaa_role: role_int,
+                depth,
+                parent_element_index: parent_index,
+                in_web_content: false,
+            }
+        } else {
+            UiaNode {
+                element_index: None,
+                control_type: control_type.clone(),
+                name: name.clone(),
+                value: None,
+                automation_id: None,
+                help_text: None,
+                actions: Vec::new(),
+                enabled: None,
+                selected: None,
+                element_ptr: ptr,
+                center_x: 0,
+                center_y: 0,
+                rect,
+                msaa_role: role_int,
+                depth,
+                parent_element_index: parent_index,
+                in_web_content: false,
+            }
         };
-        next_parent = element_index.or(parent_index);
+        // Track this node as the parent_index for its descendants only when
+        // it received an element_index (mirrors what the markdown shows:
+        // only indexed rows are addressable).
+        let next_parent = node.element_index.or(parent_index);
         lines.push((depth, crate::uia::format_node_line(&node)));
         nodes.push(node);
+
+        // Recurse via accChildCount + get_accChild.
+        let child_count: i32 = acc.accChildCount().unwrap_or(0);
+        for i in 1..=child_count {
+            let child_var = VARIANT::from(i);
+            // accChild returns IDispatch — query for IAccessible.
+            if let Ok(child_disp) = acc.get_accChild(&child_var) {
+                if let Ok(child_acc) = child_disp.cast::<IAccessible>() {
+                    walk(
+                        &child_acc,
+                        depth + 1,
+                        next_parent,
+                        nodes,
+                        lines,
+                        counter,
+                        total,
+                    );
+                }
+            }
+        }
+        return;
     }
 
-    let Ok(child_count) = acc.accChildCount() else {
-        return false;
-    };
+    // Non-emitting path (filtered out by !is_actionable && !has_content):
+    // still recurse, propagating the same parent_index.
+    let child_count: i32 = acc.accChildCount().unwrap_or(0);
     for i in 1..=child_count {
-        match acc
-            .get_accChild(&VARIANT::from(i))
-            .and_then(|child| child.cast::<IAccessible>())
-        {
-            Ok(child) => {
-                complete &= walk(&child, depth + 1, next_parent, nodes, lines, counter, total)
+        let child_var = VARIANT::from(i);
+        if let Ok(child_disp) = acc.get_accChild(&child_var) {
+            if let Ok(child_acc) = child_disp.cast::<IAccessible>() {
+                walk(
+                    &child_acc,
+                    depth + 1,
+                    parent_index,
+                    nodes,
+                    lines,
+                    counter,
+                    total,
+                );
             }
-            Err(_) => complete = false,
         }
     }
-    complete
 }
 
 /// Extract i32 from a VARIANT — accRole returns VT_I4 in practice (sometimes

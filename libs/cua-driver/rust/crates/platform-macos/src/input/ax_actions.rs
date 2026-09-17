@@ -57,8 +57,35 @@ pub fn select_nearest_container(element_ptr: usize) -> anyhow::Result<Option<Str
 }
 
 pub fn nearest_container_selection_state(element_ptr: usize) -> Option<(String, bool)> {
-    let selection = capture_nearest_container_selection(element_ptr)?;
-    Some((selection.role.clone(), selection.observe()?.0))
+    let mut current = element_ptr as AXUIElementRef;
+    let mut owns_current = false;
+
+    for _ in 0..MAX_SELECTION_ANCESTORS {
+        let role = unsafe { copy_string_attr(current, "AXRole") }.unwrap_or_default();
+        if is_selectable_container_role(&role) {
+            if let Some(selected) = unsafe { copy_bool_attr(current, "AXSelected") } {
+                if owns_current {
+                    unsafe { CFRelease(current as CFTypeRef) };
+                }
+                return Some((role, selected));
+            }
+        }
+
+        let parent = unsafe { copy_element_attr(current, "AXParent") };
+        if owns_current {
+            unsafe { CFRelease(current as CFTypeRef) };
+        }
+        let Some(parent) = parent else {
+            return None;
+        };
+        current = parent;
+        owns_current = true;
+    }
+
+    if owns_current {
+        unsafe { CFRelease(current as CFTypeRef) };
+    }
+    None
 }
 
 /// A retained selection context for proving the settled result of a modified

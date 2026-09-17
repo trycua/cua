@@ -169,7 +169,11 @@ use core_foundation::{array::CFArray, base::TCFType, string::CFString as CFStr};
 ///
 /// `element` must be a valid, live `AXUIElementRef` for the duration of the call.
 pub unsafe fn is_attribute_settable(element: AXUIElementRef, attr_name: &str) -> bool {
-    is_attribute_settable_checked(element, attr_name).unwrap_or(false)
+    let attr = CFStr::new(attr_name);
+    let mut settable = 0_u8;
+    AXUIElementIsAttributeSettable(element, attr.as_concrete_TypeRef(), &mut settable)
+        == kAXErrorSuccess
+        && settable != 0
 }
 
 pub unsafe fn is_attribute_settable_checked(
@@ -191,7 +195,19 @@ pub unsafe fn is_attribute_settable_checked(
 ///
 /// `element` must be a valid, live `AXUIElementRef` for the duration of the call.
 pub unsafe fn copy_string_attr(element: AXUIElementRef, attr_name: &str) -> Option<String> {
-    copy_string_attr_checked(element, attr_name).ok().flatten()
+    let attr = CFStr::new(attr_name);
+    let mut value: CFTypeRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
+    if err != kAXErrorSuccess || value.is_null() {
+        return None;
+    }
+    let cf_string_type_id = CFStr::type_id();
+    if core_foundation::base::CFGetTypeID(value) != cf_string_type_id {
+        CFRelease(value);
+        return None;
+    }
+    let s = CFStr::wrap_under_create_rule(value as _);
+    Some(s.to_string())
 }
 
 unsafe fn copy_attribute(
@@ -237,7 +253,20 @@ pub unsafe fn copy_string_attr_checked(
 ///
 /// `element` must be a valid, live `AXUIElementRef` for the duration of the call.
 pub unsafe fn copy_number_attr(element: AXUIElementRef, attr_name: &str) -> Option<f64> {
-    copy_number_attr_checked(element, attr_name).ok().flatten()
+    use core_foundation::number::CFNumber;
+    let attr = CFStr::new(attr_name);
+    let mut value: CFTypeRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
+    if err != kAXErrorSuccess || value.is_null() {
+        return None;
+    }
+    let cf_number_type_id = CFNumber::type_id();
+    if core_foundation::base::CFGetTypeID(value) != cf_number_type_id {
+        CFRelease(value);
+        return None;
+    }
+    let n = CFNumber::wrap_under_create_rule(value as _);
+    n.to_f64()
 }
 
 pub unsafe fn copy_number_attr_checked(
@@ -267,7 +296,25 @@ pub unsafe fn copy_number_attr_checked(
 /// `element` must be a valid Accessibility object reference for the duration
 /// of this call.
 pub unsafe fn copy_bool_attr(element: AXUIElementRef, attr_name: &str) -> Option<bool> {
-    copy_bool_attr_checked(element, attr_name).ok().flatten()
+    use core_foundation::boolean::CFBoolean;
+    use core_foundation::number::CFNumber;
+    let attr = CFStr::new(attr_name);
+    let mut value: CFTypeRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
+    if err != kAXErrorSuccess || value.is_null() {
+        return None;
+    }
+    let type_id = core_foundation::base::CFGetTypeID(value);
+    if type_id == CFBoolean::type_id() {
+        let b = CFBoolean::wrap_under_create_rule(value as _);
+        return Some(b.into());
+    }
+    if type_id == CFNumber::type_id() {
+        let n = CFNumber::wrap_under_create_rule(value as _);
+        return n.to_f64().map(|f| f != 0.0);
+    }
+    CFRelease(value);
+    None
 }
 
 pub unsafe fn copy_bool_attr_checked(
@@ -310,7 +357,12 @@ unsafe fn coerce_binary_value(value: CFTypeRef) -> Option<bool> {
 }
 
 pub unsafe fn copy_binary_attr(element: AXUIElementRef, attr_name: &str) -> Option<bool> {
-    let value = copy_attribute(element, attr_name).ok()??;
+    let attr = CFStr::new(attr_name);
+    let mut value: CFTypeRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
+    if err != kAXErrorSuccess || value.is_null() {
+        return None;
+    }
     let result = coerce_binary_value(value);
     CFRelease(value);
     result
@@ -380,7 +432,12 @@ pub unsafe fn copy_stringish_attr(
     element: AXUIElementRef,
     attr_name: &str,
 ) -> Option<StringishAttrValue> {
-    let value = copy_attribute(element, attr_name).ok()??;
+    let attr = CFStr::new(attr_name);
+    let mut value: CFTypeRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
+    if err != kAXErrorSuccess || value.is_null() {
+        return None;
+    }
     let result = coerce_stringish_value(value);
     CFRelease(value);
     result
@@ -427,7 +484,53 @@ pub unsafe fn copy_action_names_checked(element: AXUIElementRef) -> Result<Vec<S
 ///
 /// `element` must be a valid, live `AXUIElementRef` for the duration of the call.
 pub unsafe fn element_screen_center(element: AXUIElementRef) -> Option<(f64, f64)> {
-    element_screen_rect(element).map(|[x, y, width, height]| (x + width / 2.0, y + height / 2.0))
+    // AXPosition → CGPoint
+    let pos_attr = CFStr::new("AXPosition");
+    let mut pos_ref: CFTypeRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValue(element, pos_attr.as_concrete_TypeRef(), &mut pos_ref);
+    if err != kAXErrorSuccess || pos_ref.is_null() {
+        return None;
+    }
+    #[repr(C)]
+    struct CGPoint {
+        x: f64,
+        y: f64,
+    }
+    let mut pos = CGPoint { x: 0.0, y: 0.0 };
+    let ok = AXValueGetValue(
+        pos_ref as AXValueRef,
+        kAXValueCGPointType,
+        &mut pos as *mut _ as *mut std::ffi::c_void,
+    );
+    CFRelease(pos_ref);
+    if !ok {
+        return None;
+    }
+
+    // AXSize → CGSize
+    let sz_attr = CFStr::new("AXSize");
+    let mut sz_ref: CFTypeRef = std::ptr::null();
+    let err2 = AXUIElementCopyAttributeValue(element, sz_attr.as_concrete_TypeRef(), &mut sz_ref);
+    if err2 != kAXErrorSuccess || sz_ref.is_null() {
+        return None;
+    }
+    #[repr(C)]
+    struct CGSize {
+        w: f64,
+        h: f64,
+    }
+    let mut sz = CGSize { w: 0.0, h: 0.0 };
+    let ok2 = AXValueGetValue(
+        sz_ref as AXValueRef,
+        kAXValueCGSizeType,
+        &mut sz as *mut _ as *mut std::ffi::c_void,
+    );
+    CFRelease(sz_ref);
+    if !ok2 || sz.w < 1.0 || sz.h < 1.0 {
+        return None;
+    }
+
+    Some((pos.x + sz.w / 2.0, pos.y + sz.h / 2.0))
 }
 
 /// Read the on-screen bounding rect of an AX element.
@@ -583,7 +686,17 @@ pub unsafe fn copy_element_attr(
     element: AXUIElementRef,
     attr_name: &str,
 ) -> Option<AXUIElementRef> {
-    copy_element_attr_checked(element, attr_name).ok().flatten()
+    let attr = CFStr::new(attr_name);
+    let mut value: CFTypeRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
+    if err != kAXErrorSuccess || value.is_null() {
+        return None;
+    }
+    if core_foundation::base::CFGetTypeID(value) != AXUIElementGetTypeID() {
+        CFRelease(value);
+        return None;
+    }
+    Some(value as AXUIElementRef)
 }
 
 pub unsafe fn copy_element_attr_checked(

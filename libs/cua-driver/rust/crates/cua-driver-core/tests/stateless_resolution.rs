@@ -69,18 +69,27 @@ async fn native_resolution_does_not_block_dispatch_or_lose_identity() {
     let (release, blocked) = std::sync::mpsc::channel();
     let worker = tokio::spawn(async move {
         let future = with_runtime_scope("stateless-resolution-test".into(), || {
-            element_token::resolve_native(42, &args, "click", move |window, target| {
-                assert_eq!(window, 7);
-                let _ = entered.send(());
-                blocked
-                    .recv_timeout(std::time::Duration::from_secs(2))
-                    .map_err(|e| e.to_string())?;
-                let runtime = tokio::runtime::Builder::new_current_thread()
-                    .build()
-                    .unwrap();
-                runtime
-                    .block_on(async { target.resolve_unique([(9, b"button:save".to_vec())], true) })
-            })
+            element_token::resolve_native(
+                42,
+                None,
+                args["element_token"].as_str(),
+                None,
+                None,
+                "click",
+                move |window, target| {
+                    assert_eq!(window, 7);
+                    let _ = entered.send(());
+                    blocked
+                        .recv_timeout(std::time::Duration::from_secs(2))
+                        .map_err(|e| e.to_string())?;
+                    let runtime = tokio::runtime::Builder::new_current_thread()
+                        .build()
+                        .unwrap();
+                    runtime.block_on(async {
+                        target.resolve_unique([(9, b"button:save".to_vec())], true)
+                    })
+                },
+            )
         });
         future.await
     });

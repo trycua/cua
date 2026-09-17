@@ -212,12 +212,22 @@ impl Tool for HotkeyTool {
         // Use the last non-modifier key; if there are multiple, treat earlier ones as extra keys.
         let key = non_modifiers.last().unwrap().clone();
         let key_display = raw_keys.join("+");
+        let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id");
-        let resolved =
-            match crate::ax::element_resolver::resolve_element_args(pid, &args, "hotkey").await {
-                Ok(resolved) => resolved,
-                Err(error) => return error,
-            };
+        let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
+        let resolved = match crate::ax::element_resolver::resolve_element_args(
+            pid,
+            element_index_arg,
+            element_token_arg.as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
+            window_id_arg,
+            "hotkey",
+        )
+        .await
+        {
+            Ok(resolved) => resolved,
+            Err(error) => return error,
+        };
         let (element_index, window_id, element_guard) = resolved.into_parts(window_id_arg);
         let window_id = match super::native_window_id(window_id) {
             Ok(window_id) => window_id,

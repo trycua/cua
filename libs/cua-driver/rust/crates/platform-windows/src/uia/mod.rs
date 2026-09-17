@@ -50,7 +50,7 @@ const MAX_TOTAL_ELEMENTS: usize = DEFAULT_MAX_TOTAL_ELEMENTS;
 /// Same shape for the UIA primary path AND the MSAA fallback (used for
 /// SAL/VCL window classes — see `msaa.rs`). MSAA-only fields use the
 /// `_ptr is IAccessible` / `msaa_role = Some(...)` discriminator.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct UiaNode {
     pub element_index: Option<usize>,
     pub control_type: String,
@@ -719,35 +719,50 @@ unsafe fn walk_cached_bounded(
         let ptr = retained.as_raw() as usize;
         std::mem::forget(retained);
 
-        let element_index = is_actionable.then(|| {
-            let index = *counter;
+        let node = if is_actionable {
+            let idx = *counter;
             *counter += 1;
-            emitted_parent = Some(index);
-            index
-        });
-        let (center_x, center_y, rect) = if is_actionable {
-            read_cached_bounding_rect_full(element)
+            let (center_x, center_y, rect) = read_cached_bounding_rect_full(element);
+            emitted_parent = Some(idx);
+            UiaNode {
+                element_index: Some(idx),
+                control_type: control_type.clone(),
+                name: name.clone(),
+                value: value.clone(),
+                automation_id: automation_id.clone(),
+                help_text: help_text.clone(),
+                actions: actions.clone(),
+                enabled,
+                selected,
+                element_ptr: ptr,
+                center_x,
+                center_y,
+                rect,
+                msaa_role: None,
+                depth,
+                parent_element_index: parent_index,
+                in_web_content,
+            }
         } else {
-            (0, 0, None)
-        };
-        let node = UiaNode {
-            element_index,
-            control_type: control_type.clone(),
-            name,
-            value,
-            automation_id,
-            help_text,
-            actions,
-            enabled,
-            selected,
-            element_ptr: ptr,
-            center_x,
-            center_y,
-            rect,
-            msaa_role: None,
-            depth,
-            parent_element_index: parent_index,
-            in_web_content,
+            UiaNode {
+                element_index: None,
+                control_type: control_type.clone(),
+                name: name.clone(),
+                value: value.clone(),
+                automation_id: automation_id.clone(),
+                help_text: help_text.clone(),
+                actions: vec![],
+                enabled,
+                selected,
+                element_ptr: ptr,
+                center_x: 0,
+                center_y: 0,
+                rect: None,
+                msaa_role: None,
+                depth,
+                parent_element_index: parent_index,
+                in_web_content,
+            }
         };
 
         lines.push((depth, format_node_line(&node)));

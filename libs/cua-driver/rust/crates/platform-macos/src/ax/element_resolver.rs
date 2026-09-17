@@ -3,16 +3,16 @@ use super::tree::AXNode;
 use core_foundation::base::{CFEqual, CFRelease, CFRetain, CFTypeRef};
 use cua_driver_core::element_token::{self, ElementTarget, ResolvedElement};
 use cua_driver_core::protocol::ToolResult;
-#[derive(Clone)]
 struct Binding {
     pid: i32,
     window: u32,
     target: ElementTarget,
     web: bool,
-    root: std::sync::Arc<RetainedElement>,
+    actions: Vec<String>,
+    root: RetainedElement,
 }
 
-pub struct RetainedElement(usize, Option<Binding>);
+pub struct RetainedElement(usize, Option<std::sync::Arc<Binding>>);
 impl RetainedElement {
     pub fn as_ptr(&self) -> usize {
         self.0
@@ -24,6 +24,12 @@ impl RetainedElement {
 
     pub fn in_web_content(&self) -> bool {
         self.1.as_ref().is_none_or(|binding| binding.web)
+    }
+
+    pub fn supports_action(&self, action: &str) -> bool {
+        self.1
+            .as_ref()
+            .is_some_and(|binding| binding.actions.iter().any(|candidate| candidate == action))
     }
 
     pub fn checked_ptr(&self) -> anyhow::Result<usize> {
@@ -165,12 +171,6 @@ impl FreshAxElements {
                 .collect(),
         }
     }
-    fn retain_element(&self, index: usize) -> Option<RetainedElement> {
-        self.elements
-            .get(index)
-            .filter(|p| **p != 0)
-            .map(|p| unsafe { RetainedElement::retain(*p) })
-    }
 }
 impl Drop for FreshAxElements {
     fn drop(&mut self) {
@@ -207,10 +207,22 @@ fn identity_for_properties(
 
 pub async fn resolve_element_args(
     pid: i32,
-    args: &serde_json::Value,
+    element_index: Option<usize>,
+    element_token: Option<&str>,
+    snapshot_id: Option<&str>,
+    window_id: Option<u64>,
     tool: &str,
 ) -> Result<ResolvedElement<RetainedElement>, ToolResult> {
-    element_token::resolve_native(pid, args, tool, move |w, t| resolve_fresh(pid, w, t)).await
+    element_token::resolve_native(
+        pid,
+        element_index,
+        element_token,
+        snapshot_id,
+        window_id,
+        tool,
+        move |w, t| resolve_fresh(pid, w, t),
+    )
+    .await
 }
 pub(crate) fn resolve_fresh(
     pid: i32,
@@ -220,40 +232,36 @@ pub(crate) fn resolve_fresh(
     let w =
         u32::try_from(w).map_err(|_| format!("window_id {w} is not a valid macOS window id"))?;
     let tree = super::tree::walk_tree(pid, Some(w), None);
-    let payload = FreshAxElements::from_nodes(&tree.nodes);
+    let _payload = FreshAxElements::from_nodes(&tree.nodes);
     let matched = t.resolve_unique(
         tree.nodes
             .iter()
-            .filter_map(|n| Some((n.element_index?, identity_for_node(n)))),
+            .filter(|node| node.element_index.is_some())
+            .map(|node| (node, identity_for_node(node))),
         !tree.truncated
             && tree
                 .window_scope
                 .as_ref()
                 .is_some_and(|scope| scope.is_matched()),
     )?;
-    let web = matched
-        .and_then(|index| {
-            tree.nodes
-                .iter()
-                .find(|node| node.element_index == Some(index))
-        })
-        .is_some_and(|node| node.in_web_content);
-    let Some(mut element) = matched.and_then(|i| payload.retain_element(i)) else {
+    let Some(node) = matched.filter(|node| node.element_ptr != 0) else {
         return Ok(None);
     };
+    let mut element = unsafe { RetainedElement::retain(node.element_ptr) };
     let (identity, root) = element.live_identity().map_err(|error| error.to_string())?;
     if !t.matches_identity(&identity) {
         return Err("element changed during resolution".into());
     }
     root.verify_scope(pid, w)
         .map_err(|error| error.to_string())?;
-    element.1 = Some(Binding {
+    element.1 = Some(std::sync::Arc::new(Binding {
         pid,
         window: w,
         target: t.clone(),
-        web,
-        root: std::sync::Arc::new(root),
-    });
+        web: node.in_web_content,
+        actions: node.actions.clone(),
+        root,
+    }));
     Ok(Some(element))
 }
 #[cfg(test)]
@@ -266,7 +274,41 @@ mod tests {
     }
 
     #[test]
+    fn advertised_action_does_not_authorize_an_absent_native_target() {
+        let snapshot = element_token::mint_snapshot_handle(42, 7);
+        let token = element_token::token_for_identity(&snapshot, 9, b"control").unwrap();
+        let resolved = element_token::resolve_element_args(
+            42,
+            None,
+            Some(&token),
+            None,
+            None,
+            "right_click",
+            |_, target| Ok(Some(target.clone())),
+        )
+        .unwrap();
+        let (_, _, target) = resolved.into_parts(None);
+        let element = RetainedElement(
+            0,
+            Some(std::sync::Arc::new(Binding {
+                pid: 42,
+                window: 7,
+                target: target.unwrap(),
+                web: false,
+                actions: vec!["AXShowMenu".into()],
+                root: unsafe { RetainedElement::retain(0) },
+            })),
+        );
+        assert!(element.supports_action("AXShowMenu"));
+        assert!(!element.supports_action("AXOpen"));
+        assert!(!element.supports_action("axshowmenu"));
+        assert!(element.clone().supports_action("AXShowMenu"));
+        assert!(element.checked_ptr().is_err());
+        assert!(!unsafe { RetainedElement::retain(0) }.supports_action("AXShowMenu"));
+    }
+
+    #[test]
     fn empty_projection_has_no_element() {
-        assert!(FreshAxElements::from_nodes(&[]).retain_element(0).is_none());
+        assert!(FreshAxElements::from_nodes(&[]).elements.is_empty());
     }
 }

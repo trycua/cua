@@ -28,15 +28,15 @@ fn def() -> &'static ToolDef {
         name: "right_click".into(),
         description:
             "Right-click against a target pid. Two addressing modes:\n\n\
-             - `element_token` + `window_id` (from the last `get_window_state` snapshot) — \
-               performs `AXShowMenu` on the freshly resolved element. Pure AX RPC, works on backgrounded / \
-               hidden windows, no cursor move or focus steal. Requires a prior \
-               `get_window_state(pid, window_id)` in this turn.\n\n\
+             - `element_token` (from `get_window_state`) — resolves a unique matching \
+               current element, then selects advertised `AXShowMenu` or a pointer right-click \
+               before dispatch. Another observation does not invalidate the token. Missing, \
+               changed, ambiguous, disabled, or unproven targets refuse.\n\n\
              - `x`, `y` — synthesizes `rightMouseDown` / `rightMouseUp` CGEvent pair posted \
                to the pid. Driver converts image-pixel → screen-point internally. \
-               `modifier` forces the CGEvent path (AX actions don't propagate modifier keys).\n\n\
+               `modifier` is supported on the coordinate path; modified token actions refuse.\n\n\
              Exactly one of `element_token` or (`x` AND `y`) must be provided. `pid` always \
-             required. `window_id` required when `element_token` is used."
+             required. With a token, an explicit `window_id` must match its window."
             .into(),
         input_schema: serde_json::json!({
             "type": "object",
@@ -95,10 +95,15 @@ impl Tool for RightClickTool {
         let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
 
         // Surface 6: element_token / element_index precedence resolution.
+        let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id");
+        let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
         let resolved = match crate::ax::element_resolver::resolve_element_args(
             pid,
-            &args,
+            element_index_arg,
+            element_token_arg.as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
+            window_id_arg,
             "right_click",
         )
         .await
@@ -136,22 +141,7 @@ impl Tool for RightClickTool {
         if let (Some(idx), Some(wid), Some(element_guard)) =
             (element_index, window_id, element_guard)
         {
-            let probe = element_guard.clone();
-            let semantic = match spawn_native(move || -> anyhow::Result<bool> {
-                let pointer = probe.checked_ptr()?;
-                Ok(unsafe {
-                    crate::ax::bindings::copy_action_names_checked(pointer as AXUIElementRef)
-                }
-                .map_err(|code| anyhow::anyhow!("native action read failed: {code}"))?
-                .iter()
-                .any(|action| action == "AXShowMenu"))
-            })
-            .await
-            {
-                Ok(Ok(semantic)) => semantic,
-                Ok(Err(error)) => return ToolResult::error(error.to_string()),
-                Err(error) => return ToolResult::error(error.to_string()),
-            };
+            let semantic = element_guard.supports_action("AXShowMenu");
             let element_ptr = element_guard.as_ptr();
 
             if !modifiers.is_empty() {
@@ -194,12 +184,7 @@ impl Tool for RightClickTool {
                     )
                 };
                 if foreground {
-                    let mut result = None;
-                    crate::input::skylight::with_foreground_hid_activation(pid, wid, || {
-                        result = Some(dispatch());
-                        Ok(())
-                    })?;
-                    result.ok_or_else(|| anyhow::anyhow!("native action did not start"))?
+                    crate::input::skylight::with_foreground_hid_activation(pid, wid, dispatch)
                 } else {
                     dispatch()
                 }

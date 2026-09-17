@@ -4,15 +4,26 @@ use cua_driver_core::protocol::ToolResult;
 use std::sync::Arc;
 
 pub fn identity_for_node(node: &AtspiNode) -> Vec<u8> {
-    serde_json::to_vec(&(
+    identity_for_properties(
         &node.role,
-        &node.name,
-        &node.description,
+        node.name.as_deref(),
+        node.description.as_deref(),
         &node.actions,
         node.depth,
         node.in_web_content,
-    ))
-    .expect("AT-SPI identity tuple")
+    )
+}
+
+fn identity_for_properties(
+    role: &str,
+    name: Option<&str>,
+    description: Option<&str>,
+    actions: &[String],
+    depth: usize,
+    web: bool,
+) -> Vec<u8> {
+    serde_json::to_vec(&(role, name, description, actions, depth, web))
+        .expect("AT-SPI identity tuple")
 }
 
 pub struct RetainedElement {
@@ -20,7 +31,7 @@ pub struct RetainedElement {
     window: u64,
     frame: usize,
     position: usize,
-    observed: AtspiNode,
+    index: usize,
     identity: ElementTarget,
     visited: Arc<Vec<Visited<'static>>>,
 }
@@ -89,16 +100,17 @@ impl RetainedElement {
     }
 
     pub fn index(&self) -> usize {
-        self.observed.element_index.unwrap()
+        self.index
     }
 
     pub fn needs_foreground_pointer(&self) -> bool {
-        self.visited[self.position].has_editable || self.observed.role == "table cell"
+        let node = &self.visited[self.position];
+        node.has_editable || node.role == "table cell"
     }
 
     pub fn can_activate(&self) -> bool {
-        !self.needs_foreground_pointer()
-            && activation_index(&self.observed.role, &self.observed.actions).is_some()
+        let node = &self.visited[self.position];
+        !self.needs_foreground_pointer() && activation_index(&node.role, &node.actions).is_some()
     }
 
     async fn verify_live(&self) -> Result<()> {
@@ -141,8 +153,7 @@ impl RetainedElement {
         if state.contains(State::Defunct) || !is_enabled_state(&state) {
             anyhow::bail!("target is defunct or disabled");
         }
-        let mut current = self.observed.clone();
-        current.role = element.get_role_name().await?;
+        let role = element.get_role_name().await?;
         let mut name = element.name().await?;
         let proxies = element.proxies().await?;
         let interfaces = element.get_interfaces().await?;
@@ -152,8 +163,8 @@ impl RetainedElement {
                 name = value;
             }
         }
-        current.name = (!name.is_empty()).then_some(name);
-        current.actions.clear();
+        let name = (!name.is_empty()).then_some(name.as_str());
+        let mut actions = Vec::new();
         if interfaces.contains(Interface::Action) {
             let action = proxies.action().await?;
             let count = action.n_actions().await?;
@@ -161,29 +172,30 @@ impl RetainedElement {
                 anyhow::bail!("native action count is invalid");
             }
             for index in 0..count {
-                current.actions.push(action.get_name(index).await?);
+                actions.push(action.get_name(index).await?);
             }
         }
         let mut ancestor = element.clone();
-        current.in_web_content = self.visited[self.position].on_web_process_bus;
+        let mut web = self.visited[self.position].on_web_process_bus;
         for depth in 0..element_token::MAX_NATIVE_ANCESTORS {
             if ancestor.inner().destination().as_str() == frame.name
                 && ancestor.inner().path().as_str() == frame.path
             {
-                current.depth = depth;
-                if self.identity.matches_identity(&identity_for_node(&current)) {
+                if self.identity.matches_identity(&identity_for_properties(
+                    &role, name, None, &actions, depth, web,
+                )) {
                     return Ok(());
                 }
                 anyhow::bail!("target description changed before delivery");
             }
             let parent = RawObjectRef::from_atspi(&ancestor.parent().await?)
                 .context("target ancestry is unavailable")?;
-            current.in_web_content |= is_web_process_bus(&parent.name);
+            web |= is_web_process_bus(&parent.name);
             let parent = identity_ref(conn, &parent, &mut identity_owners)
                 .await
                 .context("target ancestor identity is unavailable")?;
             ancestor = accessible_for(conn, &parent).await?;
-            current.in_web_content |= is_document_role(&ancestor.get_role_name().await?);
+            web |= is_document_role(&ancestor.get_role_name().await?);
         }
         anyhow::bail!("target no longer belongs to the requested window")
     }
@@ -210,12 +222,21 @@ impl RetainedElement {
 
 pub async fn resolve_element_args(
     pid: i32,
-    args: &serde_json::Value,
+    element_index: Option<usize>,
+    element_token: Option<&str>,
+    snapshot_id: Option<&str>,
+    window_id: Option<u64>,
     tool_name: &str,
 ) -> Result<ResolvedElement<Arc<RetainedElement>>, ToolResult> {
-    match element_token::resolve_native(pid, args, tool_name, move |window, target| {
-        resolve_fresh(pid, window, target)
-    })
+    match element_token::resolve_native(
+        pid,
+        element_index,
+        element_token,
+        snapshot_id,
+        window_id,
+        tool_name,
+        move |window, target| resolve_fresh(pid, window, target),
+    )
     .await?
     {
         ResolvedElement::Element {
@@ -249,18 +270,31 @@ pub(crate) fn resolve_fresh(
                 .await?
                 .context("current accessibility state is unavailable")?;
             let frame = frame.context("current accessibility window scope is unproven")?;
-            let (_, nodes) = render(&visited, Some(frame));
             let matched = identity
                 .resolve_unique(
-                    nodes.into_iter().filter_map(|node| {
-                        node.element_index?;
-                        let identity = identity_for_node(&node);
-                        Some((node, identity))
-                    }),
+                    visited
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, node)| is_indexable(node))
+                        .enumerate()
+                        .filter(|(_, (_, node))| node.frame_ordinal == frame)
+                        .map(|(index, (position, node))| {
+                            (
+                                (index, position),
+                                identity_for_properties(
+                                    &node.role,
+                                    (!node.name.is_empty()).then_some(node.name.as_str()),
+                                    None,
+                                    &node.actions,
+                                    node.depth,
+                                    node.in_web_doc,
+                                ),
+                            )
+                        }),
                     complete,
                 )
                 .map_err(anyhow::Error::msg)?;
-            let Some(observed) = matched else {
+            let Some((index, position)) = matched else {
                 return Ok(None);
             };
             let position = unique_observed_identity_position(
@@ -272,7 +306,7 @@ pub(crate) fn resolve_fresh(
                         is_indexable(node),
                     )
                 }),
-                observed
+                visited[position]
                     .identity
                     .as_ref()
                     .context("resolved native identity is unavailable")?,
@@ -283,7 +317,7 @@ pub(crate) fn resolve_fresh(
                 window,
                 frame,
                 position,
-                observed,
+                index,
                 identity: identity.clone(),
                 visited: Arc::new(visited),
             })))
@@ -314,6 +348,17 @@ mod tests {
             in_web_content: false,
         }
     }
+    #[test]
+    fn descriptor_encoding_is_unchanged() {
+        let observed = node(9, "Save");
+        let expected = br#"["button","Save",null,["click"],0,false]"#;
+        assert_eq!(identity_for_node(&observed), expected);
+        assert_eq!(
+            identity_for_properties("button", Some("Save"), None, &observed.actions, 0, false),
+            expected
+        );
+    }
+
     #[test]
     fn semantic_identity_ignores_traversal_index() {
         assert_eq!(

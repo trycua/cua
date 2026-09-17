@@ -2,8 +2,8 @@ use super::UiaNode;
 use cua_driver_core::element_token::{self, ElementTarget, ResolvedElement};
 use cua_driver_core::protocol::ToolResult;
 use std::sync::Arc;
-use windows::core::{IUnknown, Interface};
-use windows::Win32::UI::Accessibility::IUIAutomationElement;
+use windows::core::Interface;
+use windows::Win32::UI::Accessibility::{IAccessible, IUIAutomationElement};
 
 #[derive(Debug)]
 struct MtaUsage(usize);
@@ -42,19 +42,21 @@ impl Drop for MtaUsage {
 
 #[derive(Debug)]
 struct Binding {
-    observed: UiaNode,
+    pid: i32,
+    window: u64,
     target: ElementTarget,
+    actions: Vec<String>,
+    _mta: Arc<MtaUsage>,
 }
 
 #[derive(Debug)]
 pub struct RetainedElement {
     ptr: usize,
-    actions: Vec<String>,
-    mta: Option<Arc<MtaUsage>>,
-    scope: Option<(i32, u64)>,
     binding: Option<Arc<Binding>>,
     pub kind: ElementBackend,
     pub center: (i32, i32),
+    pub rect: Option<(i32, i32, i32, i32)>,
+    pub msaa_role: Option<i32>,
 }
 
 impl RetainedElement {
@@ -65,17 +67,14 @@ impl RetainedElement {
     pub fn checked_ptr(&self) -> anyhow::Result<usize> {
         cua_driver_core::tool::check_native_dispatch()?;
         MtaUsage::check_thread()?;
-        if self
-            .scope
-            .is_some_and(|(pid, window)| crate::win32::window_owner_pid(window) != Some(pid as u32))
-        {
-            anyhow::bail!("target window ownership changed before dispatch");
-        }
         if self.ptr == 0 {
             anyhow::bail!("native element is unavailable");
         }
-        if let (Some(binding), Some((_, window))) = (&self.binding, self.scope) {
-            self.verify_live(window, binding)?;
+        if let Some(binding) = &self.binding {
+            if crate::win32::window_owner_pid(binding.window) != Some(binding.pid as u32) {
+                anyhow::bail!("target window ownership changed before dispatch");
+            }
+            self.verify_live(binding.window, binding)?;
         }
         Ok(self.ptr)
     }
@@ -93,7 +92,7 @@ impl RetainedElement {
             let root =
                 automation.ElementFromHandle(windows::Win32::Foundation::HWND(window as *mut _))?;
             let walker = automation.ControlViewWalker()?;
-            let mut current = binding.observed.clone();
+            let mut current = UiaNode::default();
             let optional = |value: windows::core::BSTR| {
                 let value = value.to_string();
                 (!value.is_empty()).then_some(value)
@@ -107,7 +106,6 @@ impl RetainedElement {
             if !complete {
                 anyhow::bail!("current native action availability is incomplete");
             }
-            current.in_web_content = false;
             let mut ancestor = IUIAutomationElement::clone(&element);
             for depth in 0..element_token::MAX_NATIVE_ANCESTORS {
                 if automation.CompareElements(&ancestor, &root)?.as_bool() {
@@ -162,6 +160,7 @@ impl RetainedElement {
         if !self.is_uia() {
             return None;
         }
+        let binding = self.binding.as_ref()?;
         for (action, pattern_id, transport) in [
             ("invoke", UIA_InvokePatternId, WindowsUiaInvoke),
             ("toggle", UIA_TogglePatternId, WindowsUiaToggle),
@@ -172,7 +171,7 @@ impl RetainedElement {
                 WindowsUiaExpandCollapse,
             ),
         ] {
-            if !self.actions.iter().any(|name| name == action) {
+            if !binding.actions.iter().any(|name| name == action) {
                 continue;
             }
             let result = (|| unsafe {
@@ -244,18 +243,29 @@ impl Clone for RetainedElement {
     fn clone(&self) -> Self {
         if self.ptr != 0 {
             unsafe {
-                let iface = std::mem::ManuallyDrop::new(IUnknown::from_raw(self.ptr as *mut _));
-                std::mem::forget(IUnknown::clone(&iface));
+                match self.kind {
+                    ElementBackend::Uia => {
+                        let iface = IUIAutomationElement::from_raw(self.ptr as *mut _);
+                        let dup = iface.clone();
+                        std::mem::forget(iface);
+                        std::mem::forget(dup);
+                    }
+                    ElementBackend::Msaa => {
+                        let iface = IAccessible::from_raw(self.ptr as *mut _);
+                        let dup = iface.clone();
+                        std::mem::forget(iface);
+                        std::mem::forget(dup);
+                    }
+                }
             }
         }
         Self {
             ptr: self.ptr,
-            actions: self.actions.clone(),
-            mta: self.mta.clone(),
-            scope: self.scope,
             binding: self.binding.clone(),
             kind: self.kind,
             center: self.center,
+            rect: self.rect,
+            msaa_role: self.msaa_role,
         }
     }
 }
@@ -264,7 +274,10 @@ impl Drop for RetainedElement {
     fn drop(&mut self) {
         if self.ptr != 0 {
             unsafe {
-                drop(IUnknown::from_raw(self.ptr as *mut _));
+                match self.kind {
+                    ElementBackend::Uia => drop(IUIAutomationElement::from_raw(self.ptr as *mut _)),
+                    ElementBackend::Msaa => drop(IAccessible::from_raw(self.ptr as *mut _)),
+                }
             }
         }
     }
@@ -277,7 +290,7 @@ pub enum ElementBackend {
 }
 
 pub struct FreshUiaElements {
-    elements: Vec<(Option<usize>, RetainedElement)>,
+    elements: Vec<RetainedElement>,
 }
 
 impl FreshUiaElements {
@@ -285,31 +298,16 @@ impl FreshUiaElements {
         Self {
             elements: nodes
                 .iter()
-                .map(|node| {
-                    (
-                        node.element_index,
-                        RetainedElement {
-                            ptr: node.element_ptr,
-                            actions: node.actions.clone(),
-                            mta: None,
-                            scope: None,
-                            binding: None,
-                            kind,
-                            center: (node.center_x, node.center_y),
-                        },
-                    )
+                .map(|node| RetainedElement {
+                    ptr: node.element_ptr,
+                    binding: None,
+                    kind,
+                    center: (node.center_x, node.center_y),
+                    rect: node.rect,
+                    msaa_role: node.msaa_role,
                 })
                 .collect(),
         }
-    }
-}
-
-impl FreshUiaElements {
-    fn retain_element(&self, index: usize) -> Option<RetainedElement> {
-        self.elements
-            .iter()
-            .find(|(observed, element)| *observed == Some(index) && element.ptr != 0)
-            .map(|(_, element)| element.clone())
     }
 }
 pub fn identity_for_node(node: &UiaNode) -> Vec<u8> {
@@ -327,10 +325,22 @@ pub fn identity_for_node(node: &UiaNode) -> Vec<u8> {
 }
 pub async fn resolve_element_args(
     pid: i32,
-    args: &serde_json::Value,
+    element_index: Option<usize>,
+    element_token: Option<&str>,
+    snapshot_id: Option<&str>,
+    window_id: Option<u64>,
     tool: &str,
 ) -> Result<ResolvedElement<RetainedElement>, ToolResult> {
-    element_token::resolve_native(pid, args, tool, move |w, t| resolve_fresh(pid, w, t)).await
+    element_token::resolve_native(
+        pid,
+        element_index,
+        element_token,
+        snapshot_id,
+        window_id,
+        tool,
+        move |w, t| resolve_fresh(pid, w, t),
+    )
+    .await
 }
 pub(crate) fn resolve_fresh(
     pid: i32,
@@ -357,23 +367,25 @@ pub(crate) fn resolve_fresh(
     let matched = t.resolve_unique(
         tree.nodes
             .iter()
-            .filter_map(|n| Some((n.element_index?, identity_for_node(n)))),
+            .zip(&payload.elements)
+            .filter(|(node, _)| node.element_index.is_some())
+            .map(|(node, element)| ((node, element), identity_for_node(node))),
         tree.complete,
     )?;
-    let mut retained = matched.and_then(|i| payload.retain_element(i));
-    if let Some(element) = retained.as_mut() {
-        element.mta = Some(mta);
-        element.scope = Some((pid, w));
-        let observed = tree
-            .nodes
-            .iter()
-            .find(|node| node.element_index == matched)
-            .ok_or("resolved native node is unavailable")?;
-        element.binding = Some(Arc::new(Binding {
-            observed: observed.clone(),
-            target: t.clone(),
-        }));
-        element.checked_ptr().map_err(|error| error.to_string())?;
+    let Some((node, element)) = matched else {
+        return Ok(None);
+    };
+    if element.ptr == 0 {
+        return Ok(None);
     }
-    Ok(retained)
+    let mut element = element.clone();
+    element.binding = Some(Arc::new(Binding {
+        pid,
+        window: w,
+        target: t.clone(),
+        actions: node.actions.clone(),
+        _mta: mta,
+    }));
+    element.checked_ptr().map_err(|error| error.to_string())?;
+    Ok(Some(element))
 }

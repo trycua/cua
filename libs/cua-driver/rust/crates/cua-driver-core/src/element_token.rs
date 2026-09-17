@@ -162,7 +162,10 @@ pub fn recording_target(
 
 pub fn resolve_native<T, F>(
     pid: i32,
-    args: &Value,
+    element_index: Option<usize>,
+    element_token: Option<&str>,
+    snapshot_id: Option<&str>,
+    window_id: Option<u64>,
     tool: &str,
     resolve_fresh: F,
 ) -> impl std::future::Future<Output = Result<ResolvedElement<T>, ToolResult>> + Send
@@ -170,7 +173,15 @@ where
     T: Send + 'static,
     F: FnOnce(u64, &ElementTarget) -> Result<Option<T>, String> + Send + 'static,
 {
-    let decoded = decode_element_args(pid, args, tool);
+    let decoded = resolve_element_args(
+        pid,
+        element_index,
+        element_token,
+        snapshot_id,
+        window_id,
+        tool,
+        |_, target| Ok(Some(target.clone())),
+    );
     async move {
         let ResolvedElement::Element {
             window_id,

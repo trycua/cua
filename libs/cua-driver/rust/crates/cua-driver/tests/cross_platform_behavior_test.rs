@@ -980,33 +980,17 @@ fn run_typed_sdk_native_window(fixture: &mut Fixture) -> Observation {
             .await
             .expect("typed initial window state");
         assert_eq!((before.pid, before.window_id), (fixture.pid, fixture.wid));
-        let stale_token = sdk_click_token(&before);
+        let observed_token = sdk_click_token(&before);
         let current = sdk
             .get_window_state(sdk_window_input(fixture))
             .await
-            .expect("typed fresh window state invalidates previous token");
+            .expect("typed second window state");
         let current_token = sdk_click_token(&current);
         assert_ne!(
-            stale_token, current_token,
+            observed_token, current_token,
             "fresh snapshot must mint fresh tokens"
         );
         let journal_before = fixture.journal.snapshot();
-        let stale = sdk
-            .click(sdk_background_click(fixture, stale_token))
-            .await
-            .expect_err("stale SDK token must refuse");
-        assert!(
-            matches!(stale, DriverError::Tool { ref tool, ref error_code, .. }
-            if tool == "click" && error_code == "stale_element_token"),
-            "expected typed stale-token refusal, got {stale:?}"
-        );
-        thread::sleep(Duration::from_millis(150));
-        assert_eq!(
-            fixture.journal.snapshot(),
-            journal_before,
-            "stale SDK token changed fixture state"
-        );
-
         let other_window = windows
             .windows
             .iter()
@@ -1034,10 +1018,16 @@ fn run_typed_sdk_native_window(fixture: &mut Fixture) -> Observation {
             "mismatched SDK window identity changed fixture state"
         );
 
-        sdk.click(sdk_background_click(fixture, current_token.clone()))
+        // Another observation does not invalidate an unchanged target.
+        sdk.click(sdk_background_click(fixture, observed_token))
             .await
-            .expect("typed background element click");
+            .expect("typed background click with the earlier observation's token");
         assert_fixture_contains(fixture, "last_action=left_click");
+        assert_ne!(
+            fixture.journal.snapshot(),
+            journal_before,
+            "earlier observation's SDK token must change fixture state"
+        );
         // Match the fixture's delivery contract: its DOM journal is the effect
         // oracle because embedded browsers can retain stale accessible text.
         // A fresh native observation must still preserve identity and tokens.

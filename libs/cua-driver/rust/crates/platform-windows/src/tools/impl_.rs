@@ -547,43 +547,9 @@ pub fn load_driver_config() -> DriverConfig {
     cfg
 }
 
-/// Per-process zoom context — stores padded crop origin and resize scale from
-/// the most recent `zoom` call so `click(from_zoom=true)` can translate
-/// zoom-image pixel coordinates back to full-window coordinates.
-#[derive(Clone, Copy, Debug)]
-pub struct ZoomContext {
-    pub origin_x: f64,
-    pub origin_y: f64,
-    /// Inverse resize scale: `cw / out_w` (1.0 = no downscale).
-    pub scale_inv: f64,
-}
-
-impl ZoomContext {
-    pub fn zoom_to_window(&self, px: f64, py: f64) -> (f64, f64) {
-        (
-            self.origin_x + px * self.scale_inv,
-            self.origin_y + py * self.scale_inv,
-        )
-    }
-}
-
-pub struct ZoomRegistry {
-    inner: std::sync::Mutex<std::collections::HashMap<u32, ZoomContext>>,
-}
-
-impl ZoomRegistry {
-    pub fn new() -> Self {
-        Self {
-            inner: std::sync::Mutex::new(Default::default()),
-        }
-    }
-    pub fn set(&self, pid: u32, ctx: ZoomContext) {
-        self.inner.lock().unwrap().insert(pid, ctx);
-    }
-    pub fn get(&self, pid: u32) -> Option<ZoomContext> {
-        self.inner.lock().unwrap().get(&pid).copied()
-    }
-}
+use cua_driver_core::element_cache::{
+    SnapshotBoundZoomContext as ZoomContext, SnapshotBoundZoomRegistry as ZoomRegistry,
+};
 
 pub struct ToolState {
     pub element_cache: Arc<ElementCache>,
@@ -600,6 +566,20 @@ impl ToolState {
             zoom_registry: Arc::new(ZoomRegistry::new()),
             config: Arc::new(RwLock::new(load_driver_config())),
         })
+    }
+
+    fn zoom_context(
+        &self,
+        args: &Value,
+        pid: u32,
+        window_id: Option<u64>,
+    ) -> Result<ZoomContext, ToolResult> {
+        self.zoom_registry.resolve(
+            &self.element_cache,
+            pid as i32,
+            window_id,
+            args.get("_session_id").and_then(Value::as_str),
+        )
     }
 }
 
@@ -1492,6 +1472,11 @@ impl Tool for GetWindowStateTool {
                         })
                         .flatten();
                     published_snapshot = snapshot_id.is_some();
+                    if let Some(snapshot_id) = snapshot_id {
+                        state
+                            .zoom_registry
+                            .retire_replaced(pid as i32, hwnd, snapshot_id);
+                    }
 
                     // Structured `elements` array — preferred consumption
                     // path. Shape matches the cross-platform spec:
@@ -1563,13 +1548,17 @@ impl Tool for GetWindowStateTool {
                         &[],
                         crate::uia::cache::SnapshotKind::Uia,
                     );
-                    state.element_cache.publish_for_session(
+                    if let Some(snapshot_id) = state.element_cache.publish_for_session(
                         pid as i32,
                         hwnd,
                         payload,
                         session_id.as_deref(),
                         screenshot_scale,
-                    );
+                    ) {
+                        state
+                            .zoom_registry
+                            .retire_replaced(pid as i32, hwnd, snapshot_id);
+                    }
                 }
 
                 if let Some((b64_opt, file_path, w, h, _orig_w)) = screenshot_opt {
@@ -3867,17 +3856,13 @@ impl Tool for ClickTool {
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
             if from_zoom {
-                match self.state.zoom_registry.get(pid) {
-                    Some(ctx) => {
+                match self.state.zoom_context(&args, pid, Some(hwnd)) {
+                    Ok(ctx) => {
                         let (wx, wy) = ctx.zoom_to_window(px, py);
                         px = wx;
                         py = wy;
                     }
-                    None => {
-                        return ToolResult::error(format!(
-                            "from_zoom=true but no zoom context for pid {pid}. Call zoom first."
-                        ))
-                    }
+                    Err(refusal) => return refusal,
                 }
             } else if !args.bool_or("_native_coordinates", false) {
                 let ratio = match screenshot_scale(&self.state, &args, pid, Some(hwnd)) {
@@ -4356,8 +4341,7 @@ mod background_element_click_record_tests {
 /// on the same pixel a px-click would. `Ok(())` on success; `Err(ToolResult)`
 /// short-circuits the caller. Mirrors macOS `tools::focus_by_pixel`.
 #[allow(clippy::too_many_arguments)]
-async fn focus_by_pixel(
-    state: &Arc<ToolState>,
+fn focus_by_pixel_click_args(
     pid: u32,
     window_id: Option<u64>,
     x: f64,
@@ -4367,7 +4351,7 @@ async fn focus_by_pixel(
     session_id: Option<String>,
     from_zoom: bool,
     native_coordinates: bool,
-) -> Result<(), ToolResult> {
+) -> Value {
     let mut click_args = json!({
         "pid": pid, "x": x, "y": y,
         "delivery_mode": if foreground { "foreground" } else { "background" },
@@ -4387,6 +4371,33 @@ async fn focus_by_pixel(
     if native_coordinates {
         click_args["_native_coordinates"] = json!(true);
     }
+    click_args
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn focus_by_pixel(
+    state: &Arc<ToolState>,
+    pid: u32,
+    window_id: Option<u64>,
+    x: f64,
+    y: f64,
+    foreground: bool,
+    session: Option<String>,
+    session_id: Option<String>,
+    from_zoom: bool,
+    native_coordinates: bool,
+) -> Result<(), ToolResult> {
+    let click_args = focus_by_pixel_click_args(
+        pid,
+        window_id,
+        x,
+        y,
+        foreground,
+        session,
+        session_id,
+        from_zoom,
+        native_coordinates,
+    );
     let focus = ClickTool {
         state: state.clone(),
     }
@@ -6982,17 +6993,13 @@ impl Tool for DoubleClickTool {
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
             if from_zoom {
-                match self.state.zoom_registry.get(pid) {
-                    Some(ctx) => {
+                match self.state.zoom_context(&args, pid, Some(hwnd)) {
+                    Ok(ctx) => {
                         let (wx, wy) = ctx.zoom_to_window(px, py);
                         px = wx;
                         py = wy;
                     }
-                    None => {
-                        return ToolResult::error(format!(
-                            "from_zoom=true but no zoom context for pid {pid}. Call zoom first."
-                        ))
-                    }
+                    Err(refusal) => return refusal,
                 }
             } else {
                 let ratio = match screenshot_scale(&self.state, &args, pid, Some(hwnd)) {
@@ -7354,17 +7361,13 @@ impl Tool for RightClickTool {
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
             if from_zoom {
-                match self.state.zoom_registry.get(pid) {
-                    Some(ctx) => {
+                match self.state.zoom_context(&args, pid, Some(hwnd)) {
+                    Ok(ctx) => {
                         let (wx, wy) = ctx.zoom_to_window(px, py);
                         px = wx;
                         py = wy;
                     }
-                    None => {
-                        return ToolResult::error(format!(
-                            "from_zoom=true but no zoom context for pid {pid}. Call zoom first."
-                        ))
-                    }
+                    Err(refusal) => return refusal,
                 }
             } else {
                 let ratio = match screenshot_scale(&self.state, &args, pid, Some(hwnd)) {
@@ -7606,8 +7609,8 @@ impl Tool for DragTool {
         let from_zoom = args.bool_or("from_zoom", false);
 
         if from_zoom {
-            match self.state.zoom_registry.get(pid) {
-                Some(ctx) => {
+            match self.state.zoom_context(&args, pid, hwnd_opt) {
+                Ok(ctx) => {
                     let (wx, wy) = ctx.zoom_to_window(from_x, from_y);
                     let (wx2, wy2) = ctx.zoom_to_window(to_x, to_y);
                     from_x = wx;
@@ -7615,11 +7618,7 @@ impl Tool for DragTool {
                     to_x = wx2;
                     to_y = wy2;
                 }
-                None => {
-                    return ToolResult::error(format!(
-                        "from_zoom=true but no zoom context for pid {pid}. Call zoom first."
-                    ))
-                }
+                Err(refusal) => return refusal,
             }
         } else {
             let ratio = match screenshot_scale(&self.state, &args, pid, hwnd_opt) {
@@ -8867,13 +8866,17 @@ impl Tool for ZoomTool {
                 A 20% padding is automatically added on every side of the requested region so \
                 the target remains visible even if the caller's coordinates are slightly off.\n\n\
                 After a zoom, pass `from_zoom=true` to click/type_text to auto-translate \
-                coordinates back to full-window space.\n\n\
+                coordinates back to full-window space. Coordinate actions return \
+                `screenshot_context_missing` when the latest snapshot does not contain a \
+                screenshot owned by this session. `from_zoom` actions return \
+                `zoom_context_missing` when the zoom was never created or was replaced; call \
+                `get_window_state`, then `zoom`, again on the same connection.\n\n\
                 Windows-specific: `window_id` is the canonical addressing field (HWND). \
-                `pid` is also required (used to scope the zoom translation registry, matching \
-                Swift's per-pid zoom context).".into(),
+                `pid` is preferred when available; otherwise the driver resolves the unique \
+                current snapshot owned by this session and window.".into(),
             input_schema: json!({
                 "type":"object","required":["window_id","x1","y1","x2","y2"],"properties":{
-                    "pid":{"type":"integer","description":"Target process ID. Validated in code (an explicit \"Missing required integer field pid\" error when absent); kept out of `required` to match the shared cross-platform zoom contract."},
+                    "pid":{"type":"integer","description":"Optional target process ID. When omitted, the unique current snapshot for this session and HWND is used."},
                     "window_id":{"type":"integer","description":"HWND of the target window."},
                     "x1":{"type":"number","description":"Left edge of the region (resized-image pixels)."},
                     "y1":{"type":"number","description":"Top edge of the region (resized-image pixels)."},
@@ -8887,11 +8890,13 @@ impl Tool for ZoomTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let raw_pid = match args.get("pid").and_then(|v| v.as_i64()) {
-            Some(p) => p,
-            None => return ToolResult::error("Missing required integer field pid."),
+        let requested_pid = match args.get("pid") {
+            None => None,
+            Some(value) => match value.as_i64().and_then(|pid| i32::try_from(pid).ok()) {
+                Some(pid) => Some(pid),
+                None => return ToolResult::error("pid must be a 32-bit integer"),
+            },
         };
-        let pid = Some(raw_pid as u32);
         let hwnd = match args.get("window_id").and_then(|v| v.as_u64()) {
             Some(v) => v,
             None => return ToolResult::error("Missing required integer field window_id."),
@@ -8920,11 +8925,21 @@ impl Tool for ZoomTool {
         // runs on a fresh native-resolution capture. Scale by the stored resize
         // ratio so the crop lands on the intended region; the zoom context then
         // holds native-pixel values, which is what `from_zoom` clicks expect.
-        let ratio = match screenshot_scale(&self.state, &args, raw_pid as u32, Some(hwnd)) {
-            Ok(ratio) => ratio,
+        let session_id = args.opt_str("_session_id");
+        let (pid, screenshot) = match self.state.element_cache.screenshot_context_for_zoom(
+            requested_pid,
+            hwnd,
+            session_id.as_deref(),
+        ) {
+            Ok(context) => context,
             Err(refusal) => return refusal,
         };
-        let (nx1, ny1, nx2, ny2) = (x1 * ratio, y1 * ratio, x2 * ratio, y2 * ratio);
+        let (nx1, ny1, nx2, ny2) = (
+            x1 * screenshot.scale,
+            y1 * screenshot.scale,
+            x2 * screenshot.scale,
+            y2 * screenshot.scale,
+        );
 
         let state = self.state.clone();
         let result = tokio::task::spawn_blocking(move || {
@@ -8935,15 +8950,18 @@ impl Tool for ZoomTool {
 
         match result {
             Ok(Ok(crop)) => {
-                if let Some(p) = pid {
-                    state.zoom_registry.set(
-                        p,
-                        ZoomContext {
-                            origin_x: crop.origin_x,
-                            origin_y: crop.origin_y,
-                            scale_inv: crop.scale_inv,
-                        },
-                    );
+                if let Err(refusal) = state.zoom_registry.set_if_current(
+                    &state.element_cache,
+                    pid,
+                    session_id.as_deref(),
+                    ZoomContext {
+                        screenshot,
+                        origin_x: crop.origin_x,
+                        origin_y: crop.origin_y,
+                        scale_inv: crop.scale_inv,
+                    },
+                ) {
+                    return refusal;
                 }
                 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
                 let b64 = B64.encode(&crop.jpeg_bytes);
@@ -10117,8 +10135,10 @@ pub fn build_registry_with_provider(
     // `register_all` session_end hook (platform-macos/src/tools/mod.rs).
     let cursor_registry = state.cursor_registry.clone();
     let element_cache = state.element_cache.clone();
+    let zoom_registry = state.zoom_registry.clone();
     let session_end_hook =
         cua_driver_core::session::register_scoped_session_end_hook(move |session_id| {
+            zoom_registry.retire_session(session_id);
             element_cache.retire_session_screenshots(session_id);
             cursor_registry.remove(session_id);
             crate::overlay::remove_cursor(session_id.to_owned());
@@ -10643,6 +10663,79 @@ mod click_button_schema_tests {
         for need in ["left", "right", "middle"] {
             assert!(enum_vals.contains(&need), "missing {need} in button.enum");
         }
+    }
+}
+
+#[cfg(test)]
+mod snapshot_coordinate_tests {
+    use super::{focus_by_pixel_click_args, ToolState, ZoomTool};
+    use crate::uia::cache::{CachedSnapshot, SnapshotKind};
+    use cua_driver_core::tool::Tool;
+
+    #[test]
+    fn schema_keeps_pid_optional_for_window_owned_lookup() {
+        let tool = ZoomTool {
+            state: ToolState::new(),
+        };
+        let required = tool.def().input_schema["required"].as_array().unwrap();
+        assert!(!required.iter().any(|field| field == "pid"));
+        assert!(tool.def().input_schema["properties"].get("pid").is_some());
+
+        tool.state.element_cache.publish_for_session(
+            42,
+            7,
+            CachedSnapshot::from_nodes(&[], SnapshotKind::Uia),
+            Some("zoom-optional-pid-windows"),
+            Some(2.0),
+        );
+        let (pid, context) = tool
+            .state
+            .element_cache
+            .screenshot_context_for_zoom(None, 7, Some("zoom-optional-pid-windows"))
+            .unwrap();
+        assert_eq!(pid, 42);
+        assert_eq!(context.window_id, 7);
+        tool.state.element_cache.publish_for_session(
+            43,
+            7,
+            CachedSnapshot::from_nodes(&[], SnapshotKind::Uia),
+            Some("zoom-optional-pid-windows"),
+            Some(1.0),
+        );
+        assert!(tool
+            .state
+            .element_cache
+            .screenshot_context_for_zoom(None, 7, Some("zoom-optional-pid-windows"))
+            .is_err());
+    }
+
+    #[test]
+    fn press_key_native_element_focus_skips_second_screenshot_scaling() {
+        let native = focus_by_pixel_click_args(
+            42,
+            Some(7),
+            120.0,
+            80.0,
+            false,
+            None,
+            Some("client-a".to_owned()),
+            false,
+            true,
+        );
+        assert_eq!(native["_native_coordinates"], true);
+
+        let screenshot = focus_by_pixel_click_args(
+            42,
+            Some(7),
+            60.0,
+            40.0,
+            false,
+            None,
+            Some("client-a".to_owned()),
+            false,
+            false,
+        );
+        assert!(screenshot.get("_native_coordinates").is_none());
     }
 }
 

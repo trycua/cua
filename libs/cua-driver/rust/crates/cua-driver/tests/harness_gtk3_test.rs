@@ -677,6 +677,14 @@ fn invoke_operation(
                 .as_u64()
                 .expect("small screenshot width");
             let (x, y, width, height) = element_rect(driver, pid, window_id, &pre, target);
+            let zoom = driver.call(
+                "zoom",
+                serde_json::json!({
+                    "pid": pid as i64, "window_id": window_id,
+                    "x1": x, "y1": y, "x2": x + width, "y2": y + height
+                }),
+            );
+            assert!(!zoom.is_error(), "create owned zoom context: {}", zoom.text());
             let mut observer = driver
                 .spawn_peer_unrecorded()
                 .expect("start independent capture client on the same daemon");
@@ -693,6 +701,56 @@ fn invoke_operation(
                     .expect("native screenshot width")
                     > small_width
             );
+            for (tool, args) in [
+                (
+                    "double_click",
+                    serde_json::json!({"pid":pid as i64,"window_id":window_id,"x":x,"y":y,"delivery_mode":"foreground"}),
+                ),
+                (
+                    "right_click",
+                    serde_json::json!({"pid":pid as i64,"window_id":window_id,"x":x,"y":y,"delivery_mode":"foreground"}),
+                ),
+                (
+                    "scroll",
+                    serde_json::json!({"pid":pid as i64,"window_id":window_id,"x":x,"y":y,"direction":"down","amount":1,"delivery_mode":"foreground"}),
+                ),
+                (
+                    "drag",
+                    serde_json::json!({"pid":pid as i64,"window_id":window_id,"from_x":x,"from_y":y,"to_x":x+1.0,"to_y":y+1.0,"duration_ms":0,"steps":1,"delivery_mode":"foreground"}),
+                ),
+                (
+                    "mouse_button_down",
+                    serde_json::json!({"pid":pid as i64,"window_id":window_id,"x":x,"y":y}),
+                ),
+            ] {
+                let stale = driver.call(tool, args);
+                assert_eq!(
+                    stale.structured()["code"],
+                    "screenshot_context_missing",
+                    "{tool} must refuse another client's screenshot transform"
+                );
+            }
+            for (tool, args) in [
+                (
+                    "click",
+                    serde_json::json!({"pid":pid as i64,"window_id":window_id,"x":1.0,"y":1.0,"from_zoom":true,"delivery_mode":"foreground"}),
+                ),
+                (
+                    "drag",
+                    serde_json::json!({"pid":pid as i64,"window_id":window_id,"from_x":1.0,"from_y":1.0,"to_x":2.0,"to_y":2.0,"from_zoom":true,"duration_ms":0,"steps":1,"delivery_mode":"foreground"}),
+                ),
+                (
+                    "mouse_button_down",
+                    serde_json::json!({"pid":pid as i64,"window_id":window_id,"x":1.0,"y":1.0,"from_zoom":true}),
+                ),
+            ] {
+                let stale = driver.call(tool, args);
+                assert_eq!(
+                    stale.structured()["code"],
+                    "zoom_context_missing",
+                    "{tool} must refuse a zoom bound to the replaced snapshot"
+                );
+            }
             let stale = driver.call(
                 "click",
                 serde_json::json!({

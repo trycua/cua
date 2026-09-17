@@ -147,28 +147,9 @@ pub use check_permissions::{
     PERMISSIONS_HOST_REQUEST_ARG,
 };
 
-/// Per-process zoom context — stores the padded crop origin and resize scale
-/// from the most recent `zoom` call, so `click(from_zoom=true)` can translate
-/// zoom-image pixel coordinates back to full-window coordinates.
-#[derive(Clone, Copy, Debug)]
-pub struct ZoomContext {
-    /// Padded crop X origin in full-window pixel space.
-    pub origin_x: f64,
-    /// Padded crop Y origin in full-window pixel space.
-    pub origin_y: f64,
-    /// Inverse resize scale: `cw / out_w` (1.0 = no downscale).
-    pub scale_inv: f64,
-}
-
-impl ZoomContext {
-    /// Translate a zoom-image coordinate `(px, py)` to full-window pixel coordinates.
-    pub fn zoom_to_window(&self, px: f64, py: f64) -> (f64, f64) {
-        (
-            self.origin_x + px * self.scale_inv,
-            self.origin_y + py * self.scale_inv,
-        )
-    }
-}
+pub use cua_driver_core::element_cache::{
+    SnapshotBoundZoomContext as ZoomContext, SnapshotBoundZoomRegistry as ZoomRegistry,
+};
 
 /// Input delivery modality — the agent-selected rung of the best-effort-background
 /// ladder, passed per call (never a stored/config setting).
@@ -490,33 +471,6 @@ fn point_within_rect([rx, ry, rw, rh]: [f64; 4], x: f64, y: f64) -> bool {
     rw > 0.0 && rh > 0.0 && x >= rx && x < rx + rw && y >= ry && y < ry + rh
 }
 
-/// Thread-safe per-pid zoom context registry.
-pub struct ZoomRegistry {
-    inner: std::sync::Mutex<HashMap<i32, ZoomContext>>,
-}
-
-impl Default for ZoomRegistry {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ZoomRegistry {
-    pub fn new() -> Self {
-        Self {
-            inner: std::sync::Mutex::new(HashMap::new()),
-        }
-    }
-
-    pub fn set(&self, pid: i32, ctx: ZoomContext) {
-        self.inner.lock().unwrap().insert(pid, ctx);
-    }
-
-    pub fn get(&self, pid: i32) -> Option<ZoomContext> {
-        self.inner.lock().unwrap().get(&pid).copied()
-    }
-}
-
 /// Runtime-mutable driver configuration persisted across calls within a session.
 pub struct DriverConfig {
     /// Max screenshot dimension (0 = no limit). Applied during screenshot/zoom.
@@ -747,6 +701,20 @@ pub(super) fn screenshot_scale(
     )
 }
 
+pub(super) fn zoom_context(
+    state: &ToolState,
+    args: &serde_json::Value,
+    pid: i32,
+    window_id: Option<u32>,
+) -> Result<ZoomContext, cua_driver_core::protocol::ToolResult> {
+    state.zoom_registry.resolve(
+        &state.element_cache,
+        pid,
+        window_id.map(u64::from),
+        args.get("_session_id").and_then(serde_json::Value::as_str),
+    )
+}
+
 pub(crate) fn cursor_overlay_unavailable() -> cua_driver_core::protocol::ToolResult {
     let message = "macOS agent cursor overlay is unavailable: this runtime owner has no certified \
                    AppKit main-thread host adapter or no Window Server graphic-session access; \
@@ -837,10 +805,12 @@ pub fn register_all(
     {
         let session_config = state.session_config.clone();
         let element_cache = state.element_cache.clone();
+        let zoom_registry = state.zoom_registry.clone();
         let cursor_registry = state.cursor_registry.clone();
         let registration =
             cua_driver_core::session::register_scoped_session_end_hook(move |session_id| {
                 session_config.clear(session_id);
+                zoom_registry.retire_session(session_id);
                 element_cache.retire_session_screenshots(session_id);
                 // Per-session agent cursor: the session_id is the cursor key when
                 // the caller gave no explicit cursor_id, so dropping it here both

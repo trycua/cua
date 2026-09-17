@@ -1963,6 +1963,7 @@ fn unavailable_wayland_focused_input_background(
     })
 }
 
+#[derive(Debug)]
 enum CoordinateContext {
     Zoom(ZoomContext),
     Screenshot(f64),

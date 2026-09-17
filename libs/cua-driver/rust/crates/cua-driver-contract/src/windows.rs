@@ -202,6 +202,10 @@ pub struct ElementFrame {
 pub struct WindowElement {
     pub element_index: u64,
     pub role: String,
+    /// `AXSubrole` — the control class the role alone does not name
+    /// (`AXButton` + `AXSearchField`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subrole: Option<String>,
     pub depth: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub element_token: Option<String>,

@@ -3,45 +3,93 @@ title: 'Use TypeSafe Jev with Cua Driver'
 description: 'Build an agent that uses Jev to choose actions and Cua Driver to fill and submit a browser form.'
 ---
 
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+
 [Jev](https://typesafe.ai/) is a model that chooses between options supplied by
 your application. In this example, Jev chooses the next action and Cua Driver
 performs it in the browser.
 
 You'll run a Python agent that enters a sample value into a local form and
-clicks **Submit**. The example opens a separate Chrome profile, checks that the
+clicks **Submit**. The example opens a separate browser profile, checks that the
 form received the value, and stops its test server when finished.
 
 ## Before you start
 
-Use a Mac with an unlocked desktop. Install:
+You need a logged-in graphical desktop and:
 
-- [Cua Driver](/how-to-guides/driver/install), with Accessibility and Screen
-  Recording permissions approved.
-- [Google Chrome](https://www.google.com/chrome/) in `/Applications`.
+- A current [Cua Driver installation](/how-to-guides/driver/install).
+- A supported Chromium-based browser, listed in your platform's setup below.
 - [uv](https://docs.astral.sh/uv/getting-started/installation/) and Git. uv will
   install the Python version needed by the example.
 
 You'll also need an API key from the [TypeSafe console](https://console.typesafe.ai/)
 to use Jev. You can run the connection check without a key.
 
-Run the following commands on the Mac that Cua Driver controls. Keep using the
-same terminal and working directory throughout the guide.
+After installation, open a new terminal on the computer Cua Driver controls.
+Use your platform's setup below, then follow the shared steps in that terminal.
+Commands outside the platform tabs work in both POSIX shells and PowerShell.
+See [verification status](#verification-status) for what has been tested.
 
 ## 1. Check Cua Driver
 
-Point the example to the installed app's executable and check its status:
+<Tabs items={['macOS', 'Windows', 'Linux']}>
+  <Tab value="macOS">
+
+Install [Google Chrome](https://www.google.com/chrome/) in `/Applications` and
+keep the desktop unlocked. Point the example to the installed Driver app:
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 export CUA_DRIVER_BIN="/Applications/CuaDriver.app/Contents/MacOS/cua-driver"
+"$CUA_DRIVER_BIN" --version
 "$CUA_DRIVER_BIN" status
 "$CUA_DRIVER_BIN" permissions status --json
 ```
 
-The daemon should be running, with both `accessibility` and `screen_recording`
-set to `true`. If it is not, complete the
-[installation and permission setup](/how-to-guides/driver/install#grant-tcc-permissions-macos-only)
-before continuing.
+The daemon should be running, with `accessibility` and `screen_recording` both
+`true`. Complete the [permission setup](/how-to-guides/driver/install#grant-tcc-permissions-macos-only)
+if either grant is missing.
+
+  </Tab>
+  <Tab value="Windows">
+
+Use a normal, non-administrator PowerShell terminal in your logged-in desktop
+session. Install Google Chrome or Microsoft Edge as a system application.
+Run Driver without elevation too: automatic browser discovery requires an
+installation the running account's token cannot modify.
+
+```powershell
+cua-driver --version
+cua-driver status
+cua-driver doctor
+```
+
+The daemon must run in the interactive desktop session, not a background
+service session. If it is not running, follow the
+[Windows installation steps](/how-to-guides/driver/install).
+
+  </Tab>
+  <Tab value="Linux">
+
+Start with an X11 desktop session, using a non-root account and a system package
+of Google Chrome or Chromium. A browser downloaded into a user-writable cache
+is not a substitute for the trusted system installation.
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+cua-driver --version
+cua-driver status
+cua-driver doctor
+```
+
+Start Driver from the same graphical session using the
+[Linux daemon instructions](/how-to-guides/driver/install#start-the-daemon-on-linux).
+Check the report for display and accessibility-bus problems before continuing.
+Native Wayland has [compositor-specific limits](/reference/cua-driver/platform-support#linux-window-systems)
+and has not been verified for this example.
+
+  </Tab>
+</Tabs>
 
 ## 2. Download the example
 
@@ -52,7 +100,7 @@ already exist:
 ```bash
 git clone --depth 1 https://github.com/trycua/cua.git cua-jev
 cd cua-jev
-git fetch --depth 1 origin bebe5e7692c6347b6a090336eac3c0ea4911ec59
+git fetch --depth 1 origin b0e4b6feb0064cedc4dcf04d70a0d270d0568b99
 git switch --detach FETCH_HEAD
 cd libs/cua-driver/examples/typesafe-jev
 uv sync --frozen --python 3.12
@@ -69,7 +117,7 @@ Run the example with fixed choices instead of calling Jev:
 uv run --frozen python verify_setup.py --output-dir runs/connection-check
 ```
 
-Chrome opens a local test page, enters a value, and submits the form. A
+An isolated browser opens a local test page, enters a value, and submits the form. A
 successful run ends with:
 
 ```json
@@ -94,7 +142,7 @@ source file, or chat message.
 
 The command runs the connection check again, then lets Jev choose the actions.
 Live calls send the test page's state to TypeSafe and use your account's API
-billing. Your personal Chrome profile is not used.
+billing. Your personal browser profile is not used.
 
 Success ends with:
 
@@ -105,7 +153,7 @@ Success ends with:
 Inspect the result:
 
 ```bash
-.venv/bin/python -m json.tool runs/jev-example/summary.json
+uv run --frozen python -m json.tool runs/jev-example/summary.json
 ```
 
 Look for `"complete": true` and a check with `"provider": "live"` and
@@ -119,12 +167,31 @@ shared Cua Driver service running.
 
 ## Use the TypeScript version
 
-The same example includes a TypeScript agent. With Node.js 20 or later and npm
-installed, run these commands from the example directory:
+The same example includes a TypeScript agent. Install Node.js 22 or later and
+npm, then install the dependencies from the example directory:
+
+<Tabs items={['macOS / Linux', 'Windows']}>
+  <Tab value="macOS / Linux">
 
 ```bash
 export npm_config_cache="$PWD/.venv/npm-cache"
 npm ci
+```
+
+  </Tab>
+  <Tab value="Windows">
+
+```powershell
+$env:npm_config_cache = "$PWD/.venv/npm-cache"
+npm.cmd ci
+```
+
+  </Tab>
+</Tabs>
+
+Run both agents with the same command on every platform:
+
+```bash
 uv run --frozen python verify_setup.py --live --typescript --output-dir runs/both-languages
 ```
 
@@ -134,8 +201,8 @@ This runs the connection and live checks for both languages. Success reports
 ## Running from an AI agent
 
 Give the agent this guide and supply `TYPESAFE_API_KEY` through its execution
-environment. The person operating the Mac must approve OS permissions and
-keep the desktop unlocked.
+environment. The person operating the computer must approve any OS permissions
+and keep the graphical session available.
 
 If shell calls do not share state, the agent must repeat the working directory
 and `PATH`/`CUA_DRIVER_BIN` exports. Keep each `verify_setup.py` invocation in one
@@ -146,11 +213,24 @@ shell call until it finishes. The command manages the test server itself.
 | Problem | What to check |
 | --- | --- |
 | Driver not running or permissions missing | Follow the [Driver setup guide](/how-to-guides/driver/install). |
-| Browser cannot launch | Check that the signed Google Chrome app is installed in `/Applications`. |
-| `uv` not found | Finish the uv installation and start a new terminal, or add `~/.local/bin` to `PATH`. |
+| Browser cannot launch | Check the browser installation and desktop-session requirements in your platform tab. On Windows, avoid an elevated Driver process. |
+| `browser_prepare` requires a `pid` | Update an older Driver installation before using this example. |
+| `uv` not found | Finish the uv installation and open a new terminal with its installation directory on `PATH`. |
 | API authentication or quota error | Check your TypeSafe key and account access. The connection check can pass even when live access fails. |
 | Output directory already exists | Choose another `--output-dir` to keep the previous result. |
 | Run fails or reports `"complete": false` | Read the action log before retrying. Failure does not prove that nothing happened; an action may already have landed. |
+
+## Verification status
+
+Verification coverage for this example:
+
+| Platform | Example verification |
+| --- | --- |
+| macOS | Browser actions and live Jev runs verified for Python and TypeScript. |
+| Windows | Unit and launcher tests pass; browser and live Jev runs are not yet verified. |
+| Linux | Unit and launcher tests pass; browser and live Jev runs are not yet verified. |
+
+Unit tests are not a substitute for the browser connection check in step 3.
 
 ## Adapt the example
 

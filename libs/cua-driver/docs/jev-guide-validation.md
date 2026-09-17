@@ -4,13 +4,13 @@
 
 Refs #3915; extend the existing draft PR #3916 and its canonical branch. The maintainer requested a step-by-step public guide under `/docs` and a fresh-agent setup test using that guide alone. Preserve the existing example authorship and acknowledgment. Do not implement or depend on the separate policy-head proposal in #3914.
 
-## Technical scope
+## Initial technical scope
 
 Expand `docs/content/docs/how-to-guides/driver/use-typesafe-jev.mdx` rather than create another integration. The primary supported walkthrough is macOS with the existing Python example; TypeScript is an optional second route. Use the checked-in SDK dependency locks and existing fixture/runner. No changes to the Driver, permissions contract, installers, or model API are planned. Rehearsal failures later justified a small managed verification entry point beside the existing fixture; it does not change either agent's decisions or actions. Link the example README back to the complete setup guide.
 
 The guide must explain the agent/driver boundary, host versus controller machine, human approvals, installation and PATH, Python provisioning, signed browser prerequisite, source checkout before the PR merges, credential handling without shell-history exposure, persistent MCP ownership, fixture readiness, mock versus live proofs, independent readback, failure handling, sequential execution, and cleanup. No dependency on private experiment files, remembered PIDs, old sessions, or conversation context is allowed.
 
-## Acceptance evidence
+## Initial acceptance evidence
 
 1. Record the original guide's missing prerequisites as the initial failing documentation acceptance case.
 2. A new agent session receives only the candidate guide, a blank working directory, and documented human-provisioned prerequisites. No benchmark scripts or conversation history. It must clone the example, install dependencies, run the mock and live Python paths, and prove each exact submitted token through the fixture's independent `/state` endpoint.
@@ -18,7 +18,7 @@ The guide must explain the agent/driver boundary, host versus controller machine
 4. Run Python unit tests, TypeScript tests/typecheck, docs hygiene, internal links, applicable generator drift, and the docs production build. Keep logs private if they contain local paths; publish only sanitized evidence.
 5. Preserve the unrelated staged work in the original workspace. Keep PR #3916's description current and leave it draft if acceptance evidence is incomplete.
 
-## Worklog
+## Initial implementation worklog
 
 - Reviewed the existing guide and Python runner. The current guide cannot stand alone: it assumes Driver installation/PATH, uv and a suitable Python, browser availability, OS permissions, an unlocked desktop, and a source checkout that already contains an unmerged example. It also puts a placeholder secret in an export command and lacks exact expected results, readiness checks, and cleanup instructions.
 - Searched GitHub for Jev/TypeSafe duplicates. Found active draft #3916 linked to assigned issue #3915; recorded this contribution's scope on the issue and checked out that existing branch in a separate worktree at `6bbeb001e60209eb6ce86bc88a2524947086a5ab`.
@@ -158,3 +158,91 @@ example are unchanged. The first parent audit used the wrong JSONL event name
 Existing Node/npm notices and Rust dead-code/linker warnings remained non-blocking.
 No Driver runtime, dependency lock, installation policy, or security setting was
 changed. Prior verification history stays in this report, outside the walkthrough.
+
+## Platform-neutral follow-up
+
+The maintainer selected a shared walkthrough with platform-specific setup and
+honest native validation status. The guide now separates macOS, Windows, and
+Linux desktop prerequisites while keeping download, Python setup, connection
+checks, live execution, and results common. Shell-specific npm installation is
+in tabs; summary inspection uses `uv run` instead of `.venv/bin/python`. Native
+Wayland is explicitly outside the verified example coverage. Detailed sandbox
+failures remain here rather than becoming another setup diary in the guide.
+
+### Launcher correction
+
+The original verifier invoked `npm` directly with Python `subprocess.run`.
+On Windows this raised `FileNotFoundError: [WinError 2]` because npm is a command
+shim, not an executable resolved like `node.exe`. Extracted the existing runner
+command construction and added real-process startup tests. The TypeScript test
+reached the same native failure before the fix and reaches the real argument
+validator afterward; it does not mock process creation or require a desktop.
+The Python test invokes the actual runner's help path.
+
+The fix uses the existing `node --import tsx` pattern already used by the npm
+test script. It adds no dependency, shell evaluation, permission change, or
+Driver runtime change. Optional Node checks skip only when Node/TypeScript
+dependencies are absent; the recorded three-platform runs installed them and
+had no skipped tests. Source commit `decc10f6c37168e061d3973dfd9cd21d18da3f68`
+was moved with `git cherry-pick -x`, retaining contributor/coauthor credit.
+The guide pins runnable revision `b0e4b6feb0064cedc4dcf04d70a0d270d0568b99`.
+
+| Native host | Python tests | TypeScript tests | Typechecking | Desktop/live evidence |
+| --- | --- | --- | --- | --- |
+| macOS, Python 3.12.14, Node 22.20.0 | 17 passed | 7 passed | Passed | Prior real browser/live proof; revised-guide rehearsal recorded below |
+| Windows, Python 3.12.8 | 17 passed | 7 passed | Passed | Blocked before browser actions; no live requests |
+| Linux x86_64, Python 3.12.3, Node 22.20.0 | 17 passed | 7 passed | Passed | Stopped at desktop preflight; no live requests |
+
+### Windows native limitation
+
+The existing interactive Session 1 desktop has Driver 0.19.3, whose preparation
+API requires a browser PID. It was not replaced or stopped. Official 0.23.2 and
+0.28.2 Windows binaries were downloaded separately and checked against their
+component-release asset digests. Owned direct MCP processes exercised those
+runtimes without changing the shared daemon or its user policy.
+
+Microsoft Edge 153.0.4234.32 has a valid Microsoft signature. The host's elevated
+token was correctly refused automatic protected-browser discovery. A restricted
+token, and subsequently a medium-integrity non-administrator token, passed
+attestation but the isolated Edge process did not expose a loopback DevTools
+endpoint before timeout, on both tested Driver versions. No policy, UAC, ACL,
+or browser-sandbox setting was weakened to force a pass.
+
+All four managed attempts retained `complete: false`, no successful action
+records, and closed fixture ports. The original daemon remained PID 8088 with
+the same policy hash. The TypeSafe credential was not provisioned here and no
+live provider request was attempted. This is an environment-specific unresolved
+browser-startup result, not a claim that Windows cannot support the integration.
+A usable non-elevated browser/Driver desktop run is still required.
+
+Retained Windows evidence archive SHA-256:
+`6f49886a0619263f39c72950c96532f18acefc0bc1efc9863e7cd7937cfa1161`.
+
+### Linux native limitation
+
+The first existing Linux sandbox failed workspace preflight for insufficient
+free space. On the second, unprivileged dependency setup, both test suites, and
+typechecking passed. Its installed Driver is 0.4.2, no supported system Chromium
+browser is installed, and the existing XFCE desktop belongs to root. The test
+user has no usable top-level windows on the observed X11 display. Reading the
+other user's process environment was denied, and sudo requires a password.
+No authentication material was copied and no display authorization or host
+permission was weakened. Desktop verification stopped before any model call.
+A current Driver, trusted system browser, and accessible same-user desktop are
+required before claiming an X11 pass. No native Wayland run was attempted.
+
+### Workflow integrity
+
+Environment switching resynchronized the managed Mac workspace's Git metadata
+and invalidated its sibling worktree reference. The guide files were compared
+with the canonical PR head before recovering that checkout as a standalone
+repository. The resynchronized original index was not reset or overwritten;
+its checksum changed through the tooling, so the earlier preserved-staging
+claim applies only to its original phase. This tooling issue, transfer limits,
+and all native setup blockers were recorded separately.
+
+The initial Mac test invocation lacked optional npm dependencies and skipped
+the TypeScript launcher check. After the documented locked npm installation,
+all 17 Python tests and seven TypeScript tests passed with typechecking. That
+initial skip is not counted as launcher validation. The PR remains draft with
+Windows/Linux desktop acceptance explicitly incomplete.

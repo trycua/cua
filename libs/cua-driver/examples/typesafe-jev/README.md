@@ -37,7 +37,7 @@ the page changes rather than reusing an older reference.
 Install Cua Driver so that `cua-driver` is on `PATH`, or set `CUA_DRIVER_BIN`
 to its absolute executable path. You need an unlocked desktop and a signed
 Chromium-based browser that Cua Driver can prepare. Python with `uv` supplies
-the fixture and Python agent. Node.js 20 or later and npm are needed only for
+the fixture and Python agent. Node.js 22 or later and npm are needed only for
 the optional TypeScript agent.
 
 From this directory, install the locked Python dependencies:
@@ -52,6 +52,18 @@ For the TypeScript agent, also run:
 export npm_config_cache="$PWD/.venv/npm-cache"
 npm ci
 ```
+
+On Windows, use a non-administrator desktop session and `npm.cmd ci` in
+PowerShell. The managed verifier starts TypeScript through `node --import tsx`,
+not an npm shell shim. On Linux, use a supported system browser and a desktop
+session accessible to the same user as Driver; native Wayland has separate
+compositor-specific requirements.
+
+Unit and launcher tests pass on macOS, Windows, and Linux. Desktop and live Jev
+proof are currently verified on macOS only. The available Windows host timed
+out preparing isolated Edge, and the Linux host lacked the required browser
+and desktop access. See the [validation report](../../docs/jev-guide-validation.md)
+for exact evidence and remaining gaps; a unit-test pass is not desktop proof.
 
 ## Verify setup in one agent command
 

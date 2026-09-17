@@ -190,9 +190,9 @@ pub enum Command {
         subcommand: String,
         flags: Vec<String>,
     },
-    /// `cua-driver extension ...` manages optional, registry-known Driver
-    /// extensions. Extensions are absent by default and never installed by
-    /// the main Driver installer.
+    /// `cua-driver extension ...` is an unsigned local-code storage prototype.
+    /// Archive hashes are self-asserted by the same untrusted archive and do
+    /// not establish publisher or artifact provenance.
     Extension {
         args: Vec<String>,
     },
@@ -431,7 +431,6 @@ fn finite_operation_from_args(args: &[String]) -> &'static str {
             "status" => "status",
             "install" => "install",
             "update" => "update",
-            "uninstall" => "uninstall",
             "path" => "path",
             _ => "other",
         },
@@ -552,18 +551,21 @@ pub fn parse_command() -> Command {
         println!("  cua-driver skills path          Print where the local skill pack lives.");
         println!("  --from main                     (install only) Fetch latest from main branch instead of the tagged release.");
         println!();
-        println!("extension options (optional Driver extensions):");
+        println!("extension options (UNSIGNED, UNTRUSTED LOCAL CODE PROTOTYPE):");
+        println!("  Archive hashes are self-asserted by that same archive; they detect corruption");
+        println!("  after storage but do not authenticate a publisher or establish provenance.");
+        println!(
+            "  Mutating commands are unsupported on Windows. Uninstall is intentionally absent"
+        );
+        println!(
+            "  until descriptor-relative recursive deletion has a reviewed cross-platform design."
+        );
         println!("  cua-driver extension list [--json]");
         println!("  cua-driver extension info <name> [--json]");
         println!("  cua-driver extension status [name] [--json]");
         println!("  cua-driver extension install <name> --archive <extension.tar.gz>");
         println!("  cua-driver extension update <name> --archive <extension.tar.gz>");
-        println!("  cua-driver extension uninstall <name>");
         println!("  cua-driver extension path <name>");
-        println!("                                  Installation is explicit and validates target, protocol,");
-        println!(
-            "                                  Driver compatibility, and every declared file hash."
-        );
         println!();
         println!("agent authorization (serve only):");
         println!("  --permission-mode <mode>        standard (default), bounded, or unrestricted.");
@@ -1998,11 +2000,11 @@ pub fn build_manifest() -> serde_json::Value {
               "description": "Manage the cua-driver agent skill pack (install / update / uninstall / status / path).",
               "args": [ { "name": "subcommand", "type": "positional-string", "description": "install | update | uninstall | status | path. Default: status." } ] },
             { "name": "extension",
-              "description": "Manage optional, registry-known Driver extensions.",
+              "description": "Unsigned, untrusted local-code storage prototype. Hashes are self-asserted by the same archive and do not establish publisher or artifact provenance; mutation is unsupported on Windows and uninstall is intentionally unavailable.",
               "args": [
-                  { "name": "subcommand", "type": "positional-string", "description": "list | info | status | install | update | uninstall | path. Default: list." },
+                  { "name": "subcommand", "type": "positional-string", "description": "list | info | status | install | update | path. Default: list." },
                   { "name": "name", "type": "positional-string", "description": "Registry extension name." },
-                  { "name": "--archive", "type": "string", "description": "Install from a local release-shaped tar.gz archive." },
+                  { "name": "--archive", "type": "string", "description": "Store unsigned, untrusted local code from a tar.gz whose hashes are self-asserted." },
                   { "name": "--json", "type": "flag", "description": "Emit machine-readable inspection output." }
               ] }
         ]
@@ -4196,8 +4198,8 @@ fn cli_docs_json() -> serde_json::Value {
             },
             {
                 "name": "extension",
-                "abstract": "Install, update, inspect, or remove optional Driver extensions.",
-                "discussion": "Extensions are absent by default. Installation validates the target, Driver compatibility, protocol version, and declared file hashes before activation.",
+                "abstract": "Inspect or store an unsigned, untrusted local extension prototype.",
+                "discussion": "Archive hashes are self-asserted by the same untrusted archive: they can detect later corruption but do not authenticate a publisher or establish artifact provenance. Mutation is unsupported on Windows. Uninstall is intentionally absent until descriptor-relative recursive deletion has a reviewed cross-platform design.",
                 "arguments": no_args,
                 "options": no_options,
                 "flags": no_flags,
@@ -4205,9 +4207,8 @@ fn cli_docs_json() -> serde_json::Value {
                     {"name":"list","abstract":"List registry-known extensions and local state.","discussion":"","arguments":[],"options":[],"flags":[{"name":"json","short_name":null,"help":"Emit machine-readable output.","default_value":false}],"subcommands":[]},
                     {"name":"info","abstract":"Describe one registry-known extension.","discussion":"","arguments":[{"name":"name","help":"Registry extension name.","type":"String","is_optional":false}],"options":[],"flags":[{"name":"json","short_name":null,"help":"Emit machine-readable output.","default_value":false}],"subcommands":[]},
                     {"name":"status","abstract":"Verify installed extension state; absence is healthy.","discussion":"","arguments":[{"name":"name","help":"Optional registry extension name.","type":"String","is_optional":true}],"options":[],"flags":[{"name":"json","short_name":null,"help":"Emit machine-readable output.","default_value":false}],"subcommands":[]},
-                    {"name":"install","abstract":"Inspect and install a local extension archive.","discussion":"","arguments":[{"name":"name","help":"Registry extension name.","type":"String","is_optional":false}],"options":[{"name":"archive","short_name":null,"help":"Local release-shaped tar.gz archive.","type":"String","default_value":null,"is_optional":false}],"flags":[],"subcommands":[]},
-                    {"name":"update","abstract":"Inspect and activate a local extension archive.","discussion":"","arguments":[{"name":"name","help":"Registry extension name.","type":"String","is_optional":false}],"options":[{"name":"archive","short_name":null,"help":"Local release-shaped tar.gz archive.","type":"String","default_value":null,"is_optional":false}],"flags":[],"subcommands":[]},
-                    {"name":"uninstall","abstract":"Remove only verified extension-owned versions.","discussion":"","arguments":[{"name":"name","help":"Registry extension name.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
+                    {"name":"install","abstract":"Store and activate unsigned, untrusted local code.","discussion":"Hashes are self-asserted and do not establish provenance. Unsupported on Windows.","arguments":[{"name":"name","help":"Registry extension name.","type":"String","is_optional":false}],"options":[{"name":"archive","short_name":null,"help":"Unsigned local tar.gz archive.","type":"String","default_value":null,"is_optional":false}],"flags":[],"subcommands":[]},
+                    {"name":"update","abstract":"Store and activate unsigned, untrusted local code.","discussion":"Hashes are self-asserted and do not establish provenance. Unsupported on Windows.","arguments":[{"name":"name","help":"Registry extension name.","type":"String","is_optional":false}],"options":[{"name":"archive","short_name":null,"help":"Unsigned local tar.gz archive.","type":"String","default_value":null,"is_optional":false}],"flags":[],"subcommands":[]},
                     {"name":"path","abstract":"Print the exact active version directory.","discussion":"","arguments":[{"name":"name","help":"Registry extension name.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]}
                 ]
             },

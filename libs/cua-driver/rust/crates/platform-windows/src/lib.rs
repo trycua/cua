@@ -68,6 +68,7 @@ pub mod input;
 
 #[cfg(target_os = "windows")]
 pub mod capture;
+mod capture_admission;
 #[cfg(target_os = "windows")]
 mod clipboard;
 

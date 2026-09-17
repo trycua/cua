@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/trycua/cua/.github/releases/cua-perception/artifact-manifest.schema.json",
+  "title": "Cua Perception candidate input manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "component", "version", "sourceSha", "target", "protocol", "artifacts", "modelLedger", "sourceLedger", "verification"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schemaVersion": { "const": 1 },
+    "component": { "const": "cua-perception" },
+    "version": { "$ref": "#/$defs/semver" },
+    "sourceSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "target": { "$ref": "#/$defs/target" },
+    "protocol": { "$ref": "#/$defs/protocol" },
+    "artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/artifact" }
+    },
+    "modelLedger": { "$ref": "#/$defs/relativePath" },
+    "sourceLedger": { "$ref": "#/$defs/relativePath" },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["health", "selfTest", "realParse"],
+      "properties": {
+        "health": { "$ref": "#/$defs/relativePath" },
+        "selfTest": { "$ref": "#/$defs/relativePath" },
+        "realParse": { "$ref": "#/$defs/relativePath" }
+      }
+    }
+  },
+  "$defs": {
+    "semver": { "type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$" },
+    "relativePath": { "type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$" },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["triple", "os", "arch"],
+      "properties": {
+        "triple": { "type": "string", "pattern": "^[a-z0-9_+.]+(?:-[a-z0-9_+.]+)+$" },
+        "os": { "enum": ["linux", "macos", "windows"] },
+        "arch": { "enum": ["x86_64", "aarch64", "universal"] }
+      }
+    },
+    "protocol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "const": "cua-perception-worker" },
+        "version": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "license": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["spdx", "source"],
+      "properties": {
+        "spdx": { "type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9.+() -]+$" },
+        "source": { "type": "string", "minLength": 1 },
+        "notice": { "$ref": "#/$defs/relativePath" }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name", "path", "sha256", "size", "license"],
+      "properties": {
+        "kind": { "enum": ["worker", "runtime", "model", "dictionary", "notice", "source", "verification-report", "review-recording"] },
+        "role": {
+          "enum": ["icon-detect", "ocr-detect", "ocr-recognize", "ocr-dictionary", "health", "self-test", "real-parse"]
+        },
+        "name": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+        "path": { "$ref": "#/$defs/relativePath" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "size": { "type": "integer", "minimum": 1 },
+        "target": { "$ref": "#/$defs/target" },
+        "protocolVersion": { "type": "integer", "minimum": 1 },
+        "license": { "$ref": "#/$defs/license" }
+      }
+    }
+  }
+}

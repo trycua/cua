@@ -90,6 +90,22 @@ class TestMergeReleasePleaseManifests(unittest.TestCase):
                 ["lume"],
             )
 
+    def test_perception_release_preserves_product_versions(self) -> None:
+        current = {
+            ".github/releases/cua-perception": "0.1.0",
+            "libs/cua-driver": "0.28.2",
+            "libs/lume": "0.5.3",
+        }
+        release = {
+            ".github/releases/cua-perception": "0.2.0",
+            "libs/cua-driver": "0.27.0",
+            "libs/lume": "0.5.2",
+        }
+        self.assertEqual(
+            MODULE.merge_component_versions(current, release, ["cua-perception"]),
+            {**current, ".github/releases/cua-perception": "0.2.0"},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

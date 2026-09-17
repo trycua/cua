@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/trycua/cua/.github/releases/cua-perception/model-ledger.schema.json",
+  "title": "Cua Perception model ledger",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "models"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schemaVersion": { "const": 1 },
+    "models": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["artifact", "artifactSha256", "origin", "revision", "license", "redistributionAllowed", "verificationStatus", "exportSource"],
+        "properties": {
+          "artifact": { "type": "string", "minLength": 1 },
+          "artifactSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "artifactSize": { "type": "integer", "minimum": 1 },
+          "origin": { "type": "string", "minLength": 1 },
+          "revision": { "type": "string", "minLength": 1 },
+          "license": { "type": "string", "minLength": 1 },
+          "redistributionAllowed": { "const": true },
+          "verificationStatus": {
+            "enum": ["release-verified", "license-review-required", "conversion-review-required"]
+          },
+          "exportSource": { "type": "string", "minLength": 1 },
+          "sourceArtifact": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "sha256", "size"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "size": { "type": "integer", "minimum": 1 }
+            }
+          },
+          "usageRestrictions": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  }
+}

@@ -127,6 +127,7 @@ jobs:
             --sha "$SHA" \
             --path libs/cua-driver \
             --exclude-path libs/cua-driver/docs \
+            --exclude-path libs/cua-driver/examples \
             --exclude-path libs/cua-driver/python \
             --exclude-path libs/cua-driver/tests \
             --exclude-path libs/cua-driver/rust/crates/cua-perception \
@@ -1249,6 +1250,7 @@ jobs:
             --sha "${{ steps.version.outputs.sha }}" \
             --path libs/cua-driver \
             --exclude-path libs/cua-driver/docs \
+            --exclude-path libs/cua-driver/examples \
             --exclude-path libs/cua-driver/python \
             --exclude-path libs/cua-driver/tests \
             --exclude-path libs/cua-driver/rust/crates/cua-perception \

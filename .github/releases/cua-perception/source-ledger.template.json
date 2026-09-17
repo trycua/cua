@@ -1,0 +1,15 @@
+{
+  "$schema": "./source-ledger.schema.json",
+  "schemaVersion": 1,
+  "sources": [
+    {
+      "artifact": "cua-perception-source.tar.gz",
+      "repository": "https://github.com/trycua/cua",
+      "revision": "0000000000000000000000000000000000000000",
+      "license": "Apache-2.0",
+      "durableLocation": "Candidate archive source/cua-perception-source.tar.gz",
+      "sourceOfferStatus": "bundled",
+      "patches": []
+    }
+  ]
+}

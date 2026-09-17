@@ -1,0 +1,53 @@
+name: "CI: Cua Perception release contract"
+
+on:
+  pull_request:
+    paths:
+      - ".github/releases/**"
+      - ".github/scripts/perception_release.py"
+      - ".github/scripts/tests/test_cua_perception_release_topology.py"
+      - ".github/workflows/cd-cua-perception-candidate.yml"
+      - ".github/workflows/ci-cua-perception-release.yml"
+      - ".github/workflows/release-please.yml"
+      - ".release-please-manifest.json"
+      - "release-please-config.json"
+  push:
+    branches: [main]
+    paths:
+      - ".github/releases/**"
+      - ".github/scripts/perception_release.py"
+      - ".github/workflows/cd-cua-perception-candidate.yml"
+      - ".release-please-manifest.json"
+      - "release-please-config.json"
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install validators
+        run: python -m pip install --disable-pip-version-check jsonschema==4.23.0 pyyaml==6.0.2 pytest==8.3.5
+      - name: Validate registry and focused release tests
+        run: |
+          python3 .github/scripts/release_channels.py validate
+          python3 -m pytest \
+            .github/scripts/tests/test_cua_perception_release_topology.py \
+            .github/scripts/tests/test_release_channels.py \
+            .github/scripts/tests/test_resolve_release_please_request.py \
+            .github/scripts/tests/test_merge_release_please_manifests.py
+      - name: Prove Driver dependency graph excludes Perception
+        working-directory: libs/cua-driver/rust
+        run: |
+          set -euo pipefail
+          if cargo tree --locked -p cua-driver --edges normal,build | grep -q 'cua-perception'; then
+            echo "::error::Default Cua Driver dependency graph includes cua-perception"
+            exit 1
+          fi

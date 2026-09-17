@@ -124,9 +124,11 @@ def load_registry(
         for companion_path in companion_paths:
             repository_path(root, companion_path)
         channels = component["channels"]
-        if channels != {"nightly": True, "registries": []}:
+        expected_nightly = not bool(component.get("candidateOnly", False))
+        if channels != {"nightly": expected_nightly, "registries": []}:
             raise ChannelError(
-                f"component {name} v1 channels must enable nightly and declare no registries"
+                f"component {name} channels must set nightly={expected_nightly} "
+                "and declare no registries"
             )
 
     release_config = read_json(root / "release-please-config.json")
@@ -465,6 +467,8 @@ def plan_nightly(
     if not SHA_RE.fullmatch(source_sha):
         raise ChannelError(f"source SHA must be 40 lowercase hex characters: {source_sha!r}")
     component = component_descriptor(name, registry_path, root=root)
+    if not component["channels"]["nightly"]:
+        raise ChannelError(f"component {name} does not enable nightly publication")
     base = (
         repository_path(root, component["versionAuthorityFile"]).read_text(encoding="utf-8").strip()
     )

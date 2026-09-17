@@ -69,12 +69,13 @@
           "minItems": 1,
           "items": { "$ref": "#/$defs/versionSite" }
         },
+        "candidateOnly": { "type": "boolean" },
         "channels": {
           "type": "object",
           "additionalProperties": false,
           "required": ["nightly", "registries"],
           "properties": {
-            "nightly": { "const": true },
+            "nightly": { "type": "boolean" },
             "registries": {
               "type": "array",
               "maxItems": 0

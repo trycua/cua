@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/trycua/cua/.github/releases/cua-perception/catalog-input.schema.json",
+  "title": "Cua Perception signed-catalog input",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "component", "version", "sourceSha", "target", "protocolVersion", "candidate", "releaseStatus", "signatureRequired", "artifacts"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schemaVersion": { "const": 1 },
+    "component": { "const": "cua-perception" },
+    "version": { "type": "string" },
+    "sourceSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "target": { "type": "string", "minLength": 1 },
+    "protocolVersion": { "type": "integer", "minimum": 1 },
+    "candidate": { "const": true },
+    "releaseStatus": { "const": "staging-candidate" },
+    "signatureRequired": { "const": true },
+    "artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "kind", "sha256", "size", "license"],
+        "properties": {
+          "name": { "type": "string" },
+          "kind": { "type": "string" },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "size": { "type": "integer", "minimum": 1 },
+          "license": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

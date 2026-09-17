@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/trycua/cua/.github/releases/cua-perception/runtime-contract.schema.json",
+  "title": "Cua Perception runtime binding contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "target", "protocolVersion", "worker", "runtime", "models", "dictionary", "rejectMismatch"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schemaVersion": { "const": 1 },
+    "target": { "type": "string", "minLength": 1 },
+    "protocolVersion": { "type": "integer", "minimum": 1 },
+    "worker": { "$ref": "#/$defs/binding" },
+    "runtime": { "$ref": "#/$defs/binding" },
+    "models": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "$ref": "#/$defs/binding" } },
+    "dictionary": { "$ref": "#/$defs/binding" },
+    "rejectMismatch": { "const": true }
+  },
+  "$defs": {
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "sha256"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "role": { "type": "string" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    }
+  }
+}

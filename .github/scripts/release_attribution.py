@@ -314,9 +314,10 @@ def validate_pr_title(
         for candidate in forbidden_entries
     ):
         raise ReleaseError(
-            "Perception-only changes cannot use a releasing or breaking title or commit "
-            "override; use an accurate non-releasing type such as 'build', 'test', or "
-            "'docs' with the 'no-release' label until cua-perception is registered"
+            "Perception changes that also modify shared Cargo metadata cannot use a "
+            "releasing or breaking title or commit override because Release Please would "
+            "also classify the commit as a Driver release; use an accurate non-releasing "
+            "type with the 'no-release' label"
         )
     if require_release and entry.change_type not in RELEASING_TYPES and not allow_non_release:
         raise ReleaseError(

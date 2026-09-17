@@ -60,13 +60,28 @@ def test_registry_matches_release_please_and_channel_prefixes_are_disjoint():
     schema = json.loads((ROOT / ".github/releases/component.schema.json").read_text())
     Draft202012Validator(schema).validate(json.loads(REGISTRY.read_text()))
     registry = load_registry(REGISTRY, root=ROOT)
-    assert set(registry["components"]) == {"cua-driver-rs", "lume"}
+    assert set(registry["components"]) == {"cua-driver-rs", "cua-perception", "lume"}
+    assert registry["components"]["cua-perception"]["candidateOnly"] is True
+    assert registry["components"]["cua-perception"]["channels"]["nightly"] is False
     all_prefixes = {
         component[key]
         for component in registry["components"].values()
         for key in ("stableTagPrefix", "nightlyTagPrefix")
     }
-    assert len(all_prefixes) == 4
+    assert len(all_prefixes) == 2 * len(registry["components"])
+
+
+def test_candidate_only_component_rejects_nightly_planning():
+    with pytest.raises(ChannelError, match="does not enable nightly publication"):
+        plan_nightly(
+            "cua-perception",
+            "a" * 40,
+            "20260812",
+            "1",
+            [],
+            registry_path=REGISTRY,
+            root=ROOT,
+        )
 
 
 @pytest.mark.parametrize(
@@ -456,6 +471,7 @@ def test_manifest_uses_stable_authority_with_a_separately_versioned_asset_tree(
 
     def fake_build_manifest(**kwargs):
         assert kwargs["exclude_paths"] == [
+            "libs/cua-driver/examples",
             "libs/cua-driver/experiments/cua-perception-inference",
             "libs/cua-driver/rust/crates/cua-perception",
         ]

@@ -1,0 +1,43 @@
+{
+  "$schema": "./model-ledger.schema.json",
+  "schemaVersion": 1,
+  "models": [
+    {
+      "artifact": "omniparser-icon-detect-fixed-1280-opset17.onnx",
+      "artifactSha256": "d8a876bf7f9fb73d7da9432904ade7fa78e092e9a91674e5a2806b45562a9ab2",
+      "artifactSize": 80933219,
+      "origin": "Hugging Face repository microsoft/OmniParser-v2.0",
+      "revision": "6600256cb0f1b07651e3bc86166196307bad7e2d",
+      "license": "AGPL-3.0-only",
+      "redistributionAllowed": true,
+      "verificationStatus": "license-review-required",
+      "exportSource": "Pinned conversion recipe and exporter source must be bundled in the source ledger",
+      "sourceArtifact": {
+        "name": "model.pt",
+        "sha256": "dab3d4351ad00b035db829909a4db98354d5a90f6990e4ac00222a9a95d4bf57",
+        "size": 40623819
+      },
+      "usageRestrictions": ["Do not publish until AGPL release review is complete"]
+    },
+    {
+      "artifact": "pp-ocrv5-mobile-det.onnx",
+      "artifactSha256": "a431985659dc921974177a95adcfbb90fd9e51989a5e04d70d0b75f597b6e61d",
+      "origin": "Hugging Face repository PaddlePaddle/PP-OCRv5_mobile_det",
+      "revision": "e6f4fa85f00e168c862bc462aebca69eef9b3d3d",
+      "license": "Apache-2.0",
+      "redistributionAllowed": true,
+      "verificationStatus": "release-verified",
+      "exportSource": "Pinned conversion recipe and exporter source must be bundled in the source ledger"
+    },
+    {
+      "artifact": "pp-ocrv5-mobile-rec-en.onnx",
+      "artifactSha256": "b5f833dfc5d0eb71da397b4efa06ebeee9b431b690a47d6af40d77d8eabc557f",
+      "origin": "Hugging Face repository PaddlePaddle/PP-OCRv5_mobile_rec",
+      "revision": "3fafbc3b5dcf93dd72add9f48368be8a3a2cd33b",
+      "license": "Apache-2.0",
+      "redistributionAllowed": true,
+      "verificationStatus": "release-verified",
+      "exportSource": "Pinned conversion recipe and exporter source must be bundled in the source ledger"
+    }
+  ]
+}

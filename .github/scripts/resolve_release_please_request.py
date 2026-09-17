@@ -11,6 +11,7 @@ from typing import Any
 
 
 COMPONENT_PATHS = {
+    "cua-perception": ".github/releases/cua-perception",
     "cua-driver-rs": "libs/cua-driver",
     "lume": "libs/lume",
     "sandbox": "libs/python/cua-sandbox",

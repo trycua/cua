@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/trycua/cua/.github/releases/cua-perception/source-ledger.schema.json",
+  "title": "Cua Perception bundled-source ledger",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "sources"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schemaVersion": { "const": 1 },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["artifact", "repository", "revision", "license", "durableLocation", "sourceOfferStatus"],
+        "properties": {
+          "artifact": { "type": "string", "minLength": 1 },
+          "repository": { "type": "string", "minLength": 1 },
+          "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+          "license": { "type": "string", "minLength": 1 },
+          "durableLocation": { "type": "string", "minLength": 1 },
+          "sourceOfferStatus": { "enum": ["bundled", "external-review-required"] },
+          "patches": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  }
+}

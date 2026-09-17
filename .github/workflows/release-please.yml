@@ -13,6 +13,7 @@ on:
         default: automatic
         options:
           - automatic
+          - cua-perception
           - cua-driver-rs
           - lume
           - sandbox
@@ -59,7 +60,7 @@ jobs:
           inputs.component == 'automatic' &&
           inputs.bump != 'automatic'
         run: |
-          echo "::error::Select cua-driver-rs, lume, or sandbox when forcing a bump type."
+          echo "::error::Select cua-perception, cua-driver-rs, lume, or sandbox when forcing a bump type."
           exit 1
 
       - name: Reject manifest tags outside main history
@@ -132,11 +133,13 @@ jobs:
             PR=$(gh pr view "$number" --json headRefName,headRepositoryOwner,files)
             DRIVER=$(echo "$PR" | jq -r \
               '.files | any(.path == "libs/cua-driver/rust/VERSION")')
+            PERCEPTION=$(echo "$PR" | jq -r \
+              '.files | any(.path == ".github/releases/cua-perception/VERSION")')
             LUME=$(echo "$PR" | jq -r \
               '.files | any(.path == "libs/lume/VERSION")')
             SANDBOX=$(echo "$PR" | jq -r \
               '.files | any(.path == "libs/python/cua-sandbox/VERSION")')
-            if [[ "$DRIVER" != "true" && "$LUME" != "true" && "$SANDBOX" != "true" ]]; then
+            if [[ "$DRIVER" != "true" && "$PERCEPTION" != "true" && "$LUME" != "true" && "$SANDBOX" != "true" ]]; then
               continue
             fi
 
@@ -176,6 +179,9 @@ jobs:
               if [[ "$DRIVER" == "true" ]]; then
                 COMPONENT_ARGS+=(--component cua-driver-rs)
               fi
+              if [[ "$PERCEPTION" == "true" ]]; then
+                COMPONENT_ARGS+=(--component cua-perception)
+              fi
               if [[ "$LUME" == "true" ]]; then
                 COMPONENT_ARGS+=(--component lume)
               fi
@@ -194,7 +200,11 @@ jobs:
                 exit 1
               fi
             fi
-            if [[ "$DRIVER" == "true" ]]; then
+            if [[ "$PERCEPTION" == "true" ]]; then
+              PERCEPTION_VERSION=$(tr -d '[:space:]' < .github/releases/cua-perception/VERSION)
+              test "$PERCEPTION_VERSION" = "$(jq -r '.[\".github/releases/cua-perception\"]' .release-please-manifest.json)"
+              COMMIT_MESSAGE="chore(cua-perception): synchronize release metadata"
+            elif [[ "$DRIVER" == "true" ]]; then
               DRIVER_VERSION=$(tr -d '[:space:]' < libs/cua-driver/rust/VERSION)
               cargo update --manifest-path libs/cua-driver/rust/Cargo.toml \
                 -p cua-driver --precise "$DRIVER_VERSION"

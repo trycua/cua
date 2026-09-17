@@ -6,49 +6,33 @@ tag namespaces, build-time version sites, builder workflow, and change paths.
 It intentionally does not describe signing, packaging, or registry publishing;
 those remain owned by each component workflow.
 
-## cua-perception release prerequisites
+## cua-perception candidates
 
-`cua-perception` is not a release component. Its proposed crate currently uses
-the Cua Driver Cargo workspace version, so it has no independent version
-authority that Release Please can bump honestly. It is absent from
-`release-please-config.json`, `.release-please-manifest.json`, `components.json`,
-manual release inputs, and every tag, release, builder, installer, archive,
-model-bundle, and publication workflow.
+`cua-perception` has an independent release-control version and changelog in
+`.github/releases/cua-perception`. Release Please may open version PRs for that
+component, but `skip-github-release` keeps the stream candidate-only: it does not
+create tags or GitHub releases. The reserved stable tag grammar remains
+`cua-perception-v<semver>` for a separately reviewed publication route.
 
-The future component owns `libs/cua-driver/rust/crates/cua-perception`, and the
-reserved stable tag grammar is `cua-perception-v<semver>`. No ref using that
-prefix is trusted today. Before any publication route is enabled, a separate
-review must add an independent crate version authority and changelog, register
-the component consistently in Release Please and release-branch reconciliation,
-define immutable artifacts and supported targets, and restrict publication to
-an exact `refs/tags/cua-perception-v<semver>` ref on canonical `main` history.
+The candidate workflow accepts prebuilt payloads. It does not download model
+weights or compile product code. Every supplied worker, runtime, model, notice,
+and source file must be declared with its exact size, SHA-256, license source,
+target, and protocol version as applicable. Models and bundled source also need
+complete ledgers. The workflow emits a deterministic archive, SPDX SBOM,
+signature-ready catalog input, redacted provenance, and checksums as retained CI
+artifacts only.
 
-Until then, that path and the temporary
-`libs/cua-driver/experiments/cua-perception-inference` spike are excluded from
-Cua Driver Release Please path ownership. Protocol setup also changes the shared
-Rust workspace manifest and lockfile. Release Please 17.3.0 only matches
-directory prefixes in `exclude-paths`, so those exact files cannot be excluded
-without also excluding Driver-owned Rust source. The pinned preview records that
-limitation: Perception plus shared-Cargo commits remain visible, including
-unscoped `feat` and `revert` titles that could otherwise create a Driver release.
-A mixed commit that changes Driver-owned source remains visible as required.
-Nightly change detection and stable/nightly attribution exclude commits that
-change only Perception paths plus those two shared files; a commit that also
-changes Driver-owned code remains in Driver history.
+Candidate evidence is artifact-scoped. A passing metadata check is not a claim
+that a future hosted or Fleet distribution satisfies a source-offer obligation.
+Those distribution paths need their own review of the exact archive, durable
+corresponding-source location, notices, and delivery behavior before any
+compliance claim is made.
 
-Protocol fixtures and inference feasibility work remain intentionally
-non-releasing. Use
-a title such as `test(cua-perception): add protocol fixtures` or
-`build(cua-perception): measure inference feasibility` and add the `no-release`
-label. The release-metadata check rejects those non-releasing titles without the
-explicit label. When the complete diff contains only Perception-owned files and
-the allowed shared Cargo manifest and lockfile, every releasing or breaking
-title is invalid regardless of its scope, including unscoped `feat`, `fix`,
-`perf`, `revert`, and releasing `BEGIN_COMMIT_OVERRIDE` entries. The label does
-not waive that rule. This required metadata gate prevents the Release Please
-misclassification described above. A mixed diff that also changes Driver-owned
-files follows the normal Driver release-title contract. This restriction remains
-until the component registration and independent version authority exist.
+Cua Driver continues to exclude Perception paths from release attribution and
+change detection. Shared Cargo manifest and lockfile changes are treated as
+companions only when a commit otherwise contains Perception-owned changes. The
+candidate tests also reject Driver archives containing Perception binaries,
+model directories, or common model-weight formats.
 
 To add a component, add one descriptor, keep its stable prefix identical to its
 Release Please component tag, choose a unique `nightly-` prefix, declare only

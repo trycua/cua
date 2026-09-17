@@ -1,0 +1,102 @@
+name: "CD: Cua Perception candidate"
+
+on:
+  workflow_call:
+    inputs:
+      payload_artifact:
+        description: "Artifact containing release-input.json and declared payload files"
+        required: true
+        type: string
+      source_ref:
+        description: "Exact source commit used to produce the supplied payload"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cua-perception-candidate-${{ inputs.source_ref }}-${{ inputs.payload_artifact }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: verify and package supplied payload
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
+          persist-credentials: false
+
+      - name: Verify immutable source input
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          test "$SOURCE_REF" = "$(git rev-parse HEAD)"
+          test "$SOURCE_REF" = "$(git rev-parse --verify "${SOURCE_REF}^{commit}")"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install schema validator
+        run: python -m pip install --disable-pip-version-check jsonschema==4.23.0
+
+      - name: Download supplied release payload
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.payload_artifact }}
+          path: perception-input
+
+      - name: Verify source, hashes, licenses, target, and protocol
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          test "$(jq -r .sourceSha perception-input/release-input.json)" = "$SOURCE_REF"
+          python3 .github/scripts/perception_release.py validate \
+            --manifest perception-input/release-input.json \
+            --payload-root perception-input
+
+      - name: Build deterministic candidate and evidence
+        run: |
+          python3 .github/scripts/perception_release.py package \
+            --manifest perception-input/release-input.json \
+            --payload-root perception-input \
+            --output perception-candidate
+
+      - name: Verify exact candidate hashes
+        working-directory: perception-candidate
+        run: sha256sum --check checksums.txt
+
+      - name: Sign staging candidate archive and catalog manifest
+        working-directory: perception-candidate
+        run: |
+          set -euo pipefail
+          ARCHIVE=$(find . -maxdepth 1 -name 'cua-perception-*.tar.gz' -print -quit)
+          test -n "$ARCHIVE"
+          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 \
+            -out staging-candidate-signing-key.pem
+          openssl pkey -in staging-candidate-signing-key.pem -pubout \
+            -out staging-candidate-signing-key.pub.pem
+          openssl dgst -sha256 -sign staging-candidate-signing-key.pem \
+            -out "${ARCHIVE}.sig" "$ARCHIVE"
+          openssl dgst -sha256 -sign staging-candidate-signing-key.pem \
+            -out catalog-input.json.sig catalog-input.json
+          openssl dgst -sha256 -verify staging-candidate-signing-key.pub.pem \
+            -signature "${ARCHIVE}.sig" "$ARCHIVE"
+          openssl dgst -sha256 -verify staging-candidate-signing-key.pub.pem \
+            -signature catalog-input.json.sig catalog-input.json
+          rm staging-candidate-signing-key.pem
+          sha256sum "$ARCHIVE" catalog-input.json *.sig \
+            staging-candidate-signing-key.pub.pem > signed-candidate-checksums.txt
+
+      - name: Preserve candidate without publishing
+        uses: actions/upload-artifact@v4
+        with:
+          name: STAGING-cua-perception-candidate-${{ inputs.source_ref }}
+          path: perception-candidate/
+          if-no-files-found: error
+          retention-days: 30

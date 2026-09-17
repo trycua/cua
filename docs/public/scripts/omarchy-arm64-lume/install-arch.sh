@@ -20,9 +20,10 @@ printf 'Installing Arch Linux ARM to %s. ALL DATA ON THIS DISK WILL BE LOST.\n' 
 read -r -p 'Type ERASE to continue: ' confirmation
 [[ ${confirmation} == ERASE ]] || exit 1
 
-sgdisk --zap-all "${disk}"
-sgdisk -n 1:1MiB:+1GiB -t 1:ef00 -c 1:EFI "${disk}"
-sgdisk -n 2:0:0 -t 2:8300 -c 2:ROOT "${disk}"
+# gptfdisk is not part of the Archboot live environment; use util-linux only.
+wipefs -a "${disk}"
+printf '%s\n' 'label: gpt' 'start=1MiB, size=+1GiB, type=uefi, name=EFI' 'type=linux, name=ROOT' \
+  | sfdisk "${disk}"
 partx -u "${disk}"
 udevadm settle
 

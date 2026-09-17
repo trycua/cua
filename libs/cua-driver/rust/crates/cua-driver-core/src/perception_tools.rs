@@ -293,20 +293,15 @@ fn capture_provenance(
     let action_coordinate_space = if [m11, m12, m21, m22, tx, ty] == [1.0, 0.0, 0.0, 1.0, 0.0, 0.0]
     {
         VisualActionCoordinateSpace::ScreenshotPixels
-    } else if m12 == 0.0 && m21 == 0.0 && m11 > 0.0 && m22 > 0.0 {
-        VisualActionCoordinateSpace::ScaledTopLeft {
-            action_origin_x: tx,
-            action_origin_y: ty,
-            action_units_per_pixel_x: m11,
-            action_units_per_pixel_y: m22,
-        }
     } else {
-        return Err(error(
-            VisualParseErrorCode::UnsupportedTarget,
-            "the public visual-region contract cannot represent this capture transform",
-            false,
-            None,
-        ));
+        VisualActionCoordinateSpace::Affine {
+            m11,
+            m12,
+            m21,
+            m22,
+            tx,
+            ty,
+        }
     };
     Ok(VisualCaptureProvenance {
         capture_id: capture.id().to_string(),

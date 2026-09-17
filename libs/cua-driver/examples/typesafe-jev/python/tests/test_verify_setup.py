@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -11,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from verify_setup import fixture, verify
+from verify_setup import BASE, fixture, runner_command, verify
 
 
 CHILD = """
@@ -28,6 +29,24 @@ raise SystemExit(int(code))
 
 
 class VerifySetupTests(unittest.TestCase):
+    def test_python_runner_can_start_without_a_desktop(self):
+        result = subprocess.run(
+            runner_command('python', 'mock') + ['--help'],
+            cwd=BASE, capture_output=True, text=True, timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('--fixture-url', result.stdout)
+
+    @unittest.skipUnless(shutil.which('node') and (BASE / 'node_modules/tsx').is_dir(),
+                         'requires installed TypeScript dependencies and Node')
+    def test_typescript_runner_reaches_argument_validation(self):
+        result = subprocess.run(
+            runner_command('typescript', 'mock') + ['--max-steps', '0'],
+            cwd=BASE, capture_output=True, text=True, timeout=30,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('max-steps must be a positive integer', result.stderr)
+
     def test_fixture_closes_on_success(self):
         with fixture() as url:
             port = int(url.split(':')[-1].rstrip('/'))

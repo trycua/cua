@@ -53,6 +53,12 @@ def require_key() -> None:
     os.environ['TYPESAFE_API_KEY'] = key
 
 
+def runner_command(language: str, provider: str) -> list[str]:
+    if language == 'python':
+        return [sys.executable, 'python/run.py', '--provider', provider]
+    return ['node', '--import', 'tsx', 'typescript/run.ts', '--provider', provider]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description='Verify Jev setup with an owned, automatically cleaned-up fixture.')
     parser.add_argument('--live', action='store_true', help='also verify live Jev; requires a TypeSafe key')
@@ -73,10 +79,7 @@ def main() -> None:
                 for provider in (['mock', 'live'] if args.live else ['mock']):
                     token = f'jev-guide-{provider}'
                     log = output / f'{language}-{provider}.jsonl'
-                    if language == 'python':
-                        command = [sys.executable, 'python/run.py', '--provider', provider]
-                    else:
-                        command = ['npm', 'run', f'demo:{provider}', '--']
+                    command = runner_command(language, provider)
                     command += ['--fixture-url', url, '--token', token, '--max-steps', '4', '--log', str(log)]
                     result = {'language': language, 'provider': provider, **verify(command, url, token, log)}
                     summary['checks'].append(result)

@@ -151,6 +151,18 @@ native_retry_filter_active() {
   [[ -n "${CUA_E2E_CELL_FILTER:-}" || -n "${CUA_E2E_HARNESS_FILTER:-}" ]]
 }
 
+run_appkit_cells() {
+  local cell test_name
+  while IFS=$'\t' read -r cell test_name; do
+    if filter_contains_exact "${CUA_E2E_HARNESS_FILTER:-}" appkit \
+        && filter_contains_exact "${CUA_E2E_CELL_FILTER:-}" "${cell}"; then
+      NATIVE_FILTER_MATCHES=$((NATIVE_FILTER_MATCHES + 1))
+      run_test "appkit-${test_name}" cargo test -p cua-driver --test harness_appkit_test -- \
+        --ignored --exact "${test_name}" --nocapture --test-threads=1
+    fi
+  done < "${SCRIPT_DIR}/appkit-cells.tsv"
+}
+
 native_swiftui_test_selected() {
   local cell="$1"
   filter_contains_exact "${CUA_E2E_HARNESS_FILTER:-}" swiftui \
@@ -342,33 +354,8 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
     run_test agent-cursor-showcase cargo test -p cua-driver \
       --test agent_cursor_showcase_test -- \
       --ignored --nocapture --test-threads=1
-    for appkit_test in \
-    harness_appkit_smoke \
-    harness_appkit_query_projects_structured_elements \
-    harness_appkit_stale_element_token_fails_closed \
-    snapshot_publication::harness_appkit_pending_snapshot_cannot_retarget_token \
-    harness_appkit_invoke_menu_live_path \
-    harness_appkit_text_input \
-    harness_appkit_element_foreground_press_key_commits_edit \
-    harness_appkit_modified_click_preserves_selection \
-    harness_appkit_type_text_background \
-    harness_appkit_scroll_foreground \
-    harness_appkit_scroll_background \
-    harness_appkit_counter \
-    harness_appkit_counter_px_background \
-    harness_appkit_exact_activation_with_agent_cursor \
-    harness_appkit_exact_activation_refuses_competing_window \
-    harness_appkit_foreground_single_click_has_one_ordered_native_pair \
-    harness_appkit_right_click_px_foreground \
-    harness_appkit_right_click_px_background \
-    harness_appkit_double_click_px_foreground \
-    harness_appkit_double_click_px_background \
-    harness_appkit_slider_drag_px_foreground \
-      harness_appkit_slider_drag_px_background; do
-      run_test "appkit-${appkit_test}" cargo test -p cua-driver --test harness_appkit_test -- \
-        --ignored --exact "${appkit_test}" --nocapture --test-threads=1
-    done
   fi
+  run_appkit_cells
 
   while IFS='|' read -r swiftui_cell swiftui_test; do
     if native_swiftui_test_selected "${swiftui_cell}"; then

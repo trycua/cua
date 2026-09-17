@@ -477,8 +477,9 @@ After a failing full matrix the runner retries only when all of these hold:
 Otherwise it prints why the retry was refused and exits with the matrix's
 failure. Shared web-action cells and the five typed SwiftUI cells are retryable.
 The runner routes a `macos-swiftui-*` selection to the native lane and invokes
-only the test that owns that exact cell. Reproduce other native, capture, or
-embedded-browser failures with a full rerun.
+only the test that owns that exact cell. AppKit supports the explicit single-cell
+mode below, not automatic retries after a full-matrix failure. Reproduce other
+native, capture, or embedded-browser failures with a full rerun.
 
 To rerun just that cell later in the same booted worker after the first run
 already restored standard mode, use `--retry-only`. It reinstalls the exact
@@ -547,6 +548,66 @@ domain in which to start the daemon. The runner records
 place so macOS loads it in standard mode at the next GUI login. This is the only
 deferred restoration case; a live GUI session that cannot return to standard
 mode still fails the run.
+
+## Focused AppKit development
+
+For a native red/green iteration, run one registered AppKit cell from the same
+logged-in guest Terminal and with the same signing prerequisites:
+
+```bash
+libs/cua-driver/tests/runners/macos-lume/run-all.sh \
+  --retry-cell macos-appkit-ax-tree-ax-not-applicable \
+  --retry-harness appkit --retry-only --retry-attempts 1
+```
+
+The single-attempt invocation preserves exact-source installation, unrestricted
+daemon preflight, native oracles, evidence validation, and standard-daemon
+restoration. It is focused evidence, not full-matrix certification. A failure
+remains a failure; this command does not automatically retry it.
+
+`scripts/ci/macos/appkit-cells.tsv` maps each AppKit cell ID to its exact Rust test
+name, separated by a tab. The full native lane and single-cell selection consume
+the same list. Add a row there when registering a new AppKit case. Unknown cells
+or an incorrect harness cannot fall back to running the full suite. AppKit
+selection requires `--retry-only`; full-matrix automatic retry eligibility is
+unchanged.
+
+The `macos-appkit-native-geometry-mismatch-px-background` and
+`macos-appkit-native-geometry-mismatch-px-foreground` cells use an opt-in AppKit
+fixture that changes its reported accessibility frame without resizing the
+compositor window. Real middle-click reception and WebKit reveal/scroll calibrate
+the native input and reveal oracles. The cells require retained PNG/tree output,
+independent AXPress/AXSelected/native text scrolling, and pointer-family refusals
+without additional native input or focus/cursor/stacking violations. Duplicate
+transport events establish reception, not exact-one-click delivery. Raw responses,
+PNG and fixture state remain under the cell's recording directory. This is
+controlled native disagreement coverage, not Stage Manager or tolerance calibration.
+
+`macos-appkit-geometry-availability-px-foreground` uses a pure AppKit accessory
+application to isolate single-window inference from the regular application's
+auxiliary window surfaces. It requires an inferred mismatch refusal, preserved
+observation and input with unavailable metadata, delayed metadata degradation,
+and fresh aligned recovery. It does not relax production ambiguity checks or
+claim a hard end-to-end latency bound from the injected delay.
+
+`macos-appkit-snapshot-publication-ax-foreground` changes geometry during a blocked
+PNG write and verifies unstable observation plus retained-token publication order.
+`macos-appkit-geometry-snapshot-cancellation-ax-foreground` exercises the public
+embedded SDK, not the daemon proxy. Its test host requires its own authorized
+Accessibility and Screen Recording context through maintainer-approved setup.
+Successful daemon preflight does not establish that authority. Missing SDK-host
+authority fails the observation precondition; it is neither cancellation evidence
+nor a passing/ignored cell. Resolve that prerequisite before full certification;
+do not substitute another backend or silently repair TCC.
+
+`macos-appkit-pixel-key-focus-px-foreground` verifies that a pixel-targeted
+`press_key("a")` changes the exact native text field from `original` to
+`originala`. It observes the key's effect before any select-all or replacement
+can hide a dropped key. Before/key/after responses are retained in
+`pixel-key-focus.json`. This separate control does not change the
+`macos-appkit-pixel-focus-latency-px-foreground` workload or its two warmups and
+12 measured trials; that benchmark's final value alone does not prove each
+intermediate action was delivered.
 
 ## Test the runner itself
 

@@ -918,7 +918,7 @@ pub enum DragButton {
 /// left- and right-click primitives use. Window-local stamping mirrors
 /// `right_click_at_xy_with_window_local`.
 pub fn middle_click_at_xy(pid: i32, x: f64, y: f64, modifiers: &[&str]) -> anyhow::Result<()> {
-    middle_click_at_xy_inner(pid, x, y, None, modifiers)
+    middle_click_at_xy_inner(pid, x, y, None, None, modifiers)
 }
 
 /// Like `middle_click_at_xy` but stamps the window-local `(wx, wy)` point.
@@ -928,9 +928,10 @@ pub fn middle_click_at_xy_with_window_local(
     y: f64,
     wx: f64,
     wy: f64,
+    wid: u32,
     modifiers: &[&str],
 ) -> anyhow::Result<()> {
-    middle_click_at_xy_inner(pid, x, y, Some((wx, wy)), modifiers)
+    middle_click_at_xy_inner(pid, x, y, Some((wx, wy)), Some(wid), modifiers)
 }
 
 fn middle_click_at_xy_inner(
@@ -938,8 +939,15 @@ fn middle_click_at_xy_inner(
     x: f64,
     y: f64,
     window_local: Option<(f64, f64)>,
+    wid: Option<u32>,
     modifiers: &[&str],
 ) -> anyhow::Result<()> {
+    let click_group_id = wid.map(|_| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .subsec_nanos() as i64
+    });
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
     let point = CGPoint::new(x, y);
@@ -955,7 +963,7 @@ fn middle_click_at_xy_inner(
     if flags != CGEventFlags::CGEventFlagNull {
         down.set_flags(flags);
     }
-    post_mouse_event(pid, &down, window_local, None, None, 1, 2, 3);
+    post_mouse_event(pid, &down, window_local, wid, click_group_id, 1, 2, 3);
     std::thread::sleep(std::time::Duration::from_millis(16));
 
     let up = CGEvent::new_mouse_event(
@@ -968,7 +976,7 @@ fn middle_click_at_xy_inner(
     if flags != CGEventFlags::CGEventFlagNull {
         up.set_flags(flags);
     }
-    post_mouse_event(pid, &up, window_local, None, None, 1, 2, 3);
+    post_mouse_event(pid, &up, window_local, wid, click_group_id, 1, 2, 3);
 
     Ok(())
 }

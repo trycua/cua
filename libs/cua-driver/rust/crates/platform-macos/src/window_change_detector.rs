@@ -154,6 +154,29 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_millis(1000);
 /// Default inter-poll interval. Matches Swift's 50ms.
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
+/// Read a millisecond duration from the daemon's environment. Anything
+/// missing or unparsable falls back to `default`, so the public contract
+/// is unchanged unless an embedding host opts in explicitly.
+fn env_duration_ms(name: &str, default: Duration) -> Duration {
+    std::env::var(name)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .map(Duration::from_millis)
+        .unwrap_or(default)
+}
+
+/// Post-action observation window chosen by the embedding host
+/// (`CUA_DRIVER_WINDOW_CHANGE_TIMEOUT_MS`), default `DEFAULT_TIMEOUT`.
+pub(crate) fn host_window_change_timeout() -> Duration {
+    env_duration_ms("CUA_DRIVER_WINDOW_CHANGE_TIMEOUT_MS", DEFAULT_TIMEOUT)
+}
+
+/// Poll interval chosen by the embedding host
+/// (`CUA_DRIVER_WINDOW_CHANGE_POLL_MS`), default `DEFAULT_POLL_INTERVAL`.
+pub(crate) fn host_window_change_poll() -> Duration {
+    env_duration_ms("CUA_DRIVER_WINDOW_CHANGE_POLL_MS", DEFAULT_POLL_INTERVAL)
+}
+
 /// Public API. Mirrors Swift `enum WindowChangeDetector` — no state of
 /// its own; all state lives inside the returned `Snapshot`.
 pub struct WindowChangeDetector;
@@ -249,11 +272,23 @@ impl Snapshot {
     /// foreground-app change. Returns as soon as a change is detected
     /// or the timeout elapses.
     ///
+    /// An embedding host that already observes the target continuously
+    /// (see `finish_window_observation`) can shorten this window through
+    /// `CUA_DRIVER_WINDOW_CHANGE_TIMEOUT_MS` / `CUA_DRIVER_WINDOW_CHANGE_POLL_MS`
+    /// on the daemon's environment. Unset or unparsable values keep the
+    /// defaults, so public callers see no behavior change. A zero timeout
+    /// skips polling entirely (equivalent to the trusted opt-out).
+    ///
     /// Consumes the snapshot — the wildcard suppression lease is
     /// dropped when this returns (covers the full action + detection
     /// window).
     pub fn detect(self) -> Changes {
-        self.detect_with(DEFAULT_TIMEOUT, DEFAULT_POLL_INTERVAL)
+        let timeout = host_window_change_timeout();
+        if timeout.is_zero() {
+            drop(self);
+            return Changes::no_change();
+        }
+        self.detect_with(timeout, host_window_change_poll())
     }
 
     /// Async wrapper around `detect()` — runs the synchronous poll

@@ -11,10 +11,12 @@ import {
   buildCandidates,
   chooseMock,
   classify,
+  parseVisualRegions,
   validateChoice,
   type BrowserSnapshot,
   type Candidate,
   type Outcome,
+  type VisualObservation,
 } from './core.js';
 
 type Arguments = {
@@ -91,6 +93,30 @@ export class Driver {
       throw new Error(`${name} refused: ${JSON.stringify(data.refusal ?? data)}`);
     }
     return data;
+  }
+}
+
+export async function optionalVisualObservation(
+  driver: Driver,
+  snapshot: BrowserSnapshot,
+  availableTools: ReadonlySet<string>
+): Promise<VisualObservation | undefined> {
+  if (!availableTools.has('parse_visual_regions') || typeof snapshot.capture_id !== 'string') {
+    return undefined;
+  }
+  try {
+    const result = await driver.call('parse_visual_regions', {
+      capture_id: snapshot.capture_id,
+      options: { kinds: ['text', 'icon'], min_confidence: 0.8, max_regions: 100 },
+    });
+    return parseVisualRegions(
+      result,
+      snapshot.capture_id,
+      snapshot.target_id,
+      snapshot.tab_id
+    );
+  } catch {
+    return undefined;
   }
 }
 
@@ -179,6 +205,7 @@ async function run(args: Arguments): Promise<Outcome> {
 
   try {
     await client.connect(transport);
+    const availableTools = new Set((await client.listTools()).tools.map((tool) => tool.name));
     const driver = new Driver(client, `jev-typescript-${randomUUID().slice(0, 8)}`);
     const prepared = await driver.call('browser_prepare', {
       allow_launch: true,
@@ -212,7 +239,8 @@ async function run(args: Arguments): Promise<Outcome> {
         tab_id: tabId,
         snapshot_format: 'semantic_v2',
       })) as BrowserSnapshot;
-      const candidates = buildCandidates(snapshot, token);
+      const visual = await optionalVisualObservation(driver, snapshot, availableTools);
+      const candidates = buildCandidates(snapshot, token, visual);
       if (!candidates.length) {
         await writeEvent(args.log, { event: 'outcome', outcome: 'abstained', step });
         return 'abstained';
@@ -222,8 +250,24 @@ async function run(args: Arguments): Promise<Outcome> {
           ? chooseMock(candidates)
           : await chooseLive(candidates, snapshot, history);
       if (!answer.choice) return 'abstained';
-      const candidate = validateChoice(answer.choice, candidates);
+      const candidate = validateChoice(answer.choice, candidates, visual?.captureId);
       const decisionMs = Math.round((performance.now() - decisionStarted) * 100) / 100;
+
+      if (candidate.id === 'reobserve') {
+        const event = {
+          event: 'step',
+          step,
+          candidate: candidate.id,
+          confidence: answer.confidence,
+          probabilities: answer.probabilities,
+          decision_ms: decisionMs,
+          action_ms: 0,
+          dry_run: args.dryRun,
+        };
+        history.push(event);
+        await writeEvent(args.log, event);
+        continue;
+      }
 
       if (candidate.id === 'abstain') {
         await writeEvent(args.log, {

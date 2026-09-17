@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -8,16 +9,20 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from run import Driver, select_tab_id, validate_fixture_url
+from run import Driver, optional_visual_observation, select_tab_id, validate_fixture_url
+
+
+FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
 
 
 class FakeSession:
-    def __init__(self) -> None:
+    def __init__(self, structured=None) -> None:
         self.calls = []
+        self.structured = structured or {"status": "ok"}
 
     async def call_tool(self, name, arguments):
         self.calls.append((name, arguments))
-        return SimpleNamespace(isError=False, structuredContent={"status": "ok"})
+        return SimpleNamespace(isError=False, structuredContent=self.structured)
 
 
 class DriverAdapterTest(unittest.IsolatedAsyncioTestCase):
@@ -28,6 +33,36 @@ class DriverAdapterTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             session.calls,
             [("browser_type", {"ref": "p2:0", "session": "jev-test"})],
+        )
+
+    async def test_visual_tool_is_optional_and_uses_the_released_contract_when_advertised(self) -> None:
+        payload = json.loads((FIXTURES / "parse-visual-regions-submit-v1.json").read_text())
+        session = FakeSession(payload)
+        driver = Driver(session, "jev-test")
+        snapshot = {
+            "target_id": "target",
+            "tab_id": "tab",
+            "capture_id": "capture-submit",
+        }
+        self.assertIsNone(await optional_visual_observation(driver, snapshot, set()))
+        visual = await optional_visual_observation(driver, snapshot, {"parse_visual_regions"})
+        self.assertEqual(visual.capture_id, "capture-submit")
+        self.assertEqual(
+            session.calls,
+            [
+                (
+                    "parse_visual_regions",
+                    {
+                        "capture_id": "capture-submit",
+                        "options": {
+                            "kinds": ["text", "icon"],
+                            "min_confidence": 0.8,
+                            "max_regions": 100,
+                        },
+                        "session": "jev-test",
+                    },
+                )
+            ],
         )
 
     def test_fixture_url_is_confined_to_loopback_http(self) -> None:

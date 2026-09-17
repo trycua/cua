@@ -11,26 +11,29 @@ returns one candidate ID. Never let Jev invent tool names, coordinates, refs,
 targets, delivery modes, or other arguments.
 
 Use the example at `libs/cua-driver/examples/jev-use/` as the runnable reference.
-Its current live path uses browser DOM and semantic evidence. Visual perception
-is a future optional adapter whose schema and tool contract are not defined by
-this skill.
+Prefer browser DOM and semantic evidence. The optional visual adapter consumes
+the public `cua.visual_regions_v1` result only when Driver advertises
+`parse_visual_regions` and the current observation has an immutable capture ID.
+Use the checked-in fixtures for deterministic development; do not add a model,
+extension artifact, or Driver implementation detail to the recipe.
 
 ## Decision loop
 
 1. State the goal and obtain a fresh Cua Driver observation through one
    persistent CLI or MCP session.
 2. Prefer an unambiguous fresh accessibility or browser DOM token.
-3. If visual grounding is needed, use an accepted and available generic
-   perception contract when one exists, retaining the current capture metadata.
-   Otherwise reobserve or abstain rather than inventing visual evidence.
+3. If visual grounding is needed, discover `parse_visual_regions` through the
+   current MCP tool inventory. Validate its versioned result, capture ID,
+   screenshot reference and dimensions, coordinate mapping, unique region IDs,
+   bounds, content, confidence, and ambiguity. Otherwise reobserve or abstain.
 4. Construct a bounded candidate table. Each executable candidate contains the
    complete Driver tool and arguments. Include `reobserve` and `abstain` when
    evidence can be stale, incomplete, or ambiguous.
 5. Send Jev only the goal, compact observation, recent history, and candidate
    IDs with descriptions.
-6. Resolve the returned ID against the original table. Reject an unknown ID,
-   stale observation, disallowed action, or result below the caller's stated
-   confidence policy.
+6. Resolve the returned ID against the original immutable table. Reject an
+   unknown, duplicate, malformed, denied, stale, or capture-mismatched choice,
+   or a result below the caller's stated confidence policy.
 7. Execute at most one Driver action. Use background delivery by default;
    foreground delivery is an explicit escalation subject to the active Driver
    contract and user authorization.
@@ -44,7 +47,8 @@ this skill.
   coordinate space and tied to the same target and snapshot.
 - If semantic and visual evidence disagree, or multiple regions are plausible,
   offer `reobserve` and `abstain` without inventing a mutation.
-- Do not claim that an unreleased perception tool, schema, or adapter exists.
+- Use semantic evidence as authority when it is available. A visual label does
+  not prove editability or interactivity.
 
 ## Credentials and proof
 

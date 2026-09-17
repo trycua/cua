@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import json
 import sys
 import unittest
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core import build_candidates, choose_mock, classify, validate_choice
+from core import Candidate, build_candidates, choose_mock, classify, parse_visual_regions, validate_choice
+
+
+FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
 
 
 class CoreTest(unittest.TestCase):
@@ -45,6 +50,86 @@ class CoreTest(unittest.TestCase):
             selected.arguments,
             {"target_id": "target", "tab_id": "tab", "ref": "p1:0", "text": "expected", "replace": True},
         )
+        with self.assertRaises(TypeError):
+            selected.arguments["ref"] = "changed"
+        with self.assertRaises(FrozenInstanceError):
+            selected.capture_id = "changed"
+
+    def test_reserved_candidates_are_always_available(self) -> None:
+        candidates = build_candidates({"target_id": "target", "tab_id": "tab", "refs": []}, "expected")
+        self.assertEqual([candidate.id for candidate in candidates], ["reobserve", "abstain"])
+        self.assertEqual(choose_mock(candidates)[0], "reobserve")
+
+    def test_visual_fixture_builds_equivalent_capture_bound_submit_candidate(self) -> None:
+        payload = json.loads((FIXTURES / "parse-visual-regions-submit-v1.json").read_text())
+        visual = parse_visual_regions(
+            payload,
+            expected_capture_id="capture-submit",
+            target_id="target",
+            tab_id="tab",
+        )
+        page = self.snapshot("expected")
+        page["refs"] = page["refs"][:1]
+        candidates = build_candidates(page, "expected", visual)
+        selected = validate_choice("submit-form", candidates, current_capture_id="capture-submit")
+
+        self.assertEqual(selected.id, "submit-form")
+        self.assertEqual(selected.capture_id, "capture-submit")
+        self.assertEqual(selected.screenshot_reference, "png-sha256:submit-fixture")
+        self.assertEqual(dict(selected.arguments), {"target_id": "target", "tab_id": "tab", "x": 275.0, "y": 720.0})
+
+    def test_visual_ambiguity_offers_only_reserved_candidates(self) -> None:
+        payload = json.loads((FIXTURES / "parse-visual-regions-ambiguous-v1.json").read_text())
+        visual = parse_visual_regions(
+            payload,
+            expected_capture_id="capture-ambiguous",
+            target_id="target",
+            tab_id="tab",
+        )
+        page = self.snapshot("expected")
+        page["refs"] = page["refs"][:1]
+        self.assertEqual(
+            [candidate.id for candidate in build_candidates(page, "expected", visual)],
+            ["reobserve", "abstain"],
+        )
+
+    def test_visual_stale_malformed_and_duplicate_candidates_fail_closed(self) -> None:
+        payload = json.loads((FIXTURES / "parse-visual-regions-submit-v1.json").read_text())
+        with self.assertRaisesRegex(ValueError, "stale"):
+            parse_visual_regions(
+                payload,
+                expected_capture_id="new-capture",
+                target_id="target",
+                tab_id="tab",
+            )
+        payload["regions"][0]["bounds"]["width"] = 900
+        with self.assertRaisesRegex(ValueError, "outside"):
+            parse_visual_regions(
+                payload,
+                expected_capture_id="capture-submit",
+                target_id="target",
+                tab_id="tab",
+            )
+        duplicate = Candidate("duplicate", "one", None, {})
+        with self.assertRaisesRegex(ValueError, "duplicate"):
+            validate_choice("duplicate", [duplicate, duplicate])
+
+    def test_capture_bound_choice_rejects_a_newer_capture(self) -> None:
+        payload = json.loads((FIXTURES / "parse-visual-regions-submit-v1.json").read_text())
+        visual = parse_visual_regions(
+            payload,
+            expected_capture_id="capture-submit",
+            target_id="target",
+            tab_id="tab",
+        )
+        page = self.snapshot("expected")
+        page["refs"] = page["refs"][:1]
+        with self.assertRaisesRegex(ValueError, "stale"):
+            validate_choice(
+                "submit-form",
+                build_candidates(page, "expected", visual),
+                current_capture_id="new-capture",
+            )
 
     def test_outcome_requires_oracle_match(self) -> None:
         self.assertEqual(classify("expected", "expected", steps=1, max_steps=4), "verified")

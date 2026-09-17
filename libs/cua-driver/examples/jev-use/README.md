@@ -4,9 +4,12 @@
 while Cua Driver observes the page, performs that action, and verifies the
 result. Equivalent Python and TypeScript programs run the same bounded loop.
 
-The current runnable path uses fresh browser DOM and semantic evidence. Visual
-perception is a future optional adapter; this preview does not define its
-schema, run a perception model, or claim that Cua perception has shipped.
+The runnable path prefers fresh browser DOM and semantic evidence. It also
+contains an optional adapter for the public `cua.visual_regions_v1` contract.
+The checked-in typed fixtures exercise that adapter without a model or secret.
+At runtime the agents use `parse_visual_regions` only when Driver advertises the
+tool and the current observation supplies an immutable `capture_id`; otherwise
+they continue through the semantic path.
 
 You can run the complete deterministic proof without credentials or network
 access to Jev. If you have a TypeSafe API key, you can separately verify the
@@ -25,9 +28,12 @@ through an independent `/state` endpoint. Each runner:
 2. creates a Driver-owned isolated Chromium profile with `browser_prepare`;
 3. navigates to the loopback fixture with typed browser tools;
 4. captures a browser snapshot before asking for or performing an action;
-5. asks the selected provider for one typed choice;
-6. uses fresh page references for `browser_type` and `browser_click`; and
-7. checks the fixture's `/state` endpoint instead of treating the action
+5. constructs immutable candidates plus reserved `reobserve` and `abstain`
+   choices;
+6. asks the selected provider for one typed choice;
+7. uses fresh page references for typing and semantic clicking, or one unique
+   validated capture-bound visual Submit region when available; and
+8. checks the fixture's `/state` endpoint instead of treating the action
    response or a screenshot as proof of success.
 
 The MCP connection stays open across the entire loop. This preserves the
@@ -35,6 +41,9 @@ explicit named Cua Driver session and avoids rebuilding tool state for every
 step.
 Page references are snapshot-bound, so the runners take another snapshot after
 the page changes rather than reusing an older reference.
+Visual candidates are also bound to the exact capture ID and screenshot
+reference. Stale, malformed, out-of-bounds, duplicate, or ambiguous visual
+results produce no executable visual candidate.
 
 ## Install the prerequisites
 
@@ -122,8 +131,10 @@ A successful run ends only after the exact submitted value appears at
 
 Both runners also accept `--dry-run`, `--max-steps`, `--token`, and `--log`.
 The optional log is JSONL and records the selected candidate, the full
-probability vector, and decision/action timings. Final outcomes are
-`verified`, `refuted`, `unknown`, `abstained`, or `budget_exhausted`. An
+probability vector, and decision/action timings. The candidate set always
+includes `reobserve` and `abstain`; reobservation sends no Driver action. Final
+outcomes are `verified`, `refuted`, `unknown`, `abstained`, or
+`budget_exhausted`. An
 uncertain action failure becomes `unknown` and is never retried blindly.
 
 ## Verify against live Jev
@@ -177,11 +188,18 @@ installation and diagnostics,
 for example `cua-driver doctor` and `cua-driver status`, rather than maintaining
 a third copy of the loop.
 
-This fixture exposes semantic browser refs, so the runnable example does not
-need screenshot perception. A future optional adapter may enrich observations
-for canvas, streamed desktop, or other non-semantic surfaces after the generic
-Driver perception contract is accepted and released. This preview neither
-defines that contract nor claims inference quality or release availability.
+This fixture exposes semantic browser refs, so the normal proof does not need
+screenshot perception. The optional adapter consumes only the public
+`parse_visual_regions` structured result and never adds a model, extension, or
+Driver internals to this example. It validates capture identity, PNG geometry,
+coordinate mapping, region IDs, bounds, content, confidence, and ambiguity
+before constructing a click candidate. Visual evidence never replaces the
+semantic editable ref required by `browser_type`.
+
+The credential-free tests load `fixtures/parse-visual-regions-*-v1.json` to
+exercise the same parser and candidate builder used by the runtime adapter.
+They do not claim that an optional perception extension is installed or assess
+its inference quality.
 
 ## Run the checks
 

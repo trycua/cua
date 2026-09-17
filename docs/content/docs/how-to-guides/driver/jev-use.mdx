@@ -28,11 +28,12 @@ to use Jev. You can run the connection check without a key.
 After installation, open a new terminal on the computer Cua Driver controls.
 Use your platform's setup below, then follow the shared steps in that terminal.
 Commands outside the platform tabs work in both POSIX shells and PowerShell.
-The current runnable preview uses browser DOM evidence. See
+The example prefers browser DOM evidence. It also recognizes the public
+`parse_visual_regions` contract when the installed Driver advertises that MCP
+tool and publishes a capture ID for the current observation. The optional path
+is not required for this form. See
 [Capture and delivery modalities](/concepts/capture-and-delivery-modalities) for
-the observation modes Cua Driver supports today. Screenshot parsing with the
-optional Cua Perception work is planned follow-up work and is not part of this
-guide.
+the observation modes Cua Driver supports.
 
 ## 1. Check Cua Driver
 
@@ -126,7 +127,9 @@ successful run ends with:
 ```
 
 This confirms that Cua Driver can operate the browser. It does not call
-TypeSafe or require an API key.
+TypeSafe or require an API key. The repository's credential-free unit checks
+also validate the optional visual adapter against checked-in
+`cua.visual_regions_v1` fixtures, without running a perception model.
 
 ## 4. Run with Jev
 
@@ -231,7 +234,12 @@ To automate a different task, change three parts of the agent:
 | Goal and observations | Tell Jev what to accomplish and what the page currently shows. | `python/run.py` |
 | Completion check | Confirm that the application reached the intended result. | `python/run.py` |
 
-The form example offers only the next valid action and an option to stop without acting.
+The form example offers only the next valid action plus reserved `reobserve`
+and `abstain` choices. Visual candidates are accepted only from a unique,
+well-formed region tied to the current immutable capture; stale, malformed, or
+ambiguous results fail closed. Typing continues to require the semantic
+editable reference. Completion still comes from the test server's independent
+state endpoint, not from semantic or visual observation.
 For a new task, define its allowed actions and success check before connecting
 Jev. See the [TypeSafe SDK documentation](https://docs.typesafe.ai/sdk/python)
 for constructing choice questions and the

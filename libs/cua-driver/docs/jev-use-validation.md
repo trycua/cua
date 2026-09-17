@@ -319,3 +319,26 @@ detached checkout does not depend on a remote-tracking ref that a default
 single-branch clone may omit. Its shown JSON output now matches `json.dumps`
 spacing. Current guide SHA-256:
 `35e8e78be21f589b8dc4b98ebb8a934e202c038b16f8794551d33e150430595f`.
+
+### Optional visual adapter follow-up
+
+The Python and TypeScript examples now contain equivalent optional adapters for
+the public `cua.visual_regions_v1` result. They discover
+`parse_visual_regions` from MCP `tools/list` and call it only when the same
+observation supplies an immutable capture ID. Existing Driver versions and
+installations without the tool continue through the DOM/semantic path.
+
+Two checked-in structured fixtures cover one unique Submit region and an
+ambiguous pair. Focused tests prove equivalent candidate IDs in both languages,
+reserved `reobserve` and `abstain`, immutable capture-bound arguments, rejection
+of stale, malformed, out-of-bounds, duplicate, and ambiguous inputs, and the
+continued independent fixture oracle. The fixtures contain no screenshots,
+credentials, extension artifacts, or model dependencies. No live Jev or live
+perception call was made for this follow-up.
+
+Local verification passed 25 Python tests, 15 TypeScript tests, TypeScript
+typechecking, and `git diff --check`. The managed mock verifier completed both
+languages in two actions each and independently read back
+`{"submitted":"jev-guide-mock"}` from the fixture. The installed Driver
+advertised all six required MCP tools and did not advertise the optional visual
+tool, exercising the documented semantic fallback rather than a live parse.

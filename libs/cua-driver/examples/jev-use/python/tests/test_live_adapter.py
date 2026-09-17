@@ -55,7 +55,10 @@ class LiveAdapterTest(unittest.TestCase):
         self.assertEqual(confidence, 0.9)
         self.assertEqual(probabilities[selected], 0.9)
         question = FakeClient.request["questions"]["driver_action"]
-        self.assertEqual(set(question.criteria), {"type-verification-value", "abstain"})
+        self.assertEqual(
+            set(question.criteria),
+            {"type-verification-value", "reobserve", "abstain"},
+        )
 
 
 if __name__ == "__main__":

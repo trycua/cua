@@ -14,7 +14,16 @@ from urllib.request import Request, urlopen
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from core import Candidate, build_candidates, choose_mock, classify, validate_choice
+from core import (
+    Candidate,
+    VisualObservation,
+    VisualObservationError,
+    build_candidates,
+    choose_mock,
+    classify,
+    parse_visual_regions,
+    validate_choice,
+)
 
 
 def fixture_state(fixture_url: str) -> dict[str, str | None]:
@@ -98,6 +107,32 @@ class Driver:
         return data
 
 
+async def optional_visual_observation(
+    driver: Driver,
+    snapshot: dict[str, Any],
+    available_tools: set[str],
+) -> VisualObservation | None:
+    capture_id = snapshot.get("capture_id")
+    if "parse_visual_regions" not in available_tools or not isinstance(capture_id, str):
+        return None
+    try:
+        result = await driver.call(
+            "parse_visual_regions",
+            {
+                "capture_id": capture_id,
+                "options": {"kinds": ["text", "icon"], "min_confidence": 0.8, "max_regions": 100},
+            },
+        )
+        return parse_visual_regions(
+            result,
+            expected_capture_id=capture_id,
+            target_id=str(snapshot["target_id"]),
+            tab_id=str(snapshot["tab_id"]),
+        )
+    except (RuntimeError, VisualObservationError, KeyError, TypeError):
+        return None
+
+
 async def wait_for_window(driver: Driver, pid: int) -> dict[str, Any]:
     for _ in range(40):
         windows = (await driver.call("list_windows", {"pid": pid})).get("windows", [])
@@ -132,6 +167,7 @@ async def run(args: argparse.Namespace) -> str:
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
+            available_tools = {tool.name for tool in (await session.list_tools()).tools}
             driver = Driver(session, label)
             prepared = await driver.call(
                 "browser_prepare",
@@ -165,7 +201,8 @@ async def run(args: argparse.Namespace) -> str:
                         "snapshot_format": "semantic_v2",
                     },
                 )
-                candidates = build_candidates(snapshot, token)
+                visual = await optional_visual_observation(driver, snapshot, available_tools)
+                candidates = build_candidates(snapshot, token, visual)
                 if not candidates:
                     write_event(log_path, {"event": "outcome", "outcome": "abstained", "step": step})
                     return "abstained"
@@ -178,8 +215,27 @@ async def run(args: argparse.Namespace) -> str:
                     )
                 if choice is None:
                     return "abstained"
-                candidate = validate_choice(choice, candidates)
+                candidate = validate_choice(
+                    choice,
+                    candidates,
+                    current_capture_id=visual.capture_id if visual else None,
+                )
                 decision_ms = round((time.perf_counter() - started) * 1000, 2)
+
+                if candidate.id == "reobserve":
+                    event = {
+                        "event": "step",
+                        "step": step,
+                        "candidate": candidate.id,
+                        "confidence": confidence,
+                        "probabilities": probabilities,
+                        "decision_ms": decision_ms,
+                        "action_ms": 0.0,
+                        "dry_run": args.dry_run,
+                    }
+                    history.append(event)
+                    write_event(log_path, event)
+                    continue
 
                 if candidate.id == "abstain":
                     write_event(

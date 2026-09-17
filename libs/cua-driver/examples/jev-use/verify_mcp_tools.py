@@ -15,6 +15,7 @@ REQUIRED_TOOLS = {
     "get_browser_state",
     "list_windows",
 }
+OPTIONAL_TOOLS = {"parse_visual_regions"}
 
 
 async def verify() -> None:
@@ -29,7 +30,11 @@ async def verify() -> None:
             missing = sorted(REQUIRED_TOOLS - names)
             if missing:
                 raise RuntimeError(f"MCP tools/list is missing required tools: {missing}")
-            print(f"MCP initialize and tools/list verified {len(REQUIRED_TOOLS)} required tools")
+            optional = sorted(OPTIONAL_TOOLS & names)
+            print(
+                f"MCP initialize and tools/list verified {len(REQUIRED_TOOLS)} required tools; "
+                f"optional tools available: {optional}"
+            )
 
 
 if __name__ == "__main__":

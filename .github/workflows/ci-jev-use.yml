@@ -179,11 +179,36 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: |
           proof="$RUNNER_TEMP/jev-use-mock-proof"
+          session_script="$RUNNER_TEMP/jev-use-x11-session.sh"
+          cat > "$session_script" <<'SH'
+          set -euo pipefail
+          proof="$1"
+          driver_bin="$CUA_DRIVER_BIN"
+          driver_wrapper="$RUNNER_TEMP/jev-use-driver-with-x11"
+          {
+            echo '#!/bin/bash'
+            printf 'export DISPLAY=%q\n' "$DISPLAY"
+            printf 'export XAUTHORITY=%q\n' "${XAUTHORITY:-}"
+            printf 'export DBUS_SESSION_BUS_ADDRESS=%q\n' "$DBUS_SESSION_BUS_ADDRESS"
+            echo 'export CUA_DRIVER_PERMISSION_MODE=unrestricted'
+            echo 'export CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS=1'
+            echo 'export CUA_E2E_BROWSER_NO_SANDBOX=1'
+            echo 'export CUA_E2E_BROWSER_STDERR=1'
+            printf 'exec %q "$@"\n' "$driver_bin"
+          } > "$driver_wrapper"
+          chmod 0700 "$driver_wrapper"
+          export CUA_DRIVER_BIN="$driver_wrapper"
+          openbox >/tmp/jev-use-openbox.log 2>&1 &
+          picom --backend xrender --config /dev/null >/tmp/jev-use-picom.log 2>&1 &
+          sleep 2
+          cd libs/cua-driver/examples/jev-use
+          uv run python verify_mcp_tools.py
+          uv run --frozen python verify_setup.py --typescript --output-dir "$proof"
+          SH
           # This focused recipe E2E reuses the repository's supported X11
-          # stack: Xvfb, a session D-Bus, Openbox, Picom, and system Chrome.
+          # stack and restores display variables omitted by MCP stdio defaults.
           xvfb-run -a --server-args="-screen 0 1920x1080x24" \
-            dbus-run-session -- bash -lc \
-            'openbox >/tmp/jev-use-openbox.log 2>&1 & picom --backend xrender --config /dev/null >/tmp/jev-use-picom.log 2>&1 & sleep 2; cd libs/cua-driver/examples/jev-use; uv run python verify_mcp_tools.py; uv run --frozen python verify_setup.py --typescript --output-dir "'$proof'"'
+            dbus-run-session -- bash "$session_script" "$proof"
       - name: Audit redacted E2E evidence
         run: |
           uv run python - "$RUNNER_TEMP/jev-use-mock-proof" <<'PY'

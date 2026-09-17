@@ -3,7 +3,7 @@ import test from 'node:test';
 import { TypeSafeClient } from '@typesafe-ai/sdk';
 
 import { buildCandidates, chooseMock, classify, validateChoice } from './core.js';
-import { chooseWithTypeSafe, Driver, validateFixtureUrl } from './run.js';
+import { chooseWithTypeSafe, Driver, selectTabId, validateFixtureUrl } from './run.js';
 
 function snapshot(value: string | null = null) {
   return {
@@ -105,4 +105,16 @@ test('fixture URL is confined to loopback HTTP', () => {
   for (const value of ['https://127.0.0.1/', 'http://example.com/', 'http://localhost/api/']) {
     assert.throws(() => validateFixtureUrl(value));
   }
+});
+
+test('tab selection accepts unknown active state', () => {
+  assert.equal(selectTabId([{ tab_id: 'first', active: null }]), 'first');
+  assert.equal(
+    selectTabId([
+      { tab_id: 'first', active: false },
+      { tab_id: 'second', active: true },
+    ]),
+    'second'
+  );
+  assert.throws(() => selectTabId([]));
 });

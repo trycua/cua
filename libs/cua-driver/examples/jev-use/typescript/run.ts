@@ -68,6 +68,11 @@ export function validateFixtureUrl(value: string): string {
   return parsed.toString();
 }
 
+export function selectTabId(tabs: Record<string, any>[]): string {
+  if (!tabs.length) throw new Error('isolated browser has no tabs');
+  return String(tabs.find((tab) => tab.active)?.tab_id ?? tabs[0].tab_id);
+}
+
 export class Driver {
   constructor(
     private readonly client: Client,
@@ -186,9 +191,7 @@ async function run(args: Arguments): Promise<Outcome> {
       window_id: window.window_id,
     });
     const targetId = String(bound.target_id);
-    const activeTab = (bound.tabs as Record<string, any>[]).find((tab) => tab.active);
-    if (!activeTab) throw new Error('isolated browser has no active tab');
-    const tabId = String(activeTab.tab_id);
+    const tabId = selectTabId(bound.tabs as Record<string, any>[]);
     await driver.call('browser_navigate', {
       target_id: targetId,
       tab_id: tabId,

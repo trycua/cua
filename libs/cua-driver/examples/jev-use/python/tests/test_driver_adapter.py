@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from run import Driver, validate_fixture_url
+from run import Driver, select_tab_id, validate_fixture_url
 
 
 class FakeSession:
@@ -37,6 +37,23 @@ class DriverAdapterTest(unittest.IsolatedAsyncioTestCase):
         for value in ("https://127.0.0.1/", "http://example.com/", "http://localhost/api/"):
             with self.assertRaises(argparse.ArgumentTypeError):
                 validate_fixture_url(value)
+
+    def test_tab_selection_accepts_unknown_active_state(self) -> None:
+        self.assertEqual(
+            select_tab_id([{"tab_id": "first", "active": None}]),
+            "first",
+        )
+        self.assertEqual(
+            select_tab_id(
+                [
+                    {"tab_id": "first", "active": False},
+                    {"tab_id": "second", "active": True},
+                ]
+            ),
+            "second",
+        )
+        with self.assertRaises(RuntimeError):
+            select_tab_id([])
 
 
 if __name__ == "__main__":

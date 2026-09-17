@@ -102,7 +102,7 @@ already exist:
 git clone --depth 1 https://github.com/trycua/cua.git cua-jev-use
 cd cua-jev-use
 git fetch --depth 1 origin feat/cua-driver-typesafe-jev-demo
-git switch --detach origin/feat/cua-driver-typesafe-jev-demo
+git switch --detach FETCH_HEAD
 cd libs/cua-driver/examples/jev-use
 uv sync --frozen --python 3.12
 ```
@@ -122,7 +122,7 @@ An isolated browser opens a local test page, enters a value, and submits the for
 successful run ends with:
 
 ```json
-{"event":"setup_complete","checks":1,"fixture_closed":true}
+{"event": "setup_complete", "checks": 1, "fixture_closed": true}
 ```
 
 This confirms that Cua Driver can operate the browser. It does not call
@@ -148,7 +148,7 @@ billing. Your personal browser profile is not used.
 Success ends with:
 
 ```json
-{"event":"setup_complete","checks":2,"fixture_closed":true}
+{"event": "setup_complete", "checks": 2, "fixture_closed": true}
 ```
 
 Inspect the result:

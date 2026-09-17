@@ -121,7 +121,21 @@ jobs:
           chromium_wrapper="$(dirname "$chromium_source")/chrome-wrapper"
           test -f "$chromium_wrapper" && test -x "$chromium_wrapper"
           sudo install -o root -g root -m 0755 \
-            "$chromium_wrapper" /usr/lib/chromium-browser/chromium-browser
+            "$chromium_wrapper" /usr/lib/chromium-browser/chromium-browser.real
+          bootstrap_wrapper="$RUNNER_TEMP/chromium-browser"
+          cat > "$bootstrap_wrapper" <<'SH'
+          #!/bin/bash
+          set -euo pipefail
+          args=("$@")
+          for index in "${!args[@]}"; do
+            if [[ "${args[$index]}" == about:blank ]]; then
+              args[$index]='data:text/html,<title>Cua%20Driver</title>'
+            fi
+          done
+          exec /usr/lib/chromium-browser/chromium-browser.real "${args[@]}"
+          SH
+          sudo install -o root -g root -m 0755 \
+            "$bootstrap_wrapper" /usr/lib/chromium-browser/chromium-browser
           sudo chown -R root:root /usr/lib/chromium-browser
           sudo chmod -R go-w /usr/lib/chromium-browser
 
@@ -153,7 +167,13 @@ jobs:
           }
           trap cleanup EXIT
           for _ in $(seq 1 100); do
-            test -s "$profile/DevToolsActivePort" && exit 0
+            if test -s "$profile/DevToolsActivePort"; then
+              port="$(head -n 1 "$profile/DevToolsActivePort")"
+              if curl -fsS "http://127.0.0.1:$port/json/list" | python3 -c \
+                'import json, sys; assert any(tab.get("title") == "Cua Driver" for tab in json.load(sys.stdin))'; then
+                exit 0
+              fi
+            fi
             kill -0 "$browser_pid" 2>/dev/null || exit 1
             sleep 0.1
           done

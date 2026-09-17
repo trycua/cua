@@ -118,7 +118,7 @@ troubleshooting section. Keep detailed execution-environment and measurement
 notes in the example README and this contributor report. Preserve contributor
 acknowledgments in the README. Do not change the agent or verifier code.
 
-The checkout now pins the already-tested example revision
+At that revision, the checkout pinned the already-tested example revision
 `bebe5e7692c6347b6a090336eac3c0ea4911ec59`; readers no longer need to understand
 an unmerged PR to obtain runnable code. The guide revision and example revision
 are deliberately distinct. New evidence must identify both.
@@ -186,7 +186,8 @@ Driver runtime change. Optional Node checks skip only when Node/TypeScript
 dependencies are absent; the recorded three-platform runs installed them and
 had no skipped tests. Source commit `decc10f6c37168e061d3973dfd9cd21d18da3f68`
 was moved with `git cherry-pick -x`, retaining contributor/coauthor credit.
-The guide pins runnable revision `b0e4b6feb0064cedc4dcf04d70a0d270d0568b99`.
+At that phase, the guide pinned runnable revision
+`b0e4b6feb0064cedc4dcf04d70a0d270d0568b99`.
 
 | Native host | Python tests | TypeScript tests | Typechecking | Desktop/live evidence |
 | --- | --- | --- | --- | --- |
@@ -292,3 +293,30 @@ are retained outside the resynchronized workspace in the standalone guide
 checkout. Native Windows/Linux evidence remains in their separate guest paths;
 the Windows archive was also preserved as encoded bytes in the tool transcript.
 No lost evidence was reconstructed or represented as retained.
+
+### Credential-free Linux workflow follow-up
+
+The branch remains based on `origin/main`
+`aca1985ffc4061d580218f5f850ac57132d90e36`. Exact head
+`c4b860515ae5c0cf31d7a36cd17cdb11f6163f2c` ran credential-free workflow
+`CI: jev-use` as GitHub Actions run `35237096608`. Both unit jobs passed, and
+the Linux job built that exact Driver and verified its advertised MCP tools.
+The action loop then failed before its first navigation because the bound
+browser tab had an unknown active state. This supersedes no earlier desktop or
+live proof and is not recorded as a passing Linux action-loop run.
+
+The pending candidate accepts the first bound tab when no tab is explicitly
+active, matching the Driver contract's unknown-active-state behavior, while
+still preferring an active tab when one is known. It applies the same selection
+to Python and TypeScript. The workflow also gives the isolated bootstrap tab a
+stable title and verifies that title over DevTools before starting the MCP
+agents. Local verification passed 19 Python tests, nine TypeScript tests,
+TypeScript typechecking, workflow YAML parsing, and `git diff --check`. No live
+provider workflow was dispatched. A new exact-head GitHub run is still required
+before claiming the Linux mock action loop passes.
+
+The current guide uses `FETCH_HEAD` after its single-ref shallow fetch so the
+detached checkout does not depend on a remote-tracking ref that a default
+single-branch clone may omit. Its shown JSON output now matches `json.dumps`
+spacing. Current guide SHA-256:
+`35e8e78be21f589b8dc4b98ebb8a934e202c038b16f8794551d33e150430595f`.

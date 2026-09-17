@@ -39,6 +39,13 @@ def validate_fixture_url(value: str) -> str:
     return value.rstrip("/") + "/"
 
 
+def select_tab_id(tabs: list[dict[str, Any]]) -> str:
+    if not tabs:
+        raise RuntimeError("isolated browser has no tabs")
+    selected = next((tab for tab in tabs if tab.get("active")), tabs[0])
+    return str(selected["tab_id"])
+
+
 def reset_fixture(fixture_url: str) -> None:
     request = Request(f"{fixture_url.rstrip('/')}/reset", method="POST", data=b"")
     with urlopen(request, timeout=2) as response:
@@ -136,7 +143,7 @@ async def run(args: argparse.Namespace) -> str:
                 "get_browser_state", {"pid": pid, "window_id": window["window_id"]}
             )
             target_id = bound["target_id"]
-            tab_id = next(tab["tab_id"] for tab in bound["tabs"] if tab.get("active"))
+            tab_id = select_tab_id(bound["tabs"])
             await driver.call(
                 "browser_navigate",
                 {"target_id": target_id, "tab_id": tab_id, "url": args.fixture_url},

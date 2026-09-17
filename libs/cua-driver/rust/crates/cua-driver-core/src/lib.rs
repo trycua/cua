@@ -47,6 +47,7 @@ pub mod authorization;
 pub mod background_input;
 pub mod browser;
 pub mod capture_mode;
+pub mod capture_registry;
 pub mod capture_scope;
 pub mod cdp;
 pub mod clipboard;

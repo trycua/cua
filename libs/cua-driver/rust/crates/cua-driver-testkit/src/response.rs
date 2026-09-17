@@ -116,6 +116,14 @@ impl ToolResponse {
             .expect("observed element must carry an identity-bearing token")
     }
 
+    /// Target an element from this observation without mixing snapshot metadata.
+    pub fn element_target(&self, index: u64) -> serde_json::Map<String, Value> {
+        serde_json::Map::from_iter([
+            ("element_token".into(), self.element_token(index).into()),
+            ("snapshot_id".into(), self.snapshot_id().into()),
+        ])
+    }
+
     pub fn snapshot_id(&self) -> &str {
         self.structured
             .get("snapshot_id")
@@ -152,6 +160,27 @@ mod tests {
             ]}}
         }))
         .element_token(0);
+    }
+
+    #[test]
+    fn element_target_uses_token_from_the_same_observation() {
+        let observation = |snapshot, token| {
+            ToolResponse::from_mcp(serde_json::json!({
+                "result": {"structuredContent": {
+                    "snapshot_id": snapshot,
+                    "elements": [{"element_index": 9, "element_token": token}]
+                }}
+            }))
+        };
+        let first = observation("first-snapshot", "first-token");
+        let second = observation("second-snapshot", "second-token");
+        assert_eq!(
+            serde_json::Value::Object(first.element_target(9)),
+            serde_json::json!({
+                "element_token": "first-token", "snapshot_id": "first-snapshot"
+            })
+        );
+        assert_eq!(second.element_target(9)["element_token"], "second-token");
     }
 
     #[test]

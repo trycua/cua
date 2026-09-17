@@ -15,8 +15,9 @@
 //! 1. **`harness_lo_vcl_font_color_split_button_exposes_expand`** —
 //!    Font Color SplitButton reports `actions=[invoke,expand]`.
 //!
-//! 2. **`harness_lo_vcl_font_color_expand_opens_picker`** — click
-//!    with `action:"expand"` opens a SALTMPSUBFRAME picker.
+//! 2. **`harness_lo_vcl_font_color_expand_opens_picker`** — MSAA token
+//!    targeting refuses without opening a window; a right-edge pixel click
+//!    opens a SALTMPSUBFRAME picker.
 //!
 //! 3. **`harness_lo_vcl_modal_input_roundtrip_works`** — SAL/VCL
 //!    modal (Find & Replace) accepts SendInput, snapshot has actionable
@@ -54,7 +55,124 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use cua_driver_testkit::{Driver, McpDriver};
+use cua_driver_testkit::{Driver, McpDriver, ToolResponse};
+
+fn msaa_pixel_click_args(
+    pid: u32,
+    wid: u64,
+    snapshot: &ToolResponse,
+    index: u64,
+    dropdown: bool,
+) -> serde_json::Value {
+    let state = snapshot.structured();
+    let element = state["elements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|element| element["element_index"].as_u64() == Some(index))
+        .expect("observed MSAA element must exist");
+    let frame = &element["frame"];
+    let bounds = &state["window_bounds"];
+    let number = |value: &serde_json::Value| value.as_f64().expect("observed geometry must exist");
+    let width = number(&frame["width"]);
+    let height = number(&frame["height"]);
+    assert!(width > 0.0 && height > 0.0);
+    let x = number(&frame["x"])
+        + if dropdown {
+            width - 4.0_f64.min(width / 2.0)
+        } else {
+            width / 2.0
+        };
+    let y = number(&frame["y"]) + height / 2.0;
+    let window_width = number(&bounds["width"]);
+    let window_height = number(&bounds["height"]);
+    let screenshot_width = number(&state["screenshot_width"]);
+    let screenshot_height = number(&state["screenshot_height"]);
+    assert!(
+        window_width > 0.0
+            && window_height > 0.0
+            && screenshot_width > 0.0
+            && screenshot_height > 0.0
+    );
+    serde_json::json!({
+        "pid": pid, "window_id": wid, "delivery_mode": "foreground",
+        "x": (x - number(&bounds["x"])) * screenshot_width / window_width,
+        "y": (y - number(&bounds["y"])) * screenshot_height / window_height
+    })
+}
+
+fn refuse_token_then_click_pixel(
+    driver: &mut McpDriver,
+    pid: u32,
+    wid: u64,
+    snapshot: &ToolResponse,
+    index: u64,
+    dropdown: bool,
+) -> ToolResponse {
+    let window_ids = |driver: &mut McpDriver| {
+        let windows = driver.call("list_windows", serde_json::json!({"pid": pid}));
+        assert!(!windows.is_error(), "{}", windows.text());
+        windows.structured()["windows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|window| window["window_id"].as_u64().unwrap())
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    let before = window_ids(driver);
+    let mut args = serde_json::json!({"pid": pid, "window_id": wid});
+    args.as_object_mut()
+        .unwrap()
+        .extend(snapshot.element_target(index));
+    let refused = driver.call("click", args);
+    assert!(
+        refused.is_error(),
+        "MSAA token unexpectedly accepted: {}",
+        refused.text()
+    );
+    assert_eq!(
+        refused.structured()["refusal"]["code"],
+        "element_resolution_failed"
+    );
+    assert!(refused.structured()["refusal"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("incomplete accessibility tree"));
+    assert_eq!(
+        window_ids(driver),
+        before,
+        "refused token changed the open windows"
+    );
+    driver.call(
+        "click",
+        msaa_pixel_click_args(pid, wid, snapshot, index, dropdown),
+    )
+}
+
+#[test]
+fn msaa_pixel_targets_use_observed_frame_and_screenshot_scale() {
+    let snapshot = ToolResponse::from_mcp(serde_json::json!({"result": {"structuredContent": {
+        "window_bounds": {"x": -200, "y": 100, "width": 400, "height": 200},
+        "screenshot_width": 200, "screenshot_height": 100,
+        "elements": [{"element_index": 9, "frame": {"x": -160, "y": 120, "width": 40, "height": 20}}]
+    }}}));
+    assert_eq!(
+        msaa_pixel_click_args(7, 8, &snapshot, 9, true),
+        serde_json::json!({
+            "pid": 7, "window_id": 8, "delivery_mode": "foreground", "x": 38.0, "y": 15.0
+        })
+    );
+    assert_eq!(msaa_pixel_click_args(7, 8, &snapshot, 9, false)["x"], 30.0);
+}
+
+#[test]
+#[should_panic(expected = "observed MSAA element must exist")]
+fn msaa_pixel_target_never_substitutes_a_different_row() {
+    let snapshot = ToolResponse::from_mcp(serde_json::json!({"result": {"structuredContent": {
+        "elements": [{"element_index": 9}]
+    }}}));
+    msaa_pixel_click_args(7, 8, &snapshot, 0, false);
+}
 
 // ── LO paths ─────────────────────────────────────────────────────────────────
 
@@ -202,9 +320,9 @@ fn setup() -> Option<LoSession> {
 /// not open the picker. After the MSAA fallback: SAL-class windows
 /// walk via oleacc's `AccessibleObjectFromWindow`, which preserves
 /// the BUTTONDROPDOWN role, and cua-driver maps it to
-/// `actions=[invoke,expand]`. The `click` tool's `action:"expand"`
-/// case clicks the right-edge of the cached rect (the dropdown arrow
-/// half) via SendInput.
+/// `actions=[invoke,expand]`. This is observation metadata, not proof that
+/// token targeting is supported: MSAA cannot currently attest completeness.
+/// The action tests below verify refusal, then explicitly click observed pixels.
 ///
 /// If this fails: either the MSAA path stopped applying to SALFRAME
 /// (check `uia/mod.rs` SAL class detection), or LO changed its
@@ -248,26 +366,11 @@ fn harness_lo_vcl_font_color_split_button_exposes_expand() {
     );
 }
 
-// ── Test 2: action:"expand" actually opens the color picker ─────────────────
+// ── Test 2: explicit pixel fallback opens the color picker ─────────────────
 
-/// End-to-end test that the `click(element_index, action:"expand")`
-/// dispatch on a MSAA BUTTONDROPDOWN actually opens the dropdown.
-///
-/// Asserts:
-///   1. `get_window_state` finds Font Color by name and yields an
-///      element_index.
-///   2. `click(element_index=X, action:"expand")` returns success.
-///   3. A new top-level window appears under the LO pid with title
-///      "Font Color" (the SALTMPSUBFRAME color picker).
-///
-/// Failures point at:
-///   - (1) MSAA walker not finding Font Color (check msaa.rs walker
-///         budget / depth, or LO renamed the button).
-///   - (2) cua-driver click tool's MSAA dispatch broke (check
-///         `tools/impl_.rs` BUTTONDROPDOWN branch).
-///   - (3) Right-edge offset wrong for current LO version's toolbar
-///         scale (check `rect.right - 4` heuristic in
-///         `tools/impl_.rs`).
+/// MSAA token targeting must refuse without opening the picker. A subsequent
+/// explicit foreground pixel click on the observed dropdown arrow must open
+/// the same SALTMPSUBFRAME picker as before; refusal alone is not a passing test.
 #[test]
 #[ignore]
 fn harness_lo_vcl_font_color_expand_opens_picker() {
@@ -291,10 +394,10 @@ fn harness_lo_vcl_font_color_expand_opens_picker() {
         "get_window_state",
         serde_json::json!({
             "pid": pid as i64, "window_id": wid,
-            "capture_mode": "ax", "query": "Font Color"
+            "include_screenshot": true, "query": "Font Color"
         }),
     );
-    let text = snap.text();
+    let text = snap.tree_text();
     let line = text
         .lines()
         .find(|l| l.contains("\"Font Color\"") && l.contains("expand"))
@@ -320,24 +423,13 @@ fn harness_lo_vcl_font_color_expand_opens_picker() {
         .map(|a| a.iter().filter_map(|w| w["window_id"].as_u64()).collect())
         .unwrap_or_default();
 
-    let resp = driver.call(
-        "click",
-        serde_json::json!({
-            "pid": pid as i64, "window_id": wid,
-            "element_token": snap.element_token(idx), "snapshot_id": snap.snapshot_id(),
-            "action": "expand"
-        }),
-    );
-    let resp_text = resp.text();
+    let resp = refuse_token_then_click_pixel(driver, pid, wid, &snap, idx, true);
     assert!(
-        resp_text.starts_with("✅"),
-        "click(action:expand) failed: {resp_text:?}"
+        !resp.is_error(),
+        "dropdown pixel click failed: {}",
+        resp.text()
     );
-    assert!(
-        resp_text.contains("dropdown half"),
-        "Expected response to mention dropdown half — got {resp_text:?}. \
-         The MSAA dispatch path may not have triggered."
-    );
+    assert_eq!(resp.action_delivery_mode(), Some("foreground"));
 
     // Let the picker spawn.
     std::thread::sleep(Duration::from_millis(900));
@@ -656,10 +748,10 @@ fn harness_lo_vcl_color_pick_green_end_to_end() {
         "get_window_state",
         serde_json::json!({
             "pid": pid as i64, "window_id": wid,
-            "capture_mode": "ax", "query": "Font Color"
+            "include_screenshot": true, "query": "Font Color"
         }),
     );
-    let snap_text = snap.text();
+    let snap_text = snap.tree_text();
     let fc_line = snap_text
         .lines()
         .find(|l| l.contains("\"Font Color\"") && l.contains("expand"))
@@ -681,19 +773,12 @@ fn harness_lo_vcl_color_pick_green_end_to_end() {
         .map(|a| a.iter().filter_map(|w| w["window_id"].as_u64()).collect())
         .unwrap_or_default();
 
-    // Open the dropdown.
-    let open_resp = driver.call(
-        "click",
-        serde_json::json!({
-            "pid": pid as i64, "window_id": wid,
-            "element_token": snap.element_token(fc_idx), "snapshot_id": snap.snapshot_id(),
-            "action": "expand"
-        }),
-    );
-    let open_text = open_resp.text();
+    // Token targeting refuses; explicitly open the observed dropdown by pixel.
+    let open_resp = refuse_token_then_click_pixel(driver, pid, wid, &snap, fc_idx, true);
     assert!(
-        open_text.contains("dropdown half"),
-        "click(action:expand) did not dispatch via MSAA dropdown path: {open_text:?}"
+        !open_resp.is_error(),
+        "dropdown pixel click failed: {}",
+        open_resp.text()
     );
     std::thread::sleep(Duration::from_millis(900));
 
@@ -725,10 +810,10 @@ fn harness_lo_vcl_color_pick_green_end_to_end() {
     let psnap = driver.call(
         "get_window_state",
         serde_json::json!({
-            "pid": pid as i64, "window_id": picker_wid, "capture_mode": "ax"
+            "pid": pid as i64, "window_id": picker_wid, "include_screenshot": true
         }),
     );
-    let psnap_text = psnap.text();
+    let psnap_text = psnap.tree_text();
     let green_line = psnap_text
         .lines()
         .find(|l| l.contains("\"Green\"") && l.contains("[") && l.contains("actions=[invoke"))
@@ -747,18 +832,13 @@ fn harness_lo_vcl_color_pick_green_end_to_end() {
         .parse()
         .expect("green element_index");
 
-    // Pick it. Default action (invoke) clicks center via MSAA dispatch.
-    let pick_resp = driver.call(
-        "click",
-        serde_json::json!({
-            "pid": pid as i64, "window_id": picker_wid,
-            "element_token": psnap.element_token(green_idx), "snapshot_id": psnap.snapshot_id()
-        }),
-    );
-    let pick_text = pick_resp.text();
+    // Refusal must leave the picker open; the explicit center pixel picks Green.
+    let pick_resp =
+        refuse_token_then_click_pixel(driver, pid, picker_wid, &psnap, green_idx, false);
     assert!(
-        pick_text.starts_with("✅"),
-        "click on Green color cell failed: {pick_text:?}"
+        !pick_resp.is_error(),
+        "Green pixel click failed: {}",
+        pick_resp.text()
     );
     std::thread::sleep(Duration::from_millis(700));
 

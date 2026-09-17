@@ -72,6 +72,10 @@ jobs:
       - name: Run complete desktop-independent core tests
         working-directory: libs/cua-driver/rust
         run: cargo test -p cua-driver-core --lib --test recording_shutdown_errors --locked
+      - name: Test LibreOffice target geometry without a desktop
+        working-directory: libs/cua-driver/rust
+        # Live LibreOffice scenarios remain ignored; run only pure request tests.
+        run: cargo test -p cua-driver --test harness_libreoffice_test --locked
       - name: Run deferred text publication regressions
         working-directory: libs/cua-driver/rust
         run: |

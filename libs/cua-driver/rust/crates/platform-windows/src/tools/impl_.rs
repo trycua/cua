@@ -1102,6 +1102,17 @@ fn fold_max_dimension(ceiling: u32, per_call: Option<u32>) -> u32 {
     }
 }
 
+/// Resolve the screenshot size limit. The canonical per-call override wins
+/// outright, including `0` for native resolution. When omitted, preserve the
+/// configured ceiling and legacy `max_dimension` folding behavior.
+fn resolve_max_image_dimension(
+    configured: u32,
+    max_image_dimension: Option<u32>,
+    legacy_max_dimension: Option<u32>,
+) -> u32 {
+    max_image_dimension.unwrap_or_else(|| fold_max_dimension(configured, legacy_max_dimension))
+}
+
 /// Build a single structured element entry for `get_window_state`.
 /// Returns `None` when the node has no `element_index` (non-actionable rows).
 fn build_element_entry(
@@ -1167,6 +1178,41 @@ pub struct GetWindowStateTool {
 
 static GWS_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
+#[cfg(test)]
+mod get_window_state_max_image_dimension_tests {
+    use super::{resolve_max_image_dimension, GetWindowStateTool, ToolState};
+    use cua_driver_core::tool::Tool;
+
+    #[test]
+    fn canonical_override_wins_and_zero_requests_native_resolution() {
+        assert_eq!(resolve_max_image_dimension(1568, None, None), 1568);
+        assert_eq!(resolve_max_image_dimension(1568, Some(800), None), 800);
+        assert_eq!(resolve_max_image_dimension(800, Some(1568), None), 1568);
+        assert_eq!(resolve_max_image_dimension(1568, Some(0), None), 0);
+        assert_eq!(
+            resolve_max_image_dimension(1568, Some(1200), Some(400)),
+            1200
+        );
+    }
+
+    #[test]
+    fn omitted_canonical_override_preserves_legacy_folding() {
+        assert_eq!(resolve_max_image_dimension(1568, None, Some(800)), 800);
+        assert_eq!(resolve_max_image_dimension(800, None, Some(1568)), 800);
+        assert_eq!(resolve_max_image_dimension(0, None, Some(800)), 800);
+    }
+
+    #[test]
+    fn schema_advertises_canonical_override_and_native_resolution() {
+        let tool = GetWindowStateTool {
+            state: ToolState::new(None),
+        };
+        let property = &tool.def().input_schema["properties"]["max_image_dimension"];
+        assert_eq!(property["type"], "integer");
+        assert_eq!(property["minimum"], 0);
+    }
+}
+
 #[async_trait]
 impl Tool for GetWindowStateTool {
     fn def(&self) -> &ToolDef {
@@ -1211,8 +1257,9 @@ impl Tool for GetWindowStateTool {
                 (window_bounds, app_name, window_title) — the capture-only path for a \
                 live window preview / picture-in-picture. Setting BOTH \
                 `include_accessibility_tree:false` and `include_screenshot:false` is an \
-                error. Optional `max_dimension` caps the returned screenshot's long edge \
-                in pixels for a cheap thumbnail.\n\n\
+                error. Optional `max_image_dimension` overrides the configured screenshot \
+                long-edge limit for this call; pass 0 for native resolution. Legacy \
+                `max_dimension` remains a cap on the configured limit.\n\n\
                 Uses `IUIAutomationCacheRequest` to batch-fetch all element properties in a \
                 single COM call (Chrome's ~5000-element tree returns in ~2-3s instead of \
                 timing out at 4s with per-property RPCs).\n\n\
@@ -1241,7 +1288,8 @@ impl Tool for GetWindowStateTool {
                 "query":{"type":"string","description":"Optional case-insensitive substring. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count."},
                 "max_elements":{"type":"integer","minimum":1,"description":"Cap on the total number of UIA nodes walked. Truncates depth-first; markdown and structured elements truncate together. Omit for the default (5 000). Lower for Electron / large web apps that produce 10k+ element trees."},
                 "max_depth":{"type":"integer","minimum":1,"description":"Cap on the UIA-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower for deep menu / Electron trees."},
-                "max_dimension":{"type":"integer","minimum":1,"description":"Optional cap on the returned screenshot's long edge, in pixels (aspect ratio preserved) — the cheap path for a small preview. Applied on top of the configured max_image_dimension ceiling; the tighter wins. Omit for the configured default."}
+                "max_image_dimension":{"type":"integer","minimum":0,"description":"Per-call long-edge limit for the returned screenshot, in pixels (aspect ratio preserved). Explicit values override configured behavior; 0 returns native resolution. Omit to preserve the configured default."},
+                "max_dimension":{"type":"integer","minimum":1,"description":"Legacy optional cap on the returned screenshot's long edge, in pixels (aspect ratio preserved). Applied on top of the configured max_image_dimension ceiling when max_image_dimension is omitted; the tighter wins."}
             },"additionalProperties":false}),
             // Swift annotation: idempotent: false (each call is a fresh snapshot).
             read_only: true, destructive: false, idempotent: false, open_world: false,
@@ -1302,15 +1350,28 @@ impl Tool for GetWindowStateTool {
         .ok()
         .flatten();
         use cua_driver_core::tool_args::ArgsExt;
-        // Optional per-call cap on the returned screenshot's long edge, folded
-        // with the configured ceiling (the tighter wins).
+        // The canonical per-call value overrides all configured limits,
+        // including `0` for native resolution. The legacy field retains its
+        // previous cap-folding behavior when the canonical field is omitted.
+        let max_image_dimension = match args.get("max_image_dimension") {
+            Some(value) => match value.as_u64().and_then(|v| u32::try_from(v).ok()) {
+                Some(value) => Some(value),
+                None => {
+                    return ToolResult::error(
+                        "max_image_dimension must be an integer between 0 and 4294967295.",
+                    )
+                }
+            },
+            None => None,
+        };
         let max_dimension = args
             .get("max_dimension")
             .and_then(|v| v.as_u64())
-            .map(|v| v.max(1) as u32);
+            .and_then(|v| u32::try_from(v).ok())
+            .map(|v| v.max(1));
         let max_dim = {
             let cfg = self.state.config.read().unwrap();
-            fold_max_dimension(cfg.max_image_dimension, max_dimension)
+            resolve_max_image_dimension(cfg.max_image_dimension, max_image_dimension, max_dimension)
         };
         // `capture_mode` is DEPRECATED and ignored — get_window_state always
         // returns BOTH the UIA tree and a screenshot now, so the agent grounds on

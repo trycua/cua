@@ -87,6 +87,8 @@ jobs:
       TYPESAFE_API_KEY: ""
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-python@v5
         with:
@@ -113,6 +115,13 @@ jobs:
           command -v google-chrome
           google-chrome --version
           dpkg-query -W -f='${Status}\n' google-chrome-stable | grep -Fx 'install ok installed'
+          # Driver launches only canonical, non-redirected system payloads.
+          # Mirror the package payload under its supported Chromium location.
+          sudo install -d -o root -g root -m 0755 /usr/lib/chromium
+          sudo cp -a /opt/google/chrome/. /usr/lib/chromium/
+          sudo install -o root -g root -m 0755 /opt/google/chrome/chrome /usr/lib/chromium/chromium
+          test "$(readlink -f /usr/lib/chromium/chromium)" = /usr/lib/chromium/chromium
+          test $((8#$(stat -c %a /usr/lib/chromium/chromium) & 0022)) = 0
       - name: Build the exact candidate Driver
         working-directory: ${{ github.workspace }}
         run: cargo build --locked --release -p cua-driver --features portal-input --manifest-path libs/cua-driver/rust/Cargo.toml

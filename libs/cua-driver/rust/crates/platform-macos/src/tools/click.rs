@@ -1756,8 +1756,16 @@ fn perform_ax_click(
 ) -> anyhow::Result<(String, bool, bool, bool, bool)> {
     let (element_ptr, idx) = element;
     let (pid, window_id) = window;
-    let ax_action = crate::input::ax_actions::map_action(action_str)?;
+
     let element = element_ptr as AXUIElementRef;
+
+    // Capture advertised actions BEFORE dispatching so we can detect silent no-ops
+    // (AX returns success even when the element doesn't advertise the action).
+    let advertised = unsafe { copy_action_names(element) };
+    let ax_action = match crate::ax::actions::custom_wire_name(&advertised, action_str) {
+        Some(raw) => raw,
+        None => crate::input::ax_actions::map_action(action_str)?,
+    };
 
     // Check the live value immediately before dispatch. Foreground assist can
     // enable menu items that were disabled in the cached snapshot, while a
@@ -1772,10 +1780,6 @@ fn perform_ax_click(
     } else {
         crate::input::ax_actions::ensure_ax_action_enabled(element_ptr, ax_action)?;
     }
-
-    // Capture advertised actions BEFORE dispatching so we can detect silent no-ops
-    // (AX returns success even when the element doesn't advertise the action).
-    let advertised = unsafe { copy_action_names(element) };
 
     let role = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
     let title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();

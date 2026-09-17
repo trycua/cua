@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use cua_driver_contract::HotkeyInput;
-use cua_driver_core::tool::spawn_native;
 use cua_driver_core::{
     protocol::ToolResult,
     tool::{Tool, ToolDef},
@@ -100,6 +99,23 @@ fn is_modifier(k: &str) -> bool {
     )
 }
 
+const HOTKEY_FOCUS_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(200);
+const HOTKEY_FOCUS_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
+
+fn focus_hotkey_element(pid: i32, element_ptr: usize) -> anyhow::Result<()> {
+    let deadline = std::time::Instant::now() + HOTKEY_FOCUS_TIMEOUT;
+    loop {
+        crate::input::ax_actions::focus_element(element_ptr)?;
+        if crate::input::ax_actions::is_element_focused(pid, element_ptr) {
+            return Ok(());
+        }
+        if std::time::Instant::now() >= deadline {
+            anyhow::bail!("requested hotkey element did not become focused");
+        }
+        std::thread::sleep(HOTKEY_FOCUS_POLL_INTERVAL);
+    }
+}
+
 fn screen_sharing_modifier_delivery_error(
     is_screen_sharing: bool,
     has_modifiers: bool,
@@ -159,7 +175,7 @@ impl Tool for HotkeyTool {
                 );
             };
             let display = raw_keys.join("+");
-            let result = spawn_native(move || {
+            let result = tokio::task::spawn_blocking(move || {
                 let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
                 crate::input::keyboard::press_key_global(&key, &modifier_refs)
             })
@@ -298,7 +314,7 @@ impl Tool for HotkeyTool {
             (element_guard.clone(), window_id, element_index)
         {
             let web_guard = guard.clone();
-            let is_web = spawn_native(move || {
+            let is_web = tokio::task::spawn_blocking(move || {
                 super::type_text::target_in_web_area(
                     pid,
                     Some((web_guard.as_ptr(), Some(index))),
@@ -308,7 +324,7 @@ impl Tool for HotkeyTool {
             .await
             .unwrap_or(true);
             if is_web {
-                spawn_native(move || unsafe {
+                tokio::task::spawn_blocking(move || unsafe {
                     let (screen_x, screen_y) = crate::ax::bindings::element_screen_center(
                         guard.as_ptr() as crate::ax::bindings::AXUIElementRef,
                     )?;
@@ -378,9 +394,10 @@ impl Tool for HotkeyTool {
             prior_front,
             "hotkey.CGEvent",
             || async move {
-                spawn_native(move || {
+                tokio::task::spawn_blocking(move || {
+                    let element_ptr = element_guard.as_ref().map(|guard| guard.as_ptr());
                     let m: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-                    match (fg, coordinate_focus, window_id, element_guard.as_ref()) {
+                    match (fg, coordinate_focus, window_id, element_ptr) {
                         // Chrome's native omnibox and Chromium/Electron inputs
                         // require a genuine foreground HID chord. Keep the exact
                         // target frontmost until both key events are consumed;
@@ -403,15 +420,12 @@ impl Tool for HotkeyTool {
                         // requirement as the px form. Activate the exact window,
                         // establish and confirm the requested child focus after
                         // activation, then use the guarded global HID queue.
-                        (true, false, Some(wid), Some(element)) => {
+                        (true, false, Some(wid), Some(ptr)) => {
                             crate::input::skylight::with_foreground_hid_activation(
                                 pid as libc::pid_t,
                                 wid,
                                 || {
-                                    crate::input::ax_actions::focus_target(
-                                        pid,
-                                        element.checked_ptr()?,
-                                    )?;
+                                    focus_hotkey_element(pid, ptr)?;
                                     crate::input::keyboard::press_key_bare_global(&key, &m)
                                 },
                             )?;
@@ -443,8 +457,8 @@ impl Tool for HotkeyTool {
                         }
                         // background (default): auth-envelope post to the pid, no
                         // raise — even when window_id was supplied for targeting.
-                        (false, false, _, Some(element)) => {
-                            crate::input::ax_actions::focus_target(pid, element.checked_ptr()?)?;
+                        (false, false, _, Some(ptr)) => {
+                            focus_hotkey_element(pid, ptr)?;
                             crate::input::keyboard::hotkey(pid, &key, &m)
                         }
                         _ => crate::input::keyboard::hotkey(pid, &key, &m),

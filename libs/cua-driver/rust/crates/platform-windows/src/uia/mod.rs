@@ -15,7 +15,7 @@ use windows::Win32::System::Com::{
 };
 use windows::Win32::UI::Accessibility::{
     CUIAutomation, IUIAutomation, IUIAutomationCacheRequest, IUIAutomationElement,
-    IUIAutomationElementArray, IUIAutomationExpandCollapsePattern, IUIAutomationInvokePattern,
+    IUIAutomationExpandCollapsePattern, IUIAutomationInvokePattern,
     IUIAutomationSelectionItemPattern, IUIAutomationTogglePattern, ToggleState_Off, ToggleState_On,
     TreeScope_Children, TreeScope_Subtree, UIA_AutomationIdPropertyId,
     UIA_BoundingRectanglePropertyId, UIA_ControlTypePropertyId, UIA_ExpandCollapsePatternId,
@@ -50,7 +50,7 @@ const MAX_TOTAL_ELEMENTS: usize = DEFAULT_MAX_TOTAL_ELEMENTS;
 /// Same shape for the UIA primary path AND the MSAA fallback (used for
 /// SAL/VCL window classes — see `msaa.rs`). MSAA-only fields use the
 /// `_ptr is IAccessible` / `msaa_role = Some(...)` discriminator.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct UiaNode {
     pub element_index: Option<usize>,
     pub control_type: String,
@@ -95,6 +95,7 @@ pub struct UiaNode {
 pub struct UiaTreeResult {
     pub tree_markdown: String,
     pub nodes: Vec<UiaNode>,
+    /// False for a partial walk or a fallback without exact-window proof.
     pub complete: bool,
 }
 
@@ -274,7 +275,6 @@ unsafe fn walk_tree_unsafe(
         }
     };
 
-    let mut cache_complete = true;
     // Properties to pre-fetch.
     for prop in &[
         UIA_ControlTypePropertyId,
@@ -288,7 +288,7 @@ unsafe fn walk_tree_unsafe(
         UIA_ToggleToggleStatePropertyId,
         UIA_SelectionItemIsSelectedPropertyId,
     ] {
-        cache_complete &= cache_req.AddProperty(*prop).is_ok();
+        let _ = cache_req.AddProperty(*prop);
     }
 
     // Patterns to pre-fetch (for action detection).
@@ -302,17 +302,15 @@ unsafe fn walk_tree_unsafe(
         UIA_TextPatternId,
         UIA_ScrollPatternId,
     ] {
-        cache_complete &= cache_req.AddPattern(*pat).is_ok();
+        let _ = cache_req.AddPattern(*pat);
     }
 
     // Fetch entire subtree in one call.
-    cache_complete &= cache_req.SetTreeScope(TreeScope_Subtree).is_ok();
+    let _ = cache_req.SetTreeScope(TreeScope_Subtree);
 
     // Apply control-view filter (same as ControlViewWalker).
     if let Ok(ctrl_cond) = automation.ControlViewCondition() {
-        cache_complete &= cache_req.SetTreeFilter(&ctrl_cond).is_ok();
-    } else {
-        cache_complete = false;
+        let _ = cache_req.SetTreeFilter(&ctrl_cond);
     }
 
     let hwnd_win = windows::Win32::Foundation::HWND(hwnd as *mut _);
@@ -396,19 +394,18 @@ unsafe fn walk_tree_unsafe(
     let mut counter = 0usize;
     let mut total = 0usize;
 
-    let mut complete = cache_complete
-        & walk_cached_bounded(
-            &root_elem,
-            0,
-            None,
-            false,
-            &mut nodes,
-            &mut lines,
-            &mut counter,
-            &mut total,
-            max_elements,
-            max_depth,
-        );
+    let mut complete = walk_cached_bounded(
+        &root_elem,
+        0,
+        None,
+        false,
+        &mut nodes,
+        &mut lines,
+        &mut counter,
+        &mut total,
+        max_elements,
+        max_depth,
+    );
 
     // Fallback for CoreWindow-class apps (Calculator, Settings, older UWPs).
     // `ElementFromHandle(hwnd)` on a `Windows.UI.Core.CoreWindow` HWND returns
@@ -478,9 +475,10 @@ unsafe fn walk_tree_unsafe(
                 );
 
                 if fallback_nodes.iter().any(|n| n.element_index.is_some()) {
+                    // PID-only fallback remains useful for observation, not exact targeting.
+                    complete = false;
                     nodes = fallback_nodes;
                     lines = fallback_lines;
-                    complete = false;
                     // counter/total aren't read after this point — they're
                     // only used by walk_cached's &mut params for element
                     // indexing inside that call.
@@ -676,22 +674,12 @@ unsafe fn walk_cached_bounded(
         return false;
     }
     *total += 1;
-    let mut complete = [
-        UIA_ControlTypePropertyId,
-        UIA_NamePropertyId,
-        UIA_AutomationIdPropertyId,
-        UIA_HelpTextPropertyId,
-        UIA_IsEnabledPropertyId,
-        UIA_ValueValuePropertyId,
-    ]
-    .iter()
-    .all(|&property| element.GetCachedPropertyValue(property).is_ok());
-
-    complete &= element.CachedControlType().is_ok()
+    let mut complete = element.CachedControlType().is_ok()
         && element.CachedName().is_ok()
         && element.CachedAutomationId().is_ok()
         && element.CachedHelpText().is_ok()
         && element.CachedIsEnabled().is_ok();
+
     let control_type = read_cached_control_type(element);
     let name = read_cached_bstr_name(element);
     let value = read_cached_bstr_value(element);
@@ -702,7 +690,7 @@ unsafe fn walk_cached_bounded(
     // surface. Action discovery keeps its historical best-effort assumption.
     let is_enabled = enabled.unwrap_or(true);
     let selected = read_cached_selected(element);
-    let actions = detect_actions(element, is_enabled, &mut complete, true);
+    let actions = detect_cached_actions(element, &control_type, is_enabled, &mut complete);
     let is_actionable = !actions.is_empty() && is_enabled;
     let has_content = name
         .as_deref()
@@ -776,7 +764,7 @@ unsafe fn walk_cached_bounded(
     if children.is_null() {
         return complete;
     }
-    let children = IUIAutomationElementArray::from_raw(children);
+    let children = windows::Win32::UI::Accessibility::IUIAutomationElementArray::from_raw(children);
     let Ok(len) = children.Length() else {
         return false;
     };
@@ -881,14 +869,14 @@ fn read_cached_bounding_rect_full(
     }
 }
 
-fn detect_actions(
+fn detect_cached_actions(
     element: &IUIAutomationElement,
+    control_type: &str,
     is_enabled: bool,
     complete: &mut bool,
-    cached: bool,
 ) -> Vec<String> {
     if !is_enabled {
-        return vec![];
+        return Vec::new();
     }
     let mut actions = Vec::new();
     for (pattern, action) in [
@@ -901,32 +889,27 @@ fn detect_actions(
         (UIA_TextPatternId, "text"),
         (UIA_ScrollPatternId, "scroll"),
     ] {
-        match read_pattern(element, pattern, cached) {
-            Ok(Some(_)) => actions.push(action.into()),
-            Ok(None) => {}
-            Err(_) => *complete = false,
+        unsafe {
+            // A successful null pattern means unsupported, not a failed read.
+            let mut raw = std::ptr::null_mut();
+            let status = (element.vtable().GetCachedPattern)(element.as_raw(), pattern, &mut raw);
+            *complete &= status.is_ok();
+            if !raw.is_null() {
+                drop(windows::core::IUnknown::from_raw(raw));
+                if status.is_ok() {
+                    actions.push(action.into());
+                }
+            }
         }
     }
-    actions
-}
-
-pub(crate) fn read_pattern(
-    element: &IUIAutomationElement,
-    pattern: windows::Win32::UI::Accessibility::UIA_PATTERN_ID,
-    cached: bool,
-) -> windows::core::Result<Option<windows::core::IUnknown>> {
-    let mut raw = std::ptr::null_mut();
-    unsafe {
-        let get = if cached {
-            element.vtable().GetCachedPattern
-        } else {
-            element.vtable().GetCurrentPattern
-        };
-        let status = get(element.as_raw(), pattern, &mut raw);
-        let result = (!raw.is_null()).then(|| windows::core::IUnknown::from_raw(raw));
-        status.ok()?;
-        Ok(result)
+    if actions.is_empty() && control_type == "MenuItem" {
+        // Some WPF MenuItem peers show up in ControlView with a usable name
+        // and bounding rectangle, but without cached Invoke/ExpandCollapse
+        // patterns. Index them anyway so click can retry live patterns and then
+        // fall back to the coordinate injector if UIA still reports no pattern.
+        actions.push("invoke".into());
     }
+    actions
 }
 
 fn read_cached_selected(element: &IUIAutomationElement) -> Option<bool> {

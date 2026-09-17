@@ -15,7 +15,6 @@
 
 use async_trait::async_trait;
 use cua_driver_contract::ClickButton;
-use cua_driver_core::tool::spawn_native;
 use cua_driver_core::{
     protocol::ToolResult,
     tool::{Tool, ToolDef},
@@ -127,16 +126,15 @@ fn def() -> &'static ToolDef {
         name: "click".into(),
         description:
             "Click against a target pid. **Prefer `element_token` over pixel \
-             coordinates** — the token works on backgrounded / minimized / hidden / \
-             off-Space windows, identifies one exact snapshot element, and tells \
-             you what you're clicking via the freshly resolved element's role + label. Reach for \
+             coordinates** — the token describes the observed element, and fresh \
+             accessibility state must identify a unique match. Availability depends on \
+             the current native window and provider. Reach for \
              `x, y` only when the target is a canvas / video / WebGL / custom-drawn surface \
              that doesn't appear in the AX tree.\n\n\
              Two addressing modes:\n\n\
-             - element_token, or element_token + snapshot_id (from get_window_state): AX action path. \
-               Works on backgrounded/hidden windows. No cursor move, no focus steal. \
-               The snapshot address is scoped per (pid, window_id) and is replaced by the \
-               next snapshot of the same window — re-snapshot every turn before clicking.\n\n\
+             - element_token (from get_window_state): native element path. Requires a \
+               unique match in a complete current accessibility tree. Another observation \
+               alone does not invalidate the token. Index plus snapshot_id alone is refused.\n\n\
              - x, y (window-local screenshot pixels, top-left origin of the PNG returned \
                by get_window_state): CGEvent path. Synthesizes mouse events and posts to \
                pid. Use modifier for cmd/shift/option/ctrl. Needs a visible on-screen \
@@ -162,7 +160,7 @@ fn def() -> &'static ToolDef {
             "properties": {
                 "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
                 "pid":           { "type": "integer", "description": "Target process ID." },
-                "window_id":     { "type": "integer", "description": "Target window ID. Required for element_token. Optional when element_token is supplied (the token carries it)." },
+                "window_id":     { "type": "integer", "description": "Target window ID. Required for element_index. Optional when element_token is supplied (the token carries it)." },
                 "element_index": cua_driver_core::tool_schema::element_index_schema(),
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
                 "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
@@ -191,7 +189,7 @@ fn def() -> &'static ToolDef {
                 "delivery_mode": {
                     "type": "string",
                     "enum": ["background", "foreground"],
-                    "description": "Best-effort-background ladder rung (default \"background\"). \"background\": perform the AX action or post the CGEvent without fronting. \"foreground\": briefly front the window, act, let transient UI settle, then restore the prior frontmost app. Requires window_id. Modified clicks require \"foreground\" so macOS observes physical modifier-key state. A generic click has no independent postcondition read-back, except selection of list-like AX rows whose AXSelected state can be confirmed; otherwise confirm the effect from a fresh state snapshot. Use the agent loop: background AX (element_token) → snapshot → background pixel (x/y) → snapshot → delivery_mode:\"foreground\"."
+                    "description": "Best-effort-background ladder rung (default \"background\"). \"background\": perform the AX action or post the CGEvent without fronting. \"foreground\": briefly front the window, act, let transient UI settle, then restore the prior frontmost app. Requires window_id. Modified clicks require \"foreground\" so macOS observes physical modifier-key state. A generic click has no independent postcondition read-back, except selection of list-like AX rows whose AXSelected state can be confirmed; otherwise confirm the effect from a fresh state snapshot. Use the agent loop: background AX (element_index) → snapshot → background pixel (x/y) → snapshot → delivery_mode:\"foreground\"."
                 },
                 "scope": {
                     "type": "string",
@@ -267,7 +265,7 @@ impl Tool for ClickTool {
             // screenshot width / logical screen width. This is robust even when
             // CGDisplayPixelsWide under-reports the backing scale (it returns the
             // scaled-mode point width on some Retina configs → a bogus 1.0).
-            let desktop_ratio = spawn_native(|| {
+            let desktop_ratio = tokio::task::spawn_blocking(|| {
                 let logical_w =
                     super::get_screen_size::main_screen_size().map(|(w, _, _)| w as f64);
                 let shot_w = crate::capture::screenshot_display_bytes()
@@ -303,7 +301,7 @@ impl Tool for ClickTool {
 
             let btn = button.clone();
             let desktop_modifiers: Vec<String> = args.str_array("modifier");
-            let result = spawn_native(move || -> anyhow::Result<()> {
+            let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
                 // Desktop scope is explicitly foreground and vision-driven: post
                 // at the global HID tap so WindowServer delivers to the window
                 // actually visible at this point. PID-posting here would silently
@@ -331,7 +329,7 @@ impl Tool for ClickTool {
                      (desktop scope; not driver-verified)."
                 ))
                 .with_structured(serde_json::json!({ "path": "cgevent_hid", "verified": false, "effect": "unverifiable" })),
-                Ok(Err(e)) => ToolResult::from_native_error(e, cua_driver_core::action_record::RequestedDelivery::Foreground),
+                Ok(Err(e)) => ToolResult::error(format!("desktop-scope click failed: {e}")),
                 Err(e) => ToolResult::error(format!("task error: {e}")),
             };
         }
@@ -340,21 +338,6 @@ impl Tool for ClickTool {
             Ok(v) => v,
             Err(e) => return e,
         };
-        if args.get("element_token").is_some() || args.get("element_index").is_some() {
-            let count = args.u64_or("count", 1);
-            if count > 1 {
-                if count != 2
-                    || args.str_or("button", "left") != "left"
-                    || !args.str_array("modifier").is_empty()
-                    || args.str_or("action", "press") != "press"
-                {
-                    return ToolResult::error("this semantic multi-click shape is unsupported");
-                }
-                return super::double_click::DoubleClickTool::new(self.state.clone())
-                    .invoke(args)
-                    .await;
-            }
-        }
         // Resolve this action's cursor key so its click-pulse / glide land on
         // the calling session's cursor, not the shared "default" one.
         let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
@@ -475,7 +458,7 @@ impl Tool for ClickTool {
             // Animate cursor to element center BEFORE firing AX action,
             // mirroring Swift's `performElementClick` → `animateAndWait(to:)`.
             let center_guard = element_guard.clone();
-            let center = spawn_native(move || unsafe {
+            let center = tokio::task::spawn_blocking(move || unsafe {
                 crate::ax::bindings::element_screen_center(center_guard.as_ptr() as AXUIElementRef)
             })
             .await
@@ -508,25 +491,19 @@ impl Tool for ClickTool {
 
                 let mods_owned = modifiers.clone();
                 let foreground = delivery_mode.is_foreground();
-                let result = spawn_native(move || {
+                let result = tokio::task::spawn_blocking(move || {
                     let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
-                    let point = || unsafe {
-                        crate::ax::bindings::element_screen_center(element_guard.checked_ptr()? as AXUIElementRef)
-                            .ok_or_else(|| anyhow::anyhow!("retained element geometry is unavailable"))
-                    };
                     if foreground && !m.is_empty() {
                         crate::input::skylight::with_foreground_hid_activation(
                             pid as libc::pid_t,
                             wid,
                             || {
-                                let (cx, cy) = point()?;
                                 crate::input::mouse::click_at_xy_desktop_with_modifiers_preserving_cursor(
                                     cx, cy, 1, "middle", &m,
                                 )
                             },
                         )
                     } else {
-                        let (cx, cy) = point()?;
                         crate::input::mouse::middle_click_at_xy(pid, cx, cy, &m)
                     }
                 })
@@ -537,7 +514,7 @@ impl Tool for ClickTool {
                          (background CGEvent; not driver-verified — confirm via screenshot)."
                     ))
                     .with_structured(serde_json::json!({ "path": "cgevent", "verified": false, "effect": "unverifiable" })),
-                    Ok(Err(e)) => ToolResult::from_native_error(e, delivery_mode.into()),
+                    Ok(Err(e)) => ToolResult::error(format!("Middle-click failed: {e}")),
                     Err(e)     => ToolResult::error(format!("Task error: {e}")),
                 };
             }
@@ -564,7 +541,7 @@ impl Tool for ClickTool {
             // rung internally and confirm the result by AX read-back.
             let selection_candidate = if effective_action == "press" {
                 let selection_guard = element_guard.clone();
-                spawn_native(move || {
+                tokio::task::spawn_blocking(move || {
                     crate::input::ax_actions::nearest_container_selection_state(
                         selection_guard.as_ptr(),
                     )
@@ -641,13 +618,14 @@ impl Tool for ClickTool {
                 prior_front,
                 "click.AXPress",
                 || async move {
-                    spawn_native(move || {
+                    tokio::task::spawn_blocking(move || {
+                        let element_ptr = element_guard.as_ptr();
                         if foreground {
                             let mut outcome = None;
                             let has_modifiers = !selection_modifiers.is_empty();
                             let action = || {
                                 outcome = Some(perform_ax_click(
-                                    &element_guard,
+                                    element_ptr,
                                     idx,
                                     pid,
                                     wid,
@@ -680,7 +658,7 @@ impl Tool for ClickTool {
                             Ok((outcome, fronted))
                         } else {
                             perform_ax_click(
-                                &element_guard,
+                                element_ptr,
                                 idx,
                                 pid,
                                 wid,
@@ -758,18 +736,9 @@ impl Tool for ClickTool {
                                        screenshot from get_window_state."
                         });
                     }
-                    if !selection_via_pixel && (button_str == "right" || action == "show_menu") {
-                        crate::input::ax_actions::acknowledged(
-                            msg,
-                            "AXShowMenu",
-                            delivery_mode.into(),
-                            fronted,
-                        )
-                    } else {
-                        ToolResult::text(msg).with_structured(structured)
-                    }
+                    ToolResult::text(msg).with_structured(structured)
                 }
-                Ok(Err(e)) => ToolResult::from_native_error(e, delivery_mode.into()),
+                Ok(Err(e)) => ToolResult::error(format!("AX action failed: {e}")),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             }
         } else if let (Some(mut cx), Some(mut cy)) = (x, y) {
@@ -796,7 +765,7 @@ impl Tool for ClickTool {
                             &self.state.config.read().unwrap(),
                         );
                         let dbg_path_c = dbg_path.clone();
-                        let dbg_result = spawn_native(move || {
+                        let dbg_result = tokio::task::spawn_blocking(move || {
                             let png = crate::capture::screenshot_window_bytes(wid)?;
                             let png = crate::capture::resize_png_if_needed(&png, max_dim)?;
                             crate::capture::write_crosshair_png(&png, cx, cy, &dbg_path_c)
@@ -920,7 +889,7 @@ impl Tool for ClickTool {
             {
                 let focus_only = action == "focus";
                 let hit_test_wid = window_id.expect("guarded by window_id.is_some() above");
-                let ax_result = spawn_native(move || unsafe {
+                let ax_result = tokio::task::spawn_blocking(move || unsafe {
                     let Some(element) = element_at_screen_position(pid, screen_x, screen_y) else {
                         return Ok::<bool, anyhow::Error>(false);
                     };
@@ -1022,7 +991,7 @@ impl Tool for ClickTool {
             let focus_without_raise =
                 if activation_policy == PixelActivationPolicy::AllowTargetWithoutRaise {
                     let wid = window_id.expect("activation policy requires window_id");
-                    match spawn_native(move || {
+                    match tokio::task::spawn_blocking(move || {
                         crate::input::mouse::prepare_background_pixel_click(pid, wid)
                     })
                     .await
@@ -1068,7 +1037,7 @@ impl Tool for ClickTool {
                 prior_front,
                 "click.pixel",
                 || async move {
-                    spawn_native(move || {
+                    tokio::task::spawn_blocking(move || {
                         let has_modifiers = !mods_owned.is_empty();
                         let do_click = move || -> anyhow::Result<()> {
                             let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
@@ -1195,7 +1164,7 @@ impl Tool for ClickTool {
                         "focus_without_raise": focus_without_raise
                     }))
                 }
-                Ok(Err(e)) => ToolResult::from_native_error(e, delivery_mode.into()),
+                Ok(Err(e)) => ToolResult::error(format!("{button_label} failed: {e}")),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             }
         } else {
@@ -1217,7 +1186,7 @@ impl Tool for ClickTool {
 /// it into `effect: "suspected_noop"` + an escalation hint so the agent crosses
 /// to the vision/pixel path instead of trusting a hollow success.
 fn perform_ax_click(
-    target: &crate::ax::element_resolver::RetainedElement,
+    element_ptr: usize,
     idx: usize,
     pid: i32,
     window_id: u32,
@@ -1227,28 +1196,6 @@ fn perform_ax_click(
     modifiers: &[String],
     foreground: bool,
 ) -> anyhow::Result<(String, bool, bool, bool, bool)> {
-    let element_ptr = target.checked_ptr()?;
-    let selection_pixel = selection_pixel
-        .map(|_| {
-            let (x, y) = target.screen_center()?;
-            let bounds = crate::windows::window_bounds_by_id(window_id)
-                .ok_or_else(|| anyhow::anyhow!("target window geometry is unavailable"))?;
-            let (window_x, window_y) = (x - bounds.x, y - bounds.y);
-            if window_x < 0.0
-                || window_y < 0.0
-                || window_x >= bounds.width
-                || window_y >= bounds.height
-            {
-                anyhow::bail!("retained target is outside its native window");
-            }
-            Ok::<_, anyhow::Error>(SelectionPixelTarget {
-                screen_x: x,
-                screen_y: y,
-                window_x,
-                window_y,
-            })
-        })
-        .transpose()?;
     let ax_action = map_action(action_str);
     let element = element_ptr as AXUIElementRef;
 
@@ -1272,7 +1219,7 @@ fn perform_ax_click(
     if ax_action == "AXPress" && !advertised.iter().any(|action| action == ax_action) {
         if modifiers.is_empty() {
             if let Some(selected_role) =
-                crate::input::ax_actions::select_nearest_container(element_ptr)?
+                crate::input::ax_actions::select_nearest_container(element_ptr)
             {
                 return Ok((
                     format!(
@@ -1382,12 +1329,28 @@ fn perform_ax_click(
         }
     }
 
-    if !advertised.iter().any(|action| action == ax_action) {
-        anyhow::bail!("target does not advertise the requested native action");
-    }
     let err = unsafe { crate::ax::bindings::perform_action(element, ax_action) };
     if err != crate::ax::bindings::kAXErrorSuccess {
-        return Err(cua_driver_core::protocol::ToolResult::native_action_error(format!("native action outcome is unknown: {ax_action} returned {err}; inspect fresh state and do not replay"), cua_driver_core::action_record::ActionTransport::MacosAxAction));
+        // Some collection rows claim a click-like action but Finder returns
+        // kAXErrorCannotComplete. Use the same verified selection fallback
+        // before surfacing the dispatch error.
+        if ax_action == "AXPress" && modifiers.is_empty() {
+            if let Some(selected_role) =
+                crate::input::ax_actions::select_nearest_container(element_ptr)
+            {
+                return Ok((
+                    format!(
+                        "✅ Selected nearest {selected_role} for [{idx}] {role} \"{title}\" \
+                         after AXPress returned {err}; confirmed AXSelected=true."
+                    ),
+                    false,
+                    false,
+                    true,
+                    false,
+                ));
+            }
+        }
+        anyhow::bail!("AXUIElementPerformAction({ax_action}) returned {err}");
     }
 
     let mut summary = format!("✅ Performed {ax_action} on [{idx}] {role} \"{title}\".");

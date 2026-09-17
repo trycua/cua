@@ -135,7 +135,7 @@ fn is_addressable(actions_present: bool, value_settable: bool, enabled: Option<b
 pub struct TreeWalkResult {
     pub tree_markdown: String,
     pub nodes: Vec<AXNode>,
-    /// True when the walk was cut short by the MAX_ELEMENTS cap.
+    /// True when a traversal limit or failed accessibility read left the tree incomplete.
     pub truncated: bool,
     /// Whether the requested `window_id` actually resolved to an AX surface,
     /// and if not, why. `None` when no `window_id` was requested.
@@ -298,7 +298,6 @@ pub fn walk_tree_bounded(
             walk_element(
                 child,
                 0,
-                0,
                 None,
                 false,
                 &mut nodes,
@@ -328,7 +327,9 @@ pub fn walk_tree_bounded(
     };
 
     if truncated_flag {
-        tree_markdown.push_str("\n⚠️  AX tree is incomplete because a traversal limit was reached or an accessibility read failed.");
+        tree_markdown.push_str(
+            "\n⚠️  AX tree is incomplete: a traversal limit or accessibility read failed.",
+        );
     }
 
     TreeWalkResult {
@@ -350,7 +351,6 @@ fn walk_value<T: Default>(result: Result<T, AXError>, incomplete: &mut bool) -> 
 unsafe fn walk_element(
     element: AXUIElementRef,
     depth: usize,
-    native_depth: usize,
     parent_index: Option<usize>,
     in_web_content: bool,
     nodes: &mut Vec<AXNode>,
@@ -361,7 +361,7 @@ unsafe fn walk_element(
     max_elements: usize,
     max_depth: usize,
 ) {
-    if depth > max_depth || native_depth >= cua_driver_core::element_token::MAX_NATIVE_ANCESTORS {
+    if depth > max_depth {
         *truncated = true;
         return;
     }
@@ -383,7 +383,7 @@ unsafe fn walk_element(
     let in_web_content = in_web_content || is_web_content_role(&role);
 
     // Skip pure layout containers that have no interesting content.
-    if collapses_depth(&role) {
+    if role == "AXScrollArea" || role == "AXGroup" {
         // Still recurse — children may be interesting. Layout containers
         // collapse, so children inherit the parent's depth AND the same
         // parent_index (no actionable node was emitted here).
@@ -392,7 +392,6 @@ unsafe fn walk_element(
             walk_element(
                 child,
                 depth,
-                native_depth + 1,
                 parent_index,
                 in_web_content,
                 nodes,
@@ -464,7 +463,6 @@ unsafe fn walk_element(
             walk_element(
                 child,
                 depth + 1,
-                native_depth + 1,
                 parent_index,
                 in_web_content,
                 nodes,
@@ -499,32 +497,79 @@ unsafe fn walk_element(
         enabled,
         selected: copy_bool_attr(element, "AXSelected"),
     });
-    let element_index = is_actionable.then(|| {
-        let index = *counter;
+    let node = if is_actionable {
+        let idx = *counter;
         *counter += 1;
+        // Retain so the element stays alive after the tree walk after `copy_children`
+        // releases the per-child ref at the end of the caller's loop.
         CFRetain(element as CFTypeRef);
-        index
-    });
-    let node = AXNode {
-        element_index,
-        role: role.clone(),
-        title: (!visible_title.is_empty()).then_some(visible_title),
-        value: (!visible_value.is_empty()).then_some(visible_value),
-        description: (!visible_description.is_empty()).then_some(visible_description),
-        identifier,
-        help,
-        actions: if is_actionable { actions } else { Vec::new() },
-        element_ptr,
-        depth,
-        parent_element_index: parent_index,
-        frame,
-        value_state: control_state.value_state,
-        value_description: control_state.value_description,
-        min_value: control_state.min_value,
-        max_value: control_state.max_value,
-        enabled: control_state.enabled,
-        selected: control_state.selected,
-        in_web_content,
+        AXNode {
+            element_index: Some(idx),
+            role: role.clone(),
+            title: if visible_title.is_empty() {
+                None
+            } else {
+                Some(visible_title.clone())
+            },
+            value: if visible_value.is_empty() {
+                None
+            } else {
+                Some(visible_value.clone())
+            },
+            description: if visible_description.is_empty() {
+                None
+            } else {
+                Some(visible_description.clone())
+            },
+            identifier: identifier.clone(),
+            help: help.clone(),
+            actions: actions.clone(),
+            element_ptr,
+            depth,
+            parent_element_index: parent_index,
+            frame,
+            value_state: control_state.value_state.clone(),
+            value_description: control_state.value_description.clone(),
+            min_value: control_state.min_value,
+            max_value: control_state.max_value,
+            enabled: control_state.enabled,
+            selected: control_state.selected,
+            in_web_content,
+        }
+    } else {
+        AXNode {
+            element_index: None,
+            role: role.clone(),
+            title: if visible_title.is_empty() {
+                None
+            } else {
+                Some(visible_title.clone())
+            },
+            value: if visible_value.is_empty() {
+                None
+            } else {
+                Some(visible_value.clone())
+            },
+            description: if visible_description.is_empty() {
+                None
+            } else {
+                Some(visible_description.clone())
+            },
+            identifier: identifier.clone(),
+            help: help.clone(),
+            actions: vec![],
+            element_ptr,
+            depth,
+            parent_element_index: parent_index,
+            frame,
+            value_state: control_state.value_state.clone(),
+            value_description: control_state.value_description.clone(),
+            min_value: control_state.min_value,
+            max_value: control_state.max_value,
+            enabled: control_state.enabled,
+            selected: control_state.selected,
+            in_web_content,
+        }
     };
 
     // Track this node as the parent for its descendants only when it was
@@ -541,7 +586,6 @@ unsafe fn walk_element(
         walk_element(
             child,
             depth + 1,
-            native_depth + 1,
             next_parent,
             in_web_content,
             nodes,
@@ -556,11 +600,7 @@ unsafe fn walk_element(
     }
 }
 
-pub(super) fn collapses_depth(role: &str) -> bool {
-    matches!(role, "AXScrollArea" | "AXGroup")
-}
-
-pub(super) fn is_web_content_role(role: &str) -> bool {
+fn is_web_content_role(role: &str) -> bool {
     let normalized = role
         .chars()
         .filter(|character| character.is_ascii_alphanumeric())
@@ -709,6 +749,39 @@ fn leading_indent_depth(line: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn depth_cut_is_reported_as_incomplete() {
+        let mut incomplete = false;
+        unsafe {
+            // The depth guard must return before touching this pointer.
+            walk_element(
+                std::ptr::null_mut(),
+                1,
+                None,
+                false,
+                &mut Vec::new(),
+                &mut Vec::new(),
+                &mut 0,
+                &mut 0,
+                &mut incomplete,
+                10,
+                0,
+            );
+        }
+        assert!(incomplete);
+    }
+
+    #[test]
+    fn failed_identity_read_is_not_a_missing_attribute() {
+        let mut incomplete = false;
+        let missing: Option<String> = walk_value(Ok(None), &mut incomplete);
+        assert!(missing.is_none());
+        assert!(!incomplete);
+        let failed: Option<String> = walk_value(Err(kAXErrorFailure), &mut incomplete);
+        assert!(failed.is_none());
+        assert!(incomplete);
+    }
     use std::cell::Cell;
 
     #[test]

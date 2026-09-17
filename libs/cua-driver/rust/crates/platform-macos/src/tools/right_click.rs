@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use cua_driver_core::tool::spawn_native;
 use cua_driver_core::{
     protocol::ToolResult,
     tool::{Tool, ToolDef},
@@ -7,7 +6,9 @@ use cua_driver_core::{
 use serde_json::Value;
 use std::sync::Arc;
 
-use crate::ax::bindings::{copy_string_attr, kAXErrorSuccess, perform_action, AXUIElementRef};
+use crate::ax::bindings::{
+    copy_action_names, copy_string_attr, kAXErrorSuccess, perform_action, AXUIElementRef,
+};
 
 use super::ToolState;
 
@@ -28,15 +29,14 @@ fn def() -> &'static ToolDef {
         name: "right_click".into(),
         description:
             "Right-click against a target pid. Two addressing modes:\n\n\
-             - `element_token` (from `get_window_state`) — resolves a unique matching \
-               current element, then selects advertised `AXShowMenu` or a pointer right-click \
-               before dispatch. Another observation does not invalidate the token. Missing, \
-               changed, ambiguous, disabled, or unproven targets refuse.\n\n\
+             - `element_token` from `get_window_state` — performs `AXShowMenu` on a \
+               uniquely matched element in a complete current accessibility tree. Another \
+               observation alone does not invalidate it. Native availability still applies.\n\n\
              - `x`, `y` — synthesizes `rightMouseDown` / `rightMouseUp` CGEvent pair posted \
                to the pid. Driver converts image-pixel → screen-point internally. \
-               `modifier` is supported on the coordinate path; modified token actions refuse.\n\n\
-             Exactly one of `element_token` or (`x` AND `y`) must be provided. `pid` always \
-             required. With a token, an explicit `window_id` must match its window."
+               In pixel mode, `modifier` applies to the CGEvent path.\n\n\
+             Provide `element_token` or (`x` AND `y`). `pid` is always required. \
+             If supplied with a token, `window_id` must agree with it."
             .into(),
         input_schema: serde_json::json!({
             "type": "object",
@@ -49,7 +49,7 @@ fn def() -> &'static ToolDef {
                 "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                 "window_id": {
                     "type": "integer",
-                    "description": "Window ID. Optional with element_token; if supplied, it must match the token window."
+                    "description": "CGWindowID. Required when element_index is used. Optional when element_token is supplied (the token carries it)."
                 },
                 "x": {
                     "type": "number",
@@ -141,69 +141,28 @@ impl Tool for RightClickTool {
         if let (Some(idx), Some(wid), Some(element_guard)) =
             (element_index, window_id, element_guard)
         {
-            let semantic = element_guard.supports_action("AXShowMenu");
             let element_ptr = element_guard.as_ptr();
 
-            if !modifiers.is_empty() {
-                return ToolResult::error(
-                    "modified semantic right-click is unsupported; no action was sent",
-                );
-            }
-            let foreground = delivery_mode.is_foreground();
-            let _mutation_lease = if foreground {
-                None
-            } else {
-                Some(
-                    match super::gate_background_window_action(
-                        pid,
-                        wid,
-                        Some(element_ptr),
-                        if semantic {
-                            cua_driver_core::background_input::BackgroundAction::AxSemantic
-                        } else {
-                            cua_driver_core::background_input::BackgroundAction::WindowPointer
-                        },
-                    )
-                    .await
-                    {
-                        Ok(lease) => lease,
-                        Err(refusal_result) => return refusal_result,
-                    },
-                )
+            let _mutation_lease = match super::gate_background_window_action(
+                pid,
+                wid,
+                Some(element_ptr),
+                cua_driver_core::background_input::BackgroundAction::AxSemantic,
+            )
+            .await
+            {
+                Ok(lease) => lease,
+                Err(refusal_result) => return refusal_result,
             };
 
-            let result = spawn_native(move || {
-                let dispatch = || {
-                    ax_show_menu(
-                        element_guard.checked_ptr()?,
-                        idx,
-                        pid,
-                        wid,
-                        semantic,
-                        foreground,
-                    )
-                };
-                if foreground {
-                    crate::input::skylight::with_foreground_hid_activation(pid, wid, dispatch)
-                } else {
-                    dispatch()
-                }
+            let result = tokio::task::spawn_blocking(move || {
+                ax_show_menu(element_guard.as_ptr(), idx, pid, wid)
             })
             .await;
 
             return match result {
-                Ok(Ok(msg)) if semantic => crate::input::ax_actions::acknowledged(
-                    msg,
-                    "AXShowMenu",
-                    delivery_mode.into(),
-                    foreground,
-                ),
-                Ok(Ok(msg)) => ToolResult::text(msg).with_structured(serde_json::json!({
-                    "path": if foreground { "cgevent_fg" } else { "cgevent" },
-                    "verified": false,
-                    "effect": "unverifiable"
-                })),
-                Ok(Err(error)) => ToolResult::from_native_error(error, delivery_mode.into()),
+                Ok(Ok(msg)) => ToolResult::text(msg),
+                Ok(Err(e)) => ToolResult::error(format!("Right-click failed: {e}")),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
         }
@@ -287,7 +246,7 @@ impl Tool for RightClickTool {
         };
 
         let fg = delivery_mode.is_foreground() && window_id.is_some();
-        let result = spawn_native(move || -> anyhow::Result<()> {
+        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             let do_it = move || -> anyhow::Result<()> {
                 let m: Vec<&str> = modifiers.iter().map(String::as_str).collect();
                 if let Some(wid) = window_id {
@@ -324,38 +283,41 @@ impl Tool for RightClickTool {
                 .with_structured(serde_json::json!({
                     "path": if fg { "cgevent_fg" } else { "cgevent" }, "verified": false, "effect": "unverifiable"
                 })),
-            Ok(Err(error)) => ToolResult::from_native_error(error, delivery_mode.into()),
-            Err(e) => ToolResult::error(format!("Task error: {e}")),
+            Ok(Err(e)) => ToolResult::error(format!("Right-click failed: {e}")),
+            Err(e)     => ToolResult::error(format!("Task error: {e}")),
         }
     }
 }
 
 // ── Blocking AX path ─────────────────────────────────────────────────────────
 
-fn ax_show_menu(
-    element_ptr: usize,
-    idx: usize,
-    pid: i32,
-    wid: u32,
-    semantic: bool,
-    foreground: bool,
-) -> anyhow::Result<String> {
+fn ax_show_menu(element_ptr: usize, idx: usize, pid: i32, wid: u32) -> anyhow::Result<String> {
     let element = element_ptr as AXUIElementRef;
 
     let role = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
     let title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
 
-    if semantic {
+    let advertised = unsafe { copy_action_names(element) };
+
+    // Only attempt the pure-AX AXShowMenu when the element actually advertises
+    // it. Plain controls (NSButton, custom NSView click targets, most web
+    // nodes) DON'T — calling AXShowMenu on them returns kAXErrorActionUnsupported
+    // (-25206), which used to surface as a hard "AXShowMenu failed" error and
+    // forced the agent onto raw pixels. Instead, resolve the element's on-screen
+    // center and synthesize a REAL pixel right-click there — the same actuation
+    // a user performs, delivered to backgrounded windows via the window-local
+    // primitive. This makes "right-click element N" land on any element, not
+    // just ones with a native context-menu AX action.
+    if advertised.iter().any(|a| a == "AXShowMenu") {
         let err = unsafe { perform_action(element, "AXShowMenu") };
         if err == kAXErrorSuccess {
             return Ok(format!(
                 "Shown menu for [{idx}] {role} \"{title}\" (AXShowMenu)."
             ));
         }
-        return Err(ToolResult::native_action_error(
-            format!("AXShowMenu returned {err}; inspect fresh state and do not replay"),
-            cua_driver_core::action_record::ActionTransport::MacosAxAction,
-        ));
+        // Advertised but the action failed — fall through to the pixel path
+        // rather than erroring out.
+        tracing::debug!("AXShowMenu returned {err} for [{idx}]; falling back to pixel right-click");
     }
 
     // Pixel right-click at the element's screen-space center.
@@ -368,18 +330,8 @@ fn ax_show_menu(
         })?;
     let (wx, wy) = crate::windows::window_bounds_by_id(wid)
         .map(|b| (cx - b.x, cy - b.y))
-        .ok_or_else(|| anyhow::anyhow!("target window geometry is unavailable"))?;
-    if foreground {
-        crate::input::mouse::click_at_xy_desktop_with_modifiers_preserving_cursor(
-            cx,
-            cy,
-            1,
-            "right",
-            &[],
-        )?;
-    } else {
-        crate::input::mouse::right_click_at_xy_with_window_local(pid, cx, cy, wx, wy, wid, &[])?;
-    }
+        .unwrap_or((cx, cy));
+    crate::input::mouse::right_click_at_xy_with_window_local(pid, cx, cy, wx, wy, wid, &[])?;
     Ok(format!(
         "Right-clicked [{idx}] {role} \"{title}\" at element center ({cx:.0}, {cy:.0}) \
          (pixel right-click; element advertises no AXShowMenu)."

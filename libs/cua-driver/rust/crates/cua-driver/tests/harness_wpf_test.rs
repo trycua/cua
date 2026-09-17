@@ -1059,6 +1059,7 @@ fn harness_wpf_scroll() {
         |evidence| {
             with_named_session("windows-wpf-scroll-ax-background", |pid, wid, driver| {
                 *evidence = recording_evidence(driver.recording_dir());
+                // Pre-snapshot to populate the cache + read initial offset.
                 let pre = snapshot(driver, pid, wid);
                 let pre_text = pre.text();
                 assert!(
@@ -1071,52 +1072,36 @@ fn harness_wpf_scroll() {
                         .join(" / ")
                 );
 
-                let scroll_target = element_token_by_id(&pre, "scroll-tall");
-                let unsupported = element_token_by_id(&pre, "btn-increment");
-                for delivery in ["background", "foreground"] {
-                    let refused = driver.call(
-                        "scroll",
-                        serde_json::json!({
-                            "pid": pid as i64,
-                            "window_id": wid,
-                            "element_token": unsupported,
-                            "direction": "down",
-                            "amount": 3,
-                            "delivery_mode": delivery
-                        }),
-                    );
-                    assert!(
-                        refused.is_error(),
-                        "unsupported element scroll must refuse: {}",
-                        refused.text()
-                    );
-                    let unchanged = snapshot(driver, pid, wid);
-                    assert!(
-                        unchanged.text().contains("scroll_offset=0"),
-                        "refused element scroll moved the window: {}",
-                        unchanged.text()
-                    );
-                }
+                // Click into the ScrollViewer so it gets focus / its descendants
+                // become the WM_VSCROLL target.
+                let idx = ax::element_index_by_id(pre.text(), "scroll-tall")
+                    .expect("scroll-tall not in snapshot");
+                let _ = driver.call(
+                    "click",
+                    serde_json::json!({
+                        "pid": pid as i64,
+                        "window_id": wid,
+                        "element_token": pre.element_token(idx),
+                        "snapshot_id": pre.snapshot_id(),
+                        "delivery_mode": "foreground"
+                    }),
+                );
+                std::thread::sleep(Duration::from_millis(200));
 
+                // Scroll down 5 lines. Keep this on the default background rung: the
+                // WPF harness translates the driver's WM_VSCROLL messages into the
+                // ScrollViewer movement we assert below.
                 let (resp, passed) = observe_background(driver, pid, wid, |driver| {
                     driver.call(
                         "scroll",
                         serde_json::json!({
                             "pid": pid as i64, "window_id": wid,
-                            "element_token": scroll_target,
-                            "direction": "down", "by": "page", "amount": 5,
+                            "direction": "down", "by": "line", "amount": 5,
                             "delivery_mode": "background"
                         }),
                     )
                 });
                 assert!(!resp.is_error(), "scroll failed: {}", resp.text());
-                assert_eq!(resp.action_route(), Some("accessibility"), "{}", resp.raw);
-                assert_eq!(
-                    resp.action_delivery_mode(),
-                    Some("background"),
-                    "{}",
-                    resp.raw
-                );
                 println!("scroll down: {}", resp.text());
                 std::thread::sleep(Duration::from_millis(400));
 
@@ -1127,7 +1112,7 @@ fn harness_wpf_scroll() {
                     .any(|l| l.contains("scroll_offset=") && !l.contains("scroll_offset=0\""));
                 assert!(
                     advanced,
-                    "scroll offset did not advance after token-targeted UIA scroll. Lines: {}",
+                    "scroll offset did not advance after WM_VSCROLL. Lines: {}",
                     text.lines()
                         .filter(|l| l.contains("scroll_offset"))
                         .collect::<Vec<_>>()

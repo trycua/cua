@@ -111,6 +111,7 @@ unsafe fn walk_unsafe(hwnd: u64) -> UiaTreeResult {
     UiaTreeResult {
         tree_markdown,
         nodes,
+        // This observation walker does not attest traversal completeness.
         complete: false,
     }
 }

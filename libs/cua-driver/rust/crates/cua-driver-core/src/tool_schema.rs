@@ -91,12 +91,13 @@ pub fn scope_schema() -> Value {
     })
 }
 
-/// `element_index` — the integer handle from the last get_window_state.
+/// `element_index` — observation metadata, not a native target identity.
 pub fn element_index_schema() -> Value {
     json!({
         "type": "integer",
-        "description": "Observation-only index. It cannot identify a control in a fresh tree. \
-            Actions require the identity-bearing `element_token`; index plus snapshot_id is refused."
+        "description": "Element index from get_window_state, retained as observation metadata. \
+            Native actions require an identity-bearing `element_token`; \
+            element_index plus snapshot_id alone is not accepted."
     })
 }
 
@@ -106,7 +107,8 @@ pub fn snapshot_id_schema() -> Value {
         "type": "string",
         "pattern": "^sa1\\.[0-9a-f]{32}\\.[0-9]+\\.[0-9a-f]{16}\\.[0-9a-f]{8}\\.[0-9a-f]{32}$",
         "description": "Authenticated runtime-, process-, and window-bound snapshot handle \
-            from get_window_state. Observation metadata only; it does not authorize index-based targeting."
+            from get_window_state. This handle plus element_index does not identify \
+            a native control; use its element_token."
     })
 }
 
@@ -117,8 +119,8 @@ pub fn element_token_schema() -> Value {
         "description": "Opaque authenticated element address from \
             `structuredContent.elements[].element_token`. If element_index, \
             snapshot_id, or window_id are also supplied they must agree. The \
-            address must contain identity and resolve uniquely in a complete current accessibility traversal. \
-            Missing, ambiguous, disabled, or unproven targets are refused without coordinate fallback."
+            address requires a unique match in a complete current accessibility tree. \
+            Another observation alone does not invalidate it."
     })
 }
 

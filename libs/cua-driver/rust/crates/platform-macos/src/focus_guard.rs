@@ -98,8 +98,10 @@ where
 
     let _lease = if should_arm {
         // unwrap()s are safe — `should_arm` is true only when both are Some.
-        Some(cua_driver_core::tool::retain_native_resource(
-            focus_steal::begin_suppression(target_pid, prior_frontmost.unwrap(), origin),
+        Some(focus_steal::begin_suppression(
+            target_pid,
+            prior_frontmost.unwrap(),
+            origin,
         ))
     } else {
         None

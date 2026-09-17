@@ -1,7 +1,6 @@
 use async_trait::async_trait;
 use core_foundation::base::CFRelease;
 use cua_driver_contract::PressKeyInput;
-use cua_driver_core::tool::spawn_native;
 use cua_driver_core::{
     action_record::{
         ActionEffect, ActionEvidence, ActionExecutionRecord, ActionTransport, ActualDelivery,
@@ -185,7 +184,7 @@ fn def() -> &'static ToolDef {
         description: "Press and release a single key. Follows the same `delivery_mode` ladder as click/type_text \
             — it does NOT raise the window by default:\n\
             • `background` (default): post to the pid WITHOUT fronting/raising — the \
-              auth-message path (Chromium-safe). With element_token it focuses that AX \
+              auth-message path (Chromium-safe). With element_index it focuses that AX \
               element first. `window_id` only targets; it does not raise.\n\
             • `foreground`: guard and briefly front the exact window, focus an addressed AX \
               element when supplied, send a genuine HID key transition so Chromium content, \
@@ -213,7 +212,7 @@ fn def() -> &'static ToolDef {
                 "element_index": cua_driver_core::tool_schema::element_index_schema(),
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
                 "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
-                "x": { "type": "number", "description": "Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the key. Use when the key must go to a Chromium/Electron surface the AX path can't focus. Pass with y, no element_token." },
+                "x": { "type": "number", "description": "Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the key. Use when the key must go to a Chromium/Electron surface the AX path can't focus. Pass with y, no element_index." },
                 "y": { "type": "number", "description": "Screenshot-pixel Y (see x)." },
                 "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "Use desktop with no pid/window_id to send the key to the frontmost application." },
                 "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema()
@@ -246,7 +245,7 @@ impl Tool for PressKeyTool {
             let key = input.key;
             let modifiers = input.modifiers.unwrap_or_default();
             let key_for_input = key.clone();
-            let result = spawn_native(move || {
+            let result = tokio::task::spawn_blocking(move || {
                 let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
                 crate::input::keyboard::press_key_global(&key_for_input, &modifier_refs)
             })
@@ -401,11 +400,18 @@ impl Tool for PressKeyTool {
             prior_front,
             "press_key.CGEvent",
             || async move {
-                spawn_native(move || {
-                    let pre_focus_ptr = pre_focus_guard
-                        .as_ref()
-                        .map(|guard| guard.checked_ptr())
-                        .transpose()?;
+                // Pre-focus the element under suppression so its
+                // side-effects are captured by the snapshot + lease.
+                if let Some(guard) = pre_focus_guard.clone() {
+                    let _ = tokio::task::spawn_blocking(move || {
+                        crate::input::ax_actions::focus_element(guard.as_ptr())
+                    })
+                    .await;
+                    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+                }
+
+                tokio::task::spawn_blocking(move || {
+                    let pre_focus_ptr = pre_focus_guard.as_ref().map(|guard| guard.as_ptr());
                     let m: Vec<&str> = modifiers.iter().map(String::as_str).collect();
                     // Foreground rung: keep the exact target frontmost through a genuine
                     // physical HID key down/up pair, then restore. PID-routed events without the
@@ -424,19 +430,18 @@ impl Tool for PressKeyTool {
                                 pid as libc::pid_t,
                                 wid,
                                 || {
-                                    if let Some(element) = pre_focus_guard.as_ref() {
-                                        crate::input::ax_actions::focus_target(
-                                            pid,
-                                            element.checked_ptr()?,
-                                        )?;
+                                    // Activation can change the first responder, so
+                                    // repeat the best-effort AX focus write inside
+                                    // the guarded foreground interval immediately
+                                    // before the physical key transition.
+                                    if let Some(element_ptr) = pre_focus_ptr {
+                                        let _ =
+                                            crate::input::ax_actions::focus_element(element_ptr);
                                     }
                                     crate::input::keyboard::press_key_bare_global(&key, &m)
                                 },
                             )
                         });
-                    }
-                    if let Some(element) = pre_focus_guard.as_ref() {
-                        crate::input::ax_actions::focus_target(pid, element.checked_ptr()?)?;
                     }
                     // background (default): auth-envelope post, no raise.
                     dispatch_with_ax_oracle(pid, window_id, pre_focus_ptr, || {

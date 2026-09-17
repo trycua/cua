@@ -2,10 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc, Mutex, OnceLock,
-};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -39,9 +36,6 @@ tokio::task_local! {
     /// Opaque generation for runtime-owned mutable resources. Nested
     /// dispatches inherit this key, while public arguments can never select it.
     static DISPATCH_RUNTIME_SCOPE: String;
-    static NATIVE_DISPATCH_LIVE: (Arc<AtomicBool>, Option<String>);
-    static NATIVE_RESOURCES: std::cell::RefCell<Vec<Arc<dyn Send + Sync>>>;
-    static NATIVE_INPUT_ADMISSION: (Option<Arc<TextInputAdmission>>, Option<Arc<tokio::sync::MutexGuard<'static, ()>>>);
 }
 
 /// Return the immutable authorization context bound to the current dispatch.
@@ -75,83 +69,6 @@ pub fn with_runtime_scope<T>(scope: String, action: impl FnOnce() -> T) -> T {
     let previous = CONSTRUCTION_RUNTIME_SCOPE.with(|current| current.replace(Some(scope)));
     let _restore = RestoreScope(previous);
     action()
-}
-
-pub async fn scope_native_dispatch<F: std::future::Future>(
-    session: Option<&str>,
-    dispatch: F,
-) -> F::Output {
-    struct Request(Arc<AtomicBool>);
-    impl Drop for Request {
-        fn drop(&mut self) {
-            self.0.store(false, Ordering::Release);
-        }
-    }
-    let request = Request(Arc::new(AtomicBool::new(true)));
-    NATIVE_RESOURCES
-        .scope(
-            std::cell::RefCell::new(Vec::new()),
-            NATIVE_DISPATCH_LIVE.scope((request.0.clone(), session.map(str::to_owned)), dispatch),
-        )
-        .await
-}
-
-pub fn retain_native_resource<T: Send + Sync + 'static>(resource: T) -> Arc<T> {
-    let resource = Arc::new(resource);
-    let _ = NATIVE_RESOURCES.try_with(|resources| resources.borrow_mut().push(resource.clone()));
-    resource
-}
-
-pub fn native_dispatch_allowed() -> bool {
-    NATIVE_DISPATCH_LIVE
-        .try_with(|(live, session)| {
-            live.load(Ordering::Acquire)
-                && session
-                    .as_deref()
-                    .is_none_or(|session| !crate::session::is_session_ending(session))
-        })
-        .unwrap_or(true)
-}
-
-pub fn check_native_dispatch() -> anyhow::Result<()> {
-    if !native_dispatch_allowed() {
-        anyhow::bail!("request cancelled before native dispatch");
-    }
-    Ok(())
-}
-
-pub fn spawn_native<F, T>(work: F) -> tokio::task::JoinHandle<T>
-where
-    F: FnOnce() -> T + Send + 'static,
-    T: Send + 'static,
-{
-    tokio::task::spawn_blocking(bind_native(work))
-}
-
-pub fn bind_native<F, T>(work: F) -> impl FnOnce() -> T + Send + 'static
-where
-    F: FnOnce() -> T + Send + 'static,
-    T: Send + 'static,
-{
-    let runtime = current_dispatch_runtime_scope().unwrap_or_else(|| "legacy".into());
-    let live = NATIVE_DISPATCH_LIVE.try_with(Clone::clone).ok();
-    let resources = NATIVE_RESOURCES
-        .try_with(|resources| resources.borrow().clone())
-        .unwrap_or_default();
-    let work = crate::recording::bind_dispatch_click_capture(work);
-    let admission = NATIVE_INPUT_ADMISSION
-        .try_with(Clone::clone)
-        .unwrap_or_default();
-    move || {
-        NATIVE_RESOURCES.sync_scope(std::cell::RefCell::new(resources), || {
-            NATIVE_INPUT_ADMISSION.sync_scope(admission, || {
-                DISPATCH_RUNTIME_SCOPE.sync_scope(runtime, || match live {
-                    Some(live) => NATIVE_DISPATCH_LIVE.sync_scope(live, work),
-                    None => work(),
-                })
-            })
-        })
-    }
 }
 
 fn desktop_action_coordinator() -> &'static tokio::sync::Mutex<()> {
@@ -1227,7 +1144,7 @@ impl ToolRegistry {
         // through separate platform workers, and RAII releases it on task
         // cancellation as well as normal completion.
         let _text_input_admission = match try_admit_text_input(resolved_name, &public_args) {
-            Ok(admission) => admission.map(Arc::new),
+            Ok(admission) => admission,
             Err(mut refusal) => {
                 restore_public_runtime_result(&mut refusal, &runtime_prefix);
                 return refusal;
@@ -1591,87 +1508,30 @@ impl ToolRegistry {
             // which the foreground target can lose keyboard eligibility
             // between the fixture's focus proof and SendInput. Contended
             // runtimes still wait and serialize through the same mutex.
-            Some(Arc::new(match coordinator.try_lock() {
+            Some(match coordinator.try_lock() {
                 Ok(guard) => guard,
                 Err(_) => coordinator.lock().await,
-            }))
+            })
         } else {
             None
         };
-        let dispatch = async {
-            let pending_turn = if should_record && self.recording.current_state().enabled {
-                let recording = self.recording.clone();
-                let name = resolved_name.to_owned();
-                match spawn_native(move || {
-                    if !native_dispatch_allowed() {
-                        return None;
-                    }
-                    if private_consent_turn {
-                        recording.begin_private_turn(&name, &recording_args, start_ms)
-                    } else {
-                        recording.begin_turn(&name, &recording_args, start_ms)
-                    }
-                })
-                .await
-                {
-                    Ok(pending) => pending,
-                    Err(error) => {
-                        return (
-                            None,
-                            ToolResult::error(format!(
-                                "recording preparation failed before dispatch: {error}"
-                            )),
-                        )
-                    }
+        let pending_turn = should_record
+            .then(|| {
+                if private_consent_turn {
+                    self.recording
+                        .begin_private_turn(resolved_name, &recording_args, start_ms)
+                } else {
+                    self.recording
+                        .begin_turn(resolved_name, &recording_args, start_ms)
                 }
-            } else {
-                None
-            };
+            })
+            .flatten();
 
-            let mut result = crate::recording::scope_dispatch_click_capture(
-                pending_turn.as_ref(),
-                tool.invoke(args.clone()),
-            )
-            .await;
-            if crate::action_record::is_action_tool(resolved_name) && !native_dispatch_allowed() {
-                let message = "request cancelled; native delivery may have started; inspect fresh state and do not replay";
-                let mut cancelled = ToolResult::error(message);
-                cancelled.action_record = result.action_record.take();
-                cancelled.structured_content = result.structured_content.take();
-                if cancelled.action_record.is_none() && result.is_error != Some(true) {
-                    let legacy = crate::action_record::ActionExecutionRecord::from_legacy(
-                        resolved_name,
-                        &public_args,
-                        cancelled
-                            .structured_content
-                            .as_ref()
-                            .unwrap_or(&Value::Null),
-                    );
-                    cancelled.structured_content = None;
-                    if let Some(record) = legacy {
-                        cancelled = ToolResult::native_outcome_unknown(
-                            message,
-                            record.transport,
-                            record.requested_delivery,
-                        );
-                    }
-                }
-                result = cancelled;
-            }
-            (pending_turn, result)
-        };
-        let (pending_turn, mut result) = NATIVE_INPUT_ADMISSION
-            .scope(
-                (_text_input_admission.clone(), _desktop_action.clone()),
-                async {
-                    if crate::action_record::is_action_tool(resolved_name) {
-                        scope_native_dispatch(runtime_session.as_deref(), dispatch).await
-                    } else {
-                        dispatch.await
-                    }
-                },
-            )
-            .await;
+        let mut result = crate::recording::scope_dispatch_click_capture(
+            pending_turn.as_ref(),
+            tool.invoke(args.clone()),
+        )
+        .await;
         drop(lifecycle_dispatch);
         // The platform worker has exited, so another text operation for this
         // pid may now start even while result projection and evidence capture
@@ -1789,24 +1649,12 @@ impl ToolRegistry {
         // stream stays the actual user-action sequence (not the meta
         // start/stop frames).
         if let Some(pending_turn) = pending_turn {
-            let recording = self.recording.clone();
-            let action = result.action_record.clone();
-            let failed = result.is_error == Some(true);
-            if let Err(error) = spawn_native(move || {
-                recording.finish_turn_with_outcome(
-                    pending_turn,
-                    recording_result_text.as_deref().unwrap_or(""),
-                    action.as_ref(),
-                    failed,
-                )
-            })
-            .await
-            {
-                let mut failure = ToolResult::error(format!("recording finalization failed: {error}; the action may have executed. Inspect fresh state before retrying."));
-                failure.action_record = result.action_record.take();
-                failure.structured_content = result.structured_content.take();
-                result = failure;
-            }
+            self.recording.finish_turn_with_outcome(
+                pending_turn,
+                recording_result_text.as_deref().unwrap_or(""),
+                result.action_record.as_ref(),
+                result.is_error == Some(true),
+            );
         }
 
         // Experimental PiP push — only when --experimental-pip is on argv
@@ -1818,11 +1666,7 @@ impl ToolRegistry {
         if pip_hook::pip_enabled() && should_record && !private_consent_turn {
             let window_id = args.opt_u64("window_id");
             let pid = args.opt_i64("pid");
-            if let Some(png_bytes) = spawn_native(move || screenshot_for(window_id, pid))
-                .await
-                .ok()
-                .flatten()
-            {
+            if let Some(png_bytes) = screenshot_for(window_id, pid) {
                 let label = synthesize_action_label(name, &public_args);
                 pip_hook::push_pip_frame(pip_hook::PipHookFrame {
                     png_bytes,
@@ -4707,7 +4551,7 @@ resources:
         let token = DISPATCH_RUNTIME_SCOPE
             .scope("token-dispatch-runtime-a".to_owned(), async {
                 let snapshot = crate::element_token::mint_snapshot_handle(pid, 44);
-                crate::element_token::token_for_identity(&snapshot, 0, b"runtime control").unwrap()
+                crate::element_token::token_for_identity(&snapshot, 0, b"button:Save").unwrap()
             })
             .await;
         let structured = DISPATCH_RUNTIME_SCOPE

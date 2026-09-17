@@ -161,9 +161,6 @@ pub fn capture_dispatch_click_target(
     pid: i64,
     capture: impl FnOnce() -> Option<(Vec<u8>, f64, f64)>,
 ) {
-    if !crate::tool::native_dispatch_allowed() {
-        return;
-    }
     let _ = DISPATCH_CLICK_SCOPE.try_with(|scope| {
         let Some(scope) = scope else { return };
         if (scope.window_id, scope.pid) != (window_id, pid) {
@@ -181,18 +178,6 @@ pub fn capture_dispatch_click_target(
             None => retained.failure = Some("capture_failed"),
         }
     });
-}
-
-pub fn dispatch_click_target() -> Option<(u64, i64)> {
-    DISPATCH_CLICK_SCOPE
-        .try_with(|scope| scope.as_ref().map(|scope| (scope.window_id, scope.pid)))
-        .ok()
-        .flatten()
-}
-
-pub(crate) fn bind_dispatch_click_capture<F: FnOnce() -> T, T>(work: F) -> impl FnOnce() -> T {
-    let scope = DISPATCH_CLICK_SCOPE.try_with(Clone::clone).ok().flatten();
-    move || DISPATCH_CLICK_SCOPE.sync_scope(scope, work)
 }
 
 fn point_in_image(png: &[u8], x: f64, y: f64) -> bool {
@@ -895,24 +880,7 @@ fn strip_internal_keys(args: &Value) -> std::borrow::Cow<'_, Value> {
 fn semantic_action_without_point(action: &Value) -> bool {
     let args = &action["arguments"];
     let truth = &action["action_truth"];
-    let native_gesture = truth["transport"] == "macos_ax_action"
-        && truth["evidence"].as_array().is_some_and(|evidence| {
-            evidence.iter().any(|item| {
-                item["kind"] == "native_api_result"
-                    && match item["detail"].as_str() {
-                        Some("AXOpen") => {
-                            action["tool"] == "double_click"
-                                || (action["tool"] == "click" && args["count"] == 2)
-                        }
-                        Some("AXShowMenu") => {
-                            action["tool"] == "right_click"
-                                || (action["tool"] == "click" && args["button"] == "right")
-                        }
-                        _ => false,
-                    }
-            })
-        });
-    (action["tool"] == "click" || native_gesture)
+    action["tool"] == "click"
         && action["result_error"] == false
         && action.get("click_point").is_none()
         && action.get("click_point_image").is_none()
@@ -923,14 +891,13 @@ fn semantic_action_without_point(action: &Value) -> bool {
         && args.get("x").is_none()
         && args.get("y").is_none()
         && args.get("raw").is_none_or(|value| value == false)
-        && (native_gesture
-            || (args.get("button").is_none_or(|value| value == "left")
-                && args
-                    .get("count")
-                    .is_none_or(|value| value.as_u64() == Some(1))
-                && args
-                    .get("click_count")
-                    .is_none_or(|value| value.as_u64() == Some(1))))
+        && args.get("button").is_none_or(|value| value == "left")
+        && args
+            .get("count")
+            .is_none_or(|value| value.as_u64() == Some(1))
+        && args
+            .get("click_count")
+            .is_none_or(|value| value.as_u64() == Some(1))
         && ["modifier", "modifiers"].iter().all(|key| {
             args.get(*key)
                 .is_none_or(|value| value.as_array().is_some_and(Vec::is_empty))
@@ -1885,7 +1852,7 @@ mod tests {
 
         let snapshot_id = crate::element_token::mint_snapshot_handle(1, 77);
         let token =
-            crate::element_token::token_for_identity(&snapshot_id, 0, b"recorded control").unwrap();
+            crate::element_token::token_for_identity(&snapshot_id, 0, b"button:Save").unwrap();
         let pending = session
             .begin_turn(
                 "click",
@@ -1905,8 +1872,7 @@ mod tests {
 
         let stale_snapshot = crate::element_token::mint_snapshot_handle(1, 88);
         let stale_token =
-            crate::element_token::token_for_identity(&stale_snapshot, 0, b"missing control")
-                .unwrap();
+            crate::element_token::token_for_identity(&stale_snapshot, 0, b"button:Save").unwrap();
         let pending = session
             .begin_turn(
                 "click",
@@ -2162,30 +2128,5 @@ mod tests {
         })
         .expect("finalized nonempty output must pass");
         let _ = std::fs::remove_dir_all(output_dir);
-    }
-}
-
-#[cfg(test)]
-mod native_semantic_evidence_tests {
-    use super::semantic_action_without_point;
-    #[test]
-    fn native_gestures_require_the_exact_acknowledged_operation() {
-        for (tool, operation) in [("double_click", "AXOpen"), ("right_click", "AXShowMenu")] {
-            let mut action = serde_json::json!({
-                "tool":tool, "result_error":false, "arguments":{"element_token":"observed"},
-                "action_truth":{
-                    "transport":"macos_ax_action", "route":"accessibility", "effect":"unverifiable",
-                    "requested_delivery":"background", "actual_delivery":"background",
-                    "escalation":null, "fallbacks":[], "attempts":[], "delivered_count":null,
-                    "evidence":[{"kind":"native_api_result", "detail":operation}]
-                }
-            });
-            assert!(semantic_action_without_point(&action));
-            action["action_truth"]["evidence"][0]["detail"] = "AXPress".into();
-            assert!(!semantic_action_without_point(&action));
-            action["action_truth"]["evidence"][0]["detail"] = operation.into();
-            action["action_truth"]["actual_delivery"] = "unknown".into();
-            assert!(!semantic_action_without_point(&action));
-        }
     }
 }

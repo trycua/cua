@@ -311,12 +311,8 @@ pub fn inject_click_screen(
     count: usize,
     button: &str,
 ) -> Result<()> {
-    cua_driver_core::tool::check_native_dispatch()?;
     if target == 0 {
         bail!("inject_click_screen: null target window");
-    }
-    if let Some(pid) = crate::win32::window_owner_pid(target) {
-        crate::recording_hooks::capture_dispatch_click_target(target, pid, sx, sy);
     }
     let target_h = HWND(target as *mut _);
     unsafe {
@@ -720,7 +716,6 @@ pub fn inject_drag_screen(
     steps: usize,
     button: &str,
 ) -> Result<()> {
-    cua_driver_core::tool::check_native_dispatch()?;
     if target == 0 {
         bail!("inject_drag_screen: null target window");
     }

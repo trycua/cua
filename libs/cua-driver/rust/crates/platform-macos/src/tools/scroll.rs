@@ -1,6 +1,6 @@
 use async_trait::async_trait;
+use core_foundation::base::{CFRelease, CFTypeRef};
 use cua_driver_contract::{ScrollBy, ScrollDirection, ScrollInput};
-use cua_driver_core::tool::{bind_native, spawn_native};
 use cua_driver_core::{
     protocol::ToolResult,
     tool::{Tool, ToolDef},
@@ -10,7 +10,10 @@ use serde_json::Value;
 use std::sync::Arc;
 
 use crate::apps;
-use crate::ax::bindings::{element_screen_center, kAXErrorSuccess, perform_action, AXUIElementRef};
+use crate::ax::bindings::{
+    copy_children, copy_element_attr, copy_string_attr, element_screen_center, kAXErrorSuccess,
+    perform_action, AXUIElementRef,
+};
 use crate::focus_guard;
 use crate::window_change_detector::WindowChangeDetector;
 
@@ -29,29 +32,6 @@ struct WheelTarget {
     screen_y: f64,
     win_local: Option<(f64, f64)>,
     wid: Option<u32>,
-}
-
-impl WheelTarget {
-    fn from_retained(
-        element: &crate::ax::element_resolver::RetainedElement,
-        wid: Option<u32>,
-    ) -> anyhow::Result<Self> {
-        let wid = wid.ok_or_else(|| anyhow::anyhow!("retained target has no native window"))?;
-        let (x, y) = unsafe { element_screen_center(element.checked_ptr()? as AXUIElementRef) }
-            .ok_or_else(|| anyhow::anyhow!("retained target geometry is unavailable"))?;
-        let bounds = crate::windows::window_bounds_by_id(wid)
-            .ok_or_else(|| anyhow::anyhow!("target window geometry is unavailable"))?;
-        let local = (x - bounds.x, y - bounds.y);
-        if local.0 < 0.0 || local.1 < 0.0 || local.0 >= bounds.width || local.1 >= bounds.height {
-            anyhow::bail!("retained scroll target is outside the native window");
-        }
-        Ok(Self {
-            screen_x: x,
-            screen_y: y,
-            win_local: Some(local),
-            wid: Some(wid),
-        })
-    }
 }
 
 fn after_exact_target_gate<T>(
@@ -79,7 +59,7 @@ fn def() -> &'static ToolDef {
         name: "scroll".into(),
         description: "Scroll the target pid. Two paths, picked by how you address the scroll:\n\n\
             • **Targeted wheel path** — when you pass a target, either \
-            `element_token` (preferred) or window-local `x, y` pixels: \
+            `element_index`/`element_token` (preferred) or window-local `x, y` pixels: \
             the driver synthesizes a real mouse-wheel event (CGEventCreateScrollWheelEvent, \
             at that screen point. The renderer hit-tests the wheel at the \
             cursor, so the scroll lands on whatever element is under the point — exactly \
@@ -167,7 +147,7 @@ impl Tool for ScrollTool {
                 ScrollDirection::Left => (0, step),
             };
             let (x, y) = super::desktop_screenshot_point(x, y).await;
-            let result = spawn_native(move || {
+            let result = tokio::task::spawn_blocking(move || {
                 crate::input::mouse::scroll_wheel_desktop(x, y, delta_y, delta_x, amount)
             })
             .await;
@@ -180,10 +160,7 @@ impl Tool for ScrollTool {
                     "path": "hid",
                     "effect": "unverifiable"
                 })),
-                Ok(Err(error)) => ToolResult::from_native_error(
-                    error,
-                    cua_driver_core::action_record::RequestedDelivery::Foreground,
-                ),
+                Ok(Err(error)) => ToolResult::error(format!("desktop scroll failed: {error}")),
                 Err(error) => ToolResult::error(format!("desktop scroll task failed: {error}")),
             };
         }
@@ -269,8 +246,8 @@ impl Tool for ScrollTool {
                 let direction_for_ax = direction.clone();
                 let by_for_ax = by.clone();
                 let foreground = delivery_mode.is_foreground();
-                let ax_result = tokio::task::spawn_blocking(bind_native(
-                    move || -> anyhow::Result<(bool, bool)> {
+                let ax_result =
+                    tokio::task::spawn_blocking(move || -> anyhow::Result<(bool, bool)> {
                         if foreground {
                             let mut delivered = false;
                             let fronted = crate::input::skylight::with_foreground_assist(
@@ -279,11 +256,11 @@ impl Tool for ScrollTool {
                                 || {
                                     delivered = unsafe {
                                         scroll_native_text_area(
-                                            element_guard.checked_ptr()? as AXUIElementRef,
+                                            element_guard.as_ptr() as AXUIElementRef,
                                             &direction_for_ax,
                                             &by_for_ax,
                                             amount,
-                                        )?
+                                        )
                                     };
                                     std::thread::sleep(std::time::Duration::from_millis(100));
                                     Ok(())
@@ -294,18 +271,17 @@ impl Tool for ScrollTool {
                             Ok((
                                 unsafe {
                                     scroll_native_text_area(
-                                        element_guard.checked_ptr()? as AXUIElementRef,
+                                        element_guard.as_ptr() as AXUIElementRef,
                                         &direction_for_ax,
                                         &by_for_ax,
                                         amount,
-                                    )?
+                                    )
                                 },
                                 false,
                             ))
                         }
-                    },
-                ))
-                .await;
+                    })
+                    .await;
                 match ax_result {
                     Ok(Ok((true, fronted))) => {
                         return ToolResult::text(format!(
@@ -319,7 +295,7 @@ impl Tool for ScrollTool {
                     }
                     Ok(Ok((false, _))) => {}
                     Ok(Err(error)) => {
-                        return ToolResult::from_native_error(error, delivery_mode.into());
+                        return ToolResult::error(format!("Native AX scroll failed: {error}"));
                     }
                     Err(error) => {
                         return ToolResult::error(format!("Native AX scroll task failed: {error}"));
@@ -401,45 +377,37 @@ impl Tool for ScrollTool {
             // Retina scaling is needed here.
             let wid = window_id;
             let target_guard = pre_focus_guard.clone();
-            let target_task = spawn_native(move || {
-                let element = target_guard
-                    .as_ref()
-                    .ok_or_else(|| ToolResult::error("retained scroll target is unavailable"))?;
-                let pointer = element
-                    .checked_ptr()
-                    .map_err(|error| ToolResult::error(error.to_string()))?
-                    as AXUIElementRef;
-                let actions = unsafe { crate::ax::bindings::copy_action_names_checked(pointer) }
-                    .map_err(|code| {
-                        ToolResult::error(format!("native action read failed: {code}"))
-                    })?;
-                if actions.iter().any(|action| action == "AXScrollToVisible") {
-                    let status = after_exact_target_gate(semantic_gate, || unsafe {
-                        perform_action(pointer, "AXScrollToVisible")
-                    })?;
-                    if status != kAXErrorSuccess {
-                        return Err(ToolResult::native_outcome_unknown(
-                            format!("AXScrollToVisible returned {status}; inspect fresh state and do not replay"),
-                            cua_driver_core::action_record::ActionTransport::MacosAxAction,
-                            delivery_mode.into(),
-                        ));
+            let target_task = tokio::task::spawn_blocking(move || {
+                let _target_guard = target_guard;
+                // Web content can be present in AX while its frame is below
+                // the outer page viewport. Ask the accessibility hierarchy to
+                // reveal the target before taking the screen-space center;
+                // otherwise the wheel is posted outside the rendered window
+                // and nested overflow regions never receive it.
+                after_exact_target_gate(semantic_gate, || unsafe {
+                    crate::ax::bindings::perform_action(
+                        element_ptr as AXUIElementRef,
+                        "AXScrollToVisible",
+                    )
+                })?;
+                std::thread::sleep(std::time::Duration::from_millis(40));
+                let center = unsafe { element_screen_center(element_ptr as AXUIElementRef) };
+                Ok(center.map(|(cx, cy)| {
+                    let win_local = wid
+                        .and_then(crate::windows::window_bounds_by_id)
+                        .map(|b| (cx - b.x, cy - b.y));
+                    WheelTarget {
+                        screen_x: cx,
+                        screen_y: cy,
+                        win_local,
+                        wid,
                     }
-                    std::thread::sleep(std::time::Duration::from_millis(40));
-                } else {
-                    semantic_gate?;
-                }
-                WheelTarget::from_retained(element, wid)
-                    .map(Some)
-                    .map_err(|error| ToolResult::error(error.to_string()))
+                }))
             });
             match target_task.await {
                 Ok(Ok(target)) => target,
                 Ok(Err(refusal)) => return refusal,
-                Err(error) => return ToolResult::native_outcome_unknown(
-                    format!("native scroll target worker failed ({error}); inspect fresh state and do not replay"),
-                    cua_driver_core::action_record::ActionTransport::MacosAxAction,
-                    delivery_mode.into(),
-                ),
+                Err(_) => None,
             }
         } else if let (Some(mut cx), Some(mut cy)) = (x_arg, y_arg) {
             // Targeted x,y are window-local screenshot pixels and REQUIRE a
@@ -562,15 +530,8 @@ impl Tool for ScrollTool {
                 prior_front,
                 "scroll.CGScrollWheel",
                 || async move {
-                    spawn_native(move || -> anyhow::Result<()> {
+                    tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
                         let do_it = move || -> anyhow::Result<()> {
-                            let (screen_x, screen_y, win_local) =
-                                if let Some(element) = pre_focus_guard.as_ref() {
-                                    let target = WheelTarget::from_retained(element, wid)?;
-                                    (target.screen_x, target.screen_y, target.win_local)
-                                } else {
-                                    (screen_x, screen_y, win_local)
-                                };
                             crate::input::mouse::scroll_wheel_at_xy(
                                 pid,
                                 screen_x,
@@ -616,7 +577,7 @@ impl Tool for ScrollTool {
                 .with_structured(serde_json::json!({
                     "path": if fg { "cgevent_fg" } else { "cgevent" }, "verified": false, "effect": "unverifiable"
                 })),
-                Ok(Err(e)) => ToolResult::from_native_error(e, delivery_mode.into()),
+                Ok(Err(e)) => ToolResult::error(format!("Wheel scroll failed: {e}")),
                 Err(e)     => ToolResult::error(format!("Task error: {e}")),
             };
         }
@@ -680,14 +641,14 @@ impl Tool for ScrollTool {
                 // Pre-focus the element under suppression so its
                 // side-effects are captured by the snapshot + lease.
                 if let Some(guard) = pre_focus_guard {
-                    let _ = spawn_native(move || {
+                    let _ = tokio::task::spawn_blocking(move || {
                         crate::input::ax_actions::focus_element(guard.as_ptr())
                     })
                     .await;
                     tokio::time::sleep(std::time::Duration::from_millis(30)).await;
                 }
 
-                spawn_native(move || {
+                tokio::task::spawn_blocking(move || {
                     for _ in 0..amount {
                         crate::input::keyboard::press_key(pid, &key, &[])?;
                         std::thread::sleep(std::time::Duration::from_millis(50));
@@ -708,7 +669,7 @@ impl Tool for ScrollTool {
                 changes.result_suffix()
             ))
             .with_structured(serde_json::json!({ "path": "key_events", "verified": false })),
-            Ok(Err(e)) => ToolResult::from_native_error(e, delivery_mode.into()),
+            Ok(Err(e)) => ToolResult::error(format!("Scroll failed: {e}")),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
@@ -719,82 +680,65 @@ unsafe fn scroll_native_text_area(
     direction: &str,
     by: &str,
     amount: usize,
-) -> anyhow::Result<bool> {
-    use crate::ax::bindings::*;
-    use crate::ax::element_resolver::FreshAxElements;
-    let error = |code| anyhow::anyhow!("native scroll metadata read failed: {code}");
-    if copy_string_attr_checked(element, "AXRole")
-        .map_err(error)?
-        .as_deref()
-        != Some("AXTextArea")
-    {
-        return Ok(false);
+) -> bool {
+    if copy_string_attr(element, "AXRole").as_deref() != Some("AXTextArea") {
+        return false;
     }
-    let Some(area) = copy_element_attr_checked(element, "AXParent").map_err(error)? else {
-        return Ok(false);
+    let Some(scroll_area) = copy_element_attr(element, "AXParent") else {
+        return false;
     };
-    let mut owned = FreshAxElements {
-        elements: vec![area as usize],
-    };
-    if copy_string_attr_checked(area, "AXRole")
-        .map_err(error)?
-        .as_deref()
-        != Some("AXScrollArea")
-    {
-        return Ok(false);
+    if copy_string_attr(scroll_area, "AXRole").as_deref() != Some("AXScrollArea") {
+        CFRelease(scroll_area as CFTypeRef);
+        return false;
     }
-    let Some(bar) = copy_element_attr_checked(area, "AXVerticalScrollBar").map_err(error)? else {
-        return Ok(false);
-    };
-    owned.elements.push(bar as usize);
-    let children = copy_element_array(bar, "AXChildren").map_err(error)?;
-    owned
-        .elements
-        .extend(children.iter().map(|child| *child as usize));
-    if children.len() > 64 {
-        anyhow::bail!("native scrollbar traversal is incomplete");
+    let mut buttons = Vec::new();
+    collect_ax_buttons(scroll_area, 0, &mut buttons);
+    CFRelease(scroll_area as CFTypeRef);
+    if buttons.is_empty() {
+        return false;
     }
-    let subrole = match (direction, by) {
-        ("up", "page") => "AXDecrementPage",
-        ("down", "page") => "AXIncrementPage",
-        ("up", _) => "AXDecrementArrow",
-        ("down", _) => "AXIncrementArrow",
-        _ => return Ok(false),
+
+    let reverse = direction == "up";
+    let base = if by == "page" && buttons.len() >= 4 {
+        2
+    } else {
+        0
     };
-    let mut selected = None;
-    for child in children {
-        if copy_string_attr_checked(child, "AXSubrole")
-            .map_err(error)?
-            .as_deref()
-            == Some(subrole)
-        {
-            if selected.replace(child).is_some() {
-                anyhow::bail!("native scroll control is ambiguous");
+    let index = base + usize::from(reverse);
+    let mut delivered = false;
+    if let Some(target) = buttons.get(index).copied() {
+        for _ in 0..amount.max(1) {
+            if perform_action(target, "AXPress") != kAXErrorSuccess {
+                break;
             }
+            delivered = true;
+            std::thread::sleep(std::time::Duration::from_millis(30));
         }
     }
-    let Some(target) = selected else {
-        return Ok(false);
-    };
-    if copy_bool_attr_checked(target, "AXEnabled").map_err(error)? == Some(false) {
-        anyhow::bail!("native scroll control is disabled");
+    for button in buttons {
+        CFRelease(button as CFTypeRef);
     }
-    if !copy_action_names_checked(target)
-        .map_err(error)?
-        .iter()
-        .any(|action| action == "AXPress")
-    {
-        return Ok(false);
+    delivered
+}
+
+unsafe fn collect_ax_buttons(
+    element: AXUIElementRef,
+    depth: usize,
+    buttons: &mut Vec<AXUIElementRef>,
+) {
+    if depth >= 4 || buttons.len() >= 4 {
+        return;
     }
-    for _ in 0..amount.max(1) {
-        cua_driver_core::tool::check_native_dispatch()?;
-        let status = perform_action(target, "AXPress");
-        if status != kAXErrorSuccess {
-            return Err(cua_driver_core::protocol::ToolResult::native_action_error(format!("native scroll outcome is unknown ({status}); inspect fresh state and do not replay"), cua_driver_core::action_record::ActionTransport::MacosAxAction));
+    for child in copy_children(element) {
+        if buttons.len() >= 4 {
+            CFRelease(child as CFTypeRef);
+        } else if copy_string_attr(child, "AXRole").as_deref() == Some("AXButton") {
+            buttons.push(child);
+        } else {
+            collect_ax_buttons(child, depth + 1, buttons);
+            CFRelease(child as CFTypeRef);
         }
-        std::thread::sleep(std::time::Duration::from_millis(30));
     }
-    Ok(true)
 }
 
 #[cfg(test)]

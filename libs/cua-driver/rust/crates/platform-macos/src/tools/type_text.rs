@@ -23,7 +23,6 @@
 
 use async_trait::async_trait;
 use cua_driver_contract::TypeTextInput;
-use cua_driver_core::tool::spawn_native;
 use cua_driver_core::{
     protocol::ToolResult,
     tool::{Tool, ToolDef},
@@ -68,9 +67,9 @@ fn def() -> &'static ToolDef {
              within the daemon transport budget. Longer synthesized routes are \
              refused before character events and return a safe chunk size; \
              one-call AX insertion remains uncapped.\n\n\
-             Optional `element_token` + `window_id` (from the last \
+             Optional `element_index` + `window_id` (from the last \
              `get_window_state` snapshot) directs the write to a specific field. \
-             Without `element_token`, the write goes to the pid's currently \
+             Without `element_index`, the write goes to the pid's currently \
              focused element.\n\n\
              WEB CONTENT (Chromium/WebKit/Electron — browser tabs, Slack, VS Code, \
              X's compose box): AXValue is not independent proof that the \
@@ -81,7 +80,7 @@ fn def() -> &'static ToolDef {
              browser's own native address bar/toolbar stays trusted). For a browser \
              TAB the reliable path is the `page` tool (drives the DOM via CDP); for \
              an embedded web view use this tool's px form: pass x,y (no \
-             element_token) to pixel-click the field then type, in one call. NOTE: \
+             element_index) to pixel-click the field then type, in one call. NOTE: \
              a px focus-click won't reliably open+focus a CLOSED control; AX-press \
              to open/activate it first (works in the background), then px-type. \
              Always confirm via the screenshot; if px-background still drops, \
@@ -96,12 +95,12 @@ fn def() -> &'static ToolDef {
                 "text": { "type": "string",  "description": "Text to insert at the target's cursor." },
                 "window_id": {
                     "type": "integer",
-                    "description": "Window ID. Optional with element_token; if supplied, it must match the token window."
+                    "description": "CGWindowID. Required when element_index is used. Optional when element_token is supplied (the token carries it)."
                 },
                 "element_index": cua_driver_core::tool_schema::element_index_schema(),
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
                 "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
-                "x": { "type": "number", "description": "Screenshot-pixel X of the field to type into — the element px action form. Pass x,y (no element_token) and the tool pixel-clicks there to establish real renderer focus, then types. Use for Chromium/Electron inputs the AX path can't reach. Read straight off the get_window_state PNG, same convention as click." },
+                "x": { "type": "number", "description": "Screenshot-pixel X of the field to type into — the element px action form. Pass x,y (no element_index) and the tool pixel-clicks there to establish real renderer focus, then types. Use for Chromium/Electron inputs the AX path can't reach. Read straight off the get_window_state PNG, same convention as click." },
                 "y": { "type": "number", "description": "Screenshot-pixel Y of the field (see x)." },
                 "delay_ms": {
                     "type": "integer",
@@ -176,11 +175,12 @@ impl Tool for TypeTextTool {
                 text.chars().count(),
                 delay_ms,
             ) {
-                return synthesis_refusal_result("hid", &refusal);
+                return synthesis_refusal_result("hid", &refusal, AxAttempt::NotAttempted);
             }
-            let result =
-                spawn_native(move || crate::input::keyboard::type_text_global(&text, delay_ms))
-                    .await;
+            let result = tokio::task::spawn_blocking(move || {
+                crate::input::keyboard::type_text_global(&text, delay_ms)
+            })
+            .await;
             return match result {
                 Ok(Ok(())) => {
                     ToolResult::text("Typed text into the frontmost desktop application.")
@@ -316,7 +316,7 @@ impl Tool for TypeTextTool {
         }
         if let (Some((element, _)), Some(wid)) = (element_guard.as_ref(), window_id) {
             let center_guard = element.clone();
-            if let Ok(Some((screen_x, screen_y))) = spawn_native(move || unsafe {
+            if let Ok(Some((screen_x, screen_y))) = tokio::task::spawn_blocking(move || unsafe {
                 crate::ax::bindings::element_screen_center(center_guard.as_ptr() as AXUIElementRef)
             })
             .await
@@ -333,6 +333,10 @@ impl Tool for TypeTextTool {
                     .update_position(&cursor_key, screen_x, screen_y);
             }
         }
+        let element_ptr = element_guard
+            .as_ref()
+            .map(|(g, idx)| (g.as_ptr(), Some(*idx)));
+
         let text_clone = text.clone();
         let char_count = text.chars().count();
 
@@ -358,12 +362,12 @@ impl Tool for TypeTextTool {
             prior_front,
             "type_text.AXSelectedText",
             || async move {
-                spawn_native(move || {
+                tokio::task::spawn_blocking(move || {
                     let _native_guard = native_guard;
                     type_text_blocking(
                         pid,
                         &text_clone,
-                        _native_guard.as_ref(),
+                        element_ptr,
                         delay_ms,
                         is_terminal_target,
                         delivery_mode,
@@ -385,22 +389,33 @@ impl Tool for TypeTextTool {
                 let wid = window_id.expect("background refusals require a window target");
                 return super::background_refusal_result(pid, wid, &refusal);
             }
-            Ok(Ok(TypeTextDelivery::SynthesisRefused { path, refusal })) => {
-                return synthesis_refusal_result(path, &refusal)
-            }
-            Ok(Ok(TypeTextDelivery::Unknown(detail))) => {
-                return ToolResult::native_outcome_unknown(
-                    detail,
-                    cua_driver_core::action_record::ActionTransport::MacosAxValue,
-                    cua_driver_core::action_record::RequestedDelivery::Background,
-                )
-            }
+            Ok(Ok(TypeTextDelivery::SynthesisRefused {
+                path,
+                refusal,
+                ax_attempt,
+            })) => return synthesis_refusal_result(path, &refusal, ax_attempt),
             Ok(Ok(TypeTextDelivery::Typed(outcome))) => Ok(Ok(outcome)),
             Ok(Err(error)) => Ok(Err(error)),
             Err(error) => Err(error),
         };
 
         match result {
+            Ok(Ok(outcome)) if outcome.delivered_chars.is_some_and(|n| n < char_count) => {
+                let delivered_chars = outcome.delivered_chars.unwrap_or_default();
+                ToolResult::error(format!(
+                    "type_text incomplete: delivered {delivered_chars} of {char_count} character(s){}; retry only the remaining suffix",
+                    outcome.detail
+                ))
+                .with_structured(serde_json::json!({
+                    "code": "type_text_incomplete",
+                    "path": outcome.path,
+                    "effect": "partial",
+                    "requested_chars": char_count,
+                    "delivered_chars": delivered_chars,
+                    "retryable": true,
+                    "retry_from_character": delivered_chars,
+                }))
+            }
             Ok(Ok(outcome)) => {
                 let TypeTextOutcome {
                     detail,
@@ -420,12 +435,7 @@ impl Tool for TypeTextTool {
                 // native types and already-unverified deliveries pay nothing.
                 let target_is_web_content = verified
                     && path_has_untrusted_web_readback(path)
-                    && match element_guard.as_ref() {
-                        Some((element, _)) => element.in_web_content(),
-                        None => spawn_native(move || target_in_web_area(pid, None, window_id))
-                            .await
-                            .unwrap_or(true),
-                    };
+                    && target_in_web_area(pid, element_ptr, window_id);
                 let verification = surface_verification(path, verified, target_is_web_content);
                 let verified = verification.verified;
                 let untrusted_web_readback = verification.untrusted_web_readback;
@@ -575,6 +585,25 @@ struct SynthesisRefusal {
     max_chunk_chars: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AxAttempt {
+    NotAttempted,
+    Rejected,
+    Unchanged,
+    Unverifiable,
+}
+
+impl AxAttempt {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::NotAttempted => "not_attempted",
+            Self::Rejected => "rejected",
+            Self::Unchanged => "unchanged",
+            Self::Unverifiable => "unverifiable",
+        }
+    }
+}
+
 fn synthesis_preflight(
     route: TextDeliveryRoute,
     requested_chars: usize,
@@ -613,27 +642,65 @@ fn synthesis_preflight(
     })
 }
 
-fn synthesis_refusal_result(path: &'static str, refusal: &SynthesisRefusal) -> ToolResult {
-    let message = format!("type_text refused before emitting character events: {} characters exceed the {}ms synthesis budget; retry in chunks of at most {} characters", refusal.requested_chars, SYNTHESIS_BUDGET_MS, refusal.max_chunk_chars);
-    ToolResult::error(message).with_structured(serde_json::json!({
+fn synthesis_refusal_result(
+    path: &'static str,
+    refusal: &SynthesisRefusal,
+    ax_attempt: AxAttempt,
+) -> ToolResult {
+    let effect = if ax_attempt == AxAttempt::Unverifiable {
+        "indeterminate"
+    } else {
+        "refused"
+    };
+    let retryable = ax_attempt != AxAttempt::Unverifiable;
+    let escalation = if retryable {
+        serde_json::json!({
+            "recommended": "chunk",
+            "reason": format!(
+                "Character synthesis would exceed the bounded transport-safe budget. Retry in chunks of at most {} characters at this delay.",
+                refusal.max_chunk_chars
+            )
+        })
+    } else {
+        serde_json::json!({
+            "recommended": "verify_state",
+            "reason": "The atomic AX attempt could not be observed. Re-read the target before deciding whether any suffix remains; do not retry blindly."
+        })
+    };
+    let mut structured = serde_json::json!({
         "code": "type_text_synthesis_budget_exceeded",
         "path": path,
-        "effect": "refused",
+        "effect": effect,
         "requested_chars": refusal.requested_chars,
         "estimated_duration_ms": refusal.estimated_duration_ms,
         "synthesis_budget_ms": SYNTHESIS_BUDGET_MS,
         "per_character_ms": refusal.per_character_ms,
         "max_chunk_chars": refusal.max_chunk_chars,
         "synthesized_chars": 0,
-        "atomic_ax_effect": "not_attempted",
-        "retryable": true,
-        "delivered_chars": 0,
-        "retry_from_character": 0,
-        "escalation": {
-            "recommended": "chunk",
-            "reason": "No text write was attempted; use bounded chunks."
-        }
-    }))
+        "atomic_ax_effect": ax_attempt.as_str(),
+        "retryable": retryable,
+        "escalation": escalation,
+    });
+    if ax_attempt != AxAttempt::Unverifiable {
+        structured["delivered_chars"] = serde_json::json!(0);
+        structured["retry_from_character"] = serde_json::json!(0);
+    }
+    let message = if retryable {
+        format!(
+            "type_text refused character synthesis before emitting character events: {} characters require an estimated {}ms at {}ms per character, exceeding the {}ms budget; retry in chunks of at most {} characters",
+            refusal.requested_chars,
+            refusal.estimated_duration_ms,
+            refusal.per_character_ms,
+            SYNTHESIS_BUDGET_MS,
+            refusal.max_chunk_chars,
+        )
+    } else {
+        format!(
+            "type_text did not synthesize character events because {} characters require an estimated {}ms, exceeding the {}ms budget; the preceding atomic AX attempt was unverifiable, so re-read the target before retrying",
+            refusal.requested_chars, refusal.estimated_duration_ms, SYNTHESIS_BUDGET_MS,
+        )
+    };
+    ToolResult::error(message).with_structured(structured)
 }
 
 fn path_has_untrusted_web_readback(path: &str) -> bool {
@@ -673,6 +740,7 @@ const DELIVERY_DRAIN_POLL_INTERVAL: std::time::Duration = std::time::Duration::f
 /// Pause before the single `AXFocused` re-apply in the foreground rung. Covers
 /// an app that installs its own first responder just after activation is
 /// observable, which would otherwise clobber the first write.
+const FOCUS_REAPPLY_DELAY: std::time::Duration = std::time::Duration::from_millis(30);
 
 /// Keyboard-rung policy for one window-addressed background insert, decided
 /// once by the pure exact-target core before any input is posted.
@@ -692,12 +760,12 @@ enum BackgroundKeyboardPolicy {
 /// (`Typed`), or the exact-target decision refused before any event was
 /// posted (`Refused`) and the caller must return the structured refusal.
 enum TypeTextDelivery {
-    Unknown(String),
     Typed(TypeTextOutcome),
     Refused(BackgroundRefusal),
     SynthesisRefused {
         path: &'static str,
         refusal: SynthesisRefusal,
+        ax_attempt: AxAttempt,
     },
 }
 
@@ -720,7 +788,7 @@ async fn background_keyboard_policy(
     let lease = super::acquire_background_mutation(pid).await;
     let element_guard =
         element_ptr.map(|ptr| unsafe { crate::ax::element_resolver::RetainedElement::retain(ptr) });
-    let facts = match spawn_native(move || {
+    let facts = match tokio::task::spawn_blocking(move || {
         let element_ptr = element_guard.as_ref().map(|guard| guard.as_ptr());
         crate::ax::exact_target::gather_background_facts(pid, window_id, element_ptr)
     })
@@ -945,8 +1013,22 @@ fn cgevent_type_verified(
     settle_ms: u64,
     window_id: Option<u32>,
 ) -> anyhow::Result<(bool, Option<usize>)> {
-    if let Some((pointer, _)) = element_ptr_and_idx {
-        crate::input::ax_actions::focus_target(pid, pointer)?;
+    // Focus the target element so the keystrokes land in IT. Critical in
+    // foreground mode: a freshly-fronted window's keyboard focus may be on the
+    // search box or nowhere, so without this the text goes into the void (or the
+    // wrong field). AXFocused is best-effort — harmless when unsupported.
+    //
+    // Ordering matters as much as the write itself. `with_foreground_assist` has
+    // already waited for the activation to land, so AppKit has installed the
+    // window's remembered first responder by now and this write lands *after*
+    // it rather than being clobbered by it. Re-applying once on a failed
+    // read-back covers apps that install their responder slightly late.
+    if let Some((ptr, _)) = element_ptr_and_idx {
+        let _ = crate::input::ax_actions::focus_element(ptr);
+        if settle_ms > 0 && !crate::input::ax_actions::is_element_focused(pid, ptr) {
+            std::thread::sleep(FOCUS_REAPPLY_DELAY);
+            let _ = crate::input::ax_actions::focus_element(ptr);
+        }
     }
     // First-keystroke settle (foreground rung only — caller passes `settle_ms > 0`).
     // Even once the window is front and the element focused, the surface isn't
@@ -976,15 +1058,24 @@ fn await_typed_delivery(
     deadline: std::time::Instant,
     mut read_value: impl FnMut() -> Option<String>,
 ) -> (bool, Option<usize>) {
+    let mut best_partial = None;
     loop {
         let after = read_value();
         match typed_progress(before, after.as_deref(), text) {
             TypedProgress::Complete => return (true, Some(text.chars().count())),
+            TypedProgress::Partial(delivered) => {
+                best_partial =
+                    Some(best_partial.map_or(delivered, |best: usize| best.max(delivered)));
+            }
             TypedProgress::Unverifiable => return (false, None),
-            _ => {}
+            TypedProgress::Unchanged => {
+                // A readable unchanged value is an observed zero-character
+                // delivery, not an unverifiable success.
+                best_partial.get_or_insert(0);
+            }
         }
         if std::time::Instant::now() >= deadline {
-            return (false, None);
+            return (false, best_partial);
         }
         std::thread::sleep(DELIVERY_DRAIN_POLL_INTERVAL);
     }
@@ -1003,19 +1094,13 @@ fn await_typed_delivery(
 fn type_text_blocking(
     pid: i32,
     text: &str,
-    element: Option<&(crate::ax::element_resolver::RetainedElement, usize)>,
+    element_ptr_and_idx: Option<(usize, Option<usize>)>,
     delay_ms: u64,
     is_terminal_target: bool,
     delivery_mode: super::DeliveryMode,
     window_id: Option<u32>,
     keyboard_policy: BackgroundKeyboardPolicy,
 ) -> anyhow::Result<TypeTextDelivery> {
-    let read_target = || {
-        element
-            .map(|(target, index)| target.checked_ptr().map(|ptr| (ptr, Some(*index))))
-            .transpose()
-    };
-    let element_ptr_and_idx = read_target()?;
     // Original field value before any rung drives read-back verification only.
     // An unreadable value is not evidence that the field is empty — and for a
     // window-addressed request it must come from the exact target window,
@@ -1041,6 +1126,7 @@ fn type_text_blocking(
                     PATH_KEY_EVENTS
                 },
                 refusal,
+                ax_attempt: AxAttempt::NotAttempted,
             });
         }
         // Settle between front+focus and the first keystroke — see the
@@ -1053,7 +1139,6 @@ fn type_text_blocking(
         // armed interactive stream on every text chunk.
         let foreground_settle_ms = foreground_settle_ms(pid, apps::frontmost_pid());
         let do_type = || {
-            let element_ptr_and_idx = read_target()?;
             cgevent_type_verified(
                 pid,
                 text,
@@ -1136,6 +1221,7 @@ fn type_text_blocking(
             return Ok(TypeTextDelivery::SynthesisRefused {
                 path: PATH_KEY_EVENTS,
                 refusal,
+                ax_attempt: AxAttempt::NotAttempted,
             });
         }
         tracing::debug!(
@@ -1173,37 +1259,63 @@ fn type_text_blocking(
             }
         },
     };
-    if let Some((element, owns, _)) = ax_target {
-        let retained =
-            unsafe { crate::ax::element_resolver::RetainedElement::retain(element as usize) };
+    let mut ax_attempt = AxAttempt::NotAttempted;
+    if let Some((element, owns, idx_opt)) = ax_target {
+        let role = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
+        let title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
+        let err = unsafe { set_string_attr(element, "AXSelectedText", text) };
+        // Classify the atomic write before considering synthesis. Complete AX
+        // delivery returns immediately. Partial delivery is surfaced as such
+        // instead of appending the full payload again. When synthesis would
+        // exceed its transport-safe budget, rejected/unchanged AX writes fail
+        // safely and unreadable AX state is reported as indeterminate.
+        let after = unsafe { copy_string_attr(element, "AXValue") };
+        let ax_progress = if err == kAXErrorSuccess {
+            Some(typed_progress(before.as_deref(), after.as_deref(), text))
+        } else {
+            None
+        };
+        // AXValue is not renderer evidence in web content. An unchanged echo
+        // there cannot prove that zero characters landed, so blind retry is
+        // unsafe even though no synthesis has run yet.
+        let unchanged_web_readback = ax_progress == Some(TypedProgress::Unchanged)
+            && target_in_web_area(pid, Some((element as usize, idx_opt)), window_id);
         if owns {
             unsafe {
                 CFRelease(element as _);
             }
         }
-        let settable = unsafe {
-            crate::ax::bindings::is_attribute_settable_checked(element, "AXSelectedText")
-        }
-        .map_err(|code| anyhow::anyhow!("text capability read failed: {code}"))?;
-        if settable {
-            read_target()?;
-            let status = unsafe { set_string_attr(element, "AXSelectedText", text) };
-            if status != kAXErrorSuccess {
-                return Ok(TypeTextDelivery::Unknown(format!(
-                    "AXSelectedText returned {status}; inspect fresh state and do not replay"
-                )));
-            }
-            let after = unsafe { copy_string_attr(element, "AXValue") };
-            let verified = typed_progress(before.as_deref(), after.as_deref(), text)
-                == TypedProgress::Complete;
-            drop(retained);
+        if ax_progress == Some(TypedProgress::Complete) {
+            let idx_str = idx_opt.map(|i| format!(" [{i}]")).unwrap_or_default();
             return Ok(TypeTextDelivery::Typed(TypeTextOutcome {
-                detail: " via one AXSelectedText write; inspect fresh state before retrying".into(),
+                detail: format!(" into{idx_str} {role} \"{title}\""),
                 path: PATH_AX,
-                verified,
-                delivered_chars: verified.then(|| text.chars().count()),
+                verified: true,
+                delivered_chars: Some(text.chars().count()),
             }));
         }
+        if let Some(TypedProgress::Partial(delivered_chars)) = ax_progress {
+            let idx_str = idx_opt.map(|i| format!(" [{i}]")).unwrap_or_default();
+            return Ok(TypeTextDelivery::Typed(TypeTextOutcome {
+                detail: format!(" via partial AX write into{idx_str} {role} \"{title}\""),
+                path: PATH_AX,
+                verified: false,
+                delivered_chars: Some(delivered_chars),
+            }));
+        }
+        ax_attempt = match ax_progress {
+            Some(TypedProgress::Unchanged) if unchanged_web_readback => AxAttempt::Unverifiable,
+            Some(TypedProgress::Unchanged) => AxAttempt::Unchanged,
+            Some(TypedProgress::Unverifiable) => AxAttempt::Unverifiable,
+            None => AxAttempt::Rejected,
+            Some(TypedProgress::Complete | TypedProgress::Partial(_)) => unreachable!(),
+        };
+        tracing::debug!(
+            "AX write did not land for {role} \"{title}\" (err={err}); \
+             falling back to CGEvent keystrokes"
+        );
+    } else {
+        tracing::debug!("No focused element for pid {pid}; using CGEvent keystrokes");
     }
 
     // The semantic AX rung did not land and this request is restricted to it:
@@ -1221,6 +1333,7 @@ fn type_text_blocking(
         return Ok(TypeTextDelivery::SynthesisRefused {
             path: PATH_KEY_EVENTS,
             refusal,
+            ax_attempt,
         });
     }
 
@@ -1322,10 +1435,16 @@ mod tests {
             BackgroundKeyboardPolicy::Allowed,
         )
         .expect("preflight refusal must not attempt the invalid pid");
-        let TypeTextDelivery::SynthesisRefused { path, refusal } = result else {
+        let TypeTextDelivery::SynthesisRefused {
+            path,
+            refusal,
+            ax_attempt,
+        } = result
+        else {
             panic!("oversized terminal synthesis must fail before mutation");
         };
         assert_eq!(path, PATH_KEY_EVENTS);
+        assert_eq!(ax_attempt, AxAttempt::NotAttempted);
         assert_eq!(refusal.requested_chars, 6_500);
         assert_eq!(refusal.estimated_duration_ms, 106_000);
         assert_eq!(refusal.max_chunk_chars, 6_125);
@@ -1348,24 +1467,28 @@ mod tests {
     }
 
     #[test]
-    fn pre_dispatch_budget_refusal_is_distinct_from_unknown_native_delivery() {
-        let refusal = synthesis_preflight(TextDeliveryRoute::PhysicalSynthesis, 6500, 15).unwrap();
-        let refused = synthesis_refusal_result(PATH_KEY_EVENTS, &refusal)
+    fn refusal_diagnostics_distinguish_safe_chunking_from_indeterminate_ax() {
+        let refusal = synthesis_preflight(TextDeliveryRoute::UnicodeSynthesis, 6_500, 0)
+            .expect("payload must exceed the synthesis budget");
+        let safe = synthesis_refusal_result(PATH_KEY_EVENTS, &refusal, AxAttempt::Rejected);
+        let safe = safe.structured_content.expect("structured refusal");
+        assert_eq!(safe["code"], "type_text_synthesis_budget_exceeded");
+        assert_eq!(safe["effect"], "refused");
+        assert_eq!(safe["delivered_chars"], 0);
+        assert_eq!(safe["synthesized_chars"], 0);
+        assert_eq!(safe["retryable"], true);
+        assert_eq!(safe["escalation"]["recommended"], "chunk");
+
+        let indeterminate =
+            synthesis_refusal_result(PATH_KEY_EVENTS, &refusal, AxAttempt::Unverifiable);
+        let indeterminate = indeterminate
             .structured_content
-            .unwrap();
-        assert_eq!(refused["atomic_ax_effect"], "not_attempted");
-        assert_eq!(refused["delivered_chars"], 0);
-        assert_eq!(refused["retryable"], true);
-        let unknown = ToolResult::native_outcome_unknown(
-            "native text outcome is unknown",
-            cua_driver_core::action_record::ActionTransport::MacosAxValue,
-            cua_driver_core::action_record::RequestedDelivery::Background,
-        )
-        .structured_content
-        .unwrap();
-        assert_eq!(unknown["delivery"]["mode"], "unknown");
-        assert!(unknown.get("retry_from_character").is_none());
-        assert!(unknown.get("escalation").is_none());
+            .expect("structured indeterminate result");
+        assert_eq!(indeterminate["effect"], "indeterminate");
+        assert!(indeterminate.get("delivered_chars").is_none());
+        assert_eq!(indeterminate["synthesized_chars"], 0);
+        assert_eq!(indeterminate["retryable"], false);
+        assert_eq!(indeterminate["escalation"]["recommended"], "verify_state");
     }
 
     #[test]
@@ -1416,14 +1539,14 @@ mod tests {
     }
 
     #[test]
-    fn expired_prefix_readback_does_not_authorize_suffix_replay() {
+    fn drained_prefix_reports_the_delivered_character_count() {
         let delivery = await_typed_delivery(
             Some(""),
             "BEGIN-payload-END",
             std::time::Instant::now(),
             || Some("BEGIN".to_owned()),
         );
-        assert_eq!(delivery, (false, None));
+        assert_eq!(delivery, (false, Some(5)));
     }
 
     #[test]

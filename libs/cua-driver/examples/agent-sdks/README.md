@@ -109,5 +109,3 @@ python3.12 -m py_compile \
 python3.12 -m unittest test_fixture_server.py
 npm run typecheck
 ```
-
-Native action targets must use the identity-bearing `element_token` from the original observation, not an index/snapshot pair. See [stateless targeting and migration](../../docs/stateless-element-targeting.md).

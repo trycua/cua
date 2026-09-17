@@ -11,8 +11,31 @@
 
 use anyhow::Result;
 
+pub mod element_resolver;
 pub mod native;
-pub use native::{element_resolver, ensure_listener_active};
+pub use native::{ensure_listener_active, resolve_observed_click_target, ObservedClickTarget};
+
+/// No input has been delivered; this control needs a real pointer click.
+#[derive(Debug)]
+pub(crate) struct ElementClickNeedsForeground;
+impl std::fmt::Display for ElementClickNeedsForeground {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("editable text or table cell selection requires real foreground pointer input")
+    }
+}
+impl std::error::Error for ElementClickNeedsForeground {}
+
+/// The requested indexed click has no supported AX activation route. This
+/// classification is made before submitting any action, so pointer fallback
+/// is safe. Other action errors must not be treated as this pre-input result.
+#[derive(Debug)]
+pub(crate) struct ClickActionUnavailable(pub String);
+impl std::fmt::Display for ClickActionUnavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl std::error::Error for ClickActionUnavailable {}
 
 /// Stable address on one AT-SPI bus connection, including the owning frame.
 /// Unique bus names prevent a restarted process from reusing an observed path.
@@ -171,15 +194,12 @@ pub fn walk_tree_bounded(
 /// is true when the actuated node looked like a silent no-op (a passive
 /// display role, or no advertised action), so the caller can surface
 /// `effect: "suspected_noop"`.
-pub fn perform_action(
-    pid: u32,
-    idx: impl Into<element_resolver::ElementRef>,
-) -> Result<(String, bool)> {
+pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
     native::perform_action(pid, idx)
 }
 
 /// Give an indexed AT-SPI element keyboard focus without activating its window.
-pub fn focus_element(pid: u32, idx: impl Into<element_resolver::ElementRef>) -> Result<bool> {
+pub fn focus_element(pid: u32, idx: usize) -> Result<bool> {
     native::focus_element(pid, idx)
 }
 
@@ -187,7 +207,7 @@ pub use native::ScrollProgress;
 
 pub fn scroll_element(
     pid: u32,
-    idx: impl Into<element_resolver::ElementRef>,
+    idx: usize,
     direction: &str,
     amount: usize,
     by: cua_driver_contract::ScrollBy,
@@ -236,22 +256,14 @@ pub fn type_into_editable(pid: u32, text: &str) -> Result<()> {
 }
 
 /// Type into the exact indexed editable from the caller's accessibility snapshot.
-pub fn type_into_editable_at(
-    pid: u32,
-    idx: impl Into<element_resolver::ElementRef>,
-    text: &str,
-) -> Result<()> {
+pub fn type_into_editable_at(pid: u32, idx: usize, text: &str) -> Result<()> {
     native::type_into_editable_at(pid, idx, text)
 }
 
 /// Set the text value of element `idx` within pid's app tree via AT-SPI.
 /// Tries `EditableText.set_text_contents(value)` first, then
 /// `Value.set_current_value(float)`.
-pub fn set_value(
-    pid: u32,
-    idx: impl Into<element_resolver::ElementRef>,
-    value: &str,
-) -> Result<()> {
+pub fn set_value(pid: u32, idx: usize, value: &str) -> Result<()> {
     native::set_value(pid, idx, value)
 }
 
@@ -363,8 +375,8 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
         // one window by construction — but `trusted: false` still bars it from
         // proving anything a caller acts on.
         window_scoped: true,
-        degraded_reason: None,
         complete: false,
+        degraded_reason: None,
     }
 }
 

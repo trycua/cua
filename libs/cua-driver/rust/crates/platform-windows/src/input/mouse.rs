@@ -99,10 +99,6 @@ pub fn post_click(root: u64, x: i32, y: i32, count: usize, button: &str) -> Resu
 /// Post a click at **screen** coordinates, resolving the deepest child of
 /// `root_hwnd` at that point.  Call this when you already have screen coords.
 pub fn post_click_screen(root: u64, sx: i32, sy: i32, count: usize, button: &str) -> Result<()> {
-    cua_driver_core::tool::check_native_dispatch()?;
-    if let Some(pid) = crate::win32::window_owner_pid(root) {
-        crate::recording_hooks::capture_dispatch_click_target(root, pid, sx, sy);
-    }
     let root_hwnd = HWND(root as *mut _);
     let screen_pt = POINT { x: sx, y: sy };
     let (target, client) = deepest_child(root_hwnd, screen_pt);
@@ -145,12 +141,12 @@ fn post_click_on(hwnd: HWND, x: i32, y: i32, count: usize, button: &str) -> Resu
         let press_msg = posted_press_message(down_msg, double_msg, i, wants_double);
         unsafe {
             // WM_MOUSEMOVE first so hover state is correct before the click.
-            crate::input::post_message_checked(hwnd, WM_MOUSEMOVE, WPARAM(0), lparam)?;
+            PostMessageW(hwnd, WM_MOUSEMOVE, WPARAM(0), lparam)?;
             // Win32 controls do not infer a double-click from two posted DOWN
             // messages. The second press must use WM_*BUTTONDBLCLK.
-            crate::input::post_message_checked(hwnd, press_msg, wdown, lparam)?;
+            PostMessageW(hwnd, press_msg, wdown, lparam)?;
             sleep(Duration::from_millis(CLICK_DELAY_MS));
-            crate::input::post_message_checked(hwnd, up_msg, wup, lparam)?;
+            PostMessageW(hwnd, up_msg, wup, lparam)?;
         }
         if i + 1 < count {
             sleep(Duration::from_millis(80));
@@ -195,42 +191,26 @@ pub fn post_drag(
     };
 
     unsafe {
-        crate::input::post_message_checked(root, down_msg, wparam, make_lparam(from_x, from_y))?;
+        PostMessageW(root, down_msg, wparam, make_lparam(from_x, from_y))?;
     }
     sleep(Duration::from_millis(CLICK_DELAY_MS));
 
-    let mut last = (from_x, from_y);
-    let movement = (|| -> Result<()> {
-        for i in 1..=steps {
-            let t = i as f64 / steps as f64;
-            let point = (
-                from_x + ((to_x - from_x) as f64 * t).round() as i32,
-                from_y + ((to_y - from_y) as f64 * t).round() as i32,
-            );
-            unsafe {
-                crate::input::post_message_checked(
-                    root,
-                    WM_MOUSEMOVE,
-                    wparam,
-                    make_lparam(point.0, point.1),
-                )?;
-            }
-            last = point;
-            if step_delay_ms > 0 {
-                sleep(Duration::from_millis(step_delay_ms));
-            }
+    for i in 1..=steps {
+        let t = i as f64 / steps as f64;
+        let ix = from_x + ((to_x - from_x) as f64 * t).round() as i32;
+        let iy = from_y + ((to_y - from_y) as f64 * t).round() as i32;
+        unsafe {
+            PostMessageW(root, WM_MOUSEMOVE, wparam, make_lparam(ix, iy))?;
         }
-        Ok(())
-    })();
-    let release = unsafe {
-        crate::input::post_message_checked(root, up_msg, WPARAM(0), make_lparam(last.0, last.1))
-    };
-    movement.and(release.map_err(Into::into)).map_err(|error| {
-        cua_driver_core::protocol::ToolResult::native_action_error(
-            format!("drag outcome is unknown ({error}); inspect fresh state and do not replay"),
-            cua_driver_core::action_record::ActionTransport::WindowsPostMessage,
-        )
-    })
+        if step_delay_ms > 0 {
+            sleep(Duration::from_millis(step_delay_ms));
+        }
+    }
+
+    unsafe {
+        PostMessageW(root, up_msg, WPARAM(0), make_lparam(to_x, to_y))?;
+    }
+    Ok(())
 }
 
 /// Press-drag-release via PostMessage, resolving the **deepest child** at the
@@ -268,24 +248,44 @@ pub fn post_drag_screen(
     if let Some(msg) = crate::input::post_message_blocked_by_uipi(target.0 as u64) {
         anyhow::bail!(msg);
     }
+    let (down_msg, up_msg, mk_flag) = match button {
+        "right" => (WM_RBUTTONDOWN, WM_RBUTTONUP, MK_RBUTTON),
+        "middle" => (WM_MBUTTONDOWN, WM_MBUTTONUP, MK_MBUTTON),
+        _ => (WM_LBUTTONDOWN, WM_LBUTTONUP, MK_LBUTTON),
+    };
+    let wparam = WPARAM(mk_flag as usize);
+    let steps = steps.max(1);
+    let step_delay_ms = if steps > 1 {
+        duration_ms / steps as u64
+    } else {
+        duration_ms
+    };
     unsafe {
-        crate::input::post_message_checked(
+        // Pre-drag MOUSEMOVE (wParam=0, no buttons down yet) then DOWN at from.
+        PostMessageW(
             target,
             WM_MOUSEMOVE,
             WPARAM(0),
             make_lparam(c_from.x, c_from.y),
         )?;
+        PostMessageW(target, down_msg, wparam, make_lparam(c_from.x, c_from.y))?;
     }
-    post_drag(
-        target.0 as u64,
-        c_from.x,
-        c_from.y,
-        c_to.x,
-        c_to.y,
-        duration_ms,
-        steps,
-        button,
-    )
+    sleep(Duration::from_millis(CLICK_DELAY_MS));
+    for i in 1..=steps {
+        let t = i as f64 / steps as f64;
+        let ix = c_from.x + ((c_to.x - c_from.x) as f64 * t).round() as i32;
+        let iy = c_from.y + ((c_to.y - c_from.y) as f64 * t).round() as i32;
+        unsafe {
+            PostMessageW(target, WM_MOUSEMOVE, wparam, make_lparam(ix, iy))?;
+        }
+        if step_delay_ms > 0 {
+            sleep(Duration::from_millis(step_delay_ms));
+        }
+    }
+    unsafe {
+        PostMessageW(target, up_msg, WPARAM(0), make_lparam(c_to.x, c_to.y))?;
+    }
+    Ok(())
 }
 
 /// Pack two 16-bit integers into a LPARAM (low word = x, high word = y).
@@ -430,7 +430,6 @@ pub fn send_click_synthesized(
     count: usize,
     button: &str,
 ) -> Result<()> {
-    cua_driver_core::tool::check_native_dispatch()?;
     send_click_synthesized_mods(target, sx, sy, count, button, &[])
 }
 
@@ -449,8 +448,7 @@ pub fn send_click_synthesized_mods(
     button: &str,
     modifiers: &[&str],
 ) -> Result<()> {
-    cua_driver_core::tool::check_native_dispatch()?;
-    send_click_synthesized_mods_impl(target, || Ok((sx, sy)), count, button, modifiers, false)
+    send_click_synthesized_mods_impl(target, sx, sy, count, button, modifiers, false)
 }
 
 /// SendInput click for an explicit foreground request. Unlike the historical
@@ -465,30 +463,18 @@ pub fn send_click_synthesized_active_mods(
     button: &str,
     modifiers: &[&str],
 ) -> Result<()> {
-    cua_driver_core::tool::check_native_dispatch()?;
-    send_click_synthesized_mods_impl(target, || Ok((sx, sy)), count, button, modifiers, true)
-}
-
-pub fn send_click_synthesized_active_resolved(
-    target: u64,
-    count: usize,
-    button: &str,
-    modifiers: &[&str],
-    point: impl FnOnce() -> Result<(i32, i32)>,
-) -> Result<()> {
-    cua_driver_core::tool::check_native_dispatch()?;
-    send_click_synthesized_mods_impl(target, point, count, button, modifiers, true)
+    send_click_synthesized_mods_impl(target, sx, sy, count, button, modifiers, true)
 }
 
 fn send_click_synthesized_mods_impl(
     target: u64,
-    point: impl FnOnce() -> Result<(i32, i32)>,
+    sx: i32,
+    sy: i32,
     count: usize,
     button: &str,
     modifiers: &[&str],
     activate: bool,
 ) -> Result<()> {
-    cua_driver_core::tool::check_native_dispatch()?;
     let target = HWND(target as *mut _);
     if target.0.is_null() {
         bail!("invalid target hwnd");
@@ -506,6 +492,44 @@ fn send_click_synthesized_mods_impl(
         _ => (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP),
     };
 
+    // Convert screen pixel coords to normalized absolute coords spanning the
+    // virtual desktop (0..65535 across the union of all monitors). This is
+    // what `MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK` expects.
+    //
+    // Without VIRTUALDESK the coords are relative to the primary monitor only;
+    // multi-monitor setups would misroute. Better to always use VIRTUALDESK.
+    //
+    // Math lives in `crate::virtualdesk` so it can be unit-tested cross-platform
+    // (no Win32 runtime required) — see issue #1979 for the negative-offset
+    // multi-monitor case the tests there pin down.
+    let (vd_x, vd_y) = unsafe {
+        (
+            GetSystemMetrics(SM_XVIRTUALSCREEN),
+            GetSystemMetrics(SM_YVIRTUALSCREEN),
+        )
+    };
+    let (vd_w, vd_h) = unsafe {
+        (
+            GetSystemMetrics(SM_CXVIRTUALSCREEN).max(1),
+            GetSystemMetrics(SM_CYVIRTUALSCREEN).max(1),
+        )
+    };
+    let (norm_x, norm_y) =
+        crate::virtualdesk::to_virtualdesk_absolute(sx, sy, vd_x, vd_y, vd_w, vd_h);
+
+    let move_input = INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: INPUT_0 {
+            mi: MOUSEINPUT {
+                dx: norm_x,
+                dy: norm_y,
+                mouseData: 0,
+                dwFlags: MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
     let down_input = INPUT {
         r#type: INPUT_MOUSE,
         Anonymous: INPUT_0 {
@@ -573,45 +597,6 @@ fn send_click_synthesized_mods_impl(
         } else {
             None
         };
-        let (sx, sy) = point()?;
-        // Convert screen pixel coords to normalized absolute coords spanning the
-        // virtual desktop (0..65535 across the union of all monitors). This is
-        // what `MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK` expects.
-        //
-        // Without VIRTUALDESK the coords are relative to the primary monitor only;
-        // multi-monitor setups would misroute. Better to always use VIRTUALDESK.
-        //
-        // Math lives in `crate::virtualdesk` so it can be unit-tested cross-platform
-        // (no Win32 runtime required) — see issue #1979 for the negative-offset
-        // multi-monitor case the tests there pin down.
-        let (vd_x, vd_y) = unsafe {
-            (
-                GetSystemMetrics(SM_XVIRTUALSCREEN),
-                GetSystemMetrics(SM_YVIRTUALSCREEN),
-            )
-        };
-        let (vd_w, vd_h) = unsafe {
-            (
-                GetSystemMetrics(SM_CXVIRTUALSCREEN).max(1),
-                GetSystemMetrics(SM_CYVIRTUALSCREEN).max(1),
-            )
-        };
-        let (norm_x, norm_y) =
-            crate::virtualdesk::to_virtualdesk_absolute(sx, sy, vd_x, vd_y, vd_w, vd_h);
-
-        let move_input = INPUT {
-            r#type: INPUT_MOUSE,
-            Anonymous: INPUT_0 {
-                mi: MOUSEINPUT {
-                    dx: norm_x,
-                    dy: norm_y,
-                    mouseData: 0,
-                    dwFlags: MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
-                    time: 0,
-                    dwExtraInfo: 0,
-                },
-            },
-        };
         let noactivate = (!activate).then(|| crate::input::NoActivateGuard::arm(target));
         if !activate {
             let _ = SetWindowPos(
@@ -625,10 +610,6 @@ fn send_click_synthesized_mods_impl(
             );
         }
 
-        cua_driver_core::tool::check_native_dispatch()?;
-        if let Some(pid) = crate::win32::window_owner_pid(target.0 as u64) {
-            crate::recording_hooks::capture_dispatch_click_target(target.0 as u64, pid, sx, sy);
-        }
         // Move the cursor so the OS hover state matches before the click; the
         // MOUSEEVENTF_MOVE input ensures Chromium's input filter sees a
         // coordinated move event.
@@ -641,8 +622,7 @@ fn send_click_synthesized_mods_impl(
         let (mod_downs, mod_ups) = crate::input::keyboard::modifier_hold_inputs(modifiers);
         let mut sent_ok = true;
         if !mod_downs.is_empty() {
-            let sent =
-                crate::input::send_input_checked(&mod_downs, std::mem::size_of::<INPUT>() as i32);
+            let sent = SendInput(&mod_downs, std::mem::size_of::<INPUT>() as i32);
             sent_ok = sent as usize == mod_downs.len();
             sleep(Duration::from_millis(5));
         }
@@ -656,8 +636,7 @@ fn send_click_synthesized_mods_impl(
             // records act at the current pointer position; adding ABSOLUTE to
             // them can prevent retained-mode controls from seeing the press.
             let events = [move_input, down_input, up_input];
-            let sent =
-                crate::input::send_input_checked(&events, std::mem::size_of::<INPUT>() as i32);
+            let sent = SendInput(&events, std::mem::size_of::<INPUT>() as i32);
             if sent as usize != events.len() {
                 sent_ok = false;
                 break;
@@ -669,13 +648,11 @@ fn send_click_synthesized_mods_impl(
 
         // Release any held modifiers (reverse order) before restoring z-order.
         if !mod_ups.is_empty() {
-            let released =
-                crate::input::send_input_checked(&mod_ups, std::mem::size_of::<INPUT>() as i32);
+            let released = SendInput(&mod_ups, std::mem::size_of::<INPUT>() as i32);
             if released as usize != mod_ups.len() {
                 // A second release attempt is safe and reduces the chance of a
                 // partially inserted chord leaving system modifier state held.
-                let _ =
-                    crate::input::send_input_checked(&mod_ups, std::mem::size_of::<INPUT>() as i32);
+                let _ = SendInput(&mod_ups, std::mem::size_of::<INPUT>() as i32);
                 sent_ok = false;
             }
         }
@@ -843,7 +820,7 @@ pub fn send_drag_synthesized(
             make_input(nfx, nfy, MOUSEEVENTF_MOVE),
             make_input(nfx, nfy, down_flag),
         ];
-        let sent = crate::input::send_input_checked(&prelude, std::mem::size_of::<INPUT>() as i32);
+        let sent = SendInput(&prelude, std::mem::size_of::<INPUT>() as i32);
         if sent as usize != prelude.len() {
             if !was_topmost {
                 let _ = SetWindowPos(
@@ -885,7 +862,7 @@ pub fn send_drag_synthesized(
             let (nx, ny) = norm(x, y);
             let _ = SetCursorPos(x, y);
             let mv = [make_input(nx, ny, MOUSEEVENTF_MOVE)];
-            let _ = crate::input::send_input_checked(&mv, std::mem::size_of::<INPUT>() as i32);
+            let _ = SendInput(&mv, std::mem::size_of::<INPUT>() as i32);
             if step_delay_ms > 0 {
                 sleep(Duration::from_millis(step_delay_ms));
             }
@@ -894,7 +871,7 @@ pub fn send_drag_synthesized(
         // 3. Release at the end.
         let (ntx, nty) = norm(sx_to, sy_to);
         let release = [make_input(ntx, nty, up_flag)];
-        let _ = crate::input::send_input_checked(&release, std::mem::size_of::<INPUT>() as i32);
+        let _ = SendInput(&release, std::mem::size_of::<INPUT>() as i32);
 
         // Brief settle, then restore z-order (demote target, restack user's
         // window — no activation) and the cursor.
@@ -958,7 +935,6 @@ fn wheel_mouse_data(ticks: i32) -> u32 {
 /// delivery follows the cursor, so positioning the cursor is sufficient. The
 /// cursor is restored to its previous position afterward.
 pub fn send_wheel_synthesized(sx: i32, sy: i32, ticks: i32, horizontal: bool) -> Result<()> {
-    cua_driver_core::tool::check_native_dispatch()?;
     let flag = if horizontal {
         MOUSEEVENTF_HWHEEL
     } else {
@@ -988,7 +964,7 @@ pub fn send_wheel_synthesized(sx: i32, sy: i32, ticks: i32, horizontal: bool) ->
         let _ = SetCursorPos(sx, sy);
 
         let events = [wheel_input];
-        let sent = crate::input::send_input_checked(&events, std::mem::size_of::<INPUT>() as i32);
+        let sent = SendInput(&events, std::mem::size_of::<INPUT>() as i32);
         if sent as usize != events.len() {
             let _ = SetCursorPos(prev_cursor.x, prev_cursor.y);
             bail!("SendInput inserted {sent}/{} wheel events", events.len());

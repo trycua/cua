@@ -15,8 +15,6 @@ surface through their runtime's existing MCP client.
 
 ## Scope and compatibility
 
-Native element actions require identity-bearing observed tokens. Index/snapshot pairs are observation metadata, not an action address. See the [stateless targeting migration](../docs/stateless-element-targeting.md) for resolution semantics, native limitations, and release implications.
-
 The typed slice covers the cross-platform session lifecycle tools:
 
 - `start_session`
@@ -45,13 +43,28 @@ It also covers the portable whole-desktop loop:
 - `clipboard_write` for text, image, and file-URL clipboard content
 
 The typed native-window flow includes `list_apps`, `list_windows`, and
-`get_window_state`, with discovery records, snapshot-bound element tokens,
+`get_window_state`, with discovery records, observation-issued element tokens,
 optional accessibility metadata, and screenshot images attached to the typed
 snapshot. `click` accepts one `ClickPosition` (coordinates or element token), an
 explicit `ActionTarget`, and an explicit `InputDeliveryMode`, and returns
 `ActionResult` directly. Native refusals become `DriverError.Tool`.
 See the [0.8 SDK contract migration](../docs/native-window-sdk-migration.md)
 for the intentional SDK break and unchanged CLI/MCP wire forms.
+
+### Native element addressing
+
+Copy `structuredContent.elements[].element_token` from `get_window_state` into
+an element-targeted action. The token authenticates the observed description;
+the action requires a unique match in a complete current accessibility tree.
+Another observation alone does not invalidate it. It is not a persistent native
+handle or a guarantee that application state cannot change during dispatch.
+
+**Compatibility break:** `element_index` plus `snapshot_id`, and identity-free
+legacy tokens, refuse with `element_identity_required`. Indices remain observation
+metadata. Missing, ambiguous, or incomplete matches also refuse rather than select
+an ordinal. Current Windows MSAA and PID-only fallback walkers do not attest this
+matching proof; their observations remain available, but token actions refuse.
+Explicit coordinate actions are unchanged.
 
 The canonical session-owned cursor slice is shared exactly by MCP and both
 generated SDKs:

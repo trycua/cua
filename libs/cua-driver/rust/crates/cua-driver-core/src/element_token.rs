@@ -1,6 +1,5 @@
-use crate::{protocol::ToolResult, tool_args::ArgsExt};
+use crate::protocol::ToolResult;
 use hmac::{Hmac, Mac};
-use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -41,36 +40,29 @@ impl<T> ResolvedElement<T> {
 pub struct ElementTarget {
     pub element_index: usize,
     identity_tag: Option<[u8; TAG_BYTES]>,
-    runtime_scope: String,
 }
 impl ElementTarget {
     pub fn matches_identity(&self, identity: &[u8]) -> bool {
-        self.identity_tag.is_some_and(|expected| {
-            constant_time_eq(
-                &expected,
-                &mac_tag(&self.runtime_scope, b"identity", identity),
-            )
-        })
+        self.identity_tag
+            .is_none_or(|expected| constant_time_eq(&expected, &identity_tag(identity)))
     }
     pub fn has_identity(&self) -> bool {
         self.identity_tag.is_some()
     }
+
     pub fn resolve_unique<T>(
         &self,
-        candidates: impl IntoIterator<Item = (T, Vec<u8>)>,
+        candidates: impl IntoIterator<Item = (Vec<u8>, T)>,
         complete: bool,
     ) -> Result<Option<T>, String> {
         if !complete {
-            return Err("current accessibility traversal is incomplete".into());
+            return Err("incomplete accessibility tree cannot establish a unique element".into());
         }
         let mut matches = candidates
             .into_iter()
-            .filter_map(|(element, identity)| self.matches_identity(&identity).then_some(element));
+            .filter_map(|(identity, element)| self.matches_identity(&identity).then_some(element));
         let first = matches.next();
-        if matches.next().is_some() {
-            return Err("current accessibility target is ambiguous".into());
-        }
-        Ok(first)
+        Ok(first.filter(|_| matches.next().is_none()))
     }
 }
 #[derive(Debug, Clone)]
@@ -124,8 +116,6 @@ pub fn token_for_identity(
         hex(&mac_tag(&scope, b"element", body.as_bytes()))
     ))
 }
-pub const MAX_NATIVE_ANCESTORS: usize = 64;
-
 pub fn parse_token(token: &str) -> Option<(String, usize)> {
     let parsed = parse_element_token(token).ok()?;
     Some((parsed.snapshot.encoded, parsed.element_index))
@@ -133,88 +123,6 @@ pub fn parse_token(token: &str) -> Option<(String, usize)> {
 pub fn parse_snapshot_handle(handle: &str) -> Option<(i32, u64)> {
     let parsed = parse_snapshot(handle).ok()?;
     Some((parsed.pid, parsed.window_id))
-}
-
-pub fn decode_element_args(
-    pid: i32,
-    args: &Value,
-    tool: &str,
-) -> Result<ResolvedElement<ElementTarget>, ToolResult> {
-    resolve_element_args(
-        pid,
-        args.opt_u64("element_index").map(|index| index as usize),
-        args.get("element_token").and_then(Value::as_str),
-        args.get("snapshot_id").and_then(Value::as_str),
-        args.opt_u64("window_id"),
-        tool,
-        |_, target| Ok(Some(target.clone())),
-    )
-}
-
-pub fn recording_target(
-    pid: i64,
-    args: &Value,
-    _capture_point: bool,
-) -> Option<(u64, Option<(f64, f64)>)> {
-    let target = decode_element_args(i32::try_from(pid).ok()?, args, "recording").ok()?;
-    Some((target.into_parts(None).1?, None))
-}
-
-pub fn resolve_native<T, F>(
-    pid: i32,
-    element_index: Option<usize>,
-    element_token: Option<&str>,
-    snapshot_id: Option<&str>,
-    window_id: Option<u64>,
-    tool: &str,
-    resolve_fresh: F,
-) -> impl std::future::Future<Output = Result<ResolvedElement<T>, ToolResult>> + Send
-where
-    T: Send + 'static,
-    F: FnOnce(u64, &ElementTarget) -> Result<Option<T>, String> + Send + 'static,
-{
-    let decoded = resolve_element_args(
-        pid,
-        element_index,
-        element_token,
-        snapshot_id,
-        window_id,
-        tool,
-        |_, target| Ok(Some(target.clone())),
-    );
-    async move {
-        let ResolvedElement::Element {
-            window_id,
-            element_index,
-            via_token,
-            element: target,
-        } = decoded?
-        else {
-            return Ok(ResolvedElement::None);
-        };
-        let work = crate::tool::spawn_native(move || resolve_fresh(window_id.unwrap(), &target));
-        let element = tokio::time::timeout(std::time::Duration::from_secs(20), work)
-            .await
-            .map_err(|error| resolution_failed(error.to_string()))?
-            .map_err(|error| resolution_failed(error.to_string()))?
-            .map_err(resolution_failed)?
-            .ok_or_else(|| {
-                refusal(
-                    "invalid_element_token",
-                    "no current control matches the element token".into(),
-                )
-            })?;
-        Ok(ResolvedElement::Element {
-            window_id,
-            element_index,
-            via_token,
-            element,
-        })
-    }
-}
-
-fn resolution_failed(message: String) -> ToolResult {
-    refusal("element_resolution_failed", message)
 }
 
 pub fn resolve_element_args<T, F>(
@@ -252,7 +160,6 @@ where
             ElementTarget {
                 element_index: parsed.element_index,
                 identity_tag: parsed.identity_tag,
-                runtime_scope: current_runtime_scope(),
             },
             true,
         )
@@ -263,7 +170,6 @@ where
             ElementTarget {
                 element_index: element_index.unwrap(),
                 identity_tag: None,
-                runtime_scope: current_runtime_scope(),
             },
             false,
         )
@@ -277,7 +183,10 @@ where
         ));
     }
     if !target.has_identity() {
-        return Err(refusal("element_identity_required", format!("{tool}: use an identity-bearing element_token from get_window_state; snapshot_id and element_index cannot identify a control in fresh state")));
+        return Err(refusal(
+            "element_identity_required",
+            format!("{tool}: pass an identity-bearing element_token from get_window_state; an index alone cannot identify an observed control"),
+        ));
     }
     let element = resolve_fresh(snapshot.window_id, &target).map_err(|message| refusal("element_resolution_failed", message))?.ok_or_else(|| refusal("invalid_element_token", format!("element_token element_index {} does not identify an actionable element in the current accessibility state", target.element_index)))?;
     Ok(ResolvedElement::Element {
@@ -286,6 +195,49 @@ where
         via_token,
         element,
     })
+}
+
+/// Resolve native state without blocking the async tool executor.
+pub async fn resolve_native<T, F>(
+    pid: i32,
+    element_index: Option<usize>,
+    element_token: Option<&str>,
+    snapshot_handle: Option<&str>,
+    window_id: Option<u64>,
+    tool: &str,
+    resolve_fresh: F,
+) -> Result<ResolvedElement<T>, ToolResult>
+where
+    T: Send + 'static,
+    F: FnOnce(u64, &ElementTarget) -> Result<Option<T>, String> + Send + 'static,
+{
+    if element_index.is_none() && element_token.is_none() && snapshot_handle.is_none() {
+        return Ok(ResolvedElement::None);
+    }
+    let scope = current_runtime_scope();
+    let element_token = element_token.map(str::to_owned);
+    let snapshot_handle = snapshot_handle.map(str::to_owned);
+    let tool = tool.to_owned();
+    tokio::task::spawn_blocking(move || {
+        crate::tool::with_runtime_scope(scope, || {
+            resolve_element_args(
+                pid,
+                element_index,
+                element_token.as_deref(),
+                snapshot_handle.as_deref(),
+                window_id,
+                &tool,
+                resolve_fresh,
+            )
+        })
+    })
+    .await
+    .map_err(|error| {
+        refusal(
+            "element_resolution_failed",
+            format!("native lookup worker failed: {error}"),
+        )
+    })?
 }
 
 struct ParsedElementToken {

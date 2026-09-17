@@ -71,23 +71,56 @@ pub fn screenshot_for_recording(window_id: Option<u64>, pid: Option<i64>) -> Opt
 }
 
 #[cfg(target_os = "linux")]
-pub use cua_driver_core::element_token::recording_target as element_window_local_xy;
-
-#[cfg(target_os = "linux")]
-pub fn capture_element_click(window_id: u64, pid: i64, bounds: (i32, i32, u32, u32)) {
-    cua_driver_core::recording::capture_dispatch_click_target(window_id, pid, || {
-        let (x, y) = element_window_local_xy_blocking(window_id, pid, bounds)?;
-        Some((screenshot_for_recording(Some(window_id), Some(pid))?, x, y))
-    });
+pub fn element_window_local_xy(
+    pid: i64,
+    args: &serde_json::Value,
+    capture_point: bool,
+) -> Option<(u64, Option<(f64, f64)>)> {
+    use cua_driver_core::tool_args::ArgsExt;
+    if tokio::runtime::Handle::try_current().is_ok() {
+        let args = args.clone();
+        let scope = cua_driver_core::tool::current_dispatch_runtime_scope()
+            .unwrap_or_else(|| "legacy".into());
+        return std::thread::spawn(move || {
+            cua_driver_core::tool::with_runtime_scope(scope, || {
+                element_window_local_xy(pid, &args, capture_point)
+            })
+        })
+        .join()
+        .ok()
+        .flatten();
+    }
+    let resolved = cua_driver_core::element_token::resolve_element_args(
+        i32::try_from(pid).ok()?,
+        args.opt_u64("element_index").map(|index| index as usize),
+        args.get("element_token")
+            .and_then(serde_json::Value::as_str),
+        args.get("snapshot_id").and_then(serde_json::Value::as_str),
+        args.opt_u64("window_id"),
+        "recording",
+        |window, target| crate::atspi::element_resolver::resolve_fresh(pid as i32, window, target),
+    )
+    .ok()?;
+    let (_, window, index) = resolved.into_parts(None);
+    let window_id = window?;
+    let element_index = u32::try_from(index?.0).ok()?;
+    let point = if !capture_point {
+        None
+    } else {
+        element_window_local_xy_blocking(window_id, pid, element_index)
+    };
+    Some((window_id, point))
 }
 
 #[cfg(target_os = "linux")]
 fn element_window_local_xy_blocking(
     window_id: u64,
     pid: i64,
-    (screen_x, screen_y, width, height): (i32, i32, u32, u32),
+    element_index: u32,
 ) -> Option<(f64, f64)> {
     let pid = u32::try_from(pid).ok()?;
+    let (screen_x, screen_y, width, height) =
+        crate::atspi::get_element_bounds_for_window(pid, window_id, element_index as usize).ok()?;
     let window = resolve_window_for_recording(pid, Some(window_id))?;
     if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
         let (display_width, display_height, _) = crate::wayland::hyprland::screen_size().ok()?;

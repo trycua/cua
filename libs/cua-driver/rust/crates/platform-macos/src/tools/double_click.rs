@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use cua_driver_core::tool::spawn_native;
 use cua_driver_core::{
     protocol::ToolResult,
     tool::{Tool, ToolDef},
@@ -7,7 +6,9 @@ use cua_driver_core::{
 use serde_json::Value;
 use std::sync::Arc;
 
-use crate::ax::bindings::{element_screen_center, kAXErrorSuccess, perform_action, AXUIElementRef};
+use crate::ax::bindings::{
+    copy_action_names, element_screen_center, kAXErrorSuccess, perform_action, AXUIElementRef,
+};
 
 use super::ToolState;
 
@@ -37,8 +38,8 @@ fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "double_click".into(),
         description:
-            "Double-click at (x, y) or on an AX element identified by element_token + window_id.\n\n\
-             AX path (element_token provided): performs `AXOpen` when the element advertises it \
+            "Double-click at (x, y) or on an AX element identified by element_index + window_id.\n\n\
+             AX path (element_index provided): performs `AXOpen` when the element advertises it \
              (Finder items, openable list rows/cells); otherwise resolves the element's on-screen \
              center and falls back to a pixel double-click there.\n\n\
              Pixel path (x, y provided): two down/up pairs ~80 ms apart at the given coordinates."
@@ -51,7 +52,7 @@ fn def() -> &'static ToolDef {
                 "pid":           { "type": "integer" },
                 "x":             { "type": "number",  "description": "Screen X coordinate (pixel path)." },
                 "y":             { "type": "number",  "description": "Screen Y coordinate (pixel path)." },
-                "window_id":     { "type": "integer", "description": "Window ID. Optional with element_token; if supplied, it must match the token window." },
+                "window_id":     { "type": "integer", "description": "CGWindowID. Required when element_index is used. Optional when element_token is supplied (the token carries it)." },
                 "element_index": cua_driver_core::tool_schema::element_index_schema(),
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
                 "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
@@ -117,7 +118,14 @@ impl Tool for DoubleClickTool {
             // advertises AXOpen uses the exact semantic route; all other
             // elements require the stricter routed-pointer proof. Do not let a
             // failed AXOpen silently cross into an ungated pointer fallback.
-            let has_ax_open = element_guard.supports_action("AXOpen");
+            let probe_guard = element_guard.clone();
+            let has_ax_open = tokio::task::spawn_blocking(move || unsafe {
+                copy_action_names(probe_guard.as_ptr() as AXUIElementRef)
+                    .iter()
+                    .any(|action| action == "AXOpen")
+            })
+            .await
+            .unwrap_or(false);
             let _mutation_lease = if !delivery_mode.is_foreground() {
                 let action = background_action_for_element(has_ax_open);
                 match super::gate_background_window_action(pid, wid, Some(element_ptr), action)
@@ -133,28 +141,21 @@ impl Tool for DoubleClickTool {
             // Thread the resolved session cursor key into the blocking AX path
             // so its ClickPulse lands on THIS session's cursor, not "default".
             let ck = cursor_key.clone();
-            let result = spawn_native(move || {
-                let dispatch = || {
-                    ax_double_click(
-                        pid,
-                        wid,
-                        &element_guard,
-                        idx,
-                        &ck,
-                        has_ax_open,
-                        delivery_mode.is_foreground(),
-                    )
-                };
-                if delivery_mode.is_foreground() {
-                    crate::input::skylight::with_foreground_hid_activation(pid, wid, dispatch)
-                } else {
-                    dispatch()
-                }
+            let result = tokio::task::spawn_blocking(move || {
+                ax_double_click(
+                    pid,
+                    wid,
+                    element_guard.as_ptr(),
+                    idx,
+                    &ck,
+                    has_ax_open,
+                    delivery_mode.is_foreground(),
+                )
             })
             .await;
 
             return match result {
-                Ok(Ok(result)) => result,
+                Ok(Ok(msg)) => ToolResult::text(msg),
                 Ok(Err(e)) => ToolResult::error(format!("double_click failed: {e}")),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
@@ -246,7 +247,7 @@ impl Tool for DoubleClickTool {
         );
 
         let fg = delivery_mode.is_foreground() && window_id.is_some();
-        let result = spawn_native(move || -> anyhow::Result<()> {
+        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             let do_click = move || -> anyhow::Result<()> {
                 if let Some(wid) = window_id {
                     crate::input::mouse::click_at_xy_with_window_local(
@@ -300,34 +301,29 @@ impl Tool for DoubleClickTool {
 fn ax_double_click(
     pid: i32,
     wid: u32,
-    target: &crate::ax::element_resolver::RetainedElement,
+    element_ptr: usize,
     idx: usize,
     cursor_key: &str,
     has_ax_open: bool,
     foreground: bool,
-) -> anyhow::Result<ToolResult> {
-    let element = target.checked_ptr()? as AXUIElementRef;
+) -> anyhow::Result<String> {
+    let element = element_ptr as AXUIElementRef;
 
+    // Try AXOpen first (Finder items, openable list rows, document cells).
     if has_ax_open {
-        let requested = if foreground {
-            cua_driver_core::action_record::RequestedDelivery::Foreground
-        } else {
-            cua_driver_core::action_record::RequestedDelivery::Background
-        };
-        let status = unsafe { perform_action(element, "AXOpen") };
-        if status != kAXErrorSuccess {
-            return Ok(ToolResult::native_outcome_unknown(
-                format!("AXOpen returned {status}; inspect fresh state and do not replay"),
-                cua_driver_core::action_record::ActionTransport::MacosAxAction,
-                requested,
-            ));
+        let err = unsafe { perform_action(element, "AXOpen") };
+        if err == kAXErrorSuccess {
+            return Ok(format!("AXOpen performed on element [{idx}]."));
         }
-        return Ok(crate::input::ax_actions::acknowledged(
-            format!("AXOpen performed on element [{idx}]."),
-            "AXOpen",
-            requested,
-            foreground,
-        ));
+        if !foreground {
+            anyhow::bail!(
+                "AXOpen returned {err} for element [{idx}]; background delivery will not \
+                 improvise a pointer fallback after choosing the semantic route"
+            );
+        }
+        tracing::debug!(
+            "AXOpen returned {err} for element [{idx}], falling back to pixel double-click"
+        );
     }
 
     // Resolve screen center and fall back to pixel double-click.
@@ -367,9 +363,9 @@ fn ax_double_click(
         &[],
         crate::input::mouse::WindowClickDelivery::from_foreground(foreground),
     )?;
-    Ok(ToolResult::text(format!(
+    Ok(format!(
         "✅ Double-clicked element [{idx}] at ({cx:.1}, {cy:.1})."
-    )))
+    ))
 }
 
 #[cfg(test)]

@@ -1,5 +1,17 @@
+//! set_value tool — matches the Swift reference in SetValueTool.swift.
+//!
+//! Two modes, determined by the element's AXRole:
+//!
+//! * **AXPopUpButton**: Find the child option whose AXTitle or AXValue matches
+//!   `value` (case-insensitive) and AXPress it directly.  The native macOS popup
+//!   menu is never opened, so focus is never stolen.  Falls back to Safari
+//!   `osascript do JavaScript` for WebKit `<select>` elements that expose no AX
+//!   children when the popup is closed.
+//!
+//! * **Everything else**: Write `AXValue` directly (sliders, steppers, native
+//!   text fields that expose a settable AXValue).
+
 use async_trait::async_trait;
-use cua_driver_core::tool::spawn_native;
 use cua_driver_core::{
     protocol::ToolResult,
     tool::{Tool, ToolDef},
@@ -9,11 +21,12 @@ use std::sync::Arc;
 
 use crate::apps;
 use crate::ax::bindings::{
-    copy_number_attr, copy_string_attr, kAXErrorSuccess, perform_action, set_number_attr,
-    set_string_attr, AXUIElementRef,
+    copy_children, copy_number_attr, copy_string_attr, kAXErrorSuccess, perform_action,
+    set_number_attr, set_string_attr, AXUIElementRef,
 };
 use crate::focus_guard;
 use crate::window_change_detector::WindowChangeDetector;
+use core_foundation::base::CFRelease;
 
 use super::ToolState;
 
@@ -32,7 +45,21 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "set_value".into(),
-        description: "Set a native value through an observed element_token. Popup selection requires one matching, enabled native option; unavailable or ambiguous options refuse. Other controls use their native value type, or advertised numeric stepping when AXValue is not settable. A failed native attempt is not retried through another setter, JavaScript, or keyboard input. Read fresh state to verify the result.".into(),
+        description:
+            "Set a value on a UI element. Two modes depending on element role:\n\
+             \n\
+             - **AXPopUpButton / select dropdown**: finds the child option whose \
+             title or value matches `value` (case-insensitive) and AXPresses it \
+             directly — the native macOS popup menu is never opened, so focus \
+             is never stolen. Use this for HTML <select> elements in Safari or \
+             any native NSPopUpButton.\n\
+             \n\
+             - **All other elements**: writes AXValue directly (sliders, steppers, \
+             date pickers, native text fields that expose settable AXValue).\n\
+             \n\
+             For free-form text entry into web inputs, prefer `type_text_chars` \
+             which synthesises key events — AXValue writes are ignored by WebKit."
+            .into(),
         input_schema: serde_json::json!({
             "type": "object",
             "required": ["pid", "value"],
@@ -41,7 +68,7 @@ fn def() -> &'static ToolDef {
                 "pid": { "type": "integer" },
                 "window_id": {
                     "type": "integer",
-                    "description": "CGWindowID. Must match element_token when both are supplied."
+                    "description": "CGWindowID for the window whose get_window_state produced the element_index. Required when element_index is used; optional when element_token is supplied (the token carries it)."
                 },
                 "element_index": cua_driver_core::tool_schema::element_index_schema(),
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
@@ -142,7 +169,7 @@ impl Tool for SetValueTool {
 
         let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
         let center_guard = element_guard.clone();
-        if let Ok(Some((screen_x, screen_y))) = spawn_native(move || unsafe {
+        if let Ok(Some((screen_x, screen_y))) = tokio::task::spawn_blocking(move || unsafe {
             crate::ax::bindings::element_screen_center(center_guard.as_ptr() as AXUIElementRef)
         })
         .await
@@ -161,7 +188,11 @@ impl Tool for SetValueTool {
         // the renderer never observes it. Reuse type_text's bounded ancestor
         // check so native browser chrome stays trusted but rendered content is
         // always reported as unverified.
-        let ax_echo_surface = element_guard.in_web_content();
+        let ax_echo_surface = super::type_text::target_in_web_area(
+            pid,
+            Some((element_ptr, Some(element_index))),
+            Some(window_id),
+        );
 
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
         // AXValue writes on popups / sliders can cause reflex activations
@@ -175,8 +206,8 @@ impl Tool for SetValueTool {
             prior_front,
             "set_value.AXValue",
             || async move {
-                spawn_native(move || {
-                    set_value_blocking(element_guard.checked_ptr()?, element_index, pid, &value)
+                tokio::task::spawn_blocking(move || {
+                    set_value_blocking(element_guard.as_ptr(), element_index, pid, &value)
                 })
                 .await
             },
@@ -207,10 +238,7 @@ impl Tool for SetValueTool {
                 }
                 ToolResult::text(msg).with_structured(structured)
             }
-            Ok(Err(e)) => ToolResult::from_native_error(
-                e,
-                cua_driver_core::action_record::RequestedDelivery::Background,
-            ),
+            Ok(Err(e)) => ToolResult::error(format!("set_value failed: {e}")),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
@@ -275,54 +303,68 @@ fn set_value_blocking(
             }
         })
     } else {
-        let before_number =
-            unsafe { crate::ax::bindings::copy_number_attr_checked(element, "AXValue") }
-                .map_err(|code| anyhow::anyhow!("native value type read failed: {code}"))?;
-        let numeric = before_number.is_some();
-        let numeric_target = if numeric {
-            Some(
-                value
-                    .trim()
-                    .parse::<f64>()
-                    .ok()
-                    .filter(|value| value.is_finite())
-                    .ok_or_else(|| anyhow::anyhow!("numeric control requires a finite number"))?,
-            )
-        } else {
-            None
+        // Default path: write AXValue directly. Numeric controls (AXSlider /
+        // AXStepper) reject a CFString with -25201 and need a CFNumber; text
+        // fields take a CFString. Try numeric first when the value parses as a
+        // number, then fall back to a string write.
+        // Numeric target carried through so we can step toward it if the
+        // direct writes are rejected (SwiftUI AXSlider rejects every AXValue
+        // write with -25200 yet exposes a readable AXValue + increment/decrement
+        // actions).
+        let numeric_target = value.trim().parse::<f64>().ok();
+        // Read the value before writing so an unchanged field can be reported as
+        // idempotent rather than silently indistinguishable from a fresh write.
+        let before = unsafe { copy_string_attr(element, "AXValue") };
+        let err = match numeric_target {
+            Some(n) => {
+                let e = unsafe { set_number_attr(element, "AXValue", n) };
+                if e == kAXErrorSuccess {
+                    e
+                } else {
+                    unsafe { set_string_attr(element, "AXValue", value) }
+                }
+            }
+            None => unsafe { set_string_attr(element, "AXValue", value) },
         };
-        let before = before_number
-            .map(|value| value.to_string())
-            .or_else(|| unsafe { copy_string_attr(element, "AXValue") });
-        let settable =
-            unsafe { crate::ax::bindings::is_attribute_settable_checked(element, "AXValue") }
-                .map_err(|code| anyhow::anyhow!("value capability read failed: {code}"))?;
-        if !settable {
-            let target = numeric_target.ok_or_else(|| {
-                anyhow::anyhow!("target does not support native value replacement")
-            })?;
-            if !step_to_value(element, target)? {
-                return Err(cua_driver_core::protocol::ToolResult::native_action_error(format!("native stepping did not confirm the requested value; inspect fresh state and do not replay"), cua_driver_core::action_record::ActionTransport::MacosAxValue));
+        if err == kAXErrorSuccess {
+            let after = unsafe { copy_string_attr(element, "AXValue") };
+            let (verified, changed) = classify_write(
+                before.as_deref(),
+                after.as_deref(),
+                value,
+                numeric_target.is_some(),
+            );
+            let suffix = match (verified, changed) {
+                (Some(true), Some(false)) => " Value already matched; write was idempotent.",
+                (Some(true), _) => "",
+                (Some(false), _) => " Read-back did not confirm the value; verify via screenshot.",
+                (None, _) => " Value is not readable through AX; could not confirm.",
+            };
+            Ok(SetValueOutcome {
+                detail: format!("✅ Set AXValue on [{element_index}] {role}.{suffix}"),
+                verified,
+                changed,
+            })
+        } else if let Some(target) = numeric_target {
+            // Both direct writes failed for a numeric target — fall back to
+            // stepping the control via AXIncrement / AXDecrement actions.
+            if step_to_value(element, target) {
+                let after = unsafe { copy_string_attr(element, "AXValue") };
+                let (verified, changed) =
+                    classify_write(before.as_deref(), after.as_deref(), value, true);
+                Ok(SetValueOutcome {
+                    detail: format!(
+                        "✅ Set AXValue on [{element_index}] {role} via AXIncrement/AXDecrement stepping."
+                    ),
+                    verified,
+                    changed,
+                })
+            } else {
+                anyhow::bail!("AXUIElementSetAttributeValue(AXValue) failed with error {err}")
             }
         } else {
-            let status = match numeric_target {
-                Some(number) => unsafe { set_number_attr(element, "AXValue", number) },
-                None => unsafe { set_string_attr(element, "AXValue", value) },
-            };
-            if status != kAXErrorSuccess {
-                return Err(cua_driver_core::protocol::ToolResult::native_action_error(format!("native value outcome is unknown ({status}); inspect fresh state and do not replay"), cua_driver_core::action_record::ActionTransport::MacosAxValue));
-            }
+            anyhow::bail!("AXUIElementSetAttributeValue(AXValue) failed with error {err}")
         }
-        let after = unsafe { copy_number_attr(element, "AXValue") }
-            .map(|value| value.to_string())
-            .or_else(|| unsafe { copy_string_attr(element, "AXValue") });
-        let (verified, changed) =
-            classify_write(before.as_deref(), after.as_deref(), value, numeric);
-        Ok(SetValueOutcome {
-            detail: format!("Set native value on [{element_index}] {role}; inspect fresh state before retrying."),
-            verified,
-            changed,
-        })
     }
 }
 
@@ -379,11 +421,11 @@ fn classify_write(
 ///
 /// Returns `true` once the control's value lands within half of the last
 /// observed step of `target`, `false` if it can't be read or can't be moved.
-fn step_to_value(element: AXUIElementRef, target: f64) -> anyhow::Result<bool> {
+fn step_to_value(element: AXUIElementRef, target: f64) -> bool {
     // Can't target precisely without feedback — bail if AXValue is unreadable.
     let mut current = match unsafe { copy_number_attr(element, "AXValue") } {
         Some(v) => v,
-        None => return Ok(false),
+        None => return false,
     };
 
     // Half of the last observed step. Start near-zero so we never declare the
@@ -396,7 +438,7 @@ fn step_to_value(element: AXUIElementRef, target: f64) -> anyhow::Result<bool> {
     // Hard cap to prevent runaway on a control that never quite converges.
     for _ in 0..500 {
         if (current - target).abs() <= step_radius {
-            return Ok(true);
+            return true;
         }
 
         let action = if current < target {
@@ -404,25 +446,17 @@ fn step_to_value(element: AXUIElementRef, target: f64) -> anyhow::Result<bool> {
         } else {
             "AXDecrement"
         };
-        let actions = unsafe { crate::ax::bindings::copy_action_names_checked(element) }
-            .map_err(|code| anyhow::anyhow!("native action read failed: {code}"))?;
-        if !actions.iter().any(|name| name == action) {
-            anyhow::bail!("target does not advertise {action}");
-        }
-        let status = unsafe { perform_action(element, action) };
-        if status != kAXErrorSuccess {
-            return Err(cua_driver_core::protocol::ToolResult::native_action_error(format!("native stepping outcome is unknown ({status}); inspect fresh state and do not replay"), cua_driver_core::action_record::ActionTransport::MacosAxValue));
-        }
+        let _ = unsafe { perform_action(element, action) };
 
         let next = match unsafe { copy_number_attr(element, "AXValue") } {
             Some(v) => v,
-            None => return Ok(false),
+            None => return false,
         };
 
         // The action didn't move the value — the control can't be stepped (or
         // has hit a min/max bound short of target). Stop to avoid looping.
         if next == current {
-            return Ok(false);
+            return false;
         }
 
         // Refine the stop threshold to half of the actual step the control took.
@@ -434,7 +468,7 @@ fn step_to_value(element: AXUIElementRef, target: f64) -> anyhow::Result<bool> {
     }
 
     // Exhausted the iteration cap without converging.
-    Ok((current - target).abs() <= step_radius)
+    (current - target).abs() <= step_radius
 }
 
 // ── AXPopUpButton path ───────────────────────────────────────────────────────
@@ -442,54 +476,193 @@ fn step_to_value(element: AXUIElementRef, target: f64) -> anyhow::Result<bool> {
 fn select_popup_option(
     element: AXUIElementRef,
     element_index: usize,
-    _pid: i32,
+    pid: i32,
     value: &str,
     element_title: &str,
 ) -> anyhow::Result<String> {
-    use crate::ax::bindings::{
-        copy_action_names_checked, copy_bool_attr_checked, copy_element_array,
-        copy_string_attr_checked,
-    };
-    let children = unsafe { copy_element_array(element, "AXChildren") }
-        .map_err(|code| anyhow::anyhow!("native option traversal failed: {code}"))?;
-    let owned = crate::ax::element_resolver::FreshAxElements {
-        elements: children.iter().map(|child| *child as usize).collect(),
-    };
-    if children.is_empty() || children.len() > 2000 {
-        anyhow::bail!("native options are unavailable or incomplete; global document fallback is not supported");
-    }
-    let mut selected = None;
-    for child in children {
-        let title = unsafe { copy_string_attr_checked(child, "AXTitle") }
-            .map_err(|code| anyhow::anyhow!("native option title read failed: {code}"))?;
-        let child_value = unsafe { copy_string_attr_checked(child, "AXValue") }
-            .map_err(|code| anyhow::anyhow!("native option value read failed: {code}"))?;
-        if title
-            .iter()
-            .chain(child_value.iter())
-            .any(|text| text.to_lowercase() == value.to_lowercase())
-        {
-            if selected.replace(child).is_some() {
-                anyhow::bail!("native option is ambiguous");
+    let children = unsafe { copy_children(element) };
+
+    if !children.is_empty() {
+        // Strategy 1: AX children (native AppKit NSPopUpButton).
+        let value_lower = value.to_lowercase();
+        let mut matched_idx: Option<usize> = None;
+        let mut available: Vec<String> = Vec::with_capacity(children.len());
+
+        for (i, &child) in children.iter().enumerate() {
+            let child_title = unsafe { copy_string_attr(child, "AXTitle") }.unwrap_or_default();
+            let child_value = unsafe { copy_string_attr(child, "AXValue") }.unwrap_or_default();
+            available.push(child_title.clone());
+            if child_title.to_lowercase() == value_lower
+                || child_value.to_lowercase() == value_lower
+            {
+                matched_idx = Some(i);
+                break;
             }
         }
+
+        let result = if let Some(i) = matched_idx {
+            let child = children[i];
+            let opt_title =
+                unsafe { copy_string_attr(child, "AXTitle") }.unwrap_or_else(|| value.to_string());
+            let err = unsafe { perform_action(child, "AXPress") };
+            if err == kAXErrorSuccess {
+                Ok(format!(
+                    "✅ Selected '{opt_title}' in AXPopUpButton [{element_index}] \
+                     \"{element_title}\" via AX child AXPress."
+                ))
+            } else {
+                anyhow::bail!("AXPress on child option failed with error {err}")
+            }
+        } else {
+            let avail = available
+                .iter()
+                .map(|t| format!("\"{t}\""))
+                .collect::<Vec<_>>()
+                .join(", ");
+            anyhow::bail!(
+                "No AX child matching '{value}' in AXPopUpButton [{element_index}] \
+                 \"{element_title}\". Available: [{avail}]"
+            )
+        };
+
+        // Release children (copy_children retains each one).
+        for &child in &children {
+            unsafe {
+                CFRelease(child as _);
+            }
+        }
+
+        return result;
     }
-    let selected = selected.ok_or_else(|| anyhow::anyhow!("native option was not found"))?;
-    let enabled = unsafe { copy_bool_attr_checked(selected, "AXEnabled") }
-        .map_err(|code| anyhow::anyhow!("native option state read failed: {code}"))?;
-    let actions = unsafe { copy_action_names_checked(selected) }
-        .map_err(|code| anyhow::anyhow!("native option action read failed: {code}"))?;
-    if enabled == Some(false) || !actions.iter().any(|action| action == "AXPress") {
-        anyhow::bail!("native option is disabled or unsupported");
+
+    // Strategy 2: Safari/WebKit — no AX children when popup is closed.
+    // Use osascript do JavaScript to set the <select> element's DOM value.
+    let app_name = crate::apps::get_app_name_for_pid(pid).unwrap_or_default();
+
+    if app_name != "Safari" {
+        anyhow::bail!(
+            "AXPopUpButton [{element_index}] '{element_title}' has no AX children and \
+             target is '{app_name}' (not Safari) — no fallback available."
+        )
     }
-    let status = unsafe { perform_action(selected, "AXPress") };
-    drop(owned);
-    if status != kAXErrorSuccess {
-        return Err(cua_driver_core::protocol::ToolResult::native_action_error(format!("native option outcome is unknown ({status}); inspect fresh state and do not replay"), cua_driver_core::action_record::ActionTransport::MacosAxValue));
+
+    set_select_via_js(element_index, element_title, value)
+}
+
+// ── Safari JavaScript fallback ───────────────────────────────────────────────
+
+/// Set an HTML `<select>` value in Safari via `osascript do JavaScript`.
+/// Searches all `<select>` elements for an `<option>` whose text or value matches
+/// `value` (case-insensitive), then sets it and dispatches a `change` event.
+fn set_select_via_js(
+    element_index: usize,
+    element_title: &str,
+    value: &str,
+) -> anyhow::Result<String> {
+    // Percent-encode the lowercased value using only unreserved URL characters
+    // as the allowed set, matching the Swift reference's percent-encoding approach.
+    // This makes the string safe to embed in both a JS single-quoted string
+    // (via decodeURIComponent) and an AppleScript double-quoted string.
+    let v_low = value.to_lowercase();
+    let v_encoded = percent_encode_unreserved(&v_low);
+
+    // JavaScript that matches the Swift reference verbatim.
+    let js = format!(
+        "(function(){{\
+         var v=decodeURIComponent('{v_encoded}');\
+         var ss=document.querySelectorAll('select'),opts=[];\
+         for(var i=0;i<ss.length;i++){{\
+         for(var j=0;j<ss[i].options.length;j++){{\
+         var t=ss[i].options[j].text.toLowerCase(),\
+         u=ss[i].options[j].value.toLowerCase();\
+         opts.push(t+'|'+u);\
+         if(t===v||u===v){{\
+         ss[i].value=ss[i].options[j].value;\
+         ss[i].dispatchEvent(new Event('change',{{bubbles:true}}));\
+         return 'SET:'+ss[i].value;}}}}\
+         }}return 'NOTFOUND:'+opts.join(',');\
+         }})()"
+    );
+
+    let apple_script =
+        format!("tell application \"Safari\" to do JavaScript \"{js}\" in front document");
+
+    // Spawn osascript with a 10-second deadline. A stuck Safari permission
+    // prompt or unresponsive renderer can cause wait() to block indefinitely,
+    // which would stall the MCP tool handler permanently.
+    let mut child = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(&apple_script)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("osascript launch failed: {e}"))?;
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    anyhow::bail!("osascript timed out after 10 seconds");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(e) => anyhow::bail!("osascript wait error: {e}"),
+        }
     }
-    Ok(format!(
-        "Selected '{value}' in native popup [{element_index}] '{element_title}'."
-    ))
+    let out = child
+        .wait_with_output()
+        .map_err(|e| anyhow::anyhow!("osascript output error: {e}"))?;
+
+    let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
+
+    if let Some(dom_val) = raw.strip_prefix("SET:") {
+        Ok(format!(
+            "✅ Set select [{element_index}] '{element_title}' to '{value}' via \
+             Safari JavaScript (DOM value: \"{dom_val}\")."
+        ))
+    } else if let Some(available) = raw.strip_prefix("NOTFOUND:") {
+        anyhow::bail!(
+            "No <option> matching '{value}' found in any <select>. \
+             Available (text|value): {available}"
+        )
+    } else if raw.is_empty() && !out.status.success() {
+        let err_text = String::from_utf8_lossy(&out.stderr);
+        anyhow::bail!("osascript failed: {}", err_text.trim())
+    } else {
+        anyhow::bail!(
+            "JavaScript returned unexpected output: {}",
+            &raw[..raw.len().min(200)]
+        )
+    }
+}
+
+// ── Percent-encoding helper ──────────────────────────────────────────────────
+
+/// Percent-encode a string, leaving only unreserved URL characters (`-._~` +
+/// alphanumerics) unencoded.  Matches the Swift reference's approach.
+fn percent_encode_unreserved(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 3);
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || b == b'-' || b == b'.' || b == b'_' || b == b'~' {
+            out.push(b as char);
+        } else {
+            out.push('%');
+            out.push(hex_digit(b >> 4));
+            out.push(hex_digit(b & 0xF));
+        }
+    }
+    out
+}
+
+fn hex_digit(n: u8) -> char {
+    match n {
+        0..=9 => (b'0' + n) as char,
+        10..=15 => (b'A' + n - 10) as char,
+        _ => '0',
+    }
 }
 
 #[cfg(test)]

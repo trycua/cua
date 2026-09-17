@@ -658,7 +658,7 @@ fn harness_appkit_stale_element_token_fails_closed() {
             let post = snapshot_elements(driver, pid, wid);
             assert!(
                 post.tree_text().contains("counter=0"),
-                "stale targeting mutated counter"
+                "refused targeting mutated counter"
             );
             let previous = driver.call(
                 "click",
@@ -666,7 +666,7 @@ fn harness_appkit_stale_element_token_fails_closed() {
             );
             assert!(
                 !previous.is_error(),
-                "unchanged description was invalidated by observation: {}",
+                "another observation must not invalidate an unchanged target: {}",
                 previous.text()
             );
             let post = snapshot_elements(driver, pid, wid);

@@ -51,7 +51,6 @@ pub fn click_at_xy(
     count: usize,
     modifiers: &[&str],
 ) -> anyhow::Result<()> {
-    cua_driver_core::tool::check_native_dispatch()?;
     click_at_xy_inner(pid, x, y, None, None, count, modifiers, MousePostMode::Both)
 }
 
@@ -66,7 +65,6 @@ pub fn click_at_xy(
 /// (it lands on whatever is visually on top at the point) — exactly the
 /// foreground, vision-driven model that complements the background contract.
 pub fn click_at_xy_desktop(x: f64, y: f64, count: usize, button: &str) -> anyhow::Result<()> {
-    cua_driver_core::tool::check_native_dispatch()?;
     click_at_xy_desktop_inner(x, y, count, button, &[], false)
 }
 
@@ -79,7 +77,6 @@ pub fn click_at_xy_desktop_with_modifiers(
     button: &str,
     modifiers: &[&str],
 ) -> anyhow::Result<()> {
-    cua_driver_core::tool::check_native_dispatch()?;
     click_at_xy_desktop_inner(x, y, count, button, modifiers, false)
 }
 
@@ -92,7 +89,6 @@ pub fn click_at_xy_desktop_with_modifiers_preserving_cursor(
     button: &str,
     modifiers: &[&str],
 ) -> anyhow::Result<()> {
-    cua_driver_core::tool::check_native_dispatch()?;
     click_at_xy_desktop_inner(x, y, count, button, modifiers, true)
 }
 
@@ -104,10 +100,8 @@ fn click_at_xy_desktop_inner(
     modifiers: &[&str],
     preserve_cursor: bool,
 ) -> anyhow::Result<()> {
-    cua_driver_core::tool::check_native_dispatch()?;
     use core_graphics::display::CGDisplay;
     use core_graphics::event::CGEventTapLocation;
-    cua_driver_core::tool::check_native_dispatch()?;
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
     let prior = if preserve_cursor {
@@ -156,7 +150,7 @@ fn click_at_xy_desktop_inner(
                 core_graphics::event::EventField::MOUSE_EVENT_CLICK_STATE,
                 (pair_index + 1) as i64,
             );
-            super::post_native_event(&down, CGEventTapLocation::HID);
+            down.post(CGEventTapLocation::HID);
             std::thread::sleep(std::time::Duration::from_millis(28));
             let up = CGEvent::new_mouse_event(source.clone(), up_ty, point, btn)
                 .map_err(|_| anyhow::anyhow!("CGEvent::new_mouse_event(up) failed"))?;
@@ -165,7 +159,7 @@ fn click_at_xy_desktop_inner(
                 core_graphics::event::EventField::MOUSE_EVENT_CLICK_STATE,
                 (pair_index + 1) as i64,
             );
-            super::post_native_event(&up, CGEventTapLocation::HID);
+            up.post(CGEventTapLocation::HID);
             if count > 1 {
                 std::thread::sleep(std::time::Duration::from_millis(80));
             }
@@ -203,7 +197,6 @@ pub fn scroll_wheel_desktop(
     delta_x_per_tick: i32,
     ticks: usize,
 ) -> anyhow::Result<()> {
-    cua_driver_core::tool::check_native_dispatch()?;
     use core_graphics::event::{CGEventTapLocation, ScrollEventUnit};
 
     move_cursor_desktop(x, y)?;
@@ -230,7 +223,7 @@ pub fn scroll_wheel_desktop(
             return Err(anyhow::anyhow!("CGEventCreateScrollWheelEvent2 failed"));
         }
         let event = unsafe { CGEvent::from_ptr(event_ref) };
-        super::post_native_event(&event, CGEventTapLocation::HID);
+        event.post(CGEventTapLocation::HID);
         std::thread::sleep(std::time::Duration::from_millis(30));
     }
     Ok(())
@@ -242,7 +235,6 @@ pub fn scroll_wheel_desktop(
 /// used only by approved, bounded setup flows after an accessibility element
 /// has proven the exact target point and window.
 pub fn click_at_xy_desktop_preserving_cursor(x: f64, y: f64) -> anyhow::Result<()> {
-    cua_driver_core::tool::check_native_dispatch()?;
     click_at_xy_desktop_inner(x, y, 1, "left", &[], true)
 }
 
@@ -280,7 +272,6 @@ pub fn click_at_xy_with_window_local(
     modifiers: &[&str],
     delivery: WindowClickDelivery,
 ) -> anyhow::Result<()> {
-    cua_driver_core::tool::check_native_dispatch()?;
     match delivery {
         WindowClickDelivery::Background => {
             click_at_xy_chromium(pid, x, y, wx, wy, wid, count, modifiers)
@@ -308,9 +299,8 @@ fn click_at_xy_inner(
     modifiers: &[&str],
     post_mode: MousePostMode,
 ) -> anyhow::Result<()> {
-    cua_driver_core::tool::check_native_dispatch()?;
     use std::time::{SystemTime, UNIX_EPOCH};
-    cua_driver_core::tool::check_native_dispatch()?;
+
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
     let point = CGPoint::new(x, y);
@@ -455,7 +445,6 @@ pub fn click_at_xy_chromium(
     count: usize,
     modifiers: &[&str],
 ) -> anyhow::Result<()> {
-    cua_driver_core::tool::check_native_dispatch()?;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
@@ -502,7 +491,7 @@ pub fn click_at_xy_chromium(
     let post = |event: &CGEvent| {
         let ptr = event.as_ptr() as *mut std::ffi::c_void;
         if !crate::input::skylight::post_to_pid(pid as libc::pid_t, ptr, false) {
-            super::post_native_event_to_pid(&event, pid as libc::pid_t);
+            event.post_to_pid(pid as libc::pid_t);
         }
     };
 
@@ -605,7 +594,6 @@ pub fn drag_at_xy(
     button: DragButton,
     foreground_release: bool,
 ) -> anyhow::Result<()> {
-    cua_driver_core::tool::check_native_dispatch()?;
     drag_at_xy_observed(
         pid,
         from_x,
@@ -753,7 +741,7 @@ where
         // A frontmost Chromium surface can consume PID-routed down/move
         // events yet filter the synthetic release. Re-post only the release
         // through the HID tap while the foreground assist still holds focus.
-        super::post_native_event(&up, CGEventTapLocation::HID);
+        up.post(CGEventTapLocation::HID);
     }
     // Chromium may process the final pointerup on the next run-loop turn. In
     // the foreground rung the caller restores the previous app immediately
@@ -782,7 +770,6 @@ pub fn drag_at_xy_foreground(
     modifiers: &[&str],
     button: DragButton,
 ) -> anyhow::Result<()> {
-    cua_driver_core::tool::check_native_dispatch()?;
     drag_at_xy_foreground_observed(
         from_x,
         from_y,
@@ -849,7 +836,7 @@ where
         duration_ms
     };
 
-    let post = |event: &CGEvent| super::post_native_event(&event, CGEventTapLocation::HID);
+    let post = |event: &CGEvent| event.post(CGEventTapLocation::HID);
 
     // Keep WindowServer's hardware cursor and event stream coupled. AppKit
     // hit-tests some pointer-capture surfaces against the actual cursor even
@@ -881,7 +868,7 @@ where
         down.set_flags(flags);
     }
     down.set_integer_value_field(core_graphics::event::EventField::MOUSE_EVENT_CLICK_STATE, 1);
-    super::post_native_event(&down, CGEventTapLocation::HID);
+    down.post(CGEventTapLocation::HID);
     std::thread::sleep(std::time::Duration::from_millis(16));
 
     for i in 1..=steps {
@@ -931,7 +918,6 @@ pub enum DragButton {
 /// left- and right-click primitives use. Window-local stamping mirrors
 /// `right_click_at_xy_with_window_local`.
 pub fn middle_click_at_xy(pid: i32, x: f64, y: f64, modifiers: &[&str]) -> anyhow::Result<()> {
-    cua_driver_core::tool::check_native_dispatch()?;
     middle_click_at_xy_inner(pid, x, y, None, modifiers)
 }
 
@@ -944,7 +930,6 @@ pub fn middle_click_at_xy_with_window_local(
     wy: f64,
     modifiers: &[&str],
 ) -> anyhow::Result<()> {
-    cua_driver_core::tool::check_native_dispatch()?;
     middle_click_at_xy_inner(pid, x, y, Some((wx, wy)), modifiers)
 }
 
@@ -955,7 +940,6 @@ fn middle_click_at_xy_inner(
     window_local: Option<(f64, f64)>,
     modifiers: &[&str],
 ) -> anyhow::Result<()> {
-    cua_driver_core::tool::check_native_dispatch()?;
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
     let point = CGPoint::new(x, y);
@@ -991,7 +975,6 @@ fn middle_click_at_xy_inner(
 
 /// Right-click at `(x, y)` with optional modifier keys (no window routing).
 pub fn right_click_at_xy(pid: i32, x: f64, y: f64, modifiers: &[&str]) -> anyhow::Result<()> {
-    cua_driver_core::tool::check_native_dispatch()?;
     right_click_at_xy_inner(pid, x, y, None, None, modifiers)
 }
 
@@ -1013,7 +996,6 @@ pub fn right_click_at_xy_with_window_local(
     wid: u32,
     modifiers: &[&str],
 ) -> anyhow::Result<()> {
-    cua_driver_core::tool::check_native_dispatch()?;
     right_click_at_xy_inner(pid, x, y, Some((wx, wy)), Some(wid), modifiers)
 }
 
@@ -1025,9 +1007,7 @@ fn right_click_at_xy_inner(
     wid: Option<u32>,
     modifiers: &[&str],
 ) -> anyhow::Result<()> {
-    cua_driver_core::tool::check_native_dispatch()?;
     use std::time::{SystemTime, UNIX_EPOCH};
-    cua_driver_core::tool::check_native_dispatch()?;
 
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
@@ -1175,9 +1155,9 @@ fn post_mouse_event_with_mode(
         MousePostMode::Both => {
             // Preserve the established transport for non-left-click callers.
             crate::input::skylight::post_to_pid(pid as libc::pid_t, event_ptr, false);
-            super::post_native_event_to_pid(&event, pid as libc::pid_t);
+            event.post_to_pid(pid as libc::pid_t);
         }
-        MousePostMode::PublicOnly => super::post_native_event_to_pid(&event, pid as libc::pid_t),
+        MousePostMode::PublicOnly => event.post_to_pid(pid as libc::pid_t),
     }
 }
 
@@ -1253,7 +1233,6 @@ pub fn scroll_wheel_at_xy(
     delta_x_per_tick: i32,
     ticks: usize,
 ) -> anyhow::Result<()> {
-    cua_driver_core::tool::check_native_dispatch()?;
     use core_graphics::event::ScrollEventUnit;
 
     // Prime AppKit/WebKit's tracking state at the target before the wheel
@@ -1316,7 +1295,7 @@ pub fn scroll_wheel_at_xy(
         // Belt+suspenders post: SkyLight reaches backgrounded Chromium/Catalyst;
         // the public path lands on AppKit/WKWebView. Mouse-class → no auth envelope.
         crate::input::skylight::post_to_pid(pid as libc::pid_t, event_ptr, false);
-        super::post_native_event_to_pid(&event, pid as libc::pid_t);
+        event.post_to_pid(pid as libc::pid_t);
 
         std::thread::sleep(std::time::Duration::from_millis(30));
     }

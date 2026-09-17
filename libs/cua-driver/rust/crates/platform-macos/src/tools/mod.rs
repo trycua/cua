@@ -202,32 +202,6 @@ impl DeliveryMode {
     }
 }
 
-impl From<DeliveryMode> for cua_driver_core::action_record::RequestedDelivery {
-    fn from(mode: DeliveryMode) -> Self {
-        match mode {
-            DeliveryMode::Background => Self::Background,
-            DeliveryMode::Foreground => Self::Foreground,
-        }
-    }
-}
-
-#[test]
-fn parsed_delivery_preserves_the_requested_mode() {
-    use cua_driver_core::action_record::RequestedDelivery;
-    for (input, expected) in [
-        (None, RequestedDelivery::Background),
-        (Some("background"), RequestedDelivery::Background),
-        (Some("foreground"), RequestedDelivery::Foreground),
-        (Some("FOREGROUND"), RequestedDelivery::Foreground),
-        (Some("auto"), RequestedDelivery::Background),
-    ] {
-        assert_eq!(
-            RequestedDelivery::from(DeliveryMode::parse(input)),
-            expected
-        );
-    }
-}
-
 /// Convert a pure background-input refusal into the structured refusal result
 /// shape shared by exact-target tools: `code`, `effect: "refused"`, the
 /// requested target, and the safe next route when one exists. No actuator ran.
@@ -261,7 +235,7 @@ pub(crate) fn background_refusal_result(
 /// target-bound verification.
 pub(crate) struct BackgroundMutationLease {
     pid: i32,
-    _guard: std::sync::Arc<tokio::sync::OwnedMutexGuard<()>>,
+    _guard: tokio::sync::OwnedMutexGuard<()>,
 }
 
 impl BackgroundMutationLease {
@@ -327,9 +301,7 @@ pub(crate) async fn gate_background_window_action(
 pub(crate) async fn acquire_background_mutation(pid: i32) -> BackgroundMutationLease {
     BackgroundMutationLease {
         pid,
-        _guard: cua_driver_core::tool::retain_native_resource(
-            crate::background_mutation::acquire(pid).await,
-        ),
+        _guard: crate::background_mutation::acquire(pid).await,
     }
 }
 

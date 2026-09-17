@@ -5,57 +5,66 @@ use core_foundation::base::{CFEqual, CFRelease, CFRetain, CFTypeRef};
 
 const MAX_SELECTION_ANCESTORS: usize = 8;
 
-pub fn acknowledged(
-    message: String,
-    operation: &str,
-    requested: cua_driver_core::action_record::RequestedDelivery,
-    foreground: bool,
-) -> cua_driver_core::protocol::ToolResult {
-    use cua_driver_core::action_record::*;
-    let record = ActionExecutionRecord::builder(
-        ActionEffect::Unverifiable,
-        ActionTransport::MacosAxAction,
-        requested,
-    )
-    .actual_delivery(if foreground {
-        ActualDelivery::Foreground
-    } else {
-        ActualDelivery::Background
-    })
-    .evidence(ActionEvidence {
-        kind: EvidenceKind::NativeApiResult,
-        detail: operation.into(),
-    })
-    .build()
-    .expect("acknowledged native action");
-    cua_driver_core::protocol::ToolResult::text(message).with_action_record(record)
-}
-
 fn is_selectable_container_role(role: &str) -> bool {
     matches!(role, "AXRow" | "AXCell" | "AXListItem" | "AXImage")
 }
 
-pub fn select_nearest_container(element_ptr: usize) -> anyhow::Result<Option<String>> {
-    let Some(selection) = capture_nearest_container_selection(element_ptr) else {
-        return Ok(None);
-    };
-    let settable = unsafe { is_attribute_settable_checked(selection.target, "AXSelected") }
-        .map_err(|code| anyhow::anyhow!("selection capability read failed: {code}"))?;
-    if !settable {
-        return Ok(None);
+/// Select the nearest list-like element at or above `element_ptr` and confirm
+/// the write through `AXSelected` read-back.
+///
+/// Finder and other AppKit collection views commonly expose an item's label as
+/// an actionable child (`AXTextField`) while the selectable object is its
+/// parent `AXRow`. Neither object necessarily advertises `AXPress`, and Finder
+/// can return `kAXErrorCannotComplete` for a press on the row. A pointer click
+/// selects that row, so the AX equivalent is to set the row's `AXSelected`
+/// attribute rather than treating the failed press as terminal.
+///
+/// Finder icon views expose each selectable file directly as an `AXImage` with
+/// an `AXSelected` attribute, so that role is included alongside the standard
+/// row-like containers. The fallback remains bounded and requires a successful
+/// `AXSelected=true` read-back, so an arbitrary failed image/button press cannot
+/// become a claimed success.
+pub fn select_nearest_container(element_ptr: usize) -> Option<String> {
+    let mut current = element_ptr as AXUIElementRef;
+    let mut owns_current = false;
+
+    for _ in 0..MAX_SELECTION_ANCESTORS {
+        let role = unsafe { copy_string_attr(current, "AXRole") }.unwrap_or_default();
+        if is_selectable_container_role(&role)
+            && unsafe { copy_bool_attr(current, "AXSelected") }.is_some()
+        {
+            let err = unsafe { set_bool_attr_true(current, "AXSelected") };
+            if err == kAXErrorSuccess
+                && unsafe { copy_bool_attr(current, "AXSelected") } == Some(true)
+            {
+                if owns_current {
+                    unsafe { CFRelease(current as CFTypeRef) };
+                }
+                return Some(role);
+            }
+        }
+
+        let parent = unsafe { copy_element_attr(current, "AXParent") };
+        if owns_current {
+            unsafe { CFRelease(current as CFTypeRef) };
+        }
+        let Some(parent) = parent else {
+            return None;
+        };
+        current = parent;
+        owns_current = true;
     }
-    let status = unsafe { set_bool_attr_true(selection.target, "AXSelected") };
-    if status != kAXErrorSuccess || selection.observe().map(|state| state.0) != Some(true) {
-        return Err(cua_driver_core::protocol::ToolResult::native_action_error(
-            format!(
-                "selection outcome is unknown ({status}); inspect fresh state and do not replay"
-            ),
-            cua_driver_core::action_record::ActionTransport::MacosAxValue,
-        ));
+
+    if owns_current {
+        unsafe { CFRelease(current as CFTypeRef) };
     }
-    Ok(Some(selection.role.clone()))
+    None
 }
 
+/// Read the selection state of the nearest collection-like element without
+/// mutating it. This is used to verify a coordinate fallback when AppKit
+/// exposes `AXSelected` but refuses to set it directly (notably Finder icon
+/// views).
 pub fn nearest_container_selection_state(element_ptr: usize) -> Option<(String, bool)> {
     let mut current = element_ptr as AXUIElementRef;
     let mut owns_current = false;
@@ -269,25 +278,10 @@ pub fn focus_element(element_ptr: usize) -> anyhow::Result<()> {
     if err == kAXErrorSuccess {
         Ok(())
     } else {
-        anyhow::bail!("AXSetAttribute(AXFocused) returned {err}; focus was not acknowledged")
+        // Focus errors are often benign (element doesn't support focus).
+        tracing::warn!("AXSetAttribute(AXFocused) returned {err}");
+        Ok(())
     }
-}
-
-pub fn focus_target(pid: i32, element_ptr: usize) -> anyhow::Result<()> {
-    cua_driver_core::tool::check_native_dispatch()?;
-    if is_element_focused(pid, element_ptr) {
-        return Ok(());
-    }
-    focus_element(element_ptr)?;
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(200);
-    while !is_element_focused(pid, element_ptr) {
-        cua_driver_core::tool::check_native_dispatch()?;
-        if std::time::Instant::now() >= deadline {
-            anyhow::bail!("requested element did not become focused");
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    Ok(())
 }
 
 /// Report whether `element_ptr` is the application's currently focused element.

@@ -1,5 +1,8 @@
+use crate::ax::bindings::{element_screen_center, AXUIElementRef};
 use crate::ax::element_resolver::FreshAxElements;
-pub use cua_driver_core::element_token::recording_target as element_window_local_xy;
+use cua_driver_core::element_token::ResolvedElement;
+use cua_driver_core::tool_args::ArgsExt;
+use serde_json::Value;
 
 pub fn app_state_json_for(window_id: Option<u64>, pid: Option<i64>) -> Option<Vec<u8>> {
     let pid = i32::try_from(pid?).ok()?;
@@ -23,21 +26,40 @@ pub fn app_state_json_for(window_id: Option<u64>, pid: Option<i64>) -> Option<Ve
     serde_json::to_vec_pretty(&payload).ok()
 }
 
-pub fn capture_desktop_click_point(screen_x: f64, screen_y: f64) {
-    if let Some((window, pid)) = cua_driver_core::recording::dispatch_click_target() {
-        if let (Ok(window), Ok(pid)) = (u32::try_from(window), i32::try_from(pid)) {
-            capture_click_point(pid, window, screen_x, screen_y);
-        }
-    }
-}
-
-pub fn capture_click_point(pid: i32, window_id: u32, screen_x: f64, screen_y: f64) {
-    cua_driver_core::recording::capture_dispatch_click_target(window_id.into(), pid.into(), || {
-        let frame = crate::tools::px_frame::resolve_window_px_frame(window_id).ok()?;
-        Some((
-            crate::capture::screenshot_window_bytes(window_id).ok()?,
-            (screen_x - frame.bounds.x) * frame.scale,
-            (screen_y - frame.bounds.y) * frame.scale,
-        ))
-    });
+pub fn element_window_local_xy(
+    pid: i64,
+    args: &Value,
+    capture_point: bool,
+) -> Option<(u64, Option<(f64, f64)>)> {
+    let target = cua_driver_core::element_token::resolve_element_args(
+        i32::try_from(pid).ok()?,
+        args.opt_u64("element_index").map(|index| index as usize),
+        args.get("element_token").and_then(Value::as_str),
+        args.get("snapshot_id").and_then(Value::as_str),
+        args.opt_u64("window_id"),
+        "recording",
+        |window, target| crate::ax::element_resolver::resolve_fresh(pid as i32, window, target),
+    )
+    .ok()?;
+    let ResolvedElement::Element {
+        window_id: Some(window_id),
+        element,
+        ..
+    } = target
+    else {
+        return None;
+    };
+    let point = capture_point
+        .then(|| unsafe { element_screen_center(element.as_ptr() as AXUIElementRef) })
+        .flatten()
+        .and_then(|(sx, sy)| {
+            let frame =
+                crate::tools::px_frame::resolve_window_px_frame(u32::try_from(window_id).ok()?)
+                    .ok()?;
+            Some((
+                (sx - frame.bounds.x) * frame.scale,
+                (sy - frame.bounds.y) * frame.scale,
+            ))
+        });
+    Some((window_id, point))
 }

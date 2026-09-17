@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use cua_driver_core::tool::spawn_native;
 use cua_driver_core::{
     protocol::ToolResult,
     tool::{Tool, ToolDef},
@@ -10,12 +9,12 @@ use std::sync::Arc;
 use super::ToolState;
 
 pub struct TypeTextCharsTool {
-    _state: Arc<ToolState>,
+    state: Arc<ToolState>,
 }
 
 impl TypeTextCharsTool {
     pub fn new(state: Arc<ToolState>) -> Self {
-        Self { _state: state }
+        Self { state }
     }
 }
 
@@ -117,18 +116,20 @@ impl Tool for TypeTextCharsTool {
             None
         };
 
-        let text_len = text.chars().count();
-        let result = spawn_native(move || {
-            if let Some(element) = element_guard.as_ref() {
-                let pointer = element.checked_ptr()?;
-                if type_chars_only {
-                    if !crate::input::ax_actions::is_element_focused(pid, pointer) {
-                        anyhow::bail!("requested element is not focused");
-                    }
-                } else {
-                    crate::input::ax_actions::focus_target(pid, pointer)?;
-                }
+        // Pre-focus element if requested.
+        if !type_chars_only {
+            if let Some(guard) = element_guard.as_ref().cloned() {
+                let _ = tokio::task::spawn_blocking(move || {
+                    crate::input::ax_actions::focus_element(guard.as_ptr())
+                })
+                .await;
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             }
+        }
+        drop(element_guard);
+
+        let text_len = text.chars().count();
+        let result = tokio::task::spawn_blocking(move || {
             crate::input::keyboard::type_text_with_delay(pid, &text, delay_ms)
         })
         .await;

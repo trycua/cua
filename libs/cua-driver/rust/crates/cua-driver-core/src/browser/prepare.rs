@@ -2329,10 +2329,17 @@ mod tests {
 
         let job = WindowsBrowserJob::new().expect("create browser lifecycle job");
         let mut launcher = command.spawn().expect("spawn suspended launcher helper");
+        let launcher_pid = launcher.id();
         job.assign(&launcher).expect("assign suspended launcher");
         job.resume_suspended_child(&launcher)
             .expect("resume owned launcher");
         assert!(launcher.wait().expect("wait for launcher").success());
+        // `Child` retains the exited process handle. Windows may keep that
+        // process associated with the job until the final handle closes, so
+        // release it before asserting that only the handoff descendant is
+        // live. Production keeps its handle for deterministic reaping; the
+        // endpoint owner is independently checked for live job membership.
+        drop(launcher);
 
         let deadline = Instant::now() + Duration::from_secs(5);
         while !pid_path.is_file() && Instant::now() < deadline {
@@ -2360,9 +2367,19 @@ mod tests {
             .expect("query descendant job ownership");
         assert!(in_job.as_bool());
         let outsider_pid = std::process::id();
-        let active_process_ids = job.active_process_ids().expect("query active job members");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let active_process_ids = loop {
+            let active = job.active_process_ids().expect("query active job members");
+            if !active.contains(&i64::from(launcher_pid)) {
+                break active;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "exited launcher remained in the job after its final process handle closed"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        };
         assert!(active_process_ids.contains(&i64::from(descendant_pid)));
-        assert!(!active_process_ids.contains(&i64::from(launcher.id())));
         assert!(!active_process_ids.contains(&i64::from(outsider_pid)));
         assert!(job
             .contains_active_process(i64::from(descendant_pid))

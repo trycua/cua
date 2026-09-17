@@ -1820,6 +1820,40 @@ class ClickPosition:
             return True
 
     @dataclass
+    class CAPTURED_COORDINATES:
+
+        def __init__(self, x:float, y:float, capture_id:str):
+            self.x = x
+
+
+            self.y = y
+
+
+            self.capture_id = capture_id
+
+
+            pass
+
+
+
+
+
+        def __str__(self):
+            return "ClickPosition.CAPTURED_COORDINATES(x={}, y={}, capture_id={})".format(self.x, self.y, self.capture_id)
+        def __eq__(self, other):
+            if not isinstance(other, ClickPosition):
+                return NotImplemented
+            if not other.is_CAPTURED_COORDINATES():
+                return False
+            if self.x != other.x:
+                return False
+            if self.y != other.y:
+                return False
+            if self.capture_id != other.capture_id:
+                return False
+            return True
+
+    @dataclass
     class ELEMENT:
 
         def __init__(self, element_token:str):
@@ -1851,6 +1885,10 @@ class ClickPosition:
         return isinstance(self, ClickPosition.COORDINATES)
     def is_coordinates(self) -> bool:
         return isinstance(self, ClickPosition.COORDINATES)
+    def is_CAPTURED_COORDINATES(self) -> bool:
+        return isinstance(self, ClickPosition.CAPTURED_COORDINATES)
+    def is_captured_coordinates(self) -> bool:
+        return isinstance(self, ClickPosition.CAPTURED_COORDINATES)
     def is_ELEMENT(self) -> bool:
         return isinstance(self, ClickPosition.ELEMENT)
     def is_element(self) -> bool:
@@ -1861,6 +1899,7 @@ class ClickPosition:
 # enum class, so that method calls and instance checks etc will work intuitively.
 # We might be able to do this a little more neatly with a metaclass, but this'll do.
 ClickPosition.COORDINATES = type("ClickPosition.COORDINATES", (ClickPosition.COORDINATES, ClickPosition,), {})  # type: ignore
+ClickPosition.CAPTURED_COORDINATES = type("ClickPosition.CAPTURED_COORDINATES", (ClickPosition.CAPTURED_COORDINATES, ClickPosition,), {})  # type: ignore
 ClickPosition.ELEMENT = type("ClickPosition.ELEMENT", (ClickPosition.ELEMENT, ClickPosition,), {})  # type: ignore
 
 
@@ -1876,6 +1915,12 @@ class _UniffiFfiConverterTypeClickPosition(_UniffiConverterRustBuffer):
                 _UniffiFfiConverterFloat64.read(buf),
             )
         if variant == 2:
+            return ClickPosition.CAPTURED_COORDINATES(
+                _UniffiFfiConverterFloat64.read(buf),
+                _UniffiFfiConverterFloat64.read(buf),
+                _UniffiFfiConverterString.read(buf),
+            )
+        if variant == 3:
             return ClickPosition.ELEMENT(
                 _UniffiFfiConverterString.read(buf),
             )
@@ -1886,6 +1931,11 @@ class _UniffiFfiConverterTypeClickPosition(_UniffiConverterRustBuffer):
         if value.is_COORDINATES():
             _UniffiFfiConverterFloat64.check_lower(value.x)
             _UniffiFfiConverterFloat64.check_lower(value.y)
+            return
+        if value.is_CAPTURED_COORDINATES():
+            _UniffiFfiConverterFloat64.check_lower(value.x)
+            _UniffiFfiConverterFloat64.check_lower(value.y)
+            _UniffiFfiConverterString.check_lower(value.capture_id)
             return
         if value.is_ELEMENT():
             _UniffiFfiConverterString.check_lower(value.element_token)
@@ -1898,8 +1948,13 @@ class _UniffiFfiConverterTypeClickPosition(_UniffiConverterRustBuffer):
             buf.write_i32(1)
             _UniffiFfiConverterFloat64.write(value.x, buf)
             _UniffiFfiConverterFloat64.write(value.y, buf)
-        if value.is_ELEMENT():
+        if value.is_CAPTURED_COORDINATES():
             buf.write_i32(2)
+            _UniffiFfiConverterFloat64.write(value.x, buf)
+            _UniffiFfiConverterFloat64.write(value.y, buf)
+            _UniffiFfiConverterString.write(value.capture_id, buf)
+        if value.is_ELEMENT():
+            buf.write_i32(3)
             _UniffiFfiConverterString.write(value.element_token, buf)
 
 
@@ -3557,7 +3612,7 @@ class _UniffiFfiConverterTypeGetSessionStateInput(_UniffiConverterRustBuffer):
 
 @dataclass
 class GetWindowStateInput:
-    def __init__(self, *, pid:int, window_id:int, session:typing.Optional[str], query:typing.Optional[str], include_accessibility_tree:typing.Optional[bool], include_screenshot:typing.Optional[bool], screenshot_out_file:typing.Optional[str], max_elements:typing.Optional[int], max_depth:typing.Optional[int], max_dimension:typing.Optional[int]):
+    def __init__(self, *, pid:int, window_id:int, session:typing.Optional[str], query:typing.Optional[str], include_accessibility_tree:typing.Optional[bool], include_screenshot:typing.Optional[bool], screenshot_out_file:typing.Optional[str], max_elements:typing.Optional[int], max_depth:typing.Optional[int], max_dimension:typing.Optional[int], max_image_dimension:typing.Optional[int]):
         self.pid = pid
         self.window_id = window_id
         self.session = session
@@ -3568,12 +3623,13 @@ class GetWindowStateInput:
         self.max_elements = max_elements
         self.max_depth = max_depth
         self.max_dimension = max_dimension
+        self.max_image_dimension = max_image_dimension
 
 
 
 
     def __str__(self):
-        return "GetWindowStateInput(pid={}, window_id={}, session={}, query={}, include_accessibility_tree={}, include_screenshot={}, screenshot_out_file={}, max_elements={}, max_depth={}, max_dimension={})".format(self.pid, self.window_id, self.session, self.query, self.include_accessibility_tree, self.include_screenshot, self.screenshot_out_file, self.max_elements, self.max_depth, self.max_dimension)
+        return "GetWindowStateInput(pid={}, window_id={}, session={}, query={}, include_accessibility_tree={}, include_screenshot={}, screenshot_out_file={}, max_elements={}, max_depth={}, max_dimension={}, max_image_dimension={})".format(self.pid, self.window_id, self.session, self.query, self.include_accessibility_tree, self.include_screenshot, self.screenshot_out_file, self.max_elements, self.max_depth, self.max_dimension, self.max_image_dimension)
     def __eq__(self, other):
         if self.pid != other.pid:
             return False
@@ -3595,6 +3651,8 @@ class GetWindowStateInput:
             return False
         if self.max_dimension != other.max_dimension:
             return False
+        if self.max_image_dimension != other.max_image_dimension:
+            return False
         return True
 
 class _UniffiFfiConverterTypeGetWindowStateInput(_UniffiConverterRustBuffer):
@@ -3611,6 +3669,7 @@ class _UniffiFfiConverterTypeGetWindowStateInput(_UniffiConverterRustBuffer):
             max_elements=_UniffiFfiConverterOptionalUInt32.read(buf),
             max_depth=_UniffiFfiConverterOptionalUInt32.read(buf),
             max_dimension=_UniffiFfiConverterOptionalUInt32.read(buf),
+            max_image_dimension=_UniffiFfiConverterOptionalUInt32.read(buf),
         )
 
     @staticmethod
@@ -3625,6 +3684,7 @@ class _UniffiFfiConverterTypeGetWindowStateInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalUInt32.check_lower(value.max_elements)
         _UniffiFfiConverterOptionalUInt32.check_lower(value.max_depth)
         _UniffiFfiConverterOptionalUInt32.check_lower(value.max_dimension)
+        _UniffiFfiConverterOptionalUInt32.check_lower(value.max_image_dimension)
 
     @staticmethod
     def write(value, buf):
@@ -3638,6 +3698,7 @@ class _UniffiFfiConverterTypeGetWindowStateInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalUInt32.write(value.max_elements, buf)
         _UniffiFfiConverterOptionalUInt32.write(value.max_depth, buf)
         _UniffiFfiConverterOptionalUInt32.write(value.max_dimension, buf)
+        _UniffiFfiConverterOptionalUInt32.write(value.max_image_dimension, buf)
 
 @dataclass
 class HotkeyInput:
@@ -4938,13 +4999,12 @@ class VisualActionCoordinateSpace:
     Normative mapping from source screenshot pixels to Driver action coordinates.
 
     Screenshot coordinates always originate at the encoded PNG's top-left; X
-    increases right and Y increases down. For `ScaledTopLeft`, positive
-    `action_units_per_pixel_*` preserve those axis directions and map a source
-    point `(px, py)` exactly as:
+    increases right and Y increases down. The affine form maps a source point
+    `(px, py)` exactly as:
 
-    `action_x = action_origin_x + px * action_units_per_pixel_x`
+    `action_x = m11 * px + m12 * py + tx`
 
-    `action_y = action_origin_y + py * action_units_per_pixel_y`
+    `action_y = m21 * px + m22 * py + ty`
 """
     def __init__(self):
         raise RuntimeError("VisualActionCoordinateSpace cannot be instantiated directly")
@@ -4973,23 +5033,28 @@ class VisualActionCoordinateSpace:
             return True
 
     @dataclass
-    class SCALED_TOP_LEFT:
+    class AFFINE:
         """
-        Action coordinates have a top-left origin plus independent positive
-        action-units-per-screenshot-pixel scales.
+        Lossless six-coefficient affine transform retained by the capture registry.
 """
 
-        def __init__(self, action_origin_x:float, action_origin_y:float, action_units_per_pixel_x:float, action_units_per_pixel_y:float):
-            self.action_origin_x = action_origin_x
+        def __init__(self, m11:float, m12:float, m21:float, m22:float, tx:float, ty:float):
+            self.m11 = m11
 
 
-            self.action_origin_y = action_origin_y
+            self.m12 = m12
 
 
-            self.action_units_per_pixel_x = action_units_per_pixel_x
+            self.m21 = m21
 
 
-            self.action_units_per_pixel_y = action_units_per_pixel_y
+            self.m22 = m22
+
+
+            self.tx = tx
+
+
+            self.ty = ty
 
 
             pass
@@ -4999,19 +5064,23 @@ class VisualActionCoordinateSpace:
 
 
         def __str__(self):
-            return "VisualActionCoordinateSpace.SCALED_TOP_LEFT(action_origin_x={}, action_origin_y={}, action_units_per_pixel_x={}, action_units_per_pixel_y={})".format(self.action_origin_x, self.action_origin_y, self.action_units_per_pixel_x, self.action_units_per_pixel_y)
+            return "VisualActionCoordinateSpace.AFFINE(m11={}, m12={}, m21={}, m22={}, tx={}, ty={})".format(self.m11, self.m12, self.m21, self.m22, self.tx, self.ty)
         def __eq__(self, other):
             if not isinstance(other, VisualActionCoordinateSpace):
                 return NotImplemented
-            if not other.is_SCALED_TOP_LEFT():
+            if not other.is_AFFINE():
                 return False
-            if self.action_origin_x != other.action_origin_x:
+            if self.m11 != other.m11:
                 return False
-            if self.action_origin_y != other.action_origin_y:
+            if self.m12 != other.m12:
                 return False
-            if self.action_units_per_pixel_x != other.action_units_per_pixel_x:
+            if self.m21 != other.m21:
                 return False
-            if self.action_units_per_pixel_y != other.action_units_per_pixel_y:
+            if self.m22 != other.m22:
+                return False
+            if self.tx != other.tx:
+                return False
+            if self.ty != other.ty:
                 return False
             return True
 
@@ -5023,17 +5092,17 @@ class VisualActionCoordinateSpace:
         return isinstance(self, VisualActionCoordinateSpace.SCREENSHOT_PIXELS)
     def is_screenshot_pixels(self) -> bool:
         return isinstance(self, VisualActionCoordinateSpace.SCREENSHOT_PIXELS)
-    def is_SCALED_TOP_LEFT(self) -> bool:
-        return isinstance(self, VisualActionCoordinateSpace.SCALED_TOP_LEFT)
-    def is_scaled_top_left(self) -> bool:
-        return isinstance(self, VisualActionCoordinateSpace.SCALED_TOP_LEFT)
+    def is_AFFINE(self) -> bool:
+        return isinstance(self, VisualActionCoordinateSpace.AFFINE)
+    def is_affine(self) -> bool:
+        return isinstance(self, VisualActionCoordinateSpace.AFFINE)
 
 
 # Now, a little trick - we make each nested variant class be a subclass of the main
 # enum class, so that method calls and instance checks etc will work intuitively.
 # We might be able to do this a little more neatly with a metaclass, but this'll do.
 VisualActionCoordinateSpace.SCREENSHOT_PIXELS = type("VisualActionCoordinateSpace.SCREENSHOT_PIXELS", (VisualActionCoordinateSpace.SCREENSHOT_PIXELS, VisualActionCoordinateSpace,), {})  # type: ignore
-VisualActionCoordinateSpace.SCALED_TOP_LEFT = type("VisualActionCoordinateSpace.SCALED_TOP_LEFT", (VisualActionCoordinateSpace.SCALED_TOP_LEFT, VisualActionCoordinateSpace,), {})  # type: ignore
+VisualActionCoordinateSpace.AFFINE = type("VisualActionCoordinateSpace.AFFINE", (VisualActionCoordinateSpace.AFFINE, VisualActionCoordinateSpace,), {})  # type: ignore
 
 
 
@@ -5046,7 +5115,9 @@ class _UniffiFfiConverterTypeVisualActionCoordinateSpace(_UniffiConverterRustBuf
             return VisualActionCoordinateSpace.SCREENSHOT_PIXELS(
             )
         if variant == 2:
-            return VisualActionCoordinateSpace.SCALED_TOP_LEFT(
+            return VisualActionCoordinateSpace.AFFINE(
+                _UniffiFfiConverterFloat64.read(buf),
+                _UniffiFfiConverterFloat64.read(buf),
                 _UniffiFfiConverterFloat64.read(buf),
                 _UniffiFfiConverterFloat64.read(buf),
                 _UniffiFfiConverterFloat64.read(buf),
@@ -5058,11 +5129,13 @@ class _UniffiFfiConverterTypeVisualActionCoordinateSpace(_UniffiConverterRustBuf
     def check_lower(value):
         if value.is_SCREENSHOT_PIXELS():
             return
-        if value.is_SCALED_TOP_LEFT():
-            _UniffiFfiConverterFloat64.check_lower(value.action_origin_x)
-            _UniffiFfiConverterFloat64.check_lower(value.action_origin_y)
-            _UniffiFfiConverterFloat64.check_lower(value.action_units_per_pixel_x)
-            _UniffiFfiConverterFloat64.check_lower(value.action_units_per_pixel_y)
+        if value.is_AFFINE():
+            _UniffiFfiConverterFloat64.check_lower(value.m11)
+            _UniffiFfiConverterFloat64.check_lower(value.m12)
+            _UniffiFfiConverterFloat64.check_lower(value.m21)
+            _UniffiFfiConverterFloat64.check_lower(value.m22)
+            _UniffiFfiConverterFloat64.check_lower(value.tx)
+            _UniffiFfiConverterFloat64.check_lower(value.ty)
             return
         raise ValueError(value)
 
@@ -5070,12 +5143,14 @@ class _UniffiFfiConverterTypeVisualActionCoordinateSpace(_UniffiConverterRustBuf
     def write(value, buf):
         if value.is_SCREENSHOT_PIXELS():
             buf.write_i32(1)
-        if value.is_SCALED_TOP_LEFT():
+        if value.is_AFFINE():
             buf.write_i32(2)
-            _UniffiFfiConverterFloat64.write(value.action_origin_x, buf)
-            _UniffiFfiConverterFloat64.write(value.action_origin_y, buf)
-            _UniffiFfiConverterFloat64.write(value.action_units_per_pixel_x, buf)
-            _UniffiFfiConverterFloat64.write(value.action_units_per_pixel_y, buf)
+            _UniffiFfiConverterFloat64.write(value.m11, buf)
+            _UniffiFfiConverterFloat64.write(value.m12, buf)
+            _UniffiFfiConverterFloat64.write(value.m21, buf)
+            _UniffiFfiConverterFloat64.write(value.m22, buf)
+            _UniffiFfiConverterFloat64.write(value.tx, buf)
+            _UniffiFfiConverterFloat64.write(value.ty, buf)
 
 
 

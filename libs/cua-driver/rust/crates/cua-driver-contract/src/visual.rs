@@ -3,9 +3,9 @@
 
 //! Model-neutral DTOs for parsing an immutable screenshot into visual regions.
 //!
-//! This module is a transport-free contract foundation. It does not register a
-//! tool and is not usable by the current runtime on its own. A future Driver-
-//! owned capture registry must retain an immutable PNG together with its exact
+//! This module is a transport-free public contract. It registers the callable
+//! tool schema without implementing dispatch. A Driver-owned capture registry
+//! must retain an immutable PNG together with its exact
 //! target and screenshot-to-action transform for every `capture_id`. Current
 //! `WindowStateOutput::snapshot_id` values do not retain screenshot pixels, and
 //! `DesktopStateOutput` has no capture ID, so neither satisfies this contract.
@@ -16,8 +16,13 @@
 //! DTOs use explicit fields compatible with UniFFI; future additive data should
 //! use optional typed fields or a new versioned schema rather than dynamic JSON.
 
+use crate::{
+    CursorAction, CursorSemantics, Platform, SchemaMode, ToolAnnotations, ToolContract, ToolInput,
+    ToolOutput,
+};
 use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::BTreeSet;
 
 pub const VISUAL_REGIONS_SCHEMA: &str = "cua.visual_regions_v1";
@@ -93,25 +98,25 @@ pub struct VisualScreenshotReference {
 /// Normative mapping from source screenshot pixels to Driver action coordinates.
 ///
 /// Screenshot coordinates always originate at the encoded PNG's top-left; X
-/// increases right and Y increases down. For `ScaledTopLeft`, positive
-/// `action_units_per_pixel_*` preserve those axis directions and map a source
-/// point `(px, py)` exactly as:
+/// increases right and Y increases down. The affine form maps a source point
+/// `(px, py)` exactly as:
 ///
-/// `action_x = action_origin_x + px * action_units_per_pixel_x`
+/// `action_x = m11 * px + m12 * py + tx`
 ///
-/// `action_y = action_origin_y + py * action_units_per_pixel_y`
+/// `action_y = m21 * px + m22 * py + ty`
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Enum)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum VisualActionCoordinateSpace {
     /// Action coordinates are the same physical pixel coordinates as the PNG.
     ScreenshotPixels,
-    /// Action coordinates have a top-left origin plus independent positive
-    /// action-units-per-screenshot-pixel scales.
-    ScaledTopLeft {
-        action_origin_x: f64,
-        action_origin_y: f64,
-        action_units_per_pixel_x: f64,
-        action_units_per_pixel_y: f64,
+    /// Lossless six-coefficient affine transform retained by the capture registry.
+    Affine {
+        m11: f64,
+        m12: f64,
+        m21: f64,
+        m22: f64,
+        tx: f64,
+        ty: f64,
     },
 }
 
@@ -119,14 +124,16 @@ impl VisualActionCoordinateSpace {
     pub fn map_point(&self, pixel_x: f64, pixel_y: f64) -> (f64, f64) {
         match self {
             Self::ScreenshotPixels => (pixel_x, pixel_y),
-            Self::ScaledTopLeft {
-                action_origin_x,
-                action_origin_y,
-                action_units_per_pixel_x,
-                action_units_per_pixel_y,
+            Self::Affine {
+                m11,
+                m12,
+                m21,
+                m22,
+                tx,
+                ty,
             } => (
-                action_origin_x + pixel_x * action_units_per_pixel_x,
-                action_origin_y + pixel_y * action_units_per_pixel_y,
+                m11.mul_add(pixel_x, m12.mul_add(pixel_y, *tx)),
+                m21.mul_add(pixel_x, m22.mul_add(pixel_y, *ty)),
             ),
         }
     }
@@ -134,23 +141,21 @@ impl VisualActionCoordinateSpace {
     fn validate(&self) -> Result<(), VisualContractValidationError> {
         match self {
             Self::ScreenshotPixels => Ok(()),
-            Self::ScaledTopLeft {
-                action_origin_x,
-                action_origin_y,
-                action_units_per_pixel_x,
-                action_units_per_pixel_y,
-            } if action_origin_x.is_finite()
-                && action_origin_y.is_finite()
-                && action_units_per_pixel_x.is_finite()
-                && *action_units_per_pixel_x > 0.0
-                && action_units_per_pixel_y.is_finite()
-                && *action_units_per_pixel_y > 0.0 =>
+            Self::Affine {
+                m11,
+                m12,
+                m21,
+                m22,
+                tx,
+                ty,
+            } if [m11, m12, m21, m22, tx, ty]
+                .into_iter()
+                .all(|value| value.is_finite())
+                && m11.mul_add(*m22, -(*m12 * *m21)).abs() > f64::EPSILON =>
             {
                 Ok(())
             }
-            Self::ScaledTopLeft { .. } => {
-                Err(VisualContractValidationError::InvalidCoordinateSpace)
-            }
+            Self::Affine { .. } => Err(VisualContractValidationError::InvalidCoordinateSpace),
         }
     }
 }
@@ -186,6 +191,14 @@ pub struct ParseVisualRegionsInput {
     pub capture_id: String,
     #[serde(default)]
     pub options: ParseVisualRegionsOptions,
+}
+
+impl ToolInput for ParseVisualRegionsInput {
+    const TOOL_NAME: &'static str = "parse_visual_regions";
+
+    fn validate(&self) -> Result<(), String> {
+        ParseVisualRegionsInput::validate(self).map_err(|error| error.to_string())
+    }
 }
 
 #[derive(
@@ -310,6 +323,12 @@ pub struct ParseVisualRegionsOutput {
     pub request_id: Option<String>,
 }
 
+impl ToolOutput for ParseVisualRegionsOutput {
+    fn validate(&self) -> Result<(), String> {
+        ParseVisualRegionsOutput::validate(self).map_err(|error| error.to_string())
+    }
+}
+
 /// Stable machine-readable failures for capture lookup and visual parsing.
 #[derive(
     Debug,
@@ -351,6 +370,39 @@ pub struct VisualParseError {
     pub retryable: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+}
+
+fn error_schema() -> Value {
+    crate::outputs::output_schema_with_additional_properties::<VisualParseError>(false)
+}
+
+const ALL_PLATFORMS: [Platform; 3] = [Platform::Macos, Platform::Windows, Platform::Linux];
+
+pub(crate) fn contracts() -> Vec<ToolContract> {
+    vec![ToolContract {
+        name: ParseVisualRegionsInput::TOOL_NAME.into(),
+        description:
+            "Parse one immutable registered capture into model-neutral text and icon regions."
+                .into(),
+        platforms: ALL_PLATFORMS.to_vec(),
+        aliases: Vec::new(),
+        capabilities: vec![
+            "visual.regions.parse".into(),
+            "screen.capture.registry.read".into(),
+        ],
+        annotations: ToolAnnotations {
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        },
+        schema_mode: SchemaMode::CanonicalRuntime,
+        cursor_semantics: Some(CursorSemantics::new(CursorAction::Observe)),
+        input_schema: ParseVisualRegionsInput::input_schema(),
+        success_output_schema: Some(ParseVisualRegionsOutput::output_schema()),
+        error_output_schema: Some(error_schema()),
+        output_validator: crate::validate_typed_output::<ParseVisualRegionsOutput>,
+    }]
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -396,7 +448,7 @@ impl std::fmt::Display for VisualContractValidationError {
             Self::InvalidScreenshotDigest => "screenshot sha256 must be a 64-character hex digest",
             Self::InvalidCaptureMetadata => "optional capture metadata must not be empty",
             Self::InvalidCoordinateSpace => {
-                "action coordinate transform must be finite and positive"
+                "action coordinate transform must be finite and invertible"
             }
             Self::InvalidMinimumConfidence => "min_confidence must be finite and between 0 and 1",
             Self::InvalidMaximumRegions => "max_regions must be positive",
@@ -642,11 +694,13 @@ mod tests {
                 mime_type: "image/png".into(),
                 sha256: None,
             },
-            action_coordinate_space: VisualActionCoordinateSpace::ScaledTopLeft {
-                action_origin_x: 100.0,
-                action_origin_y: 200.0,
-                action_units_per_pixel_x: 0.5,
-                action_units_per_pixel_y: 2.0,
+            action_coordinate_space: VisualActionCoordinateSpace::Affine {
+                m11: 0.5,
+                m12: 0.25,
+                m21: -0.5,
+                m22: 2.0,
+                tx: 100.0,
+                ty: 200.0,
             },
             captured_at: Some("2026-09-17T12:00:00Z".into()),
         }
@@ -744,7 +798,7 @@ mod tests {
         assert_eq!(region.bounds.center(), (61.5, 30.5));
         assert_eq!(
             region.action_center(&capture().action_coordinate_space),
-            (130.75, 261.0)
+            (138.375, 230.25)
         );
         assert!(serde_json::to_value(region)
             .unwrap()

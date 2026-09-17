@@ -715,6 +715,7 @@ const FfiConverterTypeActionTarget = (() => {
 // Enum: ClickPosition
 export enum ClickPosition_Tags {
     Coordinates = "Coordinates",
+    CapturedCoordinates = "CapturedCoordinates",
     Element = "Element"
 }
 export const ClickPosition = (() => {
@@ -746,6 +747,37 @@ inner: {x: number; y: number }): Coordinates_ {
 
         static instanceOf(obj: any): obj is Coordinates_ {
             return obj.tag === ClickPosition_Tags.Coordinates;
+        }
+
+    }
+
+    type CapturedCoordinates__interface = {
+        tag: ClickPosition_Tags.CapturedCoordinates;
+        inner:
+Readonly<{x: number; y: number; captureId: string}>
+    };
+    class CapturedCoordinates_ extends UniffiEnum implements CapturedCoordinates__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "ClickPosition";
+        readonly tag = ClickPosition_Tags.CapturedCoordinates;
+        readonly inner:
+Readonly<{x: number; y: number; captureId: string}>;
+        constructor(
+inner: {x: number; y: number; captureId: string }) {
+            super("ClickPosition", "CapturedCoordinates");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {x: number; y: number; captureId: string }): CapturedCoordinates_ {
+            return new CapturedCoordinates_(inner);
+        }
+
+        static instanceOf(obj: any): obj is CapturedCoordinates_ {
+            return obj.tag === ClickPosition_Tags.CapturedCoordinates;
         }
 
     }
@@ -788,12 +820,13 @@ inner: {elementToken: string }): Element_ {
     return Object.freeze({
         instanceOf,
   Coordinates: Coordinates_,
+  CapturedCoordinates: CapturedCoordinates_,
   Element: Element_
     });
 
 })();
 export type ClickPosition = InstanceType<
-    typeof ClickPosition['Coordinates' | 'Element']
+    typeof ClickPosition['Coordinates' | 'CapturedCoordinates' | 'Element']
 >;
 
 // FfiConverter for enum ClickPosition
@@ -804,7 +837,8 @@ const FfiConverterTypeClickPosition = (() => {
         read(from: RustBuffer): TypeName {
             switch (ordinalConverter.read(from)) {
                 case 1: return new ClickPosition.Coordinates({x: FfiConverterFloat64.read(from), y: FfiConverterFloat64.read(from) });
-                case 2: return new ClickPosition.Element({elementToken: FfiConverterString.read(from) });
+                case 2: return new ClickPosition.CapturedCoordinates({x: FfiConverterFloat64.read(from), y: FfiConverterFloat64.read(from), captureId: FfiConverterString.read(from) });
+                case 3: return new ClickPosition.Element({elementToken: FfiConverterString.read(from) });
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -817,8 +851,16 @@ const FfiConverterTypeClickPosition = (() => {
                     FfiConverterFloat64.write(inner.y, into);
                     return;
                 }
-                case ClickPosition_Tags.Element: {
+                case ClickPosition_Tags.CapturedCoordinates: {
                     ordinalConverter.write(2, into);
+                    const inner = value.inner;
+                    FfiConverterFloat64.write(inner.x, into);
+                    FfiConverterFloat64.write(inner.y, into);
+                    FfiConverterString.write(inner.captureId, into);
+                    return;
+                }
+                case ClickPosition_Tags.Element: {
+                    ordinalConverter.write(3, into);
                     const inner = value.inner;
                     FfiConverterString.write(inner.elementToken, into);
                     return;
@@ -837,9 +879,17 @@ const FfiConverterTypeClickPosition = (() => {
                     size += FfiConverterFloat64.allocationSize(inner.y);
                     return size;
                 }
-                case ClickPosition_Tags.Element: {
+                case ClickPosition_Tags.CapturedCoordinates: {
                     const inner = value.inner;
                     let size = ordinalConverter.allocationSize(2);
+                    size += FfiConverterFloat64.allocationSize(inner.x);
+                    size += FfiConverterFloat64.allocationSize(inner.y);
+                    size += FfiConverterString.allocationSize(inner.captureId);
+                    return size;
+                }
+                case ClickPosition_Tags.Element: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(3);
                     size += FfiConverterString.allocationSize(inner.elementToken);
                     return size;
                 }
@@ -2332,7 +2382,12 @@ export type GetWindowStateInput = {
     screenshotOutFile?: string,
     maxElements?: number,
     maxDepth?: number,
-    maxDimension?: number
+    maxDimension?: number,
+    /**
+     * Optional per-call long-edge ceiling. Omit it to preserve the configured
+     * session or global image dimension behavior.
+     */
+    maxImageDimension?: number
 }
 
 /**
@@ -2365,7 +2420,8 @@ const FfiConverterTypeGetWindowStateInput = (() => {
                 screenshotOutFile: FfiConverterOptionalString.read(from),
                 maxElements: FfiConverterOptionalUInt32.read(from),
                 maxDepth: FfiConverterOptionalUInt32.read(from),
-                maxDimension: FfiConverterOptionalUInt32.read(from)
+                maxDimension: FfiConverterOptionalUInt32.read(from),
+                maxImageDimension: FfiConverterOptionalUInt32.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -2379,6 +2435,7 @@ const FfiConverterTypeGetWindowStateInput = (() => {
             FfiConverterOptionalUInt32.write(value.maxElements, into);
             FfiConverterOptionalUInt32.write(value.maxDepth, into);
             FfiConverterOptionalUInt32.write(value.maxDimension, into);
+            FfiConverterOptionalUInt32.write(value.maxImageDimension, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterUInt32.allocationSize(value.pid) +
@@ -2390,7 +2447,8 @@ const FfiConverterTypeGetWindowStateInput = (() => {
              FfiConverterOptionalString.allocationSize(value.screenshotOutFile) +
              FfiConverterOptionalUInt32.allocationSize(value.maxElements) +
              FfiConverterOptionalUInt32.allocationSize(value.maxDepth) +
-             FfiConverterOptionalUInt32.allocationSize(value.maxDimension);
+             FfiConverterOptionalUInt32.allocationSize(value.maxDimension) +
+             FfiConverterOptionalUInt32.allocationSize(value.maxImageDimension);
 
         }
     };
@@ -3484,19 +3542,18 @@ const FfiConverterTypeVisualScreenshotReference = (() => {
 // Enum: VisualActionCoordinateSpace
 export enum VisualActionCoordinateSpace_Tags {
     ScreenshotPixels = "ScreenshotPixels",
-    ScaledTopLeft = "ScaledTopLeft"
+    Affine = "Affine"
 }
 /**
  * Normative mapping from source screenshot pixels to Driver action coordinates.
  *
  * Screenshot coordinates always originate at the encoded PNG's top-left; X
- * increases right and Y increases down. For `ScaledTopLeft`, positive
- * `action_units_per_pixel_*` preserve those axis directions and map a source
- * point `(px, py)` exactly as:
+ * increases right and Y increases down. The affine form maps a source point
+ * `(px, py)` exactly as:
  *
- * `action_x = action_origin_x + px * action_units_per_pixel_x`
+ * `action_x = m11 * px + m12 * py + tx`
  *
- * `action_y = action_origin_y + py * action_units_per_pixel_y`
+ * `action_y = m21 * px + m22 * py + ty`
  */
 export const VisualActionCoordinateSpace = (() => {
 
@@ -3527,37 +3584,36 @@ export const VisualActionCoordinateSpace = (() => {
 
     }
 
-    type ScaledTopLeft__interface = {
-        tag: VisualActionCoordinateSpace_Tags.ScaledTopLeft;
+    type Affine__interface = {
+        tag: VisualActionCoordinateSpace_Tags.Affine;
         inner:
-Readonly<{actionOriginX: number; actionOriginY: number; actionUnitsPerPixelX: number; actionUnitsPerPixelY: number}>
+Readonly<{m11: number; m12: number; m21: number; m22: number; tx: number; ty: number}>
     };
     /**
-     * Action coordinates have a top-left origin plus independent positive
-     * action-units-per-screenshot-pixel scales.
+     * Lossless six-coefficient affine transform retained by the capture registry.
      */
-    class ScaledTopLeft_ extends UniffiEnum implements ScaledTopLeft__interface {
+    class Affine_ extends UniffiEnum implements Affine__interface {
         /**
          * @private
          * This field is private and should not be used, use `tag` instead.
          */
         readonly [uniffiTypeNameSymbol] = "VisualActionCoordinateSpace";
-        readonly tag = VisualActionCoordinateSpace_Tags.ScaledTopLeft;
+        readonly tag = VisualActionCoordinateSpace_Tags.Affine;
         readonly inner:
-Readonly<{actionOriginX: number; actionOriginY: number; actionUnitsPerPixelX: number; actionUnitsPerPixelY: number}>;
+Readonly<{m11: number; m12: number; m21: number; m22: number; tx: number; ty: number}>;
         constructor(
-inner: {actionOriginX: number; actionOriginY: number; actionUnitsPerPixelX: number; actionUnitsPerPixelY: number }) {
-            super("VisualActionCoordinateSpace", "ScaledTopLeft");
+inner: {m11: number; m12: number; m21: number; m22: number; tx: number; ty: number }) {
+            super("VisualActionCoordinateSpace", "Affine");
 
             this.inner = Object.freeze(inner);
         }
         static new(
-inner: {actionOriginX: number; actionOriginY: number; actionUnitsPerPixelX: number; actionUnitsPerPixelY: number }): ScaledTopLeft_ {
-            return new ScaledTopLeft_(inner);
+inner: {m11: number; m12: number; m21: number; m22: number; tx: number; ty: number }): Affine_ {
+            return new Affine_(inner);
         }
 
-        static instanceOf(obj: any): obj is ScaledTopLeft_ {
-            return obj.tag === VisualActionCoordinateSpace_Tags.ScaledTopLeft;
+        static instanceOf(obj: any): obj is Affine_ {
+            return obj.tag === VisualActionCoordinateSpace_Tags.Affine;
         }
 
     }
@@ -3569,7 +3625,7 @@ inner: {actionOriginX: number; actionOriginY: number; actionUnitsPerPixelX: numb
     return Object.freeze({
         instanceOf,
   ScreenshotPixels: ScreenshotPixels_,
-  ScaledTopLeft: ScaledTopLeft_
+  Affine: Affine_
     });
 
 })();
@@ -3577,16 +3633,15 @@ inner: {actionOriginX: number; actionOriginY: number; actionUnitsPerPixelX: numb
  * Normative mapping from source screenshot pixels to Driver action coordinates.
  *
  * Screenshot coordinates always originate at the encoded PNG's top-left; X
- * increases right and Y increases down. For `ScaledTopLeft`, positive
- * `action_units_per_pixel_*` preserve those axis directions and map a source
- * point `(px, py)` exactly as:
+ * increases right and Y increases down. The affine form maps a source point
+ * `(px, py)` exactly as:
  *
- * `action_x = action_origin_x + px * action_units_per_pixel_x`
+ * `action_x = m11 * px + m12 * py + tx`
  *
- * `action_y = action_origin_y + py * action_units_per_pixel_y`
+ * `action_y = m21 * px + m22 * py + ty`
  */
 export type VisualActionCoordinateSpace = InstanceType<
-    typeof VisualActionCoordinateSpace['ScreenshotPixels' | 'ScaledTopLeft']
+    typeof VisualActionCoordinateSpace['ScreenshotPixels' | 'Affine']
 >;
 
 // FfiConverter for enum VisualActionCoordinateSpace
@@ -3597,7 +3652,7 @@ const FfiConverterTypeVisualActionCoordinateSpace = (() => {
         read(from: RustBuffer): TypeName {
             switch (ordinalConverter.read(from)) {
                 case 1: return new VisualActionCoordinateSpace.ScreenshotPixels();
-                case 2: return new VisualActionCoordinateSpace.ScaledTopLeft({actionOriginX: FfiConverterFloat64.read(from), actionOriginY: FfiConverterFloat64.read(from), actionUnitsPerPixelX: FfiConverterFloat64.read(from), actionUnitsPerPixelY: FfiConverterFloat64.read(from) });
+                case 2: return new VisualActionCoordinateSpace.Affine({m11: FfiConverterFloat64.read(from), m12: FfiConverterFloat64.read(from), m21: FfiConverterFloat64.read(from), m22: FfiConverterFloat64.read(from), tx: FfiConverterFloat64.read(from), ty: FfiConverterFloat64.read(from) });
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -3607,13 +3662,15 @@ const FfiConverterTypeVisualActionCoordinateSpace = (() => {
                     ordinalConverter.write(1, into);
                     return;
                 }
-                case VisualActionCoordinateSpace_Tags.ScaledTopLeft: {
+                case VisualActionCoordinateSpace_Tags.Affine: {
                     ordinalConverter.write(2, into);
                     const inner = value.inner;
-                    FfiConverterFloat64.write(inner.actionOriginX, into);
-                    FfiConverterFloat64.write(inner.actionOriginY, into);
-                    FfiConverterFloat64.write(inner.actionUnitsPerPixelX, into);
-                    FfiConverterFloat64.write(inner.actionUnitsPerPixelY, into);
+                    FfiConverterFloat64.write(inner.m11, into);
+                    FfiConverterFloat64.write(inner.m12, into);
+                    FfiConverterFloat64.write(inner.m21, into);
+                    FfiConverterFloat64.write(inner.m22, into);
+                    FfiConverterFloat64.write(inner.tx, into);
+                    FfiConverterFloat64.write(inner.ty, into);
                     return;
                 }
                 default:
@@ -3626,13 +3683,15 @@ const FfiConverterTypeVisualActionCoordinateSpace = (() => {
                 case VisualActionCoordinateSpace_Tags.ScreenshotPixels: {
                     return ordinalConverter.allocationSize(1);
                 }
-                case VisualActionCoordinateSpace_Tags.ScaledTopLeft: {
+                case VisualActionCoordinateSpace_Tags.Affine: {
                     const inner = value.inner;
                     let size = ordinalConverter.allocationSize(2);
-                    size += FfiConverterFloat64.allocationSize(inner.actionOriginX);
-                    size += FfiConverterFloat64.allocationSize(inner.actionOriginY);
-                    size += FfiConverterFloat64.allocationSize(inner.actionUnitsPerPixelX);
-                    size += FfiConverterFloat64.allocationSize(inner.actionUnitsPerPixelY);
+                    size += FfiConverterFloat64.allocationSize(inner.m11);
+                    size += FfiConverterFloat64.allocationSize(inner.m12);
+                    size += FfiConverterFloat64.allocationSize(inner.m21);
+                    size += FfiConverterFloat64.allocationSize(inner.m22);
+                    size += FfiConverterFloat64.allocationSize(inner.tx);
+                    size += FfiConverterFloat64.allocationSize(inner.ty);
                     return size;
                 }
                 default: throw new UniffiInternalError.UnexpectedEnumCase();

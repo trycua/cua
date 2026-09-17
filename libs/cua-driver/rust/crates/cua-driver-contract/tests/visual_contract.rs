@@ -39,7 +39,7 @@ fn versioned_output_fixture_covers_provenance_regions_warnings_and_optionals() {
             assert_eq!((pixel_x, pixel_y), (60.5, 30.5));
             assert_eq!(
                 output.regions[0].action_center(&output.capture.action_coordinate_space),
-                (-1859.5, 30.5)
+                (-1851.875, 10.25)
             );
         },
     );
@@ -78,9 +78,23 @@ fn versioned_error_fixture_exhausts_the_stable_v1_codes() {
 }
 
 #[test]
-fn visual_contract_remains_an_inert_dto_foundation() {
-    assert!(manifest()
+fn visual_tool_contract_publishes_stable_request_output_and_error_schemas() {
+    let contract = manifest()
         .tools
-        .iter()
-        .all(|tool| tool.name != "parse_visual_regions"));
+        .into_iter()
+        .find(|tool| tool.name == "parse_visual_regions")
+        .expect("visual parser tool contract");
+    assert_eq!(
+        contract.input_schema["required"],
+        serde_json::json!(["capture_id"])
+    );
+    assert_eq!(
+        contract.success_output_schema.as_ref().unwrap()["properties"]["schema"]["const"],
+        "cua.visual_regions_v1"
+    );
+    let error_schema = contract.error_output_schema.expect("visual error schema");
+    assert_eq!(error_schema["additionalProperties"], false);
+    assert!(error_schema["properties"]["code"]["enum"]
+        .as_array()
+        .is_some_and(|codes| codes.len() == 16));
 }

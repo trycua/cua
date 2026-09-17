@@ -2,6 +2,10 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import contractModule, {
+  ActionTarget,
+  ClickInput,
+  ClickPosition,
+  InputDeliveryMode,
   ParseVisualRegionsInput,
   ParseVisualRegionsOptions,
   ParseVisualRegionsOutput,
@@ -38,6 +42,23 @@ test("visual contract records round-trip through generated UniFFI converters", (
     input,
   )
 
+  const capturedClick = ClickInput.create({
+    target: new ActionTarget.Desktop({ displayId: "primary" }),
+    position: new ClickPosition.CapturedCoordinates({
+      x: 12,
+      y: 34,
+      captureId: "capture-1",
+    }),
+    deliveryMode: InputDeliveryMode.Foreground,
+    session: undefined,
+    button: undefined,
+    count: undefined,
+  })
+  assert.deepEqual(
+    roundTrip(contractModule.converters.FfiConverterTypeClickInput, capturedClick),
+    capturedClick,
+  )
+
   const output = ParseVisualRegionsOutput.create({
     schema: "cua.visual_regions_v1",
     capture: VisualCaptureProvenance.create({
@@ -50,11 +71,13 @@ test("visual contract records round-trip through generated UniFFI converters", (
         mimeType: "image/png",
         sha256: "abc123",
       }),
-      actionCoordinateSpace: new VisualActionCoordinateSpace.ScaledTopLeft({
-        actionOriginX: 10.25,
-        actionOriginY: 20.75,
-        actionUnitsPerPixelX: 0.5,
-        actionUnitsPerPixelY: 0.5,
+      actionCoordinateSpace: new VisualActionCoordinateSpace.Affine({
+        m11: 0.5,
+        m12: 0.25,
+        m21: -0.5,
+        m22: 2,
+        tx: 10.25,
+        ty: 20.75,
       }),
       capturedAt: "2026-09-17T12:00:00Z",
     }),
@@ -94,7 +117,7 @@ test("visual contract records round-trip through generated UniFFI converters", (
     output,
   )
   assert.deepEqual(restored, output)
-  assert.equal(restored.capture.actionCoordinateSpace.inner.actionUnitsPerPixelX, 0.5)
+  assert.equal(restored.capture.actionCoordinateSpace.inner.m11, 0.5)
   assert.equal(restored.regions[0].bounds.width, 4)
   assert.equal(restored.warnings[0].detail, "region-2")
 

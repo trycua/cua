@@ -605,6 +605,7 @@ pub enum InputDeliveryMode {
 #[serde(untagged)]
 pub enum ClickPosition {
     Coordinates { x: f64, y: f64 },
+    CapturedCoordinates { x: f64, y: f64, capture_id: String },
     Element { element_token: String },
 }
 
@@ -639,6 +640,9 @@ struct ClickWireInput {
     #[serde(default, deserialize_with = "present_click_field")]
     #[schemars(schema_with = "string_schema")]
     element_token: Option<String>,
+    #[serde(default, deserialize_with = "present_click_field")]
+    #[schemars(schema_with = "string_schema")]
+    capture_id: Option<String>,
     /// For multi-call work, prefer a short public session label and repeat it on every call that
     /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
     #[serde(default)]
@@ -663,9 +667,12 @@ where
 impl TryFrom<ClickWireInput> for ClickInput {
     type Error = String;
     fn try_from(wire: ClickWireInput) -> Result<Self, Self::Error> {
-        let position = match (wire.x, wire.y, wire.element_token) {
-            (Some(x), Some(y), None) => ClickPosition::Coordinates { x, y },
-            (None, None, Some(element_token)) => ClickPosition::Element { element_token },
+        let position = match (wire.x, wire.y, wire.element_token, wire.capture_id) {
+            (Some(x), Some(y), None, None) => ClickPosition::Coordinates { x, y },
+            (Some(x), Some(y), None, Some(capture_id)) => {
+                ClickPosition::CapturedCoordinates { x, y, capture_id }
+            }
+            (None, None, Some(element_token), None) => ClickPosition::Element { element_token },
             _ => return Err("click requires exactly x and y, or element_token".into()),
         };
         let input = Self {
@@ -689,7 +696,7 @@ impl JsonSchema for ClickInput {
         let mut schema = ClickWireInput::json_schema(generator);
         schema.insert("oneOf".into(), serde_json::json!([
             {"required":["x","y"], "not":{"required":["element_token"]}},
-            {"required":["element_token"], "not":{"anyOf":[{"required":["x"]},{"required":["y"]}]}}
+            {"required":["element_token"], "not":{"anyOf":[{"required":["x"]},{"required":["y"]},{"required":["capture_id"]}]}}
         ]));
         schema
     }
@@ -701,6 +708,11 @@ impl ToolInput for ClickInput {
         match &self.position {
             ClickPosition::Coordinates { x, y } if !x.is_finite() || !y.is_finite() => {
                 return Err("click coordinates must be finite".into())
+            }
+            ClickPosition::CapturedCoordinates { x, y, capture_id }
+                if !x.is_finite() || !y.is_finite() || capture_id.trim().is_empty() =>
+            {
+                return Err("captured click coordinates and capture_id must be valid".into())
             }
             ClickPosition::Element { element_token } if element_token.trim().is_empty() => {
                 return Err("element_token must not be empty".into())
@@ -915,7 +927,11 @@ mod tests {
 
     #[test]
     fn typed_click_round_trips_flat_native_wire_and_exact_window_id() {
-        for position in [json!({"x":-1.5,"y":2.0}), json!({"element_token":"s1:0"})] {
+        for position in [
+            json!({"x":-1.5,"y":2.0}),
+            json!({"x":-1.5,"y":2.0,"capture_id":"capture-1"}),
+            json!({"element_token":"s1:0"}),
+        ] {
             let mut wire = json!({"target":{"kind":"window","pid":7,"window_id":9007199254740993_u64},"delivery_mode":"background"});
             wire.as_object_mut()
                 .unwrap()
@@ -927,6 +943,7 @@ mod tests {
         assert_eq!(schema["required"], json!(["target", "delivery_mode"]));
         assert!(schema["oneOf"].is_array());
         assert!(schema["properties"].get("position").is_none());
+        assert!(schema["properties"].get("capture_id").is_some());
     }
 
     #[test]
@@ -936,6 +953,8 @@ mod tests {
             json!({"x":1}),
             json!({"y":2}),
             json!({"x":1,"y":2,"element_token":"s1:0"}),
+            json!({"element_token":"s1:0","capture_id":"capture-1"}),
+            json!({"x":1,"y":2,"capture_id":"  "}),
             json!({"x":1,"element_token":"s1:0"}),
             json!({"x":null,"element_token":"s1:0"}),
             json!({"element_token":"  "}),

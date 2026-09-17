@@ -44,11 +44,13 @@ class GeneratedOptionsTests(unittest.TestCase):
             request,
         )
 
-        coordinate_space = contract.VisualActionCoordinateSpace.SCALED_TOP_LEFT(
-            action_origin_x=-1920.0,
-            action_origin_y=0.0,
-            action_units_per_pixel_x=0.5,
-            action_units_per_pixel_y=2.0,
+        coordinate_space = contract.VisualActionCoordinateSpace.AFFINE(
+            m11=0.5,
+            m12=0.25,
+            m21=-0.5,
+            m22=2.0,
+            tx=-1920.0,
+            ty=10.0,
         )
         output = contract.ParseVisualRegionsOutput(
             schema="cua.visual_regions_v1",
@@ -103,7 +105,7 @@ class GeneratedOptionsTests(unittest.TestCase):
         lifted = round_trip(contract._UniffiFfiConverterTypeParseVisualRegionsOutput, output)
         self.assertEqual(lifted, output)
         self.assertEqual(
-            lifted.capture.action_coordinate_space.action_units_per_pixel_x,
+            lifted.capture.action_coordinate_space.m11,
             0.5,
         )
 
@@ -134,6 +136,14 @@ class GeneratedOptionsTests(unittest.TestCase):
             button=ClickButton.LEFT, count=1,
         )
         self.assertIs(click.target, target)
+        captured = ClickInput(
+            position=ClickPosition.CAPTURED_COORDINATES(
+                x=10.0, y=20.0, capture_id="capture-1"
+            ),
+            target=target, delivery_mode=InputDeliveryMode.FOREGROUND,
+            session=None, button=ClickButton.LEFT, count=1,
+        )
+        self.assertEqual(captured.position.capture_id, "capture-1")
         self.assertTrue(ActionTarget.WINDOW(pid=1, window_id=2).is_WINDOW())
         with self.assertRaises(TypeError):
             ClickInput(x=10.0, y=20.0)

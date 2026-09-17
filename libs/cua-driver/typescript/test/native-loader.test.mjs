@@ -206,7 +206,7 @@ test(
       const state = await driver.getWindowState(sdk.GetWindowStateInput.new({
         pid: 42, windowId: 123n, session: "node-run", query: "Save",
         includeScreenshot: true, includeAccessibilityTree: true,
-        maxElements: 10, maxDepth: 3, maxDimension: 800,
+        maxElements: 10, maxDepth: 3, maxDimension: 800, maxImageDimension: 1600,
       }))
       assert.equal(state.snapshotId, "snapshot-1")
       assert.equal(state.elements[0].label, "Save")
@@ -247,7 +247,7 @@ test(
       assert.deepEqual(requests[4].args, {
         pid: 42, window_id: 123, session: "node-run", query: "Save",
         include_screenshot: true, include_accessibility_tree: true,
-        max_elements: 10, max_depth: 3, max_dimension: 800,
+        max_elements: 10, max_depth: 3, max_dimension: 800, max_image_dimension: 1600,
       })
       assert.deepEqual(requests[5].args, {
         target: { kind: "window", pid: 42, window_id: 123 },

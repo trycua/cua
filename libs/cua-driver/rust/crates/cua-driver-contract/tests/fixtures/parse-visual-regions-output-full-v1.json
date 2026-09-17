@@ -14,11 +14,13 @@
       "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
     },
     "action_coordinate_space": {
-      "kind": "scaled_top_left",
-      "action_origin_x": -1920.0,
-      "action_origin_y": 0.0,
-      "action_units_per_pixel_x": 1.0,
-      "action_units_per_pixel_y": 1.0
+      "kind": "affine",
+      "m11": 1.0,
+      "m12": 0.25,
+      "m21": -0.5,
+      "m22": 1.0,
+      "tx": -1920.0,
+      "ty": 10.0
     },
     "captured_at": "2026-09-17T12:00:00Z"
   },

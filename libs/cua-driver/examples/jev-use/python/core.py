@@ -49,21 +49,16 @@ class VisualObservation:
     screenshot_reference: str
     screenshot_width: int
     screenshot_height: int
-    target_id: str
-    tab_id: str
+    pid: int
+    window_id: int
     action_origin_x: float
     action_origin_y: float
     action_units_per_pixel_x: float
     action_units_per_pixel_y: float
     regions: tuple[VisualRegion, ...]
 
-    def action_center(self, region: VisualRegion) -> tuple[float, float]:
-        pixel_x = region.x + region.width / 2
-        pixel_y = region.y + region.height / 2
-        return (
-            self.action_origin_x + pixel_x * self.action_units_per_pixel_x,
-            self.action_origin_y + pixel_y * self.action_units_per_pixel_y,
-        )
+    def screenshot_center(self, region: VisualRegion) -> tuple[float, float]:
+        return (region.x + region.width / 2, region.y + region.height / 2)
 
 
 class VisualObservationError(ValueError):
@@ -92,14 +87,22 @@ def parse_visual_regions(
     payload: Mapping[str, Any],
     *,
     expected_capture_id: str,
-    target_id: str,
-    tab_id: str,
+    expected_pid: int,
+    expected_window_id: int,
 ) -> VisualObservation:
     if payload.get("schema") != "cua.visual_regions_v1":
         raise VisualObservationError("unsupported visual region schema")
     capture = payload.get("capture")
     if not isinstance(capture, dict) or capture.get("capture_id") != expected_capture_id:
         raise VisualObservationError("visual result is stale or capture-mismatched")
+    source = capture.get("source")
+    if (
+        not isinstance(source, dict)
+        or source.get("kind") != "window"
+        or source.get("pid") != expected_pid
+        or source.get("window_id") != expected_window_id
+    ):
+        raise VisualObservationError("visual result has a mismatched window target")
     screenshot = capture.get("screenshot")
     if not isinstance(screenshot, dict) or screenshot.get("mime_type") != "image/png":
         raise VisualObservationError("visual result has invalid screenshot provenance")
@@ -191,8 +194,8 @@ def parse_visual_regions(
         screenshot_reference=screenshot_reference,
         screenshot_width=screenshot_width,
         screenshot_height=screenshot_height,
-        target_id=target_id,
-        tab_id=tab_id,
+        pid=expected_pid,
+        window_id=expected_window_id,
         action_origin_x=origin_x,
         action_origin_y=origin_y,
         action_units_per_pixel_x=scale_x,
@@ -219,7 +222,11 @@ def _reserved_candidates() -> list[Candidate]:
 
 
 def build_candidates(
-    snapshot: dict[str, Any], token: str, visual: VisualObservation | None = None
+    snapshot: dict[str, Any],
+    token: str,
+    visual: VisualObservation | None = None,
+    *,
+    capture_bound_click: bool = False,
 ) -> list[Candidate]:
     common = {
         "target_id": snapshot["target_id"],
@@ -261,29 +268,39 @@ def build_candidates(
         field
         and field.get("value") == token
         and visual
-        and visual.target_id == snapshot["target_id"]
-        and visual.tab_id == snapshot["tab_id"]
+        and capture_bound_click
     ):
         matches = [
             region
             for region in visual.regions
             if region.interactive
             and region.confidence >= 0.8
-            and (region.text or region.label or "").casefold() == "submit"
+            and _ascii_lower(region.text or region.label or "") == "submit"
         ]
         if len(matches) == 1:
-            x, y = visual.action_center(matches[0])
+            x, y = visual.screenshot_center(matches[0])
             candidates.append(
                 Candidate(
                     "submit-form",
                     "Submit the form using the unique validated visual Submit region.",
-                    "browser_click",
-                    {**common, "x": x, "y": y},
+                    "click",
+                    {
+                        "pid": visual.pid,
+                        "window_id": visual.window_id,
+                        "x": x,
+                        "y": y,
+                        "capture_id": visual.capture_id,
+                        "delivery_mode": "background",
+                    },
                     capture_id=visual.capture_id,
                     screenshot_reference=visual.screenshot_reference,
                 )
             )
     return candidates + _reserved_candidates()
+
+
+def _ascii_lower(value: str) -> str:
+    return "".join(chr(ord(char) + 32) if "A" <= char <= "Z" else char for char in value)
 
 
 def choose_mock(candidates: list[Candidate]) -> tuple[str | None, float, dict[str, float]]:

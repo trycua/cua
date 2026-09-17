@@ -7,9 +7,10 @@ result. Equivalent Python and TypeScript programs run the same bounded loop.
 The runnable path prefers fresh browser DOM and semantic evidence. It also
 contains an optional adapter for the public `cua.visual_regions_v1` contract.
 The checked-in typed fixtures exercise that adapter without a model or secret.
-At runtime the agents use `parse_visual_regions` only when Driver advertises the
-tool and the current observation supplies an immutable `capture_id`; otherwise
-they continue through the semantic path.
+At runtime the agents use `parse_visual_regions` only when Driver also
+advertises the capture-bound `click.capture_id` contract. They capture the
+browser window with `get_window_state`, then keep that exact `capture_id` in the
+click arguments. Otherwise they continue through the semantic path.
 
 You can run the complete deterministic proof without credentials or network
 access to Jev. If you have a TypeSafe API key, you can separately verify the
@@ -42,8 +43,11 @@ step.
 Page references are snapshot-bound, so the runners take another snapshot after
 the page changes rather than reusing an older reference.
 Visual candidates are also bound to the exact capture ID and screenshot
-reference. Stale, malformed, out-of-bounds, duplicate, or ambiguous visual
-results produce no executable visual candidate.
+reference. Driver receives the original screenshot-space point and capture ID
+atomically, so a retired, changed, or mismatched capture is refused before
+native dispatch. The agents never retry that refusal as an unbound coordinate
+click. Stale, malformed, out-of-bounds, duplicate, or ambiguous visual results
+produce no executable visual candidate.
 
 ## Install the prerequisites
 
@@ -193,8 +197,9 @@ screenshot perception. The optional adapter consumes only the public
 `parse_visual_regions` structured result and never adds a model, extension, or
 Driver internals to this example. It validates capture identity, PNG geometry,
 coordinate mapping, region IDs, bounds, content, confidence, and ambiguity
-before constructing a click candidate. Visual evidence never replaces the
-semantic editable ref required by `browser_type`.
+before constructing a `click` candidate containing the exact `capture_id`.
+Visual evidence never replaces the semantic editable ref required by
+`browser_type`.
 
 The credential-free tests load `fixtures/parse-visual-regions-*-v1.json` to
 exercise the same parser and candidate builder used by the runtime adapter.

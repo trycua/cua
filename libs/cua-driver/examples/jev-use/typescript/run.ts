@@ -96,25 +96,39 @@ export class Driver {
   }
 }
 
+export function supportsCaptureBoundClick(
+  tools: readonly { name: string; inputSchema?: Record<string, any> }[]
+): boolean {
+  const click = tools.find((tool) => tool.name === 'click');
+  return Boolean(click?.inputSchema?.properties?.capture_id);
+}
+
 export async function optionalVisualObservation(
   driver: Driver,
-  snapshot: BrowserSnapshot,
-  availableTools: ReadonlySet<string>
+  pid: number,
+  windowId: number,
+  availableTools: ReadonlySet<string>,
+  captureBoundClick: boolean
 ): Promise<VisualObservation | undefined> {
-  if (!availableTools.has('parse_visual_regions') || typeof snapshot.capture_id !== 'string') {
+  if (
+    !captureBoundClick ||
+    !availableTools.has('get_window_state') ||
+    !availableTools.has('parse_visual_regions')
+  ) {
     return undefined;
   }
   try {
+    const capture = await driver.call('get_window_state', {
+      pid,
+      window_id: windowId,
+      include_accessibility_tree: false,
+    });
+    if (typeof capture.capture_id !== 'string') return undefined;
     const result = await driver.call('parse_visual_regions', {
-      capture_id: snapshot.capture_id,
+      capture_id: capture.capture_id,
       options: { kinds: ['text', 'icon'], min_confidence: 0.8, max_regions: 100 },
     });
-    return parseVisualRegions(
-      result,
-      snapshot.capture_id,
-      snapshot.target_id,
-      snapshot.tab_id
-    );
+    return parseVisualRegions(result, capture.capture_id, pid, windowId);
   } catch {
     return undefined;
   }
@@ -205,7 +219,9 @@ async function run(args: Arguments): Promise<Outcome> {
 
   try {
     await client.connect(transport);
-    const availableTools = new Set((await client.listTools()).tools.map((tool) => tool.name));
+    const advertisedTools = (await client.listTools()).tools;
+    const availableTools = new Set(advertisedTools.map((tool) => tool.name));
+    const captureBoundClick = supportsCaptureBoundClick(advertisedTools);
     const driver = new Driver(client, `jev-typescript-${randomUUID().slice(0, 8)}`);
     const prepared = await driver.call('browser_prepare', {
       allow_launch: true,
@@ -239,8 +255,14 @@ async function run(args: Arguments): Promise<Outcome> {
         tab_id: tabId,
         snapshot_format: 'semantic_v2',
       })) as BrowserSnapshot;
-      const visual = await optionalVisualObservation(driver, snapshot, availableTools);
-      const candidates = buildCandidates(snapshot, token, visual);
+      const visual = await optionalVisualObservation(
+        driver,
+        pid,
+        Number(window.window_id),
+        availableTools,
+        captureBoundClick
+      );
+      const candidates = buildCandidates(snapshot, token, visual, captureBoundClick);
       if (!candidates.length) {
         await writeEvent(args.log, { event: 'outcome', outcome: 'abstained', step });
         return 'abstained';

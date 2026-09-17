@@ -43,8 +43,8 @@ export type VisualObservation = Readonly<{
   screenshotReference: string;
   screenshotWidth: number;
   screenshotHeight: number;
-  targetId: string;
-  tabId: string;
+  pid: number;
+  windowId: number;
   actionOriginX: number;
   actionOriginY: number;
   actionUnitsPerPixelX: number;
@@ -85,14 +85,22 @@ function immutableCandidate(candidate: Candidate): Candidate {
 export function parseVisualRegions(
   payload: unknown,
   expectedCaptureId: string,
-  targetId: string,
-  tabId: string
+  expectedPid: number,
+  expectedWindowId: number
 ): VisualObservation {
   const root = record(payload, 'visual result is not an object');
   if (root.schema !== 'cua.visual_regions_v1') throw new Error('unsupported visual region schema');
   const capture = record(root.capture, 'visual result has no capture provenance');
   if (capture.capture_id !== expectedCaptureId) {
     throw new Error('visual result is stale or capture-mismatched');
+  }
+  const source = record(capture.source, 'visual result has no capture source');
+  if (
+    source.kind !== 'window' ||
+    source.pid !== expectedPid ||
+    source.window_id !== expectedWindowId
+  ) {
+    throw new Error('visual result has a mismatched window target');
   }
   const screenshot = record(capture.screenshot, 'visual result has no screenshot provenance');
   if (screenshot.mime_type !== 'image/png') {
@@ -146,8 +154,8 @@ export function parseVisualRegions(
     if (typeof raw.confidence !== 'number' || !Number.isFinite(raw.confidence) || raw.confidence < 0 || raw.confidence > 1) {
       throw new Error('visual result contains invalid confidence');
     }
-    const text = raw.text === undefined ? undefined : nonempty(raw.text);
-    const label = raw.label === undefined ? undefined : nonempty(raw.label);
+    const text = raw.text === undefined || raw.text === null ? undefined : nonempty(raw.text);
+    const label = raw.label === undefined || raw.label === null ? undefined : nonempty(raw.label);
     if ((raw.kind === 'text' && text === undefined) || (raw.kind === 'icon' && label === undefined)) {
       throw new Error('visual region is missing content required by its kind');
     }
@@ -173,8 +181,8 @@ export function parseVisualRegions(
     screenshotReference,
     screenshotWidth,
     screenshotHeight,
-    targetId,
-    tabId,
+    pid: expectedPid,
+    windowId: expectedWindowId,
     actionOriginX,
     actionOriginY,
     actionUnitsPerPixelX,
@@ -203,7 +211,8 @@ function reservedCandidates(): Candidate[] {
 export function buildCandidates(
   snapshot: BrowserSnapshot,
   token: string,
-  visual?: VisualObservation
+  visual?: VisualObservation,
+  captureBoundClick = false
 ): Candidate[] {
   const common = { target_id: snapshot.target_id, tab_id: snapshot.tab_id };
   const refs = snapshot.refs ?? [];
@@ -233,27 +242,31 @@ export function buildCandidates(
   } else if (
     field?.value === token &&
     visual &&
-    visual.targetId === snapshot.target_id &&
-    visual.tabId === snapshot.tab_id
+    captureBoundClick
   ) {
     const matches = visual.regions.filter(
       (region) =>
         region.interactive &&
         region.confidence >= 0.8 &&
-        (region.text ?? region.label ?? '').toLocaleLowerCase() === 'submit'
+        asciiLower(region.text ?? region.label ?? '') === 'submit'
     );
     if (matches.length === 1) {
       const region = matches[0];
-      const x =
-        visual.actionOriginX + (region.x + region.width / 2) * visual.actionUnitsPerPixelX;
-      const y =
-        visual.actionOriginY + (region.y + region.height / 2) * visual.actionUnitsPerPixelY;
+      const x = region.x + region.width / 2;
+      const y = region.y + region.height / 2;
       candidates.push(
         immutableCandidate({
           id: 'submit-form',
           description: 'Submit the form using the unique validated visual Submit region.',
-          tool: 'browser_click',
-          arguments: { ...common, x, y },
+          tool: 'click',
+          arguments: {
+            pid: visual.pid,
+            window_id: visual.windowId,
+            x,
+            y,
+            capture_id: visual.captureId,
+            delivery_mode: 'background',
+          },
           captureId: visual.captureId,
           screenshotReference: visual.screenshotReference,
         })
@@ -261,6 +274,12 @@ export function buildCandidates(
     }
   }
   return [...candidates, ...reservedCandidates()];
+}
+
+function asciiLower(value: string): string {
+  return value.replace(/[A-Z]/g, (character) =>
+    String.fromCharCode(character.charCodeAt(0) + 32)
+  );
 }
 
 export function chooseMock(candidates: Candidate[]) {

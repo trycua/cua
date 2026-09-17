@@ -16,6 +16,7 @@ import {
   Driver,
   optionalVisualObservation,
   selectTabId,
+  supportsCaptureBoundClick,
   validateFixtureUrl,
 } from './run.js';
 
@@ -77,28 +78,50 @@ test('visual fixture builds the equivalent immutable capture-bound submit candid
   const visual = parseVisualRegions(
     fixture('parse-visual-regions-submit-v1.json'),
     'capture-submit',
-    'target',
-    'tab'
+    7,
+    9
   );
   const page = snapshot('expected');
   page.refs = page.refs.slice(0, 1);
   const selected = validateChoice(
     'submit-form',
-    buildCandidates(page, 'expected', visual),
+    buildCandidates(page, 'expected', visual, true),
     'capture-submit'
   );
   assert.equal(selected.id, 'submit-form');
   assert.equal(selected.captureId, 'capture-submit');
   assert.equal(selected.screenshotReference, 'png-sha256:submit-fixture');
-  assert.deepEqual(selected.arguments, { target_id: 'target', tab_id: 'tab', x: 275, y: 720 });
+  assert.deepEqual(selected.arguments, {
+    pid: 7,
+    window_id: 9,
+    x: 350,
+    y: 260,
+    capture_id: 'capture-submit',
+    delivery_mode: 'background',
+  });
 });
 
 test('ambiguous visual regions offer only reobserve and abstain', () => {
   const visual = parseVisualRegions(
     fixture('parse-visual-regions-ambiguous-v1.json'),
     'capture-ambiguous',
-    'target',
-    'tab'
+    7,
+    9
+  );
+  const page = snapshot('expected');
+  page.refs = page.refs.slice(0, 1);
+  assert.deepEqual(
+    buildCandidates(page, 'expected', visual, true).map((candidate) => candidate.id),
+    ['reobserve', 'abstain']
+  );
+});
+
+test('visual candidate requires the capture-bound click contract', () => {
+  const visual = parseVisualRegions(
+    fixture('parse-visual-regions-submit-v1.json'),
+    'capture-submit',
+    7,
+    9
   );
   const page = snapshot('expected');
   page.refs = page.refs.slice(0, 1);
@@ -108,15 +131,33 @@ test('ambiguous visual regions offer only reobserve and abstain', () => {
   );
 });
 
+test('null optionals and ASCII case rules match Python', () => {
+  const visual = parseVisualRegions(
+    fixture('parse-visual-regions-null-and-case-v1.json'),
+    'capture-edge',
+    7,
+    9
+  );
+  const page = snapshot('expected');
+  page.refs = page.refs.slice(0, 1);
+  const selected = validateChoice(
+    'submit-form',
+    buildCandidates(page, 'expected', visual, true),
+    'capture-edge'
+  );
+  assert.equal(selected.arguments.x, 140);
+  assert.equal(selected.arguments.capture_id, 'capture-edge');
+});
+
 test('stale, malformed, and duplicate visual selections fail closed', () => {
   const payload = fixture('parse-visual-regions-submit-v1.json');
   assert.throws(
-    () => parseVisualRegions(payload, 'new-capture', 'target', 'tab'),
+    () => parseVisualRegions(payload, 'new-capture', 7, 9),
     /stale/
   );
   payload.regions[0].bounds.width = 900;
   assert.throws(
-    () => parseVisualRegions(payload, 'capture-submit', 'target', 'tab'),
+    () => parseVisualRegions(payload, 'capture-submit', 7, 9),
     /outside/
   );
   const duplicate: Candidate = Object.freeze({
@@ -132,13 +173,13 @@ test('capture-bound selection rejects a newer capture', () => {
   const visual = parseVisualRegions(
     fixture('parse-visual-regions-submit-v1.json'),
     'capture-submit',
-    'target',
-    'tab'
+    7,
+    9
   );
   const page = snapshot('expected');
   page.refs = page.refs.slice(0, 1);
   assert.throws(
-    () => validateChoice('submit-form', buildCandidates(page, 'expected', visual), 'new-capture'),
+    () => validateChoice('submit-form', buildCandidates(page, 'expected', visual, true), 'new-capture'),
     /stale/
   );
 });
@@ -201,25 +242,48 @@ test('driver repeats the explicit session label', async () => {
 
 test('visual tool is optional and uses the released contract when advertised', async () => {
   const calls: any[] = [];
+  const responses = [
+    { capture_id: 'capture-submit' },
+    fixture('parse-visual-regions-submit-v1.json'),
+  ];
   const client = {
     callTool: async (request: unknown) => {
       calls.push(request);
       return {
         isError: false,
-        structuredContent: fixture('parse-visual-regions-submit-v1.json'),
+        structuredContent: responses.shift(),
       };
     },
   };
   const driver = new Driver(client as never, 'jev-test');
-  const page = { target_id: 'target', tab_id: 'tab', capture_id: 'capture-submit' };
-  assert.equal(await optionalVisualObservation(driver, page, new Set()), undefined);
+  assert.equal(
+    await optionalVisualObservation(
+      driver,
+      7,
+      9,
+      new Set(['get_window_state', 'parse_visual_regions', 'click']),
+      false
+    ),
+    undefined
+  );
   const visual = await optionalVisualObservation(
     driver,
-    page,
-    new Set(['parse_visual_regions'])
+    7,
+    9,
+    new Set(['get_window_state', 'parse_visual_regions', 'click']),
+    true
   );
   assert.equal(visual?.captureId, 'capture-submit');
   assert.deepEqual(calls, [
+    {
+      name: 'get_window_state',
+      arguments: {
+        pid: 7,
+        window_id: 9,
+        include_accessibility_tree: false,
+        session: 'jev-test',
+      },
+    },
     {
       name: 'parse_visual_regions',
       arguments: {
@@ -229,6 +293,65 @@ test('visual tool is optional and uses the released contract when advertised', a
       },
     },
   ]);
+});
+
+test('capture-bound click requires capture_id in the advertised schema', () => {
+  assert.equal(
+    supportsCaptureBoundClick([{ name: 'click', inputSchema: { properties: { x: {} } } }]),
+    false
+  );
+  assert.equal(
+    supportsCaptureBoundClick([
+      { name: 'click', inputSchema: { properties: { capture_id: {} } } },
+    ]),
+    true
+  );
+});
+
+test('provider delay then capture change refuses without an unbound retry', async () => {
+  const calls: any[] = [];
+  const client = {
+    callTool: async (request: any) => {
+      calls.push(request);
+      if (request.name === 'get_window_state') {
+        return { isError: false, structuredContent: { capture_id: 'capture-submit' } };
+      }
+      if (request.name === 'parse_visual_regions') {
+        return {
+          isError: false,
+          structuredContent: fixture('parse-visual-regions-submit-v1.json'),
+        };
+      }
+      if (request.name === 'click') {
+        return {
+          isError: true,
+          structuredContent: { code: 'capture_generation_mismatch' },
+          content: [{ type: 'text', text: 'capture changed while provider was deciding' }],
+        };
+      }
+      throw new Error(request.name);
+    },
+  };
+  const driver = new Driver(client as never, 'jev-test');
+  const visual = await optionalVisualObservation(
+    driver,
+    7,
+    9,
+    new Set(['get_window_state', 'parse_visual_regions', 'click']),
+    true
+  );
+  const page = snapshot('expected');
+  page.refs = page.refs.slice(0, 1);
+  const candidate = validateChoice(
+    'submit-form',
+    buildCandidates(page, 'expected', visual, true),
+    'capture-submit'
+  );
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await assert.rejects(() => driver.call(candidate.tool!, candidate.arguments), /click failed/);
+  const clickCalls = calls.filter((call) => call.name === 'click');
+  assert.equal(clickCalls.length, 1);
+  assert.equal(clickCalls[0].arguments.capture_id, 'capture-submit');
 });
 
 test('fixture URL is confined to loopback HTTP', () => {

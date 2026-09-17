@@ -30,8 +30,10 @@ Use your platform's setup below, then follow the shared steps in that terminal.
 Commands outside the platform tabs work in both POSIX shells and PowerShell.
 The example prefers browser DOM evidence. It also recognizes the public
 `parse_visual_regions` contract when the installed Driver advertises that MCP
-tool and publishes a capture ID for the current observation. The optional path
-is not required for this form. See
+tool and the capture-bound `click.capture_id` input. The agent obtains the
+capture from `get_window_state` and sends its exact ID with the visual click;
+it never falls back to unbound coordinates. The optional path is not required
+for this form. See
 [Capture and delivery modalities](/concepts/capture-and-delivery-modalities) for
 the observation modes Cua Driver supports.
 
@@ -236,8 +238,9 @@ To automate a different task, change three parts of the agent:
 
 The form example offers only the next valid action plus reserved `reobserve`
 and `abstain` choices. Visual candidates are accepted only from a unique,
-well-formed region tied to the current immutable capture; stale, malformed, or
-ambiguous results fail closed. Typing continues to require the semantic
+well-formed region tied to the current immutable capture and dispatched through
+Driver's capture-bound `click` contract. Stale, malformed, ambiguous, or
+capture-refused results fail closed. Typing continues to require the semantic
 editable reference. Completion still comes from the test server's independent
 state endpoint, not from semantic or visual observation.
 For a new task, define its allowed actions and success check before connecting

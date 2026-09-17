@@ -15,9 +15,6 @@ REQUIRED_TOOLS = {
     "get_browser_state",
     "list_windows",
 }
-OPTIONAL_TOOLS = {"parse_visual_regions"}
-
-
 async def verify() -> None:
     params = StdioServerParameters(command=os.getenv("CUA_DRIVER_BIN", "cua-driver"), args=["mcp"])
     async with stdio_client(params) as (read, write):
@@ -30,10 +27,17 @@ async def verify() -> None:
             missing = sorted(REQUIRED_TOOLS - names)
             if missing:
                 raise RuntimeError(f"MCP tools/list is missing required tools: {missing}")
-            optional = sorted(OPTIONAL_TOOLS & names)
+            click = next((tool for tool in tools.tools if tool.name == "click"), None)
+            click_schema = getattr(click, "inputSchema", {}) if click else {}
+            click_properties = (
+                click_schema.get("properties", {}) if isinstance(click_schema, dict) else {}
+            )
+            visual_available = (
+                "parse_visual_regions" in names and "capture_id" in click_properties
+            )
             print(
                 f"MCP initialize and tools/list verified {len(REQUIRED_TOOLS)} required tools; "
-                f"optional tools available: {optional}"
+                f"capture-bound visual adapter available: {visual_available}"
             )
 
 

@@ -318,15 +318,17 @@ The current guide uses `FETCH_HEAD` after its single-ref shallow fetch so the
 detached checkout does not depend on a remote-tracking ref that a default
 single-branch clone may omit. Its shown JSON output now matches `json.dumps`
 spacing. Current guide SHA-256:
-`35e8e78be21f589b8dc4b98ebb8a934e202c038b16f8794551d33e150430595f`.
+`dcdc2d8020a2aa296bef67d7058537db470b9504ca20ab6fb0cce86433ee7931`.
 
 ### Optional visual adapter follow-up
 
 The Python and TypeScript examples now contain equivalent optional adapters for
 the public `cua.visual_regions_v1` result. They discover
-`parse_visual_regions` from MCP `tools/list` and call it only when the same
-observation supplies an immutable capture ID. Existing Driver versions and
-installations without the tool continue through the DOM/semantic path.
+`parse_visual_regions` from MCP `tools/list`, capture the selected window with
+`get_window_state`, and call the visual parser only when Driver also advertises
+the capture-bound `click.capture_id` input. Existing Driver versions and
+installations without the complete contract continue through the DOM/semantic
+path.
 
 Two checked-in structured fixtures cover one unique Submit region and an
 ambiguous pair. Focused tests prove equivalent candidate IDs in both languages,
@@ -342,3 +344,25 @@ languages in two actions each and independently read back
 `{"submitted":"jev-guide-mock"}` from the fixture. The installed Driver
 advertised all six required MCP tools and did not advertise the optional visual
 tool, exercising the documented semantic fallback rather than a live parse.
+
+Independent review found that the first visual candidate used unbound
+`browser_click` coordinates and that TypeScript treated JSON `null` differently
+from Python while using locale-sensitive case conversion. The follow-up removes
+that path. Visual candidates now exist only when MCP advertises both
+`parse_visual_regions` and `click.properties.capture_id`; the complete `click`
+arguments contain the exact capture ID, window target, screenshot-space point,
+and delivery mode. Delayed-provider tests change the capture before dispatch,
+require Driver's structured refusal, and prove there is no unbound retry.
+
+A shared fixture covers nullable optional fields, ASCII `SUBMIT`, and Turkish-I
+`SUBMİT`. Both languages accept the same nulls, apply the same ASCII-only case
+normalization, select only the ASCII match, and preserve the capture-bound
+arguments.
+
+Final local verification passed 29 Python tests, 19 TypeScript tests,
+TypeScript typechecking, and `git diff --check`. The managed mock verifier again
+completed both languages in two actions each and independently read back
+`{"submitted":"jev-guide-mock"}` from the fixture. The installed Driver did
+not advertise the complete optional capture-bound visual contract, so this
+proof exercised the unchanged semantic fallback. No live Jev or live perception
+call was made.

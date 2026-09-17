@@ -12,8 +12,8 @@ targets, delivery modes, or other arguments.
 
 Use the example at `libs/cua-driver/examples/jev-use/` as the runnable reference.
 Prefer browser DOM and semantic evidence. The optional visual adapter consumes
-the public `cua.visual_regions_v1` result only when Driver advertises
-`parse_visual_regions` and the current observation has an immutable capture ID.
+the public `cua.visual_regions_v1` result only when Driver advertises both
+`parse_visual_regions` and the capture-bound `click.capture_id` input.
 Use the checked-in fixtures for deterministic development; do not add a model,
 extension artifact, or Driver implementation detail to the recipe.
 
@@ -25,7 +25,8 @@ extension artifact, or Driver implementation detail to the recipe.
 3. If visual grounding is needed, discover `parse_visual_regions` through the
    current MCP tool inventory. Validate its versioned result, capture ID,
    screenshot reference and dimensions, coordinate mapping, unique region IDs,
-   bounds, content, confidence, and ambiguity. Otherwise reobserve or abstain.
+   bounds, content, confidence, and ambiguity. Build a pixel action only with
+   the exact capture ID in the same `click` call. Otherwise reobserve or abstain.
 4. Construct a bounded candidate table. Each executable candidate contains the
    complete Driver tool and arguments. Include `reobserve` and `abstain` when
    evidence can be stale, incomplete, or ambiguous.
@@ -47,6 +48,8 @@ extension artifact, or Driver implementation detail to the recipe.
   coordinate space and tied to the same target and snapshot.
 - If semantic and visual evidence disagree, or multiple regions are plausible,
   offer `reobserve` and `abstain` without inventing a mutation.
+- Never remove `capture_id` or retry an expired, stale, or mismatched capture as
+  an unbound coordinate action.
 - Use semantic evidence as authority when it is available. A visual label does
   not prove editability or interactivity.
 

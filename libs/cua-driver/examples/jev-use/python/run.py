@@ -107,15 +107,41 @@ class Driver:
         return data
 
 
+def supports_capture_bound_click(tools: list[Any]) -> bool:
+    for tool in tools:
+        if getattr(tool, "name", None) != "click":
+            continue
+        schema = getattr(tool, "inputSchema", None)
+        if not isinstance(schema, dict):
+            schema = getattr(tool, "input_schema", None)
+        properties = schema.get("properties") if isinstance(schema, dict) else None
+        return isinstance(properties, dict) and "capture_id" in properties
+    return False
+
+
 async def optional_visual_observation(
     driver: Driver,
-    snapshot: dict[str, Any],
+    pid: int,
+    window_id: int,
     available_tools: set[str],
+    capture_bound_click: bool,
 ) -> VisualObservation | None:
-    capture_id = snapshot.get("capture_id")
-    if "parse_visual_regions" not in available_tools or not isinstance(capture_id, str):
+    if not capture_bound_click or not {"get_window_state", "parse_visual_regions"}.issubset(
+        available_tools
+    ):
         return None
     try:
+        capture = await driver.call(
+            "get_window_state",
+            {
+                "pid": pid,
+                "window_id": window_id,
+                "include_accessibility_tree": False,
+            },
+        )
+        capture_id = capture.get("capture_id")
+        if not isinstance(capture_id, str):
+            return None
         result = await driver.call(
             "parse_visual_regions",
             {
@@ -126,8 +152,8 @@ async def optional_visual_observation(
         return parse_visual_regions(
             result,
             expected_capture_id=capture_id,
-            target_id=str(snapshot["target_id"]),
-            tab_id=str(snapshot["tab_id"]),
+            expected_pid=pid,
+            expected_window_id=window_id,
         )
     except (RuntimeError, VisualObservationError, KeyError, TypeError):
         return None
@@ -167,7 +193,9 @@ async def run(args: argparse.Namespace) -> str:
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
-            available_tools = {tool.name for tool in (await session.list_tools()).tools}
+            advertised_tools = (await session.list_tools()).tools
+            available_tools = {tool.name for tool in advertised_tools}
+            capture_bound_click = supports_capture_bound_click(advertised_tools)
             driver = Driver(session, label)
             prepared = await driver.call(
                 "browser_prepare",
@@ -201,8 +229,19 @@ async def run(args: argparse.Namespace) -> str:
                         "snapshot_format": "semantic_v2",
                     },
                 )
-                visual = await optional_visual_observation(driver, snapshot, available_tools)
-                candidates = build_candidates(snapshot, token, visual)
+                visual = await optional_visual_observation(
+                    driver,
+                    pid,
+                    int(window["window_id"]),
+                    available_tools,
+                    capture_bound_click,
+                )
+                candidates = build_candidates(
+                    snapshot,
+                    token,
+                    visual,
+                    capture_bound_click=capture_bound_click,
+                )
                 if not candidates:
                     write_event(log_path, {"event": "outcome", "outcome": "abstained", "step": step})
                     return "abstained"

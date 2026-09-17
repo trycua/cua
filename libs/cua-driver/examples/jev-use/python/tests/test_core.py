@@ -65,26 +65,56 @@ class CoreTest(unittest.TestCase):
         visual = parse_visual_regions(
             payload,
             expected_capture_id="capture-submit",
-            target_id="target",
-            tab_id="tab",
+            expected_pid=7,
+            expected_window_id=9,
         )
         page = self.snapshot("expected")
         page["refs"] = page["refs"][:1]
-        candidates = build_candidates(page, "expected", visual)
+        candidates = build_candidates(page, "expected", visual, capture_bound_click=True)
         selected = validate_choice("submit-form", candidates, current_capture_id="capture-submit")
 
         self.assertEqual(selected.id, "submit-form")
         self.assertEqual(selected.capture_id, "capture-submit")
         self.assertEqual(selected.screenshot_reference, "png-sha256:submit-fixture")
-        self.assertEqual(dict(selected.arguments), {"target_id": "target", "tab_id": "tab", "x": 275.0, "y": 720.0})
+        self.assertEqual(
+            dict(selected.arguments),
+            {
+                "pid": 7,
+                "window_id": 9,
+                "x": 350.0,
+                "y": 260.0,
+                "capture_id": "capture-submit",
+                "delivery_mode": "background",
+            },
+        )
 
     def test_visual_ambiguity_offers_only_reserved_candidates(self) -> None:
         payload = json.loads((FIXTURES / "parse-visual-regions-ambiguous-v1.json").read_text())
         visual = parse_visual_regions(
             payload,
             expected_capture_id="capture-ambiguous",
-            target_id="target",
-            tab_id="tab",
+            expected_pid=7,
+            expected_window_id=9,
+        )
+        page = self.snapshot("expected")
+        page["refs"] = page["refs"][:1]
+        self.assertEqual(
+            [
+                candidate.id
+                for candidate in build_candidates(
+                    page, "expected", visual, capture_bound_click=True
+                )
+            ],
+            ["reobserve", "abstain"],
+        )
+
+    def test_visual_candidate_requires_capture_bound_click_contract(self) -> None:
+        payload = json.loads((FIXTURES / "parse-visual-regions-submit-v1.json").read_text())
+        visual = parse_visual_regions(
+            payload,
+            expected_capture_id="capture-submit",
+            expected_pid=7,
+            expected_window_id=9,
         )
         page = self.snapshot("expected")
         page["refs"] = page["refs"][:1]
@@ -93,22 +123,37 @@ class CoreTest(unittest.TestCase):
             ["reobserve", "abstain"],
         )
 
+    def test_null_optionals_and_ascii_case_rules_are_shared(self) -> None:
+        payload = json.loads((FIXTURES / "parse-visual-regions-null-and-case-v1.json").read_text())
+        visual = parse_visual_regions(
+            payload,
+            expected_capture_id="capture-edge",
+            expected_pid=7,
+            expected_window_id=9,
+        )
+        page = self.snapshot("expected")
+        page["refs"] = page["refs"][:1]
+        candidates = build_candidates(page, "expected", visual, capture_bound_click=True)
+        selected = validate_choice("submit-form", candidates, current_capture_id="capture-edge")
+        self.assertEqual(selected.arguments["x"], 140.0)
+        self.assertEqual(selected.arguments["capture_id"], "capture-edge")
+
     def test_visual_stale_malformed_and_duplicate_candidates_fail_closed(self) -> None:
         payload = json.loads((FIXTURES / "parse-visual-regions-submit-v1.json").read_text())
         with self.assertRaisesRegex(ValueError, "stale"):
             parse_visual_regions(
                 payload,
                 expected_capture_id="new-capture",
-                target_id="target",
-                tab_id="tab",
+                expected_pid=7,
+                expected_window_id=9,
             )
         payload["regions"][0]["bounds"]["width"] = 900
         with self.assertRaisesRegex(ValueError, "outside"):
             parse_visual_regions(
                 payload,
                 expected_capture_id="capture-submit",
-                target_id="target",
-                tab_id="tab",
+                expected_pid=7,
+                expected_window_id=9,
             )
         duplicate = Candidate("duplicate", "one", None, {})
         with self.assertRaisesRegex(ValueError, "duplicate"):
@@ -119,15 +164,15 @@ class CoreTest(unittest.TestCase):
         visual = parse_visual_regions(
             payload,
             expected_capture_id="capture-submit",
-            target_id="target",
-            tab_id="tab",
+            expected_pid=7,
+            expected_window_id=9,
         )
         page = self.snapshot("expected")
         page["refs"] = page["refs"][:1]
         with self.assertRaisesRegex(ValueError, "stale"):
             validate_choice(
                 "submit-form",
-                build_candidates(page, "expected", visual),
+                build_candidates(page, "expected", visual, capture_bound_click=True),
                 current_capture_id="new-capture",
             )
 

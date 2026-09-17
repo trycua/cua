@@ -84,6 +84,7 @@ jobs:
       CUA_DRIVER_PERMISSION_MODE: unrestricted
       CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS: "1"
       CUA_E2E_BROWSER_NO_SANDBOX: "1"
+      CUA_E2E_BROWSER_STDERR: "1"
       TYPESAFE_API_KEY: ""
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -117,8 +118,10 @@ jobs:
           test ! -e /usr/lib/chromium-browser
           sudo install -d -o root -g root -m 0755 /usr/lib/chromium-browser
           sudo cp -a "$(dirname "$chromium_source")/." /usr/lib/chromium-browser/
+          chromium_wrapper="$(dirname "$chromium_source")/chrome-wrapper"
+          test -f "$chromium_wrapper" && test -x "$chromium_wrapper"
           sudo install -o root -g root -m 0755 \
-            "$chromium_source" /usr/lib/chromium-browser/chromium-browser
+            "$chromium_wrapper" /usr/lib/chromium-browser/chromium-browser
           sudo chown -R root:root /usr/lib/chromium-browser
           sudo chmod -R go-w /usr/lib/chromium-browser
 
@@ -135,6 +138,9 @@ jobs:
             path="$(dirname "$path")"
           done
           "$candidate" --version
+          xvfb-run -a "$candidate" --no-sandbox --headless=new \
+            --user-data-dir="$RUNNER_TEMP/chromium-smoke-profile" \
+            --dump-dom about:blank | grep -Fq '<html'
       - name: Build the exact candidate Driver
         working-directory: ${{ github.workspace }}
         run: cargo build --locked --release -p cua-driver --features portal-input --manifest-path libs/cua-driver/rust/Cargo.toml

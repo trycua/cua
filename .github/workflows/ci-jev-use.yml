@@ -138,9 +138,27 @@ jobs:
             path="$(dirname "$path")"
           done
           "$candidate" --version
-          xvfb-run -a "$candidate" --no-sandbox --headless=new \
-            --user-data-dir="$RUNNER_TEMP/chromium-smoke-profile" \
-            --dump-dom about:blank | grep -Fq '<html'
+          smoke_profile="$RUNNER_TEMP/chromium-smoke-profile"
+          xvfb-run -a bash -s -- "$candidate" "$smoke_profile" <<'SH'
+          set -euo pipefail
+          candidate="$1"
+          profile="$2"
+          "$candidate" --no-sandbox --remote-debugging-port=0 \
+            --user-data-dir="$profile" --no-first-run \
+            --no-default-browser-check about:blank &
+          browser_pid=$!
+          cleanup() {
+            kill "$browser_pid" 2>/dev/null || true
+            wait "$browser_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          for _ in $(seq 1 100); do
+            test -s "$profile/DevToolsActivePort" && exit 0
+            kill -0 "$browser_pid" 2>/dev/null || exit 1
+            sleep 0.1
+          done
+          exit 1
+          SH
       - name: Build the exact candidate Driver
         working-directory: ${{ github.workspace }}
         run: cargo build --locked --release -p cua-driver --features portal-input --manifest-path libs/cua-driver/rust/Cargo.toml

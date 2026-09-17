@@ -29,11 +29,21 @@
     "runtime": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["adapter", "model_id", "signed_extension_sha256"],
+      "required": [
+        "adapter",
+        "model_id",
+        "model_sha256",
+        "signed_extension_sha256",
+        "signing_key_sha256",
+        "signature_algorithm"
+      ],
       "properties": {
         "adapter": { "const": "jev-use" },
         "model_id": { "type": "string", "pattern": "^[A-Za-z0-9._/-]{1,96}$" },
-        "signed_extension_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        "model_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "signed_extension_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "signing_key_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "signature_algorithm": { "const": "rsa-sha256" }
       }
     },
     "result": {

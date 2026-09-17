@@ -1,5 +1,6 @@
 //! Review-gated visual-only demo skeleton. No live Jev adapter is linked here.
 
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 use std::path::{Path, PathBuf};
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 use std::process::{Command, Stdio};
@@ -12,41 +13,10 @@ use cua_driver_testkit::{spawn_in_job, Driver, FixtureJournal, McpDriver};
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 const FIXTURE_TITLE: &str = "Cua Visual-Only Canvas Fixture";
 
-fn live_prerequisites_with(
-    lookup: impl Fn(&str) -> Option<String>,
-    exists: impl Fn(&Path) -> bool,
-) -> Result<(), String> {
-    let mut missing = Vec::new();
-    let extension = lookup("CUA_JEV_SIGNED_EXTENSION").map(PathBuf::from);
-    if extension.as_deref().is_none_or(|path| !exists(path)) {
-        missing.push("signed extension (CUA_JEV_SIGNED_EXTENSION)");
-    }
-    let model = lookup("CUA_JEV_MODEL").map(PathBuf::from);
-    if model.as_deref().is_none_or(|path| !exists(path)) {
-        missing.push("model (CUA_JEV_MODEL)");
-    }
-    let extension_sha = lookup("CUA_JEV_SIGNED_EXTENSION_SHA256");
-    if extension_sha.as_deref().is_none_or(|value| {
-        value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit())
-    }) {
-        missing.push("signed extension digest (CUA_JEV_SIGNED_EXTENSION_SHA256)");
-    }
-    // The adapter is intentionally absent from this change. This guard must be
-    // replaced only by the separately reviewed, signed live integration.
-    missing.push("reviewed live Jev adapter");
-
-    if !missing.is_empty() {
-        return Err(format!(
-            "authorized demo cannot run: missing {}; no live API request was made",
-            missing.join(", ")
-        ));
-    }
-    Ok(())
-}
-
-#[cfg(any(target_os = "windows", target_os = "linux"))]
-fn live_prerequisites() -> Result<(), String> {
-    live_prerequisites_with(|name| std::env::var(name).ok(), Path::exists)
+fn require_callable_live_adapter() -> Result<(), &'static str> {
+    Err(
+        "authorized demo cannot run: no committed callable live Jev adapter marker; no live API request was made",
+    )
 }
 
 #[cfg(any(target_os = "windows", target_os = "linux"))]
@@ -82,10 +52,8 @@ fn spawn_driver() -> McpDriver {
 
 #[test]
 fn orchestration_refuses_to_imply_a_live_adapter() {
-    let error = live_prerequisites_with(|_| None, |_| false).expect_err("must fail closed");
-    assert!(error.contains("signed extension"));
-    assert!(error.contains("model"));
-    assert!(error.contains("reviewed live Jev adapter"));
+    let error = require_callable_live_adapter().expect_err("must fail closed");
+    assert!(error.contains("committed callable live Jev adapter marker"));
     assert!(error.contains("no live API request was made"));
 }
 
@@ -93,7 +61,7 @@ fn orchestration_refuses_to_imply_a_live_adapter() {
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 #[ignore = "requires protected-environment assets and a separately reviewed live adapter"]
 fn authorized_visual_only_demo() {
-    match live_prerequisites() {
+    match require_callable_live_adapter() {
         Ok(()) => {}
         Err(error) => panic!("{error}"),
     }

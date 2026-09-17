@@ -207,9 +207,7 @@ accepts it. Omit it to use the authenticated transport's implicit lifecycle sess
 
 ### `click`
 
-Click against a target pid. **Prefer `element_index` over pixel coordinates** — element_index works on backgrounded / hidden windows, surfaces a stable handle, and tells you what you're clicking via the cached AT-SPI element's role + label. Reach for `x, y` only when the target is a canvas / custom-drawn surface that doesn't appear in the AT-SPI tree.
-
-Provide either (window_id + x/y) or (pid + element_index). Routes via XSendEvent (no focus steal). element_index cache is scoped per (pid, window_id) and is replaced by the next get_window_state of the same window — re-snapshot every turn before clicking.
+Click against a target pid. Prefer `element_token` from get_window_state for native controls, or window_id + x/y for canvas/custom-drawn content. A token describes an observed control, not a persistent native handle: it requires a unique match in a complete current AT-SPI tree for its window. Another observation alone does not invalidate it. Index plus snapshot_id alone is refused. Native and coordinate routes retain their existing delivery-mode restrictions.
 
 After a zoom call, pass from_zoom=true to auto-translate zoom-image coords back to full-window space.
 
@@ -221,14 +219,14 @@ button: "left" (default), "right", or "middle". Defaults to left so the field is
 - `count` (integer, optional)
 - `cursor_id` (string, optional): Optional multi-cursor instance id. Default: 'default'.
 - `delivery_mode` (string, optional): Input delivery mode. 'background' (default) never activates or raises the target window. On X11 it injects via XTEST / the XInput2 master pointer (no focus steal). On Wayland it goes through libei + xdg-desktop-portal, which injects to the compositor's input focus — Wayland's security model has no per-window background targeting, so a specific non-focused window cannot be aimed at; when no libei backend is available the tool returns a structured background_unavailable error. 'foreground' is the explicit escalation: activate the target (X11 _NET_ACTIVE_WINDOW; Wayland compositor activate), inject, then restore the prior active window — a brief focus swap unless the target was already active. Matches the macOS / Windows delivery_mode surface. default: `"background"`
-- `element_index` (integer, optional): Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
-- `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.
+- `element_index` (integer, optional): Element index from get_window_state, retained as observation metadata. Native actions require an identity-bearing `element_token`; element_index plus snapshot_id alone is not accepted.
+- `element_token` (string, optional): Opaque authenticated element address from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. The address requires a unique match in a complete current accessibility tree. Another observation alone does not invalidate it.
 - `from_zoom` (boolean, optional): Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space.
 - `modifier` (array of string, optional): Modifier keys held during the action: cmd, shift, option/alt, ctrl.
 - `pid` (integer, optional)
 - `scope` (string, optional): default: `"window"`
 - `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
-- `snapshot_id` (string, optional): Snapshot handle from get_window_state. Required when targeting by element_index; stale snapshots fail closed.
+- `snapshot_id` (string, optional): Authenticated runtime-, process-, and window-bound snapshot handle from get_window_state. This handle plus element_index does not identify a native control; use its element_token.
 - `target` (window target or desktop target, optional): Exact capture/input target selected independently for each action.
 
 `display_id="primary"` is the portable desktop target in this release.
@@ -246,12 +244,12 @@ Double-click at (x,y) or an element_index (AT-SPI bounds) via XSendEvent. No foc
 
 - `cursor_id` (string, optional): Optional multi-cursor instance id. Default: 'default'.
 - `delivery_mode` (string, optional): Input delivery mode. 'background' (default) never activates or raises the target window. On X11 it injects via XTEST / the XInput2 master pointer (no focus steal). On Wayland it goes through libei + xdg-desktop-portal, which injects to the compositor's input focus — Wayland's security model has no per-window background targeting, so a specific non-focused window cannot be aimed at; when no libei backend is available the tool returns a structured background_unavailable error. 'foreground' is the explicit escalation: activate the target (X11 _NET_ACTIVE_WINDOW; Wayland compositor activate), inject, then restore the prior active window — a brief focus swap unless the target was already active. Matches the macOS / Windows delivery_mode surface. default: `"background"`
-- `element_index` (integer, optional): Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
-- `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.
+- `element_index` (integer, optional): Element index from get_window_state, retained as observation metadata. Native actions require an identity-bearing `element_token`; element_index plus snapshot_id alone is not accepted.
+- `element_token` (string, optional): Opaque authenticated element address from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. The address requires a unique match in a complete current accessibility tree. Another observation alone does not invalidate it.
 - `from_zoom` (boolean, optional): Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space.
 - `pid` (integer, required)
 - `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
-- `snapshot_id` (string, optional): Snapshot handle from get_window_state. Required when targeting by element_index; stale snapshots fail closed.
+- `snapshot_id` (string, optional): Authenticated runtime-, process-, and window-bound snapshot handle from get_window_state. This handle plus element_index does not identify a native control; use its element_token.
 - `window_id` (integer, optional)
 - `x` (number, optional)
 - `y` (number, optional)
@@ -268,13 +266,13 @@ Right-click at (x,y) or an element_index (AT-SPI bounds) via XSendEvent. No focu
 
 - `cursor_id` (string, optional): Optional multi-cursor instance id. Default: 'default'.
 - `delivery_mode` (string, optional): Input delivery mode. 'background' (default) never activates or raises the target window. On X11 it injects via XTEST / the XInput2 master pointer (no focus steal). On Wayland it goes through libei + xdg-desktop-portal, which injects to the compositor's input focus — Wayland's security model has no per-window background targeting, so a specific non-focused window cannot be aimed at; when no libei backend is available the tool returns a structured background_unavailable error. 'foreground' is the explicit escalation: activate the target (X11 _NET_ACTIVE_WINDOW; Wayland compositor activate), inject, then restore the prior active window — a brief focus swap unless the target was already active. Matches the macOS / Windows delivery_mode surface. default: `"background"`
-- `element_index` (integer, optional): Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
-- `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.
+- `element_index` (integer, optional): Element index from get_window_state, retained as observation metadata. Native actions require an identity-bearing `element_token`; element_index plus snapshot_id alone is not accepted.
+- `element_token` (string, optional): Opaque authenticated element address from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. The address requires a unique match in a complete current accessibility tree. Another observation alone does not invalidate it.
 - `from_zoom` (boolean, optional): Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space.
 - `modifier` (array of string, optional): Modifier keys held during the action: cmd, shift, option/alt, ctrl.
 - `pid` (integer, required)
 - `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
-- `snapshot_id` (string, optional): Snapshot handle from get_window_state. Required when targeting by element_index; stale snapshots fail closed.
+- `snapshot_id` (string, optional): Authenticated runtime-, process-, and window-bound snapshot handle from get_window_state. This handle plus element_index does not identify a native control; use its element_token.
 - `window_id` (integer, optional)
 - `x` (number, optional)
 - `y` (number, optional)
@@ -321,12 +319,12 @@ Type text to a window via XSendEvent (KeyPress/KeyRelease). No focus steal.
 **Arguments:**
 
 - `delivery_mode` (string, optional): Input delivery mode. 'background' (default) never activates or raises the target window. On X11 it injects via XTEST / the XInput2 master pointer (no focus steal). On Wayland it goes through libei + xdg-desktop-portal, which injects to the compositor's input focus — Wayland's security model has no per-window background targeting, so a specific non-focused window cannot be aimed at; when no libei backend is available the tool returns a structured background_unavailable error. 'foreground' is the explicit escalation: activate the target (X11 _NET_ACTIVE_WINDOW; Wayland compositor activate), inject, then restore the prior active window — a brief focus swap unless the target was already active. Matches the macOS / Windows delivery_mode surface. default: `"background"`
-- `element_index` (integer, optional): Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
-- `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.
+- `element_index` (integer, optional): Element index from get_window_state, retained as observation metadata. Native actions require an identity-bearing `element_token`; element_index plus snapshot_id alone is not accepted.
+- `element_token` (string, optional): Opaque authenticated element address from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. The address requires a unique match in a complete current accessibility tree. Another observation alone does not invalidate it.
 - `pid` (integer, optional)
 - `scope` (string, optional): default: `"window"`
 - `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
-- `snapshot_id` (string, optional): Snapshot handle from get_window_state. Required when targeting by element_index; stale snapshots fail closed.
+- `snapshot_id` (string, optional): Authenticated runtime-, process-, and window-bound snapshot handle from get_window_state. This handle plus element_index does not identify a native control; use its element_token.
 - `target` (window target or desktop target, optional): Exact capture/input target selected independently for each action.
 
 `display_id="primary"` is the portable desktop target in this release.
@@ -348,14 +346,14 @@ Press a key via XSendEvent to a window. No focus steal.
 **Arguments:**
 
 - `delivery_mode` (string, optional): Input delivery mode. 'background' (default) never activates or raises the target window. On X11 it injects via XTEST / the XInput2 master pointer (no focus steal). On Wayland it goes through libei + xdg-desktop-portal, which injects to the compositor's input focus — Wayland's security model has no per-window background targeting, so a specific non-focused window cannot be aimed at; when no libei backend is available the tool returns a structured background_unavailable error. 'foreground' is the explicit escalation: activate the target (X11 _NET_ACTIVE_WINDOW; Wayland compositor activate), inject, then restore the prior active window — a brief focus swap unless the target was already active. Matches the macOS / Windows delivery_mode surface. default: `"background"`
-- `element_index` (integer, optional): Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
-- `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.
+- `element_index` (integer, optional): Element index from get_window_state, retained as observation metadata. Native actions require an identity-bearing `element_token`; element_index plus snapshot_id alone is not accepted.
+- `element_token` (string, optional): Opaque authenticated element address from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. The address requires a unique match in a complete current accessibility tree. Another observation alone does not invalidate it.
 - `key` (string, required)
 - `modifiers` (array of string, optional)
 - `pid` (integer, optional)
 - `scope` (string, optional): default: `"window"`
 - `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
-- `snapshot_id` (string, optional): Snapshot handle from get_window_state. Required when targeting by element_index; stale snapshots fail closed.
+- `snapshot_id` (string, optional): Authenticated runtime-, process-, and window-bound snapshot handle from get_window_state. This handle plus element_index does not identify a native control; use its element_token.
 - `target` (window target or desktop target, optional): Exact capture/input target selected independently for each action.
 
 `display_id="primary"` is the portable desktop target in this release.
@@ -376,13 +374,13 @@ Press a combination of keys simultaneously, e.g. ["ctrl","c"] for Copy. Sent via
 **Arguments:**
 
 - `delivery_mode` (string, optional): Input delivery mode. 'background' (default) never activates or raises the target window. On X11 it injects via XTEST / the XInput2 master pointer (no focus steal). On Wayland it goes through libei + xdg-desktop-portal, which injects to the compositor's input focus — Wayland's security model has no per-window background targeting, so a specific non-focused window cannot be aimed at; when no libei backend is available the tool returns a structured background_unavailable error. 'foreground' is the explicit escalation: activate the target (X11 _NET_ACTIVE_WINDOW; Wayland compositor activate), inject, then restore the prior active window — a brief focus swap unless the target was already active. Matches the macOS / Windows delivery_mode surface. default: `"background"`
-- `element_index` (integer, optional): Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
-- `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.
+- `element_index` (integer, optional): Element index from get_window_state, retained as observation metadata. Native actions require an identity-bearing `element_token`; element_index plus snapshot_id alone is not accepted.
+- `element_token` (string, optional): Opaque authenticated element address from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. The address requires a unique match in a complete current accessibility tree. Another observation alone does not invalidate it.
 - `keys` (array of string, required): Modifier(s) + one non-modifier key, e.g. ["ctrl","c"]. items: 2–unbounded
 - `pid` (integer, optional)
 - `scope` (string, optional): default: `"window"`
 - `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
-- `snapshot_id` (string, optional): Snapshot handle from get_window_state. Required when targeting by element_index; stale snapshots fail closed.
+- `snapshot_id` (string, optional): Authenticated runtime-, process-, and window-bound snapshot handle from get_window_state. This handle plus element_index does not identify a native control; use its element_token.
 - `target` (window target or desktop target, optional): Exact capture/input target selected independently for each action.
 
 `display_id="primary"` is the portable desktop target in this release.
@@ -402,11 +400,11 @@ Set value of an AT-SPI element via SetValue action.
 
 **Arguments:**
 
-- `element_index` (integer, optional): Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
-- `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.
+- `element_index` (integer, optional): Element index from get_window_state, retained as observation metadata. Native actions require an identity-bearing `element_token`; element_index plus snapshot_id alone is not accepted.
+- `element_token` (string, optional): Opaque authenticated element address from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. The address requires a unique match in a complete current accessibility tree. Another observation alone does not invalidate it.
 - `pid` (integer, required)
 - `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
-- `snapshot_id` (string, optional): Snapshot handle from get_window_state. Required when targeting by element_index; stale snapshots fail closed.
+- `snapshot_id` (string, optional): Authenticated runtime-, process-, and window-bound snapshot handle from get_window_state. This handle plus element_index does not identify a native control; use its element_token.
 - `value` (string, required)
 - `window_id` (integer, optional): Required when element_index is used; optional when element_token is supplied (the token carries it).
 
@@ -425,12 +423,12 @@ Scroll the target pid's focused region via XSendEvent Button4/5. direction requi
 - `cursor_id` (string, optional): Optional multi-cursor instance id. Default: 'default'.
 - `delivery_mode` (string, optional): Input delivery mode. 'background' (default) never activates or raises the target window. On X11 it injects via XTEST / the XInput2 master pointer (no focus steal). On Wayland it goes through libei + xdg-desktop-portal, which injects to the compositor's input focus — Wayland's security model has no per-window background targeting, so a specific non-focused window cannot be aimed at; when no libei backend is available the tool returns a structured background_unavailable error. 'foreground' is the explicit escalation: activate the target (X11 _NET_ACTIVE_WINDOW; Wayland compositor activate), inject, then restore the prior active window — a brief focus swap unless the target was already active. Matches the macOS / Windows delivery_mode surface. default: `"background"`
 - `direction` (string, required)
-- `element_index` (integer, optional): Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
-- `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.
+- `element_index` (integer, optional): Element index from get_window_state, retained as observation metadata. Native actions require an identity-bearing `element_token`; element_index plus snapshot_id alone is not accepted.
+- `element_token` (string, optional): Opaque authenticated element address from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. The address requires a unique match in a complete current accessibility tree. Another observation alone does not invalidate it.
 - `pid` (integer, optional)
 - `scope` (string, optional): default: `"window"`
 - `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
-- `snapshot_id` (string, optional): Snapshot handle from get_window_state. Required when targeting by element_index; stale snapshots fail closed.
+- `snapshot_id` (string, optional): Authenticated runtime-, process-, and window-bound snapshot handle from get_window_state. This handle plus element_index does not identify a native control; use its element_token.
 - `target` (window target or desktop target, optional): Exact capture/input target selected independently for each action.
 
 `display_id="primary"` is the portable desktop target in this release.
@@ -586,7 +584,7 @@ Replay a recorded trajectory by re-invoking every turn's tool call in lexical or
 
 Caveats:
 - Element-indexed actions (`click({pid, element_index})` etc.) will fail because element indices are per-snapshot and don't survive across sessions. Pixel clicks (`click({pid, x, y})`) and all keyboard tools replay cleanly. Failures are reported but don't stop replay unless `stop_on_error` is true.
-- `get_window_state` and other read-only tools are NOT currently recorded, so replays do not re-populate the per-(pid, window_id) element cache.
+- `get_window_state` and other read-only tools are NOT currently recorded, so replays do not re-populate the current accessibility snapshot.
 - If recording is ENABLED while replay runs, the replay itself is recorded into the currently configured output directory.  That's deliberate: recording a replay against a new build and diffing the two trajectories is the regression-test workflow.
 
 **Arguments:**

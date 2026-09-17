@@ -1,18 +1,21 @@
-//! Lifecycle management for optional, registry-known Driver extensions.
+//! Local storage-format prototype for optional Driver extensions.
 //!
-//! Installation is deliberately local-only in this first slice. A caller
-//! supplies a release-shaped `.tar.gz`; the manager validates the archive in
-//! memory before placing an exact version under the Driver home and switching
-//! the small active-version pointer.
+//! A caller supplies an unsigned local `.tar.gz`. The manager checks its
+//! structure and hashes, but does not establish publisher or artifact
+//! provenance. Archive payloads are streamed into a private staging directory
+//! before an exact version is activated.
 
 use anyhow::{anyhow, bail, Context, Result};
+use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
+use cap_std::ambient_authority;
+use cap_std::fs::{Dir, OpenOptions as CapOpenOptions};
 use flate2::read::GzDecoder;
 use fs2::FileExt;
 use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -23,8 +26,16 @@ const ACTIVE_NAME: &str = "active.json";
 const ACTIVE_BACKUP_NAME: &str = "active.backup.json";
 const ACTIVE_NEW_NAME: &str = "active.new.json";
 const MANIFEST_SCHEMA_VERSION: u32 = 1;
-const MAX_ARCHIVE_BYTES: u64 = 4 * 1024 * 1024 * 1024;
-const MAX_FILE_COUNT: usize = 10_000;
+// The local prototype targets one executable plus a moderate model bundle.
+// These defaults keep disk/memory exposure bounded without claiming support
+// for multi-tens-of-gigabytes production model distributions.
+const MAX_ARCHIVE_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_EXPANDED_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+const MAX_IN_MEMORY_BYTES: u64 = 1024 * 1024;
+const MAX_FILE_COUNT: usize = 4_096;
+const MAX_ARCHIVE_PATH_BYTES: usize = 512;
+const TRUST_NOTICE: &str = "unsigned, untrusted local code; archive-provided hashes do not authenticate publisher or artifact provenance";
 
 #[derive(Clone, Copy)]
 struct RegistryEntry {
@@ -35,9 +46,9 @@ struct RegistryEntry {
 }
 
 const REGISTRY: &[RegistryEntry] = &[RegistryEntry {
-    id: "perception",
-    display_name: "Cua Perception",
-    description: "Optional model-neutral visual region worker and model bundle.",
+    id: "local-prototype",
+    display_name: "Local Extension Prototype",
+    description: "Unsigned local archive prototype; publisher provenance is not verified.",
     protocol_version: 1,
 }];
 
@@ -94,15 +105,34 @@ struct ExtensionInfo<'a> {
 #[derive(Debug)]
 struct ArchiveFile {
     path: String,
-    bytes: Vec<u8>,
-    mode: u32,
+    sha256: String,
+    size: u64,
 }
 
 #[derive(Debug)]
 struct InspectedArchive {
     manifest: ExtensionManifest,
     manifest_bytes: Vec<u8>,
-    files: Vec<ArchiveFile>,
+}
+
+struct BoundedReader<R> {
+    inner: R,
+    remaining: u64,
+}
+
+impl<R: Read> Read for BoundedReader<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        if self.remaining == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "compressed archive exceeds its byte limit",
+            ));
+        }
+        let limit = buffer.len().min(self.remaining as usize);
+        let read = self.inner.read(&mut buffer[..limit])?;
+        self.remaining -= read as u64;
+        Ok(read)
+    }
 }
 
 struct ExtensionStore {
@@ -111,15 +141,122 @@ struct ExtensionStore {
 
 struct InstallLock {
     _file: fs::File,
+    root: Dir,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ActivationFailpoint {
     None,
     AfterBackup,
+    LeaveInterruptedAfterBackup,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ParsedCommand {
+    subcommand: String,
+    id: Option<String>,
+    archive: Option<PathBuf>,
+    json: bool,
 }
 
 static UNIQUE_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+fn cap_parent(path: &Path) -> Result<(Dir, &std::ffi::OsStr)> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("path has no parent: {}", path.display()))?;
+    let name = path
+        .file_name()
+        .ok_or_else(|| anyhow!("path has no final component: {}", path.display()))?;
+    let dir = open_directory_path_nofollow(parent)?;
+    Ok((dir, name))
+}
+
+fn directory_path_anchor(path: &Path) -> Result<(Dir, Vec<std::ffi::OsString>)> {
+    #[cfg(target_os = "macos")]
+    let normalized;
+    #[cfg(target_os = "macos")]
+    let path = if let Ok(suffix) = path.strip_prefix("/var") {
+        normalized = Path::new("/private/var").join(suffix);
+        normalized.as_path()
+    } else if let Ok(suffix) = path.strip_prefix("/tmp") {
+        normalized = Path::new("/private/tmp").join(suffix);
+        normalized.as_path()
+    } else if let Ok(suffix) = path.strip_prefix("/etc") {
+        normalized = Path::new("/private/etc").join(suffix);
+        normalized.as_path()
+    } else {
+        path
+    };
+    let mut components = path.components().peekable();
+    let mut anchor = PathBuf::new();
+    if let Some(Component::Prefix(prefix)) = components.peek().copied() {
+        anchor.push(prefix.as_os_str());
+        components.next();
+    }
+    if matches!(components.peek(), Some(Component::RootDir)) {
+        anchor.push(std::path::MAIN_SEPARATOR_STR);
+        components.next();
+    } else if anchor.as_os_str().is_empty() {
+        anchor.push(".");
+    }
+    let mut names = Vec::new();
+    for component in components {
+        match component {
+            Component::CurDir => {}
+            Component::Normal(name) => names.push(name.to_owned()),
+            Component::ParentDir => bail!(
+                "directory path must not contain parent traversal: {}",
+                path.display()
+            ),
+            Component::Prefix(_) | Component::RootDir => {
+                bail!("directory path has an invalid root: {}", path.display())
+            }
+        }
+    }
+    let directory = Dir::open_ambient_dir(&anchor, ambient_authority())
+        .with_context(|| format!("open directory anchor {}", anchor.display()))?;
+    Ok((directory, names))
+}
+
+fn open_directory_path_nofollow(path: &Path) -> Result<Dir> {
+    let (mut directory, names) = directory_path_anchor(path)?;
+    for name in names {
+        directory = directory.open_dir_nofollow(&name).with_context(|| {
+            format!("open directory component {:?} in {}", name, path.display())
+        })?;
+    }
+    Ok(directory)
+}
+
+fn ensure_private_directory_path(path: &Path) -> Result<Dir> {
+    let (mut directory, names) = directory_path_anchor(path)?;
+    for name in names {
+        directory = match directory.open_dir_nofollow(&name) {
+            Ok(next) => next,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                create_private_subdirectory(&directory, &name)?;
+                directory.open_dir_nofollow(&name)?
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("open directory component {:?} in {}", name, path.display())
+                })
+            }
+        };
+    }
+    verify_cap_directory_permissions_portable(&directory)?;
+    Ok(directory)
+}
+
+fn sync_cap_dir(dir: &Dir) -> Result<()> {
+    #[cfg(unix)]
+    dir.try_clone()?
+        .into_std_file()
+        .sync_all()
+        .context("sync containing directory")?;
+    Ok(())
+}
 
 pub fn run(args: &[String]) {
     if let Err(error) = run_inner(args) {
@@ -129,31 +266,10 @@ pub fn run(args: &[String]) {
 }
 
 fn run_inner(args: &[String]) -> Result<()> {
-    let subcommand = args.first().map(String::as_str).unwrap_or("list");
-    if !matches!(
-        subcommand,
-        "list" | "info" | "status" | "install" | "update" | "uninstall" | "path"
-    ) {
-        bail!("unknown subcommand {subcommand:?}; expected list, info, status, install, update, uninstall, or path");
-    }
-    let json = args.iter().any(|arg| arg == "--json");
-    let positionals: Vec<&str> = args
-        .iter()
-        .enumerate()
-        .filter_map(|(index, value)| {
-            if index == 0
-                || value.starts_with('-')
-                || args
-                    .get(index.wrapping_sub(1))
-                    .is_some_and(|previous| previous == "--archive")
-            {
-                None
-            } else {
-                Some(value.as_str())
-            }
-        })
-        .collect();
-    let id = positionals.first().copied();
+    let parsed = parse_command(args)?;
+    let subcommand = parsed.subcommand.as_str();
+    let id = parsed.id.as_deref();
+    let json = parsed.json;
     let store = ExtensionStore::new(extension_root()?);
 
     match subcommand {
@@ -164,34 +280,24 @@ fn run_inner(args: &[String]) -> Result<()> {
             None => print_infos(&store, REGISTRY, json),
         },
         "install" | "update" => {
+            ensure_mutations_supported()?;
             let id = required_id(id, subcommand)?;
             let entry = registry_entry(id)?;
-            let archive = flag_value(args, "--archive").ok_or_else(|| {
-                anyhow!("{subcommand} requires --archive <path>; verified network download is not implemented in this slice")
+            let archive = parsed.archive.as_deref().ok_or_else(|| {
+                anyhow!("{subcommand} requires --archive <path>; network download and publisher verification are not implemented")
             })?;
-            let installed = store.install_archive(entry, Path::new(&archive))?;
+            let installed = store.install_archive(entry, archive)?;
             println!(
-                "{} {} {} at {}",
+                "{} unsigned, untrusted local code prototype {} {} at {}; hashes are self-asserted by the same archive and do not establish provenance",
                 if subcommand == "update" {
                     "Updated"
                 } else {
-                    "Installed"
+                    "Stored"
                 },
                 id,
                 installed.version,
                 installed.path.display()
             );
-            Ok(())
-        }
-        "uninstall" => {
-            let id = required_id(id, "uninstall")?;
-            registry_entry(id)?;
-            let removed = store.uninstall(id)?;
-            if removed == 0 {
-                println!("{id} is not installed");
-            } else {
-                println!("Uninstalled {id} ({removed} verified version(s) removed)");
-            }
             Ok(())
         }
         "path" => {
@@ -207,18 +313,91 @@ fn run_inner(args: &[String]) -> Result<()> {
     }
 }
 
-fn required_id<'a>(id: Option<&'a str>, command: &str) -> Result<&'a str> {
-    id.ok_or_else(|| anyhow!("usage: cua-driver extension {command} <name>"))
+fn parse_command(args: &[String]) -> Result<ParsedCommand> {
+    let subcommand = args.first().map(String::as_str).unwrap_or("list");
+    if !matches!(
+        subcommand,
+        "list" | "info" | "status" | "install" | "update" | "path"
+    ) {
+        bail!("unknown subcommand {subcommand:?}; expected list, info, status, install, update, or path");
+    }
+    let mut id = None;
+    let mut archive = None;
+    let mut json = false;
+    let mut index = usize::from(!args.is_empty());
+    while index < args.len() {
+        let value = &args[index];
+        match value.as_str() {
+            "--json" => {
+                if json {
+                    bail!("duplicate flag --json");
+                }
+                json = true;
+                index += 1;
+            }
+            "--archive" => {
+                if archive.is_some() {
+                    bail!("duplicate option --archive");
+                }
+                let next = args
+                    .get(index + 1)
+                    .ok_or_else(|| anyhow!("--archive requires a value"))?;
+                if next.starts_with('-') {
+                    bail!("--archive requires a value");
+                }
+                archive = Some(PathBuf::from(next));
+                index += 2;
+            }
+            _ if value.starts_with("--archive=") => {
+                if archive.is_some() {
+                    bail!("duplicate option --archive");
+                }
+                let path = value.trim_start_matches("--archive=");
+                if path.is_empty() {
+                    bail!("--archive requires a value");
+                }
+                archive = Some(PathBuf::from(path));
+                index += 1;
+            }
+            _ if value.starts_with('-') => bail!("unknown extension option {value:?}"),
+            _ => {
+                if id.replace(value.clone()).is_some() {
+                    bail!("unexpected extra positional argument {value:?}");
+                }
+                index += 1;
+            }
+        }
+    }
+    match subcommand {
+        "list" if id.is_some() => bail!("list does not accept an extension name"),
+        "info" | "install" | "update" | "path" if id.is_none() => {
+            bail!("{subcommand} requires an extension name")
+        }
+        _ => {}
+    }
+    if !matches!(subcommand, "install" | "update") && archive.is_some() {
+        bail!("--archive is only valid with install or update");
+    }
+    if !matches!(subcommand, "list" | "info" | "status") && json {
+        bail!("--json is not valid with {subcommand}");
+    }
+    Ok(ParsedCommand {
+        subcommand: subcommand.to_owned(),
+        id,
+        archive,
+        json,
+    })
 }
 
-fn flag_value(args: &[String], flag: &str) -> Option<String> {
-    args.windows(2)
-        .find(|pair| pair[0] == flag)
-        .map(|pair| pair[1].clone())
-        .or_else(|| {
-            args.iter()
-                .find_map(|arg| arg.strip_prefix(&format!("{flag}=")).map(str::to_owned))
-        })
+fn ensure_mutations_supported() -> Result<()> {
+    #[cfg(windows)]
+    bail!("extension install/update is unsupported on Windows until opened-handle reparse-point and ACL enforcement is implemented");
+    #[cfg(not(windows))]
+    Ok(())
+}
+
+fn required_id<'a>(id: Option<&'a str>, command: &str) -> Result<&'a str> {
+    id.ok_or_else(|| anyhow!("usage: cua-driver extension {command} <name>"))
 }
 
 fn registry_entry(id: &str) -> Result<&'static RegistryEntry> {
@@ -292,141 +471,232 @@ impl ExtensionStore {
         self.extension_dir(id).join("versions")
     }
 
-    fn recover_activation(&self, id: &str) -> Result<()> {
-        let dir = self.extension_dir(id);
-        if !verified_directory_or_missing(&dir)? {
+    fn recover_activation_locked(&self, root: &Dir, id: &str) -> Result<()> {
+        let Some(extension) = open_private_subdirectory_if_present(root, id)? else {
             return Ok(());
+        };
+        let mut has_active = private_regular_file_or_missing_at(&extension, ACTIVE_NAME)?;
+        let mut has_backup = private_regular_file_or_missing_at(&extension, ACTIVE_BACKUP_NAME)?;
+        let has_new = private_regular_file_or_missing_at(&extension, ACTIVE_NEW_NAME)?;
+        if has_active {
+            self.validate_pointer_target_locked(id, &extension, ACTIVE_NAME)?;
         }
-        let active = dir.join(ACTIVE_NAME);
-        let backup = dir.join(ACTIVE_BACKUP_NAME);
-        let new = dir.join(ACTIVE_NEW_NAME);
-        let mut has_active = verified_regular_file_or_missing(&active)?;
-        let mut has_backup = verified_regular_file_or_missing(&backup)?;
-        let has_new = verified_regular_file_or_missing(&new)?;
+        if has_backup {
+            self.validate_pointer_target_locked(id, &extension, ACTIVE_BACKUP_NAME)?;
+        }
         if !has_active && has_backup {
-            fs::rename(&backup, &active)
+            extension
+                .rename(ACTIVE_BACKUP_NAME, &extension, ACTIVE_NAME)
                 .with_context(|| format!("restore interrupted activation for {id}"))?;
+            sync_cap_dir(&extension)?;
             has_active = true;
             has_backup = false;
         }
         if has_active && has_backup {
-            fs::remove_file(&backup)
+            extension
+                .remove_file(ACTIVE_BACKUP_NAME)
                 .with_context(|| format!("remove stale activation backup for {id}"))?;
+            sync_cap_dir(&extension)?;
         }
         if has_new {
-            fs::remove_file(&new)
+            extension
+                .remove_file(ACTIVE_NEW_NAME)
                 .with_context(|| format!("remove stale activation candidate for {id}"))?;
+            sync_cap_dir(&extension)?;
         }
         Ok(())
     }
 
-    fn lock(&self, id: &str) -> Result<InstallLock> {
-        if let Some(parent) = self.root.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("create Driver home {}", parent.display()))?;
+    fn validate_pointer_target_locked(
+        &self,
+        id: &str,
+        extension: &Dir,
+        pointer_name: &str,
+    ) -> Result<()> {
+        let bytes = read_small_file_at(extension, Path::new(pointer_name))?;
+        let pointer: ActivePointer = serde_json::from_slice(&bytes)
+            .with_context(|| format!("parse activation pointer {pointer_name}"))?;
+        if pointer.id != id {
+            bail!("activation pointer for {id} names extension {}", pointer.id);
         }
-        ensure_directory(&self.root)?;
-        let lock_dir = self.root.join(".locks");
-        ensure_directory(&lock_dir)?;
-        let path = lock_dir.join(format!("{id}.lock"));
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&path)
-            .with_context(|| format!("open extension lock {}", path.display()))?;
+        validate_version_segment(&pointer.version)?;
+        let versions = extension
+            .open_dir_nofollow("versions")
+            .context("active extension has no owned versions directory")?;
+        verify_cap_directory_permissions_portable(&versions)?;
+        let version = versions
+            .open_dir_nofollow(&pointer.version)
+            .with_context(|| {
+                format!(
+                    "active extension version {} is not an owned directory",
+                    pointer.version
+                )
+            })?;
+        verify_cap_directory_permissions_portable(&version)?;
+        verify_installed_version_at(&version, registry_entry(id)?, None)?;
+        Ok(())
+    }
+
+    fn lock(&self, id: &str) -> Result<InstallLock> {
+        let root = ensure_private_directory_path(&self.root)?;
+        let lock_dir = ensure_private_subdirectory(&root, ".locks")?;
+        let lock_name = format!("{id}.lock");
+        let file = open_lock_file_at(&lock_dir, &lock_name)?;
         file.try_lock_exclusive()
             .with_context(|| format!("extension {id} is already being modified"))?;
-        Ok(InstallLock { _file: file })
+        Ok(InstallLock { _file: file, root })
     }
 
     fn install_archive(&self, entry: &RegistryEntry, archive: &Path) -> Result<InstalledVersion> {
-        let _lock = self.lock(entry.id)?;
-        self.recover_activation(entry.id)?;
-        let inspected = inspect_archive(archive, entry)?;
-        let version = Version::parse(&inspected.manifest.version)
-            .context("manifest version is not valid semantic versioning")?;
-        let version_text = version.to_string();
-        ensure_directory(&self.extension_dir(entry.id))?;
+        let lock = self.lock(entry.id)?;
+        self.recover_activation_locked(&lock.root, entry.id)?;
+        let extension_handle = ensure_private_subdirectory(&lock.root, entry.id)?;
         let versions = self.versions_dir(entry.id);
-        ensure_directory(&versions)?;
-        let destination = versions.join(&version_text);
-
-        if destination.symlink_metadata().is_ok() {
-            verify_installed_version(&destination, entry, Some(&inspected.manifest_bytes))?;
-        } else {
-            let staging_parent = self.root.join(".staging");
-            ensure_directory(&staging_parent)?;
-            let staging = staging_parent.join(unique_name(entry.id));
-            fs::create_dir(&staging)
-                .with_context(|| format!("create staging directory {}", staging.display()))?;
-            let staged = (|| -> Result<()> {
-                write_inspected_archive(&staging, &inspected)?;
-                write_install_record(&staging, &inspected)?;
-                verify_installed_version(&staging, entry, Some(&inspected.manifest_bytes))?;
-                fs::rename(&staging, &destination).with_context(|| {
-                    format!("place extension version at {}", destination.display())
-                })?;
-                Ok(())
-            })();
-            if staged.is_err() {
-                let _ = fs::remove_dir_all(&staging);
+        let versions_handle = ensure_private_subdirectory(&extension_handle, "versions")?;
+        let staging_parent = self.root.join(".staging");
+        let staging_parent_handle = ensure_private_subdirectory(&lock.root, ".staging")?;
+        let staging = staging_parent.join(unique_name(entry.id));
+        let staging_name = staging.file_name().expect("generated staging name");
+        create_private_subdirectory(&staging_parent_handle, staging_name)?;
+        let staging_handle = staging_parent_handle.open_dir_nofollow(staging_name)?;
+        let inspected = match inspect_archive(archive, entry, &staging_handle) {
+            Ok(inspected) => inspected,
+            Err(error) => {
+                remove_cap_subdirectory(&staging_parent_handle, staging_name)?;
+                return Err(error);
             }
-            staged?;
+        };
+        let version = match Version::parse(&inspected.manifest.version)
+            .context("manifest version is not valid semantic versioning")
+        {
+            Ok(version) => version,
+            Err(error) => {
+                remove_cap_subdirectory(&staging_parent_handle, staging_name)?;
+                return Err(error);
+            }
+        };
+        let version_text = version.to_string();
+        let destination = versions.join(&version_text);
+        match versions_handle.open_dir_nofollow(&version_text) {
+            Ok(existing) => {
+                verify_cap_directory_permissions_portable(&existing)?;
+                let verified =
+                    verify_installed_version_at(&existing, entry, Some(&inspected.manifest_bytes));
+                let cleanup = remove_cap_subdirectory(&staging_parent_handle, staging_name);
+                verified?;
+                cleanup?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let staged = (|| -> Result<()> {
+                    write_install_record_at(&staging_handle, &inspected)?;
+                    verify_installed_version_at(
+                        &staging_handle,
+                        entry,
+                        Some(&inspected.manifest_bytes),
+                    )?;
+                    staging_parent_handle
+                        .rename(staging_name, &versions_handle, &version_text)
+                        .with_context(|| {
+                            format!("place extension version at {}", destination.display())
+                        })?;
+                    sync_cap_dir(&staging_parent_handle)?;
+                    sync_cap_dir(&versions_handle)?;
+                    Ok(())
+                })();
+                if staged.is_err() {
+                    remove_cap_subdirectory(&staging_parent_handle, staging_name)?;
+                }
+                staged?;
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "inspect existing extension version {}",
+                        destination.display()
+                    )
+                })
+            }
         }
 
-        self.activate(entry.id, &version_text, ActivationFailpoint::None)?;
+        self.activate_locked(
+            &lock.root,
+            entry.id,
+            &version_text,
+            ActivationFailpoint::None,
+        )?;
         Ok(InstalledVersion {
             version: version_text,
             path: destination,
         })
     }
 
-    fn activate(&self, id: &str, version: &str, failpoint: ActivationFailpoint) -> Result<()> {
-        let dir = self.extension_dir(id);
-        ensure_directory(&dir)?;
-        let active = dir.join(ACTIVE_NAME);
-        let backup = dir.join(ACTIVE_BACKUP_NAME);
-        let new = dir.join(ACTIVE_NEW_NAME);
+    fn activate_locked(
+        &self,
+        root: &Dir,
+        id: &str,
+        version: &str,
+        failpoint: ActivationFailpoint,
+    ) -> Result<()> {
+        let extension = ensure_private_subdirectory(root, id)?;
+        let had_active = private_regular_file_or_missing_at(&extension, ACTIVE_NAME)?;
+        if private_regular_file_or_missing_at(&extension, ACTIVE_BACKUP_NAME)?
+            || private_regular_file_or_missing_at(&extension, ACTIVE_NEW_NAME)?
+        {
+            bail!("activation pointer state was not recovered before activation");
+        }
         let pointer = serde_json::to_vec_pretty(&ActivePointer {
             id: id.to_owned(),
             version: version.to_owned(),
         })?;
-        write_new_file(&new, &pointer)?;
-        let had_active = active.is_file();
+        write_new_file_at(&extension, ACTIVE_NEW_NAME, &pointer)?;
+        sync_cap_dir(&extension)?;
         if had_active {
-            fs::rename(&active, &backup)
+            extension
+                .rename(ACTIVE_NAME, &extension, ACTIVE_BACKUP_NAME)
                 .context("move current active pointer to rollback backup")?;
+            sync_cap_dir(&extension)?;
+        }
+        if failpoint == ActivationFailpoint::LeaveInterruptedAfterBackup {
+            return Err(anyhow!(
+                "simulated process interruption after activation backup"
+            ));
         }
         let switched = if failpoint == ActivationFailpoint::AfterBackup {
             Err(anyhow!("simulated interruption after activation backup"))
         } else {
-            fs::rename(&new, &active).context("activate inspected extension version")
+            extension
+                .rename(ACTIVE_NEW_NAME, &extension, ACTIVE_NAME)
+                .context("activate inspected extension version")
         };
         if let Err(error) = switched {
-            let _ = fs::remove_file(&new);
+            let _ = extension.remove_file(ACTIVE_NEW_NAME);
             if had_active {
-                fs::rename(&backup, &active).context("restore previous active extension")?;
+                extension
+                    .rename(ACTIVE_BACKUP_NAME, &extension, ACTIVE_NAME)
+                    .context("restore previous active extension")?;
+                sync_cap_dir(&extension)?;
             }
             return Err(error);
         }
-        if backup.exists() {
-            fs::remove_file(&backup).context("remove activation rollback backup")?;
+        if private_regular_file_or_missing_at(&extension, ACTIVE_BACKUP_NAME)? {
+            extension
+                .remove_file(ACTIVE_BACKUP_NAME)
+                .context("remove activation rollback backup")?;
         }
+        sync_cap_dir(&extension)?;
         Ok(())
     }
 
-    fn active_pointer(&self, id: &str) -> Result<Option<ActivePointer>> {
-        self.recover_activation(id)?;
-        let path = self.extension_dir(id).join(ACTIVE_NAME);
-        if !verified_regular_file_or_missing(&path)? {
+    fn active_pointer_locked(&self, root: &Dir, id: &str) -> Result<Option<ActivePointer>> {
+        let Some(extension) = open_private_subdirectory_if_present(root, id)? else {
+            return Ok(None);
+        };
+        if !private_regular_file_or_missing_at(&extension, ACTIVE_NAME)? {
             return Ok(None);
         }
-        let pointer: ActivePointer = serde_json::from_slice(
-            &fs::read(&path).with_context(|| format!("read {}", path.display()))?,
-        )
-        .with_context(|| format!("parse {}", path.display()))?;
+        let bytes = read_small_file_at(&extension, Path::new(ACTIVE_NAME))?;
+        let pointer: ActivePointer =
+            serde_json::from_slice(&bytes).context("parse active extension pointer")?;
         if pointer.id != id {
             bail!("active pointer for {id} names extension {}", pointer.id);
         }
@@ -435,16 +705,50 @@ impl ExtensionStore {
     }
 
     fn active_path(&self, id: &str) -> Result<Option<PathBuf>> {
-        let Some(pointer) = self.active_pointer(id)? else {
+        let lock = self.lock(id)?;
+        self.recover_activation_locked(&lock.root, id)?;
+        let Some(pointer) = self.active_pointer_locked(&lock.root, id)? else {
             return Ok(None);
         };
+        let extension = lock.root.open_dir_nofollow(id)?;
+        let versions = extension
+            .open_dir_nofollow("versions")
+            .context("active extension has no owned versions directory")?;
+        verify_cap_directory_permissions_portable(&versions)?;
+        let version = versions
+            .open_dir_nofollow(&pointer.version)
+            .with_context(|| {
+                format!(
+                    "active extension version {} is not an owned directory",
+                    pointer.version
+                )
+            })?;
+        verify_cap_directory_permissions_portable(&version)?;
         let path = self.versions_dir(id).join(&pointer.version);
-        verify_installed_version(&path, registry_entry(id)?, None)?;
+        verify_installed_version_at(&version, registry_entry(id)?, None)?;
         Ok(Some(path))
     }
 
     fn info<'a>(&self, entry: &'a RegistryEntry) -> Result<ExtensionInfo<'a>> {
-        let pointer = match self.active_pointer(entry.id) {
+        let lock = match self.lock(entry.id) {
+            Ok(lock) => lock,
+            Err(error) => {
+                return Ok(ExtensionInfo {
+                    id: entry.id,
+                    display_name: entry.display_name,
+                    description: entry.description,
+                    protocol_version: entry.protocol_version,
+                    installed: true,
+                    active_version: None,
+                    healthy: false,
+                    detail: format!("unhealthy: {error:#}; {TRUST_NOTICE}"),
+                });
+            }
+        };
+        let pointer = match self
+            .recover_activation_locked(&lock.root, entry.id)
+            .and_then(|()| self.active_pointer_locked(&lock.root, entry.id))
+        {
             Ok(pointer) => pointer,
             Err(error) => {
                 return Ok(ExtensionInfo {
@@ -455,7 +759,7 @@ impl ExtensionStore {
                     installed: true,
                     active_version: None,
                     healthy: false,
-                    detail: format!("unhealthy: {error:#}"),
+                    detail: format!("unhealthy: {error:#}; {TRUST_NOTICE}"),
                 });
             }
         };
@@ -468,12 +772,24 @@ impl ExtensionStore {
                 installed: false,
                 active_version: None,
                 healthy: true,
-                detail: "not installed (healthy)".to_owned(),
+                detail: format!("not installed (healthy); {TRUST_NOTICE}"),
             });
         };
         let version = pointer.version.clone();
-        let path = self.versions_dir(entry.id).join(&version);
-        match verify_installed_version(&path, entry, None) {
+        let verified = (|| -> Result<()> {
+            let extension = lock.root.open_dir_nofollow(entry.id)?;
+            let versions = extension
+                .open_dir_nofollow("versions")
+                .context("active extension has no owned versions directory")?;
+            verify_cap_directory_permissions_portable(&versions)?;
+            let installed = versions.open_dir_nofollow(&version).with_context(|| {
+                format!("active extension version {version} is not an owned directory")
+            })?;
+            verify_cap_directory_permissions_portable(&installed)?;
+            verify_installed_version_at(&installed, entry, None)?;
+            Ok(())
+        })();
+        match verified {
             Ok(_) => Ok(ExtensionInfo {
                 id: entry.id,
                 display_name: entry.display_name,
@@ -482,7 +798,7 @@ impl ExtensionStore {
                 installed: true,
                 active_version: Some(version),
                 healthy: true,
-                detail: "installed and verified".to_owned(),
+                detail: format!("stored; local integrity checks passed; {TRUST_NOTICE}"),
             }),
             Err(error) => Ok(ExtensionInfo {
                 id: entry.id,
@@ -492,64 +808,40 @@ impl ExtensionStore {
                 installed: true,
                 active_version: Some(version),
                 healthy: false,
-                detail: format!("unhealthy: {error:#}"),
+                detail: format!("unhealthy: {error:#}; {TRUST_NOTICE}"),
             }),
         }
     }
-
-    fn uninstall(&self, id: &str) -> Result<usize> {
-        let _lock = self.lock(id)?;
-        self.recover_activation(id)?;
-        let entry = registry_entry(id)?;
-        let extension_dir = self.extension_dir(id);
-        let versions = self.versions_dir(id);
-        let mut owned = Vec::new();
-        if versions.is_dir() {
-            for child in fs::read_dir(&versions)? {
-                let child = child?;
-                let path = child.path();
-                if !child.file_type()?.is_dir() {
-                    continue;
-                }
-                let version = child.file_name().to_string_lossy().into_owned();
-                if validate_version_segment(&version).is_ok()
-                    && verify_installed_version(&path, entry, None).is_ok()
-                {
-                    owned.push(path);
-                }
-            }
-        }
-        let active = extension_dir.join(ACTIVE_NAME);
-        if active.exists() {
-            let pointer = self.active_pointer(id)?;
-            if let Some(pointer) = pointer {
-                let expected = versions.join(pointer.version);
-                if !owned.iter().any(|path| path == &expected) {
-                    bail!("refusing to remove active pointer: its version is not a verified extension-owned directory");
-                }
-            }
-            fs::remove_file(&active).context("remove active extension pointer")?;
-        }
-        for path in &owned {
-            fs::remove_dir_all(path)
-                .with_context(|| format!("remove verified extension version {}", path.display()))?;
-        }
-        let _ = fs::remove_dir(&versions);
-        let _ = fs::remove_dir(&extension_dir);
-        let staging = self.root.join(".staging");
-        let _ = fs::remove_dir(&staging);
-        Ok(owned.len())
-    }
 }
 
-fn inspect_archive(path: &Path, entry: &RegistryEntry) -> Result<InspectedArchive> {
-    let file = fs::File::open(path).with_context(|| format!("open archive {}", path.display()))?;
-    let decoder = GzDecoder::new(file);
+fn inspect_archive(
+    path: &Path,
+    entry: &RegistryEntry,
+    staging_dir: &Dir,
+) -> Result<InspectedArchive> {
+    let file = open_existing_no_follow(path)?;
+    let metadata = file
+        .metadata()
+        .with_context(|| format!("inspect archive {}", path.display()))?;
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+        bail!("archive is not a regular local file: {}", path.display());
+    }
+    if metadata.len() > MAX_ARCHIVE_BYTES {
+        bail!("archive exceeds the {MAX_ARCHIVE_BYTES} byte input limit");
+    }
+    let decoder = GzDecoder::new(BoundedReader {
+        inner: file,
+        remaining: MAX_ARCHIVE_BYTES + 1,
+    });
     let mut archive = tar::Archive::new(decoder);
     let mut files = Vec::new();
     let mut seen = BTreeSet::new();
-    let mut total = 0_u64;
-    for item in archive.entries().context("read extension archive")? {
+    let mut expanded = 0_u64;
+    for item in archive
+        .entries()
+        .context("read extension archive")?
+        .raw(true)
+    {
         let mut item = item.context("read extension archive entry")?;
         let entry_type = item.header().entry_type();
         let path = item.path().context("read archive entry path")?;
@@ -564,6 +856,9 @@ fn inspect_archive(path: &Path, entry: &RegistryEntry) -> Result<InspectedArchiv
             );
         }
         let normalized = normalized.to_string_lossy().replace('\\', "/");
+        if normalized.len() > MAX_ARCHIVE_PATH_BYTES {
+            bail!("archive path exceeds the {MAX_ARCHIVE_PATH_BYTES} byte limit");
+        }
         if !seen.insert(normalized.clone()) {
             bail!("archive contains duplicate entry {normalized}");
         }
@@ -571,37 +866,42 @@ fn inspect_archive(path: &Path, entry: &RegistryEntry) -> Result<InspectedArchiv
             bail!("archive contains more than {MAX_FILE_COUNT} files");
         }
         let size = item.header().size().context("read archive entry size")?;
-        total = total
+        if size > MAX_FILE_BYTES {
+            bail!("archive entry {normalized} exceeds the {MAX_FILE_BYTES} byte file limit");
+        }
+        if normalized == MANIFEST_NAME && size > MAX_IN_MEMORY_BYTES {
+            bail!("{MANIFEST_NAME} exceeds the {MAX_IN_MEMORY_BYTES} byte in-memory limit");
+        }
+        expanded = expanded
             .checked_add(size)
             .ok_or_else(|| anyhow!("archive size overflow"))?;
-        if total > MAX_ARCHIVE_BYTES {
+        if expanded > MAX_EXPANDED_BYTES {
             bail!(
                 "archive expands beyond the {} byte limit",
-                MAX_ARCHIVE_BYTES
+                MAX_EXPANDED_BYTES
             );
         }
-        let mut bytes = Vec::with_capacity(usize::try_from(size).unwrap_or(0));
-        item.read_to_end(&mut bytes)
-            .with_context(|| format!("read archive entry {normalized}"))?;
-        let mode = item.header().mode().unwrap_or(0o644);
+        let relative = Path::new(&normalized);
+        create_private_cap_parent_directories(staging_dir, relative)?;
+        let sha256 = stream_archive_file_at(staging_dir, &mut item, relative, size)
+            .with_context(|| format!("stage archive entry {normalized}"))?;
         files.push(ArchiveFile {
             path: normalized,
-            bytes,
-            mode,
+            sha256,
+            size,
         });
     }
-    let manifest_bytes = files
-        .iter()
-        .find(|file| file.path == MANIFEST_NAME)
-        .map(|file| file.bytes.clone())
-        .ok_or_else(|| anyhow!("archive does not contain {MANIFEST_NAME} at its root"))?;
+    if !files.iter().any(|file| file.path == MANIFEST_NAME) {
+        bail!("archive does not contain {MANIFEST_NAME} at its root");
+    }
+    let manifest_bytes = read_small_file_at(staging_dir, Path::new(MANIFEST_NAME))?;
     let manifest: ExtensionManifest = serde_json::from_slice(&manifest_bytes)
         .with_context(|| format!("parse {MANIFEST_NAME}"))?;
     validate_manifest(&manifest, entry, &files)?;
+    apply_manifest_permissions_at(staging_dir, &manifest)?;
     Ok(InspectedArchive {
         manifest,
         manifest_bytes,
-        files,
     })
 }
 
@@ -643,7 +943,7 @@ fn validate_manifest(
             entry.protocol_version
         );
     }
-    let target = current_target();
+    let target = current_target()?;
     if manifest.target != target {
         bail!(
             "extension target {:?} does not match current target {:?}",
@@ -671,6 +971,15 @@ fn validate_manifest(
             manifest.entrypoint
         );
     }
+    if !declared
+        .get(manifest.entrypoint.as_str())
+        .is_some_and(|file| file.executable)
+    {
+        bail!(
+            "manifest entrypoint {} must be executable",
+            manifest.entrypoint
+        );
+    }
     let actual: BTreeMap<&str, &ArchiveFile> = archive_files
         .iter()
         .filter(|file| file.path != MANIFEST_NAME)
@@ -683,87 +992,69 @@ fn validate_manifest(
         let file = actual
             .get(path)
             .ok_or_else(|| anyhow!("archive is missing declared file {path}"))?;
-        let digest = hex_sha256(&file.bytes);
-        if !digest.eq_ignore_ascii_case(&expected.sha256) {
+        if !file.sha256.eq_ignore_ascii_case(&expected.sha256) {
             bail!(
-                "SHA-256 mismatch for {path}: expected {}, got {digest}",
-                expected.sha256
+                "SHA-256 mismatch for {path}: expected {}, got {}",
+                expected.sha256,
+                file.sha256
             );
         }
-    }
-    Ok(())
-}
-
-fn write_inspected_archive(root: &Path, inspected: &InspectedArchive) -> Result<()> {
-    for file in &inspected.files {
-        let destination = root.join(Path::new(&file.path));
-        if let Some(parent) = destination.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        write_new_file(&destination, &file.bytes)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let executable = inspected
-                .manifest
-                .files
-                .iter()
-                .find(|manifest_file| manifest_file.path == file.path)
-                .is_some_and(|manifest_file| manifest_file.executable);
-            let mode = if executable {
-                file.mode | 0o111
-            } else {
-                file.mode & !0o111
-            };
-            fs::set_permissions(&destination, fs::Permissions::from_mode(mode & 0o777))?;
+        if file.size > MAX_FILE_BYTES {
+            bail!("file {path} exceeds the supported file limit");
         }
     }
     Ok(())
 }
 
-fn write_install_record(root: &Path, inspected: &InspectedArchive) -> Result<()> {
+fn write_install_record_at(root: &Dir, inspected: &InspectedArchive) -> Result<()> {
     let record = InstallRecord {
         schema_version: MANIFEST_SCHEMA_VERSION,
         id: inspected.manifest.id.clone(),
         version: inspected.manifest.version.clone(),
         manifest_sha256: hex_sha256(&inspected.manifest_bytes),
     };
-    write_new_file(
-        &root.join(INSTALL_RECORD_NAME),
+    write_new_file_at(
+        root,
+        INSTALL_RECORD_NAME,
         &serde_json::to_vec_pretty(&record)?,
     )
 }
 
-fn write_new_file(path: &Path, bytes: &[u8]) -> Result<()> {
-    let mut file = OpenOptions::new()
+fn write_new_file_at(directory: &Dir, path: &str, bytes: &[u8]) -> Result<()> {
+    if bytes.len() as u64 > MAX_IN_MEMORY_BYTES {
+        bail!("refusing to write oversized in-memory file {path}");
+    }
+    let mut options = CapOpenOptions::new();
+    options
         .write(true)
         .create_new(true)
-        .open(path)
-        .with_context(|| format!("create {}", path.display()))?;
+        .follow(FollowSymlinks::No);
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = directory.open_with(path, &options)?;
     file.write_all(bytes)?;
     file.sync_all()?;
     Ok(())
 }
 
-fn verify_installed_version(
-    root: &Path,
+fn verify_installed_version_at(
+    root: &Dir,
     entry: &RegistryEntry,
     expected_manifest: Option<&[u8]>,
 ) -> Result<ExtensionManifest> {
-    if !root.is_dir() || root.symlink_metadata()?.file_type().is_symlink() {
-        bail!(
-            "installed version path is not an owned directory: {}",
-            root.display()
-        );
-    }
-    let manifest_path = root.join(MANIFEST_NAME);
-    let bytes = fs::read(&manifest_path)
-        .with_context(|| format!("read installed manifest {}", manifest_path.display()))?;
+    let bytes = read_small_file_at(root, Path::new(MANIFEST_NAME))?;
     if expected_manifest.is_some_and(|expected| expected != bytes) {
         bail!("version directory already exists with a different manifest");
     }
     let manifest: ExtensionManifest = serde_json::from_slice(&bytes)?;
-    let actual_paths = installed_regular_files(root)?;
+    safe_manifest_path(&manifest.entrypoint)?;
+    for file in &manifest.files {
+        safe_manifest_path(&file.path)?;
+    }
+    let actual_paths = installed_regular_files_at(root)?;
     let expected_paths: BTreeSet<String> = manifest
         .files
         .iter()
@@ -777,76 +1068,422 @@ fn verify_installed_version(
         .files
         .iter()
         .map(|file| {
-            let path = root.join(&file.path);
-            let metadata = fs::symlink_metadata(&path)
+            let path = Path::new(&file.path);
+            let metadata = root
+                .symlink_metadata(path)
                 .with_context(|| format!("inspect installed file {}", path.display()))?;
             if !metadata.file_type().is_file() {
                 bail!("installed path is not a regular file: {}", path.display());
             }
-            let bytes = fs::read(&path)?;
             Ok(ArchiveFile {
                 path: file.path.clone(),
-                bytes,
-                mode: 0,
+                sha256: hash_file_at(root, path, MAX_FILE_BYTES)?,
+                size: metadata.len(),
             })
         })
         .collect::<Result<Vec<_>>>()?;
     let mut all_files = synthetic_files;
     all_files.push(ArchiveFile {
         path: MANIFEST_NAME.to_owned(),
-        bytes: bytes.clone(),
-        mode: 0,
+        sha256: hex_sha256(&bytes),
+        size: bytes.len() as u64,
     });
     validate_manifest(&manifest, entry, &all_files)?;
-    verify_install_record(root, entry.id, &manifest.version)?;
+    verify_manifest_permissions_at(root, &manifest)?;
+    verify_install_record_at(root, entry.id, &manifest.version)?;
     Ok(manifest)
 }
 
-fn installed_regular_files(root: &Path) -> Result<BTreeSet<String>> {
-    fn visit(base: &Path, directory: &Path, paths: &mut BTreeSet<String>) -> Result<()> {
-        for child in fs::read_dir(directory)? {
+fn installed_regular_files_at(root: &Dir) -> Result<BTreeSet<String>> {
+    fn visit(
+        directory: &Dir,
+        prefix: &Path,
+        paths: &mut BTreeSet<String>,
+        expanded: &mut u64,
+    ) -> Result<()> {
+        verify_cap_directory_permissions_portable(directory)?;
+        for child in directory.entries()? {
             let child = child?;
-            let path = child.path();
             let file_type = child.file_type()?;
+            let relative = prefix.join(child.file_name());
             if file_type.is_symlink() {
                 bail!(
                     "installed extension contains a symbolic link: {}",
-                    path.display()
+                    relative.display()
                 );
             }
             if file_type.is_dir() {
-                visit(base, &path, paths)?;
+                visit(
+                    &directory.open_dir_nofollow(child.file_name())?,
+                    &relative,
+                    paths,
+                    expanded,
+                )?;
             } else if file_type.is_file() {
-                let relative = path
-                    .strip_prefix(base)
-                    .expect("visited path remains under extension root")
-                    .to_string_lossy()
-                    .replace('\\', "/");
-                paths.insert(relative);
+                let size = child.metadata()?.len();
+                if size > MAX_FILE_BYTES {
+                    bail!(
+                        "installed file exceeds the supported file limit: {}",
+                        relative.display()
+                    );
+                }
+                *expanded = expanded
+                    .checked_add(size)
+                    .ok_or_else(|| anyhow!("installed extension size overflow"))?;
+                if *expanded > MAX_EXPANDED_BYTES {
+                    bail!("installed extension exceeds the supported expanded size");
+                }
+                paths.insert(relative.to_string_lossy().replace('\\', "/"));
+                if paths.len() > MAX_FILE_COUNT + 2 {
+                    bail!("installed extension contains too many files");
+                }
             } else {
                 bail!(
                     "installed extension contains a special file: {}",
-                    path.display()
+                    relative.display()
                 );
             }
         }
         Ok(())
     }
-
     let mut paths = BTreeSet::new();
-    visit(root, root, &mut paths)?;
+    let mut expanded = 0;
+    visit(root, Path::new(""), &mut paths, &mut expanded)?;
     Ok(paths)
 }
 
-fn verify_install_record(root: &Path, id: &str, version: &str) -> Result<()> {
-    let manifest = fs::read(root.join(MANIFEST_NAME))?;
-    let record: InstallRecord = serde_json::from_slice(&fs::read(root.join(INSTALL_RECORD_NAME))?)?;
+fn verify_install_record_at(root: &Dir, id: &str, version: &str) -> Result<()> {
+    let manifest = read_small_file_at(root, Path::new(MANIFEST_NAME))?;
+    let record: InstallRecord =
+        serde_json::from_slice(&read_small_file_at(root, Path::new(INSTALL_RECORD_NAME))?)?;
     if record.schema_version != MANIFEST_SCHEMA_VERSION
         || record.id != id
         || record.version != version
         || record.manifest_sha256 != hex_sha256(&manifest)
     {
         bail!("install record does not verify extension ownership");
+    }
+    Ok(())
+}
+
+fn stream_archive_file_at<R: Read>(
+    root: &Dir,
+    reader: &mut R,
+    path: &Path,
+    expected: u64,
+) -> Result<String> {
+    let mut options = CapOpenOptions::new();
+    options
+        .write(true)
+        .create_new(true)
+        .follow(FollowSymlinks::No);
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = root.open_with(path, &options)?;
+    let mut hasher = Sha256::new();
+    let mut copied = 0_u64;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        copied = copied
+            .checked_add(read as u64)
+            .ok_or_else(|| anyhow!("archive entry size overflow"))?;
+        if copied > expected || copied > MAX_FILE_BYTES {
+            bail!("archive entry exceeded its declared or supported size");
+        }
+        hasher.update(&buffer[..read]);
+        file.write_all(&buffer[..read])?;
+    }
+    if copied != expected {
+        bail!("archive entry declared {expected} bytes but contained {copied}");
+    }
+    file.sync_all()?;
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn hash_file_at(directory: &Dir, path: &Path, limit: u64) -> Result<String> {
+    let mut options = CapOpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
+    let mut file = directory.open_with(path, &options)?;
+    let mut hasher = Sha256::new();
+    let mut total = 0_u64;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        total = total
+            .checked_add(read as u64)
+            .ok_or_else(|| anyhow!("file size overflow"))?;
+        if total > limit {
+            bail!("file {} exceeds the {limit} byte limit", path.display());
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn read_small_file_at(directory: &Dir, path: &Path) -> Result<Vec<u8>> {
+    let mut options = CapOpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
+    let file = directory.open_with(path, &options)?;
+    let mut bytes = Vec::new();
+    file.take(MAX_IN_MEMORY_BYTES + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_IN_MEMORY_BYTES {
+        bail!("file {} exceeds the in-memory limit", path.display());
+    }
+    Ok(bytes)
+}
+
+fn create_private_cap_parent_directories(root: &Dir, relative: &Path) -> Result<()> {
+    let mut current = root.try_clone()?;
+    if let Some(parent) = relative.parent() {
+        for component in parent.components() {
+            let Component::Normal(segment) = component else {
+                bail!("staging destination contains an unsafe parent");
+            };
+            match current.open_dir_nofollow(segment) {
+                Ok(next) => current = next,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    create_private_subdirectory(&current, segment)?;
+                    current = current.open_dir_nofollow(segment)?;
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
+    Ok(())
+}
+
+fn create_private_subdirectory(parent: &Dir, name: &std::ffi::OsStr) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use cap_std::fs::{DirBuilder, DirBuilderExt};
+        let mut builder = DirBuilder::new();
+        builder.mode(0o700);
+        parent.create_dir_with(name, &builder)?;
+    }
+    #[cfg(not(unix))]
+    parent.create_dir(name)?;
+    sync_cap_dir(parent)
+}
+
+fn ensure_private_subdirectory(parent: &Dir, name: &str) -> Result<Dir> {
+    match parent.open_dir_nofollow(name) {
+        Ok(directory) => {
+            verify_cap_directory_permissions_portable(&directory)?;
+            Ok(directory)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            create_private_subdirectory(parent, std::ffi::OsStr::new(name))?;
+            let directory = parent.open_dir_nofollow(name)?;
+            verify_cap_directory_permissions_portable(&directory)?;
+            Ok(directory)
+        }
+        Err(error) => Err(error).with_context(|| format!("open private subdirectory {name}")),
+    }
+}
+
+fn open_private_subdirectory_if_present(parent: &Dir, name: &str) -> Result<Option<Dir>> {
+    match parent.open_dir_nofollow(name) {
+        Ok(directory) => {
+            verify_cap_directory_permissions_portable(&directory)?;
+            Ok(Some(directory))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error).with_context(|| format!("open private subdirectory {name}")),
+    }
+}
+
+fn private_regular_file_or_missing_at(directory: &Dir, path: &str) -> Result<bool> {
+    let mut options = CapOpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
+    match directory.open_with(path, &options) {
+        Ok(file) => {
+            let metadata = file.metadata()?;
+            if !metadata.is_file() {
+                bail!("extension path is not an owned regular file: {path}");
+            }
+            verify_private_cap_file_permissions(&file, path)?;
+            Ok(true)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error).with_context(|| format!("open {path} without following links")),
+    }
+}
+
+#[cfg(unix)]
+fn verify_private_cap_file_permissions(file: &cap_std::fs::File, path: &str) -> Result<()> {
+    use cap_std::fs::MetadataExt;
+    let metadata = file.metadata()?;
+    let mode = metadata.mode() & 0o777;
+    if metadata.uid() != rustix::process::geteuid().as_raw()
+        || mode & 0o077 != 0
+        || mode & 0o600 != 0o600
+    {
+        bail!("extension file {path} has unsafe ownership or permissions");
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn verify_private_cap_file_permissions(_file: &cap_std::fs::File, _path: &str) -> Result<()> {
+    Ok(())
+}
+
+fn remove_cap_subdirectory(parent: &Dir, name: &std::ffi::OsStr) -> Result<()> {
+    let opened = match parent.open_dir_nofollow(name) {
+        Ok(opened) => opened,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    inspect_owned_tree(&opened)?;
+    opened.remove_open_dir_all()?;
+    sync_cap_dir(parent)
+}
+
+fn inspect_owned_tree(directory: &Dir) -> Result<()> {
+    for child in directory.entries()? {
+        let child = child?;
+        let file_type = child.file_type()?;
+        if file_type.is_symlink() {
+            bail!(
+                "refusing to delete extension directory containing symbolic link {:?}",
+                child.file_name()
+            );
+        }
+        if file_type.is_dir() {
+            inspect_owned_tree(&directory.open_dir_nofollow(child.file_name())?)?;
+        } else if file_type.is_file() {
+            let mut options = CapOpenOptions::new();
+            options.read(true).follow(FollowSymlinks::No);
+            drop(child.open_with(&options)?);
+        } else {
+            bail!(
+                "refusing to delete extension directory containing special file {:?}",
+                child.file_name()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn apply_manifest_permissions_at(root: &Dir, manifest: &ExtensionManifest) -> Result<()> {
+    set_private_file_permissions_at(root, Path::new(MANIFEST_NAME), false)?;
+    for file in &manifest.files {
+        set_private_file_permissions_at(root, Path::new(&file.path), file.executable)?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_private_file_permissions_at(root: &Dir, path: &Path, executable: bool) -> Result<()> {
+    use cap_std::fs::PermissionsExt;
+    let mut options = CapOpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
+    let file = root.open_with(path, &options)?;
+    file.set_permissions(cap_std::fs::Permissions::from_mode(if executable {
+        0o700
+    } else {
+        0o600
+    }))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn set_private_file_permissions_at(_root: &Dir, _path: &Path, _executable: bool) -> Result<()> {
+    Ok(())
+}
+
+fn verify_manifest_permissions_at(root: &Dir, manifest: &ExtensionManifest) -> Result<()> {
+    verify_expected_file_permissions_at(root, Path::new(MANIFEST_NAME), false)?;
+    verify_expected_file_permissions_at(root, Path::new(INSTALL_RECORD_NAME), false)?;
+    for file in &manifest.files {
+        verify_expected_file_permissions_at(root, Path::new(&file.path), file.executable)?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn verify_expected_file_permissions_at(root: &Dir, path: &Path, executable: bool) -> Result<()> {
+    use cap_std::fs::MetadataExt;
+    let mut options = CapOpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
+    let file = root.open_with(path, &options)?;
+    let metadata = file.metadata()?;
+    let expected = if executable { 0o700 } else { 0o600 };
+    if metadata.uid() != rustix::process::geteuid().as_raw() || metadata.mode() & 0o777 != expected
+    {
+        bail!(
+            "extension file {} has unsafe ownership or permissions",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn verify_expected_file_permissions_at(_root: &Dir, _path: &Path, _executable: bool) -> Result<()> {
+    Ok(())
+}
+
+fn open_existing_no_follow(path: &Path) -> Result<fs::File> {
+    let (dir, name) = cap_parent(path)?;
+    let mut options = CapOpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
+    dir.open_with(name, &options)
+        .map(cap_std::fs::File::into_std)
+        .with_context(|| format!("open {} without following links", path.display()))
+}
+
+fn open_lock_file_at(dir: &Dir, name: &str) -> Result<fs::File> {
+    let mut create = CapOpenOptions::new();
+    create
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .follow(FollowSymlinks::No);
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt;
+        create.mode(0o600);
+    }
+    match dir.open_with(name, &create) {
+        Ok(file) => {
+            verify_private_cap_file_permissions(&file, name)?;
+            sync_cap_dir(dir)?;
+            Ok(file.into_std())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let mut existing = CapOpenOptions::new();
+            existing.read(true).write(true).follow(FollowSymlinks::No);
+            let file = dir
+                .open_with(name, &existing)
+                .with_context(|| format!("open extension lock {name}"))?;
+            verify_private_cap_file_permissions(&file, name)?;
+            Ok(file.into_std())
+        }
+        Err(error) => Err(error).with_context(|| format!("create extension lock {name}")),
+    }
+}
+
+#[cfg(unix)]
+fn verify_cap_directory_permissions(directory: &Dir) -> Result<()> {
+    use cap_std::fs::MetadataExt;
+    let metadata = directory.dir_metadata()?;
+    if metadata.uid() != rustix::process::geteuid().as_raw() {
+        bail!("extension directory is not owned by the current user");
+    }
+    let mode = metadata.mode() & 0o777;
+    if mode != 0o700 {
+        bail!("extension directory has unsafe permissions {mode:o}; expected 700");
     }
     Ok(())
 }
@@ -870,47 +1507,14 @@ fn safe_relative_path(path: &Path) -> Result<PathBuf> {
     Ok(result)
 }
 
-fn ensure_directory(path: &Path) -> Result<()> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() => {
-            Ok(())
-        }
-        Ok(_) => bail!(
-            "extension path is not an owned directory: {}",
-            path.display()
-        ),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => fs::create_dir(path)
-            .with_context(|| format!("create extension directory {}", path.display())),
-        Err(error) => Err(error).with_context(|| format!("inspect {}", path.display())),
-    }
+#[cfg(unix)]
+fn verify_cap_directory_permissions_portable(directory: &Dir) -> Result<()> {
+    verify_cap_directory_permissions(directory)
 }
 
-fn verified_directory_or_missing(path: &Path) -> Result<bool> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() => {
-            Ok(true)
-        }
-        Ok(_) => bail!(
-            "extension path is not an owned directory: {}",
-            path.display()
-        ),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(error).with_context(|| format!("inspect {}", path.display())),
-    }
-}
-
-fn verified_regular_file_or_missing(path: &Path) -> Result<bool> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_file() && !metadata.file_type().is_symlink() => {
-            Ok(true)
-        }
-        Ok(_) => bail!(
-            "extension path is not an owned regular file: {}",
-            path.display()
-        ),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(error).with_context(|| format!("inspect {}", path.display())),
-    }
+#[cfg(not(unix))]
+fn verify_cap_directory_permissions_portable(_directory: &Dir) -> Result<()> {
+    Ok(())
 }
 
 fn safe_manifest_path(path: &str) -> Result<()> {
@@ -943,15 +1547,31 @@ fn unique_name(id: &str) -> String {
     format!("{id}-{}-{counter}", std::process::id())
 }
 
-fn current_target() -> String {
-    let arch = std::env::consts::ARCH;
-    let suffix = match std::env::consts::OS {
-        "macos" => "apple-darwin",
-        "windows" => "pc-windows-msvc",
-        "linux" => "unknown-linux-gnu",
-        other => other,
+fn current_target() -> Result<String> {
+    target_triple(
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        option_env!("CARGO_CFG_TARGET_ENV").unwrap_or(if cfg!(target_env = "musl") {
+            "musl"
+        } else if cfg!(target_env = "msvc") {
+            "msvc"
+        } else if cfg!(target_env = "gnu") {
+            "gnu"
+        } else {
+            ""
+        }),
+    )
+}
+
+fn target_triple(os: &str, arch: &str, abi: &str) -> Result<String> {
+    let triple = match (os, arch, abi) {
+        ("macos", "x86_64" | "aarch64", "") => format!("{arch}-apple-darwin"),
+        ("windows", "x86_64" | "aarch64", "msvc") => format!("{arch}-pc-windows-msvc"),
+        ("linux", "x86_64" | "aarch64", "gnu") => format!("{arch}-unknown-linux-gnu"),
+        ("linux", "x86_64" | "aarch64", "musl") => format!("{arch}-unknown-linux-musl"),
+        _ => bail!("extension archives are unsupported on target OS={os} arch={arch} ABI={abi}"),
     };
-    format!("{arch}-{suffix}")
+    Ok(triple)
 }
 
 #[cfg(test)]
@@ -988,22 +1608,45 @@ mod tests {
         declared_hash: &str,
         driver_version: &str,
     ) -> PathBuf {
-        let path = directory.join(format!("perception-{version}.tar.gz"));
+        fixture_archive_with_executable(
+            directory,
+            version,
+            target,
+            protocol,
+            payload,
+            declared_hash,
+            driver_version,
+            true,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn fixture_archive_with_executable(
+        directory: &Path,
+        version: &str,
+        target: &str,
+        protocol: u32,
+        payload: &[u8],
+        declared_hash: &str,
+        driver_version: &str,
+        executable: bool,
+    ) -> PathBuf {
+        let path = directory.join(format!("local-extension-{version}.tar.gz"));
         let file = fs::File::create(&path).unwrap();
         let encoder = GzEncoder::new(file, Compression::default());
         let mut builder = tar::Builder::new(encoder);
         let manifest = ExtensionManifest {
             schema_version: 1,
-            id: "perception".to_owned(),
+            id: "local-prototype".to_owned(),
             version: version.to_owned(),
             driver_version: driver_version.to_owned(),
             protocol_version: protocol,
             target: target.to_owned(),
-            entrypoint: "bin/cua-perception".to_owned(),
+            entrypoint: "bin/local-extension".to_owned(),
             files: vec![ManifestFile {
-                path: "bin/cua-perception".to_owned(),
+                path: "bin/local-extension".to_owned(),
                 sha256: declared_hash.to_owned(),
-                executable: true,
+                executable,
             }],
         };
         append(
@@ -1011,7 +1654,7 @@ mod tests {
             MANIFEST_NAME,
             &serde_json::to_vec_pretty(&manifest).unwrap(),
         );
-        append(&mut builder, "bin/cua-perception", payload);
+        append(&mut builder, "bin/local-extension", payload);
         builder.finish().unwrap();
         path
     }
@@ -1049,6 +1692,15 @@ mod tests {
                 header.set_cksum();
                 builder.append(&header, Cursor::new([])).unwrap();
             }
+            "pax" => {
+                builder
+                    .append_pax_extensions([("comment", b"untrusted metadata".as_slice())])
+                    .unwrap();
+            }
+            "long-path" => {
+                let path = format!("{}/payload", "a".repeat(MAX_ARCHIVE_PATH_BYTES + 1));
+                append(&mut builder, &path, b"x");
+            }
             _ => unreachable!(),
         }
         builder.finish().unwrap();
@@ -1058,15 +1710,24 @@ mod tests {
     #[test]
     fn fresh_and_idempotent_fixture_install() {
         let temp = TempDir::new().unwrap();
-        let archive = fixture_archive(temp.path(), "1.2.3", &current_target(), 1, b"worker");
+        let archive = fixture_archive(
+            temp.path(),
+            "1.2.3",
+            &current_target().unwrap(),
+            1,
+            b"worker",
+        );
         let store = ExtensionStore::new(temp.path().join("extensions"));
-        let entry = registry_entry("perception").unwrap();
+        let entry = registry_entry("local-prototype").unwrap();
 
         let first = store.install_archive(entry, &archive).unwrap();
         let second = store.install_archive(entry, &archive).unwrap();
 
         assert_eq!(first.path, second.path);
-        assert_eq!(store.active_path("perception").unwrap(), Some(first.path));
+        assert_eq!(
+            store.active_path("local-prototype").unwrap(),
+            Some(first.path)
+        );
         assert!(store.info(entry).unwrap().healthy);
     }
 
@@ -1074,7 +1735,7 @@ mod tests {
     fn rejects_corrupt_target_and_protocol_mismatches() {
         let temp = TempDir::new().unwrap();
         let store = ExtensionStore::new(temp.path().join("extensions"));
-        let entry = registry_entry("perception").unwrap();
+        let entry = registry_entry("local-prototype").unwrap();
 
         let wrong_target = fixture_archive(temp.path(), "1.0.0", "wrong-target", 1, b"worker");
         assert!(store
@@ -1083,8 +1744,13 @@ mod tests {
             .to_string()
             .contains("target"));
 
-        let wrong_protocol =
-            fixture_archive(temp.path(), "1.0.1", &current_target(), 99, b"worker");
+        let wrong_protocol = fixture_archive(
+            temp.path(),
+            "1.0.1",
+            &current_target().unwrap(),
+            99,
+            b"worker",
+        );
         assert!(store
             .install_archive(entry, &wrong_protocol)
             .unwrap_err()
@@ -1094,7 +1760,7 @@ mod tests {
         let wrong_driver = fixture_archive_with(
             temp.path(),
             "1.0.2",
-            &current_target(),
+            &current_target().unwrap(),
             1,
             b"worker",
             &hex_sha256(b"worker"),
@@ -1109,7 +1775,7 @@ mod tests {
         let wrong_hash = fixture_archive_with(
             temp.path(),
             "1.0.3",
-            &current_target(),
+            &current_target().unwrap(),
             1,
             b"worker",
             &"0".repeat(64),
@@ -1121,74 +1787,351 @@ mod tests {
             .to_string()
             .contains("SHA-256 mismatch"));
 
-        let corrupt = fixture_archive(temp.path(), "1.0.4", &current_target(), 1, b"worker");
+        let corrupt = fixture_archive(
+            temp.path(),
+            "1.0.4",
+            &current_target().unwrap(),
+            1,
+            b"worker",
+        );
         let bytes = fs::read(&corrupt).unwrap();
         fs::write(&corrupt, &bytes[..bytes.len() / 2]).unwrap();
         assert!(store.install_archive(entry, &corrupt).is_err());
-        assert!(store.active_path("perception").unwrap().is_none());
+        assert!(store.active_path("local-prototype").unwrap().is_none());
     }
 
     #[test]
-    fn rejects_traversal_and_link_entries_before_staging() {
+    fn malformed_manifest_version_cleans_staging() {
         let temp = TempDir::new().unwrap();
         let store = ExtensionStore::new(temp.path().join("extensions"));
-        let entry = registry_entry("perception").unwrap();
+        let entry = registry_entry("local-prototype").unwrap();
+        let archive = fixture_archive(
+            temp.path(),
+            "not-a-version",
+            &current_target().unwrap(),
+            1,
+            b"worker",
+        );
 
-        for kind in ["traversal", "symlink"] {
+        assert!(store
+            .install_archive(entry, &archive)
+            .unwrap_err()
+            .to_string()
+            .contains("semantic versioning"));
+        assert_eq!(
+            fs::read_dir(store.root.join(".staging")).unwrap().count(),
+            0
+        );
+    }
+
+    #[test]
+    fn rejects_traversal_and_link_entries_and_cleans_staging() {
+        let temp = TempDir::new().unwrap();
+        let store = ExtensionStore::new(temp.path().join("extensions"));
+        let entry = registry_entry("local-prototype").unwrap();
+
+        for kind in ["traversal", "symlink", "pax", "long-path"] {
             let archive = unsafe_archive(temp.path(), kind);
             assert!(store.install_archive(entry, &archive).is_err(), "{kind}");
         }
-        assert!(!store.root.join(".staging").exists());
+        assert_eq!(
+            fs::read_dir(store.root.join(".staging")).unwrap().count(),
+            0
+        );
+    }
+
+    #[test]
+    fn compressed_reader_stops_at_its_limit() {
+        let mut reader = BoundedReader {
+            inner: Cursor::new(vec![b'x'; 16]),
+            remaining: 4,
+        };
+        let mut output = Vec::new();
+        let error = reader.read_to_end(&mut output).unwrap_err();
+        assert_eq!(output.len(), 4);
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn strict_command_grammar_rejects_ambiguous_arguments() {
+        for args in [
+            vec!["list", "extra"],
+            vec!["info", "local-prototype", "extra"],
+            vec!["status", "--bogus"],
+            vec!["status", "--json", "--json"],
+            vec!["install", "local-prototype", "--archive"],
+            vec![
+                "install",
+                "local-prototype",
+                "--archive",
+                "a",
+                "--archive=b",
+            ],
+            vec!["path", "local-prototype", "--archive=a"],
+        ] {
+            let args = args.into_iter().map(str::to_owned).collect::<Vec<_>>();
+            assert!(parse_command(&args).is_err(), "accepted {args:?}");
+        }
+    }
+
+    #[test]
+    fn mutation_platform_contract_is_explicit() {
+        #[cfg(windows)]
+        assert!(ensure_mutations_supported()
+            .unwrap_err()
+            .to_string()
+            .contains("unsupported on Windows"));
+        #[cfg(not(windows))]
+        assert!(ensure_mutations_supported().is_ok());
     }
 
     #[test]
     fn activation_failure_restores_previous_version() {
         let temp = TempDir::new().unwrap();
         let store = ExtensionStore::new(temp.path().join("extensions"));
-        let entry = registry_entry("perception").unwrap();
-        let archive = fixture_archive(temp.path(), "1.0.0", &current_target(), 1, b"worker");
+        let entry = registry_entry("local-prototype").unwrap();
+        let archive = fixture_archive(
+            temp.path(),
+            "1.0.0",
+            &current_target().unwrap(),
+            1,
+            b"worker",
+        );
         store.install_archive(entry, &archive).unwrap();
 
+        let lock = store.lock("local-prototype").unwrap();
         let error = store
-            .activate("perception", "2.0.0", ActivationFailpoint::AfterBackup)
+            .activate_locked(
+                &lock.root,
+                "local-prototype",
+                "2.0.0",
+                ActivationFailpoint::AfterBackup,
+            )
             .unwrap_err();
+        drop(lock);
 
         assert!(error.to_string().contains("simulated interruption"));
+        let lock = store.lock("local-prototype").unwrap();
         assert_eq!(
-            store.active_pointer("perception").unwrap().unwrap().version,
+            store
+                .active_pointer_locked(&lock.root, "local-prototype")
+                .unwrap()
+                .unwrap()
+                .version,
             "1.0.0"
         );
     }
 
     #[test]
-    fn uninstall_preserves_neighboring_files() {
+    fn recovery_validates_and_restores_interrupted_backup() {
         let temp = TempDir::new().unwrap();
         let store = ExtensionStore::new(temp.path().join("extensions"));
-        let entry = registry_entry("perception").unwrap();
-        let archive = fixture_archive(temp.path(), "1.0.0", &current_target(), 1, b"worker");
-        store.install_archive(entry, &archive).unwrap();
-        let neighbor = store.extension_dir("perception").join("user-notes.txt");
-        fs::write(&neighbor, b"keep").unwrap();
-        let unowned_version = store.versions_dir("perception").join("9.9.9");
-        fs::create_dir_all(&unowned_version).unwrap();
-        fs::write(unowned_version.join("user-notes.txt"), b"keep version").unwrap();
-
-        assert_eq!(store.uninstall("perception").unwrap(), 1);
-        assert_eq!(fs::read(&neighbor).unwrap(), b"keep");
-        assert_eq!(
-            fs::read(unowned_version.join("user-notes.txt")).unwrap(),
-            b"keep version"
+        let entry = registry_entry("local-prototype").unwrap();
+        let archive = fixture_archive(
+            temp.path(),
+            "1.0.0",
+            &current_target().unwrap(),
+            1,
+            b"worker",
         );
-        assert!(store.active_path("perception").unwrap().is_none());
+        store.install_archive(entry, &archive).unwrap();
+
+        let lock = store.lock(entry.id).unwrap();
+        store
+            .activate_locked(
+                &lock.root,
+                entry.id,
+                "2.0.0",
+                ActivationFailpoint::LeaveInterruptedAfterBackup,
+            )
+            .unwrap_err();
+        drop(lock);
+
+        assert_eq!(
+            store.active_path(entry.id).unwrap().unwrap(),
+            store.versions_dir(entry.id).join("1.0.0")
+        );
+        assert!(!store
+            .extension_dir(entry.id)
+            .join(ACTIVE_BACKUP_NAME)
+            .exists());
+        assert!(!store.extension_dir(entry.id).join(ACTIVE_NEW_NAME).exists());
     }
 
     #[test]
     fn absence_is_healthy() {
         let temp = TempDir::new().unwrap();
         let store = ExtensionStore::new(temp.path().join("extensions"));
-        let info = store.info(registry_entry("perception").unwrap()).unwrap();
+        let info = store
+            .info(registry_entry("local-prototype").unwrap())
+            .unwrap();
         assert!(!info.installed);
         assert!(info.healthy);
-        assert_eq!(info.detail, "not installed (healthy)");
+        assert_eq!(
+            info.detail,
+            format!("not installed (healthy); {TRUST_NOTICE}")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symlinked_store_components_without_deleting_external_targets() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+
+        for component in [
+            "ancestor",
+            "root",
+            "extension",
+            "versions",
+            "staging",
+            "active",
+            "active-backup",
+            "active-new",
+        ] {
+            let temp = TempDir::new().unwrap();
+            let external = temp.path().join("external");
+            fs::create_dir(&external).unwrap();
+            fs::set_permissions(&external, fs::Permissions::from_mode(0o700)).unwrap();
+            fs::write(external.join("sentinel"), b"keep").unwrap();
+            fs::set_permissions(external.join("sentinel"), fs::Permissions::from_mode(0o600))
+                .unwrap();
+            let store = if component == "ancestor" {
+                let linked_home = temp.path().join("linked-home");
+                symlink(&external, &linked_home).unwrap();
+                ExtensionStore::new(linked_home.join("extensions"))
+            } else {
+                ExtensionStore::new(temp.path().join("extensions"))
+            };
+            let entry = registry_entry("local-prototype").unwrap();
+            let archive = fixture_archive(
+                temp.path(),
+                "1.0.0",
+                &current_target().unwrap(),
+                1,
+                b"worker",
+            );
+
+            if !matches!(component, "ancestor" | "root") {
+                ensure_private_directory_path(&store.root).unwrap();
+            }
+            match component {
+                "ancestor" => {}
+                "root" => symlink(&external, &store.root).unwrap(),
+                "extension" => symlink(&external, store.extension_dir(entry.id)).unwrap(),
+                "versions" => {
+                    ensure_private_directory_path(&store.extension_dir(entry.id)).unwrap();
+                    symlink(&external, store.versions_dir(entry.id)).unwrap();
+                }
+                "staging" => symlink(&external, store.root.join(".staging")).unwrap(),
+                "active" | "active-backup" | "active-new" => {
+                    store.install_archive(entry, &archive).unwrap();
+                    let pointer_name = match component {
+                        "active" => ACTIVE_NAME,
+                        "active-backup" => ACTIVE_BACKUP_NAME,
+                        "active-new" => ACTIVE_NEW_NAME,
+                        _ => unreachable!(),
+                    };
+                    let pointer_path = store.extension_dir(entry.id).join(pointer_name);
+                    if pointer_path.exists() {
+                        fs::remove_file(&pointer_path).unwrap();
+                    }
+                    symlink(external.join("sentinel"), pointer_path).unwrap();
+                }
+                _ => unreachable!(),
+            }
+
+            let result = store.install_archive(entry, &archive).map(|_| ());
+            assert!(result.is_err(), "{component} symlink was accepted");
+            assert_eq!(fs::read(external.join("sentinel")).unwrap(), b"keep");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn retained_directory_handle_survives_name_swap_without_touching_replacement() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+
+        let temp = TempDir::new().unwrap();
+        let store = ExtensionStore::new(temp.path().join("extensions"));
+        let root = ensure_private_directory_path(&store.root).unwrap();
+        let retained = ensure_private_subdirectory(&root, "slot").unwrap();
+        let external = temp.path().join("external");
+        fs::create_dir(&external).unwrap();
+        fs::set_permissions(&external, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::write(external.join("sentinel"), b"keep").unwrap();
+
+        root.rename("slot", &root, "slot-original").unwrap();
+        sync_cap_dir(&root).unwrap();
+        symlink(&external, store.root.join("slot")).unwrap();
+
+        write_new_file_at(&retained, "marker", b"retained").unwrap();
+        assert_eq!(
+            fs::read(store.root.join("slot-original/marker")).unwrap(),
+            b"retained"
+        );
+        assert!(!external.join("marker").exists());
+        assert!(remove_cap_subdirectory(&root, std::ffi::OsStr::new("slot")).is_err());
+        assert_eq!(fs::read(external.join("sentinel")).unwrap(), b"keep");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn installs_owner_only_files_and_requires_executable_entrypoint() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = TempDir::new().unwrap();
+        let store = ExtensionStore::new(temp.path().join("extensions"));
+        let entry = registry_entry("local-prototype").unwrap();
+        let archive = fixture_archive(
+            temp.path(),
+            "1.0.0",
+            &current_target().unwrap(),
+            1,
+            b"worker",
+        );
+        let installed = store.install_archive(entry, &archive).unwrap();
+        assert_eq!(
+            fs::symlink_metadata(installed.path.join("bin/local-extension"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        assert_eq!(
+            fs::symlink_metadata(installed.path.join(MANIFEST_NAME))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+
+        let invalid = fixture_archive_with_executable(
+            temp.path(),
+            "2.0.0",
+            &current_target().unwrap(),
+            1,
+            b"worker",
+            &hex_sha256(b"worker"),
+            &format!("={}", env!("CARGO_PKG_VERSION")),
+            false,
+        );
+        assert!(store
+            .install_archive(entry, &invalid)
+            .unwrap_err()
+            .to_string()
+            .contains("must be executable"));
+    }
+
+    #[test]
+    fn rejects_unknown_or_unsupported_target_abis() {
+        assert!(target_triple("linux", "x86_64", "unknown").is_err());
+        assert!(target_triple("macos", "aarch64", "unknown").is_err());
+        assert!(target_triple("freebsd", "x86_64", "gnu").is_err());
+        assert_eq!(
+            target_triple("linux", "aarch64", "musl").unwrap(),
+            "aarch64-unknown-linux-musl"
+        );
     }
 }

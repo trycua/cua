@@ -352,9 +352,6 @@ mod tests {
         let error = bindings
             .admit_desktop_click(&capture_id, &args, 1.0, 1.0)
             .unwrap_err();
-        assert_eq!(
-            error.structured_content.unwrap()["code"],
-            "capture_stale"
-        );
+        assert_eq!(error.structured_content.unwrap()["code"], "capture_stale");
     }
 }

@@ -16,6 +16,16 @@ pub mod native;
 pub use cache::ElementCache;
 pub use native::ensure_listener_active;
 
+/// Stable address on one AT-SPI bus connection, including the owning frame.
+/// Unique bus names prevent a restarted process from reusing an observed path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AtspiIdentity {
+    pub bus_name: String,
+    pub path: String,
+    pub frame_bus_name: String,
+    pub frame_path: String,
+}
+
 #[derive(Clone, Debug)]
 pub struct AtspiNode {
     pub element_index: Option<usize>,
@@ -33,6 +43,7 @@ pub struct AtspiNode {
     /// For AT-SPI: element_key = element_index as u64.
     /// For X11 fallback: element_key = xid.
     pub element_key: u64,
+    pub identity: Option<AtspiIdentity>,
     /// Depth in the markdown tree (0 = top-level window child).
     /// Defaults to 0 when not tracked (e.g. X11 fallback path).
     pub depth: usize,
@@ -275,6 +286,18 @@ pub fn perform_action_in(pid: u32, xid: Option<u64>, idx: usize) -> Result<(Stri
     native::perform_action(pid, idx)
 }
 
+/// [`perform_action`] on the exact object a snapshot observed. Never re-walks
+/// or retargets by index: when the object is gone the error downcasts to
+/// [`native::CachedElementGone`] so the caller can refuse as stale.
+pub fn perform_action_observed(element: &cache::CachedElement) -> Result<(String, bool)> {
+    let Some(object_ref) = element.object_ref.as_ref() else {
+        return Err(
+            native::CachedElementGone("observed element has no D-Bus address".into()).into(),
+        );
+    };
+    native::perform_action_ref(object_ref)
+}
+
 /// Give an indexed AT-SPI element keyboard focus without activating its window.
 pub fn focus_element(pid: u32, idx: usize) -> Result<bool> {
     if let Some(object_ref) = cache::cached_element(pid, None, idx).and_then(|e| e.object_ref) {
@@ -507,6 +530,7 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
         },
         actions: vec!["activate".into()],
         element_key: xid,
+        identity: None,
         depth: 0,
         parent_element_index: None,
         in_web_content: false,
@@ -647,6 +671,7 @@ mod budget_tests {
             depth,
             parent_element_index: (depth > 0).then_some(0),
             in_web_content: false,
+            identity: None,
             object_ref: None,
         };
         native::WalkedTree {

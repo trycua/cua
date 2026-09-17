@@ -281,7 +281,11 @@ background delivery is tested.
 
 ### macOS
 
-Runner: `libs/cua-driver/tests/runners/macos-lume/run-all.sh`
+Canonical runner: `libs/cua-driver/tests/runners/macos-lume/run-all.sh`
+
+Supplemental hosted runner: manually dispatch
+`.github/workflows/e2e-rust-macos.yml` with an exact 40-character source SHA.
+Its probe must pass before independent shared, native, and capture jobs run.
 
 | Runner area               | Rust test                              | Real harness or app                     |
 | ------------------------- | -------------------------------------- | --------------------------------------- |
@@ -301,6 +305,25 @@ canonical logged-in macOS lane, but they do not replace repo-local fixtures.
 The maintainer wrapper provisions the exact source build and verifies the
 private Lume seed's TCC/signing contract before delegating the behavior matrix
 to `scripts/ci/macos/run-rust-e2e.sh`.
+
+The hosted wrapper uses the same behavior matrix on fresh `macos-26` runners.
+It requires the GitHub-hosted Aqua session and SIP-off VirtualMac environment,
+creates a temporary code-signing Keychain, installs a certificate-signed local
+app, seeds only Accessibility and Screen Capture for that app's exact csreq, and
+verifies that permission status is attributed to the driver daemon before any
+test begins. The temporary certificate trust is removed during job cleanup.
+Hosted results remain supplemental until the image and signing
+identity provide the same release-parity guarantees as the maintained Lume
+seed.
+
+Workers cloned from a granted private seed verify and reuse its app-owned TCC
+identity. A disposable SIP-disabled Lume worker without inherited grants must
+use `tests/runners/macos-lume/seed-tcc.sh` after installing the exact candidate
+as a certificate-signed `CuaDriverLocal.app`. The guarded helper is the only
+supported automated path: it verifies `VirtualMac*`, disabled SIP, the expected
+bundle identity, and the signed requirement before seeding only Accessibility
+and Screen Recording. Never hand-edit `TCC.db`. Restart the app afterward and
+prove live capture and input; database rows alone do not certify the desktop.
 
 ### Linux
 

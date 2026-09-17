@@ -112,7 +112,7 @@ Compatibility is tracked separately at each boundary:
 | `contract_version` | `0.8.0` | Generated manifest and typed SDK shape |
 | `tools_list_schema_version` | `1` | cua-driver `tools/list` extension shape |
 | `capability_version` | `1` | Additive capability-token vocabulary |
-| `mcp_protocol_version` | `2025-06-18` | MCP initialization protocol served to agent runtimes |
+| `mcp_protocol_version` | `2025-06-18` | Legacy `initialize.params.protocolVersion` and loopback HTTP compatibility version; modern stdio negotiation is endpoint-owned |
 
 This implementation does not use WASM. UniFFI distributes the shared Rust
 implementation to Python and Node. Permission identity follows the selected

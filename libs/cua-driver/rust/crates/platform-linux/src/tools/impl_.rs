@@ -241,8 +241,10 @@ pub struct MouseHoldState {
 
 impl ToolState {
     pub fn new() -> Arc<Self> {
+        let element_cache = Arc::new(ElementCache::new());
+        cua_driver_core::element_cache::register_runtime_cache(&element_cache);
         Arc::new(Self {
-            element_cache: Arc::new(ElementCache::new()),
+            element_cache,
             cursor_registry: Arc::new(CursorRegistry::new()),
             resize_registry: Arc::new(ResizeRegistry::new()),
             zoom_registry: Arc::new(ZoomRegistry::new()),
@@ -1000,11 +1002,6 @@ impl Tool for GetWindowStateTool {
                     content.push(cua_driver_core::protocol::Content::text(
                         header + &tr.tree_markdown,
                     ));
-                    if !observation_only {
-                        state
-                            .element_cache
-                            .update_with_bounds(pid, xid, &tr.nodes, &tr.bounds);
-                    }
                     structured["element_count"] = json!(count);
                     // `elements_complete` is a real claim now: a native walk that
                     // finished without hitting the deadline / node budget saw
@@ -1022,25 +1019,21 @@ impl Tool for GetWindowStateTool {
                     structured["timeout_ms"] = json!(timeout_ms);
                     structured["tree_markdown"] = json!(tr.tree_markdown);
 
-                    // Surface 6: register a snapshot in the global token
-                    // registry so each actionable element can be addressed
-                    // by an opaque per-snapshot `element_token` alongside
-                    // its existing integer `element_index`. The integer
-                    // surface stays unchanged — the token is additive.
                     let target_scoped = !(crate::wayland::is_wayland()
                         && crate::wayland::hyprland::is_session())
                         || tr.window_scoped;
                     if !observation_only && !target_scoped {
-                        cua_driver_core::element_token::global().invalidate_window(pid as i32, xid);
+                        state.element_cache.remove(pid as i32, xid);
+                        crate::atspi::cache::forget_window(pid, xid);
                     }
+                    // The payload carries each element's proven identity plus
+                    // the frames this walk produced, so later per-index
+                    // actions act on the observed object without re-walking.
                     let snapshot_id = (!observation_only && target_scoped).then(|| {
-                        cua_driver_core::element_token::global().register_snapshot_indices(
+                        state.element_cache.publish(
                             pid as i32,
                             xid,
-                            &tr.nodes
-                                .iter()
-                                .filter_map(|node| node.element_index)
-                                .collect::<Vec<_>>(),
+                            crate::atspi::cache::update_snapshot(pid, xid, &tr.nodes, &tr.bounds),
                         )
                     });
 
@@ -1288,6 +1281,7 @@ mod get_window_state_actions_tests {
             description: None,
             actions,
             element_key: 1,
+            identity: None,
             depth: 0,
             parent_element_index: None,
             in_web_content: false,
@@ -2523,7 +2517,8 @@ fn hyprland_foreground(delivery: crate::input::delivery::DeliveryMode) -> bool {
 fn element_needs_real_click(role: &str) -> bool {
     matches!(
         role.trim().to_ascii_lowercase().as_str(),
-        "spin button"
+        "table cell"
+            | "spin button"
             | "text"
             | "entry"
             | "password text"
@@ -3024,6 +3019,33 @@ fn isolated_background_routes_do_not_reprobe_availability_before_primary_fallbac
         let native = invoke.split_once("if isolated_background {").unwrap().1;
         assert!(native.contains("return match dispatch.await"), "{start}");
     }
+}
+
+#[cfg(test)]
+#[test]
+fn type_text_routes_isolated_background_before_generic_wayland_refusal() {
+    let source = include_str!("impl_.rs");
+    let invoke = source
+        .rsplit_once("impl Tool for TypeTextTool {")
+        .unwrap()
+        .1
+        .split_once("impl Tool for PressKeyTool {")
+        .unwrap()
+        .0
+        .split_once("async fn invoke")
+        .unwrap()
+        .1;
+    let isolated = invoke
+        .find("isolated_hyprland_background(delivery)")
+        .expect("type_text must select isolated Hyprland background delivery");
+    let generic = invoke
+        .find("unavailable_wayland_focused_input_background")
+        .expect("type_text must retain the generic Wayland refusal");
+    assert!(
+        isolated < generic,
+        "the plugin route must run before the generic focused-input refusal"
+    );
+    assert!(invoke.contains("execute_background_text"));
 }
 
 #[cfg(test)]
@@ -3877,7 +3899,7 @@ impl Tool for ClickTool {
         let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id");
         let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match cua_driver_core::element_token::resolve_element_args_wide(
+        let resolved = match self.state.element_cache.resolve_element_args(
             pid as i32,
             element_index_arg,
             element_token_arg.as_deref(),
@@ -3902,6 +3924,18 @@ impl Tool for ClickTool {
         };
 
         if let Some(idx) = elem_idx_resolved {
+            // The observed element: its proven AT-SPI identity and the frame
+            // the snapshot recorded. Every route below acts on that identity
+            // (or its cached frame); the live ordinal `idx` is only an
+            // address within the snapshot, never used to retarget.
+            let observed = match resolved {
+                cua_driver_core::element_token::ResolvedElement::Element { element, .. } => {
+                    element
+                }
+                cua_driver_core::element_token::ResolvedElement::None => {
+                    unreachable!("indexed click resolved without an element")
+                }
+            };
             let xid_hint = window_id_resolved;
             // Resolve the element's screen center + its window FIRST, so the
             // agent cursor glides to the target *before* the click fires —
@@ -4017,19 +4051,34 @@ impl Tool for ClickTool {
             // give an entry / spin button / slider the widget focus a following
             // type_text needs (GIMP spin scales, VS Code settings inputs). With
             // the MPX real pointer available, click those like a user would.
+            let needs_real_click = element_needs_real_click(&observed.role);
             let real_click_role = !delivery.is_foreground()
                 && !crate::wayland::wayland_input_enabled()
-                && crate::atspi::cache::cached_element(pid, xid_hint, idx)
-                    .is_some_and(|element| element_needs_real_click(&element.role))
+                && needs_real_click
                 && crate::input::real_pointer_input_available();
+            // Without a real pointer, an editable / table cell cannot take a
+            // background click that gives it focus: refuse instead of firing
+            // an AT-SPI action whose effect is not a click.
+            if !delivery.is_foreground()
+                && !crate::wayland::is_wayland()
+                && needs_real_click
+                && !crate::input::real_pointer_input_available()
+            {
+                if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
+                    return refusal;
+                }
+                return crate::input::delivery::background_unavailable_error(
+                    crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+                );
+            }
             if !real_click_role
                 && element_click_prefers_ax(foreground_hyprland, button, count, !modifiers.is_empty())
             {
-                let ax_xid = window_id_resolved;
+                let observed_for_ax = observed.clone();
                 let ax_result = match tokio::time::timeout(
                     ELEMENT_AX_BUDGET,
                     tokio::task::spawn_blocking(move || {
-                        crate::atspi::perform_action_in(pid, ax_xid, idx)
+                        crate::atspi::perform_action_observed(&observed_for_ax)
                     }),
                 )
                 .await
@@ -4057,6 +4106,21 @@ impl Tool for ClickTool {
                     }
                     return ToolResult::text(format!("Clicked element [{idx}] (pid {pid})."))
                         .with_structured(structured);
+                }
+                // The observed object is gone: the snapshot is stale. Refuse
+                // rather than retarget whatever now lives at that index.
+                if let Ok(Err(error)) = &ax_result {
+                    if error.is::<crate::atspi::native::CachedElementGone>() {
+                        return ToolResult::error(format!(
+                            "AT-SPI element click failed: stale_element_token: observed \
+                             AT-SPI object [{idx}] is no longer present ({error}); \
+                             re-snapshot with get_window_state"
+                        ))
+                        .with_structured(json!({
+                            "code": "stale_element_token",
+                            "effect": "none",
+                        }));
+                    }
                 }
                 // AT-SPI errors can arrive after dispatch. Do not introduce a
                 // primary-seat replay when its semantic outcome is uncertain.
@@ -4685,7 +4749,7 @@ impl Tool for TypeTextTool {
         // Surface 6: resolve element_token / element_index for the
         // optional pre-typing focus glide below. The token also carries
         // the window_id when supplied so the caller can omit window_id.
-        let resolved = match cua_driver_core::element_token::resolve_element_args_wide(
+        let resolved = match self.state.element_cache.resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
@@ -4756,6 +4820,40 @@ impl Tool for TypeTextTool {
             }
         };
         let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
+        if isolated_hyprland_background(delivery)
+            && resolved_elem_idx.is_none()
+            && args.get("x").is_none()
+            && args.get("y").is_none()
+        {
+            if xid_opt.is_none() {
+                return isolated_hyprland_refusal(
+                    "an exact window_id is required for isolated text",
+                );
+            }
+            match crate::wayland::hyprland_input::text_actions(&text) {
+                Ok(actions) if !actions.is_empty() => {}
+                Ok(_) => return isolated_hyprland_refusal("background text must not be empty"),
+                Err(error) => return isolated_hyprland_refusal(error.to_string()),
+            }
+            let owner = named_session_cursor_key(&args);
+            let (_cancellation, dispatch) =
+                match spawn_isolated_hyprland(&args, move |cancellation| {
+                    crate::wayland::hyprland_input::execute_background_text(
+                        owner,
+                        pid,
+                        xid,
+                        &text,
+                        cancellation,
+                    )
+                }) {
+                    Ok(dispatch) => dispatch,
+                    Err(refusal) => return refusal,
+                };
+            return match dispatch.await {
+                Ok(result) => isolated_hyprland_result(result),
+                Err(error) => isolated_hyprland_task_error(error, false),
+            };
+        }
         if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
             return refusal;
         }
@@ -4799,7 +4897,7 @@ impl Tool for TypeTextTool {
                     }
                 }
             }
-            match crate::wayland::hyprland_input::foreground_text_actions(&text) {
+            match crate::wayland::hyprland_input::text_actions(&text) {
                 Ok(actions) if !actions.is_empty() => {}
                 Ok(_) => return foreground_hyprland_refusal("foreground text must not be empty"),
                 Err(error) => return foreground_hyprland_refusal(error.to_string()),
@@ -5544,7 +5642,7 @@ impl Tool for PressKeyTool {
         let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id");
         let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match cua_driver_core::element_token::resolve_element_args_wide(
+        let resolved = match self.state.element_cache.resolve_element_args(
             pid as i32,
             element_index_arg,
             element_token_arg.as_deref(),
@@ -5954,7 +6052,7 @@ impl Tool for HotkeyTool {
         let mut pid = args.u64_or("pid", 0) as u32;
         let window_id_arg = args.opt_u64("window_id");
         let element_index_arg = args.opt_u64("element_index").map(|value| value as usize);
-        let resolved = match cua_driver_core::element_token::resolve_element_args_wide(
+        let resolved = match self.state.element_cache.resolve_element_args(
             pid as i32,
             element_index_arg,
             args.opt_str("element_token").as_deref(),
@@ -6337,7 +6435,7 @@ impl Tool for SetValueTool {
             Err(e) => return e,
         };
         // Surface 6: element_token / element_index precedence resolution.
-        let resolved = match cua_driver_core::element_token::resolve_element_args_wide(
+        let resolved = match self.state.element_cache.resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
@@ -6562,7 +6660,7 @@ impl Tool for ScrollTool {
         // element (X11 scroll buttons go to the window root), but the
         // token still needs to be accepted + validated so a stale
         // token surfaces an error instead of silently no-op'ing.
-        let resolved = match cua_driver_core::element_token::resolve_element_args_wide(
+        let resolved = match self.state.element_cache.resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
@@ -6696,6 +6794,39 @@ impl Tool for ScrollTool {
                 return refusal;
             }
         }
+        if let cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } =
+            &resolved
+        {
+            let idx = *element_index;
+            // WebKitGTK acknowledges the AT-SPI scroll action without moving
+            // the DOM scroller. On native Wayland, use a real compositor wheel
+            // event at the resolved element instead of reporting a silent
+            // success. Other AX targets keep their semantic route before any
+            // coordinate-based compositor fallback.
+            if !(crate::wayland::wayland_input_enabled() && is_webkitgtk_embedder(pid)) {
+                let direction_for_ax = direction.clone();
+                let ax_result = tokio::task::spawn_blocking(move || {
+                    crate::atspi::scroll_element(pid, idx, &direction_for_ax, amount, by)
+                })
+                .await;
+                match ax_result {
+                    Ok(Ok(progress)) => {
+                        return atspi_scroll_result(progress, delivery.is_foreground())
+                    }
+                    Err(error) => {
+                        return atspi_scroll_result(
+                            crate::atspi::ScrollProgress {
+                                acknowledged: 0,
+                                complete: false,
+                                detail: Some(error.to_string()),
+                            },
+                            delivery.is_foreground(),
+                        )
+                    }
+                    Ok(Err(_)) => {}
+                }
+            }
+        }
         if hyprland_foreground(delivery) {
             if xid_opt.is_none() {
                 return foreground_hyprland_refusal(
@@ -6730,39 +6861,6 @@ impl Tool for ScrollTool {
             )
             .await;
         }
-        if let cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } =
-            &resolved
-        {
-            let idx = *element_index;
-            // WebKitGTK acknowledges the AT-SPI scroll action without moving
-            // the DOM scroller. On native Wayland, use a real compositor wheel
-            // event at the resolved element instead of reporting a silent
-            // success. Chromium's AT-SPI scroll path remains effective.
-            if !(crate::wayland::wayland_input_enabled() && is_webkitgtk_embedder(pid)) {
-                let direction_for_ax = direction.clone();
-                let ax_result = tokio::task::spawn_blocking(move || {
-                    crate::atspi::scroll_element(pid, idx, &direction_for_ax, amount, by)
-                })
-                .await;
-                match ax_result {
-                    Ok(Ok(progress)) => {
-                        return atspi_scroll_result(progress, delivery.is_foreground())
-                    }
-                    Err(error) => {
-                        return atspi_scroll_result(
-                            crate::atspi::ScrollProgress {
-                                acknowledged: 0,
-                                complete: false,
-                                detail: Some(error.to_string()),
-                            },
-                            delivery.is_foreground(),
-                        )
-                    }
-                    Ok(Err(_)) => {}
-                }
-            }
-        }
-
         if isolated_background {
             if xid_opt.is_none() {
                 return isolated_hyprland_refusal(
@@ -7081,7 +7179,7 @@ impl Tool for DoubleClickTool {
             .await;
         }
         // Surface 6: element_token / element_index precedence.
-        let resolved = match cua_driver_core::element_token::resolve_element_args_wide(
+        let resolved = match self.state.element_cache.resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
@@ -7344,7 +7442,7 @@ impl Tool for RightClickTool {
             .await;
         }
         // Surface 6: element_token / element_index precedence.
-        let resolved = match cua_driver_core::element_token::resolve_element_args_wide(
+        let resolved = match self.state.element_cache.resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),

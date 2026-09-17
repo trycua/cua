@@ -226,7 +226,7 @@ fn run_cursor_theme_command(args: &[String]) -> ! {
 /// enough to be useful).
 ///
 /// No-op when `--experimental-pip` is not on argv. On Windows / Linux
-/// the factory returns "not yet implemented" — we log and continue
+/// startup returns "not yet implemented" — we log and continue
 /// without a window so the rest of the daemon keeps working.
 fn maybe_init_pip() {
     let cfg = match pip_preview::default_config_path() {
@@ -237,16 +237,14 @@ fn maybe_init_pip() {
         return;
     }
 
-    // Register the platform factory. The set is idempotent so multiple
-    // entry points calling this in the same process is safe.
     #[cfg(target_os = "macos")]
-    pip_preview::set_pip_backend_factory(Box::new(platform_macos::pip::MacosPipBackendFactory));
+    let backend = platform_macos::pip::start(&cfg);
     #[cfg(target_os = "windows")]
-    pip_preview::set_pip_backend_factory(Box::new(platform_windows::pip::WindowsPipBackendFactory));
+    let backend = platform_windows::pip::start(&cfg);
     #[cfg(target_os = "linux")]
-    pip_preview::set_pip_backend_factory(Box::new(platform_linux::pip::LinuxPipBackendFactory));
+    let backend = platform_linux::pip::start(&cfg);
 
-    match pip_preview::start_pip(&cfg) {
+    match backend {
         Ok(backend) => {
             // Bridge: when the tool dispatcher in cua-driver-core wants
             // to push a frame, forward to the live backend handle.

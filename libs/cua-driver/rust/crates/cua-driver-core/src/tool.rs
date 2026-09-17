@@ -179,26 +179,18 @@ impl ToolDef {
             "capabilities": caps,
             "risk": risk,
         });
-        let output_schema = if crate::action_record::is_action_tool(&self.name) {
-            Some(
-                <cua_driver_contract::ActionResult as cua_driver_contract::ToolOutput>::output_schema(
-                ),
-            )
-        } else {
-            cua_driver_contract::tool_success_output_schema(&self.name)
-        };
-        if let Some(output_schema) = output_schema {
-            // Advertise the refusal envelope alongside the success shape. MCP
-            // holds every `structuredContent` we emit — refusals included — to
-            // the advertised schema, and a success-only schema made strict
-            // clients discard our refusal message in favour of a schema error.
+        // Advertise the refusal envelope alongside the success shape. MCP
+        // holds every `structuredContent` we emit — refusals included — to
+        // the advertised schema, and a success-only schema made strict
+        // clients discard our refusal message in favour of a schema error.
+        // The `tools/call` boundary answers from the same lookup, so what a
+        // client is promised and what it is held to cannot drift.
+        if let Some(output_schema) = cua_driver_contract::advertised_tool_output_schema(&self.name)
+        {
             entry
                 .as_object_mut()
                 .expect("tool list entry is an object")
-                .insert(
-                    "outputSchema".into(),
-                    cua_driver_contract::advertised_output_schema(output_schema),
-                );
+                .insert("outputSchema".into(), output_schema);
         }
         entry
     }
@@ -1601,10 +1593,11 @@ impl ToolRegistry {
         if result.is_error != Some(true) && crate::action_record::is_action_tool(resolved_name) {
             if let Err(error) = publish_action_result(&mut result) {
                 result = ToolResult::error(format!(
-                    "internal action outcome mismatch for {resolved_name}: {error}"
+                    "internal action outcome mismatch for {resolved_name}: {error}; the tool may have executed. Verify state before retrying."
                 ))
                 .with_structured(serde_json::json!({
                     "code": "action_outcome_mismatch",
+                    "execution_state": "unknown",
                     "tool": resolved_name,
                     "detail": error,
                 }));
@@ -1616,10 +1609,11 @@ impl ToolRegistry {
                     cua_driver_contract::validate_success_output(resolved_name, structured)
                 {
                     result = ToolResult::error(format!(
-                        "internal typed output mismatch for {resolved_name}: {error}"
+                        "internal typed output mismatch for {resolved_name}: {error}; the tool may have executed. Verify state before retrying."
                     ))
                     .with_structured(serde_json::json!({
                         "code": "typed_output_mismatch",
+                        "execution_state": "unknown",
                         "tool": resolved_name,
                         "detail": error,
                     }));
@@ -4554,48 +4548,51 @@ resources:
     #[tokio::test]
     async fn element_tokens_are_bound_to_the_dispatch_runtime_generation() {
         let pid = 8_675_309;
-        let token = DISPATCH_RUNTIME_SCOPE
-            .scope("runtime-a".to_owned(), async {
-                let snapshot = crate::element_token::global().register_snapshot(pid, 44, 1);
-                crate::element_token::token_for(snapshot, 0)
+        let (first_cache, token) = DISPATCH_RUNTIME_SCOPE
+            .scope("token-dispatch-runtime-a".to_owned(), async {
+                let cache = crate::snapshot_test_support::cache();
+                let snapshot =
+                    cache.publish(pid, 44, crate::snapshot_test_support::Payload(vec![0]));
+                (cache, crate::element_token::token_for(snapshot, 0))
             })
             .await;
-
-        let cross_runtime = DISPATCH_RUNTIME_SCOPE
-            .scope("runtime-b".to_owned(), async {
-                crate::element_token::global().resolve(pid, &token)
+        let second_cache = DISPATCH_RUNTIME_SCOPE
+            .scope("token-dispatch-runtime-b".to_owned(), async {
+                crate::snapshot_test_support::cache()
             })
             .await;
-        assert_eq!(
-            cross_runtime.unwrap_err(),
-            "element_token belongs to another runtime generation"
-        );
         let structured = DISPATCH_RUNTIME_SCOPE
-            .scope("runtime-b".to_owned(), async {
-                crate::element_token::resolve_element_args(
-                    pid,
-                    None,
-                    Some(&token),
-                    None,
-                    None,
-                    "click",
-                )
-                .unwrap_err()
+            .scope("token-dispatch-runtime-b".to_owned(), async {
+                second_cache
+                    .resolve_element_args(pid, None, Some(&token), None, None, "click")
+                    .unwrap_err()
             })
             .await
             .structured_content
             .unwrap();
+        assert_eq!(
+            structured["refusal"]["message"],
+            "element_token belongs to another runtime generation"
+        );
         assert_eq!(
             structured.pointer("/refusal/code"),
             Some(&serde_json::Value::String("generation_mismatch".into()))
         );
 
         let owner = DISPATCH_RUNTIME_SCOPE
-            .scope("runtime-a".to_owned(), async {
-                crate::element_token::global().resolve(pid, &token)
+            .scope("token-dispatch-runtime-a".to_owned(), async {
+                first_cache.resolve_element_args(pid, None, Some(&token), None, None, "click")
             })
             .await;
-        assert_eq!(owner.unwrap(), (44, 0));
+        assert!(matches!(
+            owner.unwrap(),
+            crate::element_token::ResolvedElement::Element {
+                window_id: Some(44),
+                element_index: 0,
+                element: 0,
+                ..
+            }
+        ));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

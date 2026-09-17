@@ -521,8 +521,8 @@ func TestEmbeddedMigrationsAreOrderedAndImmutable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 12 {
-		t.Fatalf("expected exactly twelve migrations, got %d", len(files))
+	if len(files) != 13 {
+		t.Fatalf("expected exactly thirteen migrations, got %d", len(files))
 	}
 	manifest := make([]struct {
 		Version int64
@@ -550,6 +550,7 @@ func TestEmbeddedMigrationsAreOrderedAndImmutable(t *testing.T) {
 		{10, "000010_grant_metabase_billing_meter_access.sql"},
 		{11, "000011_signed_service_urls.sql"},
 		{12, "000012_private_account_lookup.sql"},
+		{13, "000013_stripe_usage_submission.sql"},
 	}) {
 		t.Fatalf("migration manifest = %#v", manifest)
 	}
@@ -927,12 +928,13 @@ func TestCredentialURLsExcludeDynamicTenantRoles(t *testing.T) {
 		Metabase:    "postgres://k8s_metabase:pw@db/cyclops",
 		Usage:       "postgres://cyclops_usage_reader:pw@db/cyclops",
 		Meter:       "postgres://cyclops_meter_writer:pw@db/cyclops",
+		Submitter:   "postgres://cyclops_submitter:pw@db/cyclops",
 	})
 	if err != nil {
 		t.Fatalf("parse fixed runtime credentials: %v", err)
 	}
-	if len(credentials) != 7 {
-		t.Fatalf("credential count = %d, want 7", len(credentials))
+	if len(credentials) != 8 {
+		t.Fatalf("credential count = %d, want 8", len(credentials))
 	}
 	for _, credential := range credentials {
 		if credential.Role == "k8s_query_broker" || strings.HasPrefix(credential.Role, "k8s_tenant_") {
@@ -960,6 +962,7 @@ func TestStaticRoleContractsAreAllowlistedAndFixed(t *testing.T) {
 		"k8s_metabase":         {true, false, false, false, -1, staticRoleValidUntilInfinity},
 		"cyclops_usage_reader": {true, false, false, false, -1, staticRoleValidUntilInfinity},
 		"cyclops_meter_writer": {true, false, false, false, -1, staticRoleValidUntilInfinity},
+		"cyclops_submitter":    {true, false, false, false, -1, staticRoleValidUntilInfinity},
 	}
 	if len(contracts) != len(want) {
 		t.Fatalf("static role contract count = %d, want %d", len(contracts), len(want))
@@ -1010,6 +1013,7 @@ func TestCredentialURLsRequireExpectedRoleNames(t *testing.T) {
 		Metabase:    "postgres://k8s_metabase:pw@db/cyclops",
 		Usage:       "postgres://cyclops_usage_reader:pw@db/cyclops",
 		Meter:       "postgres://cyclops_meter_writer:pw@db/cyclops",
+		Submitter:   "postgres://cyclops_submitter:pw@db/cyclops",
 	})
 	if err == nil {
 		t.Fatal("expected application role-name validation")
@@ -1028,6 +1032,7 @@ func TestCredentialURLsRejectEmptyPassword(t *testing.T) {
 		Metabase:    "postgres://k8s_metabase:pw@db/cyclops",
 		Usage:       "postgres://cyclops_usage_reader:pw@db/cyclops",
 		Meter:       "postgres://cyclops_meter_writer:pw@db/cyclops",
+		Submitter:   "postgres://cyclops_submitter:pw@db/cyclops",
 	})
 	if err == nil || err.Error() != "application credential database URL must include a password" {
 		t.Fatalf("expected empty password rejection, got %v", err)
@@ -1043,6 +1048,7 @@ func TestCredentialURLParseErrorsPreserveCauseForBoundaryClassification(t *testi
 		Metabase:    "postgres://k8s_metabase:pw@db/cyclops",
 		Usage:       "postgres://cyclops_usage_reader:pw@db/cyclops",
 		Meter:       "postgres://cyclops_meter_writer:pw@db/cyclops",
+		Submitter:   "postgres://cyclops_submitter:pw@db/cyclops",
 	})
 	if !errors.Is(err, ErrInvalidConfiguration) {
 		t.Fatalf("error = %v, want ErrInvalidConfiguration", err)

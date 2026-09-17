@@ -14,7 +14,10 @@ import { CuaDriver } from "@trycua/cua-driver"
 organizational `/embedded` entrypoint; they are the same generated Rust object.
 The `/electron` entrypoint is a thin compatibility naming layer over the same
 generated macOS permission functions. The package does not contain a TypeScript
-MCP client. Agents already have
+MCP protocol implementation. The optional `/fleet` entrypoint forwards service
+bytes to the shared Rust typed-MCP client and returns the canonical Driver.
+See [the candidate Fleet connection guide](../docs/shared-fleet-mcp-client.md)
+for prerequisites, ownership, and release limits. Agents already have
 runtime-neutral MCP clients and should configure the executable directly:
 
 ```text

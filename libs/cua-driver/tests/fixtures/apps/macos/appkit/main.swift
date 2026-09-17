@@ -648,9 +648,22 @@ struct CuaAppKitHarness {
     static func main() {
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
+        if let directory = ProcessInfo.processInfo.environment["CUA_APPKIT_SNAPSHOT_DIR"] {
+            let fixture = SnapshotPublicationFixture(directory: URL(fileURLWithPath: directory))
+            fixture.show()
+            app.activate(ignoringOtherApps: true)
+            app.run()
+            withExtendedLifetime(fixture) {}
+            return
+        }
         let controller = HarnessWindowController()
         installMenuBar(target: controller)
         controller.show()
+        if ProcessInfo.processInfo.environment["CUA_APPKIT_KEEP_ORDERED_FRONT"] == "1" {
+            _ = Timer.scheduledTimer(withTimeInterval: 0.01, repeats: true) { [weak window = controller.window] _ in
+                window?.orderFrontRegardless()
+            }
+        }
         if let path = ProcessInfo.processInfo.environment["CUA_APPKIT_POINTER_ORACLE"] {
             let receiver = SingleClickReceiver(
                 frame: controller.window.contentView!.bounds,

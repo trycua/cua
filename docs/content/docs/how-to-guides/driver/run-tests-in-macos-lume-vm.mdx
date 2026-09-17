@@ -294,6 +294,30 @@ libs/cua-driver/scripts/sync-vm-worktree.sh push \
   "lume@${VM_IP}" '~/cua'
 ```
 
+### Seed TCC in a disposable worker without inherited grants
+
+Skip this section when the worker was cloned from a private seed whose signing
+identity and app-owned grants passed the preflight. For a disposable worker
+created from the public SIP-disabled image or another ungranted base, first
+install the exact candidate as the certificate-signed local app. Then run the
+checked-in helper from the host:
+
+```bash
+libs/cua-driver/tests/runners/macos-lume/seed-tcc.sh "$WORKER"
+```
+
+The helper refuses to write unless the guest identifies as `VirtualMac*`, SIP
+is disabled, the app is `com.trycua.driver.local`, and its code requirement is
+certificate-backed. It seeds only Accessibility and Screen Recording, restarts
+`tccd`, and verifies both rows. Do not copy its SQL or edit `TCC.db` manually.
+
+Restart `CuaDriverLocal.app` in the logged-in guest after seeding. Before the
+matrix, require `cua-driver-local permissions status --json` to report both
+grants and prove a fresh screenshot plus a reversible input action through the
+guest Driver. Database rows or a successful helper exit alone do not certify
+the desktop. The complete command options and signing prerequisites are in the
+repository's `libs/cua-driver/tests/runners/macos-lume/README.md`.
+
 ### Run the complete matrix in foreground Terminal
 
 Open Terminal in the VM display and run:

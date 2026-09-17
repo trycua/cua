@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.8.0](https://github.com/trycua/cua/compare/sandbox-v0.7.0...sandbox-v0.8.0) (2026-09-15)
+
+
+### Features
+
+* **sandbox:** OSWorld disks on Fleet via agent_type="osworld" + "Run OSWorld on Fleet" guide ([#3686](https://github.com/trycua/cua/issues/3686)) ([db8ba21](https://github.com/trycua/cua/commit/db8ba214b6fb954d5d2044a54261552dda5ddaf5))
+
+
+### Bug Fixes
+
+* **sandbox:** keep Image file sizes JSON-safe ([#3839](https://github.com/trycua/cua/issues/3839)) ([1d6e81e](https://github.com/trycua/cua/commit/1d6e81ea513a06a29a8e756bbc8ff26d64e03a02))
+
+## [0.7.0](https://github.com/trycua/cua/compare/sandbox-v0.6.0...sandbox-v0.7.0) (2026-09-11)
+
+
+### Features
+
+* **sandbox:** use shared Driver MCP client ([#3718](https://github.com/trycua/cua/issues/3718)) ([d1ac400](https://github.com/trycua/cua/commit/d1ac40014457556c9d66a4d791fa40a8db5b9d68))
+
 ## [0.6.0](https://github.com/trycua/cua/compare/sandbox-v0.5.0...sandbox-v0.6.0) (2026-09-10)
 
 

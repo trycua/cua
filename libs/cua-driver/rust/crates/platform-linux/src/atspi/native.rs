@@ -21,7 +21,7 @@ use atspi::proxy::accessible::AccessibleProxy;
 use atspi::proxy::proxy_ext::ProxyExt;
 use atspi::{CoordType, Interface, State, StateSet};
 
-use super::AtspiNode;
+use super::{AtspiIdentity, AtspiNode};
 
 /// Per-call D-Bus timeout: a single unresponsive accessible (common in large,
 /// lazily-built trees like Chromium's) must not stall the whole walk.
@@ -393,6 +393,7 @@ struct Visited<'a> {
     /// per-index action can re-open it directly from a cached snapshot instead
     /// of re-walking the application.
     object_ref: ObjectRef,
+    identity: Option<AtspiIdentity>,
     acc: AccessibleProxy<'a>,
 }
 
@@ -524,6 +525,38 @@ async fn raw_child_count(conn: &atspi::zbus::Connection, oref: &RawObjectRef) ->
         .get_property::<i32>("ChildCount")
         .await
         .map_err(|e| anyhow!("Accessible.ChildCount failed: {e}"))
+}
+
+/// Pin well-known names to their current unique owner. A missing owner is
+/// discovery-only: indexed clicks cannot use an unproven persistent identity.
+async fn identity_ref(
+    conn: &AccessibilityConnection,
+    raw: &RawObjectRef,
+    owners: &mut std::collections::HashMap<String, Option<String>>,
+) -> Option<RawObjectRef> {
+    let owner = if raw.name.starts_with(':') {
+        raw.name.clone()
+    } else if let Some(owner) = owners.get(&raw.name) {
+        owner.clone()?
+    } else {
+        let owner = async {
+            let bus = atspi::zbus::fdo::DBusProxy::new(conn.connection())
+                .await
+                .ok()?;
+            let name = atspi::zbus::names::BusName::try_from(raw.name.as_str()).ok()?;
+            call(bus.get_name_owner(name))
+                .await?
+                .ok()
+                .map(|name| name.to_string())
+        }
+        .await;
+        owners.insert(raw.name.clone(), owner.clone());
+        owner?
+    };
+    Some(RawObjectRef {
+        name: owner,
+        path: raw.path.clone(),
+    })
 }
 
 /// Read Accessible.GetChildren without deserializing the bus-name field as a
@@ -966,7 +999,8 @@ async fn collect_visited_bounded<'a>(
     // by the same identity; only the visiting order (and thus the index
     // space of this snapshot) changes.
     let mut ordered: Vec<(RawObjectRef, usize, bool, usize)> = seeds
-        .into_iter()
+        .iter()
+        .cloned()
         .enumerate()
         .map(|(ordinal, r)| (r, 0usize, false, ordinal))
         .collect();
@@ -979,6 +1013,7 @@ async fn collect_visited_bounded<'a>(
     let mut stack: Vec<(RawObjectRef, usize, bool, usize)> = ordered.into_iter().rev().collect();
 
     let mut visited: Vec<Visited<'a>> = Vec::new();
+    let mut identity_owners = std::collections::HashMap::new();
     // Guard against pathological/looping trees. Defaults to 5 000 (the
     // historical hard-coded budget); callers can override via max_elements.
     let mut budget = max_elements.unwrap_or(5000usize);
@@ -1038,7 +1073,14 @@ async fn collect_visited_bounded<'a>(
         // otherwise the loop never returns to the deadline check at the top and
         // the walk stalls past OP_TIMEOUT for callers without an outer guard
         // (snapshot bounds, insert_text). That was the residual #1936 hang.
-        let acc = match call(accessible_for(conn, &oref)).await {
+        let object_identity = identity_ref(conn, &oref, &mut identity_owners).await;
+        let frame_identity = identity_ref(conn, &seeds[frame_ordinal], &mut identity_owners).await;
+        let acc = match call(accessible_for(
+            conn,
+            object_identity.as_ref().unwrap_or(&oref),
+        ))
+        .await
+        {
             Some(Ok(a)) => a,
             Some(Err(error)) => {
                 dlog!("  accessible_for failed: {error:#}");
@@ -1266,6 +1308,14 @@ async fn collect_visited_bounded<'a>(
                 bus: oref.name.clone(),
                 path: oref.path.clone(),
             },
+            identity: object_identity
+                .zip(frame_identity)
+                .map(|(object, frame)| AtspiIdentity {
+                    bus_name: object.name,
+                    path: object.path,
+                    frame_bus_name: frame.name,
+                    frame_path: frame.path,
+                }),
             acc,
         });
     }
@@ -1373,6 +1423,7 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
                 description: None,
                 actions: v.actions.clone(),
                 element_key: idx as u64,
+                identity: v.identity.clone(),
                 depth: v.depth,
                 parent_element_index,
                 in_web_content: v.in_web_doc,
@@ -2429,6 +2480,17 @@ async fn action_names(ap: &atspi::proxy::action::ActionProxy<'_>) -> Vec<String>
     names
 }
 
+/// The snapshot-cached object no longer answers on the bus (or never did):
+/// the observation is stale and must not be retargeted by index.
+#[derive(Debug)]
+pub struct CachedElementGone(pub String);
+impl std::fmt::Display for CachedElementGone {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl std::error::Error for CachedElementGone {}
+
 /// Open a cached accessible and prove it is still alive (one role read).
 async fn live_accessible<'a>(
     conn: &'a AccessibilityConnection,
@@ -2436,12 +2498,16 @@ async fn live_accessible<'a>(
 ) -> Result<(AccessibleProxy<'a>, String)> {
     let acc = match call(accessible_for(conn, &raw_ref(object_ref))).await {
         Some(Ok(acc)) => acc,
-        Some(Err(error)) => return Err(anyhow!("cached element unreachable: {error}")),
+        Some(Err(error)) => {
+            return Err(CachedElementGone(format!("cached element unreachable: {error}")).into())
+        }
         None => return Err(anyhow!("cached element did not answer in time")),
     };
     let role = match call(acc.get_role_name()).await {
         Some(Ok(role)) => role,
-        Some(Err(error)) => return Err(anyhow!("cached element is gone: {error}")),
+        Some(Err(error)) => {
+            return Err(CachedElementGone(format!("cached element is gone: {error}")).into())
+        }
         None => return Err(anyhow!("cached element did not answer in time")),
     };
     Ok((acc, role))

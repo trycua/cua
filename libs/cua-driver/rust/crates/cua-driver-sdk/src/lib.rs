@@ -31,6 +31,7 @@ mod authorization_host;
 mod embedded;
 pub mod remote;
 pub mod remote_foreign;
+pub mod remote_mcp;
 pub mod remote_receiver;
 mod runtime;
 mod service_session;
@@ -44,6 +45,10 @@ pub use authorization_host::{
 };
 pub use embedded::*;
 use remote::{DriverEnvelopeChannel, RemoteBoundSession, RemoteDriverClient};
+pub use remote_mcp::{
+    open_mcp_driver_channel, DriverServiceHeader, DriverServiceRequest, DriverServiceResponse,
+    DriverServiceTransport, DriverServiceTransportError, McpDriverChannel,
+};
 use runtime::RuntimeOptions;
 use service_session::ServiceSessionClient;
 use worker::{ActionCompletion, PrivateWorkerClient};
@@ -1969,6 +1974,9 @@ fn normalize_result(tool: &str, raw: Value) -> Result<ToolResult, DriverError> {
 }
 
 uniffi::setup_scaffolding!("cua_driver_sdk");
+
+#[cfg(test)]
+mod snapshot_lifecycle_tests;
 
 #[cfg(test)]
 mod tests {

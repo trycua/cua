@@ -11,7 +11,10 @@ This package is for client applications importing Cua Driver as an SDK:
 from cua_driver import CuaDriver
 ```
 
-It does not contain a Python MCP client. Agents already have runtime-neutral
+It does not contain a Python MCP protocol implementation. The optional
+`cua_driver.fleet` module forwards service bytes to the shared Rust typed-MCP
+client. See [the candidate Fleet connection guide](../docs/shared-fleet-mcp-client.md)
+for prerequisites, ownership, and release limits. Agents already have runtime-neutral
 MCP clients and should configure the bundled server directly:
 
 ```text

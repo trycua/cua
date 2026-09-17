@@ -372,6 +372,7 @@ private_constant :UniffiHandleMap
     RustBuffer.check_lower_SequenceTypeHttpHeader(v.headers)
     RustBuffer.check_lower_Optionalbytes(v.body)
     RustBuffer.check_lower_Optionalu64(v.timeout_secs)
+    RustBuffer.check_lower_Optionalu64(v.max_response_bytes)
   end
 
   def self.alloc_from_TypeHttpRequest(v)
@@ -405,6 +406,88 @@ private_constant :UniffiHandleMap
   def consumeIntoTypeHttpResponse
     consumeWithStream do |stream|
       return stream.readTypeHttpResponse
+    end
+  end
+
+  # The Record type ImageUploadFileRequest.
+
+  def self.check_lower_TypeImageUploadFileRequest(v)
+
+
+
+  end
+
+  def self.alloc_from_TypeImageUploadFileRequest(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_TypeImageUploadFileRequest(v)
+      return builder.finalize
+    end
+  end
+
+  def consumeIntoTypeImageUploadFileRequest
+    consumeWithStream do |stream|
+      return stream.readTypeImageUploadFileRequest
+    end
+  end
+
+  # The Record type ImageUploadInstruction.
+
+  def self.check_lower_TypeImageUploadInstruction(v)
+
+
+
+    RustBuffer.check_lower_OptionalTypePresignedPut(v.upload)
+  end
+
+  def self.alloc_from_TypeImageUploadInstruction(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_TypeImageUploadInstruction(v)
+      return builder.finalize
+    end
+  end
+
+  def consumeIntoTypeImageUploadInstruction
+    consumeWithStream do |stream|
+      return stream.readTypeImageUploadInstruction
+    end
+  end
+
+  # The Record type ImageUploadRequest.
+
+  def self.check_lower_TypeImageUploadRequest(v)
+
+    RustBuffer.check_lower_SequenceTypeImageUploadFileRequest(v.files)
+  end
+
+  def self.alloc_from_TypeImageUploadRequest(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_TypeImageUploadRequest(v)
+      return builder.finalize
+    end
+  end
+
+  def consumeIntoTypeImageUploadRequest
+    consumeWithStream do |stream|
+      return stream.readTypeImageUploadRequest
+    end
+  end
+
+  # The Record type ImageUploadResponse.
+
+  def self.check_lower_TypeImageUploadResponse(v)
+    RustBuffer.check_lower_SequenceTypeImageUploadInstruction(v.files)
+  end
+
+  def self.alloc_from_TypeImageUploadResponse(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_TypeImageUploadResponse(v)
+      return builder.finalize
+    end
+  end
+
+  def consumeIntoTypeImageUploadResponse
+    consumeWithStream do |stream|
+      return stream.readTypeImageUploadResponse
     end
   end
 
@@ -494,6 +577,27 @@ private_constant :UniffiHandleMap
   def consumeIntoTypePoolDisplayStatus
     consumeWithStream do |stream|
       return stream.readTypePoolDisplayStatus
+    end
+  end
+
+  # The Record type PresignedPut.
+
+  def self.check_lower_TypePresignedPut(v)
+
+
+    RustBuffer.check_lower_MapStringString(v.headers)
+  end
+
+  def self.alloc_from_TypePresignedPut(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_TypePresignedPut(v)
+      return builder.finalize
+    end
+  end
+
+  def consumeIntoTypePresignedPut
+    consumeWithStream do |stream|
+      return stream.readTypePresignedPut
     end
   end
 
@@ -703,6 +807,27 @@ private_constant :UniffiHandleMap
     end
   end
 
+  # The Optional<T> type for TypePresignedPut.
+
+  def self.check_lower_OptionalTypePresignedPut(v)
+    if not v.nil?
+      RustBuffer.check_lower_TypePresignedPut(v)
+    end
+  end
+
+  def self.alloc_from_OptionalTypePresignedPut(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_OptionalTypePresignedPut(v)
+      return builder.finalize()
+    end
+  end
+
+  def consumeIntoOptionalTypePresignedPut
+    consumeWithStream do |stream|
+      return stream.readOptionalTypePresignedPut
+    end
+  end
+
   # The Optional<T> type for TypeClaimSpec.
 
   def self.check_lower_OptionalTypeClaimSpec(v)
@@ -808,6 +933,27 @@ private_constant :UniffiHandleMap
     end
   end
 
+  # The Sequence<T> type for TypePreservedJson.
+
+  def self.check_lower_SequenceTypePreservedJson(v)
+    v.each do |item|
+      (PreservedJson.uniffi_check_lower item)
+    end
+  end
+
+  def self.alloc_from_SequenceTypePreservedJson(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_SequenceTypePreservedJson(v)
+      return builder.finalize()
+    end
+  end
+
+  def consumeIntoSequenceTypePreservedJson
+    consumeWithStream do |stream|
+      return stream.readSequenceTypePreservedJson
+    end
+  end
+
   # The Sequence<T> type for TypeClaim.
 
   def self.check_lower_SequenceTypeClaim(v)
@@ -847,6 +993,48 @@ private_constant :UniffiHandleMap
   def consumeIntoSequenceTypeHttpHeader
     consumeWithStream do |stream|
       return stream.readSequenceTypeHttpHeader
+    end
+  end
+
+  # The Sequence<T> type for TypeImageUploadFileRequest.
+
+  def self.check_lower_SequenceTypeImageUploadFileRequest(v)
+    v.each do |item|
+      RustBuffer.check_lower_TypeImageUploadFileRequest(item)
+    end
+  end
+
+  def self.alloc_from_SequenceTypeImageUploadFileRequest(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_SequenceTypeImageUploadFileRequest(v)
+      return builder.finalize()
+    end
+  end
+
+  def consumeIntoSequenceTypeImageUploadFileRequest
+    consumeWithStream do |stream|
+      return stream.readSequenceTypeImageUploadFileRequest
+    end
+  end
+
+  # The Sequence<T> type for TypeImageUploadInstruction.
+
+  def self.check_lower_SequenceTypeImageUploadInstruction(v)
+    v.each do |item|
+      RustBuffer.check_lower_TypeImageUploadInstruction(item)
+    end
+  end
+
+  def self.alloc_from_SequenceTypeImageUploadInstruction(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_SequenceTypeImageUploadInstruction(v)
+      return builder.finalize()
+    end
+  end
+
+  def consumeIntoSequenceTypeImageUploadInstruction
+    consumeWithStream do |stream|
+      return stream.readSequenceTypeImageUploadInstruction
     end
   end
 
@@ -1246,7 +1434,8 @@ class RustBufferStream
       url: readString,
       headers: readSequenceTypeHttpHeader,
       body: readOptionalbytes,
-      timeout_secs: readOptionalu64
+      timeout_secs: readOptionalu64,
+      max_response_bytes: readOptionalu64
     )
   end
 
@@ -1257,6 +1446,44 @@ class RustBufferStream
       status: readU16,
       headers: readSequenceTypeHttpHeader,
       body: readBytes
+    )
+  end
+
+  # The Record type ImageUploadFileRequest.
+
+  def readTypeImageUploadFileRequest
+    ImageUploadFileRequest.new(
+      digest: readString,
+      size_bytes: readU64,
+      name: readString
+    )
+  end
+
+  # The Record type ImageUploadInstruction.
+
+  def readTypeImageUploadInstruction
+    ImageUploadInstruction.new(
+      digest: readString,
+      size_bytes: readU64,
+      reference: readString,
+      upload: readOptionalTypePresignedPut
+    )
+  end
+
+  # The Record type ImageUploadRequest.
+
+  def readTypeImageUploadRequest
+    ImageUploadRequest.new(
+      namespace: readString,
+      files: readSequenceTypeImageUploadFileRequest
+    )
+  end
+
+  # The Record type ImageUploadResponse.
+
+  def readTypeImageUploadResponse
+    ImageUploadResponse.new(
+      files: readSequenceTypeImageUploadInstruction
     )
   end
 
@@ -1302,6 +1529,16 @@ class RustBufferStream
       kind: readTypePoolDisplayStatusKind,
       label: readString,
       indicator: readString
+    )
+  end
+
+  # The Record type PresignedPut.
+
+  def readTypePresignedPut
+    PresignedPut.new(
+      method: readString,
+      url: readString,
+      headers: readMapStringString
     )
   end
 
@@ -1573,6 +1810,20 @@ class RustBufferStream
     end
   end
 
+  # The Optional<T> type for TypePresignedPut.
+
+  def readOptionalTypePresignedPut
+    flag = unpack_from 1, 'c'
+
+    if flag == 0
+      return nil
+    elsif flag == 1
+      return readTypePresignedPut
+    else
+      raise InternalError, 'Unexpected flag byte for OptionalTypePresignedPut'
+    end
+  end
+
   # The Optional<T> type for TypeClaimSpec.
 
   def readOptionalTypeClaimSpec
@@ -1645,6 +1896,22 @@ class RustBufferStream
     items
   end
 
+  # The Sequence<T> type for TypePreservedJson.
+
+  def readSequenceTypePreservedJson
+    count = unpack_from 4, 'l>'
+
+    raise InternalError, 'Unexpected negative sequence length' if count.negative?
+
+    items = []
+
+    count.times do
+      items.append readTypePreservedJson
+    end
+
+    items
+  end
+
   # The Sequence<T> type for TypeClaim.
 
   def readSequenceTypeClaim
@@ -1672,6 +1939,38 @@ class RustBufferStream
 
     count.times do
       items.append readTypeHttpHeader
+    end
+
+    items
+  end
+
+  # The Sequence<T> type for TypeImageUploadFileRequest.
+
+  def readSequenceTypeImageUploadFileRequest
+    count = unpack_from 4, 'l>'
+
+    raise InternalError, 'Unexpected negative sequence length' if count.negative?
+
+    items = []
+
+    count.times do
+      items.append readTypeImageUploadFileRequest
+    end
+
+    items
+  end
+
+  # The Sequence<T> type for TypeImageUploadInstruction.
+
+  def readSequenceTypeImageUploadInstruction
+    count = unpack_from 4, 'l>'
+
+    raise InternalError, 'Unexpected negative sequence length' if count.negative?
+
+    items = []
+
+    count.times do
+      items.append readTypeImageUploadInstruction
     end
 
     items
@@ -2017,6 +2316,7 @@ class RustBufferBuilder
     self.write_SequenceTypeHttpHeader(v.headers)
     self.write_Optionalbytes(v.body)
     self.write_Optionalu64(v.timeout_secs)
+    self.write_Optionalu64(v.max_response_bytes)
   end
 
   # The Record type HttpResponse.
@@ -2025,6 +2325,36 @@ class RustBufferBuilder
     self.write_U16(v.status)
     self.write_SequenceTypeHttpHeader(v.headers)
     self.write_Bytes(v.body)
+  end
+
+  # The Record type ImageUploadFileRequest.
+
+  def write_TypeImageUploadFileRequest(v)
+    self.write_String(v.digest)
+    self.write_U64(v.size_bytes)
+    self.write_String(v.name)
+  end
+
+  # The Record type ImageUploadInstruction.
+
+  def write_TypeImageUploadInstruction(v)
+    self.write_String(v.digest)
+    self.write_U64(v.size_bytes)
+    self.write_String(v.reference)
+    self.write_OptionalTypePresignedPut(v.upload)
+  end
+
+  # The Record type ImageUploadRequest.
+
+  def write_TypeImageUploadRequest(v)
+    self.write_String(v.namespace)
+    self.write_SequenceTypeImageUploadFileRequest(v.files)
+  end
+
+  # The Record type ImageUploadResponse.
+
+  def write_TypeImageUploadResponse(v)
+    self.write_SequenceTypeImageUploadInstruction(v.files)
   end
 
   # The Record type Namespace.
@@ -2062,6 +2392,14 @@ class RustBufferBuilder
     self.write_TypePoolDisplayStatusKind(v.kind)
     self.write_String(v.label)
     self.write_String(v.indicator)
+  end
+
+  # The Record type PresignedPut.
+
+  def write_TypePresignedPut(v)
+    self.write_String(v.method)
+    self.write_String(v.url)
+    self.write_MapStringString(v.headers)
   end
 
   # The Record type ResourceMetadata.
@@ -2163,6 +2501,17 @@ class RustBufferBuilder
     end
   end
 
+  # The Optional<T> type for TypePresignedPut.
+
+  def write_OptionalTypePresignedPut(v)
+    if v.nil?
+      pack_into(1, 'c', 0)
+    else
+      pack_into(1, 'c', 1)
+      self.write_TypePresignedPut(v)
+    end
+  end
+
   # The Optional<T> type for TypeClaimSpec.
 
   def write_OptionalTypeClaimSpec(v)
@@ -2217,6 +2566,16 @@ class RustBufferBuilder
     end
   end
 
+  # The Sequence<T> type for TypePreservedJson.
+
+  def write_SequenceTypePreservedJson(items)
+    pack_into(4, 'l>', items.size)
+
+    items.each do |item|
+      self.write_TypePreservedJson(item)
+    end
+  end
+
   # The Sequence<T> type for TypeClaim.
 
   def write_SequenceTypeClaim(items)
@@ -2234,6 +2593,26 @@ class RustBufferBuilder
 
     items.each do |item|
       self.write_TypeHttpHeader(item)
+    end
+  end
+
+  # The Sequence<T> type for TypeImageUploadFileRequest.
+
+  def write_SequenceTypeImageUploadFileRequest(items)
+    pack_into(4, 'l>', items.size)
+
+    items.each do |item|
+      self.write_TypeImageUploadFileRequest(item)
+    end
+  end
+
+  # The Sequence<T> type for TypeImageUploadInstruction.
+
+  def write_SequenceTypeImageUploadInstruction(items)
+    pack_into(4, 'l>', items.size)
+
+    items.each do |item|
+      self.write_TypeImageUploadInstruction(item)
     end
   end
 
@@ -2832,6 +3211,24 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_presign_image_uploads,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_upload_image_file,
+    [:uint64, RustBuffer.by_value, RustBuffer.by_value, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_create_image,
+    [:uint64, RustBuffer.by_value, :uint64, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_image,
+    [:uint64, RustBuffer.by_value, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_get_image,
+    [:uint64, RustBuffer.by_value, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_list_images,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_create_namespace,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
@@ -3109,6 +3506,9 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_fn_method_httprequestbuilder_headers,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_httprequestbuilder_max_response_bytes,
+    [:uint64, :uint64, RustCallStatus.by_ref],
+    :uint64
   attach_function :uniffi_cyclops_sdk_fn_method_httprequestbuilder_method,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
@@ -3200,6 +3600,24 @@ module UniFFILib
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_presign_image_uploads,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_upload_image_file,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_image,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_image,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_image,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_images,
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace,
@@ -3361,6 +3779,9 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_checksum_method_httprequestbuilder_headers,
     [RustCallStatus.by_ref],
     :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_httprequestbuilder_max_response_bytes,
+    [RustCallStatus.by_ref],
+    :uint16
   attach_function :uniffi_cyclops_sdk_checksum_method_httprequestbuilder_method,
     [RustCallStatus.by_ref],
     :uint16
@@ -3459,6 +3880,123 @@ class PoolDisplayStatusKind
 end
 
 
+
+  # Record type ImageUploadFileRequest
+class ImageUploadFileRequest
+  attr_reader :digest, :size_bytes, :name
+
+  def initialize(digest:, size_bytes:, name:)
+    @digest = digest
+    @size_bytes = size_bytes
+    @name = name
+  end
+
+  def ==(other)
+    if @digest != other.digest
+      return false
+    end
+    if @size_bytes != other.size_bytes
+      return false
+    end
+    if @name != other.name
+      return false
+    end
+
+    true
+  end
+end
+
+  # Record type ImageUploadInstruction
+class ImageUploadInstruction
+  attr_reader :digest, :size_bytes, :reference, :upload
+
+  def initialize(digest:, size_bytes:, reference:, upload:)
+    @digest = digest
+    @size_bytes = size_bytes
+    @reference = reference
+    @upload = upload
+  end
+
+  def ==(other)
+    if @digest != other.digest
+      return false
+    end
+    if @size_bytes != other.size_bytes
+      return false
+    end
+    if @reference != other.reference
+      return false
+    end
+    if @upload != other.upload
+      return false
+    end
+
+    true
+  end
+end
+
+  # Record type ImageUploadRequest
+class ImageUploadRequest
+  attr_reader :namespace, :files
+
+  def initialize(namespace:, files:)
+    @namespace = namespace
+    @files = files
+  end
+
+  def ==(other)
+    if @namespace != other.namespace
+      return false
+    end
+    if @files != other.files
+      return false
+    end
+
+    true
+  end
+end
+
+  # Record type ImageUploadResponse
+class ImageUploadResponse
+  attr_reader :files
+
+  def initialize(files:)
+    @files = files
+  end
+
+  def ==(other)
+    if @files != other.files
+      return false
+    end
+
+    true
+  end
+end
+
+  # Record type PresignedPut
+class PresignedPut
+  attr_reader :method, :url, :headers
+
+  def initialize(method:, url:, headers:)
+    @method = method
+    @url = url
+    @headers = headers
+  end
+
+  def ==(other)
+    if @method != other.method
+      return false
+    end
+    if @url != other.url
+      return false
+    end
+    if @headers != other.headers
+      return false
+    end
+
+    true
+  end
+end
 
   # Record type PoolDisplayStatus
 class PoolDisplayStatus
@@ -3736,14 +4274,15 @@ end
 
   # Record type HttpRequest
 class HttpRequest
-  attr_reader :method, :url, :headers, :body, :timeout_secs
+  attr_reader :method, :url, :headers, :body, :timeout_secs, :max_response_bytes
 
-  def initialize(method:, url:, headers:, body:, timeout_secs: nil)
+  def initialize(method:, url:, headers:, body:, timeout_secs: nil, max_response_bytes: nil)
     @method = method
     @url = url
     @headers = headers
     @body = body
     @timeout_secs = timeout_secs
+    @max_response_bytes = max_response_bytes
   end
 
   def ==(other)
@@ -3760,6 +4299,9 @@ class HttpRequest
       return false
     end
     if @timeout_secs != other.timeout_secs
+      return false
+    end
+    if @max_response_bytes != other.max_response_bytes
       return false
     end
 
@@ -4286,6 +4828,82 @@ end
       UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim(uniffi_clone_handle(),RustBuffer.alloc_from_TypeClaim(claim),RustCallStatus.new),
     )
     return result.consumeIntoTypeSandbox
+  end
+  def presign_image_uploads(request)
+        request = request
+        RustBuffer.check_lower_TypeImageUploadRequest(request)
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
+      SdkError,
+      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_presign_image_uploads(uniffi_clone_handle(),RustBuffer.alloc_from_TypeImageUploadRequest(request),RustCallStatus.new),
+    )
+    return result.consumeIntoTypeImageUploadResponse
+  end
+  def upload_image_file(namespace, name, contents)
+        namespace = FleetSdk::uniffi_utf8(namespace)
+
+        name = FleetSdk::uniffi_utf8(name)
+
+        contents = FleetSdk::uniffi_bytes(contents)
+
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
+
+      SdkError,
+
+      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_upload_image_file(uniffi_clone_handle(),RustBuffer.allocFromString(namespace),RustBuffer.allocFromString(name),RustBuffer.allocFromBytes(contents),RustCallStatus.new),
+
+    )
+    return result.consumeIntoTypeImageUploadInstruction
+  end
+  def create_image(namespace, manifest)
+        namespace = FleetSdk::uniffi_utf8(namespace)
+
+        manifest = manifest
+        (PreservedJson.uniffi_check_lower manifest)
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
+      SdkError,
+      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_image(uniffi_clone_handle(),RustBuffer.allocFromString(namespace),(PreservedJson.uniffi_lower manifest),RustCallStatus.new),
+    )
+    return PreservedJson.uniffi_allocate(result)
+  end
+  def delete_image(namespace, name)
+        namespace = FleetSdk::uniffi_utf8(namespace)
+
+        name = FleetSdk::uniffi_utf8(name)
+
+      FleetSdk.uniffi_rust_future_void(
+
+        SdkError,
+
+        UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_image(uniffi_clone_handle(),RustBuffer.allocFromString(namespace),RustBuffer.allocFromString(name),RustCallStatus.new),
+
+      )
+  end
+
+  def get_image(namespace, name)
+        namespace = FleetSdk::uniffi_utf8(namespace)
+
+        name = FleetSdk::uniffi_utf8(name)
+
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
+
+      SdkError,
+
+      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_image(uniffi_clone_handle(),RustBuffer.allocFromString(namespace),RustBuffer.allocFromString(name),RustCallStatus.new),
+
+    )
+    return PreservedJson.uniffi_allocate(result)
+  end
+  def list_images(namespace)
+        namespace = FleetSdk::uniffi_utf8(namespace)
+
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
+
+      SdkError,
+
+      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_images(uniffi_clone_handle(),RustBuffer.allocFromString(namespace),RustCallStatus.new),
+
+    )
+    return result.consumeIntoSequenceTypePreservedJson
   end
   def create_namespace(name)
         name = FleetSdk::uniffi_utf8(name)
@@ -5260,6 +5878,12 @@ end
         value = value
         RustBuffer.check_lower_SequenceTypeHttpHeader(value)
     result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_method_httprequestbuilder_headers,uniffi_clone_handle(),RustBuffer.alloc_from_SequenceTypeHttpHeader(value))
+    return HttpRequestBuilder.uniffi_allocate(result)
+  end
+  def max_response_bytes(value)
+        value = FleetSdk::uniffi_in_range(value, "u64", 0, 2**64)
+
+    result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_method_httprequestbuilder_max_response_bytes,uniffi_clone_handle(),value)
     return HttpRequestBuilder.uniffi_allocate(result)
   end
   def method(value)

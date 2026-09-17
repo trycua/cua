@@ -29,12 +29,12 @@ import production_pointer_grounding as pointer_grounding
 from realapp_proof import cleanup_all, rect_position, released_synthetic_input
 
 
-TOOLS = {'click', 'press_key', 'hotkey', 'scroll', 'drag'}
+TOOLS = {'click', 'type_text', 'press_key', 'hotkey', 'scroll', 'drag'}
 RESERVED = {'pid', 'window_id', 'session', 'delivery_mode'}
 POINTER_EPISODES = ('clicks', 'scroll-away', 'scroll-back', 'drags', 'save')
 PRIMARY_LIFETIME_MS = 60000
 SMOKE_STEPS = {
-    'calc': {'insert': ('press_key', {'key': 'a'}),
+    'calc': {'insert': ('type_text', {'text': 'abc'}),
              'commit': ('press_key', {'key': 'Return'}),
              'save': ('hotkey', {'keys': ['ctrl', 's']})},
     'inkscape': {'select': ('hotkey', {'keys': ['ctrl', 'a']}),
@@ -294,7 +294,8 @@ def capacity_lane(before, after, tool):
     lanes = {row[5] for row in synthetic}
     assert len(lanes) == 1, 'capacity action must exercise exactly one compositor lane'
     input_kind = {'click': 'pointer_button', 'drag': 'pointer_button',
-                  'scroll': 'pointer_axis', 'press_key': 'keyboard_key', 'hotkey': 'keyboard_key'}[tool]
+                  'scroll': 'pointer_axis', 'type_text': 'keyboard_key',
+                  'press_key': 'keyboard_key', 'hotkey': 'keyboard_key'}[tool]
     completion = 'agent_drag_end' if tool == 'drag' else 'agent_action_end'
     admissions = [row[0] for row in synthetic if row[2] == 'agent_admitted']
     inputs = [row[0] for row in synthetic if row[2] == input_kind]

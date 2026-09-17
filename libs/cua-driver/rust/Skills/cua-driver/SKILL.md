@@ -262,10 +262,19 @@ the browser capability loop: use one lifecycle session, bind `(pid, window_id)` 
 route. Browser target ids, tab ids, and refs are session-scoped and stale refs
 must be replaced by a fresh snapshot. A challenge or explicit-navigation
 rate-limit pause is origin-local. An uncertain post-dispatch navigation pauses
-the exact tab until state is refreshed. After an explicit caller decision,
-call `browser_resume` only with the exact origin and blocker id from the current
-blocker report. Stale ids refuse. A `safety_capacity` blocker is session-wide
+the exact tab until state is refreshed. After an explicit human decision, call
+`browser_resume` only with the exact origin and blocker id from the current
+blocker report. Every permission mode requires separate protected-host approval
+for that exact blocker. Routine browser-input authority and unrestricted launch
+acceptance cannot clear it; bounded mode also requires the tool and live origin
+in the manifest. Stale ids refuse. A `safety_capacity` blocker is session-wide
 and requires session end.
+
+Trusted browser Input calls are tab-scoped, not document-atomic. Even after the
+driver revalidates the live origin and ref, a final-instant navigation can race
+dispatch. Treat `input_delivered: true` with `page_blocked: null` as transport
+acknowledgement only, never retry automatically, and refresh page state before
+continuing.
 
 ## Agent cursor overlay
 

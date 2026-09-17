@@ -294,7 +294,7 @@ impl BrowserPointerTool {
         Self {
             def: ToolDef {
                 name: "browser_pointer".into(),
-                description: "Perform hover, right-click, double-click, scroll, or drag in an exactly-bound browser tab. Semantic refs must declare pointer for hover, right-click, double-click, and drag; scroll accepts a scroll or pointer capability. The trusted route uses CDP Input events and refuses if standalone background posture cannot be preserved. The explicit dom_event route requires a page ref and synthesizes full-background DOM events. Never activates or brings a tab to the foreground.".into(),
+                description: "Perform hover, right-click, double-click, scroll, or drag in an exactly-bound browser tab. Semantic refs must declare pointer for hover, right-click, double-click, and drag; scroll accepts a scroll or pointer capability. The trusted route uses tab-scoped CDP Input events and refuses if standalone background posture cannot be preserved. Because trusted input is not document-atomic, a navigation can race the final dispatch; success reports input delivery separately from the unknown page outcome, so refresh page state before continuing. The explicit dom_event route requires a page ref and synthesizes full-background DOM events. Never activates or brings a tab to the foreground.".into(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -551,6 +551,8 @@ impl BrowserPointerTool {
         let external_ref = (!origin.external.is_empty()).then_some(origin.external.as_str());
         json!({
             "status": "ok",
+            "input_delivered": true,
+            "page_blocked": Value::Null,
             "action": request.action.as_str(),
             "route": request.route.as_str(),
             "target_id": validated.record.target_id,

@@ -25,7 +25,7 @@ browser_dialog / browser_set_input_files / browser_download
 get_browser_state(target_id, tab_id, session?,
                   snapshot_format=semantic_v2)            # verify and refresh refs
 browser_resume(target_id, tab_id, origin, blocker_id,
-               session?)                                 # exact current blocker only
+               session?)                                 # human-approved exact blocker only
 end_session(session?)                                     # optional cleanup
 ```
 
@@ -271,10 +271,15 @@ bot-verification challenge. The five-field challenge report remains advisory;
 a separate `blocker` object carries the action pause. The driver keeps read-only
 snapshots available but pauses navigation and mutations to that blocker's
 origin. Ask the user to take over, or call `browser_resume` with the exact
-`blocker.origin` and `blocker.blocker_id` only after an explicit caller decision.
-A stale id refuses. The same proven main document preserves its id; a reload or
-unproven document identity replaces it. When the blocker origin is null, leave
-the opaque page or end the session rather than inventing an origin. The report
+`blocker.origin` and `blocker.blocker_id` only after an explicit human decision.
+Every permission mode requests a separate protected-host approval for that
+exact blocker. Routine browser-input authority and unrestricted launch
+acceptance cannot clear it; bounded mode also requires the tool and live origin
+in the manifest. A stale id refuses before approval. The same proven main
+document preserves its id; a reload or unproven document identity replaces it.
+When the blocker origin is null, leave the opaque page or end the session rather
+than inventing an origin. An elapsed rate-limit blocker clears without approval;
+manual early resume uses the same human boundary. The report
 contains fixed source and confidence classifications rather than copied URL
 paths, queries, or page text.
 
@@ -335,9 +340,10 @@ and embedded browser endpoints, an observed main-document HTTP 429 returns
 `rate_limited` blocker. `status` remains `ok` because the navigation was
 delivered; `page_blocked` reports the state reached afterward. The blocker does
 not expose a response body, full URL, path, or query. The driver refuses
-another mutation to that origin until `retry_after_ms` elapses or the caller
-explicitly invokes `browser_resume` with that blocker's exact `origin` and
-`blocker_id`; unrelated origins remain available. A stale blocker id refuses.
+another mutation to that origin until `retry_after_ms` elapses or the user
+approves manual early resume and the caller invokes `browser_resume` with that
+blocker's exact `origin` and `blocker_id`; unrelated origins remain available.
+A stale blocker id refuses.
 A redirect that reaches an origin with a known active blocker also reports
 `page_blocked: true`. Otherwise `page_blocked` is null: a navigation response
 alone does not prove that the reached document is free of a page-level
@@ -376,6 +382,15 @@ trusted CDP pointer input is used. CUA Driver detects that limitation and
 returns `browser_input_trust_unavailable` before dispatch instead of claiming
 background delivery. Windows Chrome and Edge have validated trusted
 background delivery.
+
+Chromium's trusted Input methods are tab-scoped and accept no frame or document
+identity. The driver revalidates the binding, live origin, and any ref before
+dispatch, but a final-instant navigation can still race that proof. Treat
+`input_delivered: true` with `page_blocked: null` as transport acknowledgement,
+not proof of the receiving document or page outcome. Never retry it
+automatically; snapshot again and verify. For click and pointer actions, prefer
+the explicit `dom_event` route with a current ref when document-bound synthetic
+dispatch is more important than trusted input semantics.
 
 When the application semantics allow a synthetic JavaScript click, request it
 explicitly with a current ref:

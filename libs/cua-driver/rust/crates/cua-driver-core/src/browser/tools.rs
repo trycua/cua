@@ -183,6 +183,51 @@ pub(crate) async fn browser_protected_resource_scope(
         }
         _ => None,
     };
+    let resume_blocker = if tool_name == "browser_resume" {
+        let requested_origin = requested_origin
+            .as_deref()
+            .expect("browser_resume always supplies a requested origin");
+        if requested_origin != live_origin {
+            return Err(
+                "browser_resume origin does not match the exact live tab origin".to_owned(),
+            );
+        }
+        let blocker_id = args
+            .get("blocker_id")
+            .and_then(Value::as_str)
+            .filter(|blocker_id| !blocker_id.is_empty())
+            .ok_or_else(|| "browser_resume requires the exact blocker_id".to_owned())?;
+        // Match invocation order: an exact-tab unknown-navigation blocker
+        // takes precedence over any origin blocker. This prevents a caller
+        // from obtaining approval for one incident while dispatch would act
+        // on another.
+        let blocker = engine
+            .store
+            .active_tab_navigation_blocker(&runtime_session, target_id, tab_id, &live_origin)
+            .or_else(|| {
+                engine
+                    .store
+                    .active_origin_blocker(&runtime_session, &live_origin)
+            })
+            .ok_or_else(|| {
+                "browser_resume blocker is stale or no longer active for the exact live tab"
+                    .to_owned()
+            })?;
+        let blocker = blocker.to_value(std::time::Instant::now());
+        if blocker["blocker_id"].as_str() != Some(blocker_id) {
+            return Err(
+                "browser_resume blocker_id does not match the exact current blocker".to_owned(),
+            );
+        }
+        if blocker["kind"] == "safety_capacity" {
+            return Err(
+                "browser_resume cannot clear a safety_capacity blocker; end the session".to_owned(),
+            );
+        }
+        Some(blocker)
+    } else {
+        None
+    };
     let action_class = match tool_name {
         "get_browser_state" => "page_observation",
         "browser_navigate" => "navigation",
@@ -221,6 +266,9 @@ pub(crate) async fn browser_protected_resource_scope(
             .filter(|blocker_id| !blocker_id.is_empty())
             .ok_or_else(|| "browser_resume requires the exact blocker_id".to_owned())?;
         resource["blocker_id"] = Value::String(blocker_id.to_owned());
+        let blocker = resume_blocker.expect("browser_resume attests one current blocker");
+        resource["blocker_kind"] = blocker["kind"].clone();
+        resource["blocker_requires_user"] = blocker["requires_user"].clone();
     }
     Ok(Some(resource))
 }
@@ -993,7 +1041,7 @@ impl BrowserResumeTool {
     pub fn new(engine: Arc<BrowserEngine>) -> Self {
         let def = ToolDef {
             name: "browser_resume".into(),
-            description: "Explicitly clear one exact session-local challenge, rate-limit, or unknown-navigation blocker after the caller decides it is safe to continue. Requires the non-null origin and opaque blocker_id from the current blocker report, and refuses if either is stale or does not match the exact live tab. This records that decision only; it does not click, navigate, solve a challenge, or bypass a site's controls. A still-visible challenge is reported and paused again by the next semantic snapshot. Leave an opaque page instead of inventing an origin. A safety_capacity blocker can be cleared only by ending the session.".into(),
+            description: "Explicitly clear one exact session-local challenge, rate-limit, or unknown-navigation blocker after the user decides it is safe to continue. This is a non-routine human decision: every permission mode requires a separate protected-host authorization scoped to the exact current target, tab, origin, and blocker_id. Routine browser-input authority and unrestricted launch acceptance cannot resume it; a bounded manifest must also allow the tool and live origin. The call refuses before authorization if the blocker is stale or does not match the exact live tab. This records the decision only; it does not click, navigate, solve a challenge, or bypass a site's controls. A still-visible challenge is reported and paused again by the next semantic snapshot. Leave an opaque page instead of inventing an origin. A safety_capacity blocker can be cleared only by ending the session.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -1026,7 +1074,7 @@ impl Tool for BrowserResumeTool {
         adapter_id: &str,
         args: &Value,
     ) -> ProtectedResourceOwnership {
-        if adapter_id == "browser_bound_input" {
+        if adapter_id == "browser_blocker_resume" {
             browser_resource_ownership(&self.engine, args)
         } else {
             ProtectedResourceOwnership::UserOwned
@@ -1038,7 +1086,7 @@ impl Tool for BrowserResumeTool {
         adapter_id: &str,
         args: &Value,
     ) -> Result<Option<Value>, String> {
-        if adapter_id == "browser_bound_input" {
+        if adapter_id == "browser_blocker_resume" {
             browser_protected_resource_scope(&self.engine, args, "browser_resume").await
         } else {
             Ok(None)
@@ -1491,7 +1539,10 @@ impl BrowserClickTool {
                 el.click(), ref required) is used only when explicitly requested; \
                 it proves dispatch, not control activation, because trust-gated \
                 controls may ignore synthetic events. \
-                Refused for heuristic bindings."
+                CDP trusted input is tab-scoped rather than document-atomic, so \
+                a navigation can race the final dispatch. Success reports input \
+                delivery separately from the unknown page outcome; refresh page \
+                state before continuing. Refused for heuristic bindings."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -1768,6 +1819,8 @@ impl Tool for BrowserClickTool {
                 .with_structured(json!({
                     "status": "ok",
                     "effect": "unverifiable",
+                    "input_delivered": true,
+                    "page_blocked": Value::Null,
                     "route": "dom_event",
                     "target_id": target_id,
                     "tab_id": tab_id,
@@ -1906,6 +1959,8 @@ impl Tool for BrowserClickTool {
         }
         ToolResult::text(format!("clicked ({x:.0}, {y:.0}) in {tab_id}")).with_structured(json!({
             "status": "ok",
+            "input_delivered": true,
+            "page_blocked": Value::Null,
             "route": "trusted",
             "target_id": target_id,
             "tab_id": tab_id,
@@ -2110,7 +2165,10 @@ impl BrowserTypeTool {
                 at the caret, so typing into a field that already holds text appends \
                 to it; pass replace=true to set the field instead, or to clear it by \
                 typing an empty string. Pass a ref to an editable element from the \
-                latest snapshot. A ref is required; heuristic bindings are refused."
+                latest snapshot. CDP input is tab-scoped rather than document-atomic, \
+                so a navigation can race the final dispatch. Success reports input \
+                delivery separately from the unknown page outcome; refresh page state \
+                before continuing. A ref is required; heuristic bindings are refused."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -2654,6 +2712,8 @@ impl Tool for BrowserTypeTool {
             })
             .with_structured(json!({
                 "status": "ok",
+                "input_delivered": true,
+                "page_blocked": Value::Null,
                 "target_id": target_id,
                 "tab_id": tab_id,
                 "ref": ext_ref,

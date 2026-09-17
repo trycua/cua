@@ -151,11 +151,15 @@ page.
 
 The advisory `challenge` object keeps this five-field shape. When its status is
 `detected`, the separate top-level `blocker` object reports the action pause and
-its opaque `blocker_id`. After an explicit caller decision, `browser_resume`
-requires that blocker's exact current `origin` and `blocker_id`; a stale id or a
-different live origin refuses. Repeated observations preserve the id only when
-the driver proves they describe the same main document. A reload or unproven
-document identity creates a replacement blocker with a new id.
+its opaque `blocker_id`. After an explicit human decision, `browser_resume`
+requires that blocker's exact current target, tab, `origin`, and `blocker_id`; a
+stale id or a different live origin refuses before authorization. Every
+permission mode uses a separate protected-host authorization. Routine browser
+input authority and unrestricted launch acceptance cannot clear it; bounded
+mode additionally requires the tool and live origin in the manifest. Repeated
+observations preserve the id only when the driver proves they describe the
+same main document. A reload or unproven document identity creates a
+replacement blocker with a new id.
 
 An opaque page has `origin: null`. Its blocker pauses actions on opaque pages;
 navigate to a web origin or end the session rather than inventing an origin for
@@ -166,8 +170,9 @@ If `browser_navigate` may have entered the browser transport but the final
 document outcome cannot be proven, the driver retains a
 `navigation_outcome_unknown` blocker for that exact tab. The navigation result
 keeps `page_blocked` null rather than guessing. Refresh `get_browser_state` to
-bind the blocker to the live non-opaque origin, then either end the session or
-pass that exact `origin` and `blocker_id` to `browser_resume`. Cancellation
+bind the blocker to the live non-opaque origin, then end the session or obtain
+human approval and pass that exact `origin` and `blocker_id` to
+`browser_resume`. Cancellation
 before the navigation reaches the shared browser writer does not create this
 blocker or invalidate the current refs.
 

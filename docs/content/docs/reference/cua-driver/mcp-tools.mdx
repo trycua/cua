@@ -900,7 +900,7 @@ Explicitly prepare an owned DevTools endpoint for a browser. pid is required for
 
 ### `browser_resume`
 
-Explicitly clear one exact session-local challenge, rate-limit, or unknown-navigation blocker after the caller decides it is safe to continue. Requires the non-null origin and opaque blocker_id from the current blocker report, and refuses if either is stale or does not match the exact live tab. This records that decision only; it does not click, navigate, solve a challenge, or bypass a site's controls. A still-visible challenge is reported and paused again by the next semantic snapshot. Leave an opaque page instead of inventing an origin. A safety_capacity blocker can be cleared only by ending the session.
+Explicitly clear one exact session-local challenge, rate-limit, or unknown-navigation blocker after the user decides it is safe to continue. This is a non-routine human decision: every permission mode requires a separate protected-host authorization scoped to the exact current target, tab, origin, and blocker_id. Routine browser-input authority and unrestricted launch acceptance cannot resume it; a bounded manifest must also allow the tool and live origin. The call refuses before authorization if the blocker is stale or does not match the exact live tab. This records the decision only; it does not click, navigate, solve a challenge, or bypass a site's controls. A still-visible challenge is reported and paused again by the next semantic snapshot. Leave an opaque page instead of inventing an origin. A safety_capacity blocker can be cleared only by ending the session.
 
 **Arguments:**
 
@@ -931,7 +931,7 @@ Navigate one tab of an exactly-bound browser target to a new URL (http/https/abo
 
 ### `browser_click`
 
-Click a page element (by ref) or viewport coordinates in an exactly-bound tab. Default route is trusted hardware-like input (Input.dispatchMouseEvent), and refuses where that route cannot preserve standalone-browser background posture. input_route="dom_event" (synthetic el.click(), ref required) is used only when explicitly requested; it proves dispatch, not control activation, because trust-gated controls may ignore synthetic events. Refused for heuristic bindings.
+Click a page element (by ref) or viewport coordinates in an exactly-bound tab. Default route is trusted hardware-like input (Input.dispatchMouseEvent), and refuses where that route cannot preserve standalone-browser background posture. input_route="dom_event" (synthetic el.click(), ref required) is used only when explicitly requested; it proves dispatch, not control activation, because trust-gated controls may ignore synthetic events. CDP trusted input is tab-scoped rather than document-atomic, so a navigation can race the final dispatch. Success reports input delivery separately from the unknown page outcome; refresh page state before continuing. Refused for heuristic bindings.
 
 **Arguments:**
 
@@ -949,7 +949,7 @@ Click a page element (by ref) or viewport coordinates in an exactly-bound tab. D
 
 ### `browser_type`
 
-Type text into an exactly-bound tab via the Input domain. mode="insert_text" (default) uses Input.insertText; mode="keystrokes" dispatches per-character key events. Both insert at the caret, so typing into a field that already holds text appends to it; pass replace=true to set the field instead, or to clear it by typing an empty string. Pass a ref to an editable element from the latest snapshot. A ref is required; heuristic bindings are refused.
+Type text into an exactly-bound tab via the Input domain. mode="insert_text" (default) uses Input.insertText; mode="keystrokes" dispatches per-character key events. Both insert at the caret, so typing into a field that already holds text appends to it; pass replace=true to set the field instead, or to clear it by typing an empty string. Pass a ref to an editable element from the latest snapshot. CDP input is tab-scoped rather than document-atomic, so a navigation can race the final dispatch. Success reports input delivery separately from the unknown page outcome; refresh page state before continuing. A ref is required; heuristic bindings are refused.
 
 **Arguments:**
 
@@ -1017,7 +1017,7 @@ Trigger one download through an exact live browser ref and save it inside an exp
 
 ### `browser_pointer`
 
-Perform hover, right-click, double-click, scroll, or drag in an exactly-bound browser tab. Semantic refs must declare pointer for hover, right-click, double-click, and drag; scroll accepts a scroll or pointer capability. The trusted route uses CDP Input events and refuses if standalone background posture cannot be preserved. The explicit dom_event route requires a page ref and synthesizes full-background DOM events. Never activates or brings a tab to the foreground.
+Perform hover, right-click, double-click, scroll, or drag in an exactly-bound browser tab. Semantic refs must declare pointer for hover, right-click, double-click, and drag; scroll accepts a scroll or pointer capability. The trusted route uses tab-scoped CDP Input events and refuses if standalone background posture cannot be preserved. Because trusted input is not document-atomic, a navigation can race the final dispatch; success reports input delivery separately from the unknown page outcome, so refresh page state before continuing. The explicit dom_event route requires a page ref and synthesizes full-background DOM events. Never activates or brings a tab to the foreground.
 
 **Arguments:**
 

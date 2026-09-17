@@ -227,7 +227,7 @@ impl SessionManifest {
                 _ => refused(),
             },
             "file_transfer_and_output" => self.authorize_file_resource(kind, resource),
-            "browser_bound_input" | "browser_consequential_action" => {
+            "browser_bound_input" | "browser_blocker_resume" | "browser_consequential_action" => {
                 self.authorize_resource_origin(resource)
             }
             "process_control" => {
@@ -1786,24 +1786,26 @@ allow:
             )
             .is_err());
 
-        loaded
-            .authorize_protected_resource(
-                "browser_bound_input",
-                &serde_json::json!({
-                    "kind": "authenticated_browser_tab",
-                    "live_origin": "https://app.example.com"
-                }),
-            )
-            .unwrap();
-        assert!(loaded
-            .authorize_protected_resource(
-                "browser_bound_input",
-                &serde_json::json!({
-                    "kind": "authenticated_browser_tab",
-                    "live_origin": "https://other.example.com"
-                }),
-            )
-            .is_err());
+        for adapter_id in ["browser_bound_input", "browser_blocker_resume"] {
+            loaded
+                .authorize_protected_resource(
+                    adapter_id,
+                    &serde_json::json!({
+                        "kind": "authenticated_browser_tab",
+                        "live_origin": "https://app.example.com"
+                    }),
+                )
+                .unwrap();
+            assert!(loaded
+                .authorize_protected_resource(
+                    adapter_id,
+                    &serde_json::json!({
+                        "kind": "authenticated_browser_tab",
+                        "live_origin": "https://other.example.com"
+                    }),
+                )
+                .is_err());
+        }
 
         loaded
             .authorize_protected_resource(

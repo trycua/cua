@@ -440,12 +440,7 @@ impl ProtectedResourceGrants {
             context.managed_policy_sha256().map(str::to_owned),
             context.user_policy_sha256().map(str::to_owned),
         );
-        let protected = match context.mode() {
-            PermissionMode::Standard => self.broker.approve(&request).await?,
-            PermissionMode::Bounded | PermissionMode::Unrestricted => {
-                unreachable!("handled before protected admission")
-            }
-        };
+        let protected = self.broker.approve(&request).await?;
         let now = Instant::now();
         let grant = ResourceGrant {
             adapter_id: adapter_id.to_owned(),

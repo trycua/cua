@@ -4341,6 +4341,51 @@ async fn protected_resume_scope_rejects_noncanonical_origin_and_missing_blocker_
 }
 
 #[tokio::test]
+async fn protected_resume_scope_attests_the_exact_current_blocker_and_tab() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let blocker = f.engine.store.block_origin_for_rate_limit(
+        SESSION,
+        "https://fixture.test",
+        Some(std::time::Duration::from_secs(30)),
+    );
+    let blocker_id = blocker.blocker_id().to_owned();
+    let args = json!({
+        "target_id": target,
+        "tab_id": tab,
+        "origin": "https://fixture.test",
+        "blocker_id": blocker_id,
+        "session": SESSION,
+    });
+
+    let scope = browser_protected_resource_scope(&f.engine, &args, "browser_resume")
+        .await
+        .expect("current blocker scope")
+        .expect("attested blocker resource");
+    assert_eq!(scope["target_id"], args["target_id"]);
+    assert_eq!(scope["tab_id"], args["tab_id"]);
+    assert_eq!(scope["live_origin"], "https://fixture.test");
+    assert_eq!(scope["requested_origin"], "https://fixture.test");
+    assert_eq!(scope["blocker_id"], args["blocker_id"]);
+    assert_eq!(scope["blocker_kind"], "rate_limited");
+    assert_eq!(scope["blocker_requires_user"], false);
+
+    let stale = json!({
+        "target_id": args["target_id"],
+        "tab_id": args["tab_id"],
+        "origin": "https://fixture.test",
+        "blocker_id": "blocker-stale",
+        "session": SESSION,
+    });
+    assert!(
+        browser_protected_resource_scope(&f.engine, &stale, "browser_resume")
+            .await
+            .expect_err("stale blocker cannot reach authorization")
+            .contains("exact current blocker")
+    );
+}
+
+#[tokio::test]
 async fn click_routes_oopif_refs_through_the_contained_child_session() {
     let f = fixture().await;
     let (target, tab) = bind(&f).await;
@@ -4355,6 +4400,8 @@ async fn click_routes_oopif_refs_through_the_contained_child_session() {
         .await;
     let s = structured(&result);
     assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["input_delivered"], true, "{s}");
+    assert_eq!(s["page_blocked"], Value::Null, "{s}");
     assert_eq!(s["frame"], "oopif");
     // Box-model center of backend 100 in the child session's space.
     assert_eq!(s["x"], 1010.0);
@@ -4414,6 +4461,8 @@ async fn two_ref_drag_in_one_oopif_reuses_one_owned_child_session() {
         .await;
     let outcome = structured(&result);
     assert_eq!(outcome["status"], "ok", "{outcome}");
+    assert_eq!(outcome["input_delivered"], true, "{outcome}");
+    assert_eq!(outcome["page_blocked"], Value::Null, "{outcome}");
     assert_eq!(outcome["frame"], "oopif");
     assert_eq!(outcome["destination_ref"], destination);
 
@@ -4498,6 +4547,8 @@ async fn trusted_click_refuses_when_standalone_background_posture_is_unavailable
         .await;
     assert_eq!(structured(&synthetic)["status"], "ok");
     assert_eq!(structured(&synthetic)["effect"], "unverifiable");
+    assert_eq!(structured(&synthetic)["input_delivered"], true);
+    assert_eq!(structured(&synthetic)["page_blocked"], Value::Null);
     assert_eq!(structured(&synthetic)["escalation"]["recommended"], "page");
     assert!(synthetic.content.iter().any(|content| matches!(
         content,
@@ -4656,6 +4707,8 @@ async fn typing_into_composed_shadow_input_uses_the_tab_session() {
         .await;
     let s = structured(&result);
     assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["input_delivered"], true, "{s}");
+    assert_eq!(s["page_blocked"], Value::Null, "{s}");
     assert_eq!(s["frame"], "main");
 
     let inserts = recorded_calls(&f, "Input.insertText");

@@ -79,9 +79,12 @@ target and tab, then returns short-lived page refs for `browser_click`,
 A semantic snapshot that detects a CAPTCHA pauses mutations to that origin. An
 HTTP 429 observed during explicit `browser_navigate` does the same on
 driver-owned and embedded endpoints. An uncertain post-dispatch navigation
-pauses the exact tab until state is refreshed. After an explicit caller
+pauses the exact tab until state is refreshed. After an explicit human
 decision, `browser_resume` requires the exact live origin and opaque blocker id
-from the separate blocker report. A stale id refuses. It does not solve the
+from the separate blocker report. Every permission mode requires a separate
+protected-host approval. Routine browser-input authority and unrestricted
+launch acceptance cannot clear the blocker; bounded mode also requires the
+tool and live origin in the manifest. A stale id refuses. It does not solve the
 challenge or bypass the site's control.
 
 Setup is never a hidden read side effect. `browser_prepare` requires explicit

@@ -72,11 +72,14 @@ or acting on it. A later `get_browser_state` snapshot can report
 `challenge.status: "detected"` and a separate `blocker` object. Read-only
 snapshots remain available, but the driver refuses navigation and mutations to
 that blocker's origin. Ask the user to take over, or call `browser_resume` only
-after an explicit caller decision, passing the exact `blocker.origin` and opaque
-`blocker.blocker_id`. A stale id refuses. The same proven page preserves its id;
-a reload or unproven document identity replaces it. When `blocker.origin` is
-null, navigate away from the opaque page or end the session instead of
-inventing an origin.
+after an explicit human decision, passing the exact `blocker.origin` and opaque
+`blocker.blocker_id`. Every permission mode requires a separate protected-host
+approval for that exact blocker. Routine browser-input authority and
+unrestricted launch acceptance cannot clear it; bounded mode additionally
+requires the tool and live origin in the manifest. A stale id refuses before
+approval. The same proven page preserves its id; a reload or unproven document
+identity replaces it. When `blocker.origin` is null, navigate away from the
+opaque page or end the session instead of inventing an origin.
 
 ## Attach to an existing Chrome or Edge profile
 
@@ -314,6 +317,17 @@ full-background evidence for this route. Standalone Chromium on macOS and Linux
 returns `browser_input_trust_unavailable` because dispatching the trusted
 pointer event activates the native browser window.
 
+Chromium's trusted Input methods are scoped to the tab; they do not accept a
+frame or document identity. Cua Driver revalidates the binding, live origin,
+and any ref before dispatch, but a page can still navigate in the final instant
+between that proof and Chromium receiving the input. A successful trusted
+result therefore means `input_delivered: true` while `page_blocked` remains
+unknown. It does not prove which final document handled the input or that the
+task advanced. Do not retry automatically; take a fresh snapshot and verify the
+expected page. For click and pointer actions, use the explicit `dom_event` route
+with a current ref when document-bound synthetic dispatch is preferable to
+trusted tab-scoped input.
+
 To request a synthetic full-background DOM click deliberately, pass
 `input_route: "dom_event"` with a ref:
 
@@ -443,11 +457,11 @@ from `input_delivered`, honors `Retry-After` when present, and otherwise starts
 a bounded per-origin backoff. This response observation does not cover a
 navigation caused by a click, form submission, reload, or page script. The
 driver refuses more actions to the observed response origin
-until the wait ends or the caller explicitly invokes `browser_resume` with the
-exact `origin` and `blocker_id` from the current blocker report. A stale id
-refuses. Unrelated origins remain available unless the bounded blocker store
-returns a session-wide `safety_capacity` blocker; that requires ending the
-session. Only a positively identified
+until the wait ends or the user approves manual early resume and the caller
+invokes `browser_resume` with the exact `origin` and `blocker_id` from the
+current blocker report. A stale id refuses. Unrelated origins remain available
+unless the bounded blocker store returns a session-wide `safety_capacity`
+blocker; that requires ending the session. Only a positively identified
 blocker sets `page_blocked: true`; otherwise it is null because an HTTP response
 alone cannot prove that the reached document is free of a page-level challenge.
 Existing-profile attachments do not enable CDP network observation and report
@@ -457,9 +471,9 @@ If dispatch starts but the final document outcome cannot be proven because the
 command fails, is cancelled, or produces no matching terminal response, the
 exact tab receives a `navigation_outcome_unknown` blocker. The result leaves
 `page_blocked` unknown. Refresh `get_browser_state`, then use the current
-blocker's exact non-null `origin` and `blocker_id` for an explicit resume, or end
-the session. Cancellation before dispatch neither creates this blocker nor
-invalidates the current refs.
+blocker's exact non-null `origin` and `blocker_id` for a human-approved explicit
+resume, or end the session. Cancellation before dispatch neither creates this
+blocker nor invalidates the current refs.
 
 ## End the session
 

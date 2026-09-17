@@ -793,17 +793,13 @@ impl Tool for ClickTool {
             }
 
             if from_zoom {
-                match self.state.zoom_registry.get(pid) {
-                    Some(ctx) => {
+                match super::zoom_context(&self.state, &args, pid, window_id) {
+                    Ok(ctx) => {
                         let (wx, wy) = ctx.zoom_to_window(cx, cy);
                         cx = wx;
                         cy = wy;
                     }
-                    None => {
-                        return ToolResult::error(format!(
-                            "from_zoom=true but no zoom context for pid {pid}. Call zoom first."
-                        ))
-                    }
+                    Err(refusal) => return refusal,
                 }
             } else {
                 let ratio = match super::screenshot_scale(&self.state, &args, pid, window_id) {

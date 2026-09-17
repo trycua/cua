@@ -521,6 +521,11 @@ impl Tool for GetWindowStateTool {
                     screenshot_resize_scale,
                 )
             });
+        if let Some(snapshot_id) = snapshot_id {
+            self.state
+                .zoom_registry
+                .retire_replaced(pid, u64::from(window_id), snapshot_id);
+        }
 
         // Build the structured `elements` array — one entry per actionable
         // node, matching the order (and indices) of the markdown rendering.

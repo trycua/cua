@@ -2,15 +2,15 @@
 
 use std::path::PathBuf;
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::process::Command;
-use tokio::sync::Notify;
+use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+use tokio::sync::{Mutex as AsyncMutex, Notify};
 use uuid::Uuid;
 
 use cua_driver_contract::{VisualParseError, VisualParseErrorCode};
@@ -24,6 +24,7 @@ pub struct PerceptionWorkerConfig {
     pub args: Vec<String>,
     pub request_timeout: Duration,
     pub max_frame_bytes: usize,
+    pub warm_worker: Option<WarmWorkerPolicy>,
 }
 
 impl PerceptionWorkerConfig {
@@ -33,6 +34,37 @@ impl PerceptionWorkerConfig {
             args: Vec::new(),
             request_timeout: Duration::from_secs(30),
             max_frame_bytes: DEFAULT_MAX_FRAME_BYTES,
+            warm_worker: None,
+        }
+    }
+
+    pub fn with_bounded_reuse(mut self, policy: WarmWorkerPolicy) -> Self {
+        self.warm_worker = Some(policy);
+        self
+    }
+
+    /// Configuration for an installed extension where model startup is
+    /// expensive. Reuse remains bounded by [`WarmWorkerPolicy::default`].
+    pub fn installed(executable: impl Into<PathBuf>) -> Self {
+        Self::new(executable).with_bounded_reuse(WarmWorkerPolicy::default())
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct WarmWorkerPolicy {
+    pub startup_timeout: Duration,
+    pub inference_timeout: Duration,
+    pub shutdown_timeout: Duration,
+    pub idle_ttl: Duration,
+}
+
+impl Default for WarmWorkerPolicy {
+    fn default() -> Self {
+        Self {
+            startup_timeout: Duration::from_secs(15),
+            inference_timeout: Duration::from_secs(30),
+            shutdown_timeout: Duration::from_secs(2),
+            idle_ttl: Duration::from_secs(30),
         }
     }
 }
@@ -61,20 +93,43 @@ impl PerceptionCancellation {
     }
 }
 
+#[derive(Default)]
+struct PerceptionState {
+    worker: AsyncMutex<Option<WarmWorker>>,
+    cancellation_epoch: AtomicU64,
+    cancellation_notify: Notify,
+}
+
+impl Drop for PerceptionState {
+    fn drop(&mut self) {
+        self.worker.get_mut().take();
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct PerceptionClient {
-    config: Option<PerceptionWorkerConfig>,
+    config: Option<Arc<PerceptionWorkerConfig>>,
+    state: Arc<PerceptionState>,
 }
 
 impl PerceptionClient {
     pub fn unavailable() -> Self {
-        Self { config: None }
+        Self {
+            config: None,
+            state: Arc::new(PerceptionState::default()),
+        }
     }
 
     pub fn new(config: PerceptionWorkerConfig) -> Result<Self, VisualParseError> {
         if config.request_timeout.is_zero()
             || config.max_frame_bytes == 0
             || config.max_frame_bytes > u32::MAX as usize
+            || config.warm_worker.is_some_and(|policy| {
+                policy.startup_timeout.is_zero()
+                    || policy.inference_timeout.is_zero()
+                    || policy.shutdown_timeout.is_zero()
+                    || policy.idle_ttl.is_zero()
+            })
         {
             return Err(error(
                 VisualParseErrorCode::ResourceLimitExceeded,
@@ -84,12 +139,22 @@ impl PerceptionClient {
             ));
         }
         Ok(Self {
-            config: Some(config),
+            config: Some(Arc::new(config)),
+            state: Arc::new(PerceptionState::default()),
         })
     }
 
     pub fn is_available(&self) -> bool {
         self.config.is_some()
+    }
+
+    /// Cancel any in-flight request and synchronously drop an idle worker.
+    pub fn shutdown_now(&self) {
+        self.state.cancellation_epoch.fetch_add(1, Ordering::AcqRel);
+        self.state.cancellation_notify.notify_waiters();
+        if let Ok(mut worker) = self.state.worker.try_lock() {
+            worker.take();
+        }
     }
 
     /// Launch one worker process and issue exactly one parse. Failures are
@@ -114,7 +179,21 @@ impl PerceptionClient {
             return Err(cancelled_error());
         }
 
-        let operation = self.parse_once(config, capture_id, width, height, png_bytes);
+        if let Some(policy) = config.warm_worker {
+            return self
+                .parse_warm(
+                    config,
+                    policy,
+                    capture_id,
+                    width,
+                    height,
+                    png_bytes,
+                    cancellation,
+                )
+                .await;
+        }
+
+        let operation = self.parse_cold(config, capture_id, width, height, png_bytes);
         tokio::select! {
             _ = cancellation.cancelled() => Err(cancelled_error()),
             result = tokio::time::timeout(config.request_timeout, operation) => {
@@ -131,7 +210,7 @@ impl PerceptionClient {
         }
     }
 
-    async fn parse_once(
+    async fn parse_cold(
         &self,
         config: &PerceptionWorkerConfig,
         capture_id: &str,
@@ -139,8 +218,113 @@ impl PerceptionClient {
         height: u32,
         png_bytes: &[u8],
     ) -> Result<Value, VisualParseError> {
-        use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+        let mut worker = WarmWorker::launch(config).await?;
+        let result = worker
+            .parse(config, capture_id, width, height, png_bytes)
+            .await?;
+        worker.stdin.shutdown().await.map_err(map_io_error)?;
+        let status = worker.child.wait().await.map_err(map_crash_error)?;
+        if !status.success() {
+            return Err(error(
+                VisualParseErrorCode::WorkerCrashed,
+                "perception worker exited unsuccessfully after responding",
+                true,
+                Some(status.to_string()),
+            ));
+        }
+        Ok(result)
+    }
 
+    async fn parse_warm(
+        &self,
+        config: &Arc<PerceptionWorkerConfig>,
+        policy: WarmWorkerPolicy,
+        capture_id: &str,
+        width: u32,
+        height: u32,
+        png_bytes: &[u8],
+        cancellation: &PerceptionCancellation,
+    ) -> Result<Value, VisualParseError> {
+        let epoch = self.state.cancellation_epoch.load(Ordering::Acquire);
+        let mut slot = tokio::select! {
+            _ = cancellation.cancelled() => return Err(cancelled_error()),
+            _ = runtime_cancelled(&self.state, epoch) => return Err(cancelled_error()),
+            slot = self.state.worker.lock() => slot,
+        };
+
+        if slot
+            .as_ref()
+            .is_some_and(|worker| worker.last_used.elapsed() >= policy.idle_ttl)
+        {
+            if let Some(worker) = slot.take() {
+                shutdown_worker(worker, policy.shutdown_timeout).await;
+            }
+        }
+
+        if slot.is_none() {
+            let launch = WarmWorker::launch(config);
+            let worker = tokio::select! {
+                _ = cancellation.cancelled() => return Err(cancelled_error()),
+                _ = runtime_cancelled(&self.state, epoch) => return Err(cancelled_error()),
+                result = tokio::time::timeout(policy.startup_timeout, launch) => {
+                    match result {
+                        Ok(result) => result?,
+                        Err(_) => return Err(timeout_error("startup")),
+                    }
+                }
+            };
+            *slot = Some(worker);
+        }
+
+        let operation = slot
+            .as_mut()
+            .expect("warm worker was initialized")
+            .parse(config, capture_id, width, height, png_bytes);
+        let result = tokio::select! {
+            _ = cancellation.cancelled() => Err(cancelled_error()),
+            _ = runtime_cancelled(&self.state, epoch) => Err(cancelled_error()),
+            result = tokio::time::timeout(policy.inference_timeout, operation) => {
+                match result {
+                    Ok(result) => result,
+                    Err(_) => Err(timeout_error("inference")),
+                }
+            }
+        };
+        let result = match result {
+            Ok(result) => result,
+            Err(failure) => {
+                slot.take();
+                return Err(failure);
+            }
+        };
+
+        let worker = slot.as_mut().expect("successful worker remains present");
+        worker.last_used = Instant::now();
+        worker.idle_generation = worker.idle_generation.wrapping_add(1);
+        let idle_generation = worker.idle_generation;
+        drop(slot);
+        schedule_idle_shutdown(
+            Arc::downgrade(&self.state),
+            idle_generation,
+            policy.idle_ttl,
+            policy.shutdown_timeout,
+        );
+        Ok(result)
+    }
+}
+
+struct WarmWorker {
+    child: Child,
+    stdin: ChildStdin,
+    stdout: ChildStdout,
+    _working_directory: tempfile::TempDir,
+    _process_group: ProcessGroupGuard,
+    last_used: Instant,
+    idle_generation: u64,
+}
+
+impl WarmWorker {
+    async fn launch(config: &PerceptionWorkerConfig) -> Result<Self, VisualParseError> {
         let mut command = Command::new(&config.executable);
         command
             .args(&config.args)
@@ -149,7 +333,7 @@ impl PerceptionClient {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .kill_on_drop(true);
-        let private_working_directory = tempfile::Builder::new()
+        let working_directory = tempfile::Builder::new()
             .prefix("cua-perception-")
             .tempdir()
             .map_err(|cause| {
@@ -160,7 +344,7 @@ impl PerceptionClient {
                     Some(cause.to_string()),
                 )
             })?;
-        command.current_dir(private_working_directory.path());
+        command.current_dir(working_directory.path());
         configure_process_containment(&mut command)?;
         let mut child = command.spawn().map_err(|cause| {
             error(
@@ -170,7 +354,7 @@ impl PerceptionClient {
                 Some(cause.to_string()),
             )
         })?;
-        let _process_group = ProcessGroupGuard::new(child.id());
+        let process_group = ProcessGroupGuard::new(child.id());
         let mut stdin = child.stdin.take().ok_or_else(|| {
             error(
                 VisualParseErrorCode::WorkerLaunchFailed,
@@ -187,7 +371,6 @@ impl PerceptionClient {
                 None,
             )
         })?;
-
         let health_id = format!("health-{}", Uuid::new_v4());
         write_json_frame(
             &mut stdin,
@@ -207,10 +390,30 @@ impl PerceptionClient {
                 None,
             ));
         }
+        Ok(Self {
+            child,
+            stdin,
+            stdout,
+            _working_directory: working_directory,
+            _process_group: process_group,
+            last_used: Instant::now(),
+            idle_generation: 0,
+        })
+    }
+
+    async fn parse(
+        &mut self,
+        config: &PerceptionWorkerConfig,
+        capture_id: &str,
+        width: u32,
+        height: u32,
+        png_bytes: &[u8],
+    ) -> Result<Value, VisualParseError> {
+        use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 
         let request_id = format!("parse-{}", Uuid::new_v4());
         write_json_frame(
-            &mut stdin,
+            &mut self.stdin,
             &json!({
                 "protocol": PROTOCOL_VERSION,
                 "request_id": request_id,
@@ -229,22 +432,51 @@ impl PerceptionClient {
             config.max_frame_bytes,
         )
         .await?;
-        stdin.shutdown().await.map_err(map_io_error)?;
-        drop(stdin);
-
-        let response = read_response(&mut stdout, config.max_frame_bytes).await?;
-        let result = response.into_result(&request_id)?;
-        let status = child.wait().await.map_err(map_crash_error)?;
-        if !status.success() {
-            return Err(error(
-                VisualParseErrorCode::WorkerCrashed,
-                "perception worker exited unsuccessfully after responding",
-                true,
-                Some(status.to_string()),
-            ));
-        }
-        Ok(result)
+        read_response(&mut self.stdout, config.max_frame_bytes)
+            .await?
+            .into_result(&request_id)
     }
+}
+
+async fn runtime_cancelled(state: &PerceptionState, epoch: u64) {
+    loop {
+        let notified = state.cancellation_notify.notified();
+        if state.cancellation_epoch.load(Ordering::Acquire) != epoch {
+            return;
+        }
+        notified.await;
+    }
+}
+
+fn schedule_idle_shutdown(
+    state: std::sync::Weak<PerceptionState>,
+    generation: u64,
+    idle_ttl: Duration,
+    shutdown_timeout: Duration,
+) {
+    tokio::spawn(async move {
+        tokio::time::sleep(idle_ttl).await;
+        let Some(state) = state.upgrade() else {
+            return;
+        };
+        let mut slot = state.worker.lock().await;
+        let should_shutdown = slot.as_ref().is_some_and(|worker| {
+            worker.idle_generation == generation && worker.last_used.elapsed() >= idle_ttl
+        });
+        if should_shutdown {
+            if let Some(worker) = slot.take() {
+                shutdown_worker(worker, shutdown_timeout).await;
+            }
+        }
+    });
+}
+
+async fn shutdown_worker(mut worker: WarmWorker, timeout: Duration) {
+    let operation = async {
+        let _ = worker.stdin.shutdown().await;
+        let _ = worker.child.wait().await;
+    };
+    let _ = tokio::time::timeout(timeout, operation).await;
 }
 
 #[cfg(unix)]
@@ -478,6 +710,15 @@ fn cancelled_error() -> VisualParseError {
     )
 }
 
+fn timeout_error(phase: &str) -> VisualParseError {
+    error(
+        VisualParseErrorCode::Timeout,
+        format!("the perception worker exceeded its {phase} deadline"),
+        true,
+        None,
+    )
+}
+
 pub(crate) fn error(
     code: VisualParseErrorCode,
     message: impl Into<String>,
@@ -578,8 +819,72 @@ else:
             args,
             request_timeout: timeout,
             max_frame_bytes: maximum,
+            warm_worker: None,
         })
         .unwrap()
+    }
+
+    fn warm_client(
+        directory: &tempfile::TempDir,
+        path: PathBuf,
+        policy: WarmWorkerPolicy,
+    ) -> PerceptionClient {
+        let args: Vec<String> =
+            serde_json::from_slice(&std::fs::read(directory.path().join("args.json")).unwrap())
+                .unwrap();
+        PerceptionClient::new(PerceptionWorkerConfig {
+            executable: path,
+            args,
+            request_timeout: Duration::from_secs(10),
+            max_frame_bytes: 1024 * 1024,
+            warm_worker: Some(policy),
+        })
+        .unwrap()
+    }
+
+    fn warm_fixture_worker(
+        counter: &std::path::Path,
+        pid_file: &std::path::Path,
+    ) -> (tempfile::TempDir, PathBuf) {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("warm-worker.py");
+        let script = r#"#!/usr/bin/env python3
+import json, os, struct, sys, time
+counter, pid_file = sys.argv[1], sys.argv[2]
+with open(pid_file, 'a', encoding='utf-8') as handle: handle.write(str(os.getpid()) + '\n')
+def read_frame():
+ p=sys.stdin.buffer.read(4)
+ if not p: return None
+ if len(p)!=4: sys.exit(2)
+ n=struct.unpack('>I',p)[0]; d=sys.stdin.buffer.read(n)
+ if len(d)!=n: sys.exit(3)
+ return json.loads(d)
+def write(v):
+ p=json.dumps(v,separators=(',',':')).encode(); sys.stdout.buffer.write(struct.pack('>I',len(p))+p); sys.stdout.buffer.flush()
+h=read_frame(); write({'protocol':'cua-perception/1','request_id':h['request_id'],'status':'ok','result':{'ready':True,'protocol':'cua-perception/1'}})
+while True:
+ r=read_frame()
+ if r is None: sys.exit(0)
+ capture=r['params']['capture_id']
+ with open(counter,'a',encoding='utf-8') as handle: handle.write(capture+'\n')
+ if capture == 'crash': sys.exit(9)
+ if capture == 'hang': time.sleep(60)
+ write({'protocol':'cua-perception/1','request_id':r['request_id'],'status':'ok','result':{'capture':capture,'regions':[]}})
+"#;
+        std::fs::write(&path, script).unwrap();
+        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&path, permissions).unwrap();
+        let args = vec![
+            counter.display().to_string(),
+            pid_file.display().to_string(),
+        ];
+        std::fs::write(
+            directory.path().join("args.json"),
+            serde_json::to_vec(&args).unwrap(),
+        )
+        .unwrap();
+        (directory, path)
     }
 
     #[tokio::test]
@@ -682,5 +987,131 @@ else:
             .await
             .unwrap_err();
         assert_eq!(failure.code, VisualParseErrorCode::WorkerCancelled);
+    }
+
+    #[tokio::test]
+    async fn warm_worker_reuses_one_process_then_idle_ttl_reaps_it() {
+        let evidence = tempfile::tempdir().unwrap();
+        let counter = evidence.path().join("counter");
+        let pids = evidence.path().join("pids");
+        let (directory, worker) = warm_fixture_worker(&counter, &pids);
+        let client = warm_client(
+            &directory,
+            worker,
+            WarmWorkerPolicy {
+                startup_timeout: Duration::from_secs(2),
+                inference_timeout: Duration::from_secs(2),
+                shutdown_timeout: Duration::from_millis(100),
+                idle_ttl: Duration::from_millis(100),
+            },
+        );
+        for capture in ["one", "two"] {
+            client
+                .parse(capture, 1, 1, &[1, 2, 3, 4], &Default::default())
+                .await
+                .unwrap();
+        }
+        assert_eq!(std::fs::read_to_string(&pids).unwrap().lines().count(), 1);
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        client
+            .parse("three", 1, 1, &[1, 2, 3, 4], &Default::default())
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read_to_string(&pids).unwrap().lines().count(), 2);
+        assert_eq!(
+            std::fs::read_to_string(counter).unwrap(),
+            "one\ntwo\nthree\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn warm_worker_crash_and_cancel_kill_state_without_replay() {
+        let evidence = tempfile::tempdir().unwrap();
+        let counter = evidence.path().join("counter");
+        let pids = evidence.path().join("pids");
+        let (directory, worker) = warm_fixture_worker(&counter, &pids);
+        let client = warm_client(
+            &directory,
+            worker,
+            WarmWorkerPolicy {
+                startup_timeout: Duration::from_secs(2),
+                inference_timeout: Duration::from_secs(2),
+                shutdown_timeout: Duration::from_millis(100),
+                idle_ttl: Duration::from_secs(5),
+            },
+        );
+        let failure = client
+            .parse("crash", 1, 1, &[1, 2, 3, 4], &Default::default())
+            .await
+            .unwrap_err();
+        assert_eq!(failure.code, VisualParseErrorCode::WorkerCrashed);
+        client
+            .parse("after-crash", 1, 1, &[1, 2, 3, 4], &Default::default())
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&counter).unwrap(),
+            "crash\nafter-crash\n"
+        );
+
+        let cancellation = PerceptionCancellation::default();
+        let trigger = cancellation.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            trigger.cancel();
+        });
+        let failure = client
+            .parse("hang", 1, 1, &[1, 2, 3, 4], &cancellation)
+            .await
+            .unwrap_err();
+        assert_eq!(failure.code, VisualParseErrorCode::WorkerCancelled);
+        client
+            .parse("after-cancel", 1, 1, &[1, 2, 3, 4], &Default::default())
+            .await
+            .unwrap();
+        let calls = std::fs::read_to_string(counter).unwrap();
+        assert_eq!(calls.matches("hang\n").count(), 1);
+        assert!(calls.ends_with("after-cancel\n"));
+    }
+
+    #[tokio::test]
+    async fn shutdown_now_cancels_inference_and_drops_warm_worker() {
+        let evidence = tempfile::tempdir().unwrap();
+        let counter = evidence.path().join("counter");
+        let pids = evidence.path().join("pids");
+        let (directory, worker) = warm_fixture_worker(&counter, &pids);
+        let client = warm_client(
+            &directory,
+            worker,
+            WarmWorkerPolicy {
+                startup_timeout: Duration::from_secs(2),
+                inference_timeout: Duration::from_secs(5),
+                shutdown_timeout: Duration::from_millis(100),
+                idle_ttl: Duration::from_secs(5),
+            },
+        );
+        let shutdown = client.clone();
+        let observed_counter = counter.clone();
+        tokio::spawn(async move {
+            for _ in 0..100 {
+                if std::fs::read_to_string(&observed_counter)
+                    .is_ok_and(|calls| calls.contains("hang\n"))
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            shutdown.shutdown_now();
+        });
+        let failure = client
+            .parse("hang", 1, 1, &[1, 2, 3, 4], &Default::default())
+            .await
+            .unwrap_err();
+        assert_eq!(failure.code, VisualParseErrorCode::WorkerCancelled);
+        client
+            .parse("after-shutdown", 1, 1, &[1, 2, 3, 4], &Default::default())
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read_to_string(pids).unwrap().lines().count(), 2);
     }
 }

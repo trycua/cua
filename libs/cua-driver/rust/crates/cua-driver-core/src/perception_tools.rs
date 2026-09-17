@@ -29,6 +29,10 @@ pub fn register_perception_tool(
     client: PerceptionClient,
     resolve_binding: CaptureBindingResolver,
 ) {
+    let shutdown_client = client.clone();
+    registry.retain_session_end_hook(crate::session::register_scoped_session_end_hook(
+        move |_| shutdown_client.shutdown_now(),
+    ));
     registry.register(Box::new(ParseVisualRegionsTool::new(
         registry.capture_service(),
         client,

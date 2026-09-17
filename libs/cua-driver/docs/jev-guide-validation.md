@@ -165,9 +165,10 @@ The maintainer selected a shared walkthrough with platform-specific setup and
 honest native validation status. The guide now separates macOS, Windows, and
 Linux desktop prerequisites while keeping download, Python setup, connection
 checks, live execution, and results common. Shell-specific npm installation is
-in tabs; summary inspection uses `uv run` instead of `.venv/bin/python`. Native
-Wayland is explicitly outside the verified example coverage. Detailed sandbox
-failures remain here rather than becoming another setup diary in the guide.
+in tabs; summary inspection uses `uv run` instead of `.venv/bin/python`. The
+Wayland section links canonical compositor requirements. At the maintainer's
+request, verification-status labels and coverage tables are omitted from the
+walkthrough; actual coverage and blockers remain here and in the PR.
 
 ### Launcher correction
 
@@ -246,3 +247,48 @@ the TypeScript launcher check. After the documented locked npm installation,
 all 17 Python tests and seven TypeScript tests passed with typechecking. That
 initial skip is not counted as launcher validation. The PR remains draft with
 Windows/Linux desktop acceptance explicitly incomplete.
+
+### Final macOS rehearsal and documentation checks
+
+A seventh fresh, ephemeral agent followed guide candidate
+`a213d0acc731c8041199cdc944014bd05cddec09` against pinned example
+`b0e4b6feb0064cedc4dcf04d70a0d270d0568b99`, without prior conversation, host skill
+discovery, code edits, or intervention. All seven cases passed, including three
+live Jev cases and both languages. The parent independently audited exact
+submitted tokens, two actual actions per case, final outcomes, closed fixture
+ports, unchanged executable sources/locks, and absence of the credential value
+from retained transcripts and reports. This remains a provisioned-Mac proof,
+not a new Windows/Linux desktop certification.
+
+Final guide changes after that rehearsal clarify the already-tested Driver
+version floor and remove the verification-status wording at the maintainer's
+request. Every executable command is unchanged; the parent audit allows only
+those exact prose changes. The final guide hash is
+`139ec94166234c91f8ca428eb620a404932e9175fe3f5946406134bcac1cfe9e`.
+
+- Tested guide hash: `dc44915168f1486ec64ccd8c04f3753d835b4ce58df0173f23f0927947279c84`.
+- Fresh-agent transcript: `123abe5a3da301095b9fffea71ee77f16c5515b5d0bc94648ab28ba4e6889472`.
+- Fresh-agent report: `138c22ebb41ac4f6b045cc5a68f585eb9fed0a5eba75a926d601447d1d52baf5`.
+
+Final docs hygiene, links, generated-contract drift, and production build passed.
+The recovered shallow checkout initially lacked release tags; fetching the
+component tags restored the generator's prerequisite without changing generated
+files. A supplementary preview automation did not establish its expected tab
+postcondition, so no successful interactive-tab screenshot check is claimed.
+
+### Evidence retention update
+
+Sandbox re-entry replaced ignored files inside the managed Mac workspace as
+well as Git metadata. Earlier private launcher scripts and parent transcripts
+stored there were lost; their historical fingerprints above must not be read
+as a promise that all original raw files remain available. Surviving fresh-agent
+reports, guide snapshots, and per-case logs were recovered from their separate
+temporary checkouts. Desktop deliveries remain intact; the previously delivered
+gameplay video still matches its recorded hash. No local filesystem snapshot
+was available for broader recovery.
+
+The latest fresh-agent transcript, report, seven case logs, audit, and harness
+are retained outside the resynchronized workspace in the standalone guide
+checkout. Native Windows/Linux evidence remains in their separate guest paths;
+the Windows archive was also preserved as encoded bytes in the tool transcript.
+No lost evidence was reconstructed or represented as retained.

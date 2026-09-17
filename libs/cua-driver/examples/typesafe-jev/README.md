@@ -59,11 +59,8 @@ not an npm shell shim. On Linux, use a supported system browser and a desktop
 session accessible to the same user as Driver; native Wayland has separate
 compositor-specific requirements.
 
-Unit and launcher tests pass on macOS, Windows, and Linux. Desktop and live Jev
-proof are currently verified on macOS only. The available Windows host timed
-out preparing isolated Edge, and the Linux host lacked the required browser
-and desktop access. See the [validation report](../../docs/jev-guide-validation.md)
-for exact evidence and remaining gaps; a unit-test pass is not desktop proof.
+Development validation evidence and environment details are recorded in the
+[validation report](../../docs/jev-guide-validation.md).
 
 ## Verify setup in one agent command
 

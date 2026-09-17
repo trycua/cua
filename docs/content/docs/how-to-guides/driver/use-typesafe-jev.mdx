@@ -17,7 +17,7 @@ form received the value, and stops its test server when finished.
 
 You need a logged-in graphical desktop and:
 
-- A current [Cua Driver installation](/how-to-guides/driver/install).
+- [Cua Driver](/how-to-guides/driver/install), version 0.23.2 or later.
 - A supported Chromium-based browser, listed in your platform's setup below.
 - [uv](https://docs.astral.sh/uv/getting-started/installation/) and Git. uv will
   install the Python version needed by the example.
@@ -28,7 +28,6 @@ to use Jev. You can run the connection check without a key.
 After installation, open a new terminal on the computer Cua Driver controls.
 Use your platform's setup below, then follow the shared steps in that terminal.
 Commands outside the platform tabs work in both POSIX shells and PowerShell.
-See [verification status](#verification-status) for what has been tested.
 
 ## 1. Check Cua Driver
 
@@ -85,8 +84,8 @@ cua-driver doctor
 Start Driver from the same graphical session using the
 [Linux daemon instructions](/how-to-guides/driver/install#start-the-daemon-on-linux).
 Check the report for display and accessibility-bus problems before continuing.
-Native Wayland has [compositor-specific limits](/reference/cua-driver/platform-support#linux-window-systems)
-and has not been verified for this example.
+For native Wayland, follow the
+[compositor-specific setup and limits](/reference/cua-driver/platform-support#linux-window-systems).
 
   </Tab>
 </Tabs>
@@ -219,18 +218,6 @@ shell call until it finishes. The command manages the test server itself.
 | API authentication or quota error | Check your TypeSafe key and account access. The connection check can pass even when live access fails. |
 | Output directory already exists | Choose another `--output-dir` to keep the previous result. |
 | Run fails or reports `"complete": false` | Read the action log before retrying. Failure does not prove that nothing happened; an action may already have landed. |
-
-## Verification status
-
-Verification coverage for this example:
-
-| Platform | Example verification |
-| --- | --- |
-| macOS | Browser actions and live Jev runs verified for Python and TypeScript. |
-| Windows | Unit and launcher tests pass; browser and live Jev runs are not yet verified. |
-| Linux | Unit and launcher tests pass; browser and live Jev runs are not yet verified. |
-
-Unit tests are not a substitute for the browser connection check in step 3.
 
 ## Adapt the example
 

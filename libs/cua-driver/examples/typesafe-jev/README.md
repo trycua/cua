@@ -54,7 +54,30 @@ export npm_config_cache="$PWD/.venv/npm-cache"
 npm ci
 ```
 
-Start the loopback-only fixture in a separate terminal:
+## Verify setup in one agent command
+
+The managed verifier starts the existing fixture on an unused loopback port,
+runs the existing agent, requires both its verified event and an independent
+HTTP state match, and closes the fixture even when a runner fails. This avoids
+background-process lifetime and cross-call signal restrictions in agent shells.
+
+```bash
+uv run --frozen python verify_setup.py --output-dir proof-mock
+uv run --frozen python verify_setup.py --live --output-dir proof-live
+```
+
+Use a new output directory for every attempt. `--live` adds live Jev after the
+mock check; it reads `TYPESAFE_API_KEY`, prompts securely in an interactive
+terminal, or stops before starting if an unattended run lacks a key. After
+installing the TypeScript dependencies, add `--typescript` to verify both
+languages. `summary.json` must say `complete: true`; partial results remain
+false. Each runner has four decisions and a 180-second process timeout. These
+are not provider billing caps.
+
+## Run the standalone fixture
+
+For an application or terminal that already owns the server lifecycle, start
+the loopback-only fixture in a separate persistent terminal:
 
 ```bash
 uv run --frozen --python 3.12 python fixture_server.py

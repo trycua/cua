@@ -1,6 +1,6 @@
 ---
 title: 'Use TypeSafe Jev with Cua Driver'
-description: 'Set up a bounded Jev agent on macOS, prove the Driver connection without credentials, then verify a live Jev decision.'
+description: 'Set up a bounded Jev agent on macOS, prove the Driver connection without credentials, then verify live Jev decisions.'
 ---
 
 This walkthrough starts with a fresh checkout and ends with a value that Jev
@@ -10,7 +10,7 @@ confirms that the form actually received it.
 **Jev is not loaded into Cua Driver as a chat model.** The included Python agent
 asks TypeSafe for a typed choice; code owns the arguments and execution. No
 Codex, ChatGPT subscription, model weights, GPU, OCR, or video tools are needed.
-The TypeScript version is an optional alternative, not a Python prerequisite.
+The TypeScript agent is optional, not a prerequisite for the Python route.
 
 ```mermaid
 flowchart LR
@@ -40,12 +40,12 @@ permission policy.
 Use a Bash terminal. Stop at any failed command before advancing. Agents with
 stateless shell tools must repeat the working directory and environment exports
 in later calls; shell variables do not persist between independent processes.
-The agent's execution environment must allow dependency downloads, loopback
-connections, and writes to its workspace, user installation/cache directories,
-and macOS's per-user temporary directory (`getconf DARWIN_USER_TEMP_DIR`). If
-an execution sandbox denies those writes, ask its operator to authorize those
-specific paths. That is separate from Cua permissions; do not use `sudo` or
-disable the sandbox as an installation workaround.
+The execution environment must allow dependency downloads, loopback connections,
+and writes to its workspace, user installation/cache directories, and macOS's
+per-user temporary directory (`getconf DARWIN_USER_TEMP_DIR`). If a sandbox
+denies those writes, ask its operator to authorize those specific paths. That
+is separate from Cua permissions; do not use `sudo` or disable the sandbox as
+an installation workaround.
 
 ### Cua Driver and permissions
 
@@ -138,7 +138,7 @@ cd cua-jev
 example is not on `main`. Use the following fallback inside this fresh clone:
 
 ```bash
-if [ ! -f libs/cua-driver/examples/typesafe-jev/python/run.py ]; then
+if [ ! -f libs/cua-driver/examples/typesafe-jev/verify_setup.py ]; then
   git fetch --depth 1 origin refs/pull/3916/head
   git switch --detach FETCH_HEAD
 fi
@@ -161,117 +161,49 @@ uv run --frozen python -m unittest discover -s python/tests
 
 These are code checks, not evidence of an operational desktop or live provider.
 
-## 3. Start and check the local fixture
+## 3. Prove the Driver connection without Jev
 
-From the example directory, check that port 8765 is available:
-
-```bash
-.venv/bin/python - <<'PY'
-import socket
-with socket.socket() as listener:
-    listener.bind(("127.0.0.1", 8765))
-print("Port 8765 is available")
-PY
-```
-
-If the port is occupied, stop here. Do not terminate an unknown listener or
-reset another run's fixture. Choose an unused port and change both the server's
-`--port` and every runner's `--fixture-url` and verification URL consistently.
-
-Start only this example's server in a separate process session and save its PID
-for cleanup. A plain `command &` or `nohup` can be killed when an agent's shell
-tool call finishes, even after a readiness check succeeds:
+From the example directory, with `CUA_DRIVER_BIN` still exported, run:
 
 ```bash
-.venv/bin/python - <<'PY'
-import subprocess
-import sys
-from pathlib import Path
-with Path("fixture.log").open("wb") as log:
-    process = subprocess.Popen(
-        [sys.executable, "fixture_server.py", "--port", "8765"],
-        stdin=subprocess.DEVNULL,
-        stdout=log,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
-Path("fixture.pid").write_text(str(process.pid) + "\n")
-print("Started owned fixture PID:", process.pid)
-PY
+uv run --frozen python verify_setup.py --output-dir proof-mock
 ```
 
-If your execution environment disallows detached children, keep
-`.venv/bin/python fixture_server.py --port 8765` running in a separate persistent
-terminal instead. The fixture must outlive individual agent tool calls; do not
-weaken the environment's policy to achieve that.
+Use a new output directory for each attempt; existing directories are refused
+so a retry cannot erase failed evidence.
 
-Wait for the server, checking both the owned process and the independent state:
+The verification command owns the fixture's lifetime inside one process. It
+starts the existing loopback-only form on an unused port, runs the existing
+agent, independently reads `/state`, and closes the server on success or failure.
+No separate terminal, `nohup`, remembered PID, or cross-call process control is
+needed. Run the entire command in **one** agent shell call and allow it to finish.
 
-```bash
-.venv/bin/python - <<'PY'
-import json
-import os
-import time
-from pathlib import Path
-from urllib.request import urlopen
-pid = int(Path("fixture.pid").read_text())
-for attempt in range(30):
-    os.kill(pid, 0)
-    try:
-        with urlopen("http://127.0.0.1:8765/state", timeout=1) as response:
-            state = json.load(response)
-        assert state == {"submitted": None}, state
-        print("Fixture ready:", state)
-        break
-    except OSError:
-        time.sleep(0.2)
-else:
-    raise SystemExit("Fixture not ready; inspect fixture.log")
-PY
-```
-
-The fixture binds to loopback only. Do not expose it publicly. Keep it running
-through the following steps, and run the examples **one at a time**: each run
-resets this shared fixture.
-
-## 4. Prove the Driver connection without Jev
-
-In the same example directory and with `CUA_DRIVER_BIN` still exported:
-
-```bash
-uv run --frozen python/run.py --provider mock \
-  --token jev-guide-mock --max-steps 4 --log mock.jsonl
-```
-
-The runner keeps one MCP connection and named session alive, discovers the
-new browser's PID/window, types the token, and clicks Submit using fresh
+The agent keeps one MCP connection and named session alive, discovers its new
+browser's PID/window, types a verification token, and clicks Submit using fresh
 `semantic_v2` page refs. It never borrows an existing CLI or MCP session.
 
-Expected terminal output includes step events followed by:
+Require all three pieces of evidence:
 
-```json
-{"event":"outcome","outcome":"verified","token":"jev-guide-mock"}
-```
+1. A runner event with `"outcome": "verified"` and `"token": "jev-guide-mock"`.
+2. An `independently_verified` event whose `observed` value is
+   `{"submitted": "jev-guide-mock"}`.
+3. A final event with `"event": "setup_complete"`, `"checks": 1`, and
+   `"fixture_closed": true`.
 
-Independently verify the exact token before running anything else:
+Inspect the saved summary without contacting a now-closed fixture:
 
 ```bash
-.venv/bin/python - <<'PY'
-import json
-from urllib.request import urlopen
-with urlopen("http://127.0.0.1:8765/state", timeout=2) as response:
-    state = json.load(response)
-assert state == {"submitted": "jev-guide-mock"}, state
-print("PASS: mock Driver action reached the fixture")
-PY
+.venv/bin/python -m json.tool proof-mock/summary.json
 ```
 
-Require **both** the runner's `verified` outcome and this assertion. A zero exit
-status, screenshot, or successful action response alone is not completion.
+It must contain `"complete": true` and one verified Python/mock check. The
+per-run log is `proof-mock/python-mock.jsonl`. The verifier requires both the
+runner's final event and the exact independently observed token: a zero exit
+status, screenshot, or successful action response alone is insufficient.
 Never submit the token directly with HTTP or JavaScript to manufacture a pass.
 The mock proves the desktop integration, not Jev authentication or decisions.
 
-## 5. Provide a TypeSafe key and run live Jev
+## 4. Provide a TypeSafe key and run live Jev
 
 Create an API key in the [TypeSafe console](https://console.typesafe.ai/).
 The [official SDK](https://docs.typesafe.ai/sdk/python) reads
@@ -282,91 +214,71 @@ variable to the agent's execution environment in advance. Do not paste the key
 into chat, put it in a command argument, commit it, or print it. Disable shell
 tracing and avoid environment dumps. There is no credential-free live mode.
 
-For a human at an interactive terminal, the following command prompts without
-echoing or putting the key in shell history. It also works without a prompt if
-the environment variable was already provisioned. It passes the key only to
-the child process and does not persist it to a file:
+For a human at an interactive terminal, the command below prompts securely if
+the variable is absent. The input is not echoed, stored in shell history, or
+persisted to a file. An unattended run without the variable fails before
+starting the fixture or making provider calls.
 
 ```bash
-uv run --frozen python - <<'PY'
-import getpass
-import os
-import subprocess
-import sys
-if not os.environ.get("TYPESAFE_API_KEY"):
-    if not sys.stderr.isatty():
-        raise SystemExit("Human prerequisite: provision TYPESAFE_API_KEY before this unattended run")
-    key = getpass.getpass("TypeSafe API key: ").strip()
-    if not key:
-        raise SystemExit("No key supplied")
-    os.environ["TYPESAFE_API_KEY"] = key
-result = subprocess.run([
-    sys.executable, "python/run.py", "--provider", "live",
-    "--token", "jev-guide-live", "--max-steps", "4", "--log", "live.jsonl",
-])
-raise SystemExit(result.returncode)
-PY
+uv run --frozen python verify_setup.py --live --output-dir proof-live
 ```
 
-This makes billable TypeSafe requests. It sends the fixture's page observation,
-action descriptions, and short action history—not your personal browser
-profile—to the provider. Code supplies the token and tool arguments; Jev chooses
-among the currently allowed action and abstention. This deliberately constrained
-fixture is an integration proof, **not a general computer-use capability test**.
+This runs a fresh Python mock check and then a **live** Jev check, sequentially
+against the owned fixture. Each run resets its state. Require:
 
-Expected final event:
-
-```json
-{"event":"outcome","outcome":"verified","token":"jev-guide-live"}
-```
-
-Verify the live result independently:
+- `independently_verified` for `"provider": "live"`, with
+  `"observed": {"submitted": "jev-guide-live"}`;
+- `setup_complete` with `"checks": 2` and `"fixture_closed": true`; and
+- `proof-live/summary.json` with `"complete": true`, including both checks.
 
 ```bash
-.venv/bin/python - <<'PY'
-import json
-from urllib.request import urlopen
-with urlopen("http://127.0.0.1:8765/state", timeout=2) as response:
-    state = json.load(response)
-assert state == {"submitted": "jev-guide-live"}, state
-print("PASS: live Jev-selected Driver action reached the fixture")
-PY
+.venv/bin/python -m json.tool proof-live/summary.json
 ```
+
+Live verification makes billable TypeSafe requests. It sends the fixture's page
+observation, action descriptions, and short action history—not your personal
+browser profile—to the provider. Code supplies the token and tool arguments;
+Jev chooses among the currently allowed action and abstention. This deliberately
+constrained fixture is an integration proof, **not a general computer-use
+capability test**.
 
 Do not replace a failed live run with the mock and call it success. Preserve the
 failure and its log; an abstention or exhausted step budget is not verification.
-The SDK may perform transport retries, so the four-step bound is not a hard
-request-count or billing cap. The logged `decision_ms` includes browser
-observation time; it is not a pure inference-latency measurement.
+The runner allows four decisions per case and the verifier bounds each runner
+process to 180 seconds. SDK transport retries mean this is not a hard
+request-count or billing cap. Logged `decision_ms` includes browser observation
+time; it is not a pure inference-latency measurement.
 
-## 6. Record the result and clean up
+## 5. Record evidence and finish
 
-Keep the checkout SHA, Driver/Python versions, `mock.jsonl`, `live.jsonl`, and the
-two independent assertion results. Record which host prerequisites already
-existed and any human intervention. Do not attach credentials or unrelated
-screenshots. The logs contain choices/probabilities and timings, but are not a
-complete provider usage or billing audit.
+Keep the checkout SHA, Driver/Python versions, the two proof directories, and
+which host prerequisites already existed. Record any human intervention. Do
+not attach credentials or unrelated screenshots. The logs contain choices,
+probabilities, and timings, but are not a complete provider usage/billing audit.
 
-The runner closes its MCP transport on exit. Do not reuse its session or refs.
-Stop only the fixture process that this walkthrough started, then remove its
-PID file:
+Each runner closes its MCP connection; the verifier stops only its own fixture.
+Do not reuse sessions or refs, stop a shared Cua daemon, or kill unrelated Chrome
+processes. If the verifier fails, its summary stays `"complete": false`; inspect
+the available logs before another attempt. After an abrupt external termination,
+check the host's owned resources rather than assuming normal cleanup ran.
+
+If you exported a key in your terminal, remove it when finished:
 
 ```bash
-kill "$(cat fixture.pid)"
-rm fixture.pid
 unset TYPESAFE_API_KEY
 ```
 
-Do not stop a shared Cua daemon or kill unrelated Chrome processes. If a run was
-interrupted, inspect the exact owned process before cleanup rather than killing
-all Python or browser processes. Do not disable the screen lock or screen saver
-to keep an unattended run alive; ask the human to keep the session available.
+The interactive verifier prompt does not export the key back to your terminal.
+Do not disable the screen lock or screen saver to keep an unattended run alive;
+ask the human to keep the session available.
 
-## Optional: use the TypeScript agent
+## Optional: verify the TypeScript agent
 
-The same checkout also contains the equivalent TypeScript loop. This route
-additionally needs Node.js 20 or later and npm; install a supported Node release
-from [nodejs.org](https://nodejs.org/en/download) if necessary.
+Complete the Python proof first. This route additionally needs Node.js 20 or
+later and npm; install a supported release from
+[nodejs.org](https://nodejs.org/en/download) if necessary.
+
+From the same example directory:
 
 ```bash
 node --version
@@ -378,47 +290,47 @@ npm run typecheck
 ```
 
 The local cache avoids an unwritable or root-owned global npm cache without
-changing its ownership. Repeat the export in stateless agent shells. Complete
-the Python proof first; then repeat step 3 if you already stopped the fixture.
-Run sequentially:
+changing its ownership. Repeat the cache and Driver environment exports in
+stateless agent shells.
+
+With the key available again, verify all four cases in one managed invocation:
 
 ```bash
-npm run demo:mock -- --token jev-guide-mock --max-steps 4 --log mock-ts.jsonl
+uv run --frozen python verify_setup.py --live --typescript --output-dir proof-both
 ```
 
-Repeat step 4's independent assertion. For live TypeScript, provision
-`TYPESAFE_API_KEY` through the environment, then run:
-
-```bash
-npm run demo:live -- --token jev-guide-live --max-steps 4 --log live-ts.jsonl
-```
-
-Repeat step 5's independent assertion and step 6's cleanup. The one-shot Python
-password prompt does not export the key into your parent terminal or future
-TypeScript processes.
+Require Python/mock, Python/live, TypeScript/mock, and TypeScript/live checks
+with exact independent token matches, followed by `setup_complete` with
+`"checks": 4` and `"fixture_closed": true`. Inspect `proof-both/summary.json`
+and its four JSONL logs. Without a key, omit `--live` to run the two mock cases,
+but do not claim live verification.
 
 ## Troubleshoot without changing the task
 
 | Symptom | Next step |
 | --- | --- |
-| Example directory missing | Use step 2's unmerged-PR checkout fallback; record its SHA. |
+| Example/verifier missing | Use step 2's unmerged-PR checkout fallback; record its SHA. |
 | `uv` or `cua-driver` not found | Restore `PATH` and `CUA_DRIVER_BIN` in this shell. Agents must preserve exports across calls. |
+| Installer cannot write a temporary file | Ask the execution-environment operator to allow its normal user temp/install/cache paths. Do not bypass the sandbox. |
 | Python version error | Run `uv sync --frozen --python 3.12`; use `.venv/bin/python`, not macOS's system Python. |
-| npm cache `EACCES` | Export `npm_config_cache="$PWD/.venv/npm-cache"` from the example directory before npm commands. Do not run `sudo chown` on a shared cache. |
+| npm cache `EACCES` | Export `npm_config_cache="$PWD/.venv/npm-cache"` before npm commands. Do not run `sudo chown` on a shared cache. |
+| Existing output directory | Choose a new `--output-dir`; preserve the previous attempt. |
 | `browser_route_unavailable` / no vendor-signed executable | Install the signed system Chrome application from step 1; do not attach a personal profile. |
 | Empty windows, locked desktop, or missing permissions | Stop and ask the human to unlock/check the logged-in desktop and CuaDriver's grants. |
-| Permission or policy refusal | Ask the host owner to authorize the specific fixture operation; do not bypass the policy or switch modes. |
-| `session_unavailable`, stale page ref, or old PID | Restart the complete runner after checking the prior outcome; do not transplant IDs between transports. |
-| Connection refused at port 8765 | Check `fixture.log`, the recorded PID, and that fixture and Driver are on the same machine. If readiness previously passed, the shell tool may have terminated its background child; use step 3's separate process session or a persistent terminal. |
+| Permission or policy refusal | Ask the host owner to authorize the specific fixture operation; do not switch modes. The verifier accepts `--port` if an approved fixed loopback port is required. |
+| `session_unavailable`, stale page ref, or old PID | Check the prior outcome, then start a new complete invocation; never transplant IDs between transports. |
+| Connection refused or terminated fixture | Keep the complete verifier in one shell call. Do not split out a background fixture; shell tools can terminate children or deny cross-call process signals. |
 | Missing key, HTTP 401/403, quota or rate limit | Check TypeSafe access with the human. Do not log the key, loop indefinitely, or silently use another provider. |
-| `unknown`, `refuted`, `abstained`, or `budget_exhausted` | Retain the logs and read `/state`. An uncertain action may already have landed; never blindly repeat it. |
-| `--dry-run` exits zero | It suppresses the candidate action, but still resets the fixture and prepares/navigates the browser. It is not a completed task or a side-effect-free preflight. |
+| `unknown`, `refuted`, `abstained`, or `budget_exhausted` | Retain logs and the incomplete summary. An uncertain action may already have landed; never blindly repeat it. |
+| Standalone runner `--dry-run` exits zero | It suppresses the candidate action but still resets the fixture and prepares/navigates the browser. It is not a completed task or a side-effect-free preflight. |
 
 ## Continue beyond the fixture
 
 Adapt the example's candidate builder, goal/state, and independent completion
 oracle for a new authorized task. Do not expose arbitrary tools merely because
 the model can name them. Keep fresh observations and arguments owned by code.
+The example README also describes the standalone runners for an application
+that already owns a persistent fixture lifecycle.
 
 This example uses existing Driver tools, not the proposed `suggest_action`
 tool in [PR #3914](https://github.com/trycua/cua/pull/3914). It was inspired by the

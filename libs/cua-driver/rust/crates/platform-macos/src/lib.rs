@@ -116,6 +116,13 @@ pub fn register_tools_with_cursor_and_provider(
         if cursor_overlay_available {
             cursor::overlay::init(cfg);
         }
+        // System cursor shape reporting is independent of the agent-cursor
+        // overlay: a remote viewer wants the I-beam even when Cua draws no
+        // cursor of its own. It needs only a Window Server session, so it is
+        // gated on graphic access rather than on `cfg.enabled`.
+        if session::has_graphic_access() {
+            cursor::shape::install();
+        }
         let mut r = ToolRegistry::new_with_protected_consent_provider(provider);
         tools::register_all(
             &mut r,

@@ -148,7 +148,7 @@ jobs:
             --no-default-browser-check about:blank &
           browser_pid=$!
           cleanup() {
-            kill "$browser_pid" 2>/dev/null || true
+            kill -KILL "$browser_pid" 2>/dev/null || true
             wait "$browser_pid" 2>/dev/null || true
           }
           trap cleanup EXIT

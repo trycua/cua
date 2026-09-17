@@ -10,6 +10,9 @@ rfc_pr: https://github.com/trycua/cua/pull/3934
 implementation:
   - https://github.com/trycua/cua/issues/3931
   - https://github.com/trycua/cua/pull/3916
+  - https://github.com/trycua/cua/pull/3932
+  - https://github.com/trycua/cua/pull/3933
+  - https://github.com/trycua/cua/pull/3937
 supersedes:
 superseded_by:
 ---

@@ -178,13 +178,32 @@ If the port is occupied, stop here. Do not terminate an unknown listener or
 reset another run's fixture. Choose an unused port and change both the server's
 `--port` and every runner's `--fixture-url` and verification URL consistently.
 
-Start only this example's server and save its PID for cleanup:
+Start only this example's server in a separate process session and save its PID
+for cleanup. A plain `command &` or `nohup` can be killed when an agent's shell
+tool call finishes, even after a readiness check succeeds:
 
 ```bash
-nohup .venv/bin/python fixture_server.py --port 8765 > fixture.log 2>&1 &
-FIXTURE_PID=$!
-printf '%s\n' "$FIXTURE_PID" > fixture.pid
+.venv/bin/python - <<'PY'
+import subprocess
+import sys
+from pathlib import Path
+with Path("fixture.log").open("wb") as log:
+    process = subprocess.Popen(
+        [sys.executable, "fixture_server.py", "--port", "8765"],
+        stdin=subprocess.DEVNULL,
+        stdout=log,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+Path("fixture.pid").write_text(str(process.pid) + "\n")
+print("Started owned fixture PID:", process.pid)
+PY
 ```
+
+If your execution environment disallows detached children, keep
+`.venv/bin/python fixture_server.py --port 8765` running in a separate persistent
+terminal instead. The fixture must outlive individual agent tool calls; do not
+weaken the environment's policy to achieve that.
 
 Wait for the server, checking both the owned process and the independent state:
 
@@ -390,7 +409,7 @@ TypeScript processes.
 | Empty windows, locked desktop, or missing permissions | Stop and ask the human to unlock/check the logged-in desktop and CuaDriver's grants. |
 | Permission or policy refusal | Ask the host owner to authorize the specific fixture operation; do not bypass the policy or switch modes. |
 | `session_unavailable`, stale page ref, or old PID | Restart the complete runner after checking the prior outcome; do not transplant IDs between transports. |
-| Connection refused at port 8765 | Check `fixture.log`, the recorded PID, and that fixture and Driver are on the same machine. |
+| Connection refused at port 8765 | Check `fixture.log`, the recorded PID, and that fixture and Driver are on the same machine. If readiness previously passed, the shell tool may have terminated its background child; use step 3's separate process session or a persistent terminal. |
 | Missing key, HTTP 401/403, quota or rate limit | Check TypeSafe access with the human. Do not log the key, loop indefinitely, or silently use another provider. |
 | `unknown`, `refuted`, `abstained`, or `budget_exhausted` | Retain the logs and read `/state`. An uncertain action may already have landed; never blindly repeat it. |
 | `--dry-run` exits zero | It suppresses the candidate action, but still resets the fixture and prepares/navigates the browser. It is not a completed task or a side-effect-free preflight. |

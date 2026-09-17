@@ -17,6 +17,7 @@ implementation:
   - https://github.com/trycua/cua/pull/3939
   - https://github.com/trycua/cua/pull/3940
   - https://github.com/trycua/cua/pull/3941
+  - https://github.com/trycua/cua/pull/3942
 supersedes:
 superseded_by:
 ---
@@ -283,9 +284,10 @@ element identity and native payloads by
 [#3616](https://github.com/trycua/cua/pull/3616). It retains bounded immutable
 screenshot bytes and their interpretation metadata under the same runtime and
 session ownership. [Issue #3630](https://github.com/trycua/cua/issues/3630)
-owns the selected screenshot-transform follow-up. Its implementation must
-remove the current independently mutable transform path rather than add a
-second registry.
+owns the selected screenshot-transform follow-up, implemented in draft
+[#3942](https://github.com/trycua/cua/pull/3942). Its implementation must remove
+the current independently mutable transform path rather than add a second
+registry.
 
 The public result contains:
 

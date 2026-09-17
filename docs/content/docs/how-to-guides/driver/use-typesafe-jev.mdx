@@ -352,12 +352,16 @@ from [nodejs.org](https://nodejs.org/en/download) if necessary.
 ```bash
 node --version
 npm --version
+export npm_config_cache="$PWD/.venv/npm-cache"
 npm ci
 npm test
 npm run typecheck
 ```
 
-Repeat step 3 if you already stopped the fixture. Run sequentially:
+The local cache avoids an unwritable or root-owned global npm cache without
+changing its ownership. Repeat the export in stateless agent shells. Complete
+the Python proof first; then repeat step 3 if you already stopped the fixture.
+Run sequentially:
 
 ```bash
 npm run demo:mock -- --token jev-guide-mock --max-steps 4 --log mock-ts.jsonl
@@ -381,6 +385,7 @@ TypeScript processes.
 | Example directory missing | Use step 2's unmerged-PR checkout fallback; record its SHA. |
 | `uv` or `cua-driver` not found | Restore `PATH` and `CUA_DRIVER_BIN` in this shell. Agents must preserve exports across calls. |
 | Python version error | Run `uv sync --frozen --python 3.12`; use `.venv/bin/python`, not macOS's system Python. |
+| npm cache `EACCES` | Export `npm_config_cache="$PWD/.venv/npm-cache"` from the example directory before npm commands. Do not run `sudo chown` on a shared cache. |
 | `browser_route_unavailable` / no vendor-signed executable | Install the signed system Chrome application from step 1; do not attach a personal profile. |
 | Empty windows, locked desktop, or missing permissions | Stop and ask the human to unlock/check the logged-in desktop and CuaDriver's grants. |
 | Permission or policy refusal | Ask the host owner to authorize the specific fixture operation; do not bypass the policy or switch modes. |

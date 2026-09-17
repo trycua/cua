@@ -50,6 +50,7 @@ uv sync --frozen --python 3.12
 For the TypeScript agent, also run:
 
 ```bash
+export npm_config_cache="$PWD/.venv/npm-cache"
 npm ci
 ```
 

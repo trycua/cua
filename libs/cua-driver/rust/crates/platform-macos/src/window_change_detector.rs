@@ -148,8 +148,39 @@ impl Changes {
 
 /// Default poll deadline — new windows triggered by a click typically
 /// appear within ~200ms on macOS; 1.0s gives the wildcard suppressor
-/// time to fire and settle.
+/// time to fire and settle, and covers delayed windows (slow launches,
+/// system load, remote desktop sessions).
+///
+/// A detected change returns immediately, so the deadline is only ever
+/// paid in full on QUIET actions — which is nearly every action. A
+/// deployment that accepts trading late-window detection for ~700ms per
+/// quiet action can lower it via `CUA_DRIVER_RS_WINDOW_WATCH_MS`
+/// (300 covers the typical appearance window plus two poll intervals).
 const DEFAULT_TIMEOUT: Duration = Duration::from_millis(1000);
+
+/// The watch deadline for `env_value`, falling back to
+/// `DEFAULT_TIMEOUT` when unset or unparseable. Pure so the fallback
+/// contract is unit-testable without process-global env mutation.
+fn watch_deadline_from(env_value: Option<&str>) -> Duration {
+    env_value
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(Duration::from_millis)
+        .unwrap_or(DEFAULT_TIMEOUT)
+}
+
+/// `DEFAULT_TIMEOUT`, overridable via `CUA_DRIVER_RS_WINDOW_WATCH_MS`.
+/// Read once — the watch window is a deploy-time knob, not a per-call
+/// one.
+fn watch_deadline() -> Duration {
+    static DEADLINE: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+    *DEADLINE.get_or_init(|| {
+        watch_deadline_from(
+            std::env::var("CUA_DRIVER_RS_WINDOW_WATCH_MS")
+                .ok()
+                .as_deref(),
+        )
+    })
+}
 
 /// Default inter-poll interval. Matches Swift's 50ms.
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(50);
@@ -245,15 +276,16 @@ impl Snapshot {
         self.front_pid
     }
 
-    /// Poll for up to `DEFAULT_TIMEOUT` for new windows or a
-    /// foreground-app change. Returns as soon as a change is detected
-    /// or the timeout elapses.
+    /// Poll for up to the configured watch deadline (`DEFAULT_TIMEOUT`,
+    /// overridable via `CUA_DRIVER_RS_WINDOW_WATCH_MS`) for new windows
+    /// or a foreground-app change. Returns as soon as a change is
+    /// detected or the timeout elapses.
     ///
     /// Consumes the snapshot — the wildcard suppression lease is
     /// dropped when this returns (covers the full action + detection
     /// window).
     pub fn detect(self) -> Changes {
-        self.detect_with(DEFAULT_TIMEOUT, DEFAULT_POLL_INTERVAL)
+        self.detect_with(watch_deadline(), DEFAULT_POLL_INTERVAL)
     }
 
     /// Async wrapper around `detect()` — runs the synchronous poll
@@ -526,5 +558,41 @@ mod tests {
         // panicking (no frontmost to restore to).
         let snap_none = WindowChangeDetector::snapshot(None);
         assert_eq!(snap_none.front_pid(), None);
+    }
+
+    /// The watch deadline honors `CUA_DRIVER_RS_WINDOW_WATCH_MS` and
+    /// falls back to the default on unset or unparseable values.
+    #[test]
+    fn watch_deadline_parses_and_falls_back() {
+        // Explicit 1000 and the unset default are the same deadline — the
+        // override changes nothing unless a deployment opts in.
+        assert_eq!(
+            watch_deadline_from(Some("1000")),
+            Duration::from_millis(1000)
+        );
+        assert_eq!(watch_deadline_from(None), DEFAULT_TIMEOUT);
+        assert_eq!(watch_deadline_from(Some("1000")), DEFAULT_TIMEOUT);
+        // Opt-in shorter deadline.
+        assert_eq!(watch_deadline_from(Some("300")), Duration::from_millis(300));
+        // Zero is honored (detect degenerates to a single poll).
+        assert_eq!(watch_deadline_from(Some("0")), Duration::from_millis(0));
+        // Very large values are honored as given...
+        assert_eq!(
+            watch_deadline_from(Some("86400000")),
+            Duration::from_millis(86_400_000)
+        );
+        assert_eq!(
+            watch_deadline_from(Some(&u64::MAX.to_string())),
+            Duration::from_millis(u64::MAX)
+        );
+        // ...and anything unparseable (junk, empty, negative, overflow)
+        // falls back to the default.
+        assert_eq!(watch_deadline_from(Some("junk")), DEFAULT_TIMEOUT);
+        assert_eq!(watch_deadline_from(Some("")), DEFAULT_TIMEOUT);
+        assert_eq!(watch_deadline_from(Some("-1")), DEFAULT_TIMEOUT);
+        assert_eq!(
+            watch_deadline_from(Some("99999999999999999999999")),
+            DEFAULT_TIMEOUT
+        );
     }
 }

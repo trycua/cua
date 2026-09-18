@@ -139,10 +139,14 @@ jobs:
           ref: ${{ needs.source.outputs.sha }}
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
-      - name: Install the visual fixture runtime
+      - name: Install visual fixture and native Rust dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends python3-tk
+          sudo apt-get install -y --no-install-recommends \
+            python3-tk clang pkg-config libdbus-1-dev libpipewire-0.3-dev \
+            libspa-0.2-dev libei-dev libxkbcommon-dev libx11-dev libxi-dev \
+            libxtst-dev libxext-dev libwebkit2gtk-4.1-dev libssl-dev libxdo-dev \
+            libayatana-appindicator3-dev librsvg2-dev
       - name: Verify exact checkout
         shell: bash
         env:

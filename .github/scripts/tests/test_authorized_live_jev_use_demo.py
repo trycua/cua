@@ -113,6 +113,8 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         linux = "\n".join(step.get("run", "") for step in self.jobs["linux-x11-preflight"]["steps"])
         mock = "\n".join(step.get("run", "") for step in self.jobs["mock-preflight"]["steps"])
         self.assertIn("python3-tk", mock)
+        self.assertIn("libx11-dev", mock)
+        self.assertIn("libwebkit2gtk-4.1-dev", mock)
         self.assertLess(mock.index("python3-tk"), mock.index("test_fixture.py"))
         self.assertIn("scripts\\ci\\windows\\run-rust-e2e.ps1 -RequireGui", windows)
         self.assertIn("scripts/ci/linux/run-rust-e2e.sh", linux)

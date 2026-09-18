@@ -1637,6 +1637,189 @@ impl std::fmt::Display for TargetOccluded {
 }
 impl std::error::Error for TargetOccluded {}
 
+/// A mapped override-redirect toplevel: a popup menu, popover, combo list
+/// or tooltip. The WM does not manage it, so it is absent from
+/// `list_windows`; the pointer tools name it so a caller can walk it with
+/// `get_window_state(pid, window_id=<window>)`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PopupWindow {
+    pub window: u64,
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+    pub title: String,
+    pub pid: Option<u32>,
+}
+
+impl PopupWindow {
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "window_id": self.window,
+            "bounds": { "x": self.x, "y": self.y, "width": self.width, "height": self.height },
+            "title": self.title,
+            "pid": self.pid,
+        })
+    }
+
+    /// `popup window 12345678 "Edit" (220x340 at 410,220)`.
+    pub fn describe(&self) -> String {
+        format!(
+            "popup window {}{} ({}x{} at {},{})",
+            self.window,
+            if self.title.is_empty() {
+                String::new()
+            } else {
+                format!(" \"{}\"", self.title)
+            },
+            self.width,
+            self.height,
+            self.x,
+            self.y
+        )
+    }
+}
+
+/// The caller's window-local point does not lie inside the window: a
+/// coordinate-frame mistake (screen pixels passed as window pixels, or the
+/// wrong window_id), refused before any input is sent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PointOutsideWindow {
+    pub target_window: u64,
+    pub screen_x: i32,
+    pub screen_y: i32,
+    pub window_x: i32,
+    pub window_y: i32,
+    /// Screen-space `(x, y, width, height)` of the window.
+    pub bounds: (i32, i32, u32, u32),
+}
+
+impl std::fmt::Display for PointOutsideWindow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (bx, by, bw, bh) = self.bounds;
+        write!(
+            f,
+            "window-local point ({}, {}) of window {} resolves to screen ({}, {}), outside \
+             the window's bounds (x={bx}, y={by}, {bw}x{bh}); no input was sent",
+            self.window_x, self.window_y, self.target_window, self.screen_x, self.screen_y
+        )
+    }
+}
+impl std::error::Error for PointOutsideWindow {}
+
+/// Screen-space `(x, y, width, height)` of `window`, or `None` when it is
+/// gone.
+fn window_screen_bounds(
+    display: *mut x11::xlib::Display,
+    window: x11::xlib::Window,
+) -> Option<(i32, i32, u32, u32)> {
+    let previous_handler = unsafe { x11::xlib::XSetErrorHandler(Some(ignore_x_error)) };
+    let mut root: x11::xlib::Window = 0;
+    let (mut gx, mut gy) = (0i32, 0i32);
+    let (mut width, mut height, mut border, mut depth) = (0u32, 0u32, 0u32, 0u32);
+    let rc = unsafe {
+        x11::xlib::XGetGeometry(
+            display, window, &mut root, &mut gx, &mut gy, &mut width, &mut height, &mut border,
+            &mut depth,
+        )
+    };
+    let mut result = None;
+    if rc != 0 && root != 0 {
+        let (mut dx, mut dy) = (0i32, 0i32);
+        let mut child: x11::xlib::Window = 0;
+        let ok = unsafe {
+            x11::xlib::XTranslateCoordinates(display, window, root, 0, 0, &mut dx, &mut dy, &mut child)
+        };
+        if ok != 0 {
+            result = Some((dx, dy, width, height));
+        }
+    }
+    unsafe {
+        x11::xlib::XSync(display, 0);
+        x11::xlib::XSetErrorHandler(previous_handler);
+    }
+    result
+}
+
+fn bounds_contain(bounds: (i32, i32, u32, u32), x: i32, y: i32) -> bool {
+    let (bx, by, bw, bh) = bounds;
+    x >= bx && y >= by && x < bx.saturating_add(bw as i32) && y < by.saturating_add(bh as i32)
+}
+
+/// Describe a mapped override-redirect root child as a [`PopupWindow`].
+fn popup_info(display: *mut x11::xlib::Display, child: x11::xlib::Window) -> Option<PopupWindow> {
+    let mut attrs: x11::xlib::XWindowAttributes = unsafe { std::mem::zeroed() };
+    let previous_handler = unsafe { x11::xlib::XSetErrorHandler(Some(ignore_x_error)) };
+    let rc = unsafe { x11::xlib::XGetWindowAttributes(display, child, &mut attrs) };
+    unsafe {
+        x11::xlib::XSync(display, 0);
+        x11::xlib::XSetErrorHandler(previous_handler);
+    }
+    if rc == 0 || attrs.override_redirect == 0 || attrs.map_state != x11::xlib::IsViewable {
+        return None;
+    }
+    if attrs.width <= 1 || attrs.height <= 1 {
+        return None;
+    }
+    let pid = crate::x11::window_pid(child as u64).or_else(|| {
+        window_children(display, child)
+            .into_iter()
+            .find_map(|kid| crate::x11::window_pid(kid as u64))
+    });
+    Some(PopupWindow {
+        window: child as u64,
+        x: attrs.x,
+        y: attrs.y,
+        width: attrs.width as u32,
+        height: attrs.height as u32,
+        title: window_title_for_report(display, child),
+        pid,
+    })
+}
+
+/// Every mapped override-redirect child of the root, bottom to top.
+fn mapped_popups(display: *mut x11::xlib::Display) -> Vec<PopupWindow> {
+    let root = unsafe { x11::xlib::XDefaultRootWindow(display) };
+    window_children(display, root)
+        .into_iter()
+        .filter_map(|child| popup_info(display, child))
+        .collect()
+}
+
+/// The mapped override-redirect popup (menu, popover, combo list) under the
+/// screen point, if any.
+pub fn popup_under_screen_point(x: i32, y: i32) -> Option<PopupWindow> {
+    let display = open_display().ok()?;
+    let popup = root_child_under_point(display, x, y).and_then(|child| popup_info(display, child));
+    unsafe {
+        x11::xlib::XCloseDisplay(display);
+    }
+    popup
+}
+
+/// `xid` described as a popup when it is a mapped override-redirect window.
+pub fn popup_window_info(xid: u64) -> Option<PopupWindow> {
+    let display = open_display().ok()?;
+    let popup = popup_info(display, xid as x11::xlib::Window);
+    unsafe {
+        x11::xlib::XCloseDisplay(display);
+    }
+    popup
+}
+
+/// Mapped popups on the screen right now (bottom to top), for a caller that
+/// wants "the menu that is open" without a window id.
+pub fn mapped_popup_windows() -> Vec<PopupWindow> {
+    let Ok(display) = open_display() else {
+        return Vec::new();
+    };
+    let popups = mapped_popups(display);
+    unsafe {
+        x11::xlib::XCloseDisplay(display);
+    }
+    popups
+}
+
 /// Cheap post-checks a real-pointer action can make without touching the
 /// application: whether the WM's active window / core focus stayed put, and
 /// whether the screen region around the action point changed.
@@ -1664,6 +1847,10 @@ pub struct PointerEffect {
     /// The point was under another window of the target's own pid (its
     /// dialog over its main window) and the press went to that window.
     pub retargeted_to: Option<SameAppCover>,
+    /// The popups behind `popups_appeared`, so the tool can name them.
+    pub popups: Vec<PopupWindow>,
+    /// The window-local point the caller asked for, when it had one.
+    pub window_point: Option<(i32, i32)>,
 }
 
 impl PointerEffect {
@@ -1681,24 +1868,13 @@ impl PointerEffect {
 }
 
 /// Mapped override-redirect children of the root window: popup menus and
-/// popovers, but also tooltips and the agent-cursor overlay, so only a
-/// *delta* across an action is meaningful.
-fn mapped_popup_count(display: *mut x11::xlib::Display) -> usize {
-    let root = unsafe { x11::xlib::XDefaultRootWindow(display) };
-    let previous_handler = unsafe { x11::xlib::XSetErrorHandler(Some(ignore_x_error)) };
-    let count = window_children(display, root)
+/// popovers, but also tooltips and the agent-cursor overlay, so only the
+/// *new* ones across an action are meaningful (see [`mapped_popups`]).
+fn new_popups(before: &[PopupWindow], after: Vec<PopupWindow>) -> Vec<PopupWindow> {
+    after
         .into_iter()
-        .filter(|&child| {
-            let mut attrs: x11::xlib::XWindowAttributes = unsafe { std::mem::zeroed() };
-            let rc = unsafe { x11::xlib::XGetWindowAttributes(display, child, &mut attrs) };
-            rc != 0 && attrs.override_redirect != 0 && attrs.map_state == x11::xlib::IsViewable
-        })
-        .count();
-    unsafe {
-        x11::xlib::XSync(display, 0);
-        x11::xlib::XSetErrorHandler(previous_handler);
-    }
-    count
+        .filter(|popup| !before.iter().any(|old| old.window == popup.window))
+        .collect()
 }
 
 /// Debug overrides for the multi-click cadence (milliseconds), read once.
@@ -1894,6 +2070,18 @@ fn occluding_window(
     x: i32,
     y: i32,
 ) -> Result<PointCover> {
+    if let Some(bounds) = window_screen_bounds(display, window) {
+        if !bounds_contain(bounds, x, y) {
+            return Ok(PointCover::Outside(PointOutsideWindow {
+                target_window: window as u64,
+                screen_x: x,
+                screen_y: y,
+                window_x: x - bounds.0,
+                window_y: y - bounds.1,
+                bounds,
+            }));
+        }
+    }
     let under = root_child_under_point(display, x, y);
     let frame = root_child_of(display, window);
     match (under, frame) {
@@ -1942,6 +2130,8 @@ enum PointCover {
     SameApp(SameAppCover),
     /// Another application's window; refused.
     Occluded(TargetOccluded),
+    /// The point is not inside the target window at all; refused.
+    Outside(PointOutsideWindow),
 }
 
 /// The target application's own window that received a press aimed at a
@@ -1969,14 +2159,14 @@ fn pointer_effect(
     display: *mut x11::xlib::Display,
     saved: &SavedFocus,
     before: Option<(Vec<u8>, usize, usize)>,
-    popups_before: usize,
+    popups_before: &[PopupWindow],
     x: i32,
     y: i32,
 ) -> PointerEffect {
     unsafe { x11::xlib::XSync(display, 0) };
     sleep(EFFECT_SETTLE);
     let after = root_region_pixels(x, y);
-    let popups_after = mapped_popup_count(display);
+    let popups = new_popups(popups_before, mapped_popups(display));
     PointerEffect {
         focus_unchanged: focus_state_unchanged(display, saved),
         region_diff_pct: match (before, after) {
@@ -1985,9 +2175,11 @@ fn pointer_effect(
         },
         x,
         y,
-        popups_appeared: popups_after.saturating_sub(popups_before),
+        popups_appeared: popups.len(),
         focus_guard: None,
         retargeted_to: None,
+        popups,
+        window_point: None,
     }
 }
 
@@ -2013,6 +2205,7 @@ pub fn send_virtual_pointer_click(
             PointCover::Clear => None,
             PointCover::SameApp(cover) => Some(cover),
             PointCover::Occluded(occluded) => return Err(occluded.into()),
+            PointCover::Outside(outside) => return Err(outside.into()),
         };
         let ids = ensure_master_pointer(cursor_id)?;
         let device = uinput_pointers()
@@ -2026,7 +2219,7 @@ pub fn send_virtual_pointer_click(
         // replayed) would queue this press forever.
         thaw_device(display, ids.pointer_id);
         warp_master_pointer(display, ids, click.x, click.y)?;
-        let popups_before = mapped_popup_count(display);
+        let popups_before = mapped_popups(display);
         let before = root_region_pixels(click.x, click.y);
         let (press_ms, gap_ms) = click_cadence();
         let train = (|| -> Result<()> {
@@ -2054,7 +2247,7 @@ pub fn send_virtual_pointer_click(
         release_button_best_effort(&device, click.button);
         train?;
         let mut effect =
-            pointer_effect(display, &saved_focus, before, popups_before, click.x, click.y);
+            pointer_effect(display, &saved_focus, before, &popups_before, click.x, click.y);
         effect.retargeted_to = retargeted_to;
         Ok(effect)
     })();
@@ -2094,6 +2287,7 @@ pub fn send_virtual_pointer_drag(
             PointCover::Clear => None,
             PointCover::SameApp(cover) => Some(cover),
             PointCover::Occluded(occluded) => return Err(occluded.into()),
+            PointCover::Outside(outside) => return Err(outside.into()),
         };
         let ids = ensure_master_pointer(cursor_id)?;
         let device = uinput_pointers()
@@ -2107,7 +2301,7 @@ pub fn send_virtual_pointer_drag(
         let step_delay = Duration::from_millis(drag.duration_ms / steps as u64);
         thaw_device(display, ids.pointer_id);
         warp_master_pointer(display, ids, start.0, start.1)?;
-        let popups_before = mapped_popup_count(display);
+        let popups_before = mapped_popups(display);
         let before = root_region_pixels(end.0, end.1);
         let gesture = (|| -> Result<()> {
             {
@@ -2149,7 +2343,7 @@ pub fn send_virtual_pointer_drag(
         // Release on every exit path (see `send_virtual_pointer_click`).
         release_button_best_effort(&device, drag.button);
         gesture?;
-        let mut effect = pointer_effect(display, &saved_focus, before, popups_before, end.0, end.1);
+        let mut effect = pointer_effect(display, &saved_focus, before, &popups_before, end.0, end.1);
         effect.retargeted_to = retargeted_to;
         Ok(effect)
     })();

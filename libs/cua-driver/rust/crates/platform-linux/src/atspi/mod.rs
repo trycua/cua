@@ -363,6 +363,22 @@ pub fn perform_action_at_point_in(
 ) -> Result<Option<AtPointHit>> {
     if xid != 0 {
         if let Some((ox, oy)) = native::x11_window_origin(xid) {
+            if let Some(popup) = crate::input::popup_under_screen_point(win_x + ox, win_y + oy) {
+                if popup.window != xid {
+                    // A popup menu / popover covers the point. The window's
+                    // own accessibles under it are not what the caller sees;
+                    // the real pointer press reaches the popup item (or the
+                    // caller names the popup as window_id and lands here
+                    // with popup.window == xid).
+                    tracing::debug!(
+                        "point ({}, {}) is under {}; skipping the AT-SPI at-point tier for window {xid}",
+                        win_x + ox,
+                        win_y + oy,
+                        popup.describe()
+                    );
+                    return Ok(None);
+                }
+            }
             if let Some((idx, element)) = cache::hit_test(pid, xid, win_x + ox, win_y + oy) {
                 if skip_focus_roles && is_focus_taking_role(&element.role) {
                     return Ok(None);

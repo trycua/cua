@@ -879,24 +879,37 @@ async fn resolve_window_frame(
         // that more certain.
         return Some(0);
     }
-    let window = crate::x11::list_windows(Some(pid))
+    // A popup menu / popover is an override-redirect window the WM's client
+    // list never carries: describe it from the server directly, and let it
+    // correlate with the toolkit's popup toplevels (role `window` for GTK
+    // menus, `menu` / `popup menu` elsewhere).
+    let (window, popup) = match crate::x11::list_windows(Some(pid))
         .into_iter()
-        .find(|candidate| candidate.xid == xid)?;
+        .find(|candidate| candidate.xid == xid)
+    {
+        Some(window) => (window, false),
+        None => (
+            crate::x11::window_info(xid).filter(|w| w.is_on_screen)?,
+            true,
+        ),
+    };
     let mut candidates: Vec<(usize, (i32, i32, i32, i32))> = Vec::new();
     for (ordinal, oref) in seeds.iter().enumerate() {
         let Some(Ok(acc)) = call(accessible_for(conn, oref)).await else {
             continue;
         };
         // Menus, tooltips and other transients are top-level accessibles too;
-        // only real windows can correspond to a native window id.
+        // only real windows can correspond to a managed native window id.
         let role = match call(acc.get_role_name()).await {
             Some(Ok(role)) => role,
             _ => continue,
         };
-        if !matches!(
+        let real_window = matches!(
             role.as_str(),
             "frame" | "window" | "dialog" | "alert" | "file chooser"
-        ) {
+        );
+        let popup_toplevel = matches!(role.as_str(), "window" | "menu" | "popup menu");
+        if !(real_window || (popup && popup_toplevel)) {
             continue;
         }
         let Some(Ok(proxies)) = call(acc.proxies()).await else {

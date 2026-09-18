@@ -334,6 +334,70 @@ pub fn pick_pid_window(
         .map(|w| w.xid)
 }
 
+/// Geometry, title and owner of ANY mapped X window (an override-redirect
+/// popup menu included), unlike [`list_windows`], which only enumerates the
+/// WM's client list. `None` when the window does not exist.
+pub fn window_info(xid: u64) -> Option<WindowInfo> {
+    let window = u32::try_from(xid).ok()?;
+    let (conn, screen_num) = RustConnection::connect(None).ok()?;
+    let root = conn.setup().roots[screen_num].root;
+    let attributes = conn.get_window_attributes(window).ok()?.reply().ok()?;
+    let geom = conn.get_geometry(window).ok()?.reply().ok()?;
+    let trans = conn.translate_coordinates(window, root, 0, 0).ok()?.reply().ok()?;
+    let pid = get_window_pid(&conn, window).ok().flatten();
+    let title = get_window_title(&conn, window).unwrap_or_default();
+    let app_name = get_window_class(&conn, window)
+        .map(|(instance, class)| if class.is_empty() { instance } else { class })
+        .unwrap_or_default();
+    Some(WindowInfo {
+        xid,
+        pid,
+        app_name,
+        title,
+        is_on_screen: attributes.map_state == MapState::VIEWABLE,
+        z_index: None,
+        x: i32::from(trans.dst_x),
+        y: i32::from(trans.dst_y),
+        width: u32::from(geom.width),
+        height: u32::from(geom.height),
+    })
+}
+
+/// Ask the window manager to close `xid` (EWMH `_NET_CLOSE_WINDOW`, which
+/// the WM turns into `WM_DELETE_WINDOW` for a cooperating client): what
+/// Alt+F4 does through mutter's passive grab, which a virtual keyboard cannot
+/// reach. Only a window of `pid` is accepted.
+pub fn close_window(xid: u64, pid: u32) -> Result<()> {
+    let window = u32::try_from(xid).map_err(|_| anyhow::anyhow!("window_id is out of X11 range"))?;
+    let (conn, screen_num) = RustConnection::connect(None)?;
+    let root = conn.setup().roots[screen_num].root;
+    match get_window_pid(&conn, window)? {
+        Some(owner) if owner == pid => {}
+        Some(owner) => anyhow::bail!("window_id {xid} belongs to pid {owner}, not pid {pid}"),
+        None => anyhow::bail!("window_id {xid} has no verifiable _NET_WM_PID owner"),
+    }
+    let atom = get_atom(&conn, "_NET_CLOSE_WINDOW")?;
+    let event = ClientMessageEvent::new(
+        32,
+        window,
+        atom,
+        ClientMessageData::from([0u32, 1u32, 0, 0, 0]),
+    );
+    conn.send_event(
+        false,
+        root,
+        EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+        event,
+    )?;
+    conn.flush()?;
+    Ok(())
+}
+
+/// True while `xid` exists on the server and is viewable.
+pub fn window_is_viewable(xid: u64) -> bool {
+    window_info(xid).is_some_and(|w| w.is_on_screen)
+}
+
 /// `_NET_WM_PID` of a toplevel, when the window advertises one.
 pub fn window_pid(xid: u64) -> Option<u32> {
     let xid = u32::try_from(xid).ok()?;

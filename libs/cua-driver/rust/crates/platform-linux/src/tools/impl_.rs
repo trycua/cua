@@ -910,11 +910,18 @@ impl Tool for GetWindowStateTool {
                 `elements_complete: false`. Every element listed is real and \
                 clickable; elements after the cut are simply missing. Retry with a \
                 larger `timeout_ms` (e.g. 5000) or narrow with `query`/`max_depth` \
-                when the element you need is absent.".into(),
-            input_schema: json!({"type":"object","required":["pid","window_id"],"properties":{
+                when the element you need is absent.\n\n\
+                POPUP MENUS: a context menu / popover / combo list is an \
+                override-redirect window that list_windows never shows. A click or \
+                right_click that opened one names it in its result (`popup: \
+                {window_id, bounds, title}`); pass that window_id here to walk the \
+                popup's own AT-SPI toplevel so its menu items get element indices \
+                (then click them by element_index). Omitting window_id while a popup \
+                of this pid is open walks that popup.".into(),
+            input_schema: json!({"type":"object","required":["pid"],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
                 "pid":{"type":"integer"},
-                "window_id":{"type":"integer","description":"Native window identifier from list_windows."},
+                "window_id":{"type":"integer","description":"Native window identifier from list_windows, or the `popup.window_id` a click / right_click result named (an open context menu / popover; its menu items then get element indices). Omitted: the pid's open popup menu when one is mapped, else its focused / active / largest window."},
                 "capture_mode": cua_driver_core::capture_mode::capture_mode_schema(),
                 "include_accessibility_tree":{"type":"boolean",
                     "description":"Default true — walk the AT-SPI tree and return `elements` + `tree_markdown` alongside the screenshot. Set false to SKIP the AT-SPI walk entirely and return just the screenshot plus window metadata (window_bounds, app_name, window_title) — the capture-only path for a live window preview / picture-in-picture. Mirrors include_screenshot. Setting BOTH include_accessibility_tree:false AND include_screenshot:false is an error (nothing to return)."},
@@ -938,9 +945,41 @@ impl Tool for GetWindowStateTool {
             Ok(v) => v,
             Err(e) => return e,
         };
-        let xid = match args.require_u64("window_id") {
-            Ok(v) => v,
-            Err(e) => return e,
+        // `window_id` omitted: the open popup menu of this pid when one is
+        // mapped (a context menu the caller wants to read), else the pid's
+        // focused / dialog / active / largest window.
+        let xid = match args.opt_u64("window_id") {
+            Some(v) => v,
+            None => {
+                let chosen = tokio::task::spawn_blocking(move || {
+                    if let Some(popup) = crate::input::mapped_popup_windows()
+                        .into_iter()
+                        .rev()
+                        .find(|p| p.pid == Some(pid))
+                    {
+                        return Some(popup.window);
+                    }
+                    let windows = crate::x11::list_windows(Some(pid));
+                    let candidates: Vec<u64> = windows.iter().map(|w| w.xid).collect();
+                    crate::x11::pick_pid_window(
+                        &windows,
+                        crate::x11::focused_window_among(&candidates),
+                        crate::x11::transient_for,
+                        crate::x11::active_window(),
+                    )
+                })
+                .await
+                .ok()
+                .flatten();
+                match chosen {
+                    Some(v) => v,
+                    None => {
+                        return ToolResult::error(format!(
+                            "No windows found for pid {pid}. Provide window_id."
+                        ))
+                    }
+                }
+            }
         };
         // Optional per-call cap on the returned screenshot's long edge, folded
         // with the configured ceiling below (the tighter wins).
@@ -1001,14 +1040,33 @@ impl Tool for GetWindowStateTool {
         // below, instead of paying for the compositor/X11 enumeration twice.
         // `window_meta` also names the surface + its on-screen rectangle on the
         // capture-only path, where no AT-SPI tree identifies it.
+        let popup_meta = (!crate::wayland::is_wayland())
+            .then(|| crate::input::popup_window_info(xid))
+            .flatten();
         let window_meta = crate::wayland::list_windows_dispatch(Some(pid))
             .into_iter()
-            .find(|w| w.xid == xid);
+            .find(|w| w.xid == xid)
+            .or_else(|| {
+                popup_meta.as_ref().map(|popup| crate::x11::WindowInfo {
+                    xid: popup.window,
+                    pid: popup.pid,
+                    app_name: String::new(),
+                    title: popup.title.clone(),
+                    is_on_screen: true,
+                    z_index: None,
+                    x: popup.x,
+                    y: popup.y,
+                    width: popup.width,
+                    height: popup.height,
+                })
+            });
         let window_matches = if crate::wayland::is_wayland() {
             window_meta.as_ref().is_some_and(|w| w.pid == Some(pid))
                 || crate::wayland::window_was_listed_for_pid(pid, xid)
         } else {
             crate::x11::window_belongs_to_pid(xid, pid)
+                || crate::input::popup_window_info(xid)
+                    .is_some_and(|popup| popup.pid.is_none_or(|owner| owner == pid))
         };
         if !process_is_live || !window_matches {
             return ToolResult::error(format!(
@@ -1312,6 +1370,9 @@ impl Tool for GetWindowStateTool {
                 // Window identity metadata (additive): app + title + on-screen
                 // rectangle for the requested window_id, useful on the
                 // capture-only path where no AT-SPI tree names the surface.
+                if popup_meta.is_some() {
+                    structured["popup"] = json!(true);
+                }
                 if let Some(meta) = &window_meta {
                     if !meta.app_name.is_empty() {
                         structured["app_name"] = json!(meta.app_name);
@@ -3063,10 +3124,20 @@ impl PointerRoute {
         }
         if let Self::Mpx(effect) = self {
             v["focus_unchanged"] = json!(effect.focus_unchanged);
+            v["screen_point"] = json!([effect.x, effect.y]);
+            if let Some((wx, wy)) = effect.window_point {
+                v["window_point"] = json!([wx, wy]);
+            }
             if let Some(pct) = effect.region_diff_pct {
                 v["region_diff_pct"] = json!((pct * 100.0).round() / 100.0);
             }
             v["popups_appeared"] = json!(effect.popups_appeared);
+            if let Some(popup) = effect.popups.last() {
+                v["popup"] = popup.to_json();
+            }
+            if !effect.popups.is_empty() {
+                v["popups"] = json!(effect.popups.iter().map(|p| p.to_json()).collect::<Vec<_>>());
+            }
             // Evidence the action record can publish. A popup (menu, popover,
             // combo list) appearing is a window change the public contract
             // accepts for `effect: confirmed`; a screen-region change is
@@ -3077,8 +3148,11 @@ impl PointerRoute {
                 evidence.push(json!({
                     "kind": "window_change",
                     "detail": format!(
-                        "{} popup window(s) appeared after the {} at ({}, {})",
-                        effect.popups_appeared, self.path().unwrap_or("pointer"), effect.x, effect.y
+                        "{} appeared after the {} at ({}, {}); get_window_state(pid, window_id=<popup window_id>) lists its items",
+                        popup_list(&effect.popups),
+                        self.path().unwrap_or("pointer"),
+                        effect.x,
+                        effect.y
                     ),
                 }));
             }
@@ -3125,6 +3199,22 @@ impl PointerRoute {
     fn text_suffix(&self, mode_label: &str) -> String {
         let mut text = self.text_suffix_inner(mode_label);
         if let Self::Mpx(effect) = self {
+            if let Some(popup) = effect.popups.last() {
+                text.push_str(&format!(
+                    " {} opened (popup: window_id={}, bounds x={} y={} {}x{}); call \
+                     get_window_state(pid={}, window_id={}) to index its items and click them \
+                     by element_index, or click(window_id={}, x, y) with popup-local pixels.",
+                    popup.describe(),
+                    popup.window,
+                    popup.x,
+                    popup.y,
+                    popup.width,
+                    popup.height,
+                    popup.pid.map(|p| p.to_string()).unwrap_or_else(|| "<pid>".to_owned()),
+                    popup.window,
+                    popup.window
+                ));
+            }
             if let Some(cover) = &effect.retargeted_to {
                 text.push_str(&format!(
                     " The point was under this application's own window {} \"{}\" \
@@ -3218,6 +3308,46 @@ impl std::error::Error for BackgroundPointerFailed {}
 /// events, otherwise a typed [`BackgroundPointerFailed`] is returned. `lx`,`ly`
 /// are window-local; screen-absolute coords for the warp are derived here.
 /// Blocking — call inside spawn_blocking.
+/// `popup window A "x" (..), popup window B (..)` for evidence text.
+fn popup_list(popups: &[crate::input::PopupWindow]) -> String {
+    if popups.is_empty() {
+        return "a popup window".to_owned();
+    }
+    popups
+        .iter()
+        .map(crate::input::PopupWindow::describe)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Every pixel action reports the point it resolved, success or refusal, so
+/// a coordinate-frame mistake is visible: `window_point` is what the caller
+/// passed (window-local pixels after zoom / resize translation),
+/// `screen_point` is where that lands on the screen.
+fn with_pixel_points(
+    mut result: ToolResult,
+    screen: Option<(i32, i32)>,
+    window: (i32, i32),
+) -> ToolResult {
+    let mut structured = result.structured_content.take().unwrap_or_else(|| json!({}));
+    structured["window_point"] = json!([window.0, window.1]);
+    let mut note = format!(" [window_point=({}, {})", window.0, window.1);
+    if let Some((sx, sy)) = screen {
+        structured["screen_point"] = json!([sx, sy]);
+        note.push_str(&format!(" screen_point=({sx}, {sy})"));
+    }
+    note.push(']');
+    result.structured_content = Some(structured);
+    if let Some(cua_driver_core::protocol::Content::Text { text, .. }) = result.content.first_mut() {
+        text.push_str(&note);
+    } else {
+        result
+            .content
+            .push(cua_driver_core::protocol::Content::text(note.trim().to_owned()));
+    }
+    result
+}
+
 fn x11_pixel_click_no_focus_steal(
     cursor_id: &str,
     xid: u64,
@@ -3247,6 +3377,7 @@ fn x11_pixel_click_no_focus_steal(
             match outcome {
                 Ok(mut effect) => {
                     effect.focus_guard = guard;
+                    effect.window_point = Some((lx, ly));
                     return Ok(PointerRoute::Mpx(effect));
                 }
                 Err(error) if crate::input::is_uinput_unavailable(&error) => return Err(error),
@@ -3313,6 +3444,25 @@ fn linux_input_error(error: anyhow::Error) -> ToolResult {
             "covering_title": occluded.covering_title,
             "covering_pid": occluded.covering_pid,
             "screen_point": [occluded.x, occluded.y],
+            "hint": hint,
+        }));
+    }
+    if let Some(outside) = error.downcast_ref::<crate::input::PointOutsideWindow>() {
+        let (bx, by, bw, bh) = outside.bounds;
+        let hint = format!(
+            "x/y are window-local pixels of window {} (0..{bw} x 0..{bh}, its top-left is at \
+             screen ({bx}, {by})). Pass window-local coordinates from get_window_state's \
+             screenshot, or screen pixels with coordinate_frame:\"desktop\".",
+            outside.target_window
+        );
+        return ToolResult::error(format!("{outside}. {hint}")).with_structured(json!({
+            "code": "point_outside_window",
+            "effect": "refused",
+            "path": crate::input::MPX_POINTER_PATH,
+            "target_window": outside.target_window,
+            "screen_point": [outside.screen_x, outside.screen_y],
+            "window_point": [outside.window_x, outside.window_y],
+            "window_bounds": { "x": bx, "y": by, "width": bw, "height": bh },
             "hint": hint,
         }));
     }
@@ -4576,8 +4726,16 @@ impl Tool for ClickTool {
                 a stable handle, and tells you what you're clicking via the cached AT-SPI \
                 element's role + label. Reach for `x, y` only when the target is a canvas / \
                 custom-drawn surface that doesn't appear in the AT-SPI tree.\n\n\
-                Provide either (window_id + x/y) or (pid + element_index). Routes via \
-                XSendEvent (no focus steal). element_index cache is scoped per (pid, \
+                Provide either (window_id + x/y) or (pid + element_index). x/y are \
+                WINDOW-LOCAL pixels of window_id (the get_window_state screenshot frame); \
+                a point outside the window is refused (point_outside_window) and every \
+                pixel result reports the resolved window_point / screen_point. Background \
+                delivery first resolves the accessible under the point and fires its action \
+                (the result says `hit: <role> \"<name>\" action=...`; a file / list item is \
+                selected through its container: `selected: ...`), else presses the real \
+                virtual pointer there. A click that opens a popup menu names it (`popup: \
+                {window_id, bounds}`): pass that window_id to get_window_state to index its \
+                items. element_index cache is scoped per (pid, \
                 window_id) and is replaced by the next get_window_state of the same window — \
                 re-snapshot every turn before clicking.\n\n\
                 After a zoom call, pass from_zoom=true to auto-translate zoom-image coords \
@@ -5201,6 +5359,7 @@ impl Tool for ClickTool {
         }
 
         let (xi, yi) = (x as i32, y as i32);
+        let pixel_screen_point = glide_target.map(|(sx, sy)| (sx.round() as i32, sy.round() as i32));
         let (output_x, output_y) = wayland_output_point.unwrap_or((xi, yi));
         if hyprland_foreground(delivery) {
             if !modifiers.is_empty() {
@@ -5400,7 +5559,7 @@ impl Tool for ClickTool {
         } else {
             "background"
         };
-        match result {
+        let outcome = match result {
             Ok(Ok(("background_unavailable", _, _, _))) => {
                 crate::input::delivery::background_unavailable_error(
                     crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
@@ -5453,7 +5612,8 @@ impl Tool for ClickTool {
             }
             Ok(Err(e)) => input_error_result(e),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
-        }
+        };
+        with_pixel_points(outcome, pixel_screen_point, (xi, yi))
     }
 }
 
@@ -8459,7 +8619,7 @@ impl Tool for DoubleClickTool {
         } else {
             "background"
         };
-        match result {
+        let outcome = match result {
             Ok(Ok(route)) => ToolResult::text(format!(
                 "Double-clicked at ({x:.1}, {y:.1}) {}",
                 route.text_suffix(mode_label)
@@ -8467,7 +8627,12 @@ impl Tool for DoubleClickTool {
             .with_structured(route.structured(mode_label)),
             Ok(Err(e)) => input_error_result(e),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
-        }
+        };
+        with_pixel_points(
+            outcome,
+            glide_target.map(|(sx, sy)| (sx.round() as i32, sy.round() as i32)),
+            (xi, yi),
+        )
     }
 }
 
@@ -8487,7 +8652,11 @@ impl Tool for RightClickTool {
                 delivery on X11 sends real button events from the session's virtual master pointer \
                 (path mpx_pointer); a point covered by another application's window is refused \
                 (target_occluded), one covered by this app's own dialog is retargeted to it \
-                (retargeted_to). No focus steal. Provide either (window_id + x/y) or (pid + element_index). \
+                (retargeted_to), one outside the window is refused (point_outside_window; x/y are \
+                window-local pixels, the result reports window_point / screen_point). No focus \
+                steal. When a context menu opens, the result names it (`popup: {window_id, bounds, \
+                title}`): call get_window_state(pid, window_id=<that id>) to index its menu items \
+                and click them by element_index. Provide either (window_id + x/y) or (pid + element_index). \
                 After a zoom call, pass from_zoom=true to auto-translate zoom-image coords.".into(),
             input_schema: json!({"type":"object","required":["pid"],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
@@ -8739,7 +8908,7 @@ impl Tool for RightClickTool {
         } else {
             "background"
         };
-        match result {
+        let outcome = match result {
             Ok(Ok(route)) => ToolResult::text(format!(
                 "Right-clicked at ({x:.1}, {y:.1}) {}",
                 route.text_suffix(mode_label)
@@ -8747,7 +8916,12 @@ impl Tool for RightClickTool {
             .with_structured(route.structured(mode_label)),
             Ok(Err(e)) => input_error_result(e),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
-        }
+        };
+        with_pixel_points(
+            outcome,
+            glide_target.map(|(sx, sy)| (sx.round() as i32, sy.round() as i32)),
+            (xi, yi),
+        )
     }
 }
 

@@ -26,8 +26,28 @@ print_local_signing_bootstrap() {
     echo "  security unlock-keychain \"\$SIGNING_KEYCHAIN\"" >&2
     echo "  export CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN=\"\$SIGNING_KEYCHAIN\"" >&2
     echo "  bash libs/cua-driver/scripts/install-local.sh --require-stable-signing" >&2
-    echo "If the certificate is newly created, authorize its private key for codesign as described in:" >&2
+    echo "If macOS asks for the keychain password during codesign, the key is not ready for unattended E2E." >&2
+    echo "Authorize only the dedicated local-development key once as described in:" >&2
     echo "  libs/cua-driver/scripts/README.md#stable-macos-local-signing" >&2
+}
+
+# Unattended E2E must not discover a stale login-key ACL by opening
+# SecurityAgent halfway through an install.
+strict_signing_would_use_implicit_login_keychain() {
+    [ "${CUA_DRIVER_REQUIRE_STABLE_SIGNING:-0}" = "1" ] \
+        && [ -z "${CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN:-}" ] \
+        && [ ! -f "$HOME/Library/Keychains/cua-driver-signing.keychain-db" ]
+}
+
+local_signing_keychain_is_login() {
+    case "$1" in
+        "$HOME/Library/Keychains/login.keychain"|"$HOME/Library/Keychains/login.keychain-db")
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
 }
 
 # Echoes the `codesign --sign` argument: a matching identity's SHA-1 when
@@ -35,6 +55,13 @@ print_local_signing_bootstrap() {
 ensure_local_signing_identity() {
     { [ "$OS" = "Darwin" ] && command -v codesign >/dev/null 2>&1; } \
         || { printf -- '-'; return; }
+    if strict_signing_would_use_implicit_login_keychain; then
+        echo "Stable source builds will not use the login Keychain implicitly." >&2
+        echo "That fallback can interrupt unattended E2E with a macOS password dialog." >&2
+        echo "Configure the dedicated signing keychain, or explicitly select a prepared keychain." >&2
+        printf -- '-'
+        return
+    fi
     local kc
     kc="$(local_signing_keychain)"
     [ -f "$kc" ] || { printf -- '-'; return; }
@@ -178,18 +205,32 @@ reset_local_tcc_after_ad_hoc_change() {
 sign_staged_local_app() {
     local app_stage="$1"
     local app_dest="$2"
-    local sign_id requirement signing_class
+    local sign_id requirement signing_class signing_keychain sign_status
     sign_id="$(ensure_local_signing_identity)"
 
-    if [ "$sign_id" != "-" ] \
-       && codesign_bounded 20 --force --deep --sign "$sign_id" "$app_stage" 2>/dev/null; then
-        requirement="$(designated_requirement "$app_stage")"
-        signing_class="$(classify_designated_requirement "$requirement")"
-        if [ "$signing_class" = "certificate-backed" ]; then
-            echo "${GREEN}signed staged app with a stable local identity — TCC grants survive future install-local rebuilds${NORMAL}"
-            return 0
+    if [ "$sign_id" != "-" ]; then
+        signing_keychain="$(local_signing_keychain)"
+        if local_signing_keychain_is_login "$signing_keychain"; then
+            echo "${YELLOW}Signing CuaDriverLocal.app with a key in the login Keychain.${NORMAL}" >&2
+            echo "This should not open a password dialog. If one appears, it is the local-build signing step, not browser content." >&2
+            echo "Choose Always Allow only for a dedicated local-development key; otherwise choose Deny and use the setup below." >&2
         fi
-        echo "${YELLOW}warning: the requested stable identity produced a non-certificate designated requirement${NORMAL}" >&2
+        sign_status=0
+        if codesign_bounded 20 --force --deep --sign "$sign_id" "$app_stage" 2>/dev/null; then
+            requirement="$(designated_requirement "$app_stage")"
+            signing_class="$(classify_designated_requirement "$requirement")"
+            if [ "$signing_class" = "certificate-backed" ]; then
+                echo "${GREEN}signed staged app with a stable local identity — TCC grants survive future install-local rebuilds${NORMAL}"
+                return 0
+            fi
+            echo "${YELLOW}warning: the requested stable identity produced a non-certificate designated requirement${NORMAL}" >&2
+        else
+            sign_status=$?
+            if [ "$sign_status" = "124" ] || [ "$sign_status" = "142" ]; then
+                echo "${YELLOW}warning: stable signing timed out while waiting for keychain authorization.${NORMAL}" >&2
+                echo "Deny or close any password dialog that remains; the staged signing attempt was canceled." >&2
+            fi
+        fi
     fi
 
     if [ "${CUA_DRIVER_REQUIRE_STABLE_SIGNING:-0}" = "1" ]; then

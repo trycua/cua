@@ -443,13 +443,16 @@ impl Tool for HotkeyTool {
                             )?;
                             Ok(())
                         }
-                        // foreground rung: briefly front the window so NSMenu key
-                        // equivalents dispatch, then restore prior frontmost.
+                        // A window-level shortcut also needs genuine key-window
+                        // activation. PID-routed NSMenu dispatch can create a new
+                        // document while leaving AX focus on the old one. Use the
+                        // same exact-window guarded HID path as addressed chords,
+                        // retaining activation until the key events are delivered.
                         (true, false, Some(wid), None) => {
-                            crate::input::skylight::with_menu_shortcut_activation(
+                            crate::input::skylight::with_foreground_hid_activation(
                                 pid as libc::pid_t,
                                 wid,
-                                || crate::input::keyboard::hotkey_no_auth(pid, &key, &m),
+                                || crate::input::keyboard::press_key_bare_global(&key, &m),
                             )?;
                             Ok(())
                         }

@@ -42,7 +42,7 @@ jobs:
           EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           EVENT_LABEL: ${{ github.event.label.name }}
           EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
-          REVIEWED_JEV_SHA: 201732fffd81a40818be7ce2e04269aec962bc42
+          REVIEWED_JEV_SHA: bdaf8c2570e35254f5e50a317781374efe7aa91a
         run: |
           set -euo pipefail
           [[ "$GITHUB_REPOSITORY" == "trycua/cua" ]]
@@ -60,9 +60,10 @@ jobs:
           jq -e '.labels | any(.name == "cua-perception-live-review")' <<<"$pr_json" >/dev/null
 
           jev_json="$(gh api "repos/$GITHUB_REPOSITORY/pulls/3916")"
-          [[ "$(jq -r .state <<<"$jev_json")" == "open" ]]
+          [[ "$(jq -r .state <<<"$jev_json")" == "closed" ]]
+          [[ "$(jq -r .merged <<<"$jev_json")" == "true" ]]
           [[ "$(jq -r .head.repo.full_name <<<"$jev_json")" == "$GITHUB_REPOSITORY" ]]
-          [[ "$(jq -r .head.sha <<<"$jev_json")" == "$REVIEWED_JEV_SHA" ]]
+          [[ "$(jq -r .merge_commit_sha <<<"$jev_json")" == "$REVIEWED_JEV_SHA" ]]
 
           echo "source_sha=$EVENT_HEAD_SHA" >> "$GITHUB_OUTPUT"
           echo "jev_source_sha=$REVIEWED_JEV_SHA" >> "$GITHUB_OUTPUT"

@@ -26,7 +26,7 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         cls.triggers = cls.workflow.get("on", cls.workflow.get(True))
         cls.jobs = cls.workflow["jobs"]
 
-    def test_is_manual_or_callable_with_two_exact_current_pr_heads(self):
+    def test_is_manual_or_callable_with_open_source_head_and_merged_jev_commit(self):
         self.assertEqual(set(self.triggers), {"workflow_dispatch", "workflow_call"})
         dispatch_inputs = self.triggers["workflow_dispatch"]["inputs"]
         callable_inputs = self.triggers["workflow_call"]["inputs"]
@@ -52,9 +52,20 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
             "${{ inputs.run_live }}",
         )
         self.assertIn("validate_pr_head 3943", source)
-        self.assertIn("validate_pr_head 3916", source)
+        self.assertNotIn("validate_pr_head 3916", source)
+        self.assertIn("validate_merged_pr 3916", source)
+        self.assertEqual(
+            self.jobs["source"]["steps"][0]["env"]["CANONICAL_JEV_MERGE_SHA"],
+            "bdaf8c2570e35254f5e50a317781374efe7aa91a",
+        )
+        self.assertEqual(
+            dispatch_inputs["jev_source_sha"]["description"],
+            "Canonical merge commit SHA of merged pull request #3916",
+        )
         self.assertIn('[[ "$requested" == "$head_sha" ]]', source)
         self.assertIn('"$head_repo" == "$GITHUB_REPOSITORY"', source)
+        self.assertIn('[[ "$state" == closed && "$merged" == true', source)
+        self.assertIn('"$merge_sha" == "$expected"', source)
         self.assertNotIn("merge-base --is-ancestor", source)
         self.assertNotIn("pull_request_target", self.text)
         self.assertIn('[[ "$run_id" == "$CANDIDATE_RUN_ID" ]]', source)
@@ -211,6 +222,11 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         self.assertIn("Remove-Item Env:TYPESAFE_API_KEY", secret["run"])
         self.assertIn("pulls/3943", secret["run"])
         self.assertIn("pulls/3916", secret["run"])
+        self.assertIn("$jevReview.state -ne 'closed'", secret["run"])
+        self.assertIn("$jevReview.merged -ne $true", secret["run"])
+        self.assertIn("$jevReview.head.repo.full_name -ne $env:GITHUB_REPOSITORY", secret["run"])
+        self.assertIn("$jevReview.merge_commit_sha -ne 'bdaf8c2570e35254f5e50a317781374efe7aa91a'", secret["run"])
+        self.assertNotIn("$jevReview.head.sha", secret["run"])
         self.assertIn("cua-perception-live-review", secret["run"])
         self.assertIn("Remove-Item Env:GH_TOKEN", secret["run"])
         self.assertIn(

@@ -50,7 +50,7 @@ def test_unlabelled_and_unrelated_pull_requests_skip_before_any_runner() -> None
     )
 
 
-def test_gate_revalidates_current_same_repository_heads_and_label() -> None:
+def test_gate_revalidates_candidate_head_and_canonical_merged_jev_source() -> None:
     text, workflow = load_workflow(TRIGGER)
     gate = workflow["jobs"]["resolve"]["steps"][0]["run"]
     for contract in (
@@ -62,10 +62,15 @@ def test_gate_revalidates_current_same_repository_heads_and_label() -> None:
         '[[ "$(jq -r .head.sha <<<"$pr_json")" == "$EVENT_HEAD_SHA" ]]',
         '.labels | any(.name == "cua-perception-live-review")',
         'gh api "repos/$GITHUB_REPOSITORY/pulls/3916"',
+        '[[ "$(jq -r .state <<<"$jev_json")" == "closed" ]]',
+        '[[ "$(jq -r .merged <<<"$jev_json")" == "true" ]]',
         '[[ "$(jq -r .head.repo.full_name <<<"$jev_json")" == "$GITHUB_REPOSITORY" ]]',
-        '[[ "$(jq -r .head.sha <<<"$jev_json")" == "$REVIEWED_JEV_SHA" ]]',
+        '[[ "$(jq -r .merge_commit_sha <<<"$jev_json")" == "$REVIEWED_JEV_SHA" ]]',
     ):
         assert contract in gate
+    assert '[[ "$(jq -r .state <<<"$jev_json")" == "open" ]]' not in gate
+    assert '[[ "$(jq -r .head.sha <<<"$jev_json")" == "$REVIEWED_JEV_SHA" ]]' not in gate
+    assert 'echo "jev_source_sha=$REVIEWED_JEV_SHA" >> "$GITHUB_OUTPUT"' in gate
     assert "secrets." not in text
     assert workflow["permissions"] == {
         "actions": "read",
@@ -77,8 +82,11 @@ def test_gate_revalidates_current_same_repository_heads_and_label() -> None:
     } == {"contents"}
     assert "called workflow cannot elevate this permission to discover draft assets" in text
     assert all("permissions" not in job for job in workflow["jobs"].values())
+    assert workflow["jobs"]["resolve"]["outputs"]["jev_source_sha"] == (
+        "${{ steps.resolve.outputs.jev_source_sha }}"
+    )
     resolve_env = workflow["jobs"]["resolve"]["steps"][0]["env"]
-    assert resolve_env["REVIEWED_JEV_SHA"] == "201732fffd81a40818be7ce2e04269aec962bc42"
+    assert resolve_env["REVIEWED_JEV_SHA"] == "bdaf8c2570e35254f5e50a317781374efe7aa91a"
 
 
 def test_review_candidate_executes_release_gates_instead_of_synthesizing_evidence() -> None:

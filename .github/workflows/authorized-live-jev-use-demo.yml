@@ -12,7 +12,7 @@ on:
         required: true
         type: string
       jev_source_sha:
-        description: "Exact reviewed head SHA of pull request #3916"
+        description: "Canonical merge commit SHA of merged pull request #3916"
         required: true
         type: string
       signed_candidate_artifact_id:
@@ -34,7 +34,7 @@ on:
         required: true
         type: string
       jev_source_sha:
-        description: "Exact reviewed head SHA of pull request #3916"
+        description: "Canonical merge commit SHA of merged pull request #3916"
         required: true
         type: string
       signed_candidate_artifact_id:
@@ -72,6 +72,7 @@ jobs:
           RUN_LIVE_ACKNOWLEDGED: ${{ inputs.run_live }}
           REQUESTED_SHA: ${{ inputs.source_sha }}
           REQUESTED_JEV_SHA: ${{ inputs.jev_source_sha }}
+          CANONICAL_JEV_MERGE_SHA: bdaf8c2570e35254f5e50a317781374efe7aa91a
           CANDIDATE_ARTIFACT_ID: ${{ inputs.signed_candidate_artifact_id }}
           CANDIDATE_RUN_ID: ${{ inputs.signed_candidate_run_id }}
           EVENT_ACTION: ${{ github.event.action }}
@@ -85,6 +86,7 @@ jobs:
           [[ "$RUN_LIVE_ACKNOWLEDGED" == true ]] || { echo "run_live must be explicitly acknowledged" >&2; exit 2; }
           [[ "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "source_sha must be exactly 40 lowercase hexadecimal characters" >&2; exit 2; }
           [[ "$REQUESTED_JEV_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "jev_source_sha must be exactly 40 lowercase hexadecimal characters" >&2; exit 2; }
+          [[ "$REQUESTED_JEV_SHA" == "$CANONICAL_JEV_MERGE_SHA" ]] || { echo "jev_source_sha must be the canonical merge commit of PR #3916" >&2; exit 2; }
           [[ "$CANDIDATE_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]] || { echo "signed_candidate_artifact_id must be numeric" >&2; exit 2; }
           [[ "$CANDIDATE_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo "signed_candidate_run_id must be numeric" >&2; exit 2; }
           validate_pr_head() {
@@ -100,8 +102,21 @@ jobs:
               echo "$label is not the exact current reviewed head of PR $number" >&2; exit 2;
             }
           }
+          validate_merged_pr() {
+            local number="$1" requested="$2" expected="$3" label="$4" state merged head_repo merge_sha
+            IFS=$'\t' read -r state merged head_repo merge_sha < <(
+              gh api "repos/$GITHUB_REPOSITORY/pulls/$number" \
+                --jq '[.state, .merged, .head.repo.full_name, .merge_commit_sha] | @tsv'
+            )
+            [[ "$state" == closed && "$merged" == true && "$head_repo" == "$GITHUB_REPOSITORY" ]] || {
+              echo "PR $number must be merged and closed with a head in $GITHUB_REPOSITORY" >&2; exit 2;
+            }
+            [[ "$requested" == "$expected" && "$merge_sha" == "$expected" ]] || {
+              echo "$label is not the exact canonical merge commit of PR $number" >&2; exit 2;
+            }
+          }
           validate_pr_head 3943 "$REQUESTED_SHA" source_sha
-          validate_pr_head 3916 "$REQUESTED_JEV_SHA" jev_source_sha
+          validate_merged_pr 3916 "$REQUESTED_JEV_SHA" "$CANONICAL_JEV_MERGE_SHA" jev_source_sha
           artifact_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$CANDIDATE_ARTIFACT_ID")"
           [[ "$(jq -r .name <<<"$artifact_json")" == "STAGING-cua-perception-review-candidates-$REQUESTED_SHA" ]] || { echo "candidate artifact has the wrong aggregate name" >&2; exit 2; }
           [[ "$(jq -r .expired <<<"$artifact_json")" == false ]] || { echo "candidate artifact is expired" >&2; exit 2; }
@@ -426,7 +441,7 @@ jobs:
           $review = gh api "repos/$env:GITHUB_REPOSITORY/pulls/3943" | ConvertFrom-Json
           if ($review.state -ne 'open' -or $review.draft -ne $true -or $review.head.repo.full_name -ne $env:GITHUB_REPOSITORY -or $review.head.sha -ne '${{ needs.source.outputs.sha }}' -or 'cua-perception-live-review' -notin $review.labels.name) { throw 'PR #3943 is no longer the exact labeled draft under review' }
           $jevReview = gh api "repos/$env:GITHUB_REPOSITORY/pulls/3916" | ConvertFrom-Json
-          if ($jevReview.state -ne 'open' -or $jevReview.head.repo.full_name -ne $env:GITHUB_REPOSITORY -or $jevReview.head.sha -ne '${{ needs.source.outputs.jev_sha }}') { throw 'PR #3916 is no longer the exact open Jev recipe under review' }
+          if ($jevReview.state -ne 'closed' -or $jevReview.merged -ne $true -or $jevReview.head.repo.full_name -ne $env:GITHUB_REPOSITORY -or $jevReview.merge_commit_sha -ne 'bdaf8c2570e35254f5e50a317781374efe7aa91a' -or '${{ needs.source.outputs.jev_sha }}' -ne 'bdaf8c2570e35254f5e50a317781374efe7aa91a') { throw 'PR #3916 is no longer the exact canonical merged Jev recipe' }
           Remove-Item Env:GH_TOKEN
           if ((git rev-parse HEAD).Trim() -ne '${{ needs.source.outputs.sha }}') { throw 'source changed after build' }
           if ((git -C (Join-Path $env:GITHUB_WORKSPACE 'jev-use-source') rev-parse HEAD).Trim() -ne '${{ needs.source.outputs.jev_sha }}') { throw 'chooser source changed after setup' }

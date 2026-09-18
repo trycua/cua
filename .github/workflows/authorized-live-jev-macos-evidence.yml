@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       jev_source_sha:
-        description: "Exact reviewed head SHA of pull request #3916"
+        description: "Canonical merged commit SHA bdaf8c2570e35254f5e50a317781374efe7aa91a of pull request #3916"
         required: true
         type: string
       signed_arm64_candidate_artifact_id:
@@ -26,7 +26,7 @@ on:
         required: true
         type: string
       jev_source_sha:
-        description: "Exact reviewed head SHA of pull request #3916"
+        description: "Canonical merged commit SHA bdaf8c2570e35254f5e50a317781374efe7aa91a of pull request #3916"
         required: true
         type: string
       signed_arm64_candidate_artifact_id:
@@ -56,7 +56,7 @@ jobs:
       candidate_run_id: ${{ steps.resolve.outputs.candidate_run_id }}
     steps:
       - id: resolve
-        name: Require current same-repository PR heads and immutable artifact
+        name: Require exact open candidate head, merged Jev commit, and immutable artifact
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -69,6 +69,7 @@ jobs:
           [[ "$GITHUB_REPOSITORY" == "trycua/cua" ]]
           [[ "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$REQUESTED_JEV_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$REQUESTED_JEV_SHA" == "bdaf8c2570e35254f5e50a317781374efe7aa91a" ]]
           [[ "$CANDIDATE_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
           [[ "$CANDIDATE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
           validate_pr_head() {
@@ -80,7 +81,11 @@ jobs:
             [[ "$state" == open && "$head_repo" == "$GITHUB_REPOSITORY" && "$head_sha" == "$requested" ]]
           }
           validate_pr_head 3943 "$REQUESTED_SHA"
-          validate_pr_head 3916 "$REQUESTED_JEV_SHA"
+          jev_pr_json="$(gh api "repos/$GITHUB_REPOSITORY/pulls/3916")"
+          [[ "$(jq -r .state <<<"$jev_pr_json")" == closed ]]
+          [[ "$(jq -r .merged <<<"$jev_pr_json")" == true ]]
+          [[ "$(jq -r .head.repo.full_name <<<"$jev_pr_json")" == "$GITHUB_REPOSITORY" ]]
+          [[ "$(jq -r .merge_commit_sha <<<"$jev_pr_json")" == "$REQUESTED_JEV_SHA" ]]
           artifact_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$CANDIDATE_ARTIFACT_ID")"
           [[ "$(jq -r .name <<<"$artifact_json")" == "STAGING-cua-perception-review-candidates-$REQUESTED_SHA" ]]
           [[ "$(jq -r .expired <<<"$artifact_json")" == false ]]
@@ -167,7 +172,7 @@ jobs:
         shell: bash
         run: libs/cua-driver/tests/runners/macos-lume/run-all.sh --standalone-browser
 
-      - name: Check out the exact reviewed Jev chooser
+      - name: Check out the exact merged Jev chooser
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           repository: trycua/cua
@@ -449,9 +454,10 @@ jobs:
           [[ "$(jq -r .head.sha <<<"$pr_json")" == "$CUA_E2E_SOURCE_SHA" ]]
           jq -e '.labels | any(.name == "cua-perception-live-review")' <<<"$pr_json" >/dev/null
           jev_pr_json="$(gh api "repos/$GITHUB_REPOSITORY/pulls/3916")"
-          [[ "$(jq -r .state <<<"$jev_pr_json")" == open ]]
+          [[ "$(jq -r .state <<<"$jev_pr_json")" == closed ]]
+          [[ "$(jq -r .merged <<<"$jev_pr_json")" == true ]]
           [[ "$(jq -r .head.repo.full_name <<<"$jev_pr_json")" == "$GITHUB_REPOSITORY" ]]
-          [[ "$(jq -r .head.sha <<<"$jev_pr_json")" == "$CUA_JEV_SOURCE_SHA" ]]
+          [[ "$(jq -r .merge_commit_sha <<<"$jev_pr_json")" == "$CUA_JEV_SOURCE_SHA" ]]
           unset GH_TOKEN
           [[ "$(git rev-parse HEAD)" == "$CUA_E2E_SOURCE_SHA" ]]
           [[ "$(git -C jev-use-source rev-parse HEAD)" == "$CUA_JEV_SOURCE_SHA" ]]

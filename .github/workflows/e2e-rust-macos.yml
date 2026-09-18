@@ -13,7 +13,7 @@ on:
         default: false
         type: boolean
       jev_source_sha:
-        description: "Exact reviewed head SHA of pull request #3916 (live lane only)"
+        description: "Canonical merged commit SHA bdaf8c2570e35254f5e50a317781374efe7aa91a of pull request #3916 (live lane only)"
         required: false
         default: ""
         type: string

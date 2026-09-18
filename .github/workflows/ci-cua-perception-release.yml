@@ -48,7 +48,7 @@ jobs:
           - target: linux-x64
             os: ubuntu-latest
           - target: macos-x64
-            os: macos-13
+            os: macos-15-intel
           - target: windows-x64
             os: windows-latest
     runs-on: ${{ matrix.os }}

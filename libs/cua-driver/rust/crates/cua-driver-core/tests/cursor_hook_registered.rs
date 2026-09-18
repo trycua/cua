@@ -23,7 +23,10 @@ fn registered_hook_receives_events_verbatim_and_keeps_sources_distinct() {
     );
 
     let recorder = Arc::clone(&sink);
-    set_cursor_hook_fn(move |ev| recorder.lock().unwrap().push(ev));
+    assert!(
+        set_cursor_hook_fn(move |ev| recorder.lock().unwrap().push(ev)),
+        "the first registration in a process must report that it took effect"
+    );
 
     assert!(
         cursor_hook_enabled(),
@@ -88,9 +91,14 @@ fn registered_hook_receives_events_verbatim_and_keeps_sources_distinct() {
     // cursor stream and the host would go blind with no error.
     let hijack = Arc::new(Mutex::new(0usize));
     let hijack_probe = Arc::clone(&hijack);
-    set_cursor_hook_fn(move |_| {
-        *hijack_probe.lock().unwrap() += 1;
-    });
+    assert!(
+        !set_cursor_hook_fn(move |_| {
+            *hijack_probe.lock().unwrap() += 1;
+        }),
+        "a second registration must REPORT that it did not take effect. \
+         Silently returning as though it had is how a host ends up rendering \
+         no pointers with no way to discover why it owns no stream"
+    );
     push_cursor_event(CursorHookEvent {
         cursor_id: "after-second-register".into(),
         x: 0.0,

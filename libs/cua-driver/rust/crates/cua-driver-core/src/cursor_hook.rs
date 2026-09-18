@@ -26,8 +26,19 @@ type CursorHookFnBox = Box<dyn Fn(CursorHookEvent) + Send + Sync>;
 static CURSOR_HOOK_FN: OnceLock<CursorHookFnBox> = OnceLock::new();
 
 /// Register the process-wide cursor observer. Call once at startup.
-pub fn set_cursor_hook_fn(f: impl Fn(CursorHookEvent) + Send + Sync + 'static) {
-    let _ = CURSOR_HOOK_FN.set(Box::new(f));
+///
+/// Returns `true` if this call installed the observer, `false` if one was
+/// already registered — in which case `f` is dropped and the existing observer
+/// keeps receiving events.
+///
+/// Check the result. Registration is one-shot and there is no deregistration,
+/// so a second caller silently gets nothing: a host that assumed it had the
+/// cursor stream would render no pointers and have no way to find out why. If
+/// this returns `false`, something else in the process owns the stream. Two
+/// consumers in one process need a fan-out observer registered once, not two
+/// calls here.
+pub fn set_cursor_hook_fn(f: impl Fn(CursorHookEvent) + Send + Sync + 'static) -> bool {
+    CURSOR_HOOK_FN.set(Box::new(f)).is_ok()
 }
 
 /// True when an observer is registered (lets hot paths skip building an event).

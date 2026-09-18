@@ -245,7 +245,6 @@ jobs:
       CUA_JEV_SOURCE_SHA: ${{ needs.source.outputs.jev_sha }}
       CUA_E2E_UNRESTRICTED_GUI: "1"
       CUA_SESSION_LABEL: authorized-jev-choice-demo-${{ matrix.platform }}
-      CUA_PERCEPTION_EXTENSION_HOME: ${{ github.workspace }}/.cua-perception-home
       CUA_DESKTOP_SESSION_TYPE: ${{ matrix.desktop_session }}
       CUA_RUNNER_IDENTITY_CLASS: github-hosted
     steps:
@@ -257,6 +256,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          "CUA_PERCEPTION_EXTENSION_HOME=$(Join-Path $env:RUNNER_TEMP 'cua-perception-extension-home/live')" >> $env:GITHUB_ENV
           "CUA_PERCEPTION_EVIDENCE_DIR=$(Join-Path $env:RUNNER_TEMP 'cua-perception-evidence/live')" >> $env:GITHUB_ENV
       - name: Check out the exact reviewed Jev chooser
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

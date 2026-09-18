@@ -150,12 +150,9 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         self.assertGreater(shared, self.orchestrator.index('Command::new("py")'))
         self.assertGreater(shared, self.orchestrator.index('Command::new("python3")'))
 
-    def test_job_level_paths_use_a_context_available_before_runner_assignment(self):
+    def test_live_paths_are_runner_temp_owned(self):
         live_env = self.jobs["live"]["env"]
-        self.assertEqual(
-            live_env["CUA_PERCEPTION_EXTENSION_HOME"],
-            "${{ github.workspace }}/.cua-perception-home",
-        )
+        self.assertNotIn("CUA_PERCEPTION_EXTENSION_HOME", live_env)
         self.assertNotIn("CUA_PERCEPTION_EVIDENCE_DIR", live_env)
         configure = next(
             step
@@ -163,9 +160,18 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
             if step.get("name") == "Configure temporary evidence paths"
         )
         self.assertIn(
+            "CUA_PERCEPTION_EXTENSION_HOME=$(Join-Path $env:RUNNER_TEMP 'cua-perception-extension-home/live')",
+            configure["run"],
+        )
+        self.assertIn(
             "CUA_PERCEPTION_EVIDENCE_DIR=$(Join-Path $env:RUNNER_TEMP 'cua-perception-evidence/live')",
             configure["run"],
         )
+        self.assertNotRegex(
+            self.text,
+            r"CUA_PERCEPTION_EXTENSION_HOME[^\n]*github\.workspace",
+        )
+        self.assertNotIn("github.workspace", configure["run"])
         self.assertFalse(any("${{ runner." in value for value in live_env.values()))
 
     def test_live_linux_desktop_installs_xdpyinfo_before_readiness_probe(self):

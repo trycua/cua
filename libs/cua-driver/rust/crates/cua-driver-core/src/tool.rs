@@ -403,6 +403,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         // page via CDP, not on the OS input layer.
         "get_browser_state" => &["browser.state"],
         "browser_prepare" => &["browser.prepare"],
+        "browser_resume" => &["browser.resume"],
         "browser_navigate" => &["browser.navigate"],
         "browser_click" => &["browser.input.click"],
         "browser_type" => &["browser.input.type"],
@@ -1349,6 +1350,38 @@ impl ToolRegistry {
                 return refusal;
             }
         }
+        if has_adapter("browser_blocker_resume") {
+            let approved_scope = match self
+                .authorize_attested_resource(
+                    tool.as_ref(),
+                    "browser_blocker_resume",
+                    crate::authorization::RiskClass::R3,
+                    &public_args,
+                    context,
+                    runtime_session.as_deref(),
+                    "Allow Cua to clear this exact browser blocker after human review",
+                    Duration::from_secs(2 * 60),
+                    Duration::from_secs(10 * 60),
+                )
+                .await
+            {
+                Ok(scope) => scope,
+                Err(refusal) => return refusal,
+            };
+            if let Err(refusal) = self
+                .validate_attested_resource(
+                    tool.as_ref(),
+                    "browser_blocker_resume",
+                    &public_args,
+                    context,
+                    runtime_session.as_deref(),
+                    &approved_scope,
+                )
+                .await
+            {
+                return refusal;
+            }
+        }
         if has_adapter("browser_bound_input")
             && (tool
                 .protected_resource_ownership("browser_bound_input", &public_args)
@@ -2179,8 +2212,16 @@ impl ToolRegistry {
         idle_ttl: Duration,
         absolute_ttl: Duration,
     ) -> Result<Value, ToolResult> {
+        let requires_protected_grant = crate::authorization::ENFORCEMENT_ADAPTERS
+            .iter()
+            .find(|descriptor| descriptor.id == adapter_id)
+            .is_some_and(|descriptor| {
+                descriptor.profile_behavior.for_mode(context.mode())
+                    == crate::authorization::ModeBehavior::RequireGrant
+            });
         if context.mode() == crate::authorization::PermissionMode::Unrestricted
             && context.capability_manifest().is_none()
+            && !requires_protected_grant
         {
             return Ok(Value::Null);
         }
@@ -2227,8 +2268,16 @@ impl ToolRegistry {
         lifecycle_session: Option<&str>,
         approved_scope: &Value,
     ) -> Result<(), ToolResult> {
+        let requires_protected_grant = crate::authorization::ENFORCEMENT_ADAPTERS
+            .iter()
+            .find(|descriptor| descriptor.id == adapter_id)
+            .is_some_and(|descriptor| {
+                descriptor.profile_behavior.for_mode(context.mode())
+                    == crate::authorization::ModeBehavior::RequireGrant
+            });
         if context.mode() == crate::authorization::PermissionMode::Unrestricted
             && context.capability_manifest().is_none()
+            && !requires_protected_grant
         {
             return Ok(());
         }
@@ -2881,6 +2930,11 @@ mod runtime_isolation_tests {
         def: super::ToolDef,
     }
 
+    struct BrowserResumeProbe {
+        hits: Arc<AtomicUsize>,
+        def: super::ToolDef,
+    }
+
     #[async_trait::async_trait]
     impl super::Tool for AttestedProbe {
         fn def(&self) -> &super::ToolDef {
@@ -2914,6 +2968,49 @@ mod runtime_isolation_tests {
         async fn invoke(&self, _args: serde_json::Value) -> crate::protocol::ToolResult {
             self.hits.fetch_add(1, Ordering::SeqCst);
             crate::protocol::ToolResult::text("attested operation ran")
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl super::Tool for BrowserResumeProbe {
+        fn def(&self) -> &super::ToolDef {
+            &self.def
+        }
+
+        async fn protected_resource_scope(
+            &self,
+            adapter_id: &str,
+            args: &serde_json::Value,
+        ) -> Result<Option<serde_json::Value>, String> {
+            if adapter_id != "browser_blocker_resume" {
+                return Ok(None);
+            }
+            let required = |name: &str| {
+                args.get(name)
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_owned)
+                    .ok_or_else(|| format!("missing {name}"))
+            };
+            let target_id = required("target_id")?;
+            let tab_id = required("tab_id")?;
+            let origin = required("origin")?;
+            let blocker_id = required("blocker_id")?;
+            Ok(Some(serde_json::json!({
+                "kind": "authenticated_browser_tab",
+                "target_id": target_id,
+                "tab_id": tab_id,
+                "live_origin": origin,
+                "requested_origin": origin,
+                "blocker_id": blocker_id,
+                "blocker_kind": "anti_bot_challenge",
+                "blocker_requires_user": true
+            })))
+        }
+
+        async fn invoke(&self, _args: serde_json::Value) -> crate::protocol::ToolResult {
+            self.hits.fetch_add(1, Ordering::SeqCst);
+            crate::protocol::ToolResult::text("blocker resumed")
         }
     }
 
@@ -3073,6 +3170,16 @@ mod runtime_isolation_tests {
                     "start_time": 7,
                     "executable": fixture_executable()
                 }
+            }),
+            "browser_resume" => serde_json::json!({
+                "kind": "authenticated_browser_tab",
+                "target_id": "target-1",
+                "tab_id": "tab-1",
+                "live_origin": "https://blocked.example",
+                "requested_origin": "https://blocked.example",
+                "blocker_id": "blocker-exact-1",
+                "blocker_kind": "anti_bot_challenge",
+                "blocker_requires_user": true
             }),
             _ => serde_json::json!({
                 "kind": "synthetic_attested_resource",
@@ -3963,6 +4070,158 @@ resources:
         }
         assert_eq!(hits.load(Ordering::SeqCst), 2);
         assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn standard_browser_input_authority_cannot_resume_a_blocker() {
+        let click_hits = Arc::new(AtomicUsize::new(0));
+        let resume_hits = Arc::new(AtomicUsize::new(0));
+        let mut registry = super::ToolRegistry::new();
+        registry.register(Box::new(AttestedProbe {
+            hits: click_hits.clone(),
+            scope: serde_json::json!({
+                "kind": "authenticated_browser_tab",
+                "target_id": "target-1",
+                "tab_id": "tab-1",
+                "live_origin": "https://blocked.example"
+            }),
+            stale_before_dispatch: false,
+            def: super::ToolDef {
+                name: "browser_click".to_owned(),
+                description: "routine browser input".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                read_only: false,
+                destructive: false,
+                idempotent: false,
+                open_world: true,
+            },
+        }));
+        registry.register(Box::new(AttestedProbe {
+            hits: resume_hits.clone(),
+            scope: serde_json::json!({
+                "kind": "authenticated_browser_tab",
+                "target_id": "target-1",
+                "tab_id": "tab-1",
+                "live_origin": "https://blocked.example",
+                "requested_origin": "https://blocked.example",
+                "blocker_id": "blocker-exact-1",
+                "blocker_kind": "anti_bot_challenge",
+                "blocker_requires_user": true
+            }),
+            stale_before_dispatch: false,
+            def: super::ToolDef {
+                name: "browser_resume".to_owned(),
+                description: "exact blocker resume".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                read_only: false,
+                destructive: false,
+                idempotent: false,
+                open_world: false,
+            },
+        }));
+        let registry = Arc::new(registry);
+        let context = standard_context();
+
+        let routine = registry
+            .invoke_with_context(
+                "browser_click",
+                serde_json::json!({
+                    "target_id": "target-1",
+                    "tab_id": "tab-1",
+                    "session": "browser"
+                }),
+                context.clone(),
+            )
+            .await;
+        assert_ne!(routine.is_error, Some(true));
+        assert_eq!(click_hits.load(Ordering::SeqCst), 1);
+
+        let resume = registry
+            .invoke_with_context(
+                "browser_resume",
+                serde_json::json!({
+                    "target_id": "target-1",
+                    "tab_id": "tab-1",
+                    "origin": "https://blocked.example",
+                    "blocker_id": "blocker-exact-1",
+                    "session": "browser"
+                }),
+                context,
+            )
+            .await;
+        assert_eq!(resume_hits.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            resume
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.pointer("/refusal/code"))
+                .and_then(serde_json::Value::as_str),
+            Some("authorization_required")
+        );
+    }
+
+    #[tokio::test]
+    async fn blocker_resume_requires_its_own_exact_grant_in_every_mode() {
+        let bounded = bounded_context(
+            r#"
+version: 3
+expires_after: 1h
+idle_timeout: 30m
+allow:
+  tools: [browser_resume]
+resources:
+  browser:
+    origins: [https://blocked.example]
+"#,
+        );
+        for (mode, context) in [
+            (PermissionMode::Standard, standard_context()),
+            (PermissionMode::Bounded, bounded),
+            (PermissionMode::Unrestricted, unrestricted_context()),
+        ] {
+            let hits = Arc::new(AtomicUsize::new(0));
+            let provider = Arc::new(AcceptingProvider {
+                requests: AtomicUsize::new(0),
+            });
+            let mut registry =
+                super::ToolRegistry::new_with_protected_consent_provider(Some(provider.clone()));
+            registry.register(Box::new(BrowserResumeProbe {
+                hits: hits.clone(),
+                def: super::ToolDef {
+                    name: "browser_resume".to_owned(),
+                    description: "exact blocker resume".into(),
+                    input_schema: serde_json::json!({"type": "object"}),
+                    read_only: false,
+                    destructive: false,
+                    idempotent: false,
+                    open_world: false,
+                },
+            }));
+            let registry = Arc::new(registry);
+            for blocker_id in ["blocker-exact-1", "blocker-exact-1", "blocker-exact-2"] {
+                let result = registry
+                    .invoke_with_context(
+                        "browser_resume",
+                        serde_json::json!({
+                            "target_id": "target-1",
+                            "tab_id": "tab-1",
+                            "origin": "https://blocked.example",
+                            "blocker_id": blocker_id,
+                            "session": "browser"
+                        }),
+                        context.clone(),
+                    )
+                    .await;
+                assert_ne!(result.is_error, Some(true), "{mode:?}: {result:?}");
+            }
+
+            assert_eq!(hits.load(Ordering::SeqCst), 3, "{mode:?}");
+            assert_eq!(
+                provider.requests.load(Ordering::SeqCst),
+                2,
+                "{mode:?}: a new blocker id must require a distinct protected-host grant"
+            );
+        }
     }
 
     #[tokio::test]
@@ -5104,6 +5363,7 @@ mod capability_tests {
         // browser-tool v1
         "get_browser_state",
         "browser_prepare",
+        "browser_resume",
         "browser_navigate",
         "browser_click",
         "browser_type",
@@ -5189,6 +5449,7 @@ mod capability_tests {
         // browser-tool v1
         "browser.state",
         "browser.prepare",
+        "browser.resume",
         "browser.navigate",
         "browser.input.click",
         "browser.input.type",

@@ -1704,7 +1704,7 @@ mod tests {
                 "tool={tool_name}"
             );
         }
-        for tool_name in ["get_browser_state", "browser_prepare"] {
+        for tool_name in ["get_browser_state", "browser_prepare", "browser_resume"] {
             let operation = crate::server::tool_operation(tool_name, Some(&args));
             assert!(
                 !crate::server::is_computer_action(tool_name, operation),

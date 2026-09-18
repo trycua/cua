@@ -163,6 +163,7 @@ pub enum ModeBehavior {
 pub enum AdapterProfileBehavior {
     Routine,
     GrantInStandard,
+    HumanGrant,
     BoundedOrUnrestricted,
     UnrestrictedOnly,
     Denied,
@@ -178,6 +179,7 @@ impl AdapterProfileBehavior {
             (Self::GrantInStandard, PermissionMode::Standard) => ModeBehavior::RequireGrant,
             (Self::GrantInStandard, PermissionMode::Bounded) => ModeBehavior::AllowWithoutGrant,
             (Self::GrantInStandard, PermissionMode::Unrestricted) => ModeBehavior::Allow,
+            (Self::HumanGrant, _) => ModeBehavior::RequireGrant,
             (Self::BoundedOrUnrestricted, PermissionMode::Standard) => ModeBehavior::Deny,
             (Self::BoundedOrUnrestricted, PermissionMode::Bounded) => {
                 ModeBehavior::AllowWithoutGrant
@@ -329,6 +331,19 @@ const CONSEQUENTIAL_SCOPE_KEYS: &[&str] = &[
     "tab",
     "origin",
     "action_kind",
+    "permission_mode",
+    "managed_policy_sha256",
+    "user_policy_sha256",
+];
+
+const BROWSER_BLOCKER_RESUME_OPERATIONS: &[&str] = &["browser_resume"];
+const BROWSER_BLOCKER_RESUME_SCOPE_KEYS: &[&str] = &[
+    "daemon_generation",
+    "public_session",
+    "browser_binding",
+    "tab",
+    "origin",
+    "blocker_id",
     "permission_mode",
     "managed_policy_sha256",
     "user_policy_sha256",
@@ -488,6 +503,23 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         authorization_source: "built_in_standard; unattended_bounded_profile; trusted_unrestricted_mode; optional_capability_manifest_ceiling",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
         profile_behavior: AdapterProfileBehavior::Routine,
+    },
+    EnforcementAdapterDescriptor {
+        id: "browser_blocker_resume",
+        operations: BROWSER_BLOCKER_RESUME_OPERATIONS,
+        state: RiskEnforcement::Active,
+        risk_class: RiskClass::R3,
+        resource_kind: "exact_browser_blocker_decision",
+        scope_keys: BROWSER_BLOCKER_RESUME_SCOPE_KEYS,
+        grant_type: Some("protected_resource_grant"),
+        idle_ttl_seconds: Some(2 * 60),
+        absolute_ttl_seconds: Some(10 * 60),
+        authorization_requirement: "exact_protected_host_grant_in_every_mode_and_optional_capability_manifest",
+        revocation_triggers: SESSION_REVOCATION,
+        refusal_code: Some("authorization_required"),
+        authorization_source: "authorization_host_in_every_mode; optional_capability_manifest_ceiling",
+        enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
+        profile_behavior: AdapterProfileBehavior::HumanGrant,
     },
     EnforcementAdapterDescriptor {
         id: "browser_consequential_action",
@@ -807,6 +839,10 @@ pub fn enforcement_adapters_for_call(
         add("browser_unbounded_script");
     }
 
+    if BROWSER_BLOCKER_RESUME_OPERATIONS.contains(&tool) {
+        add("browser_blocker_resume");
+    }
+
     if BROWSER_BOUND_INPUT_OPERATIONS.contains(&tool) {
         add("browser_bound_input");
     }
@@ -934,7 +970,8 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "page"
         | "browser_dialog"
         | "browser_set_input_files"
-        | "browser_download" => RiskClass::R3,
+        | "browser_download"
+        | "browser_resume" => RiskClass::R3,
 
         _ => RiskClass::Unclassified,
     };
@@ -1670,6 +1707,7 @@ mod tests {
                 "computer_history",
                 "desktop_input",
                 "file_transfer_and_output",
+                "browser_blocker_resume",
                 "browser_consequential_action",
                 "browser_unbounded_script",
                 "browser_bound_input",
@@ -1696,6 +1734,7 @@ mod tests {
                 "computer_history",
                 "desktop_input",
                 "file_transfer_and_output",
+                "browser_blocker_resume",
                 "browser_consequential_action",
                 "browser_unbounded_script",
                 "browser_bound_input",
@@ -1750,6 +1789,16 @@ mod tests {
             behavior("browser_prepare.existing_profile", PermissionMode::Standard),
             ModeBehavior::RequireGrant
         );
+        for mode in [
+            PermissionMode::Standard,
+            PermissionMode::Bounded,
+            PermissionMode::Unrestricted,
+        ] {
+            assert_eq!(
+                behavior("browser_blocker_resume", mode),
+                ModeBehavior::RequireGrant
+            );
+        }
         assert_eq!(
             behavior("process_control", PermissionMode::Standard),
             ModeBehavior::Deny
@@ -1926,6 +1975,10 @@ mod tests {
             vec!["browser_bound_input"]
         );
         assert_eq!(
+            ids("browser_resume", serde_json::json!({})),
+            vec!["browser_blocker_resume"]
+        );
+        assert_eq!(
             ids("kill_app", serde_json::json!({})),
             vec!["process_control"]
         );
@@ -1972,6 +2025,7 @@ mod tests {
                 "computer_history",
                 "desktop_input",
                 "file_transfer_and_output",
+                "browser_blocker_resume",
                 "browser_consequential_action",
                 "browser_unbounded_script",
                 "browser_bound_input",
@@ -1998,6 +2052,7 @@ mod tests {
                 "computer_history",
                 "desktop_input",
                 "file_transfer_and_output",
+                "browser_blocker_resume",
                 "browser_consequential_action",
                 "browser_unbounded_script",
                 "browser_bound_input",

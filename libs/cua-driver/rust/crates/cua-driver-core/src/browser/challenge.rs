@@ -5,8 +5,11 @@
 //! checkbox. It does not copy page text into the report, act on a challenge, or
 //! treat page copy as proof.
 
-use serde::Serialize;
+use std::time::Duration;
 
+use serde::Serialize;
+use serde_json::Value;
+use time::{format_description::well_known::Rfc2822, OffsetDateTime};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum BrowserChallengeStatus {
@@ -28,6 +31,14 @@ pub(crate) enum BrowserChallengeSource {
     Semantic,
 }
 
+impl BrowserChallengeSource {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Url => "url",
+            Self::Semantic => "semantic",
+        }
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum BrowserChallengeConfidence {
@@ -88,6 +99,16 @@ impl BrowserChallengeReport {
             confidence: None,
         }
     }
+
+    pub(crate) fn containment_target(&self) -> Option<(&str, BrowserChallengeSource)> {
+        (self.status == BrowserChallengeStatus::Detected).then(|| {
+            (
+                self.origin.as_deref().unwrap_or_default(),
+                self.source
+                    .expect("a detected challenge always has a bounded source"),
+            )
+        })
+    }
 }
 
 pub(crate) fn browser_challenge_report<'a>(
@@ -95,7 +116,7 @@ pub(crate) fn browser_challenge_report<'a>(
     labels: impl IntoIterator<Item = BrowserChallengeLabel<'a>>,
     observation_complete: bool,
 ) -> BrowserChallengeReport {
-    let origin = browser_origin(url);
+    let origin = nonopaque_browser_origin(url);
     if url_indicates_challenge(url) {
         return BrowserChallengeReport::detected(
             origin,
@@ -186,12 +207,98 @@ fn visible_labels_indicate_challenge<'a>(
     false
 }
 
-fn browser_origin(url: &str) -> Option<String> {
-    let parsed = url::Url::parse(url).ok()?;
+fn nonopaque_browser_origin(url: &str) -> Option<String> {
+    let origin = browser_origin(url);
+    (!origin.is_empty()).then_some(origin)
+}
+
+pub(crate) fn browser_origin(url: &str) -> String {
+    let Ok(parsed) = url::Url::parse(url) else {
+        return String::new();
+    };
     match parsed.origin() {
-        url::Origin::Tuple(_, _, _) => Some(parsed.origin().ascii_serialization()),
-        url::Origin::Opaque(_) => None,
+        url::Origin::Tuple(_, _, _) => parsed.origin().ascii_serialization(),
+        url::Origin::Opaque(_) => String::new(),
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct NavigationResponseObservation {
+    pub(crate) status: u16,
+    pub(crate) origin: String,
+    pub(crate) retry_after: Option<Duration>,
+    pub(crate) is_redirect: bool,
+}
+
+pub(crate) fn navigation_response_observation(
+    params: &Value,
+    expected_loader_id: Option<&str>,
+    expected_frame_id: Option<&str>,
+    now: OffsetDateTime,
+) -> Option<NavigationResponseObservation> {
+    if params.get("type").and_then(Value::as_str) != Some("Document") {
+        return None;
+    }
+    if expected_loader_id.is_some()
+        && params.get("loaderId").and_then(Value::as_str) != expected_loader_id
+    {
+        return None;
+    }
+    if expected_frame_id.is_some()
+        && params.get("frameId").and_then(Value::as_str) != expected_frame_id
+    {
+        return None;
+    }
+
+    let response = params.get("response")?.as_object()?;
+    let status = response.get("status")?.as_f64()?;
+    if !(0.0..=u16::MAX as f64).contains(&status) || status.fract() != 0.0 {
+        return None;
+    }
+    let origin = browser_origin(response.get("url")?.as_str()?);
+    if origin.is_empty() {
+        return None;
+    }
+    let headers = response.get("headers").and_then(Value::as_object);
+    let retry_after = headers
+        .and_then(|headers| {
+            headers
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case("retry-after"))
+                .and_then(|(_, value)| match value {
+                    Value::String(value) => Some(value.clone()),
+                    Value::Number(value) => Some(value.to_string()),
+                    _ => None,
+                })
+        })
+        .and_then(|value| parse_retry_after(&value, now));
+    let is_redirect = matches!(status as u16, 301 | 302 | 303 | 307 | 308)
+        && headers.is_some_and(|headers| {
+            headers.iter().any(|(name, value)| {
+                name.eq_ignore_ascii_case("location")
+                    && value.as_str().is_some_and(|value| !value.is_empty())
+            })
+        });
+
+    Some(NavigationResponseObservation {
+        status: status as u16,
+        origin,
+        retry_after,
+        is_redirect,
+    })
+}
+
+fn parse_retry_after(value: &str, now: OffsetDateTime) -> Option<Duration> {
+    let value = value.trim();
+    if !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return value.parse::<u64>().ok().map(Duration::from_secs);
+    }
+
+    let retry_at = OffsetDateTime::parse(value, &Rfc2822).ok()?;
+    let milliseconds = (retry_at - now).whole_milliseconds().max(0);
+    Some(Duration::from_millis(
+        u64::try_from(milliseconds).unwrap_or(u64::MAX),
+    ))
 }
 
 fn normalize_text(text: &str) -> String {
@@ -430,15 +537,19 @@ mod tests {
 
     #[test]
     fn opaque_urls_report_an_unknown_origin() {
-        let value = to_value(browser_challenge_report(
+        let report = browser_challenge_report(
             "about:blank",
             [BrowserChallengeLabel::new(
                 "checkbox",
                 "Verify you are human",
             )],
             true,
-        ))
-        .unwrap();
+        );
+        assert_eq!(
+            report.containment_target(),
+            Some(("", BrowserChallengeSource::Semantic))
+        );
+        let value = to_value(report).unwrap();
 
         assert_eq!(value["status"], "detected");
         assert!(value["origin"].is_null());
@@ -460,5 +571,114 @@ mod tests {
         assert!(!serialized.contains("Alice"));
         assert!(!serialized.contains("secret"));
         assert_eq!(value["origin"], "https://example.test");
+    }
+
+    #[test]
+    fn observes_429_and_numeric_retry_after_without_retaining_url_details() {
+        let observation = navigation_response_observation(
+            &json!({
+                "type": "Document",
+                "frameId": "frame-1",
+                "loaderId": "loader-1",
+                "response": {
+                    "url": "https://example.test/private?q=secret",
+                    "status": 429,
+                    "headers": {"Retry-After": "12"},
+                }
+            }),
+            Some("loader-1"),
+            Some("frame-1"),
+            OffsetDateTime::UNIX_EPOCH,
+        )
+        .expect("main-document response");
+
+        assert_eq!(observation.status, 429);
+        assert_eq!(observation.origin, "https://example.test");
+        assert_eq!(observation.retry_after, Some(Duration::from_secs(12)));
+        assert!(!observation.is_redirect);
+    }
+
+    #[test]
+    fn marks_redirect_only_when_status_and_location_agree() {
+        let redirect = json!({
+            "type": "Document",
+            "frameId": "frame-1",
+            "loaderId": "loader-1",
+            "response": {
+                "url": "https://example.test/start",
+                "status": 302,
+                "headers": {"location": "https://example.test/final"},
+            }
+        });
+        assert!(
+            navigation_response_observation(
+                &redirect,
+                Some("loader-1"),
+                Some("frame-1"),
+                OffsetDateTime::UNIX_EPOCH,
+            )
+            .unwrap()
+            .is_redirect
+        );
+
+        let mut terminal = redirect;
+        terminal["response"]["headers"] = json!({});
+        assert!(
+            !navigation_response_observation(
+                &terminal,
+                Some("loader-1"),
+                Some("frame-1"),
+                OffsetDateTime::UNIX_EPOCH,
+            )
+            .unwrap()
+            .is_redirect
+        );
+    }
+
+    #[test]
+    fn parses_http_date_retry_after_and_ignores_other_loaders() {
+        let now = OffsetDateTime::parse("Sun, 06 Nov 1994 08:49:30 GMT", &Rfc2822).unwrap();
+        let params = json!({
+            "type": "Document",
+            "frameId": "frame-1",
+            "loaderId": "loader-1",
+            "response": {
+                "url": "https://example.test/",
+                "status": 429,
+                "headers": {"retry-after": "Sun, 06 Nov 1994 08:49:37 GMT"},
+            }
+        });
+
+        let observation =
+            navigation_response_observation(&params, Some("loader-1"), Some("frame-1"), now)
+                .expect("main-document response");
+        assert_eq!(observation.retry_after, Some(Duration::from_secs(7)));
+        assert!(navigation_response_observation(
+            &params,
+            Some("different-loader"),
+            Some("frame-1"),
+            now,
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn ignores_subresource_response_events() {
+        assert!(navigation_response_observation(
+            &json!({
+                "type": "Image",
+                "frameId": "frame-1",
+                "loaderId": "loader-1",
+                "response": {
+                    "url": "https://example.test/tracker.png",
+                    "status": 429,
+                    "headers": {"Retry-After": "120"},
+                }
+            }),
+            Some("loader-1"),
+            Some("frame-1"),
+            OffsetDateTime::UNIX_EPOCH,
+        )
+        .is_none());
     }
 }

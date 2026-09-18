@@ -13,6 +13,7 @@
     "browser_navigate",
     "browser_pointer",
     "browser_prepare",
+    "browser_resume",
     "browser_set_input_files",
     "browser_type",
     "check_for_update",

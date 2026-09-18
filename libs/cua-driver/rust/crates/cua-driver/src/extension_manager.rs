@@ -22,6 +22,9 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 
+use cua_driver_core::perception_client::containment::{
+    run_contained_hook, ContainmentLimits, HookOutcome,
+};
 use cua_driver_core::perception_client::{PerceptionClient, PerceptionWorkerConfig};
 use cua_driver_core::protocol::ToolResult;
 use cua_driver_core::tool::{Tool, ToolDef, ToolRegistry};
@@ -1956,18 +1959,24 @@ impl ExtensionStore {
                     verify_installed_version_at(&existing, entry, Some(&inspected.manifest_bytes));
                 let cleanup = remove_cap_subdirectory(&staging_parent_handle, staging_name);
                 let manifest = verified?;
+                verify_install_record_at(&existing, entry.id, &manifest.version)?;
                 run_extension_hook(&destination, &manifest, true)?;
                 cleanup?;
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 let staged = (|| -> Result<()> {
-                    run_extension_hook(&staging, &inspected.manifest, true)?;
+                    // Record and fully verify the staged version before any
+                    // hook instruction runs, so a hook can never execute from
+                    // an unrecorded or unverified install. A failure here
+                    // removes the staging directory below, so the rollback
+                    // stays durable whichever step failed.
                     write_install_record_at(&staging_handle, &inspected, source)?;
                     verify_installed_version_at(
                         &staging_handle,
                         entry,
                         Some(&inspected.manifest_bytes),
                     )?;
+                    run_extension_hook(&staging, &inspected.manifest, true)?;
                     staging_parent_handle
                         .rename(staging_name, &versions_handle, &version_text)
                         .with_context(|| {
@@ -2826,6 +2835,79 @@ fn run_extension_hook(root: &Path, manifest: &ExtensionManifest, self_test: bool
     )
 }
 
+/// Test-only record of the installed state each hook launch could see.
+///
+/// A hook may run only after its extension has been recorded and fully
+/// verified, and the only way to prove that ordering is to inspect the install
+/// directory at the moment of launch — a fresh install's staging directory is
+/// gone by the time a test could look.
+#[cfg(test)]
+mod hook_observer {
+    use super::{
+        open_directory_path_nofollow, read_install_record_at, registry_entry,
+        verify_installed_version_at, INSTALL_RECORD_NAME, PERCEPTION_ID,
+    };
+    use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
+
+    #[derive(Clone, Debug)]
+    pub(super) struct Launch {
+        pub(super) install_record_present: bool,
+        pub(super) fully_verified: bool,
+        root: PathBuf,
+    }
+
+    static LAUNCHES: Mutex<Vec<Launch>> = Mutex::new(Vec::new());
+
+    /// Called before the hook process is created, so nothing it observes can
+    /// have been produced by the hook itself.
+    pub(super) fn note_launch(root: &Path) {
+        let launch = Launch {
+            root: root.to_path_buf(),
+            install_record_present: root.join(INSTALL_RECORD_NAME).exists(),
+            fully_verified: fully_verified(root),
+        };
+        LAUNCHES.lock().expect("hook launch observer").push(launch);
+    }
+
+    /// Whether the manager itself would accept this directory as an installed,
+    /// recorded, integrity-verified extension version right now.
+    fn fully_verified(root: &Path) -> bool {
+        let Ok(directory) = open_directory_path_nofollow(root) else {
+            return false;
+        };
+        let Ok(entry) = registry_entry(PERCEPTION_ID) else {
+            return false;
+        };
+        let Ok(manifest) = verify_installed_version_at(&directory, entry, None) else {
+            return false;
+        };
+        read_install_record_at(&directory, entry.id, &manifest.version).is_ok()
+    }
+
+    /// Launches observed anywhere beneath one directory, which is how a test
+    /// reaches a fresh install's staging directory without knowing its
+    /// generated name. Tests use their own temporary roots, so this stays exact
+    /// while the suite runs in parallel.
+    pub(super) fn launches_under(root: &Path) -> Vec<Launch> {
+        LAUNCHES
+            .lock()
+            .expect("hook launch observer")
+            .iter()
+            .filter(|launch| launch.root.starts_with(root))
+            .cloned()
+            .collect()
+    }
+}
+
+/// Run one installed extension hook under the same fail-closed native
+/// containment boundary a perception parse gets.
+///
+/// The hook is the extension's own worker binary, so the only authority it is
+/// granted beyond the shared boundary is reading its own installed bundle. It
+/// inherits no environment, no descriptor, and none of the Driver's capture,
+/// input, or credential authority; a platform that cannot install every
+/// boundary fails the launch instead of running the hook.
 fn run_extension_hook_with_timeout(
     root: &Path,
     manifest: &ExtensionManifest,
@@ -2853,147 +2935,51 @@ fn run_extension_hook_with_timeout(
     if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
         bail!("extension hook entrypoint is not a regular file");
     }
-    let mut command = std::process::Command::new(entrypoint);
-    command
-        .args(args)
-        .env_clear()
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt as _;
-        command.process_group(0);
-    }
-    let mut child = command.spawn().context("run extension health hook")?;
-    #[cfg(windows)]
-    let mut hook_job = Some(windows_assign_kill_on_close_job(&child)?);
-    let deadline = std::time::Instant::now() + timeout;
-    let status = loop {
-        if let Some(status) = child.try_wait()? {
-            break status;
-        }
-        if std::time::Instant::now() >= deadline {
-            #[cfg(unix)]
-            unsafe {
-                libc::kill(-(child.id() as i32), libc::SIGKILL);
-            }
-            #[cfg(windows)]
-            drop(hook_job.take());
-            let _ = child.kill();
-            let _ = child.wait();
-            bail!("extension hook exceeded its execution limit");
-        }
-        std::thread::sleep(std::time::Duration::from_millis(25));
+    #[cfg(test)]
+    hook_observer::note_launch(root);
+    let limits = ContainmentLimits {
+        additional_readable_paths: vec![root.to_path_buf()],
+        ..ContainmentLimits::default()
     };
-    if !status.success() {
-        bail!(
-            "extension {} hook failed with {}",
-            if self_test { "self-test" } else { "health" },
-            status
-        );
-    }
-    Ok(())
-}
-
-#[cfg(windows)]
-struct WindowsJob(*mut std::ffi::c_void);
-
-#[cfg(windows)]
-impl Drop for WindowsJob {
-    fn drop(&mut self) {
-        unsafe {
-            windows_close_handle(self.0);
+    let kind = if self_test { "self-test" } else { "health" };
+    match run_contained_hook_blocking(&entrypoint, args, &limits, timeout)? {
+        HookOutcome::Succeeded => Ok(()),
+        HookOutcome::Failed(detail) => bail!("extension {kind} hook failed with {detail}"),
+        HookOutcome::ResourceLimited(detail) => {
+            bail!("extension {kind} hook exceeded a containment limit: {detail}")
         }
+        HookOutcome::TimedOut => bail!("extension hook exceeded its execution limit"),
     }
 }
 
-#[cfg(windows)]
-unsafe fn windows_close_handle(handle: *mut std::ffi::c_void) {
-    #[link(name = "kernel32")]
-    extern "system" {
-        fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
-    }
-    if !handle.is_null() {
-        let _ = CloseHandle(handle);
-    }
-}
-
-#[cfg(windows)]
-fn windows_assign_kill_on_close_job(child: &std::process::Child) -> Result<WindowsJob> {
-    #[repr(C)]
-    #[derive(Default)]
-    struct BasicLimitInformation {
-        per_process_user_time_limit: i64,
-        per_job_user_time_limit: i64,
-        limit_flags: u32,
-        minimum_working_set_size: usize,
-        maximum_working_set_size: usize,
-        active_process_limit: u32,
-        affinity: usize,
-        priority_class: u32,
-        scheduling_class: u32,
-    }
-    #[repr(C)]
-    #[derive(Default)]
-    struct IoCounters {
-        read_operation_count: u64,
-        write_operation_count: u64,
-        other_operation_count: u64,
-        read_transfer_count: u64,
-        write_transfer_count: u64,
-        other_transfer_count: u64,
-    }
-    #[repr(C)]
-    #[derive(Default)]
-    struct ExtendedLimitInformation {
-        basic_limit_information: BasicLimitInformation,
-        io_info: IoCounters,
-        process_memory_limit: usize,
-        job_memory_limit: usize,
-        peak_process_memory_used: usize,
-        peak_job_memory_used: usize,
-    }
-    #[link(name = "kernel32")]
-    extern "system" {
-        fn CreateJobObjectW(
-            attributes: *mut std::ffi::c_void,
-            name: *const u16,
-        ) -> *mut std::ffi::c_void;
-        fn SetInformationJobObject(
-            job: *mut std::ffi::c_void,
-            class: i32,
-            information: *const std::ffi::c_void,
-            length: u32,
-        ) -> i32;
-        fn AssignProcessToJobObject(
-            job: *mut std::ffi::c_void,
-            process: *mut std::ffi::c_void,
-        ) -> i32;
-    }
-    use std::os::windows::io::AsRawHandle as _;
-
-    unsafe {
-        let job = WindowsJob(CreateJobObjectW(std::ptr::null_mut(), std::ptr::null()));
-        if job.0.is_null() {
-            bail!("create Windows containment job for extension hook");
-        }
-        let mut limits = ExtendedLimitInformation::default();
-        limits.basic_limit_information.limit_flags = 0x0000_2000;
-        if SetInformationJobObject(
-            job.0,
-            9,
-            std::ptr::addr_of!(limits).cast(),
-            std::mem::size_of::<ExtendedLimitInformation>() as u32,
-        ) == 0
-        {
-            bail!("configure Windows containment job for extension hook");
-        }
-        if AssignProcessToJobObject(job.0, child.as_raw_handle().cast()) == 0 {
-            bail!("assign extension hook to Windows containment job");
-        }
-        Ok(job)
-    }
+/// Bridge the asynchronous contained launch into the synchronous extension
+/// lifecycle. The hook owns a dedicated thread and runtime, so this stays
+/// correct whether or not the caller already sits inside one.
+fn run_contained_hook_blocking(
+    entrypoint: &Path,
+    args: &[String],
+    limits: &ContainmentLimits,
+    timeout: std::time::Duration,
+) -> Result<HookOutcome> {
+    std::thread::scope(|scope| -> Result<HookOutcome> {
+        scope
+            .spawn(|| -> Result<HookOutcome> {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .context("start the contained extension hook runtime")?;
+                runtime
+                    .block_on(run_contained_hook(entrypoint, args, limits, timeout))
+                    .map_err(|failure| match failure.detail {
+                        Some(detail) => {
+                            anyhow!("contain the extension hook: {} ({detail})", failure.message)
+                        }
+                        None => anyhow!("contain the extension hook: {}", failure.message),
+                    })
+            })
+            .join()
+            .map_err(|_| anyhow!("the contained extension hook supervisor panicked"))?
+    })
 }
 
 fn stream_archive_file_at<R: Read>(
@@ -4120,11 +4106,67 @@ mod tests {
         driver_version: &str,
         executable: bool,
     ) -> PathBuf {
+        let manifest = fixture_manifest(
+            version,
+            target,
+            protocol,
+            declared_hash,
+            driver_version,
+            executable,
+        );
+        write_fixture_archive(directory, version, &manifest, payload)
+    }
+
+    /// The same fixture extension, but declaring a self-test hook so a test can
+    /// observe when the installer runs it.
+    fn fixture_archive_with_self_test(
+        directory: &Path,
+        version: &str,
+        target: &str,
+        payload: &[u8],
+        self_test_args: &[&str],
+    ) -> PathBuf {
+        let mut manifest = fixture_manifest(
+            version,
+            target,
+            1,
+            &hex_sha256(payload),
+            &format!("={}", env!("CARGO_PKG_VERSION")),
+            true,
+        );
+        manifest.self_test_args = self_test_args.iter().map(|arg| (*arg).to_owned()).collect();
+        write_fixture_archive(directory, version, &manifest, payload)
+    }
+
+    fn write_fixture_archive(
+        directory: &Path,
+        version: &str,
+        manifest: &ExtensionManifest,
+        payload: &[u8],
+    ) -> PathBuf {
         let path = directory.join(format!("local-extension-{version}.tar.gz"));
         let file = fs::File::create(&path).unwrap();
         let encoder = GzEncoder::new(file, Compression::default());
         let mut builder = tar::Builder::new(encoder);
-        let manifest = ExtensionManifest {
+        append(
+            &mut builder,
+            MANIFEST_NAME,
+            &serde_json::to_vec_pretty(manifest).unwrap(),
+        );
+        append(&mut builder, "bin/local-extension", payload);
+        builder.finish().unwrap();
+        path
+    }
+
+    fn fixture_manifest(
+        version: &str,
+        target: &str,
+        protocol: u32,
+        declared_hash: &str,
+        driver_version: &str,
+        executable: bool,
+    ) -> ExtensionManifest {
+        ExtensionManifest {
             schema_version: 1,
             id: "cua-perception".to_owned(),
             version: version.to_owned(),
@@ -4155,15 +4197,7 @@ mod tests {
             provenance: "developer test fixture".to_owned(),
             health_args: Vec::new(),
             self_test_args: Vec::new(),
-        };
-        append(
-            &mut builder,
-            MANIFEST_NAME,
-            &serde_json::to_vec_pretty(&manifest).unwrap(),
-        );
-        append(&mut builder, "bin/local-extension", payload);
-        builder.finish().unwrap();
-        path
+        }
     }
 
     #[cfg(feature = "review-trust-root")]
@@ -4758,9 +4792,14 @@ mod tests {
             .contains("must be executable"));
     }
 
+    /// An interpreted entrypoint cannot execute inside the worker boundary:
+    /// the sandbox grants execution to the entrypoint file alone, never to an
+    /// interpreter. The hook therefore fails before its first instruction, so
+    /// nothing it would have done — here, forking a descendant that outlives
+    /// the deadline — can happen at all.
     #[cfg(unix)]
     #[test]
-    fn timed_out_hook_terminates_descendants() {
+    fn a_hook_cannot_run_a_single_instruction_outside_its_containment() {
         use std::os::unix::fs::PermissionsExt;
 
         let temp = TempDir::new().unwrap();
@@ -4775,7 +4814,43 @@ mod tests {
         .unwrap();
         fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
         let sentinel = temp.path().join("escaped");
-        let manifest = ExtensionManifest {
+        let manifest = hook_fixture_manifest(vec![sentinel.to_string_lossy().into_owned()]);
+
+        assert!(run_extension_hook_with_timeout(
+            &root,
+            &manifest,
+            false,
+            std::time::Duration::from_secs(5),
+        )
+        .is_err());
+        std::thread::sleep(std::time::Duration::from_millis(1_100));
+        assert!(!sentinel.exists());
+        // The launch happened through the contained path, so the manager saw
+        // the hook root before any process existed.
+        assert_eq!(hook_observer::launches_under(&root).len(), 1);
+    }
+
+    /// A hook whose entrypoint is not an executable image never reaches the
+    /// worker boundary either, and the failure is reported rather than ignored.
+    #[test]
+    fn a_hook_with_an_unlaunchable_entrypoint_fails_closed() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("hook");
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("worker"), b"not an executable image").unwrap();
+        let manifest = hook_fixture_manifest(vec!["--health".to_owned()]);
+
+        assert!(run_extension_hook_with_timeout(
+            &root,
+            &manifest,
+            false,
+            std::time::Duration::from_secs(5),
+        )
+        .is_err());
+    }
+
+    fn hook_fixture_manifest(health_args: Vec<String>) -> ExtensionManifest {
+        ExtensionManifest {
             schema_version: MANIFEST_SCHEMA_VERSION,
             id: "cua-perception".to_owned(),
             version: "1.0.0".to_owned(),
@@ -4792,21 +4867,48 @@ mod tests {
             corresponding_source_uri: "test".to_owned(),
             corresponding_source_revision: "test".to_owned(),
             provenance: "test".to_owned(),
-            health_args: vec![sentinel.to_string_lossy().into_owned()],
+            health_args,
             self_test_args: Vec::new(),
-        };
+        }
+    }
 
-        assert!(run_extension_hook_with_timeout(
-            &root,
-            &manifest,
-            false,
-            std::time::Duration::from_millis(150),
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("execution limit"));
-        std::thread::sleep(std::time::Duration::from_millis(1_100));
-        assert!(!sentinel.exists());
+    /// A fresh install must write its record and pass full verification before
+    /// its self-test hook is allowed to run, so a hook can never execute from
+    /// an unrecorded or unverified directory.
+    #[test]
+    fn a_fresh_install_records_and_verifies_before_running_its_hook() {
+        let temp = TempDir::new().unwrap();
+        let store = ExtensionStore::new(temp.path().join("extensions"));
+        let entry = registry_entry("cua-perception").unwrap();
+        let archive = fixture_archive_with_self_test(
+            temp.path(),
+            "1.0.0",
+            &current_target().unwrap(),
+            b"worker",
+            &["--self-test"],
+        );
+
+        // The fixture payload is not an executable image, so the contained
+        // hook cannot succeed; the install fails and rolls back.
+        assert!(store.install_archive(entry, &archive).is_err());
+        assert!(store.active_path(entry.id).unwrap().is_none());
+        assert!(staging_is_empty(&store), "staging was not rolled back");
+
+        let launches = hook_observer::launches_under(&store.root);
+        assert_eq!(launches.len(), 1, "expected exactly one hook launch");
+        assert!(
+            launches[0].install_record_present,
+            "the hook ran before the install record was written"
+        );
+        assert!(
+            launches[0].fully_verified,
+            "the hook ran before the staged version was fully verified"
+        );
+    }
+
+    fn staging_is_empty(store: &ExtensionStore) -> bool {
+        let staging = store.root.join(".staging");
+        !staging.exists() || fs::read_dir(&staging).unwrap().next().is_none()
     }
 
     #[test]

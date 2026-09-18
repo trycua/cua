@@ -32,11 +32,16 @@
 //! Network denial, read confinement and write confinement are deliberately not
 //! configurable. The only tunable surface is [`ContainmentLimits`], including
 //! extra readable and writable paths a caller must opt into explicitly.
+//!
+//! [`run_contained_hook`] reuses the same boundary for a one-shot auxiliary
+//! process — an installed extension's health or self-test hook — so such a hook
+//! never runs with more authority than an ordinary parse.
 
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use cua_driver_contract::{VisualParseError, VisualParseErrorCode};
+use tokio::io::AsyncReadExt as _;
 
 use super::error;
 
@@ -601,6 +606,115 @@ pub(crate) async fn spawn(
         })
         .collect::<Result<Vec<_>, _>>()?;
     platform::spawn(&executable, &args, &working_directory, &boundary, limits).await
+}
+
+/// How a one-shot contained process finished.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum HookOutcome {
+    Succeeded,
+    /// The hook ran and ended unsuccessfully for a reason other than a
+    /// containment ceiling.
+    Failed(String),
+    /// A containment ceiling — CPU time or memory — ended the hook.
+    ResourceLimited(String),
+    /// The hook outlived its deadline, so its process tree was killed and
+    /// reaped before this returned.
+    TimedOut,
+}
+
+/// How long the killed process tree is given to be reaped after a deadline, so
+/// a one-shot caller leaves no zombie behind.
+const TERMINATION_GRACE: Duration = Duration::from_secs(5);
+
+/// Run one auxiliary process — an installed extension's health or self-test
+/// hook — under exactly the boundary [`spawn`] installs for a perception parse.
+///
+/// The hook is not a protocol peer, so its request pipe is closed immediately
+/// and it observes end of file just as a null stdin would; its standard output
+/// is read and discarded so a chatty hook can neither block on a full pipe nor
+/// reach the Driver's own output; its standard error is discarded by the
+/// platform command shape. The private working directory is created here and
+/// removed when this returns, and it is the only path the hook may write.
+///
+/// Containment that cannot be installed is an error rather than a weaker
+/// launch, so no hook instruction runs before every boundary is in place.
+pub async fn run_contained_hook(
+    executable: &Path,
+    args: &[String],
+    limits: &ContainmentLimits,
+    timeout: Duration,
+) -> Result<HookOutcome, VisualParseError> {
+    if timeout.is_zero() {
+        return Err(error(
+            VisualParseErrorCode::ResourceLimitExceeded,
+            "a contained hook deadline must be non-zero",
+            false,
+            None,
+        ));
+    }
+    let working_directory = tempfile::Builder::new()
+        .prefix("cua-extension-hook-")
+        .tempdir()
+        .map_err(|cause| {
+            containment_error(
+                "failed to create a private contained hook directory",
+                os_detail(&cause),
+            )
+        })?;
+    let mut contained = spawn(executable, args, working_directory.path(), limits).await?;
+    // Closing the request pipe is what makes the hook observe end of file.
+    drop(contained.take_stdin());
+    let mut stdout = contained.take_stdout();
+    let exit = tokio::time::timeout(timeout, async {
+        let (_, exit) = tokio::join!(discard_output(stdout.as_mut()), contained.wait());
+        exit
+    })
+    .await;
+    match exit {
+        Ok(Ok(WorkerExit::Success)) => Ok(HookOutcome::Succeeded),
+        Ok(Ok(WorkerExit::Failure(detail))) => Ok(HookOutcome::Failed(detail)),
+        Ok(Ok(WorkerExit::ResourceLimit(detail))) => Ok(HookOutcome::ResourceLimited(detail)),
+        Ok(Err(cause)) => Err(error(
+            VisualParseErrorCode::WorkerCrashed,
+            "failed to supervise the contained hook",
+            false,
+            os_detail(&cause),
+        )),
+        Err(_) => {
+            terminate(contained).await;
+            Ok(HookOutcome::TimedOut)
+        }
+    }
+}
+
+/// Drain the hook's output into nothing. A hook that fills its pipe would
+/// otherwise block until its deadline instead of exiting.
+async fn discard_output(stdout: Option<&mut WorkerStdout>) {
+    let Some(stdout) = stdout else {
+        return;
+    };
+    let mut sink = [0_u8; 8 * 1024];
+    while matches!(stdout.read(&mut sink).await, Ok(count) if count > 0) {}
+}
+
+/// Tear a contained process tree down through its platform guard and reap it.
+///
+/// Destructuring rather than dropping keeps the documented order explicit: the
+/// guard kills the tree first, and only then is the process handle awaited.
+async fn terminate(contained: ContainedChild) {
+    let ContainedChild {
+        guard,
+        mut process,
+        stdin,
+        stdout,
+    } = contained;
+    // Matches the field order an ordinary drop would follow: the guard tears
+    // the tree down first, the process handle is reaped next, and the protocol
+    // pipes are released last.
+    drop(guard);
+    let _ = tokio::time::timeout(TERMINATION_GRACE, process.wait()).await;
+    drop(stdin);
+    drop(stdout);
 }
 
 /// A launch failure that is deterministic for this host: retrying cannot make

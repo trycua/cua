@@ -1651,4 +1651,92 @@ write_frame({'protocol':'cua-perception/1','request_id':request['request_id'],'s
             .unwrap();
         assert_ne!(original_pid, replacement_pid);
     }
+
+    /// A stand-in for an installed extension's health or self-test hook. A
+    /// shipped hook is the extension's own native binary, so as with the worker
+    /// fixtures the interpreter is opted into the sandbox explicitly rather
+    /// than by widening the boundary for everyone.
+    fn fixture_hook(mode: &str) -> (tempfile::TempDir, PathBuf, Vec<String>) {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("fixture-hook.py");
+        let script = r#"#!/usr/bin/env python3
+import sys, time
+
+mode = sys.argv[1]
+if mode == 'chatty':
+    sys.stdout.buffer.write(b'x' * (4 * 1024 * 1024))
+    sys.stdout.buffer.flush()
+elif mode == 'hang':
+    time.sleep(120)
+elif mode == 'fail':
+    sys.exit(7)
+sys.exit(0)
+"#;
+        std::fs::write(&path, with_fixture_interpreter(script)).unwrap();
+        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&path, permissions).unwrap();
+        (directory, path, vec![mode.to_owned()])
+    }
+
+    async fn run_fixture_hook(mode: &str, timeout: Duration) -> containment::HookOutcome {
+        let (_directory, hook, args) = fixture_hook(mode);
+        containment::run_contained_hook(&hook, &args, &fixture_limits(&args), timeout)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_contained_hook_reports_how_it_exited() {
+        assert_eq!(
+            run_fixture_hook("ok", Duration::from_secs(30)).await,
+            containment::HookOutcome::Succeeded
+        );
+        assert!(matches!(
+            run_fixture_hook("fail", Duration::from_secs(30)).await,
+            containment::HookOutcome::Failed(_)
+        ));
+    }
+
+    /// A hook that never exits is killed at its deadline rather than holding
+    /// the install or status command open.
+    #[tokio::test]
+    async fn a_contained_hook_that_outlives_its_deadline_is_killed() {
+        let started = Instant::now();
+        assert_eq!(
+            run_fixture_hook("hang", Duration::from_millis(500)).await,
+            containment::HookOutcome::TimedOut
+        );
+        assert!(started.elapsed() < Duration::from_secs(30));
+    }
+
+    /// The hook's output is discarded as it arrives, so a hook that fills its
+    /// pipe still finishes instead of blocking until its deadline.
+    #[tokio::test]
+    async fn a_contained_hook_that_floods_its_output_still_finishes() {
+        assert_eq!(
+            run_fixture_hook("chatty", Duration::from_secs(30)).await,
+            containment::HookOutcome::Succeeded
+        );
+    }
+
+    /// A hook gets no more authority than a parse: the same boundary refuses a
+    /// launch it cannot fully contain.
+    #[tokio::test]
+    async fn a_contained_hook_refuses_a_missing_entrypoint() {
+        let directory = tempfile::tempdir().unwrap();
+        let missing = directory.path().join("absent-hook");
+        let failure = containment::run_contained_hook(
+            &missing,
+            &[],
+            &ContainmentLimits::default(),
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(
+            failure.code,
+            VisualParseErrorCode::WorkerLaunchFailed | VisualParseErrorCode::UnsupportedPlatform
+        ));
+    }
 }

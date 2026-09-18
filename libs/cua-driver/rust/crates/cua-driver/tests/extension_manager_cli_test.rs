@@ -97,8 +97,13 @@ fn fixture_archive_with_legal_bindings(
         "corresponding_source_uri": "https://github.com/trycua/cua",
         "corresponding_source_revision": "integration-fixture",
         "provenance": "integration test fixture",
-        "health_args": ["health"],
-        "self_test_args": ["self-test"]
+        // Hooks now run inside the perception worker's containment boundary,
+        // which grants execution to the entrypoint image alone. A scripted
+        // fixture entrypoint cannot launch there, so this end-to-end fixture
+        // declares no hook; hook behavior is covered by the focused
+        // extension-manager and containment unit tests.
+        "health_args": [],
+        "self_test_args": []
     });
     if !legal_bindings {
         manifest_value["components"][0]

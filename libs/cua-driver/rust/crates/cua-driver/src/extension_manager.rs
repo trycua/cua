@@ -311,6 +311,89 @@ struct InspectedArchive {
     expanded_size: u64,
 }
 
+#[derive(Debug, Serialize)]
+struct InstallReview {
+    extension: &'static str,
+    id: String,
+    name: String,
+    artifact: String,
+    backend: &'static str,
+    acceleration: &'static str,
+    version: String,
+    target: String,
+    publisher: Option<String>,
+    publisher_id: Option<String>,
+    publisher_name: Option<String>,
+    publisher_key_id: Option<String>,
+    signing_key_algorithm: Option<String>,
+    signing_key_status: &'static str,
+    publisher_signature_verified: bool,
+    catalog_version: Option<u64>,
+    catalog_expires_unix: Option<u64>,
+    trust: TrustClass,
+    evidence_class: &'static str,
+    artifact_source: String,
+    destination: String,
+    download_size: u64,
+    installed_size: u64,
+    archive_sha256: String,
+    manifest_sha256: String,
+    license: String,
+    license_notices: Vec<LicenseNoticeReview>,
+    model_licenses: Vec<ModelLicenseReview>,
+    source: String,
+    corresponding_source: CorrespondingSourceReview,
+    corresponding_source_uri: String,
+    corresponding_source_revision: String,
+    provenance: String,
+    files: Vec<ManifestFile>,
+    models: Vec<ManifestModel>,
+    components: Vec<ComponentLicense>,
+    authorization: InstallAuthorizationReview,
+    mutation_performed: bool,
+    installed: bool,
+    ran: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    installed_version: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct LicenseNoticeReview {
+    component: String,
+    license: String,
+    file: Option<ArtifactBinding>,
+}
+
+#[derive(Debug, Serialize)]
+struct ModelLicenseReview {
+    model: String,
+    file: Option<ArtifactBinding>,
+}
+
+#[derive(Debug, Serialize)]
+struct CorrespondingSourceReview {
+    file: Option<ArtifactBinding>,
+    uri: String,
+    revision: String,
+}
+
+#[derive(Debug, Serialize)]
+struct InstallAuthorizationReview {
+    request: &'static str,
+    confirmation_required: bool,
+    confirmation_received: bool,
+    mutation_authorized: bool,
+    mutation_performed: bool,
+}
+
+#[derive(Clone, Copy)]
+enum InstallReviewRequest {
+    CliInspect,
+    CliInstall,
+    CliUpdate,
+    Mcp { confirmed: bool },
+}
+
 struct BoundedReader<R> {
     inner: R,
     remaining: u64,
@@ -531,79 +614,131 @@ fn install_extension_from_mcp(confirmed: bool) -> Result<(String, serde_json::Va
     };
     let source = resolve_install_source(entry, &parsed, &store)?;
     let inspected = inspect_without_mutation(entry, &source)?;
-    let plan = mcp_install_plan(entry, &store, &inspected, &source)?;
+    let mut review = install_review(
+        entry,
+        &store,
+        &inspected,
+        &source,
+        InstallReviewRequest::Mcp { confirmed },
+    );
     if !confirmed {
         return Ok((
             "Perception extension plan verified. Review the structured plan, then re-call install_extension with name=\"perception\" and confirm=true.".to_owned(),
-            plan,
+            serde_json::to_value(review)?,
         ));
     }
     if store.active_path(entry.id)?.is_some() {
         bail!("perception is already installed; use the CLI extension update command with a reviewed catalog");
     }
     let installed = store.install_source(entry, &source, false)?;
-    let mut result = plan;
-    result["installed"] = serde_json::Value::Bool(true);
-    result["ran"] = serde_json::Value::Bool(true);
-    result["installed_version"] = serde_json::Value::String(installed.version);
+    review.authorization.mutation_performed = true;
+    review.mutation_performed = true;
+    review.installed = true;
+    review.ran = true;
+    review.installed_version = Some(installed.version);
     Ok((
         "Perception extension installed from the verified plan.".to_owned(),
-        result,
+        serde_json::to_value(review)?,
     ))
 }
 
-fn mcp_install_plan(
+fn install_review(
     entry: &RegistryEntry,
     store: &ExtensionStore,
     inspected: &InspectedArchive,
     source: &InstallSource,
-) -> Result<serde_json::Value> {
+    request: InstallReviewRequest,
+) -> InstallReview {
     let manifest = &inspected.manifest;
-    let catalog = source
-        .catalog
-        .as_ref()
-        .ok_or_else(|| anyhow!("MCP installation requires a signed catalog"))?;
-    let notices = manifest
+    let catalog = source.catalog.as_ref();
+    let license_notices = manifest
         .components
         .iter()
-        .map(|component| {
-            serde_json::json!({
-                "component": component.name,
-                "license": component.license,
-                "file": component.notice_file,
-            })
+        .map(|component| LicenseNoticeReview {
+            component: component.name.clone(),
+            license: component.license.clone(),
+            file: component.notice_file.clone(),
         })
         .collect::<Vec<_>>();
     let model_licenses = manifest
         .models
         .iter()
-        .map(|model| serde_json::json!({"model": model.path, "file": model.license_file}))
+        .map(|model| ModelLicenseReview {
+            model: model.path.clone(),
+            file: model.license_file.clone(),
+        })
         .collect::<Vec<_>>();
-    Ok(serde_json::json!({
-        "extension": "perception",
-        "artifact": format!("{} {}", entry.id, manifest.version),
-        "backend": "icon detection and OCR",
-        "download_size": inspected.archive_size,
-        "installed_size": inspected.expanded_size,
-        "destination": store.versions_dir(entry.id).join(&manifest.version).display().to_string(),
-        "license_notices": notices,
-        "model_licenses": model_licenses,
-        "corresponding_source": {
-            "file": manifest.corresponding_source_file,
-            "uri": manifest.corresponding_source_uri,
-            "revision": manifest.corresponding_source_revision,
+    let (request_name, confirmation_required, confirmation_received, mutation_authorized) =
+        match request {
+            InstallReviewRequest::CliInspect => ("cli-inspect", false, false, false),
+            InstallReviewRequest::CliInstall => ("cli-install", false, true, true),
+            InstallReviewRequest::CliUpdate => ("cli-update", false, true, true),
+            InstallReviewRequest::Mcp { confirmed } => ("mcp-install", true, confirmed, confirmed),
+        };
+    InstallReview {
+        extension: "perception",
+        id: entry.id.to_owned(),
+        name: entry.display_name.to_owned(),
+        artifact: format!("{} {}", entry.id, manifest.version),
+        backend: "icon detection and OCR",
+        acceleration: "CPU",
+        version: manifest.version.clone(),
+        target: manifest.target.clone(),
+        publisher: catalog.map(|catalog| catalog.publisher_name.clone()),
+        publisher_id: catalog.map(|catalog| catalog.publisher_id.clone()),
+        publisher_name: catalog.map(|catalog| catalog.publisher_name.clone()),
+        publisher_key_id: catalog.map(|catalog| catalog.key_id.clone()),
+        signing_key_algorithm: source
+            .signed_catalog
+            .as_ref()
+            .map(|catalog| catalog.signature_algorithm.clone()),
+        signing_key_status: if catalog.is_some() {
+            "verified"
+        } else {
+            "unsigned-local"
         },
-        "acceleration": "CPU",
-        "target": manifest.target,
-        "catalog_version": catalog.catalog_version,
-        "catalog_expires_unix": catalog.expires_unix,
-        "archive_sha256": inspected.archive_sha256,
-        "manifest_sha256": hex_sha256(&inspected.manifest_bytes),
-        "trust": source.trust,
-        "evidence_class": evidence_class(&source.trust),
-        "installed": false,
-        "ran": false,
-    }))
+        publisher_signature_verified: catalog.is_some(),
+        catalog_version: catalog.map(|catalog| catalog.catalog_version),
+        catalog_expires_unix: catalog.map(|catalog| catalog.expires_unix),
+        trust: source.trust.clone(),
+        evidence_class: evidence_class(&source.trust),
+        artifact_source: source.archive.display().to_string(),
+        destination: store
+            .versions_dir(entry.id)
+            .join(&manifest.version)
+            .display()
+            .to_string(),
+        download_size: inspected.archive_size,
+        installed_size: inspected.expanded_size,
+        archive_sha256: inspected.archive_sha256.clone(),
+        manifest_sha256: hex_sha256(&inspected.manifest_bytes),
+        license: manifest.license.clone(),
+        license_notices,
+        model_licenses,
+        source: manifest.source.clone(),
+        corresponding_source: CorrespondingSourceReview {
+            file: manifest.corresponding_source_file.clone(),
+            uri: manifest.corresponding_source_uri.clone(),
+            revision: manifest.corresponding_source_revision.clone(),
+        },
+        corresponding_source_uri: manifest.corresponding_source_uri.clone(),
+        corresponding_source_revision: manifest.corresponding_source_revision.clone(),
+        provenance: manifest.provenance.clone(),
+        files: manifest.files.clone(),
+        models: manifest.models.clone(),
+        components: manifest.components.clone(),
+        authorization: InstallAuthorizationReview {
+            request: request_name,
+            confirmation_required,
+            confirmation_received,
+            mutation_authorized,
+            mutation_performed: false,
+        },
+        mutation_performed: false,
+        installed: false,
+        ran: false,
+        installed_version: None,
+    }
 }
 
 fn run_inner(args: &[String]) -> Result<()> {
@@ -625,7 +760,16 @@ fn run_inner(args: &[String]) -> Result<()> {
             let entry = registry_entry(required_id(id, "inspect")?)?;
             let source = resolve_install_source(entry, &parsed, &store)?;
             let inspected = inspect_without_mutation(entry, &source)?;
-            print_preview(entry, &inspected, &source, json)
+            print_preview(
+                &install_review(
+                    entry,
+                    &store,
+                    &inspected,
+                    &source,
+                    InstallReviewRequest::CliInspect,
+                ),
+                json,
+            )
         }
         "status" => match id {
             Some(id) => print_info(&store, registry_entry(id)?, parsed.self_test, json),
@@ -637,7 +781,15 @@ fn run_inner(args: &[String]) -> Result<()> {
             let entry = registry_entry(id)?;
             let source = resolve_install_source(entry, &parsed, &store)?;
             let inspected = inspect_without_mutation(entry, &source)?;
-            print_preview(entry, &inspected, &source, false)?;
+            let request = if subcommand == "update" {
+                InstallReviewRequest::CliUpdate
+            } else {
+                InstallReviewRequest::CliInstall
+            };
+            print_preview(
+                &install_review(entry, &store, &inspected, &source, request),
+                false,
+            )?;
             let installed = store.install_source(entry, &source, subcommand == "update")?;
             println!(
                 "{} {} {} at {} ({})",
@@ -1434,63 +1586,54 @@ fn validate_source_metadata(inspected: &InspectedArchive, source: &InstallSource
     Ok(())
 }
 
-fn print_preview(
-    entry: &RegistryEntry,
-    inspected: &InspectedArchive,
-    source: &InstallSource,
-    json: bool,
-) -> Result<()> {
-    let manifest = &inspected.manifest;
-    let preview = serde_json::json!({
-        "id": entry.id,
-        "version": manifest.version,
-        "target": manifest.target,
-        "publisher": source.catalog.as_ref().map(|catalog| catalog.publisher_name.as_str()),
-        "publisher_key_id": source.catalog.as_ref().map(|catalog| catalog.key_id.as_str()),
-        "catalog_version": source.catalog.as_ref().map(|catalog| catalog.catalog_version),
-        "catalog_expires_unix": source.catalog.as_ref().map(|catalog| catalog.expires_unix),
-        "publisher_signature_verified": source.catalog.is_some(),
-        "trust": source.trust,
-        "evidence_class": evidence_class(&source.trust),
-        "license": manifest.license,
-        "source": manifest.source,
-        "corresponding_source_uri": manifest.corresponding_source_uri,
-        "corresponding_source_revision": manifest.corresponding_source_revision,
-        "provenance": manifest.provenance,
-        "archive_sha256": inspected.archive_sha256,
-        "manifest_sha256": hex_sha256(&inspected.manifest_bytes),
-        "files": manifest.files,
-        "models": manifest.models,
-        "components": manifest.components,
-        "mutation_performed": false,
-    });
+fn print_preview(preview: &InstallReview, json: bool) -> Result<()> {
     if json {
         println!("{}", serde_json::to_string_pretty(&preview)?);
     } else {
-        println!("Extension: {} {}", entry.id, manifest.version);
-        println!("Trust: {}", trust_label(&source.trust));
-        println!("Evidence class: {}", evidence_class(&source.trust));
+        println!("Extension: {} {}", preview.id, preview.version);
+        println!("Name: {}", preview.name);
+        println!("Trust: {}", trust_label(&preview.trust));
+        println!("Evidence class: {}", preview.evidence_class);
         #[cfg(feature = "review-trust-root")]
-        if source.trust == TrustClass::ReviewOnlyPublisherVerified {
+        if preview.trust == TrustClass::ReviewOnlyPublisherVerified {
             println!("{REVIEW_TRUST_NOTICE}");
         }
-        if let Some(catalog) = &source.catalog {
+        if let (Some(publisher), Some(key), Some(catalog), Some(expires)) = (
+            &preview.publisher_name,
+            &preview.publisher_key_id,
+            preview.catalog_version,
+            preview.catalog_expires_unix,
+        ) {
             println!(
                 "Publisher signature: verified {} with key {} (catalog {}, expires {})",
-                catalog.publisher_name,
-                catalog.key_id,
-                catalog.catalog_version,
-                catalog.expires_unix
+                publisher, key, catalog, expires
             );
         }
-        println!("License: {}", manifest.license);
-        println!("Source: {}", manifest.source);
+        println!("Signing key status: {}", preview.signing_key_status);
+        if let Some(publisher_id) = &preview.publisher_id {
+            println!("Publisher ID: {publisher_id}");
+        }
+        if let Some(algorithm) = &preview.signing_key_algorithm {
+            println!("Signing key algorithm: {algorithm}");
+        }
+        println!("Artifact source: {}", preview.artifact_source);
+        println!("Destination: {}", preview.destination);
+        println!("Download size: {} bytes", preview.download_size);
+        println!("Installed size: {} bytes", preview.installed_size);
+        println!("License: {}", preview.license);
+        println!("Source: {}", preview.source);
         println!(
             "Corresponding source: {} @ {}",
-            manifest.corresponding_source_uri, manifest.corresponding_source_revision
+            preview.corresponding_source_uri, preview.corresponding_source_revision
         );
-        println!("Provenance: {}", manifest.provenance);
-        for component in &manifest.components {
+        if let Some(file) = &preview.corresponding_source.file {
+            println!(
+                "Corresponding source file: {} | SHA-256 {}",
+                file.path, file.sha256
+            );
+        }
+        println!("Provenance: {}", preview.provenance);
+        for component in &preview.components {
             println!(
                 "Component: {} {} | {} | {} @ {} | notice: {}",
                 component.name,
@@ -1500,18 +1643,34 @@ fn print_preview(
                 component.source_revision,
                 component.notice
             );
+            if let Some(file) = &component.notice_file {
+                println!(
+                    "Component notice file: {} | SHA-256 {}",
+                    file.path, file.sha256
+                );
+            }
         }
-        for model in &manifest.models {
+        for model in &preview.models {
             println!(
                 "Model: {} @ {} | original {} | conversion {}",
                 model.path, model.revision, model.original_sha256, model.conversion_sha256
             );
+            if let Some(file) = &model.license_file {
+                println!(
+                    "Model license file: {} | SHA-256 {}",
+                    file.path, file.sha256
+                );
+            }
         }
-        println!("Target: {}", manifest.target);
-        println!("Archive SHA-256: {}", inspected.archive_sha256);
+        println!("Target: {}", preview.target);
+        println!("Archive SHA-256: {}", preview.archive_sha256);
+        println!("Manifest SHA-256: {}", preview.manifest_sha256);
         println!(
-            "Manifest SHA-256: {}",
-            hex_sha256(&inspected.manifest_bytes)
+            "Authorization: request={}, confirmation_required={}, confirmation_received={}, mutation_authorized={}",
+            preview.authorization.request,
+            preview.authorization.confirmation_required,
+            preview.authorization.confirmation_received,
+            preview.authorization.mutation_authorized,
         );
         println!("Preview complete; no extension state was changed.");
     }
@@ -4727,8 +4886,40 @@ mod tests {
         assert_eq!(plan["extension"], "perception");
         assert_eq!(plan["artifact"], "cua-perception 1.0.0");
         assert_eq!(plan["target"], current_target().unwrap());
+        assert_eq!(plan["publisher_id"], REVIEW_PUBLISHER_ID);
+        assert_eq!(plan["publisher_name"], REVIEW_PUBLISHER_NAME);
+        assert_eq!(plan["publisher_key_id"], REVIEW_KEY_ID);
+        assert_eq!(plan["signing_key_algorithm"], "ed25519");
+        assert_eq!(plan["signing_key_status"], "verified");
+        assert_eq!(plan["publisher_signature_verified"], true);
         assert_eq!(plan["trust"], "review-only-publisher-verified");
         assert_eq!(plan["evidence_class"], "review-only-not-release-evidence");
+        assert_eq!(
+            plan["artifact_source"],
+            temp.path()
+                .join("review-extension.tar.gz")
+                .to_string_lossy()
+                .as_ref()
+        );
+        assert_eq!(
+            plan["destination"],
+            home.join("extensions/cua-perception/versions/1.0.0")
+                .to_string_lossy()
+                .as_ref()
+        );
+        assert!(plan["download_size"].as_u64().unwrap() > 0);
+        assert!(plan["installed_size"].as_u64().unwrap() > 0);
+        assert_eq!(plan["models"][0]["revision"], "model-v1");
+        assert_eq!(plan["models"][0]["original_sha256"], "1".repeat(64));
+        assert_eq!(plan["models"][0]["conversion_sha256"], hex_sha256(b"model"));
+        assert_eq!(plan["components"][0]["license"], "AGPL-3.0-or-later");
+        assert_eq!(plan["license_notices"][0]["license"], "AGPL-3.0-or-later");
+        assert_eq!(plan["authorization"]["request"], "mcp-install");
+        assert_eq!(plan["authorization"]["confirmation_required"], true);
+        assert_eq!(plan["authorization"]["confirmation_received"], false);
+        assert_eq!(plan["authorization"]["mutation_authorized"], false);
+        assert_eq!(plan["authorization"]["mutation_performed"], false);
+        assert_eq!(plan["mutation_performed"], false);
         assert_eq!(plan["ran"], false);
         assert!(!home.join("extensions/cua-perception").exists());
 
@@ -4736,6 +4927,10 @@ mod tests {
         assert_eq!(installed["ran"], true);
         assert_eq!(installed["installed"], true);
         assert_eq!(installed["installed_version"], "1.0.0");
+        assert_eq!(installed["authorization"]["confirmation_received"], true);
+        assert_eq!(installed["authorization"]["mutation_authorized"], true);
+        assert_eq!(installed["authorization"]["mutation_performed"], true);
+        assert_eq!(installed["mutation_performed"], true);
         assert!(home.join("extensions/cua-perception/active.json").is_file());
 
         std::env::remove_var("CUA_DRIVER_PERCEPTION_CATALOG");

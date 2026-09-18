@@ -271,8 +271,34 @@ fn developer_lifecycle_is_explicit_previewed_and_removable() {
         String::from_utf8_lossy(&inspect.stderr)
     );
     let preview: Value = serde_json::from_slice(&inspect.stdout).unwrap();
+    assert_eq!(preview["name"], "Cua Perception");
     assert_eq!(preview["trust"], "developer-unsigned-local");
+    assert_eq!(preview["signing_key_status"], "unsigned-local");
+    assert_eq!(
+        preview["artifact_source"],
+        archive.to_string_lossy().as_ref()
+    );
+    assert_eq!(
+        preview["destination"],
+        home.join("extensions/cua-perception/versions/1.2.3")
+            .to_string_lossy()
+            .as_ref()
+    );
+    assert!(preview["download_size"].as_u64().unwrap() > 0);
+    assert!(preview["installed_size"].as_u64().unwrap() > 0);
     assert_eq!(preview["license"], "Apache-2.0");
+    assert_eq!(preview["models"][0]["revision"], "model-v1");
+    assert_eq!(preview["models"][0]["original_sha256"], "11".repeat(32));
+    assert_eq!(
+        preview["models"][0]["conversion_sha256"],
+        preview["files"][1]["sha256"]
+    );
+    assert_eq!(preview["components"][0]["license"], "Apache-2.0");
+    assert_eq!(preview["model_licenses"][0]["model"], "models/parser.bin");
+    assert_eq!(preview["authorization"]["request"], "cli-inspect");
+    assert_eq!(preview["authorization"]["confirmation_required"], false);
+    assert_eq!(preview["authorization"]["mutation_authorized"], false);
+    assert_eq!(preview["authorization"]["mutation_performed"], false);
     assert_eq!(preview["mutation_performed"], false);
     assert!(!home.join("extensions/cua-perception").exists());
 
@@ -292,7 +318,14 @@ fn developer_lifecycle_is_explicit_previewed_and_removable() {
         "{}",
         String::from_utf8_lossy(&install.stderr)
     );
-    assert!(String::from_utf8_lossy(&install.stdout).contains("developer-unsigned-local"));
+    let install_stdout = String::from_utf8_lossy(&install.stdout);
+    assert!(install_stdout.contains("developer-unsigned-local"));
+    assert!(install_stdout.contains("Signing key status: unsigned-local"));
+    assert!(install_stdout.contains("Destination:"));
+    assert!(install_stdout.contains("Download size:"));
+    assert!(install_stdout.contains("Model: models/parser.bin @ model-v1"));
+    assert!(install_stdout.contains("Model license file: LICENSES/model.txt"));
+    assert!(install_stdout.contains("mutation_authorized=true"));
 
     let status = run(
         &home,
@@ -451,6 +484,19 @@ fn cli_rejects_ambiguous_extension_arguments() {
     }
 }
 
+#[test]
+fn cli_parse_errors_do_not_create_extension_state() {
+    let temp = TempDir::new().unwrap();
+    let home = temp.path().join("driver-home");
+    let output = run(
+        &home,
+        &["extension", "install", "cua-perception", "--catalog"],
+    );
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--catalog requires a value"));
+    assert!(!home.join("extensions").exists());
+}
+
 #[cfg(feature = "review-trust-root")]
 #[test]
 fn review_signed_lifecycle_is_distinct_fail_closed_and_rollback_safe() {
@@ -491,6 +537,24 @@ fn review_signed_lifecycle_is_distinct_fail_closed_and_rollback_safe() {
     );
     assert_eq!(preview["target"], current_target());
     assert_eq!(preview["version"], "1.2.3");
+    assert_eq!(preview["publisher_id"], "cua-review-only");
+    assert_eq!(preview["publisher_name"], "Cua REVIEW ONLY");
+    assert_eq!(preview["publisher_key_id"], "review-only-build-override");
+    assert_eq!(preview["signing_key_algorithm"], "ed25519");
+    assert_eq!(preview["signing_key_status"], "verified");
+    assert_eq!(preview["publisher_signature_verified"], true);
+    assert_eq!(
+        preview["destination"],
+        home.join("extensions/cua-perception/versions/1.2.3")
+            .to_string_lossy()
+            .as_ref()
+    );
+    assert!(preview["download_size"].as_u64().unwrap() > 0);
+    assert!(preview["installed_size"].as_u64().unwrap() > 0);
+    assert_eq!(preview["models"][0]["revision"], "model-v1");
+    assert_eq!(preview["license_notices"][0]["license"], "Apache-2.0");
+    assert_eq!(preview["authorization"]["request"], "cli-inspect");
+    assert_eq!(preview["authorization"]["mutation_authorized"], false);
     assert_eq!(preview["mutation_performed"], false);
 
     let install = run(

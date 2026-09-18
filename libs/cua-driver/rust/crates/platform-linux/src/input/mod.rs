@@ -1820,6 +1820,200 @@ pub fn mapped_popup_windows() -> Vec<PopupWindow> {
     popups
 }
 
+/// `_NET_WM_WINDOW_TYPE` says the popup is a tooltip / notification / DND
+/// icon: mapped and override-redirect, but nobody's grab.
+fn popup_is_passive(display: *mut x11::xlib::Display, window: x11::xlib::Window) -> bool {
+    let type_atom = intern_atom(display, "_NET_WM_WINDOW_TYPE");
+    let passive: Vec<x11::xlib::Atom> = [
+        "_NET_WM_WINDOW_TYPE_TOOLTIP",
+        "_NET_WM_WINDOW_TYPE_NOTIFICATION",
+        "_NET_WM_WINDOW_TYPE_DND",
+    ]
+    .iter()
+    .map(|name| intern_atom(display, name))
+    .collect();
+    let mut actual_type: x11::xlib::Atom = 0;
+    let mut actual_format: std::os::raw::c_int = 0;
+    let mut nitems: std::os::raw::c_ulong = 0;
+    let mut bytes_after: std::os::raw::c_ulong = 0;
+    let mut prop: *mut std::os::raw::c_uchar = ptr::null_mut();
+    let previous_handler = unsafe { x11::xlib::XSetErrorHandler(Some(ignore_x_error)) };
+    let rc = unsafe {
+        x11::xlib::XGetWindowProperty(
+            display,
+            window,
+            type_atom,
+            0,
+            8,
+            0,
+            x11::xlib::XA_ATOM,
+            &mut actual_type,
+            &mut actual_format,
+            &mut nitems,
+            &mut bytes_after,
+            &mut prop,
+        )
+    };
+    unsafe {
+        x11::xlib::XSync(display, 0);
+        x11::xlib::XSetErrorHandler(previous_handler);
+    }
+    let mut result = false;
+    if rc == 0 && !prop.is_null() {
+        if actual_format == 32 && nitems > 0 {
+            let atoms = unsafe {
+                std::slice::from_raw_parts(prop as *const std::os::raw::c_ulong, nitems as usize)
+            };
+            result = atoms
+                .iter()
+                .any(|atom| passive.contains(&(*atom as x11::xlib::Atom)));
+        }
+        unsafe { x11::xlib::XFree(prop as *mut _) };
+    }
+    result
+}
+
+fn intern_atom(display: *mut x11::xlib::Display, name: &str) -> x11::xlib::Atom {
+    let cname = CString::new(name).unwrap_or_default();
+    unsafe { x11::xlib::XInternAtom(display, cname.as_ptr(), 0) }
+}
+
+/// The topmost mapped override-redirect popup that `pid` owns (a Qt combo
+/// list or completer, a GTK/VCL menu) — the toolkit behind it holds an
+/// active keyboard grab that makes the X server drop core key events from
+/// any *other* master keyboard aimed at that client (`IsInterferingGrab`),
+/// so the virtual master keyboard route is silently lost while it is up.
+/// Tooltips / notifications are not grabs and do not count.
+pub fn popup_of_pid(pid: u32) -> Option<PopupWindow> {
+    let display = open_display().ok()?;
+    let popup = mapped_popups(display)
+        .into_iter()
+        .rev()
+        .filter(|popup| popup.pid == Some(pid))
+        .find(|popup| !popup_is_passive(display, popup.window as x11::xlib::Window));
+    unsafe {
+        x11::xlib::XCloseDisplay(display);
+    }
+    popup
+}
+
+/// `_NET_WM_PID` of the window holding the core keyboard focus, walking up
+/// its X parents (the focus often sits on a child of the client toplevel).
+pub fn core_focus_owner_pid() -> Option<u32> {
+    let display = open_display().ok()?;
+    let mut focus: x11::xlib::Window = 0;
+    let mut revert: std::os::raw::c_int = 0;
+    unsafe { x11::xlib::XGetInputFocus(display, &mut focus, &mut revert) };
+    let root = unsafe { x11::xlib::XDefaultRootWindow(display) };
+    let mut owner = None;
+    let mut current = focus;
+    for _ in 0..8 {
+        if current == 0 || current == root || current == x11::xlib::PointerRoot as x11::xlib::Window {
+            break;
+        }
+        if let Some(pid) = crate::x11::window_pid(current as u64) {
+            owner = Some(pid);
+            break;
+        }
+        let mut parent: x11::xlib::Window = 0;
+        let mut qroot: x11::xlib::Window = 0;
+        let mut children: *mut x11::xlib::Window = ptr::null_mut();
+        let mut n: std::os::raw::c_uint = 0;
+        let previous_handler = unsafe { x11::xlib::XSetErrorHandler(Some(ignore_x_error)) };
+        let rc = unsafe {
+            x11::xlib::XQueryTree(display, current, &mut qroot, &mut parent, &mut children, &mut n)
+        };
+        unsafe {
+            x11::xlib::XSync(display, 0);
+            x11::xlib::XSetErrorHandler(previous_handler);
+        }
+        if !children.is_null() {
+            unsafe { x11::xlib::XFree(children as *mut _) };
+        }
+        if rc == 0 || parent == current {
+            break;
+        }
+        current = parent;
+    }
+    unsafe {
+        x11::xlib::XCloseDisplay(display);
+    }
+    owner
+}
+
+/// Delivery path name for keys sent on the core keyboard while the target's
+/// own popup holds the keyboard grab.
+pub const XTEST_CORE_GRAB_PATH: &str = "xtest_core_grab";
+
+/// A popup of the target pid holds the keyboard grab and the core focus is
+/// not the target's, so no route reaches the target without stealing input
+/// from the focused application; refused before any key was sent.
+#[derive(Debug, Clone)]
+pub struct PopupKeyboardGrab {
+    pub pid: u32,
+    pub popup: PopupWindow,
+    pub focus_owner: Option<u32>,
+}
+
+impl std::fmt::Display for PopupKeyboardGrab {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "pid {} has {} open, which holds a keyboard grab that drops keys from the virtual \
+             keyboard, and the core focus belongs to {}; no key was sent",
+            self.pid,
+            self.popup.describe(),
+            match self.focus_owner {
+                Some(pid) => format!("pid {pid}"),
+                None => "no window".to_owned(),
+            }
+        )
+    }
+}
+impl std::error::Error for PopupKeyboardGrab {}
+
+/// Keys for a target whose own popup (`popup`) holds the keyboard grab: the
+/// X server routes the *core* keyboard to the grab holder, which is the
+/// target itself, so XTest on the core keyboard reaches it without any
+/// focus change — verified afterwards on the core focus and the active
+/// window. Refused (`PopupKeyboardGrab`) when the core focus belongs to
+/// another pid: then a missing grab would send the keys elsewhere.
+pub fn send_keys_under_popup_grab(
+    pid: u32,
+    popup: PopupWindow,
+    send: impl FnOnce() -> Result<()>,
+) -> Result<KeyboardDeliveryReport> {
+    let focus_owner = core_focus_owner_pid();
+    if focus_owner != Some(pid) {
+        return Err(PopupKeyboardGrab {
+            pid,
+            popup,
+            focus_owner,
+        }
+        .into());
+    }
+    let display = open_display()?;
+    let saved = save_focus_state(display);
+    let sent = send();
+    unsafe { x11::xlib::XSync(display, 0) };
+    let unchanged = focus_state_unchanged(display, &saved);
+    unsafe {
+        x11::xlib::XCloseDisplay(display);
+    }
+    sent?;
+    Ok(KeyboardDeliveryReport {
+        virtual_focus_held: true,
+        core_focus_unchanged: unchanged,
+        delivery_confirmed: true,
+        key_events: 0,
+        skipped_characters: Vec::new(),
+        focus_guard: None,
+        released_stuck: Vec::new(),
+        path: XTEST_CORE_GRAB_PATH,
+        grab_popup: Some(popup),
+    })
+}
+
 /// Cheap post-checks a real-pointer action can make without touching the
 /// application: whether the WM's active window / core focus stayed put, and
 /// whether the screen region around the action point changed.
@@ -1851,6 +2045,119 @@ pub struct PointerEffect {
     pub popups: Vec<PopupWindow>,
     /// The window-local point the caller asked for, when it had one.
     pub window_point: Option<(i32, i32)>,
+    /// A toplevel of ANOTHER pid under the action point (a drop target, the
+    /// window a drag ended on): what it did during the action.
+    pub foreign_window: Option<ForeignWindowEffect>,
+}
+
+/// What a toplevel of another pid under the action point did during the
+/// action: its title before/after and the windows its pid mapped meanwhile.
+/// The focus guard only watches the target pid, so a file dropped onto VLC
+/// (auto-played, title changed) would otherwise be invisible.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ForeignWindowEffect {
+    pub window: u64,
+    pub pid: u32,
+    pub title_before: String,
+    pub title_after: String,
+    pub new_windows: Vec<(u64, String)>,
+}
+
+impl ForeignWindowEffect {
+    pub fn changed(&self) -> bool {
+        self.title_before != self.title_after || !self.new_windows.is_empty()
+    }
+
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "window_id": self.window,
+            "pid": self.pid,
+            "title_before": self.title_before,
+            "title_after": self.title_after,
+            "new_windows": self.new_windows.iter().map(|(id, title)| serde_json::json!({"window_id": id, "title": title})).collect::<Vec<_>>(),
+        })
+    }
+
+    /// One sentence for the tool text.
+    pub fn describe(&self) -> String {
+        let mut parts = Vec::new();
+        if self.title_before != self.title_after {
+            parts.push(format!(
+                "its title changed from \"{}\" to \"{}\"",
+                self.title_before, self.title_after
+            ));
+        }
+        if !self.new_windows.is_empty() {
+            parts.push(format!(
+                "it opened {}",
+                self.new_windows
+                    .iter()
+                    .map(|(id, title)| format!("window {id} \"{title}\""))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        format!(
+            "The point was over window {} of another application (pid {}); {}.",
+            self.window,
+            self.pid,
+            if parts.is_empty() {
+                "it did not visibly react (title unchanged, no new window)".to_owned()
+            } else {
+                parts.join(" and ")
+            }
+        )
+    }
+}
+
+/// The topmost managed toplevel under the screen point that belongs to a
+/// pid other than `target_pid`, with that pid's toplevels at this moment.
+fn foreign_toplevel_under(target_pid: Option<u32>, x: i32, y: i32) -> Option<(crate::x11::WindowInfo, Vec<u64>)> {
+    let windows = crate::x11::list_windows(None);
+    let hit = windows
+        .iter()
+        .rev()
+        .find(|w| {
+            w.is_on_screen
+                && w.width > 0
+                && w.height > 0
+                && x >= w.x
+                && y >= w.y
+                && x < w.x + w.width as i32
+                && y < w.y + w.height as i32
+        })?
+        .clone();
+    let pid = hit.pid?;
+    if target_pid == Some(pid) {
+        return None;
+    }
+    let owned = windows
+        .iter()
+        .filter(|w| w.pid == Some(pid))
+        .map(|w| w.xid)
+        .collect();
+    Some((hit, owned))
+}
+
+/// Re-read the foreign toplevel after the action.
+fn foreign_window_effect(before: Option<(crate::x11::WindowInfo, Vec<u64>)>) -> Option<ForeignWindowEffect> {
+    let (hit, owned) = before?;
+    let pid = hit.pid?;
+    let title_after = crate::x11::window_info(hit.xid)
+        .map(|w| w.title)
+        .unwrap_or_default();
+    let new_windows = crate::x11::list_windows(Some(pid))
+        .into_iter()
+        .filter(|w| !owned.contains(&w.xid) && w.is_on_screen)
+        .map(|w| (w.xid, w.title))
+        .collect();
+    Some(ForeignWindowEffect {
+        window: hit.xid,
+        pid,
+        title_before: hit.title,
+        title_after,
+        new_windows,
+    })
 }
 
 impl PointerEffect {
@@ -2160,6 +2467,7 @@ fn pointer_effect(
     saved: &SavedFocus,
     before: Option<(Vec<u8>, usize, usize)>,
     popups_before: &[PopupWindow],
+    foreign_before: Option<(crate::x11::WindowInfo, Vec<u64>)>,
     x: i32,
     y: i32,
 ) -> PointerEffect {
@@ -2167,6 +2475,7 @@ fn pointer_effect(
     sleep(EFFECT_SETTLE);
     let after = root_region_pixels(x, y);
     let popups = new_popups(popups_before, mapped_popups(display));
+    let foreign_window = foreign_window_effect(foreign_before);
     PointerEffect {
         focus_unchanged: focus_state_unchanged(display, saved),
         region_diff_pct: match (before, after) {
@@ -2180,6 +2489,7 @@ fn pointer_effect(
         retargeted_to: None,
         popups,
         window_point: None,
+        foreign_window,
     }
 }
 
@@ -2220,6 +2530,8 @@ pub fn send_virtual_pointer_click(
         thaw_device(display, ids.pointer_id);
         warp_master_pointer(display, ids, click.x, click.y)?;
         let popups_before = mapped_popups(display);
+        let foreign_before =
+            foreign_toplevel_under(crate::x11::window_pid(click.target_window), click.x, click.y);
         let before = root_region_pixels(click.x, click.y);
         let (press_ms, gap_ms) = click_cadence();
         let train = (|| -> Result<()> {
@@ -2247,7 +2559,7 @@ pub fn send_virtual_pointer_click(
         release_button_best_effort(&device, click.button);
         train?;
         let mut effect =
-            pointer_effect(display, &saved_focus, before, &popups_before, click.x, click.y);
+            pointer_effect(display, &saved_focus, before, &popups_before, foreign_before, click.x, click.y);
         effect.retargeted_to = retargeted_to;
         Ok(effect)
     })();
@@ -2302,6 +2614,8 @@ pub fn send_virtual_pointer_drag(
         thaw_device(display, ids.pointer_id);
         warp_master_pointer(display, ids, start.0, start.1)?;
         let popups_before = mapped_popups(display);
+        let foreign_before =
+            foreign_toplevel_under(crate::x11::window_pid(drag.target_window), end.0, end.1);
         let before = root_region_pixels(end.0, end.1);
         let gesture = (|| -> Result<()> {
             {
@@ -2343,7 +2657,7 @@ pub fn send_virtual_pointer_drag(
         // Release on every exit path (see `send_virtual_pointer_click`).
         release_button_best_effort(&device, drag.button);
         gesture?;
-        let mut effect = pointer_effect(display, &saved_focus, before, &popups_before, end.0, end.1);
+        let mut effect = pointer_effect(display, &saved_focus, before, &popups_before, foreign_before, end.0, end.1);
         effect.retargeted_to = retargeted_to;
         Ok(effect)
     })();

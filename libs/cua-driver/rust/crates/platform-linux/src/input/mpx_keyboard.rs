@@ -197,12 +197,18 @@ pub struct KeyboardDeliveryReport {
     /// action and that was released before this delivery (`button1`,
     /// `modifiers(...)`); see `release_stuck_virtual_input`.
     pub released_stuck: Vec<String>,
+    /// Route name: [`MPX_UINPUT_PATH`], or [`super::XTEST_CORE_GRAB_PATH`]
+    /// when the target's own popup held the keyboard grab and the keys went
+    /// through the core keyboard instead.
+    pub path: &'static str,
+    /// The popup whose grab chose the core-keyboard route.
+    pub grab_popup: Option<super::PopupWindow>,
 }
 
 impl KeyboardDeliveryReport {
     pub fn to_json(&self) -> serde_json::Value {
         let mut json = serde_json::json!({
-            "path": MPX_UINPUT_PATH,
+            "path": self.path,
             "virtual_focus_held": self.virtual_focus_held,
             "core_focus_unchanged": self.core_focus_unchanged,
             "delivery_confirmed": self.delivery_confirmed,
@@ -220,7 +226,32 @@ impl KeyboardDeliveryReport {
         if !self.released_stuck.is_empty() {
             json["released_stuck_input"] = serde_json::json!(self.released_stuck);
         }
+        if let Some(popup) = &self.grab_popup {
+            json["grab_popup"] = popup.to_json();
+        }
         json
+    }
+
+    /// How the keys travelled, for the tool text: the virtual master
+    /// keyboard, or the core keyboard under the target's own popup grab.
+    pub fn route_phrase(&self) -> String {
+        match &self.grab_popup {
+            Some(popup) => format!(
+                "on the core keyboard, which the target's own {} holds grabbed (path={}; \
+                 core focus and active window verified {})",
+                popup.describe(),
+                self.path,
+                if self.core_focus_unchanged {
+                    "unchanged"
+                } else {
+                    "CHANGED — check with a screenshot"
+                }
+            ),
+            None => format!(
+                "through a virtual master keyboard (path={}, focus untouched)",
+                self.path
+            ),
+        }
     }
 
     /// Sentences for the tool text: any focus change the guard saw, and any
@@ -592,6 +623,8 @@ fn deliver(
             skipped_characters,
             focus_guard: None,
             released_stuck,
+            path: MPX_UINPUT_PATH,
+            grab_popup: None,
         })
     })();
     drop(remap_guards);
@@ -802,6 +835,8 @@ mod tests {
             skipped_characters: vec!['€'],
             focus_guard: None,
             released_stuck: vec!["button1".into()],
+            path: MPX_UINPUT_PATH,
+            grab_popup: None,
         };
         let json = report.to_json();
         assert_eq!(json["path"], MPX_UINPUT_PATH);

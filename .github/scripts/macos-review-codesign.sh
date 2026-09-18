@@ -28,6 +28,26 @@ keychain_created=false
 search_list_snapshotted=false
 previous_keychains=()
 previous_keychain_count=0
+log_dir="$work_root/logs"
+signing_probe="$work_root/signing-probe"
+
+run_bounded() {
+  /usr/bin/perl -e 'alarm shift; exec @ARGV' 60 "$@"
+}
+
+emit_log() {
+  sed -E 's/[[:xdigit:]]{64}/<redacted>/g' "$1" >&2
+}
+
+run_step() {
+  local label="$1"
+  shift
+  if ! run_bounded "$@" >"$log_dir/$label.log" 2>&1; then
+    echo "review signing step failed: $label" >&2
+    emit_log "$log_dir/$label.log"
+    exit 1
+  fi
+}
 
 cleanup() {
   local status=$?
@@ -42,6 +62,12 @@ cleanup() {
   if [[ "$keychain_created" == true ]]; then
     security delete-keychain "$keychain_path" >/dev/null 2>&1 || true
   fi
+  rm -f "$signing_probe" \
+    "$log_dir/import.log" "$log_dir/partition.log" \
+    "$log_dir/identity.log" "$log_dir/probe-sign.log" \
+    "$log_dir/probe-verify.log" "$log_dir/driver-sign.log" \
+    "$log_dir/driver-verify.log"
+  rmdir "$log_dir" >/dev/null 2>&1 || true
   rm -f "$private_key_path" "$certificate_path" "$certificate_der_path" \
     "$identity_path" "$keychain_path"
   rmdir "$work_root" >/dev/null 2>&1 || true
@@ -50,6 +76,8 @@ cleanup() {
   exit "$status"
 }
 trap cleanup EXIT INT TERM
+
+mkdir -p "$log_dir"
 
 previous_keychains_output="$(security list-keychains -d user)"
 while IFS= read -r listed_keychain; do
@@ -83,20 +111,41 @@ if (( previous_keychain_count > 0 )); then
 else
   security list-keychains -d user -s "$keychain_path"
 fi
-security import "$identity_path" -k "$keychain_path" -P "$identity_password" \
-  -T /usr/bin/codesign >/dev/null
-security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
-  -k "$keychain_password" "$keychain_path" >/dev/null
 
-identities="$({ security find-identity -p codesigning "$keychain_path" || true; } |
-  sed -nE 's/^[[:space:]]*[0-9]+\) ([0-9A-F]{40}) .*/\1/p')"
+# This allow-all ACL is confined to a generated key in an ephemeral keychain on
+# a single-tenant runner. The EXIT trap deletes both the key and its keychain.
+run_step import security import "$identity_path" -k "$keychain_path" \
+  -P "$identity_password" -A -T /usr/bin/codesign
+
+# Some macOS 15 runners cannot update partitions on a freshly imported key.
+# The signing probe below is the authoritative noninteractive usability check.
+if ! run_bounded security set-key-partition-list \
+    -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain_path" \
+    >"$log_dir/partition.log" 2>&1; then
+  echo "note: set-key-partition-list did not apply; relying on the import ACL" >&2
+  emit_log "$log_dir/partition.log"
+fi
+
+run_step identity security find-identity -p codesigning "$keychain_path"
+identities="$(sed -nE 's/^[[:space:]]*[0-9]+\) ([0-9A-F]{40}) .*/\1/p' \
+  "$log_dir/identity.log")"
 [[ "$(printf '%s\n' "$identities" | sed '/^$/d' | wc -l | tr -d ' ')" == 1 ]] || {
   echo "temporary keychain must contain exactly one code-signing identity" >&2
+  emit_log "$log_dir/identity.log"
   exit 1
 }
 identity_hash="$identities"
-codesign --force --sign "$identity_hash" --keychain "$keychain_path" "$driver_path"
-codesign --verify --strict --verbose=2 "$driver_path"
+
+# Identity discovery proves presence; this probe proves the private key can sign
+# without a GUI authorization prompt before the candidate is modified.
+cp /bin/echo "$signing_probe"
+run_step probe-sign codesign --force --sign "$identity_hash" \
+  --keychain "$keychain_path" "$signing_probe"
+run_step probe-verify codesign --verify --strict "$signing_probe"
+
+run_step driver-sign codesign --force --sign "$identity_hash" \
+  --keychain "$keychain_path" "$driver_path"
+run_step driver-verify codesign --verify --strict --verbose=2 "$driver_path"
 
 requirement_output="$({ codesign -d -r- "$driver_path"; } 2>&1)"
 requirement="$(printf '%s\n' "$requirement_output" | sed -n 's/^designated => //p')"

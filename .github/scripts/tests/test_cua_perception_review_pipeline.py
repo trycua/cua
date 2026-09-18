@@ -164,8 +164,10 @@ def test_macos_review_candidate_uses_ephemeral_certificate_signing() -> None:
         "mktemp -d",
         "security create-keychain",
         "extendedKeyUsage=codeSigning",
-        'codesign --force --sign "$identity_hash" --keychain "$keychain_path"',
-        "codesign --verify --strict",
+        '-P "$identity_password" -A -T /usr/bin/codesign',
+        'run_step probe-sign codesign --force --sign "$identity_hash"',
+        'run_step driver-sign codesign --force --sign "$identity_hash"',
+        'run_step driver-verify codesign --verify --strict',
         "security delete-keychain",
         'trap cleanup EXIT INT TERM',
         'requirement_output="$({ codesign -d -r- "$driver_path"; } 2>&1)"',
@@ -185,7 +187,20 @@ def test_macos_review_candidate_uses_ephemeral_certificate_signing() -> None:
     )
     identity_import = script.index('security import "$identity_path"')
     partition_list = script.index("security set-key-partition-list")
-    assert snapshot < create < unlock < prepend < identity_import < partition_list
+    identity_lookup = script.index("run_step identity security find-identity")
+    probe_sign = script.index("run_step probe-sign codesign")
+    driver_sign = script.index("run_step driver-sign codesign")
+    assert (
+        snapshot
+        < create
+        < unlock
+        < prepend
+        < identity_import
+        < partition_list
+        < identity_lookup
+        < probe_sign
+        < driver_sign
+    )
     assert script.count('previous_keychains_output="$(security list-keychains -d user)"') == 1
     assert 'done <<< "$previous_keychains_output"' in script[snapshot:create]
     assert "search_list_snapshotted=true" in script[snapshot:create]
@@ -194,6 +209,15 @@ def test_macos_review_candidate_uses_ephemeral_certificate_signing() -> None:
         'security list-keychains -d user -s "${previous_keychains[@]}" '
         ">/dev/null 2>&1 || true"
     ) in script
+    assert "security find-identity -v" not in script
+    assert "set -x" not in script
+    assert "[[:xdigit:]]{64}" in script
+    assert 'rmdir "$work_root"' in script
+    assert 'rm -rf "$work_root"' not in script
+
+    for production_workflow in ("cd-rust-cua-driver.yml", "cd-swift-lume.yml"):
+        production = (ROOT / ".github/workflows" / production_workflow).read_text()
+        assert " -A " not in production
 
 
 def test_review_measurements_are_extracted_from_the_sealed_archive() -> None:

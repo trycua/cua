@@ -1670,6 +1670,12 @@
                     "null"
                   ]
                 },
+                "subrole": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "value": {
                   "type": [
                     "string",

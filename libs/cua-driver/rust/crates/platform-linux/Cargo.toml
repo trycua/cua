@@ -144,6 +144,7 @@ portal-capture = [
 portal-libei = ["portal-input", "portal-capture"]
 
 [dev-dependencies]
+cua-driver-testkit = { path = "../cua-driver-testkit" }
 tokio = { workspace = true, features = ["test-util"] }
 uuid = { workspace = true }
 tempfile = "3"

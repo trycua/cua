@@ -15,6 +15,10 @@
 //! the existing `set_value` tool; this module deliberately stays
 //! Win32-only so the unit tests don't depend on UIA initialisation.
 
+#[cfg(test)]
+#[path = "keyboard_partial_input_tests.rs"]
+pub(crate) mod partial_input;
+
 use anyhow::{bail, Result};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
@@ -472,6 +476,9 @@ pub fn send_key_synthesized_after_focus(
     }
 
     with_confirmed_foreground(target, "key delivery", focus, || unsafe {
+        #[cfg(test)]
+        let sent = partial_input::send_input(&events);
+        #[cfg(not(test))]
         let sent = SendInput(&events, std::mem::size_of::<INPUT>() as i32);
         if sent as usize != events.len() {
             bail!(

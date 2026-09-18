@@ -9,6 +9,8 @@ namespace CuaTestHarness.WinUI3;
 public sealed partial class MainWindow : Window
 {
     private int _counter;
+    private readonly bool _keyboardJournal = Environment.GetEnvironmentVariable("CUA_KEYBOARD_JOURNAL") == "1";
+    private bool _keyboardReady;
     private int _clickCount;
     private DateTime _lastClickTime = DateTime.MinValue;
 
@@ -21,12 +23,41 @@ public sealed partial class MainWindow : Window
         InitializeComponent();
         Title = "CuaTestHarness WinUI3";
         InstallScrollMessageHook();
+        if (_keyboardJournal)
+        {
+            ((UIElement)Content).AddHandler(UIElement.KeyDownEvent,
+                new KeyEventHandler((_, e) => Journal(new { kind = "down", key = (int)e.Key })), true);
+            Activated += (_, _) =>
+            {
+                if (_keyboardReady) return;
+                _keyboardReady = true;
+                Journal(new { kind = "ready", window = (long)WinRT.Interop.WindowNative.GetWindowHandle(this) });
+            };
+        }
+    }
+
+    private void Journal(object entry)
+    {
+        if (_keyboardJournal) Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(entry));
+    }
+
+    private void OnIncrementAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        OnIncrementClick(sender, new RoutedEventArgs());
+        args.Handled = true;
+    }
+
+    private void OnToggleAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        ChkAgreed.IsChecked = ChkAgreed.IsChecked != true;
+        args.Handled = true;
     }
 
     private void OnIncrementClick(object sender, RoutedEventArgs e)
     {
         _counter++;
         LblCounter.Text = $"counter={_counter}";
+        Journal(new { kind = "counter", value = _counter });
     }
 
     private void OnResetClick(object sender, RoutedEventArgs e)
@@ -80,6 +111,7 @@ public sealed partial class MainWindow : Window
                  : RdoHigh?.IsChecked == true ? "High"
                  : "?";
         LblChkState.Text = $"agreed={ChkAgreed.IsChecked == true}, prio={prio}";
+        Journal(new { kind = "toggle", value = ChkAgreed.IsChecked == true });
     }
     private void OnChkChanged(object sender, RoutedEventArgs e) => UpdateChkState();
     private void OnRadioChanged(object sender, RoutedEventArgs e) => UpdateChkState();

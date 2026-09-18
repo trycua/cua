@@ -3439,6 +3439,152 @@ fn windows_secure_handle<T: std::os::windows::io::AsRawHandle>(handle: &T) -> Re
 }
 
 #[cfg(windows)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct WindowsFileIdentity {
+    volume_serial_number: u32,
+    file_index_high: u32,
+    file_index_low: u32,
+}
+
+#[cfg(windows)]
+#[repr(C)]
+struct WindowsFileTime {
+    low_date_time: u32,
+    high_date_time: u32,
+}
+
+#[cfg(windows)]
+#[repr(C)]
+struct WindowsByHandleFileInformation {
+    file_attributes: u32,
+    creation_time: WindowsFileTime,
+    last_access_time: WindowsFileTime,
+    last_write_time: WindowsFileTime,
+    volume_serial_number: u32,
+    file_size_high: u32,
+    file_size_low: u32,
+    number_of_links: u32,
+    file_index_high: u32,
+    file_index_low: u32,
+}
+
+#[cfg(windows)]
+fn windows_file_identity(handle: *mut std::ffi::c_void) -> Result<WindowsFileIdentity> {
+    unsafe {
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetFileInformationByHandle(
+                file: *mut std::ffi::c_void,
+                information: *mut WindowsByHandleFileInformation,
+            ) -> i32;
+        }
+        let mut information = std::mem::MaybeUninit::uninit();
+        if GetFileInformationByHandle(handle, information.as_mut_ptr()) == 0 {
+            return Err(std::io::Error::last_os_error())
+                .context("read Windows extension object identity");
+        }
+        let information = information.assume_init();
+        if information.file_attributes & 0x400 != 0 {
+            bail!("extension object is a Windows reparse point");
+        }
+        Ok(WindowsFileIdentity {
+            volume_serial_number: information.volume_serial_number,
+            file_index_high: information.file_index_high,
+            file_index_low: information.file_index_low,
+        })
+    }
+}
+
+#[cfg(windows)]
+fn windows_final_path(handle: *mut std::ffi::c_void) -> Result<Vec<u16>> {
+    unsafe {
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetFinalPathNameByHandleW(
+                file: *mut std::ffi::c_void,
+                path: *mut u16,
+                path_size: u32,
+                flags: u32,
+            ) -> u32;
+        }
+        let required = GetFinalPathNameByHandleW(handle, std::ptr::null_mut(), 0, 0);
+        if required == 0 {
+            return Err(std::io::Error::last_os_error())
+                .context("size Windows extension object path");
+        }
+        let mut path = vec![0_u16; required as usize];
+        let written = GetFinalPathNameByHandleW(handle, path.as_mut_ptr(), path.len() as u32, 0);
+        if written == 0 {
+            return Err(std::io::Error::last_os_error())
+                .context("read Windows extension object path");
+        }
+        if written as usize >= path.len() {
+            bail!("Windows extension object path changed while it was read");
+        }
+        path.truncate(written as usize);
+        path.push(0);
+        Ok(path)
+    }
+}
+
+#[cfg(windows)]
+fn windows_verify_same_object(
+    original: *mut std::ffi::c_void,
+    reopened: *mut std::ffi::c_void,
+) -> Result<()> {
+    let original_identity = windows_file_identity(original)?;
+    let reopened_identity = windows_file_identity(reopened)?;
+    if original_identity != reopened_identity {
+        bail!("extension object changed while reopening it for a Windows ACL update");
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn windows_reopen_for_security(
+    handle: *mut std::ffi::c_void,
+) -> Result<std::os::windows::io::OwnedHandle> {
+    use std::os::windows::io::FromRawHandle as _;
+
+    unsafe {
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn CreateFileW(
+                file_name: *const u16,
+                desired_access: u32,
+                share_mode: u32,
+                security_attributes: *const std::ffi::c_void,
+                creation_disposition: u32,
+                flags_and_attributes: u32,
+                template_file: *mut std::ffi::c_void,
+            ) -> *mut std::ffi::c_void;
+        }
+        // Reopen the path reported by the capability handle itself. Opening
+        // the reparse point prevents the final component from being followed.
+        let path = windows_final_path(handle)?;
+        let reopened = CreateFileW(
+            path.as_ptr(),
+            0x0004_0000 | 0x0002_0000,
+            0x1 | 0x2 | 0x4,
+            std::ptr::null(),
+            3,
+            0x0200_0000 | 0x0020_0000,
+            std::ptr::null_mut(),
+        );
+        if reopened.is_null() || reopened as isize == -1 {
+            return Err(std::io::Error::last_os_error())
+                .context("reopen extension object for Windows ACL update");
+        }
+        let reopened = std::os::windows::io::OwnedHandle::from_raw_handle(reopened.cast());
+        use std::os::windows::io::AsRawHandle as _;
+        // A rename or replacement between path lookup and CreateFileW must not
+        // redirect the ACL update to a different filesystem object.
+        windows_verify_same_object(handle, reopened.as_raw_handle().cast())?;
+        Ok(reopened)
+    }
+}
+
+#[cfg(windows)]
 #[repr(C)]
 struct WindowsAcl {
     revision: u8,
@@ -3572,13 +3718,6 @@ fn windows_set_private_security(handle: *mut std::ffi::c_void) -> Result<()> {
         }
         #[link(name = "kernel32")]
         extern "system" {
-            fn ReOpenFile(
-                original: *mut std::ffi::c_void,
-                desired_access: u32,
-                share_mode: u32,
-                flags: u32,
-            ) -> *mut std::ffi::c_void;
-            fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
             fn LocalFree(memory: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
         }
         let user = windows_current_user_sid()?;
@@ -3609,31 +3748,26 @@ fn windows_set_private_security(handle: *mut std::ffi::c_void) -> Result<()> {
         let result = if got_dacl == 0 || present == 0 || dacl.is_null() {
             Err(anyhow!("private extension ACL has no DACL"))
         } else {
-            // ReOpenFile requires backup semantics for directory handles. The
-            // flag is also valid for files, so the shared hardening path can
-            // reopen either object type without weakening its ACL.
-            let security_handle = ReOpenFile(handle, 0x0004_0000, 0x7, 0x0200_0000);
-            if security_handle.is_null() || security_handle as isize == -1 {
-                let _ = LocalFree(descriptor);
-                bail!("reopen extension object for Windows ACL update");
-            }
-            let status = SetSecurityInfo(
-                security_handle,
-                1,
-                0x4 | 0x8000_0000,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                dacl,
-                std::ptr::null_mut(),
-            );
-            let _ = CloseHandle(security_handle);
-            if status == 0 {
-                Ok(())
-            } else {
-                Err(anyhow!(
-                    "set private extension ACL failed with Windows error {status}"
-                ))
-            }
+            (|| -> Result<()> {
+                let security_handle = windows_reopen_for_security(handle)?;
+                use std::os::windows::io::AsRawHandle as _;
+                let status = SetSecurityInfo(
+                    security_handle.as_raw_handle().cast(),
+                    1,
+                    0x4 | 0x8000_0000,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    dacl,
+                    std::ptr::null_mut(),
+                );
+                if status == 0 {
+                    Ok(())
+                } else {
+                    Err(anyhow!(
+                        "set private extension ACL failed with Windows error {status}"
+                    ))
+                }
+            })()
         };
         let _ = LocalFree(descriptor);
         result
@@ -4706,15 +4840,54 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn acl_hardening_reopens_directory_and_file_handles() {
+        use std::os::windows::io::AsRawHandle as _;
+
         let temp = TempDir::new().unwrap();
         let parent = open_directory_path_nofollow(temp.path()).unwrap();
 
         create_private_subdirectory(&parent, std::ffi::OsStr::new("private")).unwrap();
         let private = parent.open_dir_nofollow("private").unwrap();
+        let reopened_directory =
+            windows_reopen_for_security(private.as_raw_handle().cast()).unwrap();
+        windows_verify_same_object(
+            private.as_raw_handle().cast(),
+            reopened_directory.as_raw_handle().cast(),
+        )
+        .unwrap();
         windows_verify_directory_handle(&private).unwrap();
 
         write_new_file_at(&private, "owned", b"content").unwrap();
+        let mut options = CapOpenOptions::new();
+        options.read(true).follow(FollowSymlinks::No);
+        let file = private.open_with("owned", &options).unwrap();
+        let reopened_file = windows_reopen_for_security(file.as_raw_handle().cast()).unwrap();
+        windows_verify_same_object(
+            file.as_raw_handle().cast(),
+            reopened_file.as_raw_handle().cast(),
+        )
+        .unwrap();
         assert!(private_regular_file_or_missing_at(&private, "owned").unwrap());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn acl_identity_check_rejects_a_different_object() {
+        use std::os::windows::io::AsRawHandle as _;
+
+        let temp = TempDir::new().unwrap();
+        let root = open_directory_path_nofollow(temp.path()).unwrap();
+        write_new_file_at(&root, "first", b"first").unwrap();
+        write_new_file_at(&root, "second", b"second").unwrap();
+
+        let mut options = CapOpenOptions::new();
+        options.read(true).follow(FollowSymlinks::No);
+        let first = root.open_with("first", &options).unwrap();
+        let second = root.open_with("second", &options).unwrap();
+        assert!(windows_verify_same_object(
+            first.as_raw_handle().cast(),
+            second.as_raw_handle().cast(),
+        )
+        .is_err());
     }
 
     #[cfg(windows)]

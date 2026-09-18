@@ -523,6 +523,79 @@ jobs:
               for name in sorted(signed_files)
           ))
           PY
+      - name: Inspect the signed candidate with the native review Driver
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          root="review-staging/$PLATFORM"
+          driver="$root/review-${{ matrix.driver }}"
+          catalog="$root/signed-catalog.json"
+          preview="$RUNNER_TEMP/cua-perception-producer-inspect.json"
+          inspect_home="$RUNNER_TEMP/cua-perception-producer-inspect-home"
+          test ! -e "$inspect_home"
+          mkdir "$inspect_home"
+          CUA_DRIVER_RS_HOME="$inspect_home" \
+            "$driver" extension inspect cua-perception --catalog "$catalog" --json > "$preview"
+          python3 - "$preview" "$catalog" "$root/review-measurements.json" <<'PY'
+          import hashlib, json, pathlib, re, sys
+
+          preview_path, catalog_path, measurements_path = map(pathlib.Path, sys.argv[1:])
+          preview = json.loads(preview_path.read_text())
+          catalog = json.loads(catalog_path.read_text())
+          measurements = json.loads(measurements_path.read_text())
+          payload = catalog["payload"]
+
+          assert preview["trust"] == "review-only-publisher-verified"
+          assert preview["evidence_class"] == "review-only-not-release-evidence"
+          assert preview["publisher_signature_verified"] is True
+          assert preview["publisher_id"] == measurements["publisher_id"] == "cua-review-only"
+          assert preview["publisher_key_id"] == measurements["key_id"] == "review-only-build-override"
+          assert preview["signing_key_algorithm"] == measurements["signature_algorithm"] == "ed25519"
+          assert preview["archive_sha256"] == measurements["archive_sha256"] == payload["archive_sha256"]
+          archive_relative = pathlib.PurePosixPath(payload["archive"])
+          assert not archive_relative.is_absolute() and ".." not in archive_relative.parts
+          archive = catalog_path.parent.joinpath(*archive_relative.parts).resolve()
+          archive.relative_to(catalog_path.parent.resolve())
+          assert hashlib.sha256(archive.read_bytes()).hexdigest() == preview["archive_sha256"]
+          assert preview["authorization"] == {
+              "request": "cli-inspect",
+              "confirmation_required": False,
+              "confirmation_received": False,
+              "mutation_authorized": False,
+              "mutation_performed": False,
+          }
+          assert preview["mutation_performed"] is False
+          assert preview["installed"] is False
+          assert preview["ran"] is False
+
+          files = {item["path"]: item["sha256"] for item in preview["files"]}
+          assert len(files) == len(preview["files"])
+
+          def assert_binding(label, binding):
+              assert set(binding) == {"path", "sha256"}, label
+              assert re.fullmatch(r"[0-9a-f]{64}", binding["sha256"]), label
+              assert files.get(binding["path"]) == binding["sha256"], label
+
+          model_licenses = {item["model"]: item["file"] for item in preview["model_licenses"]}
+          assert len(model_licenses) == len(preview["models"]) == 3
+          for model in preview["models"]:
+              assert files.get(model["path"]) == model["conversion_sha256"]
+              assert_binding(f"model license {model['path']}", model["license_file"])
+              assert model_licenses[model["path"]] == model["license_file"]
+
+          notices = {item["component"]: item["file"] for item in preview["license_notices"]}
+          assert len(notices) == len(preview["components"]) > 0
+          for component in preview["components"]:
+              assert_binding(f"component notice {component['name']}", component["notice_file"])
+              assert notices[component["name"]] == component["notice_file"]
+
+          source = preview["corresponding_source"]
+          assert_binding("corresponding source", source["file"])
+          assert source["uri"] == preview["corresponding_source_uri"] == payload["corresponding_source_uri"]
+          assert source["revision"] == preview["corresponding_source_revision"] == payload["corresponding_source_revision"]
+          PY
       - name: Destroy any remaining ephemeral private key
         if: always()
         shell: bash

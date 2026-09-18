@@ -295,3 +295,40 @@ def test_review_measurements_are_extracted_from_the_sealed_archive() -> None:
     assert '"review_driver_version": match.group(0)' in text
     assert 'modelLock.artifacts.find' in text  # download identity only; sealed values replace it below
     assert text.index('measurements.update({') < text.rindex('signed-candidate-checksums.txt')
+
+
+def test_review_pipeline_native_driver_inspects_the_final_candidate_without_installing() -> None:
+    parsed = yaml.safe_load(workflow_text())
+    steps = parsed["jobs"]["supplied-input"]["steps"]
+    package_index = next(
+        index
+        for index, step in enumerate(steps)
+        if step.get("name") == "Package, review-sign, and measure the candidate"
+    )
+    inspect_index = next(
+        index
+        for index, step in enumerate(steps)
+        if step.get("name") == "Inspect the signed candidate with the native review Driver"
+    )
+    upload_index = next(
+        index
+        for index, step in enumerate(steps)
+        if step.get("name") == "Preserve signed review-only target without publishing"
+    )
+    assert package_index < inspect_index < upload_index
+
+    inspection = steps[inspect_index]["run"]
+    assert 'CUA_DRIVER_RS_HOME="$inspect_home"' in inspection
+    assert 'test ! -e "$inspect_home"' in inspection
+    assert 'extension inspect cua-perception --catalog "$catalog" --json' in inspection
+    assert "extension install" not in inspection
+    assert "extension update" not in inspection
+    assert 'preview["trust"] == "review-only-publisher-verified"' in inspection
+    assert 'preview["publisher_signature_verified"] is True' in inspection
+    assert 'preview["archive_sha256"] == measurements["archive_sha256"]' in inspection
+    assert 'hashlib.sha256(archive.read_bytes()).hexdigest() == preview["archive_sha256"]' in inspection
+    assert 'model["license_file"]' in inspection
+    assert 'component["notice_file"]' in inspection
+    assert 'source = preview["corresponding_source"]' in inspection
+    assert 'preview["mutation_performed"] is False' in inspection
+    assert 'preview["installed"] is False' in inspection

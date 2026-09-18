@@ -309,10 +309,23 @@ def test_packages_deterministically_with_catalog_sbom_and_redacted_provenance(tm
         extension_bytes = candidate.extractfile("extension.json").read()
         extension = json.loads(extension_bytes)
         archived_files = {
-            member.name for member in candidate.getmembers()
+            member.name: digest(candidate.extractfile(member).read())
+            for member in candidate.getmembers()
             if member.isfile() and member.name != "extension.json"
         }
-    assert {item["path"] for item in extension["files"]} == archived_files
+    assert {item["path"] for item in extension["files"]} == set(archived_files)
+    expected_notice = {
+        "path": "notices/NOTICE",
+        "sha256": archived_files["notices/NOTICE"],
+    }
+    assert all(
+        component["notice_file"] == expected_notice for component in extension["components"]
+    )
+    assert all(model["license_file"] == expected_notice for model in extension["models"])
+    assert extension["corresponding_source_file"] == {
+        "path": "source/cua-perception-source.tar.gz",
+        "sha256": archived_files["source/cua-perception-source.tar.gz"],
+    }
     assert catalog["manifest_sha256"] == digest(extension_bytes)
     assert catalog["extension_id"] == "cua-perception"
     runtime_contract = json.loads((first / "runtime-contract.json").read_text())
@@ -327,6 +340,37 @@ def test_packages_deterministically_with_catalog_sbom_and_redacted_provenance(tm
     (first / "runtime-contract.json").write_text("tampered\n")
     with pytest.raises(release.CandidateError, match="checksum verification failed"):
         release.verify_checksums(first / "checksums.txt")
+
+
+@pytest.mark.parametrize(
+    ("binding_owner", "binding_field"),
+    [
+        ("component", "notice_file"),
+        ("model", "license_file"),
+        ("extension", "corresponding_source_file"),
+    ],
+)
+def test_rejects_missing_digest_bound_extension_files(
+    tmp_path: Path, binding_owner: str, binding_field: str
+) -> None:
+    payload, manifest_path = fixture(tmp_path)
+    manifest = release.load_and_validate_manifest(manifest_path, payload)
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    for item in manifest["artifacts"]:
+        destination = stage / release.staged_artifact_path(item)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes((payload / item["path"]).read_bytes())
+    extension = release.extension_manifest(stage, manifest, payload)
+    if binding_owner == "component":
+        del extension["components"][0][binding_field]
+    elif binding_owner == "model":
+        del extension["models"][0][binding_field]
+    else:
+        extension[binding_field]["sha256"] = "0" * 64
+
+    with pytest.raises(release.CandidateError, match="binding"):
+        release.validate_extension_manifest_bindings(extension)
 
 
 @pytest.mark.parametrize("field", ["sha256", "size", "protocolVersion", "target"])

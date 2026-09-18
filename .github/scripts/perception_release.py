@@ -565,6 +565,14 @@ def extension_manifest(stage: Path, manifest: Mapping[str, Any], payload_root: P
                 "executable": relative.startswith("bin/"),
             })
     models = []
+    notice_bindings = {
+        item["path"]: {
+            "path": staged_artifact_path(item).as_posix(),
+            "sha256": item["sha256"],
+        }
+        for item in artifacts
+        if item["kind"] == "notice"
+    }
     for item in artifacts:
         if item["kind"] != "model":
             continue
@@ -575,6 +583,7 @@ def extension_manifest(stage: Path, manifest: Mapping[str, Any], payload_root: P
             "revision": ledger["revision"],
             "original_sha256": original,
             "conversion_sha256": item["sha256"],
+            "license_file": notice_bindings[item["license"]["notice"]],
         })
     components = [
         {
@@ -584,6 +593,7 @@ def extension_manifest(stage: Path, manifest: Mapping[str, Any], payload_root: P
             "notice": f"notices/{Path(item['license']['notice']).name}",
             "source_uri": item["license"]["source"],
             "source_revision": manifest["sourceSha"],
+            "notice_file": notice_bindings[item["license"]["notice"]],
         }
         for item in artifacts
         if item["kind"] != "notice"
@@ -601,6 +611,10 @@ def extension_manifest(stage: Path, manifest: Mapping[str, Any], payload_root: P
         "files": files,
         "models": models,
         "components": components,
+        "corresponding_source_file": {
+            "path": staged_artifact_path(source).as_posix(),
+            "sha256": source["sha256"],
+        },
         "license": "LicenseRef-Mixed",
         "source": "https://github.com/trycua/cua",
         "corresponding_source_uri": f"source/{source['name']}",
@@ -615,6 +629,26 @@ def extension_manifest(stage: Path, manifest: Mapping[str, Any], payload_root: P
             "--extension-version", manifest["version"],
         ],
     }
+
+
+def validate_extension_manifest_bindings(extension: Mapping[str, Any]) -> None:
+    declared = {item["path"]: item["sha256"] for item in extension["files"]}
+
+    def validate_binding(label: str, binding: Any) -> None:
+        if not isinstance(binding, dict):
+            raise CandidateError(f"{label} binding is missing")
+        path = binding.get("path")
+        digest = binding.get("sha256")
+        if declared.get(path) != digest:
+            raise CandidateError(f"{label} binding does not match a declared staged file")
+
+    for component in extension["components"]:
+        validate_binding(
+            f"component {component['name']} notice_file", component.get("notice_file")
+        )
+    for model in extension["models"]:
+        validate_binding(f"model {model['path']} license_file", model.get("license_file"))
+    validate_binding("corresponding_source_file", extension.get("corresponding_source_file"))
 
 
 def corresponding_source_artifact(manifest: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -777,6 +811,7 @@ def package_candidate(
         validate_schema(provenance, CONTROL / "provenance.schema.json")
         validate_schema(runtime, CONTROL / "runtime-contract.schema.json")
         extension = extension_manifest(stage, manifest, payload_root)
+        validate_extension_manifest_bindings(extension)
         canonical_json(stage / "extension.json", extension)
 
         archive = output / (

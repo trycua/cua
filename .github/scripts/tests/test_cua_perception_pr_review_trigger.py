@@ -115,10 +115,10 @@ def test_candidate_is_callable_discovers_one_draft_asset_and_returns_artifact_id
     )
 
 
-def test_chain_passes_exact_outputs_to_existing_protected_live_workflow() -> None:
+def test_pr_review_produces_candidates_without_entering_the_protected_environment() -> None:
     trigger_text, workflow = load_workflow(TRIGGER)
+    assert set(workflow["jobs"]) == {"resolve", "candidate"}
     candidate = workflow["jobs"]["candidate"]
-    live = workflow["jobs"]["live"]
     assert candidate["uses"] == (
         "./.github/workflows/cd-cua-perception-review-supplied-inputs.yml"
     )
@@ -128,21 +128,16 @@ def test_chain_passes_exact_outputs_to_existing_protected_live_workflow() -> Non
         "expires_unix": "${{ needs.resolve.outputs.expires_unix }}",
     }
     assert "secrets" not in candidate
-    assert live["uses"] == "./.github/workflows/authorized-live-jev-use-demo.yml"
-    assert live["with"] == {
-        "run_live": True,
-        "source_sha": "${{ needs.resolve.outputs.source_sha }}",
-        "jev_source_sha": "${{ needs.resolve.outputs.jev_source_sha }}",
-        "signed_candidate_artifact_id": "${{ needs.candidate.outputs.signed_candidate_artifact_id }}",
-        "signed_candidate_run_id": "${{ needs.candidate.outputs.producer_run_id }}",
-    }
-    assert "secrets" not in live
+    assert "authorized-live-jev-use-demo.yml" not in trigger_text
     assert "secrets: inherit" not in trigger_text
+    assert "${{ secrets." not in trigger_text
     assert re.findall(r"^\s*([\w-]+):\s*write\s*$", trigger_text, re.MULTILINE) == [
         "contents"
     ]
     assert not re.findall(r"^\s*environment:", trigger_text, re.MULTILINE)
 
+
+def test_protected_live_workflow_owns_secrets_and_environment() -> None:
     live_text, live_workflow = load_workflow(LIVE)
     live_job = live_workflow["jobs"]["live"]
     assert live_job["environment"] == "authorized-live-jev-use-demo"

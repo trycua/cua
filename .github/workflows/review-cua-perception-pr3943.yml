@@ -1,4 +1,4 @@
-name: "Review: labeled Cua Perception live evidence"
+name: "Review: labeled Cua Perception candidates"
 
 on:
   pull_request:
@@ -77,14 +77,3 @@ jobs:
       source_sha: ${{ needs.resolve.outputs.source_sha }}
       catalog_version: ${{ needs.resolve.outputs.catalog_version }}
       expires_unix: ${{ needs.resolve.outputs.expires_unix }}
-
-  live:
-    name: Run protected Windows and Linux live evidence
-    needs: [resolve, candidate]
-    uses: ./.github/workflows/authorized-live-jev-use-demo.yml
-    with:
-      run_live: true
-      source_sha: ${{ needs.resolve.outputs.source_sha }}
-      jev_source_sha: ${{ needs.resolve.outputs.jev_source_sha }}
-      signed_candidate_artifact_id: ${{ needs.candidate.outputs.signed_candidate_artifact_id }}
-      signed_candidate_run_id: ${{ needs.candidate.outputs.producer_run_id }}

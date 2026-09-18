@@ -22,7 +22,9 @@ public actor SSHClient {
     private let user: String
     private let password: String
     private let connectTimeout: TimeInterval
-    private let eventLoopGroup: MultiThreadedEventLoopGroup
+
+    /// Networking infrastructure has process lifetime, not client lifetime.
+    private static let sharedEventLoopGroup = MultiThreadedEventLoopGroup.singleton
 
     public init(
         host: String,
@@ -36,11 +38,6 @@ public actor SSHClient {
         self.user = user
         self.password = password
         self.connectTimeout = connectTimeout
-        self.eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-    }
-
-    deinit {
-        try? eventLoopGroup.syncShutdownGracefully()
     }
 
     /// Execute a command on the remote host
@@ -169,15 +166,17 @@ public actor SSHClient {
 
     /// Connect to the SSH server and return the channel
     private func connect() async throws -> Channel {
-        let bootstrap = ClientBootstrap(group: eventLoopGroup)
+        let user = self.user
+        let password = self.password
+        let bootstrap = ClientBootstrap(group: Self.sharedEventLoopGroup)
             .channelInitializer { channel in
                 channel.eventLoop.makeCompletedFuture {
                     let sshHandler = NIOSSHHandler(
                         role: .client(
                             .init(
                                 userAuthDelegate: PasswordAuthDelegate(
-                                    username: self.user,
-                                    password: self.password
+                                    username: user,
+                                    password: password
                                 ),
                                 serverAuthDelegate: AcceptAllHostKeysDelegate()
                             )

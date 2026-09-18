@@ -5841,11 +5841,29 @@ impl Tool for ClickTool {
             // A menu / menu item's `doAction` is declined or silently ignored
             // by LibreOffice VCL (and opens GTK menus without the pointer
             // grab a following item click expects): with a real pointer, press
-            // it like a user would and let the popup be listed.
-            let real_click_role = !delivery.is_foreground()
+            // it like a user would and let the popup be listed. That holds
+            // for an entry that is on screen (SHOWING: a menubar entry, an
+            // item of an open GTK3 / VCL popup). A menu item that is not
+            // showing has no point to press: gail (GTK2, GIMP) never marks
+            // menu items SHOWING, open or closed, and an item of a closed
+            // menu is still reached through its AT-SPI `click` action (the
+            // same rule the foreground route applies), so those keep the
+            // action route.
+            let real_pointer = !delivery.is_foreground()
                 && !crate::wayland::wayland_input_enabled()
-                && (needs_real_click || element_is_menu_role(&observed.role))
                 && crate::input::real_pointer_input_available();
+            let menu_entry_on_screen = real_pointer
+                && element_is_menu_role(&observed.role)
+                && {
+                    // A bounded D-Bus round-trip: off the runtime thread.
+                    let observed_for_state = observed.clone();
+                    let showing = tokio::task::spawn_blocking(move || {
+                        crate::atspi::element_showing_observed(&observed_for_state)
+                    })
+                    .await;
+                    !matches!(showing, Ok(Ok(false)))
+                };
+            let real_click_role = real_pointer && (needs_real_click || menu_entry_on_screen);
             // Without a real pointer, an editable / table cell cannot take a
             // background click that gives it focus: refuse instead of firing
             // an AT-SPI action whose effect is not a click.

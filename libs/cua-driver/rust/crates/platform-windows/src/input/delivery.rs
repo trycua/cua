@@ -204,6 +204,27 @@ pub fn would_be_silently_dropped(hwnd: u64, kind: EventKind) -> bool {
         // of pretending to succeed.
         return matches!(kind, Keystroke | KeyCombo);
     }
+    if is_delphi_vcl_target_window(hwnd) {
+        // Delphi / C++ Builder VCL (Embarcadero tools).
+        // TWinControl.WndProc checks GetMessagePos() and GetKeyState() to
+        // validate input — PostMessage does NOT update either. Posted
+        // WM_LBUTTONDOWN/UP returns TRUE but the control's click handler
+        // never fires. Same for keyboard: VCL's IsAccelerator reads
+        // GetKeyState for modifier detection. Flag all mouse and keyboard
+        // events so delivery_mode:"background" surfaces a structured error;
+        // the caller escalates to SendInput (delivery_mode:"foreground").
+        return matches!(kind, MouseClick | MouseMove | Keystroke | KeyCombo | TextInput);
+    }
+    if is_atl_target_window(hwnd) {
+        // Microsoft ATL (Active Template Library) — e.g. 火绒 Huorong.
+        // ATL's CWindowImpl message pump uses TranslateMessage/DispatchMessage
+        // from the thread's message queue. PostMessage places the message in
+        // the queue, but ATL's WndProc thunks check for the message origin
+        // and may discard posted messages that lack system-queue provenance.
+        // Flag all mouse and keyboard events so background delivery surfaces
+        // a structured error; caller escalates to SendInput (foreground).
+        return matches!(kind, MouseClick | MouseMove | Keystroke | KeyCombo | TextInput);
+    }
     false
 }
 
@@ -246,6 +267,112 @@ pub fn is_vcl_target_window(hwnd: u64) -> bool {
     }
     let class = String::from_utf16_lossy(&buf[..n as usize]);
     class.starts_with("SAL")
+}
+
+/// Detect Microsoft ATL (Active Template Library) windows.
+///
+/// ATL applications like 火绒 (Huorong) register custom window classes via
+/// `DECLARE_WND_CLASS` / `CWindowImpl`. Child dialogs use the `ATL:` prefix
+/// (e.g. `ATL:00007FF6D674AF20`), while the main frame uses a custom name
+/// (e.g. `HLBRMainUI` for Huorong). ATL's `CWindowImpl::WindowProc` thunks
+/// dispatch through `TranslateMessage`/`DispatchMessage` from the thread's
+/// message queue, and may discard posted messages that lack system-queue
+/// provenance. `PostMessage(WM_LBUTTONDOWN)` returns TRUE but the control
+/// never fires its click handler.
+pub fn is_atl_target_window(hwnd: u64) -> bool {
+    let class = read_class_name(hwnd);
+    if class.starts_with("ATL:") {
+        return true;
+    }
+    // Window-level check missed (e.g. HLBRMainUI — Huorong's custom ATL
+    // frame class). Fall back to process-level detection: if ANY top-level
+    // window owned by the same process has an `ATL:` class, the whole
+    // process is ATL-based and PostMessage input is unreliable.
+    if let Some(pid) = window_pid(hwnd) {
+        return process_has_atl_window(pid);
+    }
+    false
+}
+
+/// Get the owning process ID for a window handle.
+fn window_pid(hwnd: u64) -> Option<u32> {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+    if hwnd == 0 {
+        return None;
+    }
+    let mut pid: u32 = 0;
+    let tid = unsafe { GetWindowThreadProcessId(HWND(hwnd as *mut _), Some(&mut pid)) };
+    if tid == 0 || pid == 0 {
+        return None;
+    }
+    Some(pid)
+}
+
+/// True when any top-level window belonging to `pid` has an `ATL:`-prefixed
+/// window class. Used as a process-level fallback so that ATL main-frame
+/// windows with custom class names (e.g. Huorong's `HLBRMainUI`) are still
+/// caught when the click resolves to a non-`ATL:`-classed control.
+fn process_has_atl_window(pid: u32) -> bool {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use windows::Win32::Foundation::{BOOL, HWND, LPARAM, TRUE};
+    use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetClassNameW, GetWindowThreadProcessId};
+
+    static FOUND: AtomicBool = AtomicBool::new(false);
+    FOUND.store(false, Ordering::Relaxed);
+
+    unsafe extern "system" fn enum_cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let target_pid = lparam.0 as u32;
+        let mut this_pid: u32 = 0;
+        if GetWindowThreadProcessId(hwnd, Some(&mut this_pid)) == 0 || this_pid != target_pid {
+            return TRUE;
+        }
+        let mut buf = [0u16; 64];
+        let n = GetClassNameW(hwnd, &mut buf);
+        if n > 0 {
+            let class = String::from_utf16_lossy(&buf[..n as usize]);
+            if class.starts_with("ATL:") {
+                FOUND.store(true, Ordering::Relaxed);
+                return BOOL(0); // stop enumeration
+            }
+        }
+        TRUE
+    }
+
+    unsafe {
+        let _ = EnumWindows(Some(enum_cb), LPARAM(pid as isize));
+    }
+    FOUND.load(Ordering::Relaxed)
+}
+
+/// Detect Delphi / C++ Builder VCL applications.
+///
+/// Delphi VCL forms register window classes using their Pascal class name
+/// (e.g. `TForm1`, `TMainForm`, `TApplication`). Unlike LibreOffice's `SAL*`
+/// prefix (covered by [`is_vcl_target_window`]), Delphi VCL uses the `T`
+/// PascalCase convention. We detect this by:
+/// 1. Window class starts with 'T'
+/// 2. Second character is uppercase (PascalCase: `TFoo`, not `ToolbarWindow32`)
+/// 3. At least 2 uppercase letters total (typical of PascalCase identifiers)
+///
+/// Delphi VCL's `TWinControl.WndProc` silently drops posted `WM_*BUTTON*`
+/// messages because it checks `GetMessagePos()` and `GetKeyState(VK_LBUTTON)`
+/// which `PostMessage` does not update. The same applies to keyboard events
+/// because VCL's `IsAccelerator` reads `GetKeyState` for modifier detection.
+pub fn is_delphi_vcl_target_window(hwnd: u64) -> bool {
+    let class = read_class_name(hwnd);
+    if class.len() < 4 || !class.starts_with('T') {
+        return false;
+    }
+    let chars: Vec<char> = class.chars().collect();
+    // Second char must be uppercase for PascalCase convention.
+    // This excludes system classes like ToolbarWindow32, TrayNotifyWnd, etc.
+    if chars.len() < 2 || !chars[1].is_uppercase() {
+        return false;
+    }
+    // At least 2 uppercase letters — typical of PascalCase (TMainForm → T,M,F)
+    let uppercase_count = chars.iter().filter(|c| c.is_uppercase()).count();
+    uppercase_count >= 2
 }
 
 /// Detect WPF top-level windows. WPF hosts its visual tree in an HWND whose

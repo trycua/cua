@@ -11,8 +11,8 @@
 //!
 //! Before the fix this was live: `update_position` applied the guard, but the
 //! press edge was pushed straight to `push_cursor_event` from four call sites
-//! in `tools/click.rs`, bypassing it. `press_after_session_end_is_suppressed`
-//! fails against that version and passes against this one.
+//! in `tools/click.rs`, bypassing it. The session_end and empty-id assertions
+//! below each fail against that version and pass against this one.
 //!
 //! One test binary, one `#[test]`: `set_cursor_hook_fn` is a process-wide
 //! one-shot, so the registration and the assertions must share a process and
@@ -98,5 +98,69 @@ fn registry_cursor_hook_honours_the_resurrection_guard() {
         take().len(),
         2,
         "ending one session must not silence any other cursor"
+    );
+}
+
+/// Structural lock on the fix above.
+///
+/// The guard is only worth anything if it cannot be walked around. The original
+/// bug was not a wrong guard, it was four tool call sites that never reached
+/// one — and the natural way to wire up the next tool is to copy an existing
+/// `push_cursor_event(...)` block, which is exactly how the bypass would come
+/// back. Keeping emission to a single private choke point inside
+/// `CursorRegistry` means any new tool must go through `update_position` or
+/// `note_press` and is guarded automatically.
+///
+/// This asserts the invariant on the source itself because there is no runtime
+/// signal for "a tool pushed an event directly": such a call simply works, and
+/// silently skips the guard.
+#[test]
+fn cursor_events_are_emitted_from_exactly_one_place_in_this_adapter() {
+    fn rs_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).expect("readable source dir") {
+            let path = entry.expect("readable entry").path();
+            if path.is_dir() {
+                rs_files(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                out.push(path);
+            }
+        }
+    }
+
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    rs_files(&src, &mut files);
+    assert!(!files.is_empty(), "expected to find adapter sources");
+
+    let mut offenders = Vec::new();
+    for file in &files {
+        let text = std::fs::read_to_string(file).expect("readable source file");
+        for (i, line) in text.lines().enumerate() {
+            // Skip prose: the call is named in doc comments explaining the rule.
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            if line.contains("push_cursor_event") {
+                let _ = i;
+                offenders.push(
+                    file.strip_prefix(&src)
+                        .unwrap_or(file)
+                        .display()
+                        .to_string(),
+                );
+            }
+        }
+    }
+
+    assert_eq!(
+        offenders,
+        vec!["cursor/state.rs".to_string()],
+        "cursor events must be pushed only from CursorRegistry::emit_cursor_event. \
+         A direct push_cursor_event call elsewhere bypasses the empty-id and \
+         session_end resurrection guards, which is the exact regression \
+         registry_cursor_hook_honours_the_resurrection_guard exists to prevent. \
+         Call update_position or note_press instead. \
+         (If emit_cursor_event legitimately moved, update the expected location.)"
     );
 }

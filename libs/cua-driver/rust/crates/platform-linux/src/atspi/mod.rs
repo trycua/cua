@@ -338,23 +338,34 @@ pub fn list_windows(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo> {
 /// `Ok(Some(action))` when an element was actuated, `Ok(None)` when no
 /// actionable element covers the point (caller falls back to the X11 path).
 pub fn perform_action_at_point(pid: u32, win_x: i32, win_y: i32) -> Result<Option<String>> {
-    perform_action_at_point_in(pid, 0, win_x, win_y)
+    perform_action_at_point_in(pid, 0, win_x, win_y, false)
 }
+
+pub use native::is_focus_taking_role;
 
 /// [`perform_action_at_point`] for a known window, in three rungs that never
 /// re-walk the tree first:
 /// 1. the frames cached by the last `get_window_state` snapshot of (pid, xid);
 /// 2. the toolkit's own `Component.GetAccessibleAtPoint` descent (O(depth));
 /// 3. the historical bounded full-walk hit-test (last resort, short budget).
+///
+/// `skip_focus_roles`: the caller has a real pointer route to fall back to, so
+/// an entry / spin button / table cell under the point (whose `doAction` does
+/// not give it the keyboard focus a following `type_text` needs) is left
+/// alone and `Ok(None)` is returned; see [`is_focus_taking_role`].
 pub fn perform_action_at_point_in(
     pid: u32,
     xid: u64,
     win_x: i32,
     win_y: i32,
+    skip_focus_roles: bool,
 ) -> Result<Option<String>> {
     if xid != 0 {
         if let Some((ox, oy)) = native::x11_window_origin(xid) {
             if let Some((idx, element)) = cache::hit_test(pid, xid, win_x + ox, win_y + oy) {
+                if skip_focus_roles && is_focus_taking_role(&element.role) {
+                    return Ok(None);
+                }
                 if let Some(object_ref) = element.object_ref {
                     match native::perform_action_ref(&object_ref) {
                         Ok((action, _)) => return Ok(Some(action)),
@@ -366,12 +377,12 @@ pub fn perform_action_at_point_in(
             }
         }
     }
-    match native::perform_action_at_point_in(pid, xid, win_x, win_y) {
+    match native::perform_action_at_point_in(pid, xid, win_x, win_y, skip_focus_roles) {
         Ok(Some(action)) => return Ok(Some(action)),
         Ok(None) => {}
         Err(error) => tracing::debug!("GetAccessibleAtPoint hit-test failed: {error:#}"),
     }
-    native::perform_action_at_point(pid, win_x, win_y)
+    native::perform_action_at_point(pid, win_x, win_y, skip_focus_roles)
 }
 
 /// Resolve a *screen* pixel to the indexable element whose reconstructed screen

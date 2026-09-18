@@ -2785,6 +2785,7 @@ pub fn perform_action_at_point_in(
     xid: u64,
     win_x: i32,
     win_y: i32,
+    skip_focus_roles: bool,
 ) -> Result<Option<String>> {
     bounded_for(
         INPUT_QUERY_BUDGET,
@@ -2842,6 +2843,15 @@ pub fn perform_action_at_point_in(
                             passive_fallback = Some((depth, role.clone(), actions.clone()));
                         }
                         continue;
+                    }
+                    if skip_focus_roles && is_focus_taking_role(&role) {
+                        // The caller has a real pointer: an entry / spin button /
+                        // cell gets the focus from a real press, not from
+                        // `doAction`. Fall through to that route.
+                        dlog!(
+                            "hit-test ({win_x},{win_y}) -> depth {depth} role={role:?}: focus-taking, leaving it to a real click"
+                        );
+                        return Ok(None);
                     }
                     dlog!(
                         "hit-test ({win_x},{win_y}) -> depth {depth} role={role:?} path={} action={:?}",
@@ -3473,7 +3483,12 @@ pub fn focus_element(pid: u32, idx: usize) -> Result<bool> {
 /// a click lands on the button, not its enclosing panel. Returns `Ok(Some(action))`
 /// when an element was actuated, `Ok(None)` when no actionable element covers the
 /// point (the caller then falls back to the synthetic X11 path).
-pub fn perform_action_at_point(pid: u32, win_x: i32, win_y: i32) -> Result<Option<String>> {
+pub fn perform_action_at_point(
+    pid: u32,
+    win_x: i32,
+    win_y: i32,
+    skip_focus_roles: bool,
+) -> Result<Option<String>> {
     bounded_for(
         INPUT_QUERY_BUDGET,
         async {
@@ -3528,6 +3543,9 @@ pub fn perform_action_at_point(pid: u32, win_x: i32, win_y: i32) -> Result<Optio
                 return Ok(None);
             };
             let target = &visited[idx];
+            if skip_focus_roles && is_focus_taking_role(&target.role) {
+                return Ok(None);
+            }
             let Some(chosen) = activation_index(&target.role, &target.actions) else {
                 return Ok(None);
             };
@@ -3635,6 +3653,26 @@ pub fn perform_action_at_screen_point(
 /// smaller) frame, so an area-only hit-test lands on the inert label —
 /// `do_action` is a silent no-op (the "false success"). Treat these as
 /// last-resort click targets.
+/// AT-SPI roles whose `activate`/`press` action does not move the widget
+/// focus into them (Chromium and GTK entries, spin buttons, sliders, table
+/// cells), so a following keystroke would land elsewhere; a real pointer
+/// click at the point is what a user does.
+pub fn is_focus_taking_role(role: &str) -> bool {
+    matches!(
+        role.trim().to_ascii_lowercase().as_str(),
+        "table cell"
+            | "spin button"
+            | "text"
+            | "entry"
+            | "password text"
+            | "slider"
+            | "combo box"
+            | "editbar"
+            | "search box"
+            | "textbox"
+    )
+}
+
 pub(crate) fn is_passive_role(role: &str) -> bool {
     matches!(
         role,

@@ -3074,19 +3074,7 @@ fn hyprland_foreground(delivery: crate::input::delivery::DeliveryMode) -> bool {
 /// focus into them, so a following keystroke would land elsewhere; a real
 /// pointer click at their centre is what a user does.
 fn element_needs_real_click(role: &str) -> bool {
-    matches!(
-        role.trim().to_ascii_lowercase().as_str(),
-        "table cell"
-            | "spin button"
-            | "text"
-            | "entry"
-            | "password text"
-            | "slider"
-            | "combo box"
-            | "editbar"
-            | "search box"
-            | "textbox"
-    )
+    crate::atspi::is_focus_taking_role(role)
 }
 
 /// `press_key` accepts `"alt+F4"` / `"ctrl+shift+t"` style keys: everything
@@ -5037,12 +5025,23 @@ impl Tool for ClickTool {
             let inject = |fg: bool| -> anyhow::Result<(&'static str, Option<PointerRoute>, Option<crate::input::FocusGuardReport>)> {
                 if !fg && button == 1 && count == 1 && modifiers_for_task.is_empty() {
                     // The accessible action under the point may open a menu or
-                    // a dialog that takes the focus: guard and restore.
+                    // a dialog that takes the focus: guard and restore. With a
+                    // real pointer available, an entry / spin button / cell
+                    // under the point is left to the MPX click below (its
+                    // `doAction` would not focus it for a following type_text).
+                    let real_click_for_focus_roles =
+                        crate::input::real_pointer_input_available();
                     let (hit, guard) = crate::input::focus_guard::guarded(Some(pid), || {
-                        Ok(crate::atspi::perform_action_at_point_in(pid, xid, xi, yi)
-                            .ok()
-                            .flatten()
-                            .is_some())
+                        Ok(crate::atspi::perform_action_at_point_in(
+                            pid,
+                            xid,
+                            xi,
+                            yi,
+                            real_click_for_focus_roles,
+                        )
+                        .ok()
+                        .flatten()
+                        .is_some())
                     })?;
                     if hit {
                         return Ok(("x11_atspi", None, guard));

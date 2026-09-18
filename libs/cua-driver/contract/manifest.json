@@ -2583,6 +2583,9 @@
                     "null"
                   ]
                 },
+                "title": {
+                  "type": "string"
+                },
                 "window_id": {
                   "format": "uint64",
                   "minimum": 0,

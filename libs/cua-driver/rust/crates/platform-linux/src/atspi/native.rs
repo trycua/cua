@@ -950,6 +950,21 @@ async fn collect_visited_bounded<'a>(
     max_elements: Option<usize>,
     max_depth: Option<usize>,
 ) -> Result<Option<Collected<'a>>> {
+    collect_visited_bounded_opts(conn, pid, xid, max_elements, max_depth, false).await
+}
+
+/// [`collect_visited_bounded`] with `walk_closed_menus`: a targeted walk
+/// (invoke_menu resolving a path segment by segment) descends into menus
+/// the snapshot walk keeps collapsed, since a toolkit that never marks its
+/// entries SHOWING (gail) cannot show the walk that a `doAction` opened one.
+async fn collect_visited_bounded_opts<'a>(
+    conn: &'a AccessibilityConnection,
+    pid: u32,
+    xid: u64,
+    max_elements: Option<usize>,
+    max_depth: Option<usize>,
+    walk_closed_menus: bool,
+) -> Result<Option<Collected<'a>>> {
     let ResolvedApp {
         app,
         children: probed,
@@ -966,6 +981,9 @@ async fn collect_visited_bounded<'a>(
         }
     };
     let zconn = conn.connection();
+    // Mapped popups of this pid, read once and only when a menubar menu's
+    // open state cannot be told from AT-SPI states alone (gail, focus elsewhere).
+    let mut pid_popups: Option<Vec<crate::input::PopupWindow>> = None;
 
     // Stack of (object ref, depth, in_web_doc, frame_ordinal). Seed with the
     // app's windows; push children reversed so siblings pop left-to-right and
@@ -1335,24 +1353,71 @@ async fn collect_visited_bounded<'a>(
         // any menu that is not showing) keeps its child count and is not
         // walked: its items are hidden, never indexed, and cost a round-trip
         // each. Open menus (expanded / showing popup contents) still descend.
-        let mut closed_menu = role_lower == "menu" && (!showing || (under_menubar && !expanded));
+        let mut closed_menu = !walk_closed_menus
+            && role_lower == "menu"
+            && (!showing || (under_menubar && !expanded));
         if closed_menu && showing && under_menubar {
             // LibreOffice VCL never sets EXPANDED on an open menubar menu; its
-            // items are simply SHOWING. A few extra state reads on the first
-            // children (a dozen menus per menubar) tell an open menu from a
-            // closed one. gail (GTK2, e.g. GIMP 2.10) never sets EXPANDED
-            // either and never marks a menu entry SHOWING, open or not: its
-            // entries are VISIBLE only (the leading tearoff item carries no
-            // state at all). Such a menu cannot be told closed from open,
-            // and its entries stay reachable through their AT-SPI `click`
-            // action, so a VISIBLE entry keeps the menu walked (see
-            // `counts_as_showing`); a closed VCL / GTK3 menu, whose entries
-            // are neither SHOWING nor VISIBLE, stays collapsed.
-            if let Some(Ok(children)) = &children_r {
+            // items are simply SHOWING. gail (GTK2, e.g. GIMP 2.10) never sets
+            // EXPANDED either and never marks a menu entry SHOWING, open or
+            // not (its entries are VISIBLE only, closed or open, and the
+            // leading tearoff item carries no state at all); what it does
+            // publish is FOCUSED on the menubar menu that is popped up. So
+            // an open menu is one that is FOCUSED itself, or whose leading
+            // children are SHOWING: a few extra state reads per menubar
+            // menu. Everything else stays collapsed.
+            if focused {
+                closed_menu = false;
+            } else if let Some(Ok(children)) = &children_r {
+                let mut leading: Vec<AccessibleProxy<'_>> = Vec::new();
                 for child_ref in children.iter().take(MENU_PEEK_CHILDREN) {
                     if let Some(Ok(child)) = call(accessible_for(conn, child_ref)).await {
                         if let Some(Ok(state)) = call(child.get_state()).await {
-                            if menu_entry_state_keeps_menu_open(&state) {
+                            if is_showing_state(&state) {
+                                closed_menu = false;
+                                break;
+                            }
+                        }
+                        leading.push(child);
+                    }
+                }
+                if closed_menu {
+                    // gail with the focus elsewhere (the caller's window is
+                    // not active, so the popped-up menu is not FOCUSED): the
+                    // open menu is a mapped override-redirect window of this
+                    // pid, and its entries' screen extents lie inside it.
+                    if pid_popups.is_none() {
+                        let popups = tokio::task::spawn_blocking(crate::input::mapped_popup_windows)
+                            .await
+                            .unwrap_or_default()
+                            .into_iter()
+                            .filter(|popup| popup.pid.is_none_or(|popup_pid| popup_pid == pid))
+                            .collect::<Vec<_>>();
+                        pid_popups = Some(popups);
+                    }
+                    if let Some(popups) = pid_popups.as_ref().filter(|popups| !popups.is_empty()) {
+                        for child in &leading {
+                            let Some(Ok(proxies)) = call(child.proxies()).await else {
+                                continue;
+                            };
+                            let Some(Ok(component)) = call(proxies.component()).await else {
+                                continue;
+                            };
+                            let Some(Ok((ex, ey, ew, eh))) =
+                                call(component.get_extents(CoordType::Screen)).await
+                            else {
+                                continue;
+                            };
+                            if ew <= 0 || eh <= 0 || ex < -100_000 || ey < -100_000 {
+                                continue;
+                            }
+                            let (cx, cy) = (ex + ew / 2, ey + eh / 2);
+                            if popups.iter().any(|popup| {
+                                cx >= popup.x
+                                    && cy >= popup.y
+                                    && cx < popup.x + popup.width as i32
+                                    && cy < popup.y + popup.height as i32
+                            }) {
                                 closed_menu = false;
                                 break;
                             }
@@ -1618,14 +1683,6 @@ fn counts_as_showing(role_lower: &str, state: &StateSet) -> bool {
 /// How many leading children of a menubar menu the closed-menu peek reads
 /// (gail puts a state-less tearoff item first).
 const MENU_PEEK_CHILDREN: usize = 3;
-
-/// A menubar menu whose child carries this state set is walked: `Showing`
-/// is an open GTK3 / VCL menu, `Visible` alone is a gail entry (never
-/// `Showing`, reachable through its action whether the menu is open or
-/// not). A child with neither is an entry of a closed VCL / GTK3 menu.
-fn menu_entry_state_keeps_menu_open(state: &StateSet) -> bool {
-    is_showing_state(state) || state.contains(State::Visible)
-}
 
 /// Format an AT-SPI numeric value like the historical `str(currentValue)`
 /// (e.g. `1.0`), so `value="..."` fields stay byte-compatible.
@@ -2664,7 +2721,7 @@ pub fn invoke_menu_path_in(pid: u32, xid: u64, path: &[String]) -> Result<()> {
         async {
             let conn = shared_connection().await?;
             for depth in 0..path.len() {
-                let collected = collect_visited_bounded(conn, pid, xid, None, None)
+                let collected = collect_visited_bounded_opts(conn, pid, xid, None, None, true)
                     .await?
                     .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
                 let visited = collected.visited;
@@ -6175,20 +6232,6 @@ mod at_point_rules_tests {
             at_point_activation_index("push button", &acts(&["buffer.delete-line"]), true),
             None
         );
-    }
-
-    #[test]
-    fn menu_peek_keeps_visible_or_showing_entries() {
-        // gail: entries are Visible only, open or closed; the tearoff has no state.
-        assert!(menu_entry_state_keeps_menu_open(&StateSet::new(State::Visible)));
-        assert!(!menu_entry_state_keeps_menu_open(&StateSet::new(
-            State::Enabled | State::Sensitive
-        )));
-        // VCL open menu: items Showing.
-        assert!(menu_entry_state_keeps_menu_open(&StateSet::new(
-            State::Enabled | State::Visible | State::Showing
-        )));
-        assert!(!menu_entry_state_keeps_menu_open(&StateSet::new(State::Enabled)));
     }
 
     #[test]

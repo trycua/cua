@@ -3661,6 +3661,22 @@ pub fn is_no_value_route(error: &anyhow::Error) -> bool {
     error.to_string().starts_with(NO_VALUE_ROUTE)
 }
 
+/// A spin button / spin scale only parses its entry text on activate (Return
+/// or focus-out); after an EditableText write, fire the element's `activate`
+/// action when it exposes one so the numeric value commits. Best effort.
+async fn commit_editable_write(proxies: &atspi::proxy::proxy_ext::Proxies<'_>) {
+    let Some(Ok(ap)) = call(proxies.action()).await else {
+        return;
+    };
+    let names = action_names(&ap).await;
+    if let Some(index) = names
+        .iter()
+        .position(|name| normalized_action_verb(name) == "activate")
+    {
+        let _ = call(ap.do_action(index as i32)).await;
+    }
+}
+
 /// The focus-free write shared by the index and cached-ref entry points.
 /// SetValue never calls Component.GrabFocus: GTK may activate and raise the
 /// toplevel in response, violating the background contract. Toolkits that
@@ -3674,6 +3690,7 @@ async fn set_value_on(acc: &AccessibleProxy<'_>, has_value: bool, value: &str, l
         // Replace whole contents (parity with the Windows/macOS set_value,
         // which overwrite rather than insert at the caret).
         if et.set_text_contents(value).await.unwrap_or(false) {
+            commit_editable_write(&proxies).await;
             return Ok(());
         }
         // Some toolkits reject SetTextContents but accept an insert at the
@@ -3684,6 +3701,7 @@ async fn set_value_on(acc: &AccessibleProxy<'_>, has_value: bool, value: &str, l
         };
         let len = value.chars().count() as i32;
         if et.insert_text(off, value, len).await.unwrap_or(false) {
+            commit_editable_write(&proxies).await;
             return Ok(());
         }
     }

@@ -31,6 +31,9 @@ use x11rb::COPY_DEPTH_FROM_PARENT;
 /// How long the guard watches for a late focus change after delivery (a
 /// transient dialog is mapped and focused by the WM a beat after the action).
 const SETTLE_WATCH: Duration = Duration::from_millis(220);
+/// Longer watch once a new top-level appeared during the short one: a dialog
+/// (LibreOffice's take ~1 s to build) is focused by the WM only when mapped.
+const SETTLE_WATCH_NEW_WINDOW: Duration = Duration::from_millis(1400);
 const SETTLE_POLL: Duration = Duration::from_millis(30);
 /// Bound on the restore loop: re-activation, verification, one re-send.
 const RESTORE_BUDGET: Duration = Duration::from_millis(1200);
@@ -87,6 +90,11 @@ impl X {
             .last()
             .copied()
             .filter(|w| *w != 0)
+    }
+
+    fn client_count(&self) -> usize {
+        self.window_property(self.root, self.atoms.net_client_list_stacking, u32::MAX)
+            .len()
     }
 
     fn core_focus(&self) -> (Window, InputFocus) {
@@ -214,6 +222,7 @@ pub struct FocusSnapshot {
     active: Option<Window>,
     stacking_top: Option<Window>,
     popups: HashSet<Window>,
+    client_count: usize,
 }
 
 /// Outcome of the post-action check and restore.
@@ -283,6 +292,7 @@ impl FocusSnapshot {
             active: x.active_window(),
             stacking_top: x.stacking_top(),
             popups: x.mapped_popups(),
+            client_count: x.client_count(),
         })
     }
 
@@ -322,12 +332,19 @@ impl FocusSnapshot {
         };
         let mut report = FocusGuardReport::default();
 
-        // Settle watch: stop at the first observed change.
-        let watch_until = started + SETTLE_WATCH;
+        // Settle watch: stop at the first observed change. A new top-level
+        // (dialog being mapped) extends the watch, since the WM focuses it
+        // only once it is mapped.
+        let mut watch_until = started + SETTLE_WATCH;
+        let mut extended = false;
         let mut changes = self.diff(&x);
         while changes.is_empty() && Instant::now() < watch_until {
             std::thread::sleep(SETTLE_POLL);
             changes = self.diff(&x);
+            if !extended && x.client_count() > self.client_count {
+                extended = true;
+                watch_until = started + SETTLE_WATCH_NEW_WINDOW;
+            }
         }
 
         // Popups opened by the action: an open GTK/VCL menu grabs the keyboard.

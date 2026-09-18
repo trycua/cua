@@ -11,6 +11,7 @@ TRIGGER = ROOT / ".github/workflows/review-cua-perception-pr3943.yml"
 CANDIDATE = ROOT / ".github/workflows/cd-cua-perception-review-supplied-inputs.yml"
 LIVE = ROOT / ".github/workflows/authorized-live-jev-use-demo.yml"
 MACOS = ROOT / ".github/workflows/authorized-live-jev-macos-evidence.yml"
+MACOS_ENTRY = ROOT / ".github/workflows/e2e-rust-macos.yml"
 
 
 def load_workflow(path: Path) -> tuple[str, dict]:
@@ -158,7 +159,14 @@ def test_self_hosted_macos_evidence_is_manual_and_not_pr_event_chained() -> None
     _, workflow = load_workflow(TRIGGER)
     assert "macos" not in workflow["jobs"]
     _, macos_workflow = load_workflow(MACOS)
-    assert set(triggers(macos_workflow)) == {"workflow_dispatch"}
+    assert set(triggers(macos_workflow)) == {"workflow_dispatch", "workflow_call"}
+    entry_text, entry_workflow = load_workflow(MACOS_ENTRY)
+    assert set(triggers(entry_workflow)) == {"workflow_dispatch"}
+    assert "pull_request:" not in entry_text and "pull_request_target" not in entry_text
+    live = entry_workflow["jobs"]["live-jev-perception"]
+    assert live["if"] == "${{ inputs.live_jev_perception }}"
+    assert live["uses"] == "./.github/workflows/authorized-live-jev-macos-evidence.yml"
+    assert "secrets" not in live
     assert macos_workflow["jobs"]["evidence"]["environment"] == "authorized-live-jev-use-demo"
     assert macos_workflow["jobs"]["evidence"]["runs-on"] == [
         "self-hosted",

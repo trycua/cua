@@ -1,17 +1,27 @@
 from pathlib import Path
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[3]
 
 
+def _triggers(path: Path) -> dict:
+    workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
+    return workflow.get("on", workflow.get(True))
+
+
 def test_macos_live_evidence_is_manual_exact_sha_and_protected() -> None:
-    workflow = (ROOT / ".github/workflows/authorized-live-jev-macos-evidence.yml").read_text()
+    path = ROOT / ".github/workflows/authorized-live-jev-macos-evidence.yml"
+    workflow = path.read_text()
     trigger = workflow.split("permissions:", 1)[0]
-    assert "workflow_dispatch:" in trigger and "workflow_call:" not in trigger
+    triggers = _triggers(path)
+    assert set(triggers) == {"workflow_dispatch", "workflow_call"}
+    assert triggers["workflow_dispatch"]["inputs"] == triggers["workflow_call"]["inputs"]
     assert "&macos_evidence_inputs" not in trigger and "*macos_evidence_inputs" not in trigger
-    assert trigger.count("source_sha:") == 2
-    assert trigger.count("signed_arm64_candidate_artifact_id:") == 1
-    assert trigger.count("signed_candidate_run_id:") == 1
+    assert trigger.count("source_sha:") == 4
+    assert trigger.count("signed_arm64_candidate_artifact_id:") == 2
+    assert trigger.count("signed_candidate_run_id:") == 2
     assert "pull_request:" not in trigger and "push:" not in trigger
     assert "source_sha:" in trigger and "jev_source_sha:" in trigger
     assert "signed_arm64_candidate_artifact_id:" in trigger

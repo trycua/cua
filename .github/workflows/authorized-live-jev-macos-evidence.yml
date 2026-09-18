@@ -19,6 +19,24 @@ on:
         description: "Producer Actions run ID containing the signed review candidate"
         required: true
         type: string
+  workflow_call:
+    inputs:
+      source_sha:
+        description: "Exact reviewed head SHA of pull request #3943"
+        required: true
+        type: string
+      jev_source_sha:
+        description: "Exact reviewed head SHA of pull request #3916"
+        required: true
+        type: string
+      signed_arm64_candidate_artifact_id:
+        description: "Immutable artifact ID containing the signed macOS arm64 review candidate"
+        required: true
+        type: string
+      signed_candidate_run_id:
+        description: "Producer Actions run ID containing the signed review candidate"
+        required: true
+        type: string
 permissions:
   actions: read
   contents: read

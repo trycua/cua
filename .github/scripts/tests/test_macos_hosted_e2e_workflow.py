@@ -18,7 +18,7 @@ def test_hosted_macos_probe_is_manual_exact_sha_and_least_privilege() -> None:
     assert "pull_request:" not in trigger
     assert "push:" not in trigger
     assert "source_sha:" in trigger
-    assert "permissions:\n  contents: read\n" in workflow
+    assert "permissions:\n  actions: read\n  contents: read\n  pull-requests: read\n" in workflow
     assert "id-token: write" not in workflow
     assert "secrets." not in workflow
     assert "runs-on: macos-26" in workflow
@@ -39,6 +39,11 @@ def test_hosted_macos_probe_is_manual_exact_sha_and_least_privilege() -> None:
     assert "cua-driver/macos-hosted-certification@v1" in workflow
     assert "workflow_ref: $workflow_ref" in workflow
     assert "workflow_sha: $workflow_sha" in workflow
+    assert "live-jev-perception:" in workflow
+    assert "if: ${{ inputs.live_jev_perception }}" in workflow
+    assert "uses: ./.github/workflows/authorized-live-jev-macos-evidence.yml" in workflow
+    assert "if: ${{ !inputs.live_jev_perception }}" in workflow
+    assert "secrets: inherit" not in workflow
 
     for action in ("actions/checkout", "actions/upload-artifact"):
         line = next(line for line in workflow.splitlines() if f"uses: {action}@" in line)

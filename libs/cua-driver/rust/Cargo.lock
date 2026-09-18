@@ -1357,9 +1357,11 @@ version = "0.28.2"
 dependencies = [
  "base64",
  "image",
+ "libloading",
  "ort",
  "serde",
  "serde_json",
+ "serde_yaml",
  "sha2",
  "thiserror 1.0.69",
 ]

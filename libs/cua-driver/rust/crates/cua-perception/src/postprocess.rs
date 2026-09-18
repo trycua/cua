@@ -23,7 +23,16 @@ pub struct OcrPostprocess {
     pub box_threshold: f32,
     pub unclip_ratio: f32,
     pub minimum_area: u32,
+    pub minimum_side: u32,
     pub max_candidates: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct DetectorPostprocess {
+    pub confidence_threshold: f32,
+    pub iou_threshold: f32,
+    pub max_candidates: usize,
+    pub max_detections: usize,
 }
 
 pub fn decode_detector(
@@ -31,25 +40,28 @@ pub fn decode_detector(
     shape: &[i64],
     layout: DetectorOutputLayout,
     transform: Letterbox,
-    confidence_threshold: f32,
-    iou_threshold: f32,
+    config: DetectorPostprocess,
 ) -> Result<Vec<Detection>, String> {
     let mut candidates = match layout {
         DetectorOutputLayout::YoloV8CxcywhClassScores => {
-            decode_yolo_v8(data, shape, transform, confidence_threshold)?
+            decode_yolo_v8(data, shape, transform, config.confidence_threshold)?
         }
         DetectorOutputLayout::XyxyScoreClass => {
-            decode_xyxy(data, shape, transform, confidence_threshold)?
+            decode_xyxy(data, shape, transform, config.confidence_threshold)?
         }
     };
     candidates.sort_by(|left, right| right.score.total_cmp(&left.score));
+    candidates.truncate(config.max_candidates);
     let mut kept: Vec<Detection> = Vec::new();
     for candidate in candidates {
         if kept
             .iter()
-            .all(|existing| iou(candidate.bounds, existing.bounds) <= iou_threshold)
+            .all(|existing| iou(candidate.bounds, existing.bounds) <= config.iou_threshold)
         {
             kept.push(candidate);
+            if kept.len() == config.max_detections {
+                break;
+            }
         }
     }
     Ok(kept)
@@ -199,11 +211,15 @@ pub fn decode_ocr_probability_map(
             }
         }
         let confidence = confidence / area as f32;
-        if area < config.minimum_area || confidence < config.box_threshold {
-            continue;
-        }
         let box_width = max_x - min_x + 1;
         let box_height = max_y - min_y + 1;
+        let rectangle_score = rectangle_mean(data, width, min_x, min_y, max_x, max_y);
+        if area < config.minimum_area
+            || box_width.min(box_height) < config.minimum_side as usize
+            || rectangle_score < config.box_threshold
+        {
+            continue;
+        }
         let perimeter = 2.0 * (box_width + box_height) as f32;
         let expansion =
             ((box_width * box_height) as f32 * config.unclip_ratio / perimeter).ceil() as usize;
@@ -225,7 +241,7 @@ pub fn decode_ocr_probability_map(
         if valid(bounds) {
             regions.push(Detection {
                 bounds,
-                score: confidence,
+                score: rectangle_score.min(confidence),
                 class_id: 0,
             });
         }
@@ -238,6 +254,32 @@ pub fn decode_ocr_probability_map(
     });
     regions.truncate(config.max_candidates);
     Ok(regions)
+}
+
+fn rectangle_mean(
+    data: &[f32],
+    width: usize,
+    min_x: usize,
+    min_y: usize,
+    max_x: usize,
+    max_y: usize,
+) -> f32 {
+    let mut sum = 0.0;
+    let mut count = 0;
+    for y in min_y..=max_y {
+        for x in min_x..=max_x {
+            let value = data[y * width + x];
+            if value.is_finite() {
+                sum += value;
+                count += 1;
+            }
+        }
+    }
+    if count == 0 {
+        0.0
+    } else {
+        sum / count as f32
+    }
 }
 
 pub fn ctc_decode(
@@ -400,8 +442,12 @@ mod tests {
             &[1, 5, 3],
             DetectorOutputLayout::YoloV8CxcywhClassScores,
             transform(),
-            0.5,
-            0.5,
+            DetectorPostprocess {
+                confidence_threshold: 0.5,
+                iou_threshold: 0.5,
+                max_candidates: 100,
+                max_detections: 10,
+            },
         )
         .unwrap();
         assert_eq!(detections.len(), 2);
@@ -426,6 +472,35 @@ mod tests {
     }
 
     #[test]
+    fn detector_candidate_and_detection_counts_are_bounded() {
+        let tensor = [
+            0.0, 60.0, 10.0, 70.0, 0.7, 0.0, 20.0, 60.0, 30.0, 70.0, 0.9, 0.0, 40.0, 60.0, 50.0,
+            70.0, 0.8, 0.0,
+        ];
+        let decode = |max_candidates, max_detections| {
+            decode_detector(
+                &tensor,
+                &[1, 3, 6],
+                DetectorOutputLayout::XyxyScoreClass,
+                transform(),
+                DetectorPostprocess {
+                    confidence_threshold: 0.5,
+                    iou_threshold: 0.5,
+                    max_candidates,
+                    max_detections,
+                },
+            )
+            .unwrap()
+        };
+
+        let candidates_bounded = decode(2, 2);
+        assert_eq!(candidates_bounded.len(), 2);
+        assert_eq!(candidates_bounded[0].score, 0.9);
+        assert_eq!(candidates_bounded[1].score, 0.8);
+        assert_eq!(decode(3, 1).len(), 1);
+    }
+
+    #[test]
     fn probability_map_groups_connected_text_pixels() {
         let map = [0.9, 0.8, 0.0, 0.0, 0.9, 0.0, 0.0, 0.7];
         let regions = decode_ocr_probability_map(
@@ -434,15 +509,16 @@ mod tests {
             transform(),
             OcrPostprocess {
                 pixel_threshold: 0.5,
-                box_threshold: 0.8,
+                box_threshold: 0.6,
                 unclip_ratio: 1.5,
                 minimum_area: 2,
+                minimum_side: 1,
                 max_candidates: 100,
             },
         )
         .unwrap();
         assert_eq!(regions.len(), 1);
-        assert!((regions[0].score - 0.8666667).abs() < 1e-5);
+        assert!((regions[0].score - 0.65).abs() < 1e-5);
     }
 
     #[test]

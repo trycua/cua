@@ -16,7 +16,7 @@ use std::{
 };
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use image::{DynamicImage, ImageError, ImageFormat, ImageReader, Limits};
+use image::{ImageError, ImageFormat, ImageReader, Limits, RgbImage};
 pub use manifest::{ManifestError, ModelManifest, ValidatedManifest};
 use runtime::{InferenceRegion, OnnxBackend};
 use serde::{Deserialize, Serialize};
@@ -27,9 +27,9 @@ use thiserror::Error;
 pub const PROTOCOL_VERSION: &str = "cua-perception/1";
 pub const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
-pub const MAX_IMAGE_DIMENSION: u32 = 16_384;
-pub const MAX_IMAGE_PIXELS: u64 = 64 * 1024 * 1024;
-const MAX_DECODE_ALLOC_BYTES: u64 = MAX_IMAGE_PIXELS * 8;
+pub const MAX_IMAGE_DIMENSION: u32 = 8_192;
+pub const MAX_IMAGE_PIXELS: u64 = 32 * 1024 * 1024;
+const MAX_DECODE_ALLOC_BYTES: u64 = MAX_IMAGE_PIXELS * 4;
 
 const FIXTURE_PNG_BASE64: &str =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
@@ -352,7 +352,7 @@ impl WorkerError {
 }
 
 struct ValidatedImage {
-    decoded: DynamicImage,
+    decoded: RgbImage,
     sha256: String,
 }
 
@@ -446,7 +446,8 @@ fn validate_image(image: &ImageInput) -> Result<ValidatedImage, WorkerError> {
     }
     let decoded = image_reader(&bytes, format)
         .decode()
-        .map_err(|error| map_image_error(error, format))?;
+        .map_err(|error| map_image_error(error, format))?
+        .into_rgb8();
     Ok(ValidatedImage {
         sha256: format!("{:x}", Sha256::digest(&bytes)),
         decoded,
@@ -536,7 +537,8 @@ fn inference_result(
         "coordinate_space": "image_pixels",
         "regions": regions,
         "runtime": "onnx_runtime_cpu",
-        "identity": identity
+        "identity": identity,
+        "text_geometry": "axis_aligned_bounds"
     })
 }
 
@@ -585,8 +587,10 @@ pub fn read_frame(reader: &mut impl Read) -> Result<Option<Vec<u8>>, FrameError>
         }
     }
     let declared = u32::from_be_bytes(prefix) as usize;
+    // A zero-length frame is unambiguous and consumes exactly its prefix. Let
+    // the request parser return invalid_json, then continue with the next frame.
     if declared == 0 {
-        return Err(FrameError::Empty);
+        return Ok(Some(Vec::new()));
     }
     if declared > MAX_FRAME_BYTES {
         return Err(FrameError::Oversized {
@@ -622,4 +626,67 @@ pub fn write_frame(writer: &mut impl Write, payload: &[u8]) -> io::Result<()> {
     writer.write_all(&length.to_be_bytes())?;
     writer.write_all(payload)?;
     writer.flush()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::postprocess::Rect;
+
+    #[test]
+    fn private_inference_regions_map_to_protocol_dto() {
+        let result = inference_result(
+            "capture-1",
+            "abc123",
+            100,
+            50,
+            vec![
+                InferenceRegion {
+                    kind: "text",
+                    bounds: Rect {
+                        x1: 1.2,
+                        y1: 2.8,
+                        x2: 10.1,
+                        y2: 12.2,
+                    },
+                    text: Some("Send".to_owned()),
+                    confidence: 0.75,
+                    class_id: None,
+                },
+                InferenceRegion {
+                    kind: "icon",
+                    bounds: Rect {
+                        x1: 90.0,
+                        y1: 40.0,
+                        x2: 110.0,
+                        y2: 60.0,
+                    },
+                    text: None,
+                    confidence: 0.5,
+                    class_id: Some(4),
+                },
+            ],
+            json!({ "backend": "test" }),
+        );
+        let encoded = serde_json::to_vec(&result).unwrap();
+        let decoded: Value = serde_json::from_slice(&encoded).unwrap();
+
+        assert_eq!(decoded["capture_id"], "capture-1");
+        assert_eq!(
+            decoded["regions"],
+            json!([
+                {
+                    "id": "text-1", "kind": "text",
+                    "bounds": { "x": 1, "y": 2, "width": 10, "height": 11 },
+                    "confidence": 0.75, "text": "Send"
+                },
+                {
+                    "id": "icon-2", "kind": "icon",
+                    "bounds": { "x": 90, "y": 40, "width": 10, "height": 10 },
+                    "confidence": 0.5, "class_id": 4
+                }
+            ])
+        );
+        assert_eq!(decoded["text_geometry"], "axis_aligned_bounds");
+    }
 }

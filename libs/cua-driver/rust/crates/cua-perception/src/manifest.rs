@@ -33,6 +33,7 @@ pub struct ModelIdentity {
 #[serde(deny_unknown_fields)]
 pub struct RuntimeIdentity {
     pub version: String,
+    pub target: String,
     pub library_sha256: String,
     pub intra_threads: usize,
 }
@@ -48,6 +49,8 @@ pub struct DetectorManifest {
     pub confidence_threshold: f32,
     pub iou_threshold: f32,
     pub output_layout: DetectorOutputLayout,
+    pub max_candidates: usize,
+    pub max_detections: usize,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -85,6 +88,7 @@ pub struct OcrDetectorManifest {
     pub box_threshold: f32,
     pub unclip_ratio: f32,
     pub minimum_area: u32,
+    pub minimum_side: u32,
     pub max_candidates: usize,
 }
 
@@ -186,6 +190,7 @@ impl ModelManifest {
             ),
             ("identity.license", self.identity.license.as_str()),
             ("onnx_runtime.version", self.onnx_runtime.version.as_str()),
+            ("onnx_runtime.target", self.onnx_runtime.target.as_str()),
             ("detector.input_name", self.detector.input_name.as_str()),
             ("detector.output_name", self.detector.output_name.as_str()),
             (
@@ -236,7 +241,11 @@ impl ModelManifest {
             || !(0.0..=1.0).contains(&self.ocr.detector.box_threshold)
             || self.ocr.detector.unclip_ratio < 1.0
             || self.ocr.detector.minimum_area == 0
+            || self.ocr.detector.minimum_side == 0
             || self.ocr.detector.max_candidates == 0
+            || self.detector.max_candidates == 0
+            || self.detector.max_detections == 0
+            || self.detector.max_detections > self.detector.max_candidates
         {
             return Err(ManifestError::InvalidValue("postprocessing thresholds"));
         }
@@ -246,6 +255,10 @@ impl ModelManifest {
         )?;
         if self.onnx_runtime.intra_threads == 0 || self.onnx_runtime.intra_threads > 64 {
             return Err(ManifestError::InvalidValue("onnx_runtime.intra_threads"));
+        }
+        let actual_target = current_target();
+        if self.onnx_runtime.target != actual_target {
+            return Err(ManifestError::InvalidValue("onnx_runtime.target"));
         }
         for artifact in [
             &self.detector.model,
@@ -257,6 +270,17 @@ impl ModelManifest {
         }
         Ok(())
     }
+}
+
+fn current_target() -> String {
+    let arch = std::env::consts::ARCH;
+    let suffix = match std::env::consts::OS {
+        "macos" => "apple-darwin",
+        "windows" => "pc-windows-msvc",
+        "linux" => "unknown-linux-gnu",
+        other => other,
+    };
+    format!("{arch}-{suffix}")
 }
 
 fn validate_sha256(field: &'static str, value: &str) -> Result<(), ManifestError> {
@@ -353,26 +377,28 @@ mod tests {
                 "sha256": digest(&fs::read(directory.0.join(name)).unwrap())
             })
         };
-        let manifest = json!({
+        let mut manifest = json!({
             "schema_version": 1,
             "identity": {
                 "name": "test", "version": "1", "source_url": "https://example.invalid",
                 "source_revision": "abc", "license": "test-only"
             },
             "onnx_runtime": {
-                "version": "1", "library_sha256": digest(b"runtime"), "intra_threads": 1
+                "version": "1", "target": current_target(),
+                "library_sha256": digest(b"runtime"), "intra_threads": 1
             },
             "detector": {
                 "model": artifact("detector.onnx"), "input_name": "images", "output_name": "output0",
                 "input_width": 32, "input_height": 32, "confidence_threshold": 0.3,
-                "iou_threshold": 0.1, "output_layout": "yolo_v8_cxcywh_class_scores"
+                "iou_threshold": 0.1, "output_layout": "yolo_v8_cxcywh_class_scores",
+                "max_candidates": 100, "max_detections": 10
             },
             "ocr": {
                 "detector": {
                     "model": artifact("ocr-det.onnx"), "input_name": "x", "output_name": "out",
                     "input_width": 32, "input_height": 32, "pixel_threshold": 0.3,
                     "box_threshold": 0.6, "unclip_ratio": 1.5, "minimum_area": 1,
-                    "max_candidates": 10
+                    "minimum_side": 1, "max_candidates": 10
                 },
                 "recognizer": {
                     "model": artifact("ocr-rec.onnx"), "input_name": "x", "output_name": "out",
@@ -388,6 +414,15 @@ mod tests {
         let validated =
             ValidatedManifest::load(&manifest_path, &directory.0.join("runtime.dylib")).unwrap();
         assert_eq!(validated.manifest.identity.name, "test");
+
+        manifest["onnx_runtime"]["target"] = json!("wrong-target");
+        fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        assert!(matches!(
+            ValidatedManifest::load(&manifest_path, &directory.0.join("runtime.dylib")),
+            Err(ManifestError::InvalidValue("onnx_runtime.target"))
+        ));
+        manifest["onnx_runtime"]["target"] = json!(current_target());
+        fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
 
         fs::write(directory.0.join("detector.onnx"), b"tampered").unwrap();
         assert!(matches!(

@@ -41,7 +41,7 @@ fn pinned_real_models_match_the_synthetic_ui_known_answer() {
     let regions = response["result"]["regions"]
         .as_array()
         .expect("regions array");
-    assert_eq!(regions.len(), 9);
+    assert_eq!(regions.len(), 8, "{regions:#?}");
     let texts = regions
         .iter()
         .filter_map(|region| region.get("text").and_then(Value::as_str))

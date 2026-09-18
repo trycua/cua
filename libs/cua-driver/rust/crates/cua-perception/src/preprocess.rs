@@ -1,4 +1,4 @@
-use image::{imageops::FilterType, DynamicImage, GenericImageView, Rgb, RgbImage};
+use image::{imageops::FilterType, Rgb, RgbImage};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Letterbox {
@@ -21,7 +21,7 @@ pub struct ImageTensor {
     pub letterbox: Letterbox,
 }
 
-pub fn detector_tensor(image: &DynamicImage, width: u32, height: u32) -> ImageTensor {
+pub fn detector_tensor(image: &RgbImage, width: u32, height: u32) -> ImageTensor {
     let (canvas, letterbox) = letterbox(image, width, height, Rgb([114, 114, 114]));
     ImageTensor {
         shape: [1, 3, height as usize, width as usize],
@@ -30,23 +30,22 @@ pub fn detector_tensor(image: &DynamicImage, width: u32, height: u32) -> ImageTe
     }
 }
 
-pub fn ocr_detector_tensor(image: &DynamicImage, resize_long: u32) -> ImageTensor {
-    let source = image.to_rgb8();
-    let scale = resize_long as f32 / source.width().max(source.height()) as f32;
-    let width = round_to_multiple((source.width() as f32 * scale).round() as u32, 32);
-    let height = round_to_multiple((source.height() as f32 * scale).round() as u32, 32);
-    let resized = image::imageops::resize(&source, width, height, FilterType::Triangle);
+pub fn ocr_detector_tensor(image: &RgbImage, resize_long: u32) -> ImageTensor {
+    let scale = resize_long as f32 / image.width().max(image.height()) as f32;
+    let width = round_to_multiple((image.width() as f32 * scale).round() as u32, 128);
+    let height = round_to_multiple((image.height() as f32 * scale).round() as u32, 128);
+    let resized = image::imageops::resize(image, width, height, FilterType::Triangle);
     let letterbox = Letterbox {
-        original_width: source.width(),
-        original_height: source.height(),
+        original_width: image.width(),
+        original_height: image.height(),
         input_width: width,
         input_height: height,
         resized_width: width,
         resized_height: height,
         pad_x: 0,
         pad_y: 0,
-        scale_x: width as f32 / source.width() as f32,
-        scale_y: height as f32 / source.height() as f32,
+        scale_x: width as f32 / image.width() as f32,
+        scale_y: height as f32 / image.height() as f32,
     };
     ImageTensor {
         shape: [1, 3, height as usize, width as usize],
@@ -60,16 +59,17 @@ pub fn ocr_detector_tensor(image: &DynamicImage, resize_long: u32) -> ImageTenso
     }
 }
 
-pub fn ocr_recognizer_tensor(image: &DynamicImage, width: u32, height: u32) -> ImageTensor {
-    let source = image.to_rgb8();
-    let scale = (height as f32 / source.height() as f32).min(width as f32 / source.width() as f32);
-    let resized_width = ((source.width() as f32 * scale).round() as u32).clamp(1, width);
-    let resized = image::imageops::resize(&source, resized_width, height, FilterType::Triangle);
-    let mut canvas = RgbImage::new(width, height);
+pub fn ocr_recognizer_tensor(image: &RgbImage, width: u32, height: u32) -> ImageTensor {
+    let scale = (height as f32 / image.height() as f32).min(width as f32 / image.width() as f32);
+    let resized_width = ((image.width() as f32 * scale).round() as u32).clamp(1, width);
+    let resized = image::imageops::resize(image, resized_width, height, FilterType::Triangle);
+    // PP-OCR normalization maps 127.5 to zero. Mid-gray padding therefore
+    // represents neutral input rather than solid black content.
+    let mut canvas = RgbImage::from_pixel(width, height, Rgb([128, 128, 128]));
     image::imageops::replace(&mut canvas, &resized, 0, 0);
     let letterbox = Letterbox {
-        original_width: source.width(),
-        original_height: source.height(),
+        original_width: image.width(),
+        original_height: image.height(),
         input_width: width,
         input_height: height,
         resized_width,
@@ -77,7 +77,7 @@ pub fn ocr_recognizer_tensor(image: &DynamicImage, width: u32, height: u32) -> I
         pad_x: 0,
         pad_y: 0,
         scale_x: scale,
-        scale_y: height as f32 / source.height() as f32,
+        scale_y: height as f32 / image.height() as f32,
     };
     ImageTensor {
         shape: [1, 3, height as usize, width as usize],
@@ -87,7 +87,7 @@ pub fn ocr_recognizer_tensor(image: &DynamicImage, width: u32, height: u32) -> I
 }
 
 fn letterbox(
-    image: &DynamicImage,
+    image: &RgbImage,
     input_width: u32,
     input_height: u32,
     fill: Rgb<u8>,
@@ -99,12 +99,8 @@ fn letterbox(
     let resized_height = ((original_height as f32 * scale).round() as u32).clamp(1, input_height);
     let pad_x = (input_width - resized_width) / 2;
     let pad_y = (input_height - resized_height) / 2;
-    let resized = image::imageops::resize(
-        &image.to_rgb8(),
-        resized_width,
-        resized_height,
-        FilterType::Triangle,
-    );
+    let resized =
+        image::imageops::resize(image, resized_width, resized_height, FilterType::Triangle);
     let mut canvas = RgbImage::from_pixel(input_width, input_height, fill);
     image::imageops::replace(&mut canvas, &resized, i64::from(pad_x), i64::from(pad_y));
     (
@@ -160,13 +156,13 @@ mod tests {
 
     #[test]
     fn detector_preprocessing_is_chw_and_letterboxed() {
-        let image = DynamicImage::ImageRgb8(RgbImage::from_fn(2, 1, |x, _| {
+        let image = RgbImage::from_fn(2, 1, |x, _| {
             if x == 0 {
                 Rgb([255, 0, 0])
             } else {
                 Rgb([0, 255, 0])
             }
-        }));
+        });
         let tensor = detector_tensor(&image, 4, 4);
         assert_eq!(tensor.shape, [1, 3, 4, 4]);
         assert_eq!(tensor.letterbox.resized_width, 4);
@@ -179,21 +175,21 @@ mod tests {
 
     #[test]
     fn recognizer_padding_is_deterministic() {
-        let image = DynamicImage::ImageRgb8(RgbImage::from_pixel(2, 2, Rgb([255, 255, 255])));
+        let image = RgbImage::from_pixel(2, 2, Rgb([255, 255, 255]));
         let tensor = ocr_recognizer_tensor(&image, 8, 2);
         assert_eq!(tensor.letterbox.resized_width, 2);
         assert_eq!(tensor.data[0], 1.0);
-        assert_eq!(tensor.data[2], -1.0);
+        assert!((tensor.data[2] - (128.0 / 255.0 - 0.5) / 0.5).abs() < 1e-6);
     }
 
     #[test]
     fn ocr_detector_uses_bgr_and_resize_long() {
-        let image = DynamicImage::ImageRgb8(RgbImage::from_pixel(64, 32, Rgb([255, 0, 0])));
+        let image = RgbImage::from_pixel(64, 32, Rgb([255, 0, 0]));
         let tensor = ocr_detector_tensor(&image, 96);
-        assert_eq!(tensor.shape, [1, 3, 64, 96]);
+        assert_eq!(tensor.shape, [1, 3, 128, 128]);
         assert!(tensor.data[0] < 0.0, "B channel must receive source blue");
         assert!(
-            tensor.data[2 * 64 * 96] > 1.0,
+            tensor.data[2 * 128 * 128] > 1.0,
             "R channel must receive source red"
         );
     }

@@ -59,3 +59,7 @@ runtime dependency.
    traversal, symlinks, empty files, and hash mismatches are rejected.
 5. Start with `cua-perception --manifest <path> --onnx-runtime-library <path>`.
    Use `--fixture` only for deterministic protocol tests.
+
+PP-OCR DB detections are returned as axis-aligned bounds. Rotated probability
+map regions are not perspective-corrected before recognition; health and parse
+identity expose this limitation so a caller can decide whether it is suitable.

@@ -9,6 +9,7 @@
   },
   "onnx_runtime": {
     "version": "REPLACE_WITH_PACKAGED_CPU_RUNTIME_VERSION",
+    "target": "REPLACE_WITH_RUST_TARGET_TRIPLE",
     "library_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
     "intra_threads": 2
   },
@@ -23,7 +24,9 @@
     "input_height": 1280,
     "confidence_threshold": 0.3,
     "iou_threshold": 0.1,
-    "output_layout": "yolo_v8_cxcywh_class_scores"
+    "output_layout": "yolo_v8_cxcywh_class_scores",
+    "max_candidates": 10000,
+    "max_detections": 1000
   },
   "ocr": {
     "detector": {
@@ -39,6 +42,7 @@
       "box_threshold": 0.6,
       "unclip_ratio": 1.5,
       "minimum_area": 3,
+      "minimum_side": 3,
       "max_candidates": 1000
     },
     "recognizer": {

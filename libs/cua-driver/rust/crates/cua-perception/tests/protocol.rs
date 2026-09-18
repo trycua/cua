@@ -152,13 +152,31 @@ fn oversized_png_header_is_rejected_by_decoder_limits() {
 
 #[test]
 fn oversized_png_pixel_count_is_rejected_before_full_decode() {
-    let actual = response_for_png_header(8193, 8193);
+    let actual = response_for_png_header(5793, 5793);
     assert_eq!(actual["status"], "error");
     assert_eq!(actual["error"]["code"], "invalid_image");
     assert_eq!(
         actual["error"]["message"],
         "decoded PNG dimensions exceed image resource limits"
     );
+}
+
+#[test]
+fn zero_length_frame_is_recoverable() {
+    let mut input = vec![0, 0, 0, 0];
+    write_frame(
+        &mut input,
+        br#"{"protocol":"cua-perception/1","request_id":"after-empty","method":"health","params":{}}"#,
+    )
+    .unwrap();
+    let output = run_worker(&input);
+    assert!(output.status.success());
+    let mut stdout = Cursor::new(output.stdout);
+    assert_eq!(
+        read_json_frame(&mut stdout)["error"]["code"],
+        "invalid_json"
+    );
+    assert_eq!(read_json_frame(&mut stdout)["request_id"], "after-empty");
 }
 
 #[test]

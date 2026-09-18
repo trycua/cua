@@ -515,6 +515,12 @@ pub fn focused_is_editable(pid: u32) -> Result<Option<bool>> {
     native::focused_is_editable(pid)
 }
 
+/// `(role, name)` of the accessible holding the widget focus, from the
+/// focus-event log only (no tree walk). See `native::focused_control`.
+pub fn focused_control(pid: u32) -> Option<(String, String)> {
+    native::focused_control(pid)
+}
+
 pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> {
     if let Some(bounds) = cached_bounds(pid, None, idx) {
         return Ok(bounds);

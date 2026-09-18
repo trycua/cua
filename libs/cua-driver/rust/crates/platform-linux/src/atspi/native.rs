@@ -366,6 +366,9 @@ struct Visited<'a> {
     /// Display text: the accessible `name`, or — for editable/text widgets that
     /// expose no name — the Text-interface content (where typed text lives).
     name: String,
+    /// AT-SPI `Description`, read for controls only: Qt publishes a control's
+    /// tooltip there ("Play"/"Pause", "Look in"), GTK its tooltip text.
+    description: String,
     value: Option<String>,
     checked: Option<bool>,
     enabled: Option<bool>,
@@ -1337,9 +1340,33 @@ async fn collect_visited_bounded_opts<'a>(
             }
         }
 
-        // Surface Text content as the display name when the widget has no name.
-        if name.trim().is_empty() && !text_content.trim().is_empty() {
+        // Surface Text content as the display name when the widget has no
+        // name — for text widgets. A value control (GtkSpinButton implements
+        // AtkText with its formatted number) would otherwise be named after
+        // its own value, and four spin buttons then all read "0.0".
+        if name.trim().is_empty() && !text_content.trim().is_empty() && !has_value {
             name = text_content;
+        }
+
+        // AT-SPI `Description` for controls (one `Get` per actionable node,
+        // never for passive containers/labels): Qt reports tooltips there.
+        let is_control = has_action
+            || has_value
+            || has_editable
+            || (has_component && is_control_role(&role_lower));
+        let mut description = String::new();
+        if is_control {
+            if let Some(Ok(text)) = call(acc.description()).await {
+                description = text.trim().to_owned();
+            }
+        }
+        // An unnamed value/editable control: its `LABELLED_BY` relation names
+        // it (GTK grids, Qt forms with buddies). One relation read plus one
+        // name read, only for the controls that need it.
+        if name.trim().is_empty() && (has_value || has_editable || is_control_role(&role_lower)) {
+            if let Some(label) = labelled_by_name(conn, &acc).await {
+                name = label;
+            }
         }
 
         // Children inherit web-document context, plus this node's own role.
@@ -1468,6 +1495,7 @@ async fn collect_visited_bounded_opts<'a>(
             depth,
             role,
             name,
+            description,
             value,
             checked,
             enabled,
@@ -1525,6 +1553,140 @@ async fn collect_visited_bounded_opts<'a>(
     }))
 }
 
+/// Roles whose Description / LABELLED_BY are worth a round-trip even when
+/// the node exposes no Action / Value / EditableText interface.
+fn is_control_role(role_lower: &str) -> bool {
+    matches!(
+        role_lower,
+        "button"
+            | "push button"
+            | "toggle button"
+            | "combo box"
+            | "spin button"
+            | "slider"
+            | "check box"
+            | "radio button"
+            | "entry"
+            | "text"
+            | "password text"
+    )
+}
+
+/// Value controls the model tells apart by their label; when nothing names
+/// one, the tree says so instead of repeating the value as its name.
+fn is_value_control_role(role_lower: &str) -> bool {
+    matches!(
+        role_lower,
+        "spin button" | "slider" | "scroll bar" | "progress bar" | "combo box" | "entry" | "text"
+    )
+}
+
+/// The name of the first `LABELLED_BY` target of `acc`, when it has one.
+async fn labelled_by_name(
+    conn: &AccessibilityConnection,
+    acc: &AccessibleProxy<'_>,
+) -> Option<String> {
+    let relations = call(acc.get_relation_set()).await?.ok()?;
+    for (kind, targets) in relations {
+        if kind != atspi::RelationType::LabelledBy {
+            continue;
+        }
+        for target in targets {
+            let Some(raw) = RawObjectRef::from_atspi(&target) else {
+                continue;
+            };
+            let Some(Ok(label)) = call(accessible_for(conn, &raw)).await else {
+                continue;
+            };
+            if let Some(Ok(text)) = call(label.name()).await {
+                let text = text.trim();
+                if !text.is_empty() {
+                    return Some(text.to_owned());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Prefix of the description note an unnamed value control carries; the
+/// element builder turns it into `unlabelled: true`.
+pub const UNLABELLED_NOTE_PREFIX: &str = "unlabelled";
+
+fn ordinal_word(n: usize) -> String {
+    let suffix = match (n % 10, n % 100) {
+        (1, 11) | (2, 12) | (3, 13) => "th",
+        (1, _) => "st",
+        (2, _) => "nd",
+        (3, _) => "rd",
+        _ => "th",
+    };
+    format!("{n}{suffix}")
+}
+
+/// The real AT-SPI parent of every visited node (its position in `visited`),
+/// from the pre-order depth sequence: a node at depth `d` ends every open
+/// subtree at depth >= `d`. Ancestry never spans two top-levels.
+fn true_parents(visited: &[Visited<'_>]) -> Vec<Option<usize>> {
+    let mut parents = Vec::with_capacity(visited.len());
+    let mut chain: Vec<usize> = Vec::new();
+    let mut current_frame: Option<usize> = None;
+    for (pos, v) in visited.iter().enumerate() {
+        if current_frame != Some(v.frame_ordinal) {
+            current_frame = Some(v.frame_ordinal);
+            chain.clear();
+        }
+        chain.truncate(v.depth);
+        parents.push(chain.last().copied());
+        chain.push(pos);
+    }
+    parents
+}
+
+/// For an unnamed value control at `pos`: the nearest preceding sibling
+/// label in the same container (a GTK grid row "Hue:" [spin]) — scanning
+/// stops at another control of the same role, so the second row never
+/// borrows the first row's label.
+fn preceding_sibling_label(visited: &[Visited<'_>], parents: &[Option<usize>], pos: usize) -> Option<String> {
+    let parent = parents[pos]?;
+    let role = visited[pos].role.to_ascii_lowercase();
+    for q in (0..pos).rev() {
+        if visited[q].depth < visited[pos].depth {
+            break;
+        }
+        if parents[q] != Some(parent) {
+            continue;
+        }
+        let q_role = visited[q].role.to_ascii_lowercase();
+        if q_role == role {
+            return None;
+        }
+        if q_role == "label" && !visited[q].name.trim().is_empty() {
+            return Some(visited[q].name.trim().to_owned());
+        }
+    }
+    None
+}
+
+/// "3rd of 4 spin buttons in this panel": the control's place among the
+/// same-role siblings of its real parent, in walk (= visual) order.
+fn sibling_ordinal(visited: &[Visited<'_>], parents: &[Option<usize>], pos: usize) -> String {
+    let role = visited[pos].role.to_ascii_lowercase();
+    let same_role = |q: usize| parents[q] == parents[pos] && visited[q].role.eq_ignore_ascii_case(&role);
+    let total = (0..visited.len()).filter(|q| same_role(*q)).count();
+    let nth = (0..=pos).filter(|q| same_role(*q)).count();
+    let container = parents[pos]
+        .map(|p| visited[p].role.to_ascii_lowercase())
+        .filter(|r| !r.is_empty())
+        .unwrap_or_else(|| "window".to_owned());
+    let plural = if total == 1 {
+        role.clone()
+    } else {
+        format!("{role}s")
+    };
+    format!("{} of {total} {plural} in this {container}", ordinal_word(nth))
+}
+
 /// Render visited nodes into the markdown + node list `walk_tree` returns.
 /// Format matches the historical pyatspi output exactly so downstream parsing
 /// (`extract_text_from_markdown`, `query_dom`) is unaffected.
@@ -1543,69 +1705,97 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
     let mut md = String::new();
     let mut nodes = Vec::new();
     let mut idx = 0usize;
-    let mut current_frame: Option<usize> = None;
-    // Sparse stack: parent_at_depth[d] = Some(idx) for the actionable node
-    // most recently emitted at depth d. When a new node appears at depth d,
-    // its parent_element_index is the closest ancestor at depth < d that has
-    // an entry. We invalidate deeper entries on each emit so stale siblings
-    // don't leak across subtrees.
-    let mut parent_at_depth: Vec<Option<usize>> = Vec::new();
+    // The real AT-SPI parent of every node, so `parent_element_index` is the
+    // nearest *indexed ancestor* — never a preceding cousin at a lower depth
+    // (which parented GIMP's spin buttons to a push button).
+    let parents = true_parents(visited);
+    let mut index_of: Vec<Option<usize>> = vec![None; visited.len()];
 
-    for v in visited {
-        // Ancestry never spans two top-levels, so a frame change retires every
-        // recorded parent. Without this a window's first descendants could
-        // inherit a parent index from the previous window's subtree.
-        if current_frame != Some(v.frame_ordinal) {
-            current_frame = Some(v.frame_ordinal);
-            parent_at_depth.clear();
-        }
+    for (pos, v) in visited.iter().enumerate() {
         let emit = only_frame.is_none_or(|frame| frame == v.frame_ordinal);
         let indent = "  ".repeat(v.depth);
-        // Resolve parent: walk parent_at_depth from v.depth-1 down to 0.
-        let parent_element_index = if v.depth == 0 {
-            None
-        } else {
-            (0..v.depth)
-                .rev()
-                .find_map(|d| parent_at_depth.get(d).copied().flatten())
+        let parent_element_index = {
+            let mut cursor = parents[pos];
+            let mut found = None;
+            while let Some(p) = cursor {
+                if let Some(i) = index_of[p] {
+                    found = Some(i);
+                    break;
+                }
+                cursor = parents[p];
+            }
+            found
         };
 
         if is_indexable(v) {
+            index_of[pos] = Some(idx);
             if !emit {
                 // Consume the index without emitting: indices stay aligned with
                 // the application-wide walk the actuators perform.
                 idx += 1;
                 continue;
             }
+            let role_lower = v.role.to_ascii_lowercase();
+            // An unnamed value control: name it from the sibling label of its
+            // row when there is one; otherwise say it is unlabelled and where
+            // it sits among its same-role siblings, and never repeat its value
+            // as its name.
+            let mut name = v.name.clone();
+            let mut unlabelled_note = None;
+            if name.trim().is_empty() && is_value_control_role(&role_lower) {
+                match preceding_sibling_label(visited, &parents, pos) {
+                    Some(label) => name = label,
+                    None => {
+                        unlabelled_note = Some(format!(
+                            "{UNLABELLED_NOTE_PREFIX} {}; {}",
+                            role_lower,
+                            sibling_ordinal(visited, &parents, pos)
+                        ))
+                    }
+                }
+            }
             let act_str = v.actions.join(",");
             let val_part = match &v.value {
                 Some(val) if !val.is_empty() => format!(" value=\"{val}\""),
                 _ => String::new(),
             };
+            let description_shown = (!v.description.is_empty() && v.description != name)
+                .then(|| format!(" (description \"{}\")", v.description));
             let collapsed_note = v
                 .collapsed_children
                 .map(|n| format!(" (closed menu, {n} items; click it to open)"))
                 .unwrap_or_default();
+            let unlabelled_shown = unlabelled_note
+                .as_ref()
+                .map(|note| format!(" ({note})"))
+                .unwrap_or_default();
             md.push_str(&format!(
-                "{indent}- [{idx}] {role} \"{name}\"{val_part} [actions=[{act_str}]]{collapsed_note}\n",
+                "{indent}- [{idx}] {role} \"{name}\"{desc}{val_part} [actions=[{act_str}]]{collapsed_note}{unlabelled_shown}
+",
                 role = v.role,
-                name = v.name,
+                desc = description_shown.as_deref().unwrap_or(""),
             ));
+            let mut description_parts: Vec<String> = Vec::new();
+            if !v.description.is_empty() {
+                description_parts.push(v.description.clone());
+            }
+            if let Some(n) = v.collapsed_children {
+                description_parts.push(format!(
+                    "closed menu with {n} items; not expanded: click it to open"
+                ));
+            }
+            if let Some(note) = unlabelled_note {
+                description_parts.push(note);
+            }
             nodes.push(AtspiNode {
                 element_index: Some(idx),
                 role: v.role.clone(),
-                name: if v.name.is_empty() {
-                    None
-                } else {
-                    Some(v.name.clone())
-                },
+                name: if name.trim().is_empty() { None } else { Some(name) },
                 value: v.value.clone().filter(|s| !s.is_empty()),
                 checked: v.checked,
                 enabled: v.enabled,
                 selected: v.selected,
-                description: v
-                    .collapsed_children
-                    .map(|n| format!("closed menu with {n} items; not expanded: click it to open")),
+                description: (!description_parts.is_empty()).then(|| description_parts.join("; ")),
                 actions: v.actions.clone(),
                 element_key: idx as u64,
                 identity: v.identity.clone(),
@@ -1614,19 +1804,11 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
                 in_web_content: v.in_web_doc,
                 object_ref: Some(v.object_ref.clone()),
             });
-            // Record this actionable index at its depth, and invalidate any
-            // deeper entries from a previous subtree.
-            while parent_at_depth.len() <= v.depth {
-                parent_at_depth.push(None);
-            }
-            parent_at_depth[v.depth] = Some(idx);
-            for deeper in (v.depth + 1)..parent_at_depth.len() {
-                parent_at_depth[deeper] = None;
-            }
             idx += 1;
         } else if emit && !v.name.is_empty() && v.showing {
             md.push_str(&format!(
-                "{indent}- {role} = \"{name}\"{marker}\n",
+                "{indent}- {role} = \"{name}\"{marker}
+",
                 role = v.role,
                 name = v.name,
                 marker = passive_marker(&v.role, !v.actions.is_empty(), v.has_component, v.enabled),
@@ -2444,6 +2626,30 @@ pub fn focused_is_editable(pid: u32) -> Result<Option<bool>> {
         },
         || Ok(None),
     )
+}
+
+/// Role and name of the accessible holding the widget focus in `pid`, from
+/// the focus-event log only (no walk): cheap enough to run after every
+/// pointer press, so a grid click can name the cell it landed on
+/// (LibreOffice reports "D2"). `None` when the log has nothing current.
+pub fn focused_control(pid: u32) -> Option<(String, String)> {
+    bounded_for(
+        Duration::from_millis(400),
+        async {
+            let conn = shared_connection().await?;
+            let Some((acc, _)) = focused_accessible_via_events(conn, pid).await else {
+                return Ok(None);
+            };
+            let (role, name) = tokio::join!(call(acc.get_role_name()), call(acc.name()));
+            Ok(match (role, name) {
+                (Some(Ok(role)), Some(Ok(name))) => Some((role, name)),
+                _ => None,
+            })
+        },
+        || Ok(None),
+    )
+    .ok()
+    .flatten()
 }
 
 /// Find the window XID for a PID by listing its X11 windows.

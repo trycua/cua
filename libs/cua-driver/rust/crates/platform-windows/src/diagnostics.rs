@@ -224,6 +224,12 @@ pub fn ui_automation_available() -> Result<(), String> {
     crate::uia::windows_enum::probe_desktop_availability()
 }
 
+/// Whether a UIA failure leaves the Win32-only fallback usable.
+pub fn is_degraded_ui_automation_error(err: &str) -> bool {
+    err.starts_with("UI Automation desktop enumeration exceeded ")
+        || err.starts_with("UI Automation is busy with an earlier timed-out provider call;")
+}
+
 // ── Non-Windows stubs so the cua-driver crate can call into us
 // unconditionally during compilation on other targets. These never run —
 // they exist purely to keep the type-checker happy on macOS / Linux.
@@ -347,5 +353,27 @@ mod tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod error_classification_tests {
+    use super::is_degraded_ui_automation_error;
+
+    #[test]
+    fn only_bounded_desktop_failures_are_degraded() {
+        assert!(is_degraded_ui_automation_error(
+            "UI Automation desktop enumeration exceeded 4000ms; a UIA provider may be hung."
+        ));
+        assert!(is_degraded_ui_automation_error(
+            "UI Automation is busy with an earlier timed-out provider call; window tools are temporarily using Win32-only enumeration."
+        ));
+        assert!(!is_degraded_ui_automation_error(
+            "CoCreateInstance(CUIAutomation) failed"
+        ));
+        assert!(!is_degraded_ui_automation_error(
+            "FindAll(TreeScope_Children): operation timed out"
+        ));
+        assert!(!is_degraded_ui_automation_error("provider is busy"));
     }
 }

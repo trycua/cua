@@ -233,6 +233,10 @@ struct InputExperiment::Impl {
     std::vector<WP<CWLPointerResource>> foreground_pointers;
     std::vector<WP<CWLKeyboardResource>> foreground_keyboards;
     std::array<std::uint32_t, 4> foreground_modifiers{};
+    // Primary keyboard state restored after agent typing, and a canonical-US
+    // reference state for the per-key keymap equivalence check.
+    std::array<std::uint32_t, 4> foreground_restore_modifiers{};
+    xkb_state* foreground_reference_state = nullptr;
 
     explicit Impl(const std::string& directory, unsigned index) : lane(index) {
 #ifdef CUA_HYPRLAND_TEST_INPUT
@@ -313,7 +317,7 @@ struct InputExperiment::Impl {
     bool layout_qualified() const {
         if (!kProduction) return true;
         const auto keyboard = g_pSeatManager->m_keyboard.lock();
-        return physical_keymap_present && us_keymap && physical_keyboard_state && keyboard &&
+        return physical_keymap_present && physical_keyboard_state && keyboard &&
             keyboard->m_xkbKeymapV1FD.get() >= 0 && keyboard->m_xkbKeymapV1String == physical_keymap_text;
     }
     void sync_keymap() {
@@ -439,6 +443,7 @@ struct InputExperiment::Impl {
         if (physical_keyboard_state) xkb_state_unref(physical_keyboard_state);
         if (physical_keymap) xkb_keymap_unref(physical_keymap);
         if (physical_xkb_context) xkb_context_unref(physical_xkb_context);
+        if (foreground_reference_state) xkb_state_unref(foreground_reference_state);
         if (keymap_fd >= 0) close(keymap_fd);
     }
     std::uint32_t serial() const { return wl_display_next_serial(g_pCompositor->m_wlDisplay); }
@@ -859,13 +864,18 @@ struct InputExperiment::Impl {
             for (const auto& weak : foreground_keyboards)
                 if (const auto k = weak.lock(); k && k->good()) {
                     for (auto code : held_keys) k->sendKey(event_ms(), code, WL_KEYBOARD_KEY_STATE_RELEASED);
-                    k->sendMods(foreground_modifiers[0], foreground_modifiers[1], foreground_modifiers[2], foreground_modifiers[3]);
+                    k->sendMods(foreground_restore_modifiers[0], foreground_restore_modifiers[1],
+                        foreground_restore_modifiers[2], foreground_restore_modifiers[3]);
                 }
         held_button = 0; held_keys.clear();
         foreground_pointers.clear(); foreground_keyboards.clear(); foreground_surface.reset(); foreground_seat.reset();
         foreground_started = false;
         foreground_keyboard_used = false;
         foreground_needs_keyboard = false;
+        if (foreground_reference_state) {
+            xkb_state_unref(foreground_reference_state);
+            foreground_reference_state = nullptr;
+        }
     }
     void start_foreground(Client& c, double x, double y, bool needs_pointer, bool needs_keyboard) {
         const auto root = c.surface.lock();
@@ -896,10 +906,20 @@ struct InputExperiment::Impl {
                 foreground_modifiers[1] |= kb->m_modifiersState.latched;
                 foreground_modifiers[2] |= kb->m_modifiersState.locked;
             }
-            const auto modifier_failure = foreground_key_modifier_failure(foreground_modifiers);
+            foreground_restore_modifiers = {physical->m_modifiersState.depressed, physical->m_modifiersState.latched,
+                physical->m_modifiersState.locked, physical->m_modifiersState.group};
+            const auto unlocked = foreground_key_modifiers_without_locks(foreground_modifiers);
+            const auto modifier_failure = foreground_key_modifier_failure(unlocked);
             if (modifier_failure != ForegroundFailureReason::none) throw ForegroundFailure{modifier_failure};
-            xkb_state_update_mask(physical_keyboard_state, foreground_modifiers[0], foreground_modifiers[1],
-                foreground_modifiers[2], 0, 0, foreground_modifiers[3]);
+            xkb_state_update_mask(physical_keyboard_state, unlocked[0], unlocked[1], 0, 0, 0, unlocked[3]);
+            // Each pressed key must produce the same keysym under the physical
+            // keymap as under the canonical agent US keymap, so options that leave
+            // typed keys unchanged (compose:caps, shift:both_capslock_cancel)
+            // qualify while a key that differs refuses before delivery.
+            if (foreground_reference_state) xkb_state_unref(foreground_reference_state);
+            foreground_reference_state = keymap ? xkb_state_new(keymap) : nullptr;
+            if (!foreground_reference_state) throw ForegroundFailure{ForegroundFailureReason::keyboard_state};
+            xkb_state_update_mask(foreground_reference_state, unlocked[0], unlocked[1], 0, 0, 0, unlocked[3]);
         }
         foreground_surface = root;
         foreground_seat = seat;
@@ -951,8 +971,25 @@ struct InputExperiment::Impl {
     }
     void foreground_key(Client& c, std::uint32_t code, bool pressed) {
         require_foreground(c);
+        if (pressed) {
+            if (!foreground_reference_state) throw ForegroundFailure{ForegroundFailureReason::keyboard_state};
+            if (xkb_state_key_get_one_sym(physical_keyboard_state, code + 8) !=
+                xkb_state_key_get_one_sym(foreground_reference_state, code + 8))
+                throw ForegroundFailure{ForegroundFailureReason::unsupported_layout};
+        }
+        if (!foreground_keyboard_used) {
+            // Announce the lock-free modifier state before the first agent keystroke.
+            for (const auto& weak : foreground_keyboards)
+                if (const auto k = weak.lock(); k && k->good())
+                    k->sendMods(xkb_state_serialize_mods(physical_keyboard_state, XKB_STATE_MODS_DEPRESSED),
+                        xkb_state_serialize_mods(physical_keyboard_state, XKB_STATE_MODS_LATCHED),
+                        xkb_state_serialize_mods(physical_keyboard_state, XKB_STATE_MODS_LOCKED),
+                        xkb_state_serialize_layout(physical_keyboard_state, XKB_STATE_LAYOUT_EFFECTIVE));
+        }
         foreground_keyboard_used = true;
         xkb_state_update_key(physical_keyboard_state, code + 8, pressed ? XKB_KEY_DOWN : XKB_KEY_UP);
+        if (foreground_reference_state)
+            xkb_state_update_key(foreground_reference_state, code + 8, pressed ? XKB_KEY_DOWN : XKB_KEY_UP);
         if (pressed) held_keys.push_back(code); else std::erase(held_keys, code);
         for (const auto& weak : foreground_keyboards) {
             const auto k = weak.lock(); if (!k || !k->good()) throw ForegroundFailure{ForegroundFailureReason::keyboard_resources};

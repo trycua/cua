@@ -87,6 +87,15 @@ inline ForegroundFailureReason foreground_key_modifier_failure(const std::array<
     return ForegroundFailureReason::none;
 }
 
+// Lock modifiers (Num Lock, Caps Lock) do not block foreground typing: agent
+// keystrokes are delivered with locks cleared and the primary keyboard's own
+// modifier state is restored afterwards. Held keys, latched modifiers, and a
+// non-zero layout group still refuse through foreground_key_modifier_failure.
+inline std::array<std::uint32_t, 4> foreground_key_modifiers_without_locks(std::array<std::uint32_t, 4> modifiers) {
+    modifiers[2] = 0;
+    return modifiers;
+}
+
 inline bool foreground_key_modifiers_supported(const std::array<std::uint32_t, 4>& modifiers) {
     return foreground_key_modifier_failure(modifiers) == ForegroundFailureReason::none;
 }

@@ -305,8 +305,10 @@ held physical input, grabs, constraints, drag-and-drop, ambiguous primary seat
 bindings, and non-neutral keyboard modifiers. Background refusal never selects
 this route automatically. Driver expands bounded ASCII text under the exact
 US keymap; Unicode and IME remain outside its raw-input scope. Foreground
-pointer-only actions are layout-independent, but foreground keyboard actions
-still require the canonical physical US map.
+pointer-only actions are layout-independent. Foreground keyboard actions work
+with Num Lock or Caps Lock on (locks are cleared for the agent's keystrokes and
+restored afterwards) and with keymap options that leave the typed keys
+unchanged; each key must match the canonical US keysym or it refuses.
 
 The retained bounded app evidence at source
 `f180e8828b8f31cc153e3c44eaa89a9c13c5bc68` includes instrumented Calc/Inkscape

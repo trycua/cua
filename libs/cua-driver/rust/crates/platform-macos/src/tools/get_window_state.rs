@@ -71,6 +71,22 @@ fn def() -> &'static ToolDef {
             the requested WindowServer bounds. `px_frame_mismatch` or \
             `px_capture_unavailable` omits an unprovable screenshot/pixel frame \
             instead of guessing a transform; the truthful AX payload remains available.\n\n\
+            A document window also reports `document_path` (the local filesystem path \
+            behind its `AXDocument` file URL, percent-decoded) and `document_edited` \
+            (the app's own unsaved-changes flag). Both come from the accessibility \
+            walk, so `include_accessibility_tree:false` never carries them. Each key is \
+            ABSENT when the app does not report it: absent means unknown, never \
+            `clean`, and a document served from a non-file URL reports no \
+            `document_path`. `document_edited:true` is positive evidence of unsaved \
+            changes; `false` is NOT proof of a durable save — autosave-in-place apps \
+            (TextEdit, Preview) keep the flag clear while holding unsaved in-memory \
+            text. NOTE that an AX value write (`set_value`) does not itself persist \
+            anything and is not guaranteed to register as an edit — measured on \
+            TextEdit the new text appeared in the AX tree while the dirty flag stayed \
+            false, with no undo entry and a byte-identical file. To make an edit \
+            durable, take the app's own save action (`press_key` cmd+s, or \
+            `invoke_menu` File > Save) and re-check `document_edited`; when the file's \
+            bytes matter, re-read `document_path` from disk.\n\n\
             Optional `query` projects both tree_markdown and structured `elements` to \
             matching lines plus their ancestor chain (case-insensitive substring). The \
             element_index values are unchanged, the complete snapshot remains actionable, \
@@ -569,6 +585,13 @@ impl Tool for GetWindowStateTool {
         if query.is_some() {
             structured["filtered_element_count"] = serde_json::json!(filtered_element_count);
         }
+        cua_driver_core::window_inspection::attach_document_state(
+            &mut structured,
+            tree_result
+                .as_ref()
+                .and_then(|r| r.document_path.as_deref()),
+            tree_result.as_ref().and_then(|r| r.document_edited),
+        );
         // Surface 6: an opaque snapshot identifier consumers can log
         // alongside the per-element tokens for debug correlation. Same value
         // embedded in every `element_token` emitted in `elements[]` above.

@@ -54,6 +54,7 @@ let kMenuItemTitle = "Harness Test Item"
 let kSecondaryWindowTitle = "CuaTestHarness AppKit Secondary"
 let kSheetWindowTitle = "CuaTestHarness AppKit Sheet"
 let kFloatingWindowTitle = "CuaTestHarness AppKit Floating"
+let kToggleDocumentEditedTitle = "Toggle Document Edited"
 
 // MARK: - Controller
 
@@ -77,6 +78,7 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
     let accelCountLabel = NSTextField(labelWithString: "accel_fired=0")
     var accelCount = 0
     var keyMonitor: Any?
+    var documentAttached = false
 
     // Pinned content size — every launch MUST produce a byte-identical window
     // so screenshot dimensions (and the hardcoded pixel coords the harness tests
@@ -390,6 +392,12 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
 
     @objc private func onCheckbox(_ sender: NSButton) {
         checkStateLabel.stringValue = "agreed=\(sender.state == .on)"
+        // With a document attached, the same press also carries the dirty bit,
+        // so a test can flip it through a real AX action that needs no window
+        // activation and no new control in the pinned layout.
+        if documentAttached {
+            setDocumentEdited(sender.state == .on)
+        }
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int {
@@ -418,6 +426,21 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
 
     @objc func onArrangeLeft(_ sender: NSMenuItem) {
         menuActionLabel.stringValue = "menu_action=window_arrange_left"
+    }
+
+    func attachDocument(at path: String) {
+        window.representedURL = URL(fileURLWithPath: path)
+        window.isDocumentEdited = false
+        documentAttached = true
+    }
+
+    @objc func onToggleDocumentEdited(_ sender: NSMenuItem) {
+        setDocumentEdited(!window.isDocumentEdited)
+    }
+
+    private func setDocumentEdited(_ edited: Bool) {
+        window.isDocumentEdited = edited
+        menuActionLabel.stringValue = "menu_action=document_edited_\(edited)"
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
@@ -596,6 +619,16 @@ func installMenuBar(target: HarnessWindowController) {
     arrangeMenu.addItem(leftItem)
     arrangeItem.submenu = arrangeMenu
     windowMenu.addItem(arrangeItem)
+    if ProcessInfo.processInfo.environment["CUA_APPKIT_DOCUMENT_PATH"] != nil {
+        let toggleItem = NSMenuItem(
+            title: kToggleDocumentEditedTitle,
+            action: #selector(HarnessWindowController.onToggleDocumentEdited(_:)),
+            keyEquivalent: ""
+        )
+        toggleItem.target = target
+        toggleItem.setAccessibilityIdentifier("menu-window-toggle-document-edited")
+        windowMenu.addItem(toggleItem)
+    }
     windowItem.submenu = windowMenu
     main.addItem(windowItem)
     NSApp.mainMenu = main
@@ -658,6 +691,9 @@ struct CuaAppKitHarness {
         }
         let controller = HarnessWindowController()
         installMenuBar(target: controller)
+        if let documentPath = ProcessInfo.processInfo.environment["CUA_APPKIT_DOCUMENT_PATH"] {
+            controller.attachDocument(at: documentPath)
+        }
         controller.show()
         if ProcessInfo.processInfo.environment["CUA_APPKIT_KEEP_ORDERED_FRONT"] == "1" {
             _ = Timer.scheduledTimer(withTimeInterval: 0.01, repeats: true) { [weak window = controller.window] _ in

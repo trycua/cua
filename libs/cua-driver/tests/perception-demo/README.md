@@ -12,9 +12,12 @@ The candidate aggregate has `windows` and `linux-x11` directories. Each
 directory contains `signed-catalog.json`, the catalog-selected extension
 archive, `review-measurements.json`, `signed-candidate-checksums.txt`, and a
 `review-cua-driver` binary (`review-cua-driver.exe` on Windows). The measurement
-file binds the review-only source, debug review-trust-root build profile,
-Ed25519 public key, signed catalog, extension archive, supplied model, and
-Driver binary by SHA-256. The test requires these environment variables:
+file binds the review-only source, Driver version and debug review-trust-root
+build profile, Ed25519 public key, signed catalog, extension archive, worker,
+all three model artifacts, ONNX Runtime, executed self-test, and Driver binary.
+Those extension measurements are extracted from the sealed archive and checked
+against its artifact manifest, model ledger, runtime contract, and bytes rather
+than copied from workflow constants. The test requires these environment variables:
 
 - `CUA_JEV_MOCK_DEMO=1`, or `CUA_JEV_LIVE=1` with
   `CUA_JEV_CHOOSER_PROGRAM`, `CUA_JEV_CHOOSER_SCRIPT`, and `TYPESAFE_API_KEY`
@@ -29,6 +32,8 @@ Driver binary by SHA-256. The test requires these environment variables:
 - `CUA_RUNNER_OS_NAME`
 - `CUA_RUNNER_OS_VERSION`
 - `CUA_RUNNER_OS_ARCH`
+- `CUA_DESKTOP_SESSION_TYPE`
+- `CUA_RUNNER_IDENTITY_CLASS`
 
 The extension home must already contain the candidate installed by the Driver's
 signed extension lifecycle. The Driver verifies the signed Ed25519 catalog
@@ -43,10 +48,14 @@ schema-checked, redacted `manifest.json`. The workflow uploads only
 the raw timeline remain runner-local.
 
 `sanitize_evidence.py` measures the checked-out source SHA and host platform,
-reads the fixture's loopback oracle and adapter result, hashes the model,
-Driver, capture identifiers, and recording bytes, and binds the signed catalog,
-extension archive, and Ed25519 signing-key measurements. Its output is limited
-to `manifest.json` and `recording.mp4`.
+reads the fixture's loopback oracle and provider-returned adapter result, hashes
+the Driver, private capture trace, and recording bytes, and binds the sealed
+worker, model, runtime, protocol, and self-test measurements. The redacted
+manifest records safe bounded candidate IDs and descriptions, capture source
+and dimensions, session and runner class, background delivery, and FFprobe
+measured resolution, frame rate, uncut 1x edit record, source time range, cursor
+configuration, and final hash. Its output is limited to `manifest.json` and
+`recording.mp4`.
 
 macOS is intentionally separate from this Windows/Linux workflow. Native macOS
 proof uses the logged-in, TCC-authorized Lume runner and the canonical

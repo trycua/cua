@@ -512,6 +512,8 @@ mod e2e {
         os_name: String,
         os_version: String,
         os_arch: String,
+        desktop_session: String,
+        runner_identity_class: String,
         model: PathBuf,
         candidate_measurements: PathBuf,
         extension_home: PathBuf,
@@ -569,6 +571,52 @@ mod e2e {
         format!("{:x}", Sha256::digest(bytes))
     }
 
+    fn recording_metadata(path: &Path) -> Value {
+        let output = Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height,avg_frame_rate:format=duration",
+                "-of",
+                "json",
+            ])
+            .arg(path)
+            .output()
+            .expect("run ffprobe for recording evidence");
+        assert!(
+            output.status.success(),
+            "ffprobe rejected recording evidence"
+        );
+        let probe: Value = serde_json::from_slice(&output.stdout).expect("parse ffprobe JSON");
+        let streams = probe["streams"].as_array().expect("ffprobe video streams");
+        assert_eq!(streams.len(), 1, "recording must contain one video stream");
+        let width = streams[0]["width"].as_u64().expect("recording width");
+        let height = streams[0]["height"].as_u64().expect("recording height");
+        let rate = streams[0]["avg_frame_rate"]
+            .as_str()
+            .expect("recording frame rate");
+        let (numerator, denominator) = rate.split_once('/').expect("rational frame rate");
+        let numerator: u64 = numerator.parse().expect("frame-rate numerator");
+        let denominator: u64 = denominator.parse().expect("frame-rate denominator");
+        let duration_ms = (probe["format"]["duration"]
+            .as_str()
+            .expect("recording duration")
+            .parse::<f64>()
+            .expect("numeric recording duration")
+            * 1000.0)
+            .round() as u64;
+        assert!(width > 0 && height > 0 && numerator > 0 && denominator > 0 && duration_ms > 0);
+        json!({
+            "width": width,
+            "height": height,
+            "frame_rate": {"numerator": numerator, "denominator": denominator},
+            "duration_ms": duration_ms
+        })
+    }
+
     fn load_gate() -> Gate {
         let choice = choice_config_from(
             std::env::var("CUA_JEV_LIVE").ok().as_deref(),
@@ -584,6 +632,8 @@ mod e2e {
             os_name: required("CUA_RUNNER_OS_NAME"),
             os_version: required("CUA_RUNNER_OS_VERSION"),
             os_arch: required("CUA_RUNNER_OS_ARCH"),
+            desktop_session: required("CUA_DESKTOP_SESSION_TYPE"),
+            runner_identity_class: required("CUA_RUNNER_IDENTITY_CLASS"),
             model: required("CUA_PERCEPTION_MODEL").into(),
             candidate_measurements: required("CUA_CANDIDATE_MEASUREMENTS").into(),
             extension_home: required("CUA_PERCEPTION_EXTENSION_HOME").into(),
@@ -596,6 +646,8 @@ mod e2e {
             ("OS name", &gate.os_name),
             ("OS version", &gate.os_version),
             ("OS architecture", &gate.os_arch),
+            ("desktop session", &gate.desktop_session),
+            ("runner identity class", &gate.runner_identity_class),
         ] {
             assert!(safe_id(value), "{label} is unsafe");
         }
@@ -823,6 +875,12 @@ mod e2e {
             bounded_candidates(parsed.structured(), &capture_id).expect("bounded candidates");
         let request = choice_request(&capture_id, regions, &candidates);
         let (choice_response, selected_candidate) = choose(&gate.choice, &request, &candidates);
+        if matches!(&gate.choice, ChoiceConfig::Live { .. }) {
+            assert!(
+                choice_response.model.as_deref().is_some_and(safe_id),
+                "live chooser must return its bounded provider model identity"
+            );
+        }
         let choice = selected_candidate
             .action
             .clone()
@@ -882,6 +940,13 @@ mod e2e {
         let recording_size = fs::metadata(&published_recording)
             .expect("measure recording")
             .len();
+        let recording_metadata = recording_metadata(&published_recording);
+        let capture_width = parsed.structured()["capture"]["screenshot"]["width"]
+            .as_u64()
+            .expect("parsed capture width");
+        let capture_height = parsed.structured()["capture"]["screenshot"]["height"]
+            .as_u64()
+            .expect("parsed capture height");
         let platform = if cfg!(target_os = "windows") {
             "windows"
         } else if cfg!(target_os = "macos") {
@@ -899,6 +964,13 @@ mod e2e {
             "jev_source_sha": gate.jev_source_sha,
             "platform": platform,
             "capture_ids": {"acted": capture_id, "fresh": second_capture_id},
+            "observation": {
+                "input_scope": "window", "capture_kind": "get_window_state",
+                "capture_source": "driver-screenshot", "width": capture_width,
+                "height": capture_height, "desktop_session": gate.desktop_session,
+                "runner_identity_class": gate.runner_identity_class,
+                "delivery_mode": "background"
+            },
             "fixture_oracle": oracle,
             "extension_status": extension_status,
             "parser": parser,
@@ -908,7 +980,8 @@ mod e2e {
             "timeline": {"duration_ms": duration_ms, "events": [
                 "observed", "parsed", "chosen", "clicked", "oracle_verified", "stale_capture_refused", "reobserved"
             ]},
-            "recording": {"local_path": recording.to_string_lossy(), "sha256": recording_sha256}
+            "recording": {"local_path": recording.to_string_lossy(), "sha256": recording_sha256,
+                "metadata": recording_metadata}
         });
         let raw_bytes = serde_json::to_vec_pretty(&raw).expect("serialize raw evidence");
         let raw_sha256 = hash_bytes(&raw_bytes);
@@ -921,16 +994,25 @@ mod e2e {
         .expect("write private timeline evidence");
 
         let manifest = json!({
-            "schema": "cua-visual-perception-demo-evidence/v2",
+            "schema": "cua-visual-perception-demo-evidence/v3",
             "platform": platform,
             "raw_evidence_sha256": raw_sha256,
             "fixture": {"id": "visual-only-canvas/v1", "oracle": {
-                "selected": oracle["selected"], "action_count": oracle["action_count"]
+                "source": "fixture-journal", "initial_ready": true,
+                "selected": oracle["selected"], "action_count": oracle["action_count"],
+                "result": "passed"
             }},
             "runtime": {
                 "driver": {
                     "source_sha": gate.source_sha,
-                    "binary_sha256": driver_binary_sha256
+                    "version": candidate_measurements["review_driver_version"],
+                    "binary_sha256": driver_binary_sha256,
+                    "build": {
+                        "profile": candidate_measurements["review_driver_build_profile"],
+                        "target": candidate_measurements["target"],
+                        "sealed_artifact_manifest_sha256": candidate_measurements["sealed_artifact_manifest_sha256"],
+                        "sealed_extension_manifest_sha256": candidate_measurements["sealed_extension_manifest_sha256"]
+                    }
                 },
                 "perception": {
                     "extension_id": "cua-perception",
@@ -943,8 +1025,12 @@ mod e2e {
                     "signed_extension_archive_sha256": signed_extension_archive_sha256,
                     "signing_key_sha256": signing_key_sha256,
                     "signed_catalog_sha256": signed_catalog_sha256,
-                    "model_id": parser["model_id"],
-                    "model_sha256": hash_file(&gate.model)
+                    "protocol_version": candidate_measurements["protocol_version"],
+                    "worker_sha256": candidate_measurements["worker_sha256"],
+                    "self_test": candidate_measurements["self_test"],
+                    "models": candidate_measurements["models"],
+                    "onnx_runtime": candidate_measurements["onnx_runtime"],
+                    "parser_model_id": parser["model_id"]
                 },
                 "chooser": {
                     "mode": mode,
@@ -956,11 +1042,31 @@ mod e2e {
             },
             "observation": {
                 "session_label": gate.session_label,
+                "input_scope": "window", "capture_kind": "get_window_state",
+                "capture_source": "driver-screenshot",
+                "dimensions": {"width": capture_width, "height": capture_height},
                 "acted_capture_id_sha256": hash_bytes(capture_id.as_bytes()),
-                "fresh_capture_id_sha256": hash_bytes(second_capture_id.as_bytes())
+                "fresh_capture_id_sha256": hash_bytes(second_capture_id.as_bytes()),
+                "capture_trace_sha256": hash_bytes(format!("{capture_id}\0{second_capture_id}").as_bytes()),
+                "candidates": raw["chooser"]["request"]["candidates"]
             },
-            "os": {"name": gate.os_name, "version": gate.os_version, "arch": gate.os_arch},
+            "environment": {
+                "os": {"name": gate.os_name, "version": gate.os_version, "arch": gate.os_arch},
+                "desktop_session": gate.desktop_session,
+                "runner_identity_class": gate.runner_identity_class,
+                "delivery_mode": "background"
+            },
             "result": {"status": "passed", "selected_candidate": selected_candidate.id, "stale_capture_refused": true},
+            "recording": {
+                "original_dimensions": {"width": recording_metadata["width"], "height": recording_metadata["height"]},
+                "delivered_dimensions": {"width": recording_metadata["width"], "height": recording_metadata["height"]},
+                "frame_rate": recording_metadata["frame_rate"],
+                "cursor": {"agent_overlay": false, "system_cursor": "recorder-default"},
+                "edit_operations": [{"operation": "none", "speed": "1x"}],
+                "shots": [{"source_sha256": recording_sha256, "start_ms": 0,
+                    "end_ms": recording_metadata["duration_ms"]}],
+                "final_sha256": recording_sha256, "size_bytes": recording_size
+            },
             "artifacts": [{"kind": "video", "path": "recording.mp4", "sha256": recording_sha256, "size_bytes": recording_size}]
         });
         let schema: Value = serde_json::from_str(include_str!(

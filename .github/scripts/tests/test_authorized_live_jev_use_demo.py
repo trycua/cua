@@ -206,7 +206,11 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         self.assertIn('perception["signed_extension_archive_sha256"] == measured["archive_sha256"]', validate)
         self.assertIn('driver = runtime["driver"]', validate)
         self.assertIn('observation = manifest["observation"]', validate)
-        self.assertIn('manifest["os"] ==', validate)
+        self.assertIn('manifest["environment"] ==', validate)
+        self.assertIn('perception["models"] == measured["models"]', validate)
+        self.assertIn('chooser["model_id"]', validate)
+        self.assertIn('recording_value["frame_rate"]', validate)
+        self.assertIn('recording_value["edit_operations"]', validate)
         self.assertNotIn("raw-manifest.json", str(uploads[0]))
         self.assertNotIn("timeline.json", str(uploads[0]))
 

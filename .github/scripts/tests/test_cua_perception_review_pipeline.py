@@ -80,3 +80,24 @@ def test_review_pipeline_builds_pending_trust_override_and_exact_artifact_contra
     assert "crypto.sign(null, payloadBytes, privateKey)" in text
     assert "crypto.verify(null, payloadBytes, key" in text
     assert "fs.unlinkSync(privatePath)" in text
+
+
+def test_review_measurements_are_extracted_from_the_sealed_archive() -> None:
+    text = workflow_text()
+    for member in (
+        'member_bytes("metadata/artifact-manifest.json")',
+        'member_bytes("extension.json")',
+        'member_json("metadata/runtime-contract.json")',
+        'member_json("model-manifest.json")',
+        'member_json("modelLedger.json")',
+        'member_bytes("metadata/executed-verification.json")',
+    ):
+        assert member in text
+    assert 'for role in ("icon-detect", "ocr-detect", "ocr-recognize")' in text
+    assert 'digest(sealed_bytes)' in text
+    assert 'gates.get("self-test", {}).get("status") != "passed"' in text
+    assert '"sealed_artifact_manifest_sha256": digest(artifact_bytes)' in text
+    assert '"sealed_extension_manifest_sha256": digest(extension_bytes)' in text
+    assert '"review_driver_version": match.group(0)' in text
+    assert 'modelLock.artifacts.find' in text  # download identity only; sealed values replace it below
+    assert text.index('measurements.update({') < text.rindex('signed-candidate-checksums.txt')

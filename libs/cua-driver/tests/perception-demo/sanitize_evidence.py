@@ -19,6 +19,7 @@ SHA40 = re.compile(r"^[0-9a-f]{40}$")
 SHA64 = re.compile(r"^[0-9a-f]{64}$")
 SAFE_ID = re.compile(r"^[A-Za-z0-9._:/-]{1,96}$")
 CHOOSER_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
+SAFE_TEXT = re.compile(r"^[^\x00-\x1f\x7f]{1,256}$")
 
 
 def sha256_file(path: Path) -> str:
@@ -71,6 +72,38 @@ def measure_platform(platform_name: str = sys.platform, environment: dict = os.e
     raise ValueError("evidence sanitizer requires macOS, Windows, or an active Linux X11 session")
 
 
+def probe_recording(path: Path) -> dict:
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=width,height,avg_frame_rate:format=duration",
+            "-of", "json", str(path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    value = json.loads(result.stdout)
+    streams = value.get("streams")
+    if not isinstance(streams, list) or len(streams) != 1:
+        raise ValueError("recording must contain exactly one measured video stream")
+    stream = streams[0]
+    try:
+        numerator, denominator = (int(part) for part in stream["avg_frame_rate"].split("/", 1))
+        width, height = int(stream["width"]), int(stream["height"])
+        duration_ms = round(float(value["format"]["duration"]) * 1000)
+    except (KeyError, TypeError, ValueError, ZeroDivisionError) as error:
+        raise ValueError("recording metadata is incomplete") from error
+    if min(width, height, numerator, denominator, duration_ms) <= 0:
+        raise ValueError("recording metadata must be positive")
+    return {
+        "width": width,
+        "height": height,
+        "frame_rate": {"numerator": numerator, "denominator": denominator},
+        "duration_ms": duration_ms,
+    }
+
+
 def load_extension_status(path: Path) -> dict:
     value = load_json(path, "Driver extension status")
     if (
@@ -85,6 +118,8 @@ def load_extension_status(path: Path) -> dict:
             raise ValueError(f"Driver extension status contains an invalid {field}")
     if type(value.get("catalog_version")) is not int or value["catalog_version"] <= 0:
         raise ValueError("Driver extension status contains an invalid catalog_version")
+    if type(value.get("protocol_version")) is not int or value["protocol_version"] <= 0:
+        raise ValueError("Driver extension status contains an invalid protocol_version")
     return value
 
 
@@ -152,6 +187,15 @@ def load_candidate_measurements(path: Path) -> dict:
         "review_driver_relative_path",
         "review_driver_build_profile",
         "review_driver_sha256",
+        "review_driver_version",
+        "extension_version",
+        "protocol_version",
+        "worker_sha256",
+        "models",
+        "onnx_runtime",
+        "self_test",
+        "sealed_artifact_manifest_sha256",
+        "sealed_extension_manifest_sha256",
     }
     if (
         set(value) != expected
@@ -168,6 +212,9 @@ def load_candidate_measurements(path: Path) -> dict:
         "catalog_sha256",
         "archive_sha256",
         "review_driver_sha256",
+        "worker_sha256",
+        "sealed_artifact_manifest_sha256",
+        "sealed_extension_manifest_sha256",
     ):
         if not isinstance(value[field], str) or not SHA64.fullmatch(value[field]):
             raise ValueError(f"candidate measurements contain an invalid {field}")
@@ -176,6 +223,39 @@ def load_candidate_measurements(path: Path) -> dict:
     for field in ("target", "review_driver_relative_path"):
         if not isinstance(value[field], str) or not SAFE_ID.fullmatch(value[field]):
             raise ValueError(f"candidate measurements contain an invalid {field}")
+    for field in ("review_driver_version", "extension_version"):
+        if not isinstance(value[field], str) or not SAFE_ID.fullmatch(value[field]):
+            raise ValueError(f"candidate measurements contain an invalid {field}")
+    if type(value["protocol_version"]) is not int or value["protocol_version"] <= 0:
+        raise ValueError("candidate measurements contain an invalid protocol_version")
+    self_test = value["self_test"]
+    if (
+        not isinstance(self_test, dict)
+        or set(self_test) != {"status", "mismatch_rejection", "evidence_sha256"}
+        or self_test.get("status") != "passed"
+        or self_test.get("mismatch_rejection") is not True
+        or not isinstance(self_test.get("evidence_sha256"), str)
+        or not SHA64.fullmatch(self_test["evidence_sha256"])
+    ):
+        raise ValueError("candidate measurements contain invalid self-test evidence")
+    runtime = value["onnx_runtime"]
+    if set(runtime) != {"revision", "sha256", "license"} or not SAFE_ID.fullmatch(runtime.get("revision", "")) or not SHA64.fullmatch(runtime.get("sha256", "")) or not SAFE_ID.fullmatch(runtime.get("license", "")):
+        raise ValueError("candidate measurements contain invalid ONNX Runtime evidence")
+    models = value["models"]
+    if (
+        not isinstance(models, list)
+        or any(not isinstance(item, dict) for item in models)
+        or [item.get("role") for item in models]
+        != ["icon-detect", "ocr-detect", "ocr-recognize"]
+    ):
+        raise ValueError("candidate measurements must contain all three ordered model identities")
+    for model in models:
+        if set(model) != {"role", "id", "revision", "original_sha256", "converted_sha256", "license"}:
+            raise ValueError("candidate measurements contain an invalid model record")
+        if any(not isinstance(model[field], str) or not SAFE_ID.fullmatch(model[field]) for field in ("role", "id", "revision", "license")):
+            raise ValueError("candidate measurements contain unsafe model metadata")
+        if any(not SHA64.fullmatch(model[field]) for field in ("original_sha256", "converted_sha256")):
+            raise ValueError("candidate measurements contain invalid model hashes")
     for field in ("supplied_model_asset_id", "supplied_model_size"):
         if type(value[field]) is not int or value[field] <= 0:
             raise ValueError(f"candidate measurements contain an invalid {field}")
@@ -236,6 +316,10 @@ def build_manifest(
         or status["publisher_key_id"] != measurements["key_id"]
     ):
         raise ValueError("Driver status does not match candidate publisher identity")
+    if status["active_version"] != measurements["extension_version"] or status.get("protocol_version") != measurements["protocol_version"]:
+        raise ValueError("Driver status does not match sealed extension version or protocol")
+    if chooser_mode == "live" and chooser["model"] is None:
+        raise ValueError("live chooser did not return its model identity")
     raw = load_json(raw_evidence, "raw evidence", 8 * 1024 * 1024)
     captures = raw.get("capture_ids")
     if (
@@ -252,23 +336,71 @@ def build_manifest(
     model_sha256 = sha256_file(model)
     if model_sha256 != measurements["supplied_model_sha256"]:
         raise ValueError("model hash is absent from candidate measurements")
+    if model_sha256 != measurements["models"][0]["converted_sha256"]:
+        raise ValueError("model hash differs from the sealed OmniParser identity")
     require_file(raw_evidence, "raw evidence", 8 * 1024 * 1024)
     video_size = require_file(recording, "recording.mp4", 100 * 1024 * 1024)
+    recording_probe = probe_recording(recording)
+    observation = raw.get("observation")
+    if not isinstance(observation, dict) or set(observation) != {
+        "input_scope", "capture_kind", "capture_source", "width", "height",
+        "desktop_session", "runner_identity_class", "delivery_mode",
+    }:
+        raise ValueError("raw evidence must contain exact measured observation context")
+    for field in ("input_scope", "capture_kind", "capture_source", "desktop_session", "runner_identity_class", "delivery_mode"):
+        if not isinstance(observation[field], str) or not SAFE_ID.fullmatch(observation[field]):
+            raise ValueError(f"raw evidence contains invalid observation {field}")
+    if observation["input_scope"] != "window" or observation["capture_kind"] != "get_window_state" or observation["capture_source"] != "driver-screenshot" or observation["delivery_mode"] != "background":
+        raise ValueError("raw evidence observation context differs from the executed demo")
+    if any(type(observation[field]) is not int or observation[field] <= 0 for field in ("width", "height")):
+        raise ValueError("raw evidence contains invalid capture dimensions")
+    request = raw.get("chooser", {}).get("request", {})
+    candidate_values = request.get("candidates")
+    if not isinstance(candidate_values, list) or not 2 <= len(candidate_values) <= 18:
+        raise ValueError("raw evidence must contain the bounded chooser candidates")
+    candidates = []
+    for candidate in candidate_values:
+        if (
+            not isinstance(candidate, dict)
+            or set(candidate) != {"id", "description"}
+            or not CHOOSER_ID.fullmatch(candidate.get("id", ""))
+            or not SAFE_TEXT.fullmatch(candidate.get("description", ""))
+        ):
+            raise ValueError("raw evidence contains an unsafe candidate")
+        candidates.append(candidate)
+    if len({candidate["id"] for candidate in candidates}) != len(candidates):
+        raise ValueError("raw evidence contains duplicate candidate IDs")
+    if chooser["selected_id"] not in {candidate["id"] for candidate in candidates}:
+        raise ValueError("selected candidate was not in the bounded candidate set")
+    recording_sha256 = sha256_file(recording)
+    capture_trace_sha256 = hashlib.sha256(
+        f"{captures['acted']}\0{captures['fresh']}".encode()
+    ).hexdigest()
     return {
-        "schema": "cua-visual-perception-demo-evidence/v2",
+        "schema": "cua-visual-perception-demo-evidence/v3",
         "platform": platform,
         "raw_evidence_sha256": sha256_file(raw_evidence),
         "fixture": {
             "id": oracle_value["fixture"],
             "oracle": {
+                "source": "fixture-journal",
+                "initial_ready": True,
                 "selected": oracle_value["selected"],
                 "action_count": oracle_value["action_count"],
+                "result": "passed",
             },
         },
         "runtime": {
             "driver": {
                 "source_sha": source_sha,
+                "version": measurements["review_driver_version"],
                 "binary_sha256": driver_binary_sha256,
+                "build": {
+                    "profile": measurements["review_driver_build_profile"],
+                    "target": measurements["target"],
+                    "sealed_artifact_manifest_sha256": measurements["sealed_artifact_manifest_sha256"],
+                    "sealed_extension_manifest_sha256": measurements["sealed_extension_manifest_sha256"],
+                },
             },
             "perception": {
                 "extension_id": status["id"],
@@ -281,8 +413,12 @@ def build_manifest(
                 "signed_extension_archive_sha256": measurements["archive_sha256"],
                 "signing_key_sha256": measurements["public_key_sha256"],
                 "signed_catalog_sha256": measurements["catalog_sha256"],
-                "model_id": parser["parser"]["model_id"],
-                "model_sha256": model_sha256,
+                "protocol_version": measurements["protocol_version"],
+                "worker_sha256": measurements["worker_sha256"],
+                "self_test": measurements["self_test"],
+                "models": measurements["models"],
+                "onnx_runtime": measurements["onnx_runtime"],
+                "parser_model_id": parser["parser"]["model_id"],
             },
             "chooser": {
                 "mode": chooser_mode,
@@ -294,19 +430,40 @@ def build_manifest(
         },
         "observation": {
             "session_label": session_label,
+            "input_scope": observation["input_scope"],
+            "capture_kind": observation["capture_kind"],
+            "capture_source": observation["capture_source"],
+            "dimensions": {"width": observation["width"], "height": observation["height"]},
             "acted_capture_id_sha256": hashlib.sha256(captures["acted"].encode()).hexdigest(),
             "fresh_capture_id_sha256": hashlib.sha256(captures["fresh"].encode()).hexdigest(),
+            "capture_trace_sha256": capture_trace_sha256,
+            "candidates": candidates,
         },
-        "os": {"name": os_name, "version": os_version, "arch": os_arch},
+        "environment": {
+            "os": {"name": os_name, "version": os_version, "arch": os_arch},
+            "desktop_session": observation["desktop_session"],
+            "runner_identity_class": observation["runner_identity_class"],
+            "delivery_mode": observation["delivery_mode"],
+        },
         "result": {
             "status": "passed",
             "selected_candidate": chooser["selected_id"],
             "stale_capture_refused": True,
         },
+        "recording": {
+            "original_dimensions": {"width": recording_probe["width"], "height": recording_probe["height"]},
+            "delivered_dimensions": {"width": recording_probe["width"], "height": recording_probe["height"]},
+            "frame_rate": recording_probe["frame_rate"],
+            "cursor": {"agent_overlay": False, "system_cursor": "recorder-default"},
+            "edit_operations": [{"operation": "none", "speed": "1x"}],
+            "shots": [{"source_sha256": recording_sha256, "start_ms": 0, "end_ms": recording_probe["duration_ms"]}],
+            "final_sha256": recording_sha256,
+            "size_bytes": video_size,
+        },
         "artifacts": [{
             "kind": "video",
             "path": "recording.mp4",
-            "sha256": sha256_file(recording),
+            "sha256": recording_sha256,
             "size_bytes": video_size,
         }],
     }

@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 
 HERE = Path(__file__).parent
@@ -18,8 +19,15 @@ class EvidenceSanitizerTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
+        self.probe = mock.patch.object(sanitizer, "probe_recording", return_value={
+            "width": 1920, "height": 1080,
+            "frame_rate": {"numerator": 30, "denominator": 1},
+            "duration_ms": 1250,
+        })
+        self.probe.start()
 
     def tearDown(self):
+        self.probe.stop()
         self.temporary.cleanup()
 
     def inputs(self):
@@ -78,6 +86,22 @@ class EvidenceSanitizerTests(unittest.TestCase):
             "review_driver_relative_path": "review-cua-driver",
             "review_driver_build_profile": "debug-review-trust-root",
             "review_driver_sha256": sanitizer.sha256_file(driver_binary),
+            "review_driver_version": "0.28.2",
+            "extension_version": "0.1.0",
+            "protocol_version": 1,
+            "worker_sha256": "1" * 64,
+            "models": [
+                {"role": "icon-detect", "id": "omniparser.onnx", "revision": "a" * 40,
+                 "original_sha256": "2" * 64, "converted_sha256": sanitizer.sha256_file(model), "license": "AGPL-3.0-only"},
+                {"role": "ocr-detect", "id": "ppocr-det.onnx", "revision": "b" * 40,
+                 "original_sha256": "3" * 64, "converted_sha256": "3" * 64, "license": "Apache-2.0"},
+                {"role": "ocr-recognize", "id": "ppocr-rec.onnx", "revision": "c" * 40,
+                 "original_sha256": "4" * 64, "converted_sha256": "4" * 64, "license": "Apache-2.0"},
+            ],
+            "onnx_runtime": {"revision": "1.26.0", "sha256": "5" * 64, "license": "MIT"},
+            "self_test": {"status": "passed", "mismatch_rejection": True, "evidence_sha256": "6" * 64},
+            "sealed_artifact_manifest_sha256": "7" * 64,
+            "sealed_extension_manifest_sha256": "8" * 64,
         }))
         oracle.write_text(json.dumps({
             "fixture": "visual-only-canvas/v1",
@@ -87,6 +111,15 @@ class EvidenceSanitizerTests(unittest.TestCase):
         }))
         raw_evidence.write_text(json.dumps({
             "capture_ids": {"acted": "private-capture", "fresh": "fresh-capture"},
+            "observation": {"input_scope": "window", "capture_kind": "get_window_state",
+                            "capture_source": "driver-screenshot", "width": 760, "height": 460,
+                            "desktop_session": "x11-openbox", "runner_identity_class": "github-hosted",
+                            "delivery_mode": "background"},
+            "chooser": {"request": {"candidates": [
+                {"id": "region:send", "description": "Activate Send."},
+                {"id": "reobserve", "description": "Capture again."},
+                {"id": "abstain", "description": "Stop safely."},
+            ]}},
             "coordinates": [394.0, 270.0],
         }))
         recording.write_bytes(b"measured-video-bytes")
@@ -114,7 +147,7 @@ class EvidenceSanitizerTests(unittest.TestCase):
         inputs = self.inputs()
         manifest = sanitizer.build_manifest(**inputs)
         perception = manifest["runtime"]["perception"]
-        self.assertEqual(manifest["schema"], "cua-visual-perception-demo-evidence/v2")
+        self.assertEqual(manifest["schema"], "cua-visual-perception-demo-evidence/v3")
         self.assertEqual(manifest["raw_evidence_sha256"], sanitizer.sha256_file(inputs["raw_evidence"]))
         self.assertEqual(perception["trust"], "review-only-publisher-verified")
         self.assertEqual(perception["signature_algorithm"], "ed25519")
@@ -124,22 +157,32 @@ class EvidenceSanitizerTests(unittest.TestCase):
         public_key = bytes(range(32))
         self.assertEqual(perception["signing_key_sha256"], sanitizer.hashlib.sha256(public_key).hexdigest())
         self.assertEqual(perception["signed_catalog_sha256"], "d" * 64)
-        self.assertEqual(manifest["runtime"]["driver"], {
+        self.assertEqual(manifest["runtime"]["driver"]["source_sha"], "a" * 40)
+        self.assertEqual(manifest["runtime"]["driver"]["version"], "0.28.2")
+        self.assertEqual(manifest["runtime"]["driver"]["binary_sha256"],
+                         sanitizer.sha256_file(inputs["driver_binary"]))
+        self.assertEqual(manifest["runtime"]["driver"]["build"], {
+            "profile": "debug-review-trust-root", "target": "x86_64-unknown-linux-gnu",
+            "sealed_artifact_manifest_sha256": "7" * 64,
+            "sealed_extension_manifest_sha256": "8" * 64,
+        })
+        self.assertEqual(manifest["runtime"]["perception"]["models"][0]["role"], "icon-detect")
+        self.assertEqual(manifest["runtime"]["perception"]["onnx_runtime"]["revision"], "1.26.0")
+        self.assertEqual(manifest["runtime"]["perception"]["self_test"]["status"], "passed")
+        self.assertEqual({
             "source_sha": "a" * 40,
             "binary_sha256": sanitizer.sha256_file(inputs["driver_binary"]),
-        })
+        }, {key: manifest["runtime"]["driver"][key] for key in ("source_sha", "binary_sha256")})
         self.assertEqual(manifest["runtime"]["chooser"]["provider"], "fixture")
         self.assertEqual(manifest["runtime"]["chooser"]["model_id"], "mock")
         self.assertEqual(manifest["runtime"]["chooser"]["adapter_source_sha"], "a" * 40)
         self.assertEqual(manifest["runtime"]["chooser"]["source_sha"], "e" * 40)
-        self.assertEqual(manifest["observation"], {
-            "session_label": "authorized-jev-choice-demo",
-            "acted_capture_id_sha256": sanitizer.hashlib.sha256(b"private-capture").hexdigest(),
-            "fresh_capture_id_sha256": sanitizer.hashlib.sha256(b"fresh-capture").hexdigest(),
-        })
-        self.assertEqual(manifest["os"], {
-            "name": "ubuntu22", "version": "20260915.1", "arch": "X64",
-        })
+        self.assertEqual(manifest["observation"]["input_scope"], "window")
+        self.assertEqual(manifest["observation"]["dimensions"], {"width": 760, "height": 460})
+        self.assertEqual(len(manifest["observation"]["candidates"]), 3)
+        self.assertEqual(manifest["environment"]["os"], {"name": "ubuntu22", "version": "20260915.1", "arch": "X64"})
+        self.assertEqual(manifest["recording"]["original_dimensions"], {"width": 1920, "height": 1080})
+        self.assertEqual(manifest["recording"]["frame_rate"], {"numerator": 30, "denominator": 1})
         self.assertEqual(manifest["result"]["selected_candidate"], "region:send")
         self.assertNotIn("capture_ids", json.dumps(manifest))
         self.assertNotIn("coordinates", json.dumps(manifest))
@@ -181,25 +224,44 @@ class EvidenceSanitizerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid probability"):
             sanitizer.build_manifest(**inputs)
 
-    def test_nullable_model_and_live_provider_are_preserved(self):
+    def test_live_provider_model_identity_is_preserved(self):
         inputs = self.inputs()
         choice = json.loads(inputs["chooser_result"].read_text())
-        choice["model"] = None
+        choice["model"] = "provider-returned-model"
         inputs["chooser_result"].write_text(json.dumps(choice))
         inputs["chooser_mode"] = "live"
         manifest = sanitizer.build_manifest(**inputs)
         self.assertEqual(manifest["runtime"]["chooser"], {
             "mode": "live",
             "provider": "typesafe",
-            "model_id": None,
+            "model_id": "provider-returned-model",
             "adapter_source_sha": "a" * 40,
             "source_sha": "e" * 40,
         })
 
+    def test_live_provider_must_return_model_identity(self):
+        inputs = self.inputs()
+        choice = json.loads(inputs["chooser_result"].read_text())
+        choice["model"] = None
+        inputs["chooser_result"].write_text(json.dumps(choice))
+        inputs["chooser_mode"] = "live"
+        with self.assertRaisesRegex(ValueError, "return its model identity"):
+            sanitizer.build_manifest(**inputs)
+
+    def test_rejects_incomplete_sealed_model_measurements(self):
+        inputs = self.inputs()
+        measurements = json.loads(inputs["candidate_measurements"].read_text())
+        measurements["models"].pop()
+        inputs["candidate_measurements"].write_text(json.dumps(measurements))
+        with self.assertRaisesRegex(ValueError, "all three ordered model identities"):
+            sanitizer.build_manifest(**inputs)
+
     def test_raw_evidence_digest_changes_without_exposing_raw_fields(self):
         inputs = self.inputs()
         first = sanitizer.build_manifest(**inputs)
-        inputs["raw_evidence"].write_text('{"capture_ids":{"acted":"different","fresh":"fresh-capture"}}')
+        raw = json.loads(inputs["raw_evidence"].read_text())
+        raw["capture_ids"]["acted"] = "different"
+        inputs["raw_evidence"].write_text(json.dumps(raw))
         second = sanitizer.build_manifest(**inputs)
         self.assertNotEqual(first["raw_evidence_sha256"], second["raw_evidence_sha256"])
         self.assertNotIn("different", json.dumps(second))
@@ -234,9 +296,18 @@ class EvidenceSanitizerTests(unittest.TestCase):
         self.assertFalse(chooser["additionalProperties"])
         self.assertEqual(chooser["properties"]["provider"]["enum"], ["fixture", "typesafe"])
         self.assertIn("null", chooser["properties"]["model_id"]["type"])
+        self.assertIn("worker_sha256", perception["required"])
+        self.assertIn("models", perception["required"])
+        model_items = perception["properties"]["models"]["prefixItems"]
+        self.assertEqual(
+            [item["allOf"][1]["properties"]["role"]["const"] for item in model_items],
+            ["icon-detect", "ocr-detect", "ocr-recognize"],
+        )
+        self.assertIn("onnx_runtime", perception["required"])
         self.assertIn("raw_evidence_sha256", schema["required"])
         self.assertIn("observation", schema["required"])
-        self.assertIn("os", schema["required"])
+        self.assertIn("environment", schema["required"])
+        self.assertIn("recording", schema["required"])
 
 
 if __name__ == "__main__":

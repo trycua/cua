@@ -384,6 +384,126 @@ jobs:
           fs.writeFileSync(privatePath, Buffer.alloc(privateBytes.length), {flag: "r+"});
           fs.unlinkSync(privatePath);
           JS
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, re, subprocess, tarfile
+
+          root = pathlib.Path("review-staging") / os.environ["PLATFORM"]
+          measurements_path = root / "review-measurements.json"
+          measurements = json.loads(measurements_path.read_text())
+          archive = root / json.loads((root / "catalog-payload.json").read_text())["archive"]
+
+          def digest(data):
+              return hashlib.sha256(data).hexdigest()
+
+          with tarfile.open(archive, "r:gz") as package:
+              members = package.getmembers()
+              names = [member.name for member in members]
+              if len(names) != len(set(names)) or any(
+                  member.issym() or member.islnk() or pathlib.PurePosixPath(member.name).is_absolute()
+                  or ".." in pathlib.PurePosixPath(member.name).parts for member in members
+              ):
+                  raise SystemExit("signed archive contains an unsafe or duplicate member")
+
+              def member_bytes(name):
+                  matches = [member for member in members if member.name == name and member.isfile()]
+                  if len(matches) != 1:
+                      raise SystemExit(f"signed archive must contain one regular {name}")
+                  stream = package.extractfile(matches[0])
+                  if stream is None:
+                      raise SystemExit(f"signed archive member cannot be read: {name}")
+                  return stream.read()
+
+              def member_json(name):
+                  return json.loads(member_bytes(name))
+
+              artifact_bytes = member_bytes("metadata/artifact-manifest.json")
+              artifact_manifest = json.loads(artifact_bytes)
+              extension_bytes = member_bytes("extension.json")
+              extension = json.loads(extension_bytes)
+              runtime_contract = member_json("metadata/runtime-contract.json")
+              model_manifest = member_json("model-manifest.json")
+              model_ledger = member_json("modelLedger.json")
+              verification_bytes = member_bytes("metadata/executed-verification.json")
+              verification = json.loads(verification_bytes)
+
+              if artifact_manifest["sourceSha"] != measurements["source_sha"]:
+                  raise SystemExit("sealed artifact manifest source differs from candidate")
+              if artifact_manifest["target"]["triple"] != measurements["target"]:
+                  raise SystemExit("sealed artifact manifest target differs from candidate")
+              if extension["version"] != artifact_manifest["version"]:
+                  raise SystemExit("sealed extension and artifact manifest versions differ")
+              if runtime_contract["protocolVersion"] != artifact_manifest["protocol"]["version"]:
+                  raise SystemExit("sealed runtime contract protocol differs from artifact manifest")
+
+              artifacts = artifact_manifest["artifacts"]
+              worker = next(item for item in artifacts if item["kind"] == "worker")
+              runtime = next(item for item in artifacts if item["kind"] == "runtime")
+              models = []
+              for role in ("icon-detect", "ocr-detect", "ocr-recognize"):
+                  artifact = next(item for item in artifacts if item.get("role") == role)
+                  ledger = next(item for item in model_ledger["models"] if item["artifact"] == artifact["name"])
+                  sealed_bytes = member_bytes(f"models/{artifact['name']}")
+                  if digest(sealed_bytes) != artifact["sha256"]:
+                      raise SystemExit(f"sealed {role} bytes differ from artifact manifest")
+                  original = ledger.get("sourceArtifact", {}).get("sha256", artifact["sha256"])
+                  models.append({
+                      "role": role,
+                      "id": artifact["name"],
+                      "revision": ledger["revision"],
+                      "original_sha256": original,
+                      "converted_sha256": artifact["sha256"],
+                      "license": ledger["license"],
+                  })
+
+              runtime_bytes = member_bytes(f"runtime/{runtime['name']}")
+              worker_bytes = member_bytes(f"bin/{worker['name']}")
+              if digest(runtime_bytes) != runtime["sha256"] or digest(worker_bytes) != worker["sha256"]:
+                  raise SystemExit("sealed worker or runtime bytes differ from artifact manifest")
+              gates = {gate["gate"]: gate for gate in verification["gates"]}
+              if gates.get("self-test", {}).get("status") != "passed" or gates.get("mismatch-rejection", {}).get("status") != "passed":
+                  raise SystemExit("sealed executed evidence does not prove self-test and mismatch rejection")
+
+          driver = root / measurements["review_driver_relative_path"]
+          version_output = subprocess.run(
+              [str(driver), "--version"], check=True, capture_output=True, text=True
+          ).stdout.strip()
+          match = re.search(r"\b[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?\b", version_output)
+          if not match:
+              raise SystemExit("review Driver did not report a bounded semantic version")
+          measurements.update({
+              "review_driver_version": match.group(0),
+              "extension_version": artifact_manifest["version"],
+              "protocol_version": artifact_manifest["protocol"]["version"],
+              "worker_sha256": worker["sha256"],
+              "models": models,
+              "onnx_runtime": {
+                  "revision": model_manifest["onnx_runtime"]["version"],
+                  "sha256": runtime["sha256"],
+                  "license": runtime["license"]["spdx"],
+              },
+              "self_test": {
+                  "status": "passed",
+                  "mismatch_rejection": True,
+                  "evidence_sha256": digest(verification_bytes),
+              },
+              "sealed_artifact_manifest_sha256": digest(artifact_bytes),
+              "sealed_extension_manifest_sha256": digest(extension_bytes),
+          })
+          icon = next(item for item in models if item["role"] == "icon-detect")
+          if measurements["supplied_model_sha256"] != icon["converted_sha256"]:
+              raise SystemExit("supplied model measurement differs from sealed archive")
+          measurements_path.write_text(json.dumps(measurements, indent=2, sort_keys=True) + "\n")
+
+          signed_files = [
+              archive.name, "catalog-payload.json", "catalog.signature", "signed-catalog.json",
+              "sbom.spdx.json", "provenance.redacted.json", "runtime-contract.json",
+              measurements["review_driver_relative_path"], "review-measurements.json",
+          ]
+          (root / "signed-candidate-checksums.txt").write_text("".join(
+              f"{hashlib.sha256((root / name).read_bytes()).hexdigest()}  {name}\n"
+              for name in sorted(signed_files)
+          ))
+          PY
       - name: Destroy any remaining ephemeral private key
         if: always()
         shell: bash
@@ -437,6 +557,14 @@ jobs:
               assert measurements["review_only"] is True
               assert measurements["source_sha"] == os.environ["SOURCE_SHA"]
               assert measurements["target"] == target == payload["target"]
+              assert measurements["review_driver_version"]
+              assert measurements["extension_version"] == payload["version"]
+              assert measurements["protocol_version"] > 0 and len(measurements["worker_sha256"]) == 64
+              assert [item["role"] for item in measurements["models"]] == ["icon-detect", "ocr-detect", "ocr-recognize"]
+              assert all(len(item["original_sha256"]) == len(item["converted_sha256"]) == 64 and item["revision"] and item["license"] for item in measurements["models"])
+              assert measurements["onnx_runtime"]["revision"] and len(measurements["onnx_runtime"]["sha256"]) == 64
+              assert measurements["self_test"]["status"] == "passed" and measurements["self_test"]["mismatch_rejection"] is True
+              assert len(measurements["sealed_artifact_manifest_sha256"]) == len(measurements["sealed_extension_manifest_sha256"]) == 64
               assert payload["publisher_id"] == "cua-review-only"
               assert payload["publisher_name"] == "Cua REVIEW ONLY"
               assert payload["key_id"] == "review-only-build-override"

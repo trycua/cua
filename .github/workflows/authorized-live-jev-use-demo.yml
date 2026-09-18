@@ -161,17 +161,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {platform: windows, runner: windows-latest, target: x86_64-pc-windows-msvc, driver: review-cua-driver.exe}
-          - {platform: linux-x11, runner: ubuntu-latest, target: x86_64-unknown-linux-gnu, driver: review-cua-driver}
+          - {platform: windows, runner: windows-latest, target: x86_64-pc-windows-msvc, driver: review-cua-driver.exe, desktop_session: windows-interactive}
+          - {platform: linux-x11, runner: ubuntu-latest, target: x86_64-unknown-linux-gnu, driver: review-cua-driver, desktop_session: x11-openbox}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     environment: authorized-live-jev-use-demo
     env:
       CUA_E2E_SOURCE_SHA: ${{ needs.source.outputs.sha }}
       CUA_JEV_SOURCE_SHA: ${{ needs.source.outputs.jev_sha }}
-      CUA_SESSION_LABEL: authorized-jev-choice-demo-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
+      CUA_SESSION_LABEL: authorized-jev-choice-demo-${{ matrix.platform }}
       CUA_PERCEPTION_EXTENSION_HOME: ${{ runner.temp }}/cua-perception-home
       CUA_PERCEPTION_EVIDENCE_DIR: ${{ runner.temp }}/perception-evidence/live
+      CUA_DESKTOP_SESSION_TYPE: ${{ matrix.desktop_session }}
+      CUA_RUNNER_IDENTITY_CLASS: github-hosted
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -235,6 +237,10 @@ jobs:
           root, measurements_path, env_path = map(pathlib.Path, sys.argv[1:4]); expected_sha, expected_target, expected_driver = sys.argv[4:]
           measured = json.loads(measurements_path.read_text()); assert measured["review_only"] is True and measured["source_sha"] == expected_sha and measured["target"] == expected_target
           assert measured["review_driver_build_profile"] == "debug-review-trust-root" and measured["review_driver_relative_path"] == expected_driver
+          assert measured["review_driver_version"] and measured["extension_version"] and measured["protocol_version"] > 0
+          assert measured["self_test"]["status"] == "passed" and measured["self_test"]["mismatch_rejection"] is True
+          assert [item["role"] for item in measured["models"]] == ["icon-detect", "ocr-detect", "ocr-recognize"]
+          assert measured["onnx_runtime"]["revision"] and len(measured["onnx_runtime"]["sha256"]) == 64
           assert measured["key_id"] == "review-only-build-override" and measured["publisher_id"] == "cua-review-only" and measured["signature_algorithm"] == "ed25519"
           public_key = base64.b64decode(measured["public_key_base64"], validate=True); assert len(public_key) == 32 and hashlib.sha256(public_key).hexdigest() == measured["public_key_sha256"]
           driver = (root / expected_driver).resolve(); driver.relative_to(root.resolve()); assert driver.is_file() and hashlib.sha256(driver.read_bytes()).hexdigest() == measured["review_driver_sha256"]
@@ -269,6 +275,7 @@ jobs:
           assert preview["publisher_signature_verified"] is True and preview["trust"] == "review-only-publisher-verified"
           assert status["installed"] is True and status["healthy"] is True and status["trust"] == "review-only-publisher-verified"
           assert status["publisher_id"] == measured["publisher_id"] and status["publisher_key_id"] == measured["key_id"]
+          assert status["active_version"] == measured["extension_version"] and status["protocol_version"] == measured["protocol_version"]
           assert catalog["signature_algorithm"] == measured["signature_algorithm"] == "ed25519" and preview["archive_sha256"] == measured["archive_sha256"] == catalog["payload"]["archive_sha256"]
           archive_rel = pathlib.PurePosixPath(catalog["payload"]["archive"]); assert not archive_rel.is_absolute() and ".." not in archive_rel.parts
           archive = catalog_path.parent.joinpath(*archive_rel.parts).resolve(); assert archive.is_file() and hashlib.sha256(archive.read_bytes()).hexdigest() == preview["archive_sha256"]
@@ -281,6 +288,7 @@ jobs:
               model_paths.append(str(path)); model_hashes.append(digest)
           assert hashlib.sha256(catalog_path.read_bytes()).hexdigest() == measured["catalog_sha256"]
           assert len(model_hashes) == 3 and measured["supplied_model_sha256"] in model_hashes
+          assert model_hashes == [item["converted_sha256"] for item in measured["models"]]
           supplied_model_path = model_paths[model_hashes.index(measured["supplied_model_sha256"])]
           runner_identity = {"name": os.environ.get("ImageOS", ""), "version": os.environ.get("ImageVersion", ""), "arch": os.environ.get("RUNNER_ARCH", "")}
           assert all(runner_identity.values()), runner_identity
@@ -366,20 +374,26 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'recording.mp4 did not fully decode' }
           uv pip install --no-config --system --require-hashes -r .github/releases/cua-perception/test-requirements.lock
           @'
-          import hashlib, json, os, pathlib, shutil, sys
+          import hashlib, json, os, pathlib, shutil, subprocess, sys
           from jsonschema import Draft202012Validator
           evidence, output, schema_path, measurements_path = map(pathlib.Path, sys.argv[1:]); manifest_path, recording = evidence / "manifest.json", evidence / "recording.mp4"
           manifest = json.loads(manifest_path.read_text()); schema = json.loads(schema_path.read_text()); Draft202012Validator.check_schema(schema); Draft202012Validator(schema).validate(manifest); measured = json.loads(measurements_path.read_text())
           assert manifest["platform"] == os.environ["EXPECTED_PLATFORM"]
-          assert manifest["fixture"] == {"id": "visual-only-canvas/v1", "oracle": {"selected": "send", "action_count": 1}}
+          assert manifest["fixture"] == {"id": "visual-only-canvas/v1", "oracle": {"source": "fixture-journal", "initial_ready": True, "selected": "send", "action_count": 1, "result": "passed"}}
           runtime = manifest["runtime"]; driver = runtime["driver"]; perception = runtime["perception"]; chooser = runtime["chooser"]
-          assert driver["source_sha"] == measured["source_sha"] == os.environ["EXPECTED_SHA"] and driver["binary_sha256"] == measured["review_driver_sha256"]
-          assert perception["signature_algorithm"] == measured["signature_algorithm"] == "ed25519"; assert perception["signed_extension_archive_sha256"] == measured["archive_sha256"]; assert perception["signing_key_sha256"] == measured["public_key_sha256"]; assert perception["signed_catalog_sha256"] == measured["catalog_sha256"]; assert perception["model_sha256"] == measured["supplied_model_sha256"]
-          assert chooser["adapter_source_sha"] == os.environ["EXPECTED_SHA"] and chooser["source_sha"] == os.environ["CUA_JEV_SOURCE_SHA"]
-          observation = manifest["observation"]; assert observation["session_label"] == os.environ["CUA_SESSION_LABEL"]; assert len(observation["acted_capture_id_sha256"]) == len(observation["fresh_capture_id_sha256"]) == 64
-          assert manifest["os"] == {"name": os.environ["CUA_RUNNER_OS_NAME"], "version": os.environ["CUA_RUNNER_OS_VERSION"], "arch": os.environ["CUA_RUNNER_OS_ARCH"]}
-          result = manifest["result"]; assert result["status"] == "passed" and result["stale_capture_refused"] is True
-          content = recording.read_bytes(); assert manifest["artifacts"] == [{"kind": "video", "path": "recording.mp4", "sha256": hashlib.sha256(content).hexdigest(), "size_bytes": len(content)}]
+          assert driver["source_sha"] == measured["source_sha"] == os.environ["EXPECTED_SHA"] and driver["version"] == measured["review_driver_version"] and driver["binary_sha256"] == measured["review_driver_sha256"]
+          assert driver["build"] == {"profile": measured["review_driver_build_profile"], "target": measured["target"], "sealed_artifact_manifest_sha256": measured["sealed_artifact_manifest_sha256"], "sealed_extension_manifest_sha256": measured["sealed_extension_manifest_sha256"]}
+          assert perception["signature_algorithm"] == measured["signature_algorithm"] == "ed25519"; assert perception["signed_extension_archive_sha256"] == measured["archive_sha256"]; assert perception["signing_key_sha256"] == measured["public_key_sha256"]; assert perception["signed_catalog_sha256"] == measured["catalog_sha256"]
+          assert perception["protocol_version"] == measured["protocol_version"] and perception["worker_sha256"] == measured["worker_sha256"] and perception["self_test"] == measured["self_test"] and perception["models"] == measured["models"] and perception["onnx_runtime"] == measured["onnx_runtime"]
+          assert chooser["adapter_source_sha"] == os.environ["EXPECTED_SHA"] and chooser["source_sha"] == os.environ["CUA_JEV_SOURCE_SHA"] and chooser["model_id"]
+          result = manifest["result"]
+          observation = manifest["observation"]; assert observation["session_label"] == os.environ["CUA_SESSION_LABEL"]; assert len(observation["acted_capture_id_sha256"]) == len(observation["fresh_capture_id_sha256"]) == len(observation["capture_trace_sha256"]) == 64
+          assert 2 <= len(observation["candidates"]) <= 18 and result["selected_candidate"] in {item["id"] for item in observation["candidates"]}
+          assert manifest["environment"] == {"os": {"name": os.environ["CUA_RUNNER_OS_NAME"], "version": os.environ["CUA_RUNNER_OS_VERSION"], "arch": os.environ["CUA_RUNNER_OS_ARCH"]}, "desktop_session": os.environ["CUA_DESKTOP_SESSION_TYPE"], "runner_identity_class": os.environ["CUA_RUNNER_IDENTITY_CLASS"], "delivery_mode": "background"}
+          assert result["status"] == "passed" and result["stale_capture_refused"] is True
+          content = recording.read_bytes(); video_sha = hashlib.sha256(content).hexdigest(); assert manifest["artifacts"] == [{"kind": "video", "path": "recording.mp4", "sha256": video_sha, "size_bytes": len(content)}]
+          probe = json.loads(subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height,avg_frame_rate:format=duration", "-of", "json", recording], check=True, capture_output=True, text=True).stdout); stream = probe["streams"][0]; numerator, denominator = map(int, stream["avg_frame_rate"].split("/")); duration_ms = round(float(probe["format"]["duration"]) * 1000)
+          recording_value = manifest["recording"]; dimensions = {"width": stream["width"], "height": stream["height"]}; assert recording_value["original_dimensions"] == recording_value["delivered_dimensions"] == dimensions; assert recording_value["frame_rate"] == {"numerator": numerator, "denominator": denominator}; assert recording_value["cursor"] == {"agent_overlay": False, "system_cursor": "recorder-default"}; assert recording_value["edit_operations"] == [{"operation": "none", "speed": "1x"}]; assert recording_value["shots"] == [{"source_sha256": video_sha, "start_ms": 0, "end_ms": duration_ms}]; assert recording_value["final_sha256"] == video_sha and recording_value["size_bytes"] == len(content)
           output.mkdir(mode=0o700, parents=True, exist_ok=False); shutil.copyfile(recording, output / "recording.mp4"); shutil.copyfile(manifest_path, output / "manifest.json"); assert sorted(path.name for path in output.iterdir()) == ["manifest.json", "recording.mp4"]
           '@ | python - $evidence (Join-Path $env:RUNNER_TEMP 'publish-evidence') 'libs/cua-driver/tests/perception-demo/evidence-manifest.schema.json' $env:CUA_CANDIDATE_MEASUREMENTS
           if ($LASTEXITCODE -ne 0) { throw 'redacted evidence validation failed' }

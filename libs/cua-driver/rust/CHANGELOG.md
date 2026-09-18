@@ -4,6 +4,7 @@
 
 ### Bug Fixes
 
+* **cua-driver:** preserve the delivered X11 click interval, confirm sequential button delivery, and release modifiers after rejected desktop clicks.
 * **cua-driver:** deliver X11 key-down before the tap delay and finish background keyboard delivery before closing the input connection.
 
 ## [0.28.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.28.1...cua-driver-rs-v0.28.2) (2026-09-15)

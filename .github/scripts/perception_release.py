@@ -180,6 +180,7 @@ def load_and_validate_manifest(manifest_path: Path, payload_root: Path) -> dict[
 
     _validate_ledger(manifest, payload_root, "modelLedger", "model", "model-ledger.schema.json")
     _validate_ledger(manifest, payload_root, "sourceLedger", "source", "source-ledger.schema.json")
+    _validate_model_source_binding(manifest, payload_root)
     _validate_model_manifest(manifest, payload_root, kinds)
     _validate_verification_reports(manifest, payload_root, kinds)
     return manifest
@@ -289,10 +290,70 @@ def _validate_ledger(
                 raise CandidateError(f"{field} SHA-256 differs from manifest for {name}")
             if entry.get("artifactSize") != artifact["size"]:
                 raise CandidateError(f"{field} size differs from manifest for {name}")
-            if entry.get("revision") != manifest["sourceSha"]:
-                raise CandidateError(f"{field} revision differs from manifest sourceSha")
-            if entry.get("sourceOfferStatus") != "bundled":
+            if entry.get("contentKind") == "cua-source" and entry.get("revision") != manifest["sourceSha"]:
+                raise CandidateError(f"{field} Cua revision differs from manifest sourceSha")
+            if entry.get("sourceOfferStatus") not in {"bundled", "bundled-review-only"}:
                 raise CandidateError("candidate catalog requires bundled corresponding source")
+            source_path = confined_file(payload_root, artifact["path"])
+            if entry.get("format") == "tar.gz":
+                _validate_source_archive(source_path, entry.get("requiredPaths", []))
+            elif entry.get("format") != "file":
+                raise CandidateError(f"{field} has an unsupported source format for {name}")
+
+
+def _validate_source_archive(path: Path, required_paths: Sequence[str]) -> None:
+    try:
+        with tarfile.open(path, "r:gz") as archive:
+            members = archive.getmembers()
+    except tarfile.TarError as error:
+        raise CandidateError(f"invalid source archive {path}: {error}") from error
+    if not members:
+        raise CandidateError(f"source archive is empty: {path}")
+    names = []
+    for member in members:
+        pure = PurePosixPath(member.name)
+        if pure.is_absolute() or ".." in pure.parts:
+            raise CandidateError(f"source archive contains an unsafe member: {member.name}")
+        if member.issym() or member.islnk():
+            target = PurePosixPath(member.linkname)
+            parts = list(pure.parent.parts)
+            if target.is_absolute():
+                raise CandidateError(f"source archive contains an unsafe link: {member.name}")
+            for part in target.parts:
+                if part in {"", "."}:
+                    continue
+                if part == "..":
+                    if len(parts) <= 1:
+                        raise CandidateError(f"source archive link escapes its root: {member.name}")
+                    parts.pop()
+                else:
+                    parts.append(part)
+        names.append(pure.as_posix().rstrip("/"))
+    for required in required_paths:
+        wanted = required.rstrip("/")
+        if not any(name == wanted or name.endswith("/" + wanted) or f"/{wanted}/" in f"/{name}/" for name in names):
+            raise CandidateError(f"source archive {path.name} lacks required path: {required}")
+
+
+def _validate_model_source_binding(manifest: Mapping[str, Any], payload_root: Path) -> None:
+    model_ledger = read_json(confined_file(payload_root, str(manifest["modelLedger"])))
+    source_ledger = read_json(confined_file(payload_root, str(manifest["sourceLedger"])))
+    source_entries = {entry["artifact"]: entry for entry in source_ledger["sources"]}
+    for model in model_ledger["models"]:
+        if model.get("verificationStatus") != "license-review-required":
+            continue
+        binding = model.get("sourceArtifact")
+        if not binding:
+            raise CandidateError(f"license-review-required model lacks a bundled source input: {model['artifact']}")
+        source = source_entries.get(binding.get("artifact"))
+        artifact = next(
+            (item for item in manifest["artifacts"] if item["kind"] == "source" and item["name"] == binding.get("artifact")),
+            None,
+        )
+        if not source or not artifact or source.get("contentKind") != "model-source-input":
+            raise CandidateError(f"model source input is absent from the source ledger: {model['artifact']}")
+        if binding.get("path") != artifact["path"] or binding.get("sha256") != artifact["sha256"] or binding.get("size") != artifact["size"]:
+            raise CandidateError(f"model source input binding differs from the candidate manifest: {model['artifact']}")
 
 
 def canonical_json(path: Path, value: Mapping[str, Any]) -> None:
@@ -317,10 +378,16 @@ def bind_corresponding_source(
     ).stdout.strip()
     if head != source_sha:
         raise CandidateError(f"checked-out source {head} differs from manifest {source_sha}")
+    ledger_path = confined_file(payload_root, str(manifest.get("sourceLedger", "")))
+    ledger = read_json(ledger_path)
+    cua_entries = [entry for entry in ledger.get("sources", []) if entry.get("contentKind") == "cua-source"]
+    if len(cua_entries) != 1:
+        raise CandidateError("candidate must declare exactly one Cua corresponding-source artifact")
     source_artifacts = [item for item in manifest.get("artifacts", []) if item.get("kind") == "source"]
-    if len(source_artifacts) != 1:
-        raise CandidateError("candidate must declare exactly one corresponding-source artifact")
-    source = source_artifacts[0]
+    matching_artifacts = [item for item in source_artifacts if item.get("name") == cua_entries[0].get("artifact")]
+    if len(matching_artifacts) != 1:
+        raise CandidateError("Cua corresponding-source ledger entry does not match the manifest")
+    source = matching_artifacts[0]
     pure = PurePosixPath(str(source.get("path", "")))
     if pure.is_absolute() or ".." in pure.parts or not pure.parts:
         raise CandidateError("corresponding-source path must be relative and confined")
@@ -352,12 +419,10 @@ def bind_corresponding_source(
         raise CandidateError("generated corresponding-source artifact is empty")
     source["sha256"] = file_digest(destination)
     source["size"] = destination.stat().st_size
-    ledger_path = confined_file(payload_root, str(manifest.get("sourceLedger", "")))
-    ledger = read_json(ledger_path)
     entries = ledger.get("sources", []) if isinstance(ledger, dict) else []
     matching = [entry for entry in entries if entry.get("artifact") == source.get("name")]
-    if len(matching) != 1 or len(entries) != 1:
-        raise CandidateError("source ledger must contain exactly the declared source artifact")
+    if len(matching) != 1:
+        raise CandidateError("source ledger must contain the declared Cua source artifact")
     matching[0].update({
         "artifactSha256": source["sha256"],
         "artifactSize": source["size"],
@@ -515,7 +580,7 @@ def extension_manifest(stage: Path, manifest: Mapping[str, Any], payload_root: P
         for item in artifacts
         if item["kind"] != "notice"
     ]
-    source = next(item for item in artifacts if item["kind"] == "source")
+    source = corresponding_source_artifact(manifest)
     worker = next(item for item in artifacts if item["kind"] == "worker")
     return {
         "schema_version": 1,
@@ -538,11 +603,21 @@ def extension_manifest(stage: Path, manifest: Mapping[str, Any], payload_root: P
     }
 
 
+def corresponding_source_artifact(manifest: Mapping[str, Any]) -> Mapping[str, Any]:
+    matches = [
+        item for item in manifest["artifacts"]
+        if item["kind"] == "source" and item["name"] == "cua-perception-source.tar.gz"
+    ]
+    if len(matches) != 1:
+        raise CandidateError("candidate must contain one named Cua corresponding-source archive")
+    return matches[0]
+
+
 def catalog_payload(
     manifest: Mapping[str, Any], archive: Path, manifest_file: Path, key_id: str,
     catalog_version: int, expires_unix: int, next_key: Any,
 ) -> dict[str, Any]:
-    source = next(item for item in manifest["artifacts"] if item["kind"] == "source")
+    source = corresponding_source_artifact(manifest)
     return {
         "schema_version": 1,
         "catalog_version": catalog_version,
@@ -606,6 +681,17 @@ def create_archive(stage: Path, destination: Path) -> None:
                         archive.addfile(info)
 
 
+def staged_artifact_path(item: Mapping[str, Any]) -> Path:
+    if item["kind"] != "source":
+        return Path(KIND_DIRECTORIES[item["kind"]]) / item["name"]
+    parts = PurePosixPath(item["path"]).parts
+    if "source" in parts:
+        tail = parts[parts.index("source") + 1:]
+        if tail:
+            return Path("source", *tail)
+    return Path("source") / item["name"]
+
+
 def package_candidate(
     manifest_path: Path, payload_root: Path, output: Path, *,
     executed_evidence_path: Path,
@@ -658,7 +744,7 @@ def package_candidate(
         stage = Path(temporary) / "candidate"
         stage.mkdir()
         for item in manifest["artifacts"]:
-            destination = stage / KIND_DIRECTORIES[item["kind"]] / item["name"]
+            destination = stage / staged_artifact_path(item)
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(confined_file(payload_root, item["path"]), destination)
             destination.chmod(0o755 if item["kind"] in {"worker", "runtime"} else 0o644)

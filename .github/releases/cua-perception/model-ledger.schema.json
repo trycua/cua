@@ -29,9 +29,10 @@
           "sourceArtifact": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["name", "sha256", "size"],
+            "required": ["artifact", "path", "sha256", "size"],
             "properties": {
-              "name": { "type": "string", "minLength": 1 },
+              "artifact": { "type": "string", "minLength": 1 },
+              "path": { "type": "string", "minLength": 1 },
               "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
               "size": { "type": "integer", "minimum": 1 }
             }

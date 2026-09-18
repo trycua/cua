@@ -35,6 +35,23 @@ def image_dimensions(path: Path) -> tuple[int, int]:
     return struct.unpack(">II", data[16:24])
 
 
+def source_inspection(bundle: Path, manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    ledger = read_json(bundle / manifest["sourceLedger"])
+    artifacts = {
+        item["name"]: item for item in manifest["artifacts"] if item["kind"] == "source"
+    }
+    return [
+        {
+            "kind": entry["contentKind"],
+            "location": artifacts[entry["artifact"]]["path"],
+            "revision": entry["revision"],
+            "sha256": entry["artifactSha256"],
+            "status": entry["sourceOfferStatus"],
+        }
+        for entry in ledger["sources"]
+    ]
+
+
 def mismatch_rejection(worker: Path, manifest: Path, runtime: Path, target: str) -> None:
     with tempfile.TemporaryDirectory(prefix="cua-perception-mismatch-") as temporary:
         tampered = Path(temporary) / runtime.name
@@ -178,12 +195,13 @@ def main() -> int:
     args = parser.parse_args()
     try:
         manifest = static_verify(args.bundle, require_host=not args.static_only)
+        sources = source_inspection(args.bundle, manifest)
         if args.static_only:
-            print(json.dumps({"status": "passed", "target": manifest["target"]["triple"]}))
+            print(json.dumps({"status": "passed", "target": manifest["target"]["triple"], "sources": sources}, sort_keys=True))
             return 0
         fixture = args.real_parse_fixture or args.bundle / "verification/known-answer.png"
         reports = exercise_bundle(args.bundle, manifest["target"]["triple"], fixture)
-        print(json.dumps({"status": "passed", "reports": reports}, sort_keys=True))
+        print(json.dumps({"status": "passed", "reports": reports, "sources": sources}, sort_keys=True))
         return 0
     except (ArtifactError, OSError, KeyError, subprocess.SubprocessError) as error:
         parser.exit(1, f"verification failed: {error}\n")

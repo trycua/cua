@@ -8,7 +8,9 @@ import json
 import platform
 import struct
 import subprocess
+import tarfile
 from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Any
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -162,6 +164,85 @@ def request(method: str, params: dict[str, Any], request_id: str) -> dict[str, A
     return {"protocol": PROTOCOL, "request_id": request_id, "method": method, "params": params}
 
 
+def _verify_source_archive(path: Path, required_paths: list[str]) -> None:
+    try:
+        with tarfile.open(path, "r:gz") as archive:
+            members = archive.getmembers()
+    except tarfile.TarError as error:
+        raise ArtifactError(f"invalid corresponding-source archive {path}: {error}") from error
+    if not members:
+        raise ArtifactError(f"empty corresponding-source archive: {path}")
+    safe_names = []
+    for member in members:
+        pure = PurePosixPath(member.name)
+        if pure.is_absolute() or ".." in pure.parts:
+            raise ArtifactError(f"unsafe corresponding-source member in {path}: {member.name}")
+        if member.issym() or member.islnk():
+            target = PurePosixPath(member.linkname)
+            parts = list(pure.parent.parts)
+            if target.is_absolute():
+                raise ArtifactError(f"unsafe corresponding-source link in {path}: {member.name}")
+            for part in target.parts:
+                if part in {"", "."}:
+                    continue
+                if part == "..":
+                    if len(parts) <= 1:
+                        raise ArtifactError(f"corresponding-source link escapes archive root: {member.name}")
+                    parts.pop()
+                else:
+                    parts.append(part)
+        safe_names.append(pure.as_posix().rstrip("/"))
+    for required in required_paths:
+        wanted = required.rstrip("/")
+        if not any(name == wanted or name.endswith("/" + wanted) or f"/{wanted}/" in f"/{name}/" for name in safe_names):
+            raise ArtifactError(f"corresponding-source archive {path} lacks required path: {required}")
+
+
+def verify_corresponding_sources(bundle: Path, manifest: dict[str, Any], lock: dict[str, Any]) -> list[dict[str, Any]]:
+    source_artifacts = {
+        item["name"]: item for item in manifest.get("artifacts", []) if item.get("kind") == "source"
+    }
+    if not source_artifacts:
+        raise ArtifactError("bundle does not declare corresponding-source artifacts")
+    ledger = read_json(confined_file(bundle, str(manifest.get("sourceLedger", ""))))
+    entries = ledger.get("sources")
+    if not isinstance(entries, list) or not entries:
+        raise ArtifactError("source ledger contains no bundled source entries")
+    ledger_entries = {entry.get("artifact"): entry for entry in entries if isinstance(entry, dict)}
+    if len(ledger_entries) != len(entries) or set(ledger_entries) != set(source_artifacts):
+        raise ArtifactError("source ledger entries differ from declared source artifacts")
+    for name, artifact in source_artifacts.items():
+        entry = ledger_entries[name]
+        path = confined_file(bundle, artifact["path"])
+        verify_file(path, artifact["sha256"], artifact["size"])
+        if entry.get("artifactSha256") != artifact["sha256"] or entry.get("artifactSize") != artifact["size"]:
+            raise ArtifactError(f"source ledger hash or size differs for {name}")
+        if entry.get("license") != artifact.get("license", {}).get("spdx"):
+            raise ArtifactError(f"source ledger license differs for {name}")
+        if entry.get("sourceOfferStatus") not in {"bundled", "bundled-review-only"}:
+            raise ArtifactError(f"source ledger does not identify a bundled payload for {name}")
+        if entry.get("format") == "tar.gz":
+            _verify_source_archive(path, entry.get("requiredPaths", []))
+        elif entry.get("format") != "file":
+            raise ArtifactError(f"source ledger has an unsupported format for {name}")
+    expected = {entry["filename"]: entry for entry in lock.get("corresponding_source", [])}
+    for name, pinned in expected.items():
+        artifact = source_artifacts.get(name)
+        entry = ledger_entries.get(name)
+        if not artifact or not entry:
+            raise ArtifactError(f"bundle is missing pinned source material: {name}")
+        if artifact["path"] != pinned["bundle_path"]:
+            raise ArtifactError(f"pinned source material has the wrong path: {name}")
+        if artifact["sha256"] != pinned["sha256"] or artifact["size"] != pinned["size"]:
+            raise ArtifactError(f"pinned source material differs from the artifact lock: {name}")
+        if entry.get("revision") != pinned["revision"] or entry.get("contentKind") != pinned["content_kind"]:
+            raise ArtifactError(f"source ledger revision or kind differs from the artifact lock: {name}")
+    model_source = ledger_entries.get("omniparser-icon-detect-model.pt")
+    if not model_source or model_source.get("contentKind") != "model-source-input":
+        raise ArtifactError("exact OmniParser source model is not bundled")
+    return entries
+
+
 def static_verify(bundle: Path, require_host: bool = True) -> dict[str, Any]:
     manifest = read_json(bundle / "artifact-manifest.json")
     target = manifest.get("target", {}).get("triple")
@@ -205,6 +286,8 @@ def static_verify(bundle: Path, require_host: bool = True) -> dict[str, Any]:
         declared = declared_roles[role]
         if declared["name"] != expected["filename"] or declared["sha256"] != expected["sha256"]:
             raise ArtifactError(f"{role} differs from the pinned artifact lock")
+    if manifest.get("sourceLedger"):
+        verify_corresponding_sources(bundle, manifest, lock)
     sums_path = bundle / "SHA256SUMS"
     if sums_path.exists():
         for line in sums_path.read_text(encoding="utf-8").splitlines():

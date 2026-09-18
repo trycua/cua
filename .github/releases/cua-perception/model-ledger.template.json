@@ -11,9 +11,10 @@
       "license": "AGPL-3.0-only",
       "redistributionAllowed": true,
       "verificationStatus": "license-review-required",
-      "exportSource": "Pinned conversion recipe and exporter source must be bundled in the source ledger",
+      "exportSource": "models/conversion-recipe.json and models/export_omniparser_detector.py in the Cua source archive, with principal exporter sources listed in source-ledger.json",
       "sourceArtifact": {
-        "name": "model.pt",
+        "artifact": "omniparser-icon-detect-model.pt",
+        "path": "source/upstream/omniparser-icon-detect-model.pt",
         "sha256": "dab3d4351ad00b035db829909a4db98354d5a90f6990e4ac00222a9a95d4bf57",
         "size": 40623819
       },

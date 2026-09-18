@@ -17,6 +17,15 @@ AGPL-3.0-only. Distribution remains subject to the release review recorded in
 the model ledger. The corresponding source offer is described in
 `SOURCE_OFFER.md`.
 
+## Bundled exporter source snapshots
+
+The review bundle includes pinned source snapshots for Ultralytics
+(AGPL-3.0-only), PyTorch and torchvision (BSD-3-Clause), and ONNX and OnnxSlim
+(Apache-2.0). Exact revisions, archive hashes, and required contents are in
+`source-ledger.json`. These snapshots support review and reproduction of the
+detector conversion; their inclusion does not complete the pending detector
+license review.
+
 ## PaddleOCR models and dictionary
 
 The PP-OCRv5 mobile detector, English recognizer, and recognizer dictionary

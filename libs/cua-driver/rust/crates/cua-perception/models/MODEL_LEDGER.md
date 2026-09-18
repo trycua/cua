@@ -28,6 +28,14 @@ runtime dependency. The converted file is an explicitly supplied release
 input because the reviewed byte-for-byte export is not published at the
 upstream source URL. The assembler rejects any substitute digest.
 
+Every assembled review bundle also contains the exact `model.pt`, pinned source
+snapshots for Ultralytics, PyTorch, torchvision, and ONNX, and the executable
+command in `export_omniparser_detector.py`. `conversion-recipe.json` is the
+machine-readable authority for parameters and expected output. No local patch
+was applied. These principal sources do not include every transitive build or
+host dependency, so successful reproduction must still match the recorded
+ONNX digest and does not by itself complete the pending license review.
+
 ## PP-OCRv5 detector
 
 - Source: official PaddlePaddle `PP-OCRv5_mobile_det_onnx` Hugging Face repository

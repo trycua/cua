@@ -15,31 +15,22 @@
     "libs/cua-driver/rust/crates/cua-perception"
   ],
   "source_offer": "SOURCE_OFFER.md",
-  "upstream_sources": [
+  "bundled_upstream_sources": [
     {
       "component": "OmniParser icon detector source",
+      "path": "source/upstream/omniparser-icon-detect-model.pt",
       "url": "https://huggingface.co/microsoft/OmniParser-v2.0/resolve/6600256cb0f1b07651e3bc86166196307bad7e2d/icon_detect/model.pt",
       "sha256": "dab3d4351ad00b035db829909a4db98354d5a90f6990e4ac00222a9a95d4bf57"
     },
     {
-      "component": "PP-OCRv5 detector ONNX",
-      "url": "https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_det_onnx/resolve/e6f4fa85f00e168c862bc462aebca69eef9b3d3d/inference.onnx",
-      "sha256": "a431985659dc921974177a95adcfbb90fd9e51989a5e04d70d0b75f597b6e61d"
-    },
-    {
-      "component": "PP-OCRv5 English recognizer ONNX",
-      "url": "https://huggingface.co/PaddlePaddle/en_PP-OCRv5_mobile_rec_onnx/resolve/3fafbc3b5dcf93dd72add9f48368be8a3a2cd33b/inference.onnx",
-      "sha256": "b5f833dfc5d0eb71da397b4efa06ebeee9b431b690a47d6af40d77d8eabc557f"
-    },
-    {
-      "component": "PP-OCRv5 English recognizer dictionary",
-      "url": "https://huggingface.co/PaddlePaddle/en_PP-OCRv5_mobile_rec_onnx/resolve/3fafbc3b5dcf93dd72add9f48368be8a3a2cd33b/inference.yml",
-      "sha256": "27e91d0582f40168aa218303c76e184bc78fa7a5d105aad0cfbad8458b441067"
-    },
-    {
-      "component": "ONNX Runtime CPU archive for the bundle target",
-      "url": "REPLACE_WITH_TARGET_URL_FROM_SCRIPTS_ARTIFACTS_LOCK_JSON",
-      "sha256": "REPLACE_WITH_TARGET_ARCHIVE_SHA256_FROM_SCRIPTS_ARTIFACTS_LOCK_JSON"
+      "component": "Pinned exporter sources",
+      "path": "source/exporter/",
+      "url": "See scripts/artifacts.lock.json",
+      "sha256": "See scripts/artifacts.lock.json"
     }
-  ]
+  ],
+  "immutable_external_coordinates": [
+    { "component": "ONNX Runtime and redistributed OCR inputs", "url": "See scripts/artifacts.lock.json", "sha256": "See scripts/artifacts.lock.json" }
+  ],
+  "review_status": "license-review-required"
 }

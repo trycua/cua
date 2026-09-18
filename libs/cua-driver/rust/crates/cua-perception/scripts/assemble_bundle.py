@@ -49,6 +49,12 @@ def immutable_url(url: str) -> None:
         revision = url.split(marker, 1)[1].split("/", 1)[0]
         if len(revision) == 40 and all(character in "0123456789abcdef" for character in revision):
             return
+    if "codeload.github.com/" in url and "/tar.gz/" in url:
+        revision = url.rsplit("/tar.gz/", 1)[1]
+        if len(revision) == 40 and all(character in "0123456789abcdef" for character in revision):
+            return
+    if parsed.netloc == "files.pythonhosted.org" and parsed.path.startswith("/packages/"):
+        return
     raise ArtifactError(f"artifact URL does not pin an approved tag or commit: {url}")
 
 
@@ -216,11 +222,13 @@ def model_ledger(lock: dict[str, Any]) -> dict[str, Any]:
             "artifactSize": entry["size"], "origin": entry["origin"],
             "revision": entry["revision"], "license": entry["license"],
             "redistributionAllowed": True, "verificationStatus": entry["verification_status"],
-            "exportSource": "Bundled corresponding source archive and pinned conversion provenance",
+            "exportSource": "source/cua-perception-source.tar.gz contains models/conversion-recipe.json and models/export_omniparser_detector.py; principal exporter sources are bundled under source/exporter/",
         }
         if entry["role"] == "icon-detect":
             model["sourceArtifact"] = {
-                "name": entry["source_path"], "sha256": entry["source_sha256"], "size": 40623819
+                "artifact": "omniparser-icon-detect-model.pt",
+                "path": "source/upstream/omniparser-icon-detect-model.pt",
+                "sha256": entry["source_sha256"], "size": 40623819
             }
             model["usageRestrictions"] = ["Do not publish until AGPL release review is complete"]
         models.append(model)
@@ -266,19 +274,25 @@ def release_manifest(bundle: Path, lock: dict[str, Any], target: str, version: s
             )
         )
     entries.extend([
+        artifact(bundle / "model-manifest.json", bundle, "model-manifest", "MIT"),
         artifact(bundle / "THIRD_PARTY_NOTICES.md", bundle, "notice", "MIT", notice=False),
         artifact(bundle / "SOURCE_OFFER.md", bundle, "notice", "AGPL-3.0-only", notice=False),
         artifact(bundle / "source/cua-perception-source.tar.gz", bundle, "source", "MIT"),
-        artifact(bundle / "verification/health.json", bundle, "verification-report", "MIT", role="health"),
-        artifact(bundle / "verification/self-test.json", bundle, "verification-report", "MIT", role="self-test"),
-        artifact(bundle / "verification/real-parse.json", bundle, "verification-report", "MIT", role="real-parse"),
+        artifact(bundle / "verification/health.json", bundle, "supplied-verification-report", "MIT", role="health"),
+        artifact(bundle / "verification/self-test.json", bundle, "supplied-verification-report", "MIT", role="self-test"),
+        artifact(bundle / "verification/real-parse.json", bundle, "supplied-verification-report", "MIT", role="real-parse"),
     ])
+    for source in lock["corresponding_source"]:
+        entries.append(artifact(
+            bundle / source["bundle_path"], bundle, "source", source["license"],
+            source_url=source["repository"],
+        ))
     return {
         "schemaVersion": 1, "component": "cua-perception", "version": version,
         "driverVersion": ">=0.28.2", "sourceSha": revision, "target": target_value,
         "protocol": {"name": "cua-perception-worker", "version": 1}, "artifacts": entries,
         "modelLedger": "model-ledger.json", "sourceLedger": "source-ledger.json",
-        "verification": {"health": "verification/health.json", "selfTest": "verification/self-test.json", "realParse": "verification/real-parse.json"},
+        "suppliedVerification": {"health": "verification/health.json", "selfTest": "verification/self-test.json", "realParse": "verification/real-parse.json"},
     }
 
 
@@ -332,36 +346,64 @@ def assemble(args: argparse.Namespace) -> tuple[Path, Path]:
         models_dir.mkdir()
         for entry in lock["artifacts"]:
             shutil.copyfile(obtain_artifact(entry, args.inputs, args.cache), models_dir / entry["filename"])
+        for entry in lock["corresponding_source"]:
+            source_material = obtain_artifact(entry, args.inputs, args.cache)
+            destination = bundle / entry["bundle_path"]
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source_material, destination)
         write_json(bundle / "model-manifest.json", model_manifest(lock, args.target))
         shutil.copyfile(CRATE_DIR / "models/THIRD_PARTY_NOTICES.md", bundle / "THIRD_PARTY_NOTICES.md")
         shutil.copyfile(CRATE_DIR / "models/SOURCE_OFFER.md", bundle / "SOURCE_OFFER.md")
         write_json(bundle / "model-ledger.json", model_ledger(lock))
         source = bundle / "source/cua-perception-source.tar.gz"
         corresponding_source(repo, args.source_sha, source)
-        source_ledger = {
-            "schemaVersion": 1,
-            "sources": [{
+        source_entries = [{
                 "artifact": source.name, "artifactSha256": sha256(source), "artifactSize": source.stat().st_size,
                 "repository": "https://github.com/trycua/cua", "revision": args.source_sha, "license": "MIT",
                 "durableLocation": f"Candidate archive {source.relative_to(bundle).as_posix()}",
-                "sourceOfferStatus": "bundled", "patches": [],
-            }],
-        }
+                "sourceOfferStatus": "bundled-review-only", "contentKind": "cua-source",
+                "format": "tar.gz", "requiredPaths": [
+                    *SOURCE_PATHS,
+                    "libs/cua-driver/rust/crates/cua-perception/models/conversion-recipe.json",
+                    "libs/cua-driver/rust/crates/cua-perception/models/export_omniparser_detector.py",
+                    "libs/cua-driver/rust/crates/cua-perception/scripts/artifacts.lock.json",
+                ], "patches": [],
+            }]
+        for entry in lock["corresponding_source"]:
+            material = bundle / entry["bundle_path"]
+            source_entries.append({
+                "artifact": entry["filename"], "artifactSha256": sha256(material),
+                "artifactSize": material.stat().st_size, "repository": entry["repository"],
+                "revision": entry["revision"], "license": entry["license"],
+                "durableLocation": f"Candidate archive {entry['bundle_path']}",
+                "sourceOfferStatus": entry["source_offer_status"],
+                "contentKind": entry["content_kind"], "format": entry["format"],
+                **({"requiredPaths": entry["required_paths"]} if entry.get("required_paths") else {}),
+                "patches": [],
+            })
+        source_ledger = {"schemaVersion": 1, "sources": source_entries}
         write_json(bundle / "source-ledger.json", source_ledger)
         write_json(bundle / "source-inventory.json", {
             "schema_version": 1, "component": "cua-perception", "repository": "https://github.com/trycua/cua",
             "revision": args.source_sha,
             "archive": {"path": source.relative_to(bundle).as_posix(), "sha256": sha256(source), "size": source.stat().st_size},
             "included_paths": list(SOURCE_PATHS), "source_offer": "SOURCE_OFFER.md",
-            "upstream_sources": [
-                {"component": entry["role"], "url": entry.get("url") or (
-                    f"{entry['origin']}/resolve/{entry['revision']}/{entry['source_path']}"
-                ), "sha256": entry.get("source_sha256", entry["sha256"])}
-                for entry in lock["artifacts"]
+            "bundled_upstream_sources": [
+                {"component": entry["content_kind"], "path": entry["bundle_path"],
+                 "url": entry["url"], "revision": entry["revision"],
+                 "sha256": entry["sha256"], "size": entry["size"]}
+                for entry in lock["corresponding_source"]
+            ],
+            "immutable_external_coordinates": [
+                {"component": entry["role"], "url": entry["url"],
+                 "revision": entry["revision"], "sha256": entry["sha256"],
+                 "size": entry["size"]}
+                for entry in lock["artifacts"] if entry.get("url")
             ] + [{
                 "component": "onnx-runtime-cpu-archive", "url": target_lock["archive_url"],
                 "sha256": target_lock["archive_sha256"],
             }],
+            "review_status": "license-review-required",
         })
         fixture = bundle / "verification/known-answer.png"
         fixture.parent.mkdir()

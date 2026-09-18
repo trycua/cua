@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from hashlib import sha256
 import importlib.util
+import io
 import json
 from pathlib import Path
 import subprocess
@@ -36,9 +37,15 @@ def fixture(tmp_path: Path) -> tuple[Path, Path]:
         "payload/ocr-det.onnx": b"ocr-det\n",
         "payload/ocr-rec.onnx": b"ocr-rec\n",
         "payload/ocr-dictionary.txt": b"a\nb\n",
-        "payload/source.tar.gz": b"source\n",
         "payload/review.mp4": b"review-recording\n",
     }
+    source_buffer = io.BytesIO()
+    with tarfile.open(fileobj=source_buffer, mode="w:gz") as source_archive:
+        source_bytes = b"fixture source\n"
+        source_info = tarfile.TarInfo("fixture/AGENTS.md")
+        source_info.size = len(source_bytes)
+        source_archive.addfile(source_info, io.BytesIO(source_bytes))
+    values["payload/source.tar.gz"] = source_buffer.getvalue()
     model_manifest = {
         "schema_version": 1,
         "identity": {"name": "fixture", "version": "1", "source_url": "fixture", "source_revision": "fixture", "license": "Apache-2.0"},
@@ -163,6 +170,9 @@ def fixture(tmp_path: Path) -> tuple[Path, Path]:
                 "license": "Apache-2.0",
                 "durableLocation": "candidate archive source/",
                 "sourceOfferStatus": "bundled",
+                "contentKind": "cua-source",
+                "format": "tar.gz",
+                "requiredPaths": ["AGENTS.md"],
             }],
         },
     }

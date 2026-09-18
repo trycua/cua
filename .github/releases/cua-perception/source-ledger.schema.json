@@ -13,16 +13,19 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["artifact", "artifactSha256", "artifactSize", "repository", "revision", "license", "durableLocation", "sourceOfferStatus"],
+        "required": ["artifact", "artifactSha256", "artifactSize", "repository", "revision", "license", "durableLocation", "sourceOfferStatus", "contentKind", "format"],
         "properties": {
           "artifact": { "type": "string", "minLength": 1 },
           "artifactSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
           "artifactSize": { "type": "integer", "minimum": 1 },
           "repository": { "type": "string", "minLength": 1 },
-          "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+          "revision": { "type": "string", "minLength": 1 },
           "license": { "type": "string", "minLength": 1 },
           "durableLocation": { "type": "string", "minLength": 1 },
-          "sourceOfferStatus": { "enum": ["bundled", "external-review-required"] },
+          "sourceOfferStatus": { "enum": ["bundled", "bundled-review-only", "external-review-required"] },
+          "contentKind": { "enum": ["cua-source", "model-source-input", "exporter-source"] },
+          "format": { "enum": ["file", "tar.gz"] },
+          "requiredPaths": { "type": "array", "items": { "type": "string", "minLength": 1 } },
           "patches": { "type": "array", "items": { "type": "string" } }
         }
       }

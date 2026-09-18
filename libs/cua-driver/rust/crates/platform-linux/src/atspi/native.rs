@@ -1169,6 +1169,22 @@ async fn collect_visited_bounded<'a>(
         let has_component = ifaces.contains(Interface::Component);
         let has_text = ifaces.contains(Interface::Text);
 
+        // A toplevel transient of role `tool tip` is never read or entered:
+        // gail (GTK2, e.g. GIMP 2.10) answers `name` on a tooltip-role popup
+        // whose child is not a plain label with a `g_message` ("ATK_ROLE_TOOLTIP
+        // object found, but doesn't look like a tooltip"), which GIMP shows as
+        // a "GIMP Message" dialog. Such a popup exists only after the real
+        // pointer hovered a widget (foreground delivery); it carries no
+        // actionable element, so skipping it changes nothing else. One extra
+        // round-trip per toplevel, not per node.
+        if depth == 0 {
+            if let Some(Ok(role)) = call(acc.get_role_name()).await {
+                if is_tooltip_role(&role) {
+                    dlog!("skipping tooltip toplevel {}", oref.path);
+                    continue;
+                }
+            }
+        }
         // These four are independent — issue them concurrently to cut the
         // per-node round-trip cost (large trees like Chromium's have hundreds
         // of nodes, so sequential reads dominate the walk time).
@@ -4046,6 +4062,12 @@ pub fn is_focus_taking_role(role: &str) -> bool {
             | "search box"
             | "textbox"
     )
+}
+
+/// AT-SPI role names a toolkit gives a tooltip popup (`tool tip` is the
+/// canonical spelling; `tooltip` appears in some bridges).
+pub(crate) fn is_tooltip_role(role: &str) -> bool {
+    matches!(role.trim().to_ascii_lowercase().as_str(), "tool tip" | "tooltip")
 }
 
 pub(crate) fn is_passive_role(role: &str) -> bool {

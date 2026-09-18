@@ -2486,6 +2486,15 @@ pub(crate) fn is_container_role(role: &str) -> bool {
 
 /// Item roles a click selects rather than activates when they expose no
 /// Action of their own (Nautilus file `canvas` items, GTK list rows / cells).
+/// A spreadsheet / grid cell. Selecting one through its table's `Selection`
+/// interface marks it (LibreOffice Calc highlights the cell) but does not
+/// move the cell cursor, so text typed afterwards still lands in the
+/// previously active cell (A1 on a fresh sheet). With a real pointer
+/// available, a click on a cell must be a real press.
+fn is_cell_role(role: &str) -> bool {
+    matches!(role.trim().to_ascii_lowercase().as_str(), "table cell" | "cell")
+}
+
 fn is_selectable_item_role(role: &str) -> bool {
     matches!(
         role.trim().to_ascii_lowercase().as_str(),
@@ -3301,7 +3310,7 @@ async fn actuate_chain(
         if depth != deepest && !deepest_has_action && is_selectable_item_role(&role) {
             // The point is on a label / icon inside a file or list item: a
             // plain click selects that item.
-            if let Some(hit) = select_item_in_chain(chain, depth, &role, &deepest_name).await {
+            if let Some(hit) = select_item_in_chain(chain, depth, &role, &deepest_name, skip_focus_roles).await {
                 return Ok(Some(hit));
             }
             dlog!(
@@ -3325,7 +3334,7 @@ async fn actuate_chain(
             // advertise `open`, which launched the file). Select it through
             // the container; only fall back to the item's action when the
             // container cannot select.
-            if let Some(hit) = select_item_in_chain(chain, deepest, &role, &deepest_name).await {
+            if let Some(hit) = select_item_in_chain(chain, deepest, &role, &deepest_name, skip_focus_roles).await {
                 return Ok(Some(hit));
             }
             if actions.iter().any(|a| normalized_action_verb(a) == "open") {
@@ -3349,7 +3358,7 @@ async fn actuate_chain(
                     activation_index(&role, &actions).and_then(|i| actions.get(i))
                 );
                 return Ok(
-                    select_item_in_chain(chain, deepest, &deepest_role, &deepest_name).await,
+                    select_item_in_chain(chain, deepest, &deepest_role, &deepest_name, skip_focus_roles).await,
                 );
             }
             continue;
@@ -3396,7 +3405,8 @@ async fn actuate_chain(
     }
     if !deepest_has_action && is_selectable_item_role(&deepest_role) {
         if let Some(hit) =
-            select_item_in_chain(chain, deepest, &deepest_role, &deepest_name).await
+            select_item_in_chain(chain, deepest, &deepest_role, &deepest_name, skip_focus_roles)
+                .await
         {
             return Ok(Some(hit));
         }
@@ -3429,13 +3439,16 @@ async fn actuate_chain(
 /// node with a selectable item role whose parent selects (Nautilus: `icon`
 /// label -> `canvas` item -> `layered pane` with Selection) is cleared-and-
 /// selected (`ClearSelection` + `SelectChild(index_in_parent)`) and read back
-/// with `IsChildSelected`. `None` when nothing on the chain selects or the
-/// toolkit refused — the caller then falls back to a real pointer press.
+/// with `IsChildSelected`. `None` when nothing on the chain selects, the
+/// toolkit refused, or the item is a grid cell and a real pointer is
+/// available (`real_pointer_available`) — the caller then falls back to a
+/// real pointer press.
 async fn select_item_in_chain(
     chain: &[HitNode<'_>],
     from_depth: usize,
     _role_hint: &str,
     _name_hint: &str,
+    real_pointer_available: bool,
 ) -> Option<AtPointHit> {
     for item_depth in (1..=from_depth.min(chain.len() - 1)).rev() {
         let item = &chain[item_depth];
@@ -3445,6 +3458,16 @@ async fn select_item_in_chain(
         };
         if !is_selectable_item_role(&item_role) {
             continue;
+        }
+        if real_pointer_available && is_cell_role(&item_role) {
+            // `Selection.SelectChild` marks a Calc cell without moving the
+            // cell cursor: a following type_text would land in the old
+            // active cell. The caller's real press both selects and
+            // focuses it.
+            dlog!(
+                "{item_role:?} under the point is a grid cell; leaving it to the real pointer press instead of Selection.SelectChild"
+            );
+            return None;
         }
         let Some(Ok(ifaces)) = call(parent.acc.get_interfaces()).await else {
             continue;
@@ -6132,6 +6155,17 @@ mod at_point_rules_tests {
             at_point_activation_index("push button", &acts(&["buffer.delete-line"]), true),
             None
         );
+    }
+
+    #[test]
+    fn cell_roles_take_a_real_press() {
+        for role in ["table cell", "cell", "Table Cell"] {
+            assert!(is_cell_role(role), "{role}");
+            assert!(is_selectable_item_role(role), "{role}");
+        }
+        for role in ["canvas", "list item", "icon", "tree item", "row", "table row"] {
+            assert!(!is_cell_role(role), "{role}");
+        }
     }
 
     #[test]

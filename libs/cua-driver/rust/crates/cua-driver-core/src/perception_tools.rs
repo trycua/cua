@@ -53,16 +53,10 @@ impl ParseVisualRegionsTool {
         client: PerceptionClient,
         resolve_binding: CaptureBindingResolver,
     ) -> Self {
+        let contract = cua_driver_contract::tool_contract(ParseVisualRegionsInput::TOOL_NAME)
+            .expect("parse_visual_regions has a canonical contract");
         Self {
-            def: ToolDef {
-                name: "parse_visual_regions".into(),
-                description: "Parse text and icon regions from an immutable Driver capture.".into(),
-                input_schema: ParseVisualRegionsInput::input_schema(),
-                read_only: true,
-                destructive: false,
-                idempotent: true,
-                open_world: false,
-            },
+            def: ToolDef::from_contract(&contract),
             captures,
             client,
             resolve_binding,
@@ -109,7 +103,7 @@ impl Tool for ParseVisualRegionsTool {
             Ok(binding) => binding,
             Err(error) => return tool_error(error),
         };
-        let input: ParseVisualRegionsInput = match parse_typed_input(&self.def.name, args) {
+        let mut input: ParseVisualRegionsInput = match parse_typed_input(&self.def.name, args) {
             Ok(input) => input,
             Err(result) => return result,
         };
@@ -132,6 +126,7 @@ impl Tool for ParseVisualRegionsTool {
                 ))
             }
         };
+        input.capture_id = capture_id.to_string();
         let capture = match self.captures.read_for_perception(capture_id, &binding) {
             Ok(capture) => capture,
             Err(cause) => return tool_error(map_capture_error(cause)),
@@ -229,7 +224,6 @@ fn build_output(
     if let Ok(mut output) = serde_json::from_value::<ParseVisualRegionsOutput>(worker.clone()) {
         // The Driver, rather than the extension, is authoritative for capture provenance.
         output.capture = capture_provenance(capture)?;
-        output.capture.capture_id = input.capture_id.clone();
         output.parser = parser;
         apply_options(&mut output.regions, input);
         output.validate().map_err(invalid_worker_artifact)?;
@@ -536,12 +530,24 @@ fn tool_error(error: VisualParseError) -> ToolResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::capture_registry::{CaptureRegistryConfig, MonotonicClock};
     use crate::capture_runtime::{
         CapturePublication, EncodedScreenshotDimensions, NativeActionDimensions,
         ScreenshotToActionTransform,
     };
     use crate::image_utils::encode_rgba_to_png;
     use sha2::Digest as _;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::Duration;
+
+    #[derive(Default)]
+    struct ManualClock(AtomicU64);
+
+    impl MonotonicClock for ManualClock {
+        fn now(&self) -> Duration {
+            Duration::from_millis(self.0.load(Ordering::SeqCst))
+        }
+    }
 
     fn capture(service: &Arc<CaptureService>) -> (String, CaptureBinding) {
         let png = encode_rgba_to_png(&[7, 8, 9, 255], 1, 1).unwrap();
@@ -626,6 +632,29 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn expired_capture_fails_at_the_tool_boundary_before_worker_launch() {
+        let clock = Arc::new(ManualClock::default());
+        let mut config = CaptureRegistryConfig::default();
+        config.ttl = Duration::from_millis(10);
+        let service = Arc::new(CaptureService::with_clock(config, clock.clone()).unwrap());
+        let (capture_id, binding) = capture(&service);
+        clock.0.store(10, Ordering::SeqCst);
+        let tool = ParseVisualRegionsTool::new(
+            service,
+            PerceptionClient::new(crate::perception_client::PerceptionWorkerConfig::new(
+                "/definitely/not/a/perception-worker",
+            ))
+            .unwrap(),
+            Arc::new(move |_| Ok(binding.clone())),
+        );
+        let result = tool.invoke(json!({"capture_id": capture_id})).await;
+        assert_eq!(
+            result.structured_content.unwrap()["code"],
+            "capture_expired"
+        );
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn tool_maps_worker_icon_output_into_the_driver_contract() {
@@ -675,6 +704,7 @@ else:
         let output: ParseVisualRegionsOutput =
             serde_json::from_value(result.structured_content.unwrap()).unwrap();
         assert_eq!(output.regions.len(), 1);
+        assert_eq!(output.capture.capture_id, capture_id);
         assert_eq!(output.regions[0].label.as_deref(), Some("icon-class-4"));
         assert_eq!(output.parser.extension_id, "cua-perception");
         assert_eq!(output.parser.extension_version, extension_version);
@@ -753,7 +783,9 @@ else:
             .read_for_perception(service.parse_capture_id(&capture_id).unwrap(), &binding)
             .unwrap();
         let input = ParseVisualRegionsInput {
-            capture_id,
+            capture_id: capture_id
+                .to_ascii_uppercase()
+                .replacen("CAPTURE_", "capture_", 1),
             options: Default::default(),
         };
         let output = build_output(
@@ -775,6 +807,7 @@ else:
         .unwrap();
 
         output.validate().unwrap();
+        assert_eq!(output.capture.capture_id, capture_id);
         assert_eq!(output.regions[0].label.as_deref(), Some("icon-class-4"));
         assert_eq!(output.parser.extension_id, "cua-perception");
         assert_eq!(output.parser.extension_version, env!("CARGO_PKG_VERSION"));

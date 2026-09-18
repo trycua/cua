@@ -20,7 +20,10 @@ use containment::ContainmentLimits;
 use containment::{ContainedChild, WorkerExit, WorkerStdin, WorkerStdout};
 
 const PROTOCOL_VERSION: &str = "cua-perception/1";
-const DEFAULT_MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
+// A default-registry capture expands to four base64 bytes per three PNG bytes.
+// Leave a fixed envelope for the bounded request metadata and capture ID.
+const DEFAULT_MAX_FRAME_BYTES: usize =
+    ((crate::capture_registry::DEFAULT_MAX_CAPTURE_BYTES + 2) / 3) * 4 + 64 * 1024;
 
 /// Signed extension identity the launched worker must echo in every result.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -37,6 +40,7 @@ pub struct PerceptionWorkerConfig {
     pub max_frame_bytes: usize,
     pub warm_worker: Option<WarmWorkerPolicy>,
     pub expected_extension_identity: Option<ExpectedExtensionIdentity>,
+    installed: bool,
     #[cfg(test)]
     containment: ContainmentLimits,
 }
@@ -50,6 +54,7 @@ impl PerceptionWorkerConfig {
             max_frame_bytes: DEFAULT_MAX_FRAME_BYTES,
             warm_worker: None,
             expected_extension_identity: None,
+            installed: false,
             #[cfg(test)]
             containment: ContainmentLimits::default(),
         }
@@ -68,7 +73,9 @@ impl PerceptionWorkerConfig {
     /// worker process — and the screenshot it was handed — alive between
     /// requests by default.
     pub fn installed(executable: impl Into<PathBuf>) -> Self {
-        Self::new(executable)
+        let mut config = Self::new(executable);
+        config.installed = true;
+        config
     }
 
     /// Bind an installed worker invocation and its result to the identity from
@@ -190,6 +197,14 @@ impl PerceptionClient {
             return Err(error(
                 VisualParseErrorCode::ArtifactInvalid,
                 "the verified perception extension identity must be non-empty",
+                false,
+                None,
+            ));
+        }
+        if config.installed && config.expected_extension_identity.is_none() {
+            return Err(error(
+                VisualParseErrorCode::ArtifactInvalid,
+                "an installed perception extension must be bound to its verified identity",
                 false,
                 None,
             ));
@@ -450,6 +465,10 @@ impl WarmWorker {
                 None,
             ));
         }
+        verify_expected_extension_identity(
+            &health_result,
+            config.expected_extension_identity.as_ref(),
+        )?;
         Ok(Self {
             contained,
             stdin: Some(stdin),
@@ -892,6 +911,7 @@ else:
             max_frame_bytes: maximum,
             warm_worker: None,
             expected_extension_identity: None,
+            installed: false,
         })
         .unwrap()
     }
@@ -912,6 +932,7 @@ else:
             max_frame_bytes: 1024 * 1024,
             warm_worker: Some(policy),
             expected_extension_identity: None,
+            installed: false,
         })
         .unwrap()
     }
@@ -1266,6 +1287,7 @@ write_frame({'protocol':'cua-perception/1','request_id':request['request_id'],'s
             max_frame_bytes: 1024 * 1024,
             warm_worker: None,
             expected_extension_identity: None,
+            installed: false,
         })
         .unwrap();
         let failure = client
@@ -1294,6 +1316,17 @@ write_frame({'protocol':'cua-perception/1','request_id':request['request_id'],'s
             .with_bounded_reuse(WarmWorkerPolicy::default())
             .warm_worker
             .is_some());
+        let failure = PerceptionClient::new(PerceptionWorkerConfig::installed("/opt/cua/worker"))
+            .err()
+            .expect("unbound installed workers must be rejected");
+        assert_eq!(failure.code, VisualParseErrorCode::ArtifactInvalid);
+    }
+
+    #[test]
+    fn default_frame_limit_covers_the_default_capture_registry_limit() {
+        let encoded_capture_bytes =
+            ((crate::capture_registry::DEFAULT_MAX_CAPTURE_BYTES + 2) / 3) * 4;
+        assert!(DEFAULT_MAX_FRAME_BYTES >= encoded_capture_bytes + 64 * 1024);
     }
 
     #[test]
@@ -1333,6 +1366,45 @@ write_frame({'protocol':'cua-perception/1','request_id':request['request_id'],'s
         )
         .unwrap_err();
         assert_eq!(failure.code, VisualParseErrorCode::ArtifactInvalid);
+    }
+
+    #[tokio::test]
+    async fn installed_worker_health_must_echo_the_bound_identity() {
+        let evidence = tempfile::tempdir().unwrap();
+        let counter = evidence.path().join("parse-count");
+        let (directory, worker) = fixture_worker("ok", Some(&counter));
+        let args: Vec<String> =
+            serde_json::from_slice(&std::fs::read(directory.path().join("args.json")).unwrap())
+                .unwrap();
+        let client = PerceptionClient::new(PerceptionWorkerConfig {
+            executable: worker,
+            containment: fixture_limits(&args),
+            args,
+            request_timeout: Duration::from_secs(10),
+            max_frame_bytes: 1024 * 1024,
+            warm_worker: None,
+            expected_extension_identity: Some(ExpectedExtensionIdentity {
+                id: "cua-perception".into(),
+                version: "0.1.0".into(),
+            }),
+            installed: true,
+        })
+        .unwrap();
+        let failure = client
+            .parse(
+                "capture-test",
+                2,
+                2,
+                &[1, 2, 3, 4],
+                &PerceptionCancellation::default(),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(failure.code, VisualParseErrorCode::ArtifactInvalid);
+        assert!(
+            !counter.exists(),
+            "parse must not run after an unbound health response"
+        );
     }
 
     #[tokio::test]

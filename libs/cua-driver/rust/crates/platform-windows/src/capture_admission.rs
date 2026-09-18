@@ -102,11 +102,7 @@ impl WindowsCaptureBridge {
         target: WindowsCaptureTarget,
         geometry: CaptureGeometry,
     ) -> anyhow::Result<Option<String>> {
-        let binding = match self.service.binding_from_args(args) {
-            Ok(binding) => binding,
-            Err(_) if args.get("_session_id").is_none() => return Ok(None),
-            Err(error) => return Err(error.into()),
-        };
+        let binding = self.service.binding_from_args(args)?;
         let encoded_dimensions =
             EncodedScreenshotDimensions::new(geometry.encoded_width, geometry.encoded_height)?;
         let native_action_dimensions =
@@ -321,6 +317,42 @@ mod tests {
             "capture_not_found"
         );
         assert_eq!(dispatches, 0);
+    }
+
+    #[test]
+    fn capture_publication_without_a_runtime_session_is_an_error() {
+        let bridge = WindowsCaptureBridge::new(Arc::new(CaptureService::default()));
+        let error = bridge
+            .publish(
+                &json!({}),
+                png(),
+                WindowsCaptureTarget::PrimaryDesktop,
+                CaptureGeometry::new(1, 1, 1, 1).unwrap(),
+            )
+            .unwrap_err();
+        assert_eq!(error.to_string(), "capture binding is invalid");
+    }
+
+    #[test]
+    fn cross_session_capture_refuses_before_dispatch() {
+        let bridge = WindowsCaptureBridge::new(Arc::new(CaptureService::default()));
+        let target = WindowsCaptureTarget::PrimaryDesktop;
+        let capture_id = publish(&bridge, target);
+        let request = json!({
+            "capture_id": capture_id,
+            "_session_id": "another-session",
+        });
+        let admission = bridge.admit_click_with_geometry(
+            &request,
+            target,
+            CaptureGeometry::new(1, 1, 1, 1).unwrap(),
+            0.0,
+            0.0,
+        );
+        assert_eq!(
+            admission_error_code(&admission.unwrap_err()),
+            "capture_generation_mismatch"
+        );
     }
 
     #[test]

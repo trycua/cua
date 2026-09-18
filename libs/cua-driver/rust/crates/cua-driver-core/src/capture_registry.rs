@@ -32,6 +32,8 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 use uuid::Uuid;
 
+pub(crate) const DEFAULT_MAX_CAPTURE_BYTES: usize = 64 * 1024 * 1024;
+
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
 pub struct CaptureId {
     namespace: [u8; 16],
@@ -379,7 +381,7 @@ impl Default for CaptureRegistryConfig {
     fn default() -> Self {
         Self {
             max_captures: 32,
-            max_total_bytes: 64 * 1024 * 1024,
+            max_total_bytes: DEFAULT_MAX_CAPTURE_BYTES,
             max_encoded_width: 16_384,
             max_encoded_height: 16_384,
             max_decoded_bytes: 512 * 1024 * 1024,
@@ -683,7 +685,10 @@ impl CaptureRegistry {
             .checked_add(self.config.ttl)
             .ok_or(CaptureStoreError::ExpiryOverflow)?;
 
-        let mut inner = self.inner.lock().expect("capture registry lock poisoned");
+        let mut inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         self.prune_expired_locked(&mut inner, created_at);
         if inner.next_sequence == u64::MAX {
             return Err(CaptureStoreError::IdExhausted);
@@ -734,7 +739,10 @@ impl CaptureRegistry {
         binding: &CaptureBinding,
     ) -> Result<PerceptionCapture, CaptureLookupError> {
         let now = self.clock.now();
-        let mut inner = self.inner.lock().expect("capture registry lock poisoned");
+        let mut inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if inner
             .captures
             .get(&id)
@@ -762,7 +770,10 @@ impl CaptureRegistry {
         request: CaptureActionRequest,
     ) -> Result<CaptureActionAdmission, CaptureActionError> {
         let now = self.clock.now();
-        let mut inner = self.inner.lock().expect("capture registry lock poisoned");
+        let mut inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if inner
             .captures
             .get(&request.capture_id)
@@ -836,7 +847,10 @@ impl CaptureRegistry {
         consume: bool,
     ) -> Result<StoredCapture, CaptureLookupError> {
         let now = self.clock.now();
-        let mut inner = self.inner.lock().expect("capture registry lock poisoned");
+        let mut inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if inner
             .captures
             .get(&id)
@@ -872,7 +886,10 @@ impl CaptureRegistry {
         binding: &CaptureBinding,
     ) -> Result<(), CaptureLookupError> {
         let now = self.clock.now();
-        let mut inner = self.inner.lock().expect("capture registry lock poisoned");
+        let mut inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if inner
             .captures
             .get(&id)
@@ -911,7 +928,10 @@ impl CaptureRegistry {
     /// perception results may keep their own immutable references alive.
     pub fn prune_expired(&self) -> PruneOutcome {
         let now = self.clock.now();
-        let mut inner = self.inner.lock().expect("capture registry lock poisoned");
+        let mut inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         self.prune_expired_locked(&mut inner, now)
     }
 
@@ -919,7 +939,7 @@ impl CaptureRegistry {
         self.prune_expired();
         self.inner
             .lock()
-            .expect("capture registry lock poisoned")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .captures
             .len()
     }
@@ -932,12 +952,15 @@ impl CaptureRegistry {
         self.prune_expired();
         self.inner
             .lock()
-            .expect("capture registry lock poisoned")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .total_bytes
     }
 
     fn retire_matching(&self, matches: impl Fn(&StoredCapture) -> bool) -> usize {
-        let mut inner = self.inner.lock().expect("capture registry lock poisoned");
+        let mut inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let ids = inner
             .insertion_order
             .iter()
@@ -981,7 +1004,7 @@ impl CaptureRegistry {
         let mut removed_bytes = 0;
         if let Some(capture) = inner.captures.remove(&id) {
             removed_bytes = capture.png_bytes.len();
-            inner.total_bytes -= removed_bytes;
+            inner.total_bytes = inner.total_bytes.saturating_sub(removed_bytes);
         }
         if let Some(index) = inner
             .insertion_order
@@ -1017,6 +1040,13 @@ pub struct CaptureService {
 
 impl CaptureService {
     pub fn new(config: CaptureRegistryConfig) -> Result<Self, CaptureStoreError> {
+        Self::with_clock(config, Arc::new(SystemMonotonicClock::new()))
+    }
+
+    pub(crate) fn with_clock(
+        config: CaptureRegistryConfig,
+        clock: Arc<dyn MonotonicClock>,
+    ) -> Result<Self, CaptureStoreError> {
         let runtime_generation = NEXT_RUNTIME_GENERATION
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
                 (current != 0 && current != u64::MAX).then_some(current + 1)
@@ -1024,7 +1054,7 @@ impl CaptureService {
             .map_err(|_| CaptureStoreError::IdExhausted)?;
         Ok(Self {
             runtime_generation,
-            registry: CaptureRegistry::new(config)?,
+            registry: CaptureRegistry::with_clock(config, clock)?,
             session_generations: Mutex::new(HashMap::new()),
         })
     }
@@ -1053,7 +1083,7 @@ impl CaptureService {
         let generation = *self
             .session_generations
             .lock()
-            .expect("capture session generation lock poisoned")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .entry(session_id.clone())
             .or_insert(1);
         self.binding(session_id, generation)
@@ -1110,7 +1140,7 @@ impl CaptureService {
             let mut generations = self
                 .session_generations
                 .lock()
-                .expect("capture session generation lock poisoned");
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             let generation = generations
                 .entry(binding.session_id.clone())
                 .or_insert(binding.session_generation);
@@ -1802,6 +1832,44 @@ mod tests {
                 .binding_from_args(&serde_json::json!({"session": "public-forgery"}))
                 .unwrap_err(),
             CaptureStoreError::InvalidBinding
+        );
+    }
+
+    #[test]
+    fn poisoned_registry_and_session_locks_recover_without_panicking_or_underflowing() {
+        let registry = Arc::new(CaptureRegistry::new(config(2, 10_000)).unwrap());
+        let id = registry
+            .store(registration(
+                png(2, 2, 1),
+                CaptureTarget::PrimaryDesktop,
+                binding(1, "poisoned", 1),
+            ))
+            .unwrap();
+        let poisoned_registry = registry.clone();
+        assert!(std::thread::spawn(move || {
+            let mut inner = poisoned_registry.inner.lock().unwrap();
+            inner.total_bytes = 0;
+            panic!("poison registry lock");
+        })
+        .join()
+        .is_err());
+        assert_eq!(registry.retire(id, &binding(1, "poisoned", 1)), Ok(()));
+        assert_eq!(registry.total_bytes(), 0);
+
+        let service = Arc::new(CaptureService::new(config(2, 10_000)).unwrap());
+        let poisoned_sessions = service.clone();
+        assert!(std::thread::spawn(move || {
+            let _guard = poisoned_sessions.session_generations.lock().unwrap();
+            panic!("poison session lock");
+        })
+        .join()
+        .is_err());
+        assert_eq!(
+            service
+                .current_binding("still-available")
+                .unwrap()
+                .session_generation(),
+            1
         );
     }
 }

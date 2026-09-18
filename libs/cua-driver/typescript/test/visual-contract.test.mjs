@@ -87,6 +87,12 @@ test("visual contract records round-trip through generated UniFFI converters", (
       modelId: "visual-parser",
       modelVersion: "2026-09-17",
       runtime: "local",
+      backend: "onnx_runtime_cpu",
+      modelSourceRevision: "revision-1",
+      modelManifestSha256: "a".repeat(64),
+      onnxRuntimeVersion: "1.26.0",
+      onnxRuntimeLibrarySha256: "b".repeat(64),
+      fixtureSha256: undefined,
     }),
     regions: [VisualRegion.create({
       id: "region-1",

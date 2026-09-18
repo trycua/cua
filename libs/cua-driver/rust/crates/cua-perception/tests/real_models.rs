@@ -57,6 +57,13 @@ fn pinned_real_models_match_the_synthetic_ui_known_answer() {
             .count(),
         3
     );
+    assert!(regions
+        .iter()
+        .filter(|region| region["kind"] == "icon")
+        .all(|region| region
+            .get("label")
+            .and_then(Value::as_str)
+            .is_some_and(|label| !label.trim().is_empty())));
 }
 
 fn required_path(name: &str) -> PathBuf {

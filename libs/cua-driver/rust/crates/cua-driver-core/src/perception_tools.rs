@@ -182,6 +182,42 @@ struct WorkerRegion {
     reading_order: Option<u32>,
 }
 
+#[derive(Deserialize)]
+struct WorkerIdentity {
+    extension: WorkerExtensionIdentity,
+    backend: String,
+    #[serde(default)]
+    model: Option<WorkerModelIdentity>,
+    #[serde(default)]
+    onnx_runtime: Option<WorkerRuntimeIdentity>,
+    #[serde(default)]
+    fixture_sha256: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkerExtensionIdentity {
+    id: String,
+    version: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkerModelIdentity {
+    name: String,
+    version: String,
+    source_revision: String,
+    manifest_sha256: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkerRuntimeIdentity {
+    version: String,
+    library_sha256: String,
+    intra_threads: usize,
+}
+
 fn build_output(
     input: &ParseVisualRegionsInput,
     capture: &PerceptionCapture,
@@ -189,10 +225,12 @@ fn build_output(
     elapsed_ms: u128,
 ) -> Result<ParseVisualRegionsOutput, VisualParseError> {
     validate_worker_echo(input, capture, &worker)?;
+    let parser = worker_parser_metadata(&worker)?;
     if let Ok(mut output) = serde_json::from_value::<ParseVisualRegionsOutput>(worker.clone()) {
         // The Driver, rather than the extension, is authoritative for capture provenance.
         output.capture = capture_provenance(capture)?;
         output.capture.capture_id = input.capture_id.clone();
+        output.parser = parser;
         apply_options(&mut output.regions, input);
         output.validate().map_err(invalid_worker_artifact)?;
         return Ok(output);
@@ -234,16 +272,7 @@ fn build_output(
     let output = ParseVisualRegionsOutput {
         schema: VISUAL_REGIONS_SCHEMA.into(),
         capture: capture_provenance(capture)?,
-        parser: VisualParserMetadata {
-            extension_id: "cua-perception".into(),
-            extension_version: "1".into(),
-            model_id: "visual-regions-default".into(),
-            model_version: "1".into(),
-            runtime: worker
-                .get("runtime")
-                .and_then(Value::as_str)
-                .map(str::to_owned),
-        },
+        parser,
         regions,
         warnings: Vec::new(),
         timing: VisualParseTiming {
@@ -255,6 +284,107 @@ fn build_output(
     };
     output.validate().map_err(invalid_worker_artifact)?;
     Ok(output)
+}
+
+fn worker_parser_metadata(worker: &Value) -> Result<VisualParserMetadata, VisualParseError> {
+    let identity: WorkerIdentity = serde_json::from_value(
+        worker
+            .get("identity")
+            .cloned()
+            .ok_or_else(|| invalid_worker_artifact("worker result omitted parser identity"))?,
+    )
+    .map_err(|cause| invalid_worker_artifact(format!("worker identity is malformed: {cause}")))?;
+    let runtime = worker
+        .get("runtime")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| invalid_worker_artifact("worker result omitted runtime identity"))?;
+    if identity.extension.id != "cua-perception"
+        || identity.extension.version.trim().is_empty()
+        || identity.backend.trim().is_empty()
+    {
+        return Err(invalid_worker_artifact(
+            "worker extension or backend identity is invalid",
+        ));
+    }
+
+    let mut parser = VisualParserMetadata {
+        extension_id: identity.extension.id,
+        extension_version: identity.extension.version,
+        model_id: String::new(),
+        model_version: String::new(),
+        runtime: Some(runtime.to_owned()),
+        backend: Some(identity.backend.clone()),
+        model_source_revision: None,
+        model_manifest_sha256: None,
+        onnx_runtime_version: None,
+        onnx_runtime_library_sha256: None,
+        fixture_sha256: None,
+    };
+    match identity.backend.as_str() {
+        "onnx_runtime_cpu" => {
+            if runtime != "onnx_runtime_cpu" || identity.fixture_sha256.is_some() {
+                return Err(invalid_worker_artifact(
+                    "worker runtime and production backend identity disagree",
+                ));
+            }
+            let model = identity.model.ok_or_else(|| {
+                invalid_worker_artifact("production worker identity omitted model provenance")
+            })?;
+            let onnx_runtime = identity.onnx_runtime.ok_or_else(|| {
+                invalid_worker_artifact(
+                    "production worker identity omitted ONNX Runtime provenance",
+                )
+            })?;
+            if model.name.trim().is_empty()
+                || model.version.trim().is_empty()
+                || model.source_revision.trim().is_empty()
+                || !valid_sha256(&model.manifest_sha256)
+                || onnx_runtime.version.trim().is_empty()
+                || !valid_sha256(&onnx_runtime.library_sha256)
+                || !(1..=64).contains(&onnx_runtime.intra_threads)
+            {
+                return Err(invalid_worker_artifact(
+                    "production worker model or runtime identity is invalid",
+                ));
+            }
+            parser.model_id = model.name;
+            parser.model_version = model.version;
+            parser.model_source_revision = Some(model.source_revision);
+            parser.model_manifest_sha256 = Some(model.manifest_sha256);
+            parser.onnx_runtime_version = Some(onnx_runtime.version);
+            parser.onnx_runtime_library_sha256 = Some(onnx_runtime.library_sha256);
+        }
+        "deterministic_fixture" => {
+            if runtime != "fixture_only"
+                || identity.model.is_some()
+                || identity.onnx_runtime.is_some()
+            {
+                return Err(invalid_worker_artifact(
+                    "worker runtime and fixture backend identity disagree",
+                ));
+            }
+            let fixture_sha256 = identity
+                .fixture_sha256
+                .filter(|hash| valid_sha256(hash))
+                .ok_or_else(|| {
+                    invalid_worker_artifact("fixture worker identity omitted a valid fixture hash")
+                })?;
+            parser.model_id = "deterministic_fixture".into();
+            parser.model_version = "1".into();
+            parser.fixture_sha256 = Some(fixture_sha256);
+        }
+        _ => {
+            return Err(invalid_worker_artifact(
+                "worker reported an unsupported backend identity",
+            ))
+        }
+    }
+    Ok(parser)
+}
+
+fn valid_sha256(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn capture_provenance(
@@ -498,7 +628,7 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn tool_sends_registry_owned_png_and_validates_worker_regions() {
+    async fn tool_maps_worker_icon_output_into_the_driver_contract() {
         use std::os::unix::fs::PermissionsExt;
 
         let service = Arc::new(CaptureService::default());
@@ -508,6 +638,7 @@ mod tests {
             .unwrap()
             .digest()
             .hex();
+        let extension_version = env!("CARGO_PKG_VERSION");
         let directory = tempfile::tempdir().unwrap();
         let worker = directory.path().join("worker.py");
         let script = format!(
@@ -522,7 +653,7 @@ r=read(); raw=base64.b64decode(r['params']['image']['data_base64'])
 if hashlib.sha256(raw).hexdigest() != '{expected}':
  write({{'protocol':'cua-perception/1','request_id':r['request_id'],'status':'error','error':{{'code':'invalid_image','message':'wrong capture bytes'}}}})
 else:
- write({{'protocol':'cua-perception/1','request_id':r['request_id'],'status':'ok','result':{{'runtime':'fixture','regions':[{{'id':'one','kind':'text','bounds':{{'x':0,'y':0,'width':1,'height':1}},'text':'pixel','confidence':0.9}}]}}}})
+ write({{'protocol':'cua-perception/1','request_id':r['request_id'],'status':'ok','result':{{'runtime':'fixture_only','identity':{{'extension':{{'id':'cua-perception','version':'{extension_version}'}},'backend':'deterministic_fixture','fixture_sha256':'{expected}'}},'regions':[{{'id':'one','kind':'icon','bounds':{{'x':0,'y':0,'width':1,'height':1}},'label':'icon-class-4','confidence':0.9}}]}}}})
 "#
         );
         std::fs::write(&worker, script).unwrap();
@@ -544,7 +675,17 @@ else:
         let output: ParseVisualRegionsOutput =
             serde_json::from_value(result.structured_content.unwrap()).unwrap();
         assert_eq!(output.regions.len(), 1);
-        assert_eq!(output.regions[0].text.as_deref(), Some("pixel"));
+        assert_eq!(output.regions[0].label.as_deref(), Some("icon-class-4"));
+        assert_eq!(output.parser.extension_id, "cua-perception");
+        assert_eq!(output.parser.extension_version, extension_version);
+        assert_eq!(
+            output.parser.backend.as_deref(),
+            Some("deterministic_fixture")
+        );
+        assert_eq!(
+            output.parser.fixture_sha256.as_deref(),
+            Some(expected.as_str())
+        );
         assert_eq!(
             output.capture.screenshot.sha256.as_deref(),
             Some(expected.as_str())
@@ -583,6 +724,120 @@ else:
         output.validate().unwrap();
     }
 
+    fn production_worker_identity() -> Value {
+        json!({
+            "extension": {
+                "id": "cua-perception",
+                "version": env!("CARGO_PKG_VERSION")
+            },
+            "backend": "onnx_runtime_cpu",
+            "model": {
+                "name": "omniparser-v2-ppocrv5-en",
+                "version": "2026-09-17",
+                "source_revision": "6600256cb0f1b07651e3bc86166196307bad7e2d",
+                "manifest_sha256": "a".repeat(64)
+            },
+            "onnx_runtime": {
+                "version": "1.26.0",
+                "library_sha256": "b".repeat(64),
+                "intra_threads": 2
+            }
+        })
+    }
+
+    #[test]
+    fn production_worker_icon_and_verified_identity_reach_the_driver_contract() {
+        let service = Arc::new(CaptureService::default());
+        let (capture_id, binding) = capture(&service);
+        let capture = service
+            .read_for_perception(service.parse_capture_id(&capture_id).unwrap(), &binding)
+            .unwrap();
+        let input = ParseVisualRegionsInput {
+            capture_id,
+            options: Default::default(),
+        };
+        let output = build_output(
+            &input,
+            &capture,
+            json!({
+                "runtime": "onnx_runtime_cpu",
+                "identity": production_worker_identity(),
+                "regions": [{
+                    "id": "icon-1",
+                    "kind": "icon",
+                    "bounds": {"x": 0, "y": 0, "width": 1, "height": 1},
+                    "label": "icon-class-4",
+                    "confidence": 0.9
+                }]
+            }),
+            7,
+        )
+        .unwrap();
+
+        output.validate().unwrap();
+        assert_eq!(output.regions[0].label.as_deref(), Some("icon-class-4"));
+        assert_eq!(output.parser.extension_id, "cua-perception");
+        assert_eq!(output.parser.extension_version, env!("CARGO_PKG_VERSION"));
+        assert_eq!(output.parser.model_id, "omniparser-v2-ppocrv5-en");
+        assert_eq!(output.parser.model_version, "2026-09-17");
+        assert_eq!(
+            output.parser.model_source_revision.as_deref(),
+            Some("6600256cb0f1b07651e3bc86166196307bad7e2d")
+        );
+        assert_eq!(output.parser.model_manifest_sha256, Some("a".repeat(64)));
+        assert_eq!(
+            output.parser.onnx_runtime_version.as_deref(),
+            Some("1.26.0")
+        );
+        assert_eq!(
+            output.parser.onnx_runtime_library_sha256,
+            Some("b".repeat(64))
+        );
+    }
+
+    #[test]
+    fn malformed_or_missing_production_worker_identity_is_rejected() {
+        let service = Arc::new(CaptureService::default());
+        let (capture_id, binding) = capture(&service);
+        let capture = service
+            .read_for_perception(service.parse_capture_id(&capture_id).unwrap(), &binding)
+            .unwrap();
+        let input = ParseVisualRegionsInput {
+            capture_id,
+            options: Default::default(),
+        };
+        let regions = json!([{
+            "id": "icon-1",
+            "kind": "icon",
+            "bounds": {"x": 0, "y": 0, "width": 1, "height": 1},
+            "label": "icon-class-4",
+            "confidence": 0.9
+        }]);
+        let missing = build_output(
+            &input,
+            &capture,
+            json!({"runtime": "onnx_runtime_cpu", "regions": regions}),
+            0,
+        )
+        .unwrap_err();
+        assert_eq!(missing.code, VisualParseErrorCode::ArtifactInvalid);
+
+        let mut identity = production_worker_identity();
+        identity["model"]["manifest_sha256"] = json!("not-a-sha256");
+        let malformed = build_output(
+            &input,
+            &capture,
+            json!({
+                "runtime": "onnx_runtime_cpu",
+                "identity": identity,
+                "regions": regions
+            }),
+            0,
+        )
+        .unwrap_err();
+        assert_eq!(malformed.code, VisualParseErrorCode::ArtifactInvalid);
+    }
+
     #[test]
     fn parsed_window_provenance_keeps_native_ids_and_full_affine_mapping() {
         let service = Arc::new(CaptureService::default());
@@ -613,7 +868,12 @@ else:
             &input,
             &capture,
             json!({
-                "runtime": "fixture",
+                "runtime": "fixture_only",
+                "identity": {
+                    "extension": {"id": "cua-perception", "version": env!("CARGO_PKG_VERSION")},
+                    "backend": "deterministic_fixture",
+                    "fixture_sha256": "a".repeat(64)
+                },
                 "regions": [{
                     "id": "target",
                     "kind": "icon",

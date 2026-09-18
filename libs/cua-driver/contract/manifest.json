@@ -3077,17 +3077,53 @@
           },
           "parser": {
             "properties": {
+              "backend": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "extension_id": {
                 "type": "string"
               },
               "extension_version": {
                 "type": "string"
               },
+              "fixture_sha256": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "model_id": {
                 "type": "string"
               },
+              "model_manifest_sha256": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "model_source_revision": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "model_version": {
                 "type": "string"
+              },
+              "onnx_runtime_library_sha256": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "onnx_runtime_version": {
+                "type": [
+                  "string",
+                  "null"
+                ]
               },
               "runtime": {
                 "type": [

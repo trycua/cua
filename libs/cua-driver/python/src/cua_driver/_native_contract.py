@@ -5216,18 +5216,24 @@ class VisualParserMetadata:
     """
     Identity of the extension and model that produced a result.
 """
-    def __init__(self, *, extension_id:str, extension_version:str, model_id:str, model_version:str, runtime:typing.Optional[str]):
+    def __init__(self, *, extension_id:str, extension_version:str, model_id:str, model_version:str, runtime:typing.Optional[str], backend:typing.Optional[str], model_source_revision:typing.Optional[str], model_manifest_sha256:typing.Optional[str], onnx_runtime_version:typing.Optional[str], onnx_runtime_library_sha256:typing.Optional[str], fixture_sha256:typing.Optional[str]):
         self.extension_id = extension_id
         self.extension_version = extension_version
         self.model_id = model_id
         self.model_version = model_version
         self.runtime = runtime
+        self.backend = backend
+        self.model_source_revision = model_source_revision
+        self.model_manifest_sha256 = model_manifest_sha256
+        self.onnx_runtime_version = onnx_runtime_version
+        self.onnx_runtime_library_sha256 = onnx_runtime_library_sha256
+        self.fixture_sha256 = fixture_sha256
 
 
 
 
     def __str__(self):
-        return "VisualParserMetadata(extension_id={}, extension_version={}, model_id={}, model_version={}, runtime={})".format(self.extension_id, self.extension_version, self.model_id, self.model_version, self.runtime)
+        return "VisualParserMetadata(extension_id={}, extension_version={}, model_id={}, model_version={}, runtime={}, backend={}, model_source_revision={}, model_manifest_sha256={}, onnx_runtime_version={}, onnx_runtime_library_sha256={}, fixture_sha256={})".format(self.extension_id, self.extension_version, self.model_id, self.model_version, self.runtime, self.backend, self.model_source_revision, self.model_manifest_sha256, self.onnx_runtime_version, self.onnx_runtime_library_sha256, self.fixture_sha256)
     def __eq__(self, other):
         if self.extension_id != other.extension_id:
             return False
@@ -5238,6 +5244,18 @@ class VisualParserMetadata:
         if self.model_version != other.model_version:
             return False
         if self.runtime != other.runtime:
+            return False
+        if self.backend != other.backend:
+            return False
+        if self.model_source_revision != other.model_source_revision:
+            return False
+        if self.model_manifest_sha256 != other.model_manifest_sha256:
+            return False
+        if self.onnx_runtime_version != other.onnx_runtime_version:
+            return False
+        if self.onnx_runtime_library_sha256 != other.onnx_runtime_library_sha256:
+            return False
+        if self.fixture_sha256 != other.fixture_sha256:
             return False
         return True
 
@@ -5250,6 +5268,12 @@ class _UniffiFfiConverterTypeVisualParserMetadata(_UniffiConverterRustBuffer):
             model_id=_UniffiFfiConverterString.read(buf),
             model_version=_UniffiFfiConverterString.read(buf),
             runtime=_UniffiFfiConverterOptionalString.read(buf),
+            backend=_UniffiFfiConverterOptionalString.read(buf),
+            model_source_revision=_UniffiFfiConverterOptionalString.read(buf),
+            model_manifest_sha256=_UniffiFfiConverterOptionalString.read(buf),
+            onnx_runtime_version=_UniffiFfiConverterOptionalString.read(buf),
+            onnx_runtime_library_sha256=_UniffiFfiConverterOptionalString.read(buf),
+            fixture_sha256=_UniffiFfiConverterOptionalString.read(buf),
         )
 
     @staticmethod
@@ -5259,6 +5283,12 @@ class _UniffiFfiConverterTypeVisualParserMetadata(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.check_lower(value.model_id)
         _UniffiFfiConverterString.check_lower(value.model_version)
         _UniffiFfiConverterOptionalString.check_lower(value.runtime)
+        _UniffiFfiConverterOptionalString.check_lower(value.backend)
+        _UniffiFfiConverterOptionalString.check_lower(value.model_source_revision)
+        _UniffiFfiConverterOptionalString.check_lower(value.model_manifest_sha256)
+        _UniffiFfiConverterOptionalString.check_lower(value.onnx_runtime_version)
+        _UniffiFfiConverterOptionalString.check_lower(value.onnx_runtime_library_sha256)
+        _UniffiFfiConverterOptionalString.check_lower(value.fixture_sha256)
 
     @staticmethod
     def write(value, buf):
@@ -5267,6 +5297,12 @@ class _UniffiFfiConverterTypeVisualParserMetadata(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.write(value.model_id, buf)
         _UniffiFfiConverterString.write(value.model_version, buf)
         _UniffiFfiConverterOptionalString.write(value.runtime, buf)
+        _UniffiFfiConverterOptionalString.write(value.backend, buf)
+        _UniffiFfiConverterOptionalString.write(value.model_source_revision, buf)
+        _UniffiFfiConverterOptionalString.write(value.model_manifest_sha256, buf)
+        _UniffiFfiConverterOptionalString.write(value.onnx_runtime_version, buf)
+        _UniffiFfiConverterOptionalString.write(value.onnx_runtime_library_sha256, buf)
+        _UniffiFfiConverterOptionalString.write(value.fixture_sha256, buf)
 
 @dataclass
 class VisualRegionBounds:

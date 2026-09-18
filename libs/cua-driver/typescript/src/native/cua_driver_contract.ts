@@ -3767,7 +3767,13 @@ export type VisualParserMetadata = {
     extensionVersion: string,
     modelId: string,
     modelVersion: string,
-    runtime?: string
+    runtime?: string,
+    backend?: string,
+    modelSourceRevision?: string,
+    modelManifestSha256?: string,
+    onnxRuntimeVersion?: string,
+    onnxRuntimeLibrarySha256?: string,
+    fixtureSha256?: string
 }
 
 /**
@@ -3795,7 +3801,13 @@ const FfiConverterTypeVisualParserMetadata = (() => {
                 extensionVersion: FfiConverterString.read(from),
                 modelId: FfiConverterString.read(from),
                 modelVersion: FfiConverterString.read(from),
-                runtime: FfiConverterOptionalString.read(from)
+                runtime: FfiConverterOptionalString.read(from),
+                backend: FfiConverterOptionalString.read(from),
+                modelSourceRevision: FfiConverterOptionalString.read(from),
+                modelManifestSha256: FfiConverterOptionalString.read(from),
+                onnxRuntimeVersion: FfiConverterOptionalString.read(from),
+                onnxRuntimeLibrarySha256: FfiConverterOptionalString.read(from),
+                fixtureSha256: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -3804,13 +3816,25 @@ const FfiConverterTypeVisualParserMetadata = (() => {
             FfiConverterString.write(value.modelId, into);
             FfiConverterString.write(value.modelVersion, into);
             FfiConverterOptionalString.write(value.runtime, into);
+            FfiConverterOptionalString.write(value.backend, into);
+            FfiConverterOptionalString.write(value.modelSourceRevision, into);
+            FfiConverterOptionalString.write(value.modelManifestSha256, into);
+            FfiConverterOptionalString.write(value.onnxRuntimeVersion, into);
+            FfiConverterOptionalString.write(value.onnxRuntimeLibrarySha256, into);
+            FfiConverterOptionalString.write(value.fixtureSha256, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.extensionId) +
              FfiConverterString.allocationSize(value.extensionVersion) +
              FfiConverterString.allocationSize(value.modelId) +
              FfiConverterString.allocationSize(value.modelVersion) +
-             FfiConverterOptionalString.allocationSize(value.runtime);
+             FfiConverterOptionalString.allocationSize(value.runtime) +
+             FfiConverterOptionalString.allocationSize(value.backend) +
+             FfiConverterOptionalString.allocationSize(value.modelSourceRevision) +
+             FfiConverterOptionalString.allocationSize(value.modelManifestSha256) +
+             FfiConverterOptionalString.allocationSize(value.onnxRuntimeVersion) +
+             FfiConverterOptionalString.allocationSize(value.onnxRuntimeLibrarySha256) +
+             FfiConverterOptionalString.allocationSize(value.fixtureSha256);
 
         }
     };

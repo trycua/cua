@@ -19,6 +19,14 @@
         "confidence": 1.0
       }
     ],
-    "runtime": "fixture_only"
+    "runtime": "fixture_only",
+    "identity": {
+      "extension": {
+        "id": "cua-perception",
+        "version": "0.28.2"
+      },
+      "backend": "deterministic_fixture",
+      "fixture_sha256": "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460"
+    }
   }
 }

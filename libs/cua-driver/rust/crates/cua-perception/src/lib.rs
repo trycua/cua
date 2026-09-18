@@ -496,7 +496,15 @@ fn fixture_result(capture_id: &str) -> Value {
             "text": "fixture",
             "confidence": 1.0
         }],
-        "runtime": "fixture_only"
+        "runtime": "fixture_only",
+        "identity": {
+            "extension": {
+                "id": env!("CARGO_PKG_NAME"),
+                "version": env!("CARGO_PKG_VERSION")
+            },
+            "backend": "deterministic_fixture",
+            "fixture_sha256": FIXTURE_SHA256
+        }
     })
 }
 
@@ -508,25 +516,42 @@ fn inference_result(
     regions: Vec<InferenceRegion>,
     identity: Value,
 ) -> Value {
+    let mut identity = identity;
+    if let Some(identity) = identity.as_object_mut() {
+        identity.insert(
+            "extension".to_owned(),
+            json!({
+                "id": env!("CARGO_PKG_NAME"),
+                "version": env!("CARGO_PKG_VERSION")
+            }),
+        );
+    }
     let regions = regions
         .into_iter()
         .enumerate()
         .map(|(index, region)| {
+            let kind = region.kind;
+            let class_id = region.class_id;
             let x = region.bounds.x1.floor().max(0.0) as u32;
             let y = region.bounds.y1.floor().max(0.0) as u32;
             let right = region.bounds.x2.ceil().min(width as f32) as u32;
             let bottom = region.bounds.y2.ceil().min(height as f32) as u32;
             let mut value = json!({
-                "id": format!("{}-{}", region.kind, index + 1),
-                "kind": region.kind,
+                "id": format!("{}-{}", kind, index + 1),
+                "kind": kind,
                 "bounds": { "x": x, "y": y, "width": right.saturating_sub(x), "height": bottom.saturating_sub(y) },
                 "confidence": region.confidence
             });
             if let Some(text) = region.text {
                 value["text"] = Value::String(text);
             }
-            if let Some(class_id) = region.class_id {
+            if let Some(class_id) = class_id {
                 value["class_id"] = json!(class_id);
+            }
+            if kind == "icon" {
+                value["label"] = Value::String(
+                    class_id.map_or_else(|| "icon".to_owned(), |id| format!("icon-class-{id}")),
+                );
             }
             value
         })
@@ -683,9 +708,16 @@ mod tests {
                 {
                     "id": "icon-2", "kind": "icon",
                     "bounds": { "x": 90, "y": 40, "width": 10, "height": 10 },
-                    "confidence": 0.5, "class_id": 4
+                    "confidence": 0.5, "class_id": 4, "label": "icon-class-4"
                 }
             ])
+        );
+        assert_eq!(
+            decoded["identity"]["extension"],
+            json!({
+                "id": env!("CARGO_PKG_NAME"),
+                "version": env!("CARGO_PKG_VERSION")
+            })
         );
         assert_eq!(decoded["text_geometry"], "axis_aligned_bounds");
     }

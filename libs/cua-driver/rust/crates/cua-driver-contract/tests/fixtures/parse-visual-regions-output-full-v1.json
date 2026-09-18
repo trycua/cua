@@ -29,7 +29,12 @@
     "extension_version": "1.0.0",
     "model_id": "visual-regions-default",
     "model_version": "1",
-    "runtime": "cpu"
+    "runtime": "onnx_runtime_cpu",
+    "backend": "onnx_runtime_cpu",
+    "model_source_revision": "6600256cb0f1b07651e3bc86166196307bad7e2d",
+    "model_manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "onnx_runtime_version": "1.26.0",
+    "onnx_runtime_library_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   },
   "regions": [
     {

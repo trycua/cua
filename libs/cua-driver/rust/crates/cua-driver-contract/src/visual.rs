@@ -293,6 +293,18 @@ pub struct VisualParserMetadata {
     pub model_version: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_source_revision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_manifest_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub onnx_runtime_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub onnx_runtime_library_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fixture_sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
@@ -485,6 +497,10 @@ fn nonempty(value: &str) -> bool {
     !value.trim().is_empty()
 }
 
+fn valid_sha256(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
 impl VisualScreenshotReference {
     fn validate(&self) -> Result<(), VisualContractValidationError> {
         if !nonempty(&self.reference) {
@@ -567,6 +583,36 @@ impl ParseVisualRegionsOutput {
                 .runtime
                 .as_ref()
                 .is_some_and(|value| !nonempty(value))
+            || self
+                .parser
+                .backend
+                .as_ref()
+                .is_some_and(|value| !nonempty(value))
+            || self
+                .parser
+                .model_source_revision
+                .as_ref()
+                .is_some_and(|value| !nonempty(value))
+            || self
+                .parser
+                .onnx_runtime_version
+                .as_ref()
+                .is_some_and(|value| !nonempty(value))
+            || self
+                .parser
+                .model_manifest_sha256
+                .as_ref()
+                .is_some_and(|value| !valid_sha256(value))
+            || self
+                .parser
+                .onnx_runtime_library_sha256
+                .as_ref()
+                .is_some_and(|value| !valid_sha256(value))
+            || self
+                .parser
+                .fixture_sha256
+                .as_ref()
+                .is_some_and(|value| !valid_sha256(value))
         {
             return Err(VisualContractValidationError::InvalidParserMetadata);
         }
@@ -716,6 +762,12 @@ mod tests {
             model_id: "default".into(),
             model_version: "1".into(),
             runtime: Some("cpu".into()),
+            backend: Some("onnx_runtime_cpu".into()),
+            model_source_revision: Some("revision-1".into()),
+            model_manifest_sha256: Some("a".repeat(64)),
+            onnx_runtime_version: Some("1.26.0".into()),
+            onnx_runtime_library_sha256: Some("b".repeat(64)),
+            fixture_sha256: None,
         }
     }
 
@@ -862,6 +914,12 @@ mod tests {
         );
         result.regions[0].parent_id = None;
         result.parser.model_id.clear();
+        assert_eq!(
+            result.validate(),
+            Err(VisualContractValidationError::InvalidParserMetadata)
+        );
+        result.parser.model_id = "default".into();
+        result.parser.model_manifest_sha256 = Some("not-a-sha256".into());
         assert_eq!(
             result.validate(),
             Err(VisualContractValidationError::InvalidParserMetadata)

@@ -73,6 +73,12 @@ class GeneratedOptionsTests(unittest.TestCase):
                 model_id="default",
                 model_version="1",
                 runtime="cpu",
+                backend="onnx_runtime_cpu",
+                model_source_revision="revision-1",
+                model_manifest_sha256="a" * 64,
+                onnx_runtime_version="1.26.0",
+                onnx_runtime_library_sha256="b" * 64,
+                fixture_sha256=None,
             ),
             regions=[
                 contract.VisualRegion(

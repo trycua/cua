@@ -60,4 +60,54 @@ configuration, and final hash. Its output is limited to `manifest.json` and
 macOS is intentionally separate from this Windows/Linux workflow. Native macOS
 proof uses the logged-in, TCC-authorized Lume runner and the canonical
 `libs/cua-driver/tests/runners/macos-lume/run-all.sh --standalone-browser`
-harness with a separately assembled and signed arm64 candidate.
+harness with a separately assembled and signed arm64 candidate. The manual
+`authorized-live-jev-macos-evidence.yml` path requires a protected,
+console-logged-in self-hosted Lume runner. It verifies the exact current source
+and Jev heads, the candidate Driver's certificate-backed arm64 signature and
+hash, the signed extension identity, and the same redacted manifest contract;
+it fully decodes the recording before uploading only `manifest.json` and
+`recording.mp4`.
+
+## Derived reels
+
+Raw evidence remains an uncut 1x record. A shorter review reel is a distinct
+artifact governed by `derived-reel-manifest.schema.json` and
+`sanitize_derived_reel.py`. Its edit plan names safe source-relative evidence
+manifests and recordings, at least two 1x source ranges, and every wait-only
+interval removed between ranges from the same source. Each wait cut must state
+exactly `wait-only interval removed; no action or result omitted`; the tool
+rejects missing, extra, or differently described gaps.
+
+The sanitizer rehashes every source manifest, source recording, and final reel,
+requires all source manifests to be passed live evidence for the same Driver
+and Jev SHAs, bounds each range by FFprobe's measured source duration, fully
+decodes the reel, and checks its duration against the declared edit timeline.
+It publishes only `manifest.json` and `reel.mp4`. The derived manifest records
+per-source hashes, used ranges, disclosed wait ranges, real trim and concatenate
+operations, the expected and decoded durations, and the final hash. Local paths
+and the edit plan are not published.
+
+Example edit-plan shape:
+
+```json
+{
+  "schema": "cua-derived-reel-edit-plan/v1",
+  "sources": [
+    {"id": "macos", "evidence_manifest": "macos/manifest.json", "recording": "macos/recording.mp4"}
+  ],
+  "shots": [
+    {"source_id": "macos", "start_ms": 500, "end_ms": 1500},
+    {"source_id": "macos", "start_ms": 3000, "end_ms": 4000}
+  ],
+  "wait_cuts": [
+    {"source_id": "macos", "start_ms": 1500, "end_ms": 3000, "disclosure": "wait-only interval removed; no action or result omitted"}
+  ]
+}
+```
+
+Render the reel from those exact ranges with FFmpeg, then validate and stage it:
+
+```text
+python3 sanitize_derived_reel.py --source-root INPUTS --edit-plan edit-plan.json \
+  --reel derived.mp4 --output-dir publish-reel
+```

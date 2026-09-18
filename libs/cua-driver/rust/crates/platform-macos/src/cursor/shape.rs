@@ -109,18 +109,51 @@ fn standard_table() -> &'static HashMap<Fingerprint, SystemCursorShape> {
         let entries: Vec<(Option<Retained<NSCursor>>, SystemCursorShape)> = vec![
             (standard_cursor!(arrowCursor), SystemCursorShape::Default),
             (standard_cursor!(IBeamCursor), SystemCursorShape::Text),
-            (standard_cursor!(IBeamCursorForVerticalLayout), SystemCursorShape::VerticalText),
-            (standard_cursor!(pointingHandCursor), SystemCursorShape::Pointer),
+            (
+                standard_cursor!(IBeamCursorForVerticalLayout),
+                SystemCursorShape::VerticalText,
+            ),
+            (
+                standard_cursor!(pointingHandCursor),
+                SystemCursorShape::Pointer,
+            ),
             (standard_cursor!(openHandCursor), SystemCursorShape::Grab),
-            (standard_cursor!(closedHandCursor), SystemCursorShape::Grabbing),
-            (standard_cursor!(crosshairCursor), SystemCursorShape::Crosshair),
-            (standard_cursor!(operationNotAllowedCursor), SystemCursorShape::NotAllowed),
-            (standard_cursor!(resizeUpDownCursor), SystemCursorShape::Resize(ResizeAxis::NorthSouth)),
-            (standard_cursor!(resizeLeftRightCursor), SystemCursorShape::Resize(ResizeAxis::EastWest)),
-            (standard_cursor!(resizeUpCursor), SystemCursorShape::Resize(ResizeAxis::NorthSouth)),
-            (standard_cursor!(resizeDownCursor), SystemCursorShape::Resize(ResizeAxis::NorthSouth)),
-            (standard_cursor!(resizeLeftCursor), SystemCursorShape::Resize(ResizeAxis::EastWest)),
-            (standard_cursor!(resizeRightCursor), SystemCursorShape::Resize(ResizeAxis::EastWest)),
+            (
+                standard_cursor!(closedHandCursor),
+                SystemCursorShape::Grabbing,
+            ),
+            (
+                standard_cursor!(crosshairCursor),
+                SystemCursorShape::Crosshair,
+            ),
+            (
+                standard_cursor!(operationNotAllowedCursor),
+                SystemCursorShape::NotAllowed,
+            ),
+            (
+                standard_cursor!(resizeUpDownCursor),
+                SystemCursorShape::Resize(ResizeAxis::NorthSouth),
+            ),
+            (
+                standard_cursor!(resizeLeftRightCursor),
+                SystemCursorShape::Resize(ResizeAxis::EastWest),
+            ),
+            (
+                standard_cursor!(resizeUpCursor),
+                SystemCursorShape::Resize(ResizeAxis::NorthSouth),
+            ),
+            (
+                standard_cursor!(resizeDownCursor),
+                SystemCursorShape::Resize(ResizeAxis::NorthSouth),
+            ),
+            (
+                standard_cursor!(resizeLeftCursor),
+                SystemCursorShape::Resize(ResizeAxis::EastWest),
+            ),
+            (
+                standard_cursor!(resizeRightCursor),
+                SystemCursorShape::Resize(ResizeAxis::EastWest),
+            ),
         ];
         for (cursor, shape) in entries {
             let Some(cursor) = cursor else { continue };

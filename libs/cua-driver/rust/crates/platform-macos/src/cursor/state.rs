@@ -166,6 +166,15 @@ impl CursorRegistry {
     /// Single choke point for cursor-hook emission, so the suppression rule
     /// cannot drift between the move path and the press path.
     fn emit_cursor_event(&self, cursor_id: &str, x: f64, y: f64, pressed: bool) {
+        // Cheapest check first. `CursorHookEvent` owns its id, so building one
+        // costs a heap allocation on every commanded move — and almost every
+        // cua-driver consumer (the daemon, the CLI, every SDK caller that is not
+        // a remote-desktop host) never registers a hook, so that allocation
+        // would be pure waste for them. This is what `cursor_hook_enabled` is
+        // for, and it is the same order the `pip_hook` idiom uses.
+        if !cua_driver_core::cursor_hook::cursor_hook_enabled() {
+            return;
+        }
         if cursor_id.is_empty() || cua_driver_core::session::is_session_ended(cursor_id) {
             return;
         }

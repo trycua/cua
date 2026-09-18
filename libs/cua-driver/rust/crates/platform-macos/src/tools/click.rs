@@ -301,14 +301,7 @@ impl Tool for ClickTool {
                 .update_position(&cursor_key, sx, sy);
             // Press edge for the agent-cursor overlay (renders a click pulse on
             // viewers via the cursor hook).
-            cua_driver_core::cursor_hook::push_cursor_event(
-                cua_driver_core::cursor_hook::CursorHookEvent {
-                    cursor_id: cursor_key.clone(),
-                    x: sx,
-                    y: sy,
-                    pressed: true,
-                },
-            );
+            self.state.cursor_registry.note_press(&cursor_key, sx, sy);
 
             let btn = button.clone();
             let desktop_modifiers: Vec<String> = args.str_array("modifier");
@@ -497,14 +490,7 @@ impl Tool for ClickTool {
                 self.state
                     .cursor_registry
                     .update_position(&cursor_key, cx, cy);
-                cua_driver_core::cursor_hook::push_cursor_event(
-                    cua_driver_core::cursor_hook::CursorHookEvent {
-                        cursor_id: cursor_key.clone(),
-                        x: cx,
-                        y: cy,
-                        pressed: true,
-                    },
-                );
+                self.state.cursor_registry.note_press(&cursor_key, cx, cy);
 
                 let mods_owned = modifiers.clone();
                 let foreground = delivery_mode.is_foreground();
@@ -549,14 +535,7 @@ impl Tool for ClickTool {
                 self.state
                     .cursor_registry
                     .update_position(&cursor_key, cx, cy);
-                cua_driver_core::cursor_hook::push_cursor_event(
-                    cua_driver_core::cursor_hook::CursorHookEvent {
-                        cursor_id: cursor_key.clone(),
-                        x: cx,
-                        y: cy,
-                        pressed: true,
-                    },
-                );
+                self.state.cursor_registry.note_press(&cursor_key, cx, cy);
             }
 
             // Finder icon/list items can expose a readable AXSelected state
@@ -989,14 +968,9 @@ impl Tool for ClickTool {
             self.state
                 .cursor_registry
                 .update_position(&cursor_key, screen_x, screen_y);
-            cua_driver_core::cursor_hook::push_cursor_event(
-                cua_driver_core::cursor_hook::CursorHookEvent {
-                    cursor_id: cursor_key.clone(),
-                    x: screen_x,
-                    y: screen_y,
-                    pressed: true,
-                },
-            );
+            self.state
+                .cursor_registry
+                .note_press(&cursor_key, screen_x, screen_y);
 
             // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
             // A pixel click can land on a "Sign In" button that opens a sheet

@@ -145,12 +145,36 @@ impl CursorRegistry {
         drop(inner);
         // Notify any embedder of the cursor move so it can render this cursor as
         // an overlay without driving the overlay itself.
+        self.emit_cursor_event(cursor_id, x, y, false);
+    }
+
+    /// Report a press edge (click / drag start) for `cursor_id` at screen point
+    /// (`x`, `y`) to the embedder's cursor hook.
+    ///
+    /// Presses go through the registry rather than being pushed directly from
+    /// each tool so that they obey the same write-boundary resurrection guard as
+    /// [`Self::update_position`]. A click whose session has already ended must
+    /// not reach the hook: the registry has cleared that cursor, and an embedder
+    /// that rendered the press would resurrect a cursor the driver considers
+    /// gone. Unlike `update_position` this records no position — a press is an
+    /// event, not a new resting place, and the move that precedes it has already
+    /// stored the coordinates.
+    pub fn note_press(&self, cursor_id: &str, x: f64, y: f64) {
+        self.emit_cursor_event(cursor_id, x, y, true);
+    }
+
+    /// Single choke point for cursor-hook emission, so the suppression rule
+    /// cannot drift between the move path and the press path.
+    fn emit_cursor_event(&self, cursor_id: &str, x: f64, y: f64, pressed: bool) {
+        if cursor_id.is_empty() || cua_driver_core::session::is_session_ended(cursor_id) {
+            return;
+        }
         cua_driver_core::cursor_hook::push_cursor_event(
             cua_driver_core::cursor_hook::CursorHookEvent {
                 cursor_id: cursor_id.to_owned(),
                 x,
                 y,
-                pressed: false,
+                pressed,
             },
         );
     }

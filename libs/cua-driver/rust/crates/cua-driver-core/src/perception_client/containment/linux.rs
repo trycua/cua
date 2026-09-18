@@ -467,6 +467,8 @@ fn denied_syscalls() -> Vec<libc::c_long> {
         // has no TGID argument and therefore cannot be constrained safely.
         libc::SYS_kill,
         libc::SYS_tkill,
+        libc::SYS_rt_sigqueueinfo,
+        libc::SYS_rt_tgsigqueueinfo,
         // Filesystem policy escapes: a file handle bypasses path resolution,
         // and a mount changes what a Landlock path even refers to.
         libc::SYS_name_to_handle_at,
@@ -739,6 +741,8 @@ mod tests {
         let mut filter = assemble_seccomp_filter(SECCOMP_RET_KILL_PROCESS);
         assert!(denied_syscalls().contains(&libc::SYS_kill));
         assert!(denied_syscalls().contains(&libc::SYS_tkill));
+        assert!(denied_syscalls().contains(&libc::SYS_rt_sigqueueinfo));
+        assert!(denied_syscalls().contains(&libc::SYS_rt_tgsigqueueinfo));
         assert!(!denied_syscalls().contains(&libc::SYS_tgkill));
         let check = filter.instructions[filter.worker_tgid_instruction];
         assert_eq!(check.code, BPF_JMP | BPF_JEQ | BPF_K);
@@ -760,6 +764,14 @@ mod tests {
         );
         assert_eq!(
             evaluate_filter(&filter.instructions, libc::SYS_kill, 4242),
+            denied
+        );
+        assert_eq!(
+            evaluate_filter(&filter.instructions, libc::SYS_rt_sigqueueinfo, 4242),
+            denied
+        );
+        assert_eq!(
+            evaluate_filter(&filter.instructions, libc::SYS_rt_tgsigqueueinfo, 4242),
             denied
         );
     }

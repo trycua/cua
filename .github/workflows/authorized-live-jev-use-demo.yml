@@ -139,6 +139,10 @@ jobs:
           ref: ${{ needs.source.outputs.sha }}
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
+      - name: Install the visual fixture runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-tk
       - name: Verify exact checkout
         shell: bash
         env:

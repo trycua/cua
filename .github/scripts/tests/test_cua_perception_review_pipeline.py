@@ -193,8 +193,17 @@ def test_macos_review_candidate_uses_ephemeral_certificate_signing() -> None:
         'security default-keychain -d user -s "$keychain_path"', prepend
     )
     identity_import = script.index('security import "$identity_path"')
-    partition_list = script.index("security set-key-partition-list")
     identity_lookup = script.index("run_step identity security find-identity")
+    sudo_preflight = script.index("run_step sudo-preflight sudo -n -v")
+    cleanup_flag = script.index("admin_trust_cleanup_needed=true", sudo_preflight)
+    add_trust = script.index("run_step add-trust sudo -n security add-trusted-cert")
+    trusted_cert_present = script.index(
+        "run_step trusted-cert-present security find-certificate"
+    )
+    valid_identity = script.index(
+        "run_step valid-identity security find-identity -v"
+    )
+    partition_list = script.index("security set-key-partition-list")
     probe_sign = script.index("run_step probe-sign codesign")
     driver_sign = script.index("run_step driver-sign codesign")
     assert (
@@ -205,8 +214,13 @@ def test_macos_review_candidate_uses_ephemeral_certificate_signing() -> None:
         < prepend
         < default_set
         < identity_import
-        < partition_list
         < identity_lookup
+        < sudo_preflight
+        < cleanup_flag
+        < add_trust
+        < trusted_cert_present
+        < valid_identity
+        < partition_list
         < probe_sign
         < driver_sign
     )
@@ -225,7 +239,6 @@ def test_macos_review_candidate_uses_ephemeral_certificate_signing() -> None:
         'security default-keychain -d user -s "$previous_default_keychain" '
         "\\\n      >/dev/null 2>&1 || true"
     ) in script
-    assert "security find-identity -v" not in script
     assert "set -x" not in script
     assert script.count("openssl pkcs12 -export") == 2
     assert '"$log_dir/pkcs12-legacy.log" "$log_dir/pkcs12-fallback.log"' in script
@@ -234,6 +247,18 @@ def test_macos_review_candidate_uses_ephemeral_certificate_signing() -> None:
     assert "-keypbe PBE-SHA1-3DES" not in script
     assert "-certpbe PBE-SHA1-3DES" not in script
     assert "[[:xdigit:]]{64}" in script
+    assert '"${RUNNER_ENVIRONMENT:-}" == github-hosted' in script
+    assert '"${RUNNER_OS:-}" == macOS' in script
+    assert '"${GITHUB_ACTIONS:-}" == true' in script
+    assert 'security remove-trusted-cert -d "$certificate_path"' in script
+    assert 'security delete-certificate -Z "$trusted_identity"' in script
+    assert "security dump-trust-settings -d" in script
+    assert "run_bounded security find-certificate -Z -a" in script
+    assert 'exit "$cleanup_status"' in script
+    assert 'exit "$status"' not in script
+    trust_removal = script.index('security remove-trusted-cert -d "$certificate_path"')
+    certificate_cleanup = script.index('rm -f "$private_key_path"')
+    assert trust_removal < certificate_cleanup
     assert 'rmdir "$work_root"' in script
     assert 'rm -rf "$work_root"' not in script
 

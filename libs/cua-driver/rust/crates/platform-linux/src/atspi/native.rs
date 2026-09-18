@@ -3038,6 +3038,17 @@ async fn actuate_chain(
                 .unwrap_or_default();
             deepest_has_action = has_action;
         }
+        if depth != deepest && !deepest_has_action && is_selectable_item_role(&role) {
+            // The point is on a label / icon inside a file or list item: a
+            // plain click selects that item.
+            if let Some(hit) = select_item_in_chain(chain, depth, &role, &deepest_name).await {
+                return Ok(Some(hit));
+            }
+            dlog!(
+                "hit-test ({win_x},{win_y}) -> depth {depth} {role:?} is a selectable item that cannot be selected through Selection; leaving it to a real click"
+            );
+            return Ok(None);
+        }
         if !has_action {
             continue;
         }
@@ -3153,61 +3164,74 @@ async fn actuate_chain(
     Ok(None)
 }
 
-/// Select the item at `item_depth` of a hit chain through its parent's
-/// `Selection` interface: clear the current selection (a plain click
-/// replaces it), `SelectChild(index_in_parent)`, then read the state back.
-/// `None` when the parent does not select, the item is not one of its
-/// children, or the toolkit refused — the caller then falls back to a real
-/// pointer press.
+/// Select the item under the point through its parent's `Selection`
+/// interface: scanning the hit chain upward from the deepest node, the first
+/// node with a selectable item role whose parent selects (Nautilus: `icon`
+/// label -> `canvas` item -> `layered pane` with Selection) is cleared-and-
+/// selected (`ClearSelection` + `SelectChild(index_in_parent)`) and read back
+/// with `IsChildSelected`. `None` when nothing on the chain selects or the
+/// toolkit refused — the caller then falls back to a real pointer press.
 async fn select_item_in_chain(
     chain: &[HitNode<'_>],
-    item_depth: usize,
-    item_role: &str,
-    item_name: &str,
+    from_depth: usize,
+    _role_hint: &str,
+    _name_hint: &str,
 ) -> Option<AtPointHit> {
-    if !is_selectable_item_role(item_role) || item_depth == 0 {
-        return None;
-    }
-    let item = &chain[item_depth];
-    let parent = &chain[item_depth - 1];
-    let ifaces = call(parent.acc.get_interfaces()).await?.ok()?;
-    if !ifaces.contains(Interface::Selection) {
-        return None;
-    }
-    let index = call(item.acc.get_index_in_parent()).await?.ok()?;
-    if index < 0 {
-        return None;
-    }
-    let proxies = call(parent.acc.proxies()).await?.ok()?;
-    let selection = call(proxies.selection()).await?.ok()?;
-    // Best effort: some containers refuse ClearSelection while still
-    // honouring SelectChild (which then replaces a single selection).
-    let _ = call(selection.clear_selection()).await;
-    let accepted = call(selection.select_child(index)).await?.ok()?;
-    if !accepted {
+    for item_depth in (1..=from_depth.min(chain.len() - 1)).rev() {
+        let item = &chain[item_depth];
+        let parent = &chain[item_depth - 1];
+        let Some(Ok(item_role)) = call(item.acc.get_role_name()).await else {
+            continue;
+        };
+        if !is_selectable_item_role(&item_role) {
+            continue;
+        }
+        let Some(Ok(ifaces)) = call(parent.acc.get_interfaces()).await else {
+            continue;
+        };
+        if !ifaces.contains(Interface::Selection) {
+            continue;
+        }
+        let item_name = call(item.acc.name())
+            .await
+            .and_then(|r| r.ok())
+            .unwrap_or_default();
+        let index = call(item.acc.get_index_in_parent()).await?.ok()?;
+        if index < 0 {
+            return None;
+        }
+        let proxies = call(parent.acc.proxies()).await?.ok()?;
+        let selection = call(proxies.selection()).await?.ok()?;
+        // Best effort: some containers refuse ClearSelection while still
+        // honouring SelectChild (which then replaces a single selection).
+        let _ = call(selection.clear_selection()).await;
+        let accepted = call(selection.select_child(index)).await?.ok()?;
+        if !accepted {
+            dlog!(
+                "Selection.SelectChild({index}) refused by {}",
+                parent.oref.path
+            );
+            return None;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let verified = matches!(
+            call(selection.is_child_selected(index)).await,
+            Some(Ok(true))
+        );
         dlog!(
-            "Selection.SelectChild({index}) refused by {}",
+            "selected child {index} ({item_role:?} {item_name:?}) of {} verified={verified}",
             parent.oref.path
         );
-        return None;
+        return Some(AtPointHit {
+            action: "select_child".to_owned(),
+            role: item_role,
+            name: item_name.clone(),
+            path: item.oref.path.clone(),
+            selected: Some(item_name),
+            selection_verified: verified,
+        });
     }
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    let verified = matches!(
-        call(selection.is_child_selected(index)).await,
-        Some(Ok(true))
-    );
-    dlog!(
-        "selected child {index} ({item_role:?} {item_name:?}) of {} verified={verified}",
-        parent.oref.path
-    );
-    Some(AtPointHit {
-        action: "select_child".to_owned(),
-        role: item_role.to_owned(),
-        name: item_name.to_owned(),
-        path: item.oref.path.clone(),
-        selected: Some(item_name.to_owned()),
-        selection_verified: verified,
-    })
+    None
 }
 
 /// A mutation was attempted; callers must not replay through another route.
@@ -3863,6 +3887,13 @@ pub fn perform_action_at_point(
             };
             let target = &visited[idx];
             if skip_focus_roles && is_focus_taking_role(&target.role) {
+                return Ok(None);
+            }
+            if is_selectable_item_role(&target.role) {
+                // A plain click on a file / list item selects it; its own
+                // `open` / `activate` is the double-click. Leave it to the
+                // caller's real pointer press.
+                dlog!("full-walk hit {:?} {:?} is a selectable item; not firing", target.role, target.name);
                 return Ok(None);
             }
             let Some(chosen) = activation_index(&target.role, &target.actions) else {

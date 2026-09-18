@@ -1,0 +1,12 @@
+[package]
+name = "cua-perception-inference-spike"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+anyhow = "=1.0.104"
+image = { version = "=0.25.10", default-features = false, features = ["png"] }
+tract-onnx = "=0.23.7"

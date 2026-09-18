@@ -5,8 +5,24 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
+import keyring
+import pytest
 from cua_cli.auth.store import OAuthCredentials
 from cua_cli.commands import auth
+from keyring.backends.null import Keyring as NullKeyring
+from keyring.errors import NoKeyringError
+
+
+@pytest.fixture(autouse=True)
+def isolated_credential_store():
+    """Never read or write a developer's host credential store in command tests."""
+    with (
+        patch.object(keyring, "get_keyring", return_value=object()),
+        patch.object(keyring, "get_password", return_value=None),
+        patch.object(keyring, "set_password"),
+        patch.object(keyring, "delete_password"),
+    ):
+        yield
 
 
 class FakeOidcClient:
@@ -51,6 +67,48 @@ def test_login_uses_device_flow_without_opening_browser(monkeypatch) -> None:
     assert result == 0
     assert saved[0].access_token == "access-token"
     browser_open.assert_not_called()
+
+
+def test_login_refuses_unavailable_store_before_starting_device_flow(capsys) -> None:
+    with (
+        patch.object(keyring, "get_password", side_effect=NoKeyringError("secret-value")),
+        patch.object(auth, "OidcClient", return_value=FakeOidcClient()) as client,
+        patch.object(auth.webbrowser, "open") as browser_open,
+    ):
+        result = auth.cmd_login(argparse.Namespace(no_browser=False))
+
+    assert result == 1
+    client.assert_not_called()
+    browser_open.assert_not_called()
+    captured = capsys.readouterr()
+    output = captured.out + captured.err
+    assert "credential store" in output
+    assert "FLEETS_TOKEN" in output
+    assert "secret-value" not in output
+
+
+def test_login_refuses_disabled_store_before_device_flow() -> None:
+    with (
+        patch.object(keyring, "get_keyring", return_value=NullKeyring()),
+        patch.object(auth, "OidcClient") as client,
+    ):
+        assert auth.cmd_login(argparse.Namespace(no_browser=True)) == 1
+    client.assert_not_called()
+
+
+def test_login_reports_later_write_failure_without_exposing_credentials(capsys) -> None:
+    with (
+        patch.object(auth, "OidcClient", return_value=FakeOidcClient()),
+        patch.object(keyring, "set_password", side_effect=NoKeyringError("secret-value")),
+    ):
+        assert auth.cmd_login(argparse.Namespace(no_browser=True)) == 1
+    captured = capsys.readouterr()
+    output = captured.out + captured.err
+    assert "Login failed" in output
+    assert "credential store" in output
+    assert "Logged in" not in output
+    for secret in ("access-token", "refresh-token", "secret-value"):
+        assert secret not in output
 
 
 def test_logout_clears_local_credentials_when_remote_revocation_fails(monkeypatch) -> None:

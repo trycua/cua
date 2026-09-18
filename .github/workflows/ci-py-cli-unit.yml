@@ -1,0 +1,28 @@
+name: "CI: cua-cli unit tests"
+
+on:
+  pull_request:
+    paths:
+      - "libs/python/cua-cli/**"
+      - "libs/python/cua-sandbox/**"
+      - ".github/workflows/ci-py-cli-unit.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.12", "3.13"]
+    env:
+      CUA_TELEMETRY_ENABLED: "false"
+      PYTHON_KEYRING_BACKEND: keyring.backends.fail.Keyring
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Run CLI tests with synthetic credentials
+        run: uv run --project libs/python/cua-cli --extra dev pytest -q libs/python/cua-cli/tests

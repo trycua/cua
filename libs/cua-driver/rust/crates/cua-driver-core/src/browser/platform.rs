@@ -82,6 +82,63 @@ pub struct PrepareProfile {
     pub name: Option<String>,
 }
 
+/// Process ownership scope for fixed-port endpoint discovery after core
+/// launches an isolated browser.
+///
+/// Unix adapters receive the launch root and retain their native process-tree
+/// proof. Windows can instead receive the exact active members of core's
+/// per-launch Job Object. An exact scope is closed: adapters must not add
+/// descendants or fall back to a raw parent-pid walk when the launcher exits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SpawnedEndpointProcessScope {
+    RootProcess(i64),
+    ExactOwnedProcesses {
+        launch_pid: i64,
+        process_ids: Vec<i64>,
+    },
+}
+
+impl SpawnedEndpointProcessScope {
+    pub fn launch_pid(&self) -> i64 {
+        match self {
+            Self::RootProcess(pid) => *pid,
+            Self::ExactOwnedProcesses { launch_pid, .. } => *launch_pid,
+        }
+    }
+
+    pub fn root_process_pid(&self) -> Option<i64> {
+        match self {
+            Self::RootProcess(pid) => Some(*pid),
+            Self::ExactOwnedProcesses { .. } => None,
+        }
+    }
+
+    pub fn exact_process_ids(&self) -> Option<&[i64]> {
+        match self {
+            Self::RootProcess(_) => None,
+            Self::ExactOwnedProcesses { process_ids, .. } => Some(process_ids),
+        }
+    }
+}
+
+/// Browser launch posture for a driver-owned isolated profile.
+///
+/// This is intentionally not an existing-profile setting. Existing profiles
+/// keep their real browser identity and the reviewed personal-profile CDP
+/// policy; callers cannot use this enum to request identity overrides or page
+/// script injection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PrepareLaunchPosture {
+    /// Current deterministic launch: minimize browser-owned background work so
+    /// setup is quiet and repeatable.
+    #[default]
+    Standard,
+    /// Use a driver-selected nonzero DevTools port rather than asking Chromium
+    /// to choose one through `--remote-debugging-port=0`.
+    DriverSelectedPort,
+}
+
 /// Acting strategy for browser preparation that is not a driver-owned profile
 /// lifecycle operation. Existing profiles remain owned by the user/browser.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,9 +151,8 @@ pub enum PrepareStrategy {
 /// implicit: `get_browser_state` must not trigger it.
 #[derive(Debug, Clone)]
 pub struct PrepareRequest {
-    /// Existing browser process used to select and attest the launch executable.
-    /// Omitted only for a driver-owned isolated launch, where the platform
-    /// resolves a supported installed Chromium executable instead.
+    /// Existing browser process to prepare, or the standard isolated launch
+    /// executable source. Omitted for pid-free driver-owned isolated launch.
     pub pid: Option<i64>,
     /// Exact native window used as the visible approval and ownership anchor
     /// for existing-profile attachment.
@@ -112,6 +168,9 @@ pub struct PrepareRequest {
     /// Allows launching a separate driver-owned isolated browser process.
     /// It never authorizes terminating or modifying the requested process.
     pub allow_launch: bool,
+    /// Standalone launch posture. Non-default values are valid only with a
+    /// driver-owned isolated launch (`allow_launch=true` plus `profile`).
+    pub launch_posture: PrepareLaunchPosture,
 }
 
 /// What a platform adapter actually did (or found) during prepare.
@@ -141,6 +200,8 @@ pub struct PrepareOutcome {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prepared_pid: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub launch_posture: Option<PrepareLaunchPosture>,
     #[serde(default)]
     pub side_effects: PrepareSideEffects,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -342,6 +403,19 @@ pub trait BrowserPlatform: Send + Sync {
             .filter(|endpoint| endpoint.ws_url == expected_ws_url))
     }
 
+    /// Discover and attest the browser-level endpoint on a driver-selected
+    /// fixed port. Native adapters own the `/json/version` request and socket
+    /// ownership proof so core does not grow a fourth platform-specific
+    /// endpoint-discovery path. `process_scope` is authoritative: an exact
+    /// owned-process set must never be expanded through parent-pid discovery.
+    async fn discover_spawned_endpoint_on_port(
+        &self,
+        _process_scope: &SpawnedEndpointProcessScope,
+        _port: u16,
+    ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        Ok(None)
+    }
+
     /// Discover an endpoint while handling an explicitly approved
     /// existing-profile request. The default is the ordinary side-effect-free
     /// discovery path. Platforms may additionally return a uniquely proven
@@ -440,7 +514,31 @@ pub trait BrowserPlatform: Send + Sync {
 
 #[cfg(test)]
 mod tests {
-    use super::select_isolated_browser_executable;
+    use super::{select_isolated_browser_executable, SpawnedEndpointProcessScope};
+
+    #[test]
+    fn exact_spawned_process_scope_does_not_imply_root_or_descendants() {
+        let scope = SpawnedEndpointProcessScope::ExactOwnedProcesses {
+            launch_pid: 41,
+            process_ids: vec![42, 44],
+        };
+
+        assert_eq!(scope.launch_pid(), 41);
+        assert_eq!(scope.root_process_pid(), None);
+        let process_ids = scope.exact_process_ids().expect("exact member set");
+        assert!(!process_ids.contains(&41));
+        assert!(process_ids.contains(&42));
+        assert!(!process_ids.contains(&43));
+    }
+
+    #[test]
+    fn root_spawned_process_scope_never_claims_exact_membership() {
+        let scope = SpawnedEndpointProcessScope::RootProcess(41);
+
+        assert_eq!(scope.launch_pid(), 41);
+        assert_eq!(scope.root_process_pid(), Some(41));
+        assert_eq!(scope.exact_process_ids(), None);
+    }
 
     #[test]
     fn isolated_browser_selection_uses_first_installed_canonical_candidate() {

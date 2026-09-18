@@ -13,6 +13,7 @@ use cua_driver_core::browser::platform::{
     select_isolated_browser_executable, BrowserConsentOutcome, BrowserConsentRequest,
     BrowserPlatform, BrowserVisualAction, BrowserVisualActionKind, ExistingProfileSetupOutcome,
     ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
+    SpawnedEndpointProcessScope,
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
@@ -24,6 +25,7 @@ use serde::Serialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const CONSENT_CLEANUP_PASSES: usize = 20;
+const LISTENER_INSPECTION_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug, Serialize)]
 struct ConsentSurfaceEvidence {
@@ -393,6 +395,17 @@ fn loopback_websocket_port(url: &str) -> Option<u16> {
         })
 }
 
+fn canonical_ipv4_websocket_url(url: &str, expected_port: u16) -> Option<String> {
+    ["ws://127.0.0.1:", "ws://localhost:", "ws://[::1]:"]
+        .iter()
+        .find_map(|prefix| {
+            let remainder = url.strip_prefix(prefix)?;
+            let (port, path) = remainder.split_once('/')?;
+            (port.parse::<u16>().ok()? == expected_port && !path.is_empty())
+                .then(|| format!("ws://127.0.0.1:{expected_port}/{path}"))
+        })
+}
+
 fn stable_hash(value: &str) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     value.hash(&mut hasher);
@@ -601,16 +614,17 @@ async fn process_details(pid: i64) -> Result<(String, String), BrowserRefusal> {
     Ok((started.trim().to_owned(), executable.trim().to_owned()))
 }
 
-fn parse_loopback_lsof_ports(text: &str) -> Vec<u16> {
+fn parse_loopback_lsof_ports_with_scope(text: &str, ipv4_only: bool) -> Vec<u16> {
     let mut ports = text
         .lines()
         .filter_map(|line| line.trim().strip_prefix('n'))
         .filter_map(|address| {
             let (host, port) = address.rsplit_once(':')?;
             let host = host.trim_matches(['[', ']']);
-            matches!(host, "127.0.0.1" | "::1" | "localhost")
-                .then(|| port.parse::<u16>().ok())
-                .flatten()
+            ((ipv4_only && host == "127.0.0.1")
+                || (!ipv4_only && matches!(host, "127.0.0.1" | "::1" | "localhost")))
+            .then(|| port.parse::<u16>().ok())
+            .flatten()
         })
         .collect::<Vec<_>>();
     ports.sort_unstable();
@@ -618,8 +632,17 @@ fn parse_loopback_lsof_ports(text: &str) -> Vec<u16> {
     ports
 }
 
-async fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
-    let output = tokio::process::Command::new("lsof")
+#[cfg(test)]
+fn parse_loopback_lsof_ports(text: &str) -> Vec<u16> {
+    parse_loopback_lsof_ports_with_scope(text, false)
+}
+
+async fn loopback_ports_for_pid_with_scope(
+    pid: i64,
+    ipv4_only: bool,
+) -> Result<Vec<u16>, BrowserRefusal> {
+    let mut command = tokio::process::Command::new("lsof");
+    command
         .args([
             "-a",
             "-p",
@@ -627,21 +650,41 @@ async fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
             "-iTCP",
             "-sTCP:LISTEN",
             "-Fn",
+            "-n",
             "-P",
         ])
         .stdin(Stdio::null())
         .stderr(Stdio::null())
-        .output()
-        .await
-        .map_err(|error| {
-            refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("could not inspect browser listeners: {error}"),
-            )
-        })?;
-    Ok(parse_loopback_lsof_ports(&String::from_utf8_lossy(
-        &output.stdout,
-    )))
+        .kill_on_drop(true);
+    let output = if ipv4_only {
+        match tokio::time::timeout(LISTENER_INSPECTION_TIMEOUT, command.output()).await {
+            Ok(output) => output,
+            // The surrounding endpoint-readiness loop owns the total
+            // deadline. One slow lsof sample is the same as seeing no listener
+            // yet, while command and parse failures below remain terminal.
+            Err(_) => return Ok(Vec::new()),
+        }
+    } else {
+        command.output().await
+    }
+    .map_err(|error| {
+        refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            format!("could not inspect browser listeners: {error}"),
+        )
+    })?;
+    Ok(parse_loopback_lsof_ports_with_scope(
+        &String::from_utf8_lossy(&output.stdout),
+        ipv4_only,
+    ))
+}
+
+async fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
+    loopback_ports_for_pid_with_scope(pid, false).await
+}
+
+async fn ipv4_loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
+    loopback_ports_for_pid_with_scope(pid, true).await
 }
 
 async fn active_port_endpoint(
@@ -996,6 +1039,44 @@ impl BrowserPlatform for MacOsBrowserPlatform {
             }
         }
         Ok(None)
+    }
+
+    async fn discover_spawned_endpoint_on_port(
+        &self,
+        process_scope: &SpawnedEndpointProcessScope,
+        port: u16,
+    ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        let Some(pid) = process_scope.root_process_pid() else {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                "macOS fixed-port discovery requires a launch-root process scope",
+            ));
+        };
+        if !ipv4_loopback_ports_for_pid(pid).await?.contains(&port) {
+            return Ok(None);
+        }
+        let Some(ws_url) = browser_websocket_url(port)
+            .await
+            .and_then(|url| canonical_ipv4_websocket_url(&url, port))
+        else {
+            return Ok(None);
+        };
+        if !ipv4_loopback_ports_for_pid(pid).await?.contains(&port) {
+            return Ok(None);
+        }
+        Ok(Some(OwnedEndpoint {
+            ws_url,
+            http_port: Some(port),
+            transport: EndpointTransport::SpawnedExact,
+            ownership: EndpointOwnershipProof {
+                method: EndpointOwnershipMethod::ListeningSocketPid,
+                owner_pid: pid,
+                listener_pid: None,
+                detail: Some(
+                    "exact lsof loopback listener owner before and after /json/version".to_owned(),
+                ),
+            },
+        }))
     }
 
     async fn discover_existing_profile_endpoint(
@@ -1357,6 +1438,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
                 prepared_pid: Some(endpoint.ownership.owner_pid),
                 endpoint: Some(endpoint),
                 message: "An owned loopback DevTools endpoint is already available.".to_owned(),
+                launch_posture: None,
                 side_effects: Default::default(),
                 attachment: None,
             });
@@ -1371,6 +1453,38 @@ impl BrowserPlatform for MacOsBrowserPlatform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn driver_selected_port_does_not_query_a_foreign_listener() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind foreign listener");
+        let port = listener.local_addr().expect("listener address").port();
+        let mut unrelated = tokio::process::Command::new("sleep")
+            .arg("60")
+            .kill_on_drop(true)
+            .spawn()
+            .expect("spawn unrelated process");
+        let unrelated_pid = i64::from(unrelated.id().expect("unrelated process pid"));
+
+        let platform = MacOsBrowserPlatform::new(Arc::new(crate::cursor::CursorRegistry::new()));
+        let endpoint = platform
+            .discover_spawned_endpoint_on_port(
+                &SpawnedEndpointProcessScope::RootProcess(unrelated_pid),
+                port,
+            )
+            .await
+            .expect("foreign listener should remain an ordinary not-ready result");
+
+        assert!(endpoint.is_none());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), listener.accept())
+                .await
+                .is_err()
+        );
+        unrelated.start_kill().expect("stop unrelated process");
+        unrelated.wait().await.expect("reap unrelated process");
+    }
 
     fn consent_surface(window_id: u32) -> ConsentSurfaceEvidence {
         ConsentSurfaceEvidence {
@@ -1664,6 +1778,10 @@ mod tests {
     fn lsof_parser_accepts_only_loopback_listeners() {
         let input = "n127.0.0.1:9222\nn*:9333\nn[::1]:9444\nn0.0.0.0:9555\n";
         assert_eq!(parse_loopback_lsof_ports(input), vec![9222, 9444]);
+        assert_eq!(
+            parse_loopback_lsof_ports_with_scope(input, true),
+            vec![9222]
+        );
     }
 
     #[test]
@@ -1695,6 +1813,22 @@ mod tests {
         );
         assert_eq!(
             loopback_websocket_port("ws://192.0.2.1:9222/devtools"),
+            None
+        );
+    }
+
+    #[test]
+    fn fixed_port_websocket_route_is_canonicalized_to_the_proven_ipv4_listener() {
+        assert_eq!(
+            canonical_ipv4_websocket_url("ws://[::1]:9222/devtools/browser/id", 9222),
+            Some("ws://127.0.0.1:9222/devtools/browser/id".to_owned())
+        );
+        assert_eq!(
+            canonical_ipv4_websocket_url("ws://127.0.0.1:9333/devtools/browser/id", 9222),
+            None
+        );
+        assert_eq!(
+            canonical_ipv4_websocket_url("ws://192.0.2.1:9222/devtools/browser/id", 9222),
             None
         );
     }

@@ -163,6 +163,7 @@ pub(crate) struct SemanticPage {
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct SemanticDocument {
+    pub(crate) title: Option<String>,
     pub(crate) nodes: Vec<SemanticNode>,
     pub(crate) css_hidden_dom_count: usize,
     pub(crate) unprovable_frame_count: usize,
@@ -454,6 +455,35 @@ pub(crate) fn build_layout_index(snapshot: &Value) -> LayoutIndex {
     out
 }
 
+pub(crate) fn snapshot_document_title(snapshot: &Value, root: &Value) -> Option<String> {
+    let strings = snapshot.get("strings")?.as_array()?;
+    let document = snapshot.get("documents")?.as_array()?.first()?;
+    let string_at = |field: &str| {
+        let index = usize::try_from(document.get(field)?.as_u64()?).ok()?;
+        strings.get(index)?.as_str()
+    };
+    // The tab's cached title can belong to the page that was bound before
+    // navigation. Use the collected document, never a child frame or a label
+    // from accessibility, and omit the title if its identity cannot be matched.
+    if document
+        .get("nodes")?
+        .get("backendNodeId")?
+        .as_array()?
+        .first()?
+        .as_i64()?
+        != root.get("backendNodeId")?.as_i64()?
+        || string_at("documentURL")? != root.get("documentURL")?.as_str()?
+    {
+        return None;
+    }
+    if let Some(frame_id) = root.get("frameId").and_then(Value::as_str) {
+        if string_at("frameId")? != frame_id {
+            return None;
+        }
+    }
+    string_at("title").map(str::to_owned)
+}
+
 pub(crate) fn parse_viewport(metrics: &Value) -> Viewport {
     let viewport = metrics
         .get("cssVisualViewport")
@@ -558,6 +588,7 @@ pub(crate) fn compose_accessibility_tree(
     apply_page_occlusion(&mut nodes, dom, layout);
     remove_redundant_static_text(&mut nodes);
     SemanticDocument {
+        title: None,
         nodes,
         css_hidden_dom_count: dom.css_hidden_count,
         unprovable_frame_count: 0,
@@ -580,8 +611,9 @@ fn apply_page_occlusion(nodes: &mut [SemanticNode], dom: &DomIndex, layout: &Lay
             continue;
         };
         let covered = layout.nodes.iter().any(|(&backend, overlay)| {
+            // Most layout nodes cannot cover this control. Reject them before
+            // walking either DOM ancestry chain on large documents.
             if backend == target_backend
-                || dom.shares_dom_branch(backend, target_backend)
                 || overlay
                     .paint_order
                     .is_none_or(|paint| paint <= target_paint)
@@ -600,6 +632,7 @@ fn apply_page_occlusion(nodes: &mut [SemanticNode], dom: &DomIndex, layout: &Lay
             overlay
                 .bounds
                 .is_some_and(|bounds| bounds.has_area() && bounds.covers(target_bounds))
+                && !dom.shares_dom_branch(backend, target_backend)
         });
         if covered {
             node.visibility = BrowserVisibility::PageOccluded;
@@ -1160,6 +1193,62 @@ mod tests {
     use super::*;
 
     #[test]
+    fn document_title_requires_matching_root_metadata() {
+        let root =
+            json!({"backendNodeId": 7, "documentURL": "https://fixture.test/", "frameId": "MAIN"});
+        let snapshot = json!({
+            "strings": ["https://fixture.test/", "MAIN", "Current title", "CHILD"],
+            "documents": [{"documentURL": 0, "frameId": 1, "title": 2,
+                "nodes": {"backendNodeId": [7]}}]
+        });
+        assert_eq!(
+            snapshot_document_title(&snapshot, &root).as_deref(),
+            Some("Current title")
+        );
+        for (field, value) in [
+            ("title", json!(-1)),
+            ("title", json!(999)),
+            ("title", json!("unindexed title")),
+            ("documentURL", json!(3)),
+            ("frameId", json!(3)),
+            ("nodes", json!({"backendNodeId": [8]})),
+        ] {
+            let mut changed = snapshot.clone();
+            changed["documents"][0][field] = value;
+            assert_eq!(snapshot_document_title(&changed, &root), None, "{field}");
+        }
+        let mut missing = snapshot.clone();
+        missing["documents"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("title");
+        assert_eq!(snapshot_document_title(&missing, &root), None);
+        let mut empty = snapshot;
+        empty["strings"][2] = json!("");
+        assert_eq!(snapshot_document_title(&empty, &root).as_deref(), Some(""));
+    }
+
+    #[test]
+    fn document_title_does_not_select_an_embedded_document() {
+        let root =
+            json!({"backendNodeId": 7, "documentURL": "https://fixture.test/", "frameId": "MAIN"});
+        let snapshot = json!({
+            "strings": ["https://fixture.test/", "MAIN", "Main title", "CHILD", "Child title"],
+            "documents": [
+                {"documentURL": 0, "frameId": 1, "title": 2, "nodes": {"backendNodeId": [7]}},
+                {"documentURL": 0, "frameId": 3, "title": 4, "nodes": {"backendNodeId": [8]}}
+            ]
+        });
+        assert_eq!(
+            snapshot_document_title(&snapshot, &root).as_deref(),
+            Some("Main title")
+        );
+        let mut reordered = snapshot;
+        reordered["documents"].as_array_mut().unwrap().reverse();
+        assert_eq!(snapshot_document_title(&reordered, &root), None);
+    }
+
+    #[test]
     fn file_inputs_expose_upload_instead_of_text_typing() {
         let dom = DomMeta {
             tag: "input".into(),
@@ -1359,6 +1448,55 @@ mod tests {
         let page = document.page(0, 1, None, None);
         assert_eq!(page.selected[0].name.as_deref(), Some("Reply"));
         assert_eq!(page.next_offset, Some(1));
+    }
+
+    #[test]
+    fn large_static_layout_does_not_occlude_visible_controls() {
+        let mut dom = DomIndex::default();
+        let mut layout = LayoutIndex::default();
+        for backend in 1..=4096 {
+            dom.nodes.insert(
+                backend,
+                DomMeta {
+                    parent_backend_node_id: (backend % 32 != 1).then_some(backend - 1),
+                    ..Default::default()
+                },
+            );
+            layout.nodes.insert(
+                backend,
+                LayoutMeta {
+                    bounds: Some(Rect {
+                        x: 0.0,
+                        y: 0.0,
+                        width: 800.0,
+                        height: 600.0,
+                    }),
+                    paint_order: Some(if backend <= 64 { 1 } else { 2 }),
+                    styles: HashMap::from([("position".to_owned(), "static".to_owned())]),
+                    ..Default::default()
+                },
+            );
+        }
+        let mut nodes = (1..=64)
+            .map(|backend| SemanticNode {
+                ax_id: backend.to_string(),
+                parent_ax_id: None,
+                child_ax_ids: Vec::new(),
+                backend_node_id: Some(backend),
+                role: "button".to_owned(),
+                name: Some(format!("Control {backend}")),
+                value: None,
+                states: BTreeMap::new(),
+                frame: frame(),
+                visibility: BrowserVisibility::InViewport,
+                actions: vec![BrowserActionKind::Click],
+                document_order: backend as usize,
+            })
+            .collect::<Vec<_>>();
+        apply_page_occlusion(&mut nodes, &dom, &layout);
+        assert!(nodes
+            .iter()
+            .all(|node| node.visibility == BrowserVisibility::InViewport));
     }
 
     #[test]

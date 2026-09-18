@@ -174,6 +174,27 @@ def test_macos_review_candidate_uses_ephemeral_certificate_signing() -> None:
         assert contract in script
     assert "Developer ID" not in script
 
+    snapshot = script.index(
+        'previous_keychains_output="$(security list-keychains -d user)"'
+    )
+    create = script.index('security create-keychain -p "$keychain_password"')
+    unlock = script.index('security unlock-keychain -p "$keychain_password"')
+    prepend = script.index(
+        'security list-keychains -d user -s "$keychain_path" "${previous_keychains[@]}"',
+        unlock,
+    )
+    identity_import = script.index('security import "$identity_path"')
+    partition_list = script.index("security set-key-partition-list")
+    assert snapshot < create < unlock < prepend < identity_import < partition_list
+    assert script.count('previous_keychains_output="$(security list-keychains -d user)"') == 1
+    assert 'done <<< "$previous_keychains_output"' in script[snapshot:create]
+    assert "search_list_snapshotted=true" in script[snapshot:create]
+    assert 'if [[ "$search_list_snapshotted" == true ]]; then' in script
+    assert (
+        'security list-keychains -d user -s "${previous_keychains[@]}" '
+        ">/dev/null 2>&1 || true"
+    ) in script
+
 
 def test_review_measurements_are_extracted_from_the_sealed_archive() -> None:
     text = workflow_text()

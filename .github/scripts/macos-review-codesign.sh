@@ -25,14 +25,14 @@ identity_path="$work_root/review-signing.p12"
 keychain_password="$(openssl rand -hex 32)"
 identity_password="$(openssl rand -hex 32)"
 keychain_created=false
-search_list_updated=false
+search_list_snapshotted=false
 previous_keychains=()
 previous_keychain_count=0
 
 cleanup() {
   local status=$?
   trap - EXIT INT TERM
-  if [[ "$search_list_updated" == true ]]; then
+  if [[ "$search_list_snapshotted" == true ]]; then
     if (( previous_keychain_count > 0 )); then
       security list-keychains -d user -s "${previous_keychains[@]}" >/dev/null 2>&1 || true
     else
@@ -51,6 +51,18 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+previous_keychains_output="$(security list-keychains -d user)"
+while IFS= read -r listed_keychain; do
+  listed_keychain="${listed_keychain#*\"}"
+  listed_keychain="${listed_keychain%\"*}"
+  if [[ -n "$listed_keychain" ]]; then
+    previous_keychains+=("$listed_keychain")
+    previous_keychain_count=$((previous_keychain_count + 1))
+  fi
+done <<< "$previous_keychains_output"
+unset previous_keychains_output
+search_list_snapshotted=true
+
 openssl req -new -newkey rsa:2048 -nodes -x509 -sha256 -days 2 \
   -subj "/CN=Cua Review Candidate ${GITHUB_RUN_ID:-local}/O=Cua Review Only" \
   -addext "basicConstraints=critical,CA:FALSE" \
@@ -66,24 +78,15 @@ security create-keychain -p "$keychain_password" "$keychain_path"
 keychain_created=true
 security set-keychain-settings -lut 900 "$keychain_path"
 security unlock-keychain -p "$keychain_password" "$keychain_path"
-security import "$identity_path" -k "$keychain_path" -P "$identity_password" \
-  -T /usr/bin/codesign >/dev/null
-security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
-  -k "$keychain_password" "$keychain_path" >/dev/null
-while IFS= read -r listed_keychain; do
-  listed_keychain="${listed_keychain#*\"}"
-  listed_keychain="${listed_keychain%\"*}"
-  if [[ -n "$listed_keychain" ]]; then
-    previous_keychains+=("$listed_keychain")
-    previous_keychain_count=$((previous_keychain_count + 1))
-  fi
-done < <(security list-keychains -d user)
 if (( previous_keychain_count > 0 )); then
   security list-keychains -d user -s "$keychain_path" "${previous_keychains[@]}"
 else
   security list-keychains -d user -s "$keychain_path"
 fi
-search_list_updated=true
+security import "$identity_path" -k "$keychain_path" -P "$identity_password" \
+  -T /usr/bin/codesign >/dev/null
+security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
+  -k "$keychain_password" "$keychain_path" >/dev/null
 
 identities="$({ security find-identity -p codesigning "$keychain_path" || true; } |
   sed -nE 's/^[[:space:]]*[0-9]+\) ([0-9A-F]{40}) .*/\1/p')"

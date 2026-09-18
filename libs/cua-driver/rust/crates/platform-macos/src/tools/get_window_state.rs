@@ -353,6 +353,7 @@ impl Tool for GetWindowStateTool {
         // downscale source width, the WindowServer bounds it was validated
         // against, and the raw capture's backing scale.
         let mut screenshot_frame_error = None;
+        let mut screenshot_resize_scale = None;
         let screenshot = if should_capture {
             let out_file = screenshot_out_file.clone();
             let res = tokio::task::spawn_blocking(move || -> Result<
@@ -428,23 +429,9 @@ impl Tool for GetWindowStateTool {
             }).await;
             match res {
                 Ok(Ok((b64, file_path, w, h, orig_w, bounds, scale))) => {
-                    // Record resize ratio so ClickTool can scale coordinates back
-                    // up. Keyed per window: two windows of one pid can carry
-                    // different ratios (only the large one downscales), and a
-                    // pid-only key leaked one window's ratio into the other's
-                    // pixel clicks.
                     if !observation_only {
-                        if let Some(ow) = orig_w {
-                            if w > 0 {
-                                self.state.resize_registry.set_ratio(
-                                    pid,
-                                    window_id,
-                                    ow as f64 / w as f64,
-                                );
-                            }
-                        } else {
-                            self.state.resize_registry.clear_ratio(pid, window_id);
-                        }
+                        screenshot_resize_scale =
+                            Some(orig_w.map_or(1.0, |ow| ow as f64 / w as f64));
                     }
                     Some((b64, file_path, w, h, bounds, scale))
                 }
@@ -452,9 +439,6 @@ impl Tool for GetWindowStateTool {
                     tracing::warn!(
                         "Screenshot frame could not be verified for window {window_id}: {e:?}"
                     );
-                    if !observation_only {
-                        self.state.resize_registry.clear_ratio(pid, window_id);
-                    }
                     screenshot_frame_error = Some(e);
                     None
                 }
@@ -521,13 +505,27 @@ impl Tool for GetWindowStateTool {
             .map(|r| r.tree_markdown.clone())
             .unwrap_or_default();
 
-        let snapshot_id = prepared_snapshot
+        let snapshot_payload = prepared_snapshot.or_else(|| {
+            screenshot_resize_scale
+                .is_some()
+                .then(|| crate::ax::cache::CachedSnapshot::from_nodes(&[]))
+        });
+        let snapshot_id = snapshot_payload
             .filter(|_| scope_matched && !observation_only)
-            .map(|payload| {
-                self.state
-                    .element_cache
-                    .publish(pid, u64::from(window_id), payload)
+            .and_then(|payload| {
+                self.state.element_cache.publish_for_session(
+                    pid,
+                    u64::from(window_id),
+                    payload,
+                    session_id.as_deref(),
+                    screenshot_resize_scale,
+                )
             });
+        if let Some(snapshot_id) = snapshot_id {
+            self.state
+                .zoom_registry
+                .retire_replaced(pid, u64::from(window_id), snapshot_id);
+        }
 
         // Build the structured `elements` array — one entry per actionable
         // node, matching the order (and indices) of the markdown rendering.
@@ -710,7 +708,7 @@ impl Tool for GetWindowStateTool {
 /// remedy-in-the-refusal shape the rest of the driver uses.
 ///
 /// The owner pid is REPORTED, not followed: `element_cache`, the element-token
-/// registry and `ResizeRegistry` are all keyed on the caller-supplied pid, so
+/// registry and snapshot-owned screenshot transform are keyed on the caller-supplied pid, so
 /// walking under `owner_pid` while echoing the requested pid would hand back
 /// indices the caller replays against the wrong key. One retry with the named
 /// pid is correct and cheap.

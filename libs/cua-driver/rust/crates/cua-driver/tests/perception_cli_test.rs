@@ -168,6 +168,13 @@ fn main() {
     let output = Command::new(rustc)
         .arg(&source)
         .arg("--edition=2021")
+        // Linux containment cannot expose a host-specific dynamic loader to an installed worker.
+        .args(
+            cfg!(target_os = "linux")
+                .then_some(["-C", "target-feature=+crt-static"])
+                .into_iter()
+                .flatten(),
+        )
         .arg("-o")
         .arg(&worker)
         .output()

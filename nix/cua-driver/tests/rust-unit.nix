@@ -48,6 +48,7 @@ pkgs.rustPlatform.buildRustPackage {
     export CUA_TEST_PYTHON_READ_ROOTS="$(paste -sd: ${pythonClosure}/store-paths)"
   '';
   buildInputs = with pkgs; [
+    glibc.static
     libx11
     libxi
     libxtst

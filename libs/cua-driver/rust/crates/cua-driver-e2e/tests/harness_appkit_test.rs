@@ -1277,6 +1277,112 @@ fn harness_appkit_text_input() {
 
 #[test]
 #[ignore]
+fn harness_appkit_a_content_bearing_group_stays_addressable() {
+    run_background_case(
+        "group_with_help",
+        DriverRoute::MacosAxAction,
+        |pid, wid, driver| {
+            let before = snapshot_elements(driver, pid, wid);
+            assert!(
+                before
+                    .tree_text()
+                    .contains("help=\"To mark the row as done, press Control-Option-Space.\""),
+                "the group's own help never reached the tree:\n{}",
+                before.tree_text()
+            );
+            let pressed = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "element_token": element_token_by_id(&before, "grp-row-help"),
+                    "action": "press"
+                }),
+            );
+            assert!(
+                !pressed.is_error(),
+                "group press failed: {}",
+                pressed.text()
+            );
+            std::thread::sleep(Duration::from_millis(300));
+            let after = snapshot_elements(driver, pid, wid);
+            assert!(
+                after.tree_text().contains("group_pressed=1"),
+                "the collapsed group was not addressable:\n{}",
+                after.tree_text()
+            );
+        },
+    );
+}
+
+#[test]
+#[ignore]
+fn harness_appkit_custom_actions_are_published_and_dispatch_by_name_or_envelope() {
+    run_background_case(
+        "group_custom_action",
+        DriverRoute::MacosAxAction,
+        |pid, wid, driver| {
+            for use_raw in [false, true] {
+                let before = driver.call(
+                    "get_window_state",
+                    serde_json::json!({
+                        "pid": pid, "window_id": wid,
+                        "include_screenshot": false, "tree_format": "both"
+                    }),
+                );
+                assert!(!before.is_error(), "snapshot: {}", before.text());
+                let data = before.structured();
+                let element = data["elements"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|element| {
+                        element["custom_actions"].as_array().is_some_and(|actions| {
+                            actions.iter().any(|action| action["name"] == "Pin Row")
+                        })
+                    })
+                    .expect("custom action missing from structured snapshot");
+                let action = element["custom_actions"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|action| action["name"] == "Pin Row")
+                    .unwrap();
+                assert!(action["raw"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("Name:Pin Row\n"));
+                assert!(before.tree_text().contains("custom_actions=[\"Pin Row\"]"));
+                let clicked = driver.call(
+                    "click",
+                    serde_json::json!({
+                        "pid": pid, "window_id": wid,
+                        "element_token": element["element_token"],
+                        "action": action[if use_raw { "raw" } else { "name" }]
+                    }),
+                );
+                assert!(!clicked.is_error(), "custom action: {}", clicked.text());
+                let after = snapshot_elements(driver, pid, wid);
+                assert!(
+                    after.tree_text().contains(if use_raw {
+                        "group_custom=2"
+                    } else {
+                        "group_custom=1"
+                    }),
+                    "{}",
+                    after.tree_text()
+                );
+                assert!(
+                    !after.tree_text().contains("group_pressed=1"),
+                    "custom action pressed instead"
+                );
+            }
+        },
+    );
+}
+
+#[test]
+#[ignore]
 fn harness_appkit_element_foreground_press_key_commits_edit() {
     run_case(
         native_foreground_case(

@@ -281,6 +281,8 @@ pub struct WindowElement {
     pub in_web_content: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actions: Option<Vec<String>>,
+    /// macOS only: application-defined actions, with a readable name and the
+    /// exact action envelope accepted by `click`. Windows and Linux omit this.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_actions: Option<Vec<ElementCustomAction>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

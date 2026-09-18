@@ -214,6 +214,7 @@ struct InstallSource {
     archive: PathBuf,
     trust: TrustClass,
     catalog: Option<CatalogPayload>,
+    signed_catalog: Option<SignedCatalog>,
     trust_update: Option<PublisherTrust>,
 }
 
@@ -886,6 +887,7 @@ fn resolve_install_source(
             archive,
             trust: TrustClass::DeveloperUnsignedLocal,
             catalog: None,
+            signed_catalog: None,
             trust_update: None,
         });
     }
@@ -912,7 +914,8 @@ fn resolve_install_source(
     Ok(InstallSource {
         archive,
         trust: TrustClass::PublisherVerified,
-        catalog: Some(signed.payload),
+        catalog: Some(signed.payload.clone()),
+        signed_catalog: Some(signed),
         trust_update: Some(trust_update),
     })
 }
@@ -923,6 +926,7 @@ fn verify_catalog_at(
     trust: &PublisherTrust,
     now: u64,
 ) -> Result<PublisherTrust> {
+    validate_publisher_trust(trust)?;
     let payload = &signed.payload;
     if signed.signature_algorithm != "ed25519" {
         bail!("unsupported catalog signature algorithm");
@@ -1015,7 +1019,8 @@ fn verify_catalog_at(
         if next.key_id == updated.current_key.key_id {
             bail!("next publisher key must differ from the current key");
         }
-        if next.valid_from_unix >= next.valid_until_unix
+        if next.valid_from_unix <= updated.current_key.valid_from_unix
+            || next.valid_from_unix >= next.valid_until_unix
             || next.valid_from_unix >= updated.current_key.valid_until_unix
         {
             bail!("next publisher key has an invalid rotation window");
@@ -1047,6 +1052,22 @@ fn initial_publisher_trust() -> PublisherTrust {
     }
 }
 
+fn load_publisher_trust_at(root: &Dir) -> Result<PublisherTrust> {
+    let active = private_regular_file_or_missing_at(root, TRUST_NAME)?;
+    let backup = private_regular_file_or_missing_at(root, TRUST_BACKUP_NAME)?;
+    if !active && backup {
+        bail!("publisher trust update is interrupted; run an extension mutation to recover it");
+    }
+    if !active {
+        return Ok(initial_publisher_trust());
+    }
+    let trust: PublisherTrust =
+        serde_json::from_slice(&read_small_file_at(root, Path::new(TRUST_NAME))?)
+            .context("parse publisher trust state")?;
+    validate_publisher_trust(&trust)?;
+    Ok(trust)
+}
+
 fn validate_publisher_trust(trust: &PublisherTrust) -> Result<()> {
     if trust.schema_version != 1
         || trust.publisher_id != VERIFIED_PUBLISHER_ID
@@ -1058,6 +1079,7 @@ fn validate_publisher_trust(trust: &PublisherTrust) -> Result<()> {
     if let Some(pending) = &trust.pending_key {
         validate_publisher_key(pending)?;
         if pending.key_id == trust.current_key.key_id
+            || pending.valid_from_unix <= trust.current_key.valid_from_unix
             || pending.valid_from_unix >= trust.current_key.valid_until_unix
         {
             bail!("publisher trust rotation state is invalid");
@@ -1067,7 +1089,14 @@ fn validate_publisher_trust(trust: &PublisherTrust) -> Result<()> {
 }
 
 fn validate_publisher_key(key: &PublisherKey) -> Result<()> {
-    if key.key_id.trim().is_empty() || key.valid_from_unix >= key.valid_until_unix {
+    if key.key_id.is_empty()
+        || key.key_id.len() > 128
+        || !key
+            .key_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+        || key.valid_from_unix >= key.valid_until_unix
+    {
         bail!("publisher key metadata is invalid");
     }
     decode_publisher_key(key).map(|_| ())
@@ -1269,11 +1298,7 @@ impl ExtensionStore {
         if !active {
             return Ok(initial_publisher_trust());
         }
-        let trust: PublisherTrust =
-            serde_json::from_slice(&read_small_file_at(&root, Path::new(TRUST_NAME))?)
-                .context("parse publisher trust state")?;
-        validate_publisher_trust(&trust)?;
-        Ok(trust)
+        load_publisher_trust_at(&root)
     }
 
     fn recover_publisher_trust_locked(&self, root: &Dir) -> Result<()> {
@@ -1368,7 +1393,7 @@ impl ExtensionStore {
         if Some(candidate.highest_catalog_version) != record.catalog_version {
             bail!("installed publisher trust does not match its catalog version");
         }
-        let current = self.load_publisher_trust()?;
+        let current = load_publisher_trust_at(root)?;
         if candidate.highest_catalog_version > current.highest_catalog_version {
             self.commit_publisher_trust_locked(root, &candidate)?;
         } else if candidate.highest_catalog_version == current.highest_catalog_version
@@ -1429,6 +1454,14 @@ impl ExtensionStore {
         self.recover_publisher_trust_locked(&lock.root)?;
         self.recover_activation_locked(&lock.root, entry.id)?;
         self.recover_publisher_trust_from_active_locked(&lock.root, entry.id)?;
+        if let Some(signed) = &source.signed_catalog {
+            let current_trust = load_publisher_trust_at(&lock.root)?;
+            let verified = verify_catalog_at(entry, signed, &current_trust, unix_now()?)
+                .context("signed catalog changed or became stale before mutation")?;
+            if source.trust_update.as_ref() != Some(&verified) {
+                bail!("signed catalog trust decision changed before mutation; inspect it again");
+            }
+        }
         let active = self.active_pointer_locked(&lock.root, entry.id)?;
         if is_update && active.is_none() {
             bail!("{} is not installed; use extension install", entry.id);
@@ -1563,6 +1596,7 @@ impl ExtensionStore {
                 archive: archive.to_owned(),
                 trust: TrustClass::DeveloperUnsignedLocal,
                 catalog: None,
+                signed_catalog: None,
                 trust_update: None,
             },
             is_update,
@@ -1812,20 +1846,24 @@ impl ExtensionStore {
             self.validate_pointer_target_locked(entry.id, &extension, ACTIVE_NAME)?;
             validate_version_segment(&pointer.version)?;
         }
-        if let Ok(versions) = extension.open_dir_nofollow("versions") {
-            for child in versions.entries()? {
-                let child = child?;
-                if !child.file_type()?.is_dir() {
-                    bail!("refusing removal because versions contains non-directory state");
+        match extension.open_dir_nofollow("versions") {
+            Ok(versions) => {
+                for child in versions.entries()? {
+                    let child = child?;
+                    if !child.file_type()?.is_dir() {
+                        bail!("refusing removal because versions contains non-directory state");
+                    }
+                    let version_name = child.file_name();
+                    let version_text = version_name
+                        .to_str()
+                        .ok_or_else(|| anyhow!("installed version name is not UTF-8"))?;
+                    validate_version_segment(version_text)?;
+                    let version = versions.open_dir_nofollow(&version_name)?;
+                    verify_installed_version_at(&version, entry, None)?;
                 }
-                let version_name = child.file_name();
-                let version_text = version_name
-                    .to_str()
-                    .ok_or_else(|| anyhow!("installed version name is not UTF-8"))?;
-                validate_version_segment(version_text)?;
-                let version = versions.open_dir_nofollow(&version_name)?;
-                verify_installed_version_at(&version, entry, None)?;
             }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error).context("open owned versions directory for removal"),
         }
         drop(extension);
         remove_cap_subdirectory(&lock.root, std::ffi::OsStr::new(entry.id))
@@ -2308,6 +2346,20 @@ fn verify_install_record_at(root: &Dir, id: &str, version: &str) -> Result<()> {
 }
 
 fn run_extension_hook(root: &Path, manifest: &ExtensionManifest, self_test: bool) -> Result<()> {
+    run_extension_hook_with_timeout(
+        root,
+        manifest,
+        self_test,
+        std::time::Duration::from_secs(10),
+    )
+}
+
+fn run_extension_hook_with_timeout(
+    root: &Path,
+    manifest: &ExtensionManifest,
+    self_test: bool,
+    timeout: std::time::Duration,
+) -> Result<()> {
     let args = if self_test {
         &manifest.self_test_args
     } else {
@@ -2329,23 +2381,36 @@ fn run_extension_hook(root: &Path, manifest: &ExtensionManifest, self_test: bool
     if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
         bail!("extension hook entrypoint is not a regular file");
     }
-    let mut child = std::process::Command::new(entrypoint)
+    let mut command = std::process::Command::new(entrypoint);
+    command
         .args(args)
         .env_clear()
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .context("run extension health hook")?;
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        .stderr(std::process::Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt as _;
+        command.process_group(0);
+    }
+    let mut child = command.spawn().context("run extension health hook")?;
+    #[cfg(windows)]
+    let mut hook_job = Some(windows_assign_kill_on_close_job(&child)?);
+    let deadline = std::time::Instant::now() + timeout;
     let status = loop {
         if let Some(status) = child.try_wait()? {
             break status;
         }
         if std::time::Instant::now() >= deadline {
+            #[cfg(unix)]
+            unsafe {
+                libc::kill(-(child.id() as i32), libc::SIGKILL);
+            }
+            #[cfg(windows)]
+            drop(hook_job.take());
             let _ = child.kill();
             let _ = child.wait();
-            bail!("extension hook exceeded the 10 second execution limit");
+            bail!("extension hook exceeded its execution limit");
         }
         std::thread::sleep(std::time::Duration::from_millis(25));
     };
@@ -2359,12 +2424,113 @@ fn run_extension_hook(root: &Path, manifest: &ExtensionManifest, self_test: bool
     Ok(())
 }
 
+#[cfg(windows)]
+struct WindowsJob(*mut std::ffi::c_void);
+
+#[cfg(windows)]
+impl Drop for WindowsJob {
+    fn drop(&mut self) {
+        unsafe {
+            windows_close_handle(self.0);
+        }
+    }
+}
+
+#[cfg(windows)]
+unsafe fn windows_close_handle(handle: *mut std::ffi::c_void) {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
+    }
+    if !handle.is_null() {
+        let _ = CloseHandle(handle);
+    }
+}
+
+#[cfg(windows)]
+fn windows_assign_kill_on_close_job(child: &std::process::Child) -> Result<WindowsJob> {
+    #[repr(C)]
+    #[derive(Default)]
+    struct BasicLimitInformation {
+        per_process_user_time_limit: i64,
+        per_job_user_time_limit: i64,
+        limit_flags: u32,
+        minimum_working_set_size: usize,
+        maximum_working_set_size: usize,
+        active_process_limit: u32,
+        affinity: usize,
+        priority_class: u32,
+        scheduling_class: u32,
+    }
+    #[repr(C)]
+    #[derive(Default)]
+    struct IoCounters {
+        read_operation_count: u64,
+        write_operation_count: u64,
+        other_operation_count: u64,
+        read_transfer_count: u64,
+        write_transfer_count: u64,
+        other_transfer_count: u64,
+    }
+    #[repr(C)]
+    #[derive(Default)]
+    struct ExtendedLimitInformation {
+        basic_limit_information: BasicLimitInformation,
+        io_info: IoCounters,
+        process_memory_limit: usize,
+        job_memory_limit: usize,
+        peak_process_memory_used: usize,
+        peak_job_memory_used: usize,
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn CreateJobObjectW(
+            attributes: *mut std::ffi::c_void,
+            name: *const u16,
+        ) -> *mut std::ffi::c_void;
+        fn SetInformationJobObject(
+            job: *mut std::ffi::c_void,
+            class: i32,
+            information: *const std::ffi::c_void,
+            length: u32,
+        ) -> i32;
+        fn AssignProcessToJobObject(
+            job: *mut std::ffi::c_void,
+            process: *mut std::ffi::c_void,
+        ) -> i32;
+    }
+    use std::os::windows::io::AsRawHandle as _;
+
+    unsafe {
+        let job = WindowsJob(CreateJobObjectW(std::ptr::null_mut(), std::ptr::null()));
+        if job.0.is_null() {
+            bail!("create Windows containment job for extension hook");
+        }
+        let mut limits = ExtendedLimitInformation::default();
+        limits.basic_limit_information.limit_flags = 0x0000_2000;
+        if SetInformationJobObject(
+            job.0,
+            9,
+            std::ptr::addr_of!(limits).cast(),
+            std::mem::size_of::<ExtendedLimitInformation>() as u32,
+        ) == 0
+        {
+            bail!("configure Windows containment job for extension hook");
+        }
+        if AssignProcessToJobObject(job.0, child.as_raw_handle().cast()) == 0 {
+            bail!("assign extension hook to Windows containment job");
+        }
+        Ok(job)
+    }
+}
+
 fn stream_archive_file_at<R: Read>(
     root: &Dir,
     reader: &mut R,
     path: &Path,
     expected: u64,
 ) -> Result<String> {
+    let (parent, name) = open_cap_parent_nofollow(root, path)?;
     let mut options = CapOpenOptions::new();
     options
         .write(true)
@@ -2375,7 +2541,7 @@ fn stream_archive_file_at<R: Read>(
         use cap_std::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    let mut file = root.open_with(path, &options)?;
+    let mut file = parent.open_with(&name, &options)?;
     #[cfg(windows)]
     windows_secure_handle(&file)?;
     let mut hasher = Sha256::new();
@@ -2403,9 +2569,17 @@ fn stream_archive_file_at<R: Read>(
 }
 
 fn hash_file_at(directory: &Dir, path: &Path, limit: u64) -> Result<String> {
+    let (parent, name) = open_cap_parent_nofollow(directory, path)?;
     let mut options = CapOpenOptions::new();
     options.read(true).follow(FollowSymlinks::No);
-    let mut file = directory.open_with(path, &options)?;
+    let mut file = parent.open_with(&name, &options)?;
+    if !file.metadata()?.is_file() {
+        bail!(
+            "extension path is not an owned regular file: {}",
+            path.display()
+        );
+    }
+    verify_private_cap_file_permissions(&file, &path.to_string_lossy())?;
     let mut hasher = Sha256::new();
     let mut total = 0_u64;
     let mut buffer = [0_u8; 64 * 1024];
@@ -2426,9 +2600,17 @@ fn hash_file_at(directory: &Dir, path: &Path, limit: u64) -> Result<String> {
 }
 
 fn read_small_file_at(directory: &Dir, path: &Path) -> Result<Vec<u8>> {
+    let (parent, name) = open_cap_parent_nofollow(directory, path)?;
     let mut options = CapOpenOptions::new();
     options.read(true).follow(FollowSymlinks::No);
-    let file = directory.open_with(path, &options)?;
+    let file = parent.open_with(&name, &options)?;
+    if !file.metadata()?.is_file() {
+        bail!(
+            "extension path is not an owned regular file: {}",
+            path.display()
+        );
+    }
+    verify_private_cap_file_permissions(&file, &path.to_string_lossy())?;
     let mut bytes = Vec::new();
     file.take(MAX_IN_MEMORY_BYTES + 1).read_to_end(&mut bytes)?;
     if bytes.len() as u64 > MAX_IN_MEMORY_BYTES {
@@ -2455,6 +2637,24 @@ fn create_private_cap_parent_directories(root: &Dir, relative: &Path) -> Result<
         }
     }
     Ok(())
+}
+
+fn open_cap_parent_nofollow(root: &Dir, relative: &Path) -> Result<(Dir, std::ffi::OsString)> {
+    let name = relative
+        .file_name()
+        .ok_or_else(|| anyhow!("relative extension path has no final component"))?
+        .to_owned();
+    let mut current = root.try_clone()?;
+    if let Some(parent) = relative.parent() {
+        for component in parent.components() {
+            let Component::Normal(segment) = component else {
+                bail!("extension path contains an unsafe parent");
+            };
+            current = current.open_dir_nofollow(segment)?;
+            verify_cap_directory_permissions_portable(&current)?;
+        }
+    }
+    Ok((current, name))
 }
 
 fn create_private_subdirectory(parent: &Dir, name: &std::ffi::OsStr) -> Result<()> {
@@ -3954,6 +4154,56 @@ mod tests {
             .contains("must be executable"));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn timed_out_hook_terminates_descendants() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("hook");
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let script = root.join("worker");
+        fs::write(
+            &script,
+            b"#!/bin/sh\n(/bin/sleep 1; printf escaped > \"$1\") &\n/bin/sleep 30\n",
+        )
+        .unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
+        let sentinel = temp.path().join("escaped");
+        let manifest = ExtensionManifest {
+            schema_version: MANIFEST_SCHEMA_VERSION,
+            id: "cua-perception".to_owned(),
+            version: "1.0.0".to_owned(),
+            driver_version: format!("={}", env!("CARGO_PKG_VERSION")),
+            protocol_version: 1,
+            target: current_target().unwrap(),
+            entrypoint: "worker".to_owned(),
+            files: Vec::new(),
+            models: Vec::new(),
+            components: Vec::new(),
+            license: "Apache-2.0".to_owned(),
+            source: "test".to_owned(),
+            corresponding_source_uri: "test".to_owned(),
+            corresponding_source_revision: "test".to_owned(),
+            provenance: "test".to_owned(),
+            health_args: vec![sentinel.to_string_lossy().into_owned()],
+            self_test_args: Vec::new(),
+        };
+
+        assert!(run_extension_hook_with_timeout(
+            &root,
+            &manifest,
+            false,
+            std::time::Duration::from_millis(150),
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("execution limit"));
+        std::thread::sleep(std::time::Duration::from_millis(1_100));
+        assert!(!sentinel.exists());
+    }
+
     #[test]
     fn rejects_unknown_or_unsupported_target_abis() {
         assert!(target_triple("linux", "x86_64", "unknown").is_err());
@@ -4069,6 +4319,18 @@ mod tests {
         let pending = verify_catalog_at(entry, &rotation, &trust, 150).unwrap();
         assert_eq!(pending.pending_key.as_ref().unwrap().key_id, "next");
 
+        let mut retrograde_payload = test_catalog_payload("current", 2);
+        retrograde_payload.next_key = Some(test_publisher_key("retrograde", &next, 100, 900));
+        assert!(verify_catalog_at(
+            entry,
+            &sign_test_catalog(&current, retrograde_payload),
+            &trust,
+            150,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("invalid rotation window"));
+
         let next_catalog = sign_test_catalog(&next, test_catalog_payload("next", 3));
         assert!(verify_catalog_at(entry, &next_catalog, &pending, 199)
             .unwrap_err()
@@ -4100,6 +4362,51 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("expired"));
+    }
+
+    #[test]
+    fn catalog_verification_rejects_invalid_trust_and_stale_two_phase_decisions() {
+        let pair = ring::signature::Ed25519KeyPair::from_seed_unchecked(&[11; 32]).unwrap();
+        let key = test_publisher_key("current", &pair, 1, u64::MAX);
+        let entry = registry_entry("cua-perception").unwrap();
+        let mut payload = test_catalog_payload("current", 1);
+        payload.expires_unix = u64::MAX;
+        let signed = sign_test_catalog(&pair, payload.clone());
+        let trust = PublisherTrust {
+            schema_version: 1,
+            publisher_id: VERIFIED_PUBLISHER_ID.to_owned(),
+            generation: 1,
+            highest_catalog_version: 0,
+            current_key: key,
+            pending_key: None,
+        };
+        let mut invalid_trust = trust.clone();
+        invalid_trust.generation = 0;
+        assert!(verify_catalog_at(entry, &signed, &invalid_trust, 100)
+            .unwrap_err()
+            .to_string()
+            .contains("trust state is invalid"));
+
+        let temp = TempDir::new().unwrap();
+        let store = ExtensionStore::new(temp.path().join("extensions"));
+        let root = ensure_private_directory_path(&store.root).unwrap();
+        store.commit_publisher_trust_locked(&root, &trust).unwrap();
+        let decision = verify_catalog_at(entry, &signed, &trust, 100).unwrap();
+        let mut advanced = trust.clone();
+        advanced.highest_catalog_version = 2;
+        store
+            .commit_publisher_trust_locked(&root, &advanced)
+            .unwrap();
+        let source = InstallSource {
+            archive: temp.path().join("must-not-be-opened.tar.gz"),
+            trust: TrustClass::PublisherVerified,
+            catalog: Some(payload),
+            signed_catalog: Some(signed),
+            trust_update: Some(decision),
+        };
+        let error = store.install_source(entry, &source, false).unwrap_err();
+        assert!(format!("{error:#}").contains("anti-rollback"));
+        assert!(!store.extension_dir(entry.id).exists());
     }
 
     #[test]
@@ -4210,5 +4517,33 @@ mod tests {
             fs::read(store.extension_dir(entry.id).join("foreign")).unwrap(),
             b"keep"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn removal_rejects_a_swapped_versions_symlink_without_touching_its_target() {
+        use std::os::unix::fs::symlink;
+
+        let temp = TempDir::new().unwrap();
+        let store = ExtensionStore::new(temp.path().join("extensions"));
+        let entry = registry_entry("cua-perception").unwrap();
+        let archive = fixture_archive(
+            temp.path(),
+            "1.0.0",
+            &current_target().unwrap(),
+            1,
+            b"worker",
+        );
+        store.install_archive(entry, &archive).unwrap();
+        let external = temp.path().join("external");
+        fs::create_dir(&external).unwrap();
+        fs::write(external.join("sentinel"), b"keep").unwrap();
+        let versions = store.versions_dir(entry.id);
+        fs::rename(&versions, temp.path().join("owned-versions")).unwrap();
+        fs::remove_file(store.extension_dir(entry.id).join(ACTIVE_NAME)).unwrap();
+        symlink(&external, &versions).unwrap();
+
+        assert!(store.remove(entry).is_err());
+        assert_eq!(fs::read(external.join("sentinel")).unwrap(), b"keep");
     }
 }

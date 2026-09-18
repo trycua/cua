@@ -98,16 +98,64 @@ fn admit(
     screenshot_x: f64,
     screenshot_y: f64,
 ) -> anyhow::Result<(f64, f64)> {
+    let current_native_action_dimensions = live_action_dimensions(&target)?;
+    admit_with_live_dimensions(
+        service,
+        args,
+        capture_id,
+        target,
+        current_native_action_dimensions,
+        screenshot_x,
+        screenshot_y,
+    )
+}
+
+fn admit_with_live_dimensions(
+    service: &CaptureService,
+    args: &Value,
+    capture_id: &str,
+    target: CaptureTarget,
+    current_native_action_dimensions: NativeActionDimensions,
+    screenshot_x: f64,
+    screenshot_y: f64,
+) -> anyhow::Result<(f64, f64)> {
     let binding = service.binding_from_args(args)?;
     let capture_id = service.parse_capture_id(capture_id)?;
     let admission = service.admit_action(CaptureActionRequest {
         capture_id,
         binding,
         target,
+        current_native_action_dimensions,
         screenshot_x,
         screenshot_y,
     })?;
     Ok((admission.action_x, admission.action_y))
+}
+
+#[cfg(target_os = "linux")]
+fn live_action_dimensions(target: &CaptureTarget) -> anyhow::Result<NativeActionDimensions> {
+    let png = match target {
+        CaptureTarget::Window { pid, window_id } => {
+            let identity_matches = if crate::wayland::is_wayland() {
+                crate::wayland::window_was_listed_for_pid(*pid, *window_id)
+            } else {
+                crate::x11::window_belongs_to_pid(*window_id, *pid)
+            };
+            anyhow::ensure!(
+                identity_matches,
+                "native window identity changed after capture"
+            );
+            crate::wayland::screenshot_dispatch_with_pid(*window_id, *pid)?
+        }
+        CaptureTarget::PrimaryDesktop => crate::capture::screenshot_display_bytes()?,
+    };
+    let (width, height) = crate::capture::png_dimensions_pub(&png)?;
+    Ok(NativeActionDimensions::new(width, height)?)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn live_action_dimensions(_target: &CaptureTarget) -> anyhow::Result<NativeActionDimensions> {
+    anyhow::bail!("live Linux capture validation is unavailable on this platform")
 }
 
 pub fn admit_window_click(
@@ -165,6 +213,44 @@ mod tests {
         serde_json::json!({"_session_id": session})
     }
 
+    fn admit_window(
+        service: &CaptureService,
+        args: &Value,
+        capture_id: &str,
+        pid: u32,
+        window_id: u64,
+        point: (f64, f64),
+        native: (u32, u32),
+    ) -> anyhow::Result<(f64, f64)> {
+        admit_with_live_dimensions(
+            service,
+            args,
+            capture_id,
+            window_target(pid, window_id),
+            NativeActionDimensions::new(native.0, native.1).unwrap(),
+            point.0,
+            point.1,
+        )
+    }
+
+    fn admit_desktop(
+        service: &CaptureService,
+        args: &Value,
+        capture_id: &str,
+        point: (f64, f64),
+        native: (u32, u32),
+    ) -> anyhow::Result<(f64, f64)> {
+        admit_with_live_dimensions(
+            service,
+            args,
+            capture_id,
+            CaptureTarget::PrimaryDesktop,
+            NativeActionDimensions::new(native.0, native.1).unwrap(),
+            point.0,
+            point.1,
+        )
+    }
+
     #[test]
     fn window_publication_digests_the_exact_returned_png() {
         let service = CaptureService::default();
@@ -204,12 +290,12 @@ mod tests {
         )
         .unwrap();
 
-        assert!(admit_window_click(&service, &call_args, &id, 7, 12, 2.0, 3.0).is_err());
+        assert!(admit_window(&service, &call_args, &id, 7, 12, (2.0, 3.0), (20, 20)).is_err());
         assert_eq!(
-            admit_window_click(&service, &call_args, &id, 7, 11, 2.0, 3.0).unwrap(),
+            admit_window(&service, &call_args, &id, 7, 11, (2.0, 3.0), (20, 20)).unwrap(),
             (4.0, 6.0)
         );
-        assert!(admit_window_click(&service, &call_args, &id, 7, 11, 2.0, 3.0).is_err());
+        assert!(admit_window(&service, &call_args, &id, 7, 11, (2.0, 3.0), (20, 20)).is_err());
     }
 
     #[test]
@@ -221,7 +307,7 @@ mod tests {
         let binding = service.binding_from_args(&call_args).unwrap();
         service.retire_session(&binding);
 
-        assert!(admit_desktop_click(&service, &call_args, &id, 1.0, 1.0).is_err());
+        assert!(admit_desktop(&service, &call_args, &id, (1.0, 1.0), (3, 2)).is_err());
     }
 
     #[test]
@@ -239,7 +325,7 @@ mod tests {
         )
         .unwrap();
 
-        let (x, y) = admit_window_click(&service, &call_args, &id, 8, 13, 1.0, 1.0).unwrap();
+        let (x, y) = admit_window(&service, &call_args, &id, 8, 13, (1.0, 1.0), (5, 3)).unwrap();
         assert_eq!(x, 5.0 / 3.0);
         assert_eq!(y, 5.0 / 3.0);
     }
@@ -256,7 +342,7 @@ mod tests {
 
         assert_eq!(capture.png_bytes().as_ref(), normalized.as_slice());
         assert_eq!(
-            admit_desktop_click(&service, &args("desktop"), &id, 2.0, 1.0).unwrap(),
+            admit_desktop(&service, &args("desktop"), &id, (2.0, 1.0), (4, 3)).unwrap(),
             (2.0, 1.0)
         );
     }
@@ -275,5 +361,38 @@ mod tests {
         assert_eq!(resolve_max_image_dimension(1568, None, None), 1568);
         assert_eq!(resolve_max_image_dimension(0, None, None), 0);
         assert_eq!(resolve_max_image_dimension(1568, Some(800), None), 800);
+    }
+
+    #[test]
+    fn live_resize_refuses_before_dispatch_without_consuming_capture() {
+        let service = CaptureService::default();
+        let call_args = args("resize");
+        let id = publish_window(
+            &service,
+            &call_args,
+            &png(4, 3, 0x44),
+            8,
+            13,
+            (4, 3),
+            (8, 6),
+        )
+        .unwrap();
+        let mut dispatches = 0;
+        let refusal = admit_window(&service, &call_args, &id, 8, 13, (1.25, 1.5), (9, 6));
+        if refusal.is_ok() {
+            dispatches += 1;
+        }
+        assert_eq!(dispatches, 0);
+        assert!(refusal
+            .unwrap_err()
+            .downcast_ref::<cua_driver_core::capture_runtime::CaptureActionError>()
+            .is_some_and(|error| {
+                *error
+                == cua_driver_core::capture_runtime::CaptureActionError::NativeActionFrameMismatch
+            }));
+        assert_eq!(
+            admit_window(&service, &call_args, &id, 8, 13, (1.25, 1.5), (8, 6),).unwrap(),
+            (2.5, 3.0)
+        );
     }
 }

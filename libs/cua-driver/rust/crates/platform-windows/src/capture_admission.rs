@@ -81,6 +81,7 @@ pub(crate) fn admission_error_code(error: &anyhow::Error) -> &'static str {
         }
         Some(CaptureActionError::InvalidScreenshotPoint) => "capture_point_invalid",
         Some(CaptureActionError::InvalidMappedPoint) => "capture_mapping_invalid",
+        Some(CaptureActionError::NativeActionFrameMismatch) => "capture_frame_mismatch",
         None => "capture_action_refused",
     }
 }
@@ -137,6 +138,21 @@ impl WindowsCaptureBridge {
         screenshot_x: f64,
         screenshot_y: f64,
     ) -> anyhow::Result<Option<(f64, f64)>> {
+        if args.get("capture_id").and_then(Value::as_str).is_none() {
+            return Ok(None);
+        }
+        let current_geometry = live_geometry(target)?;
+        self.admit_click_with_geometry(args, target, current_geometry, screenshot_x, screenshot_y)
+    }
+
+    fn admit_click_with_geometry(
+        &self,
+        args: &Value,
+        target: WindowsCaptureTarget,
+        current_geometry: CaptureGeometry,
+        screenshot_x: f64,
+        screenshot_y: f64,
+    ) -> anyhow::Result<Option<(f64, f64)>> {
         let Some(capture_id) = args.get("capture_id").and_then(Value::as_str) else {
             return Ok(None);
         };
@@ -145,11 +161,45 @@ impl WindowsCaptureBridge {
             capture_id: capture_id.parse()?,
             binding,
             target: target.core(),
+            current_native_action_dimensions: NativeActionDimensions::new(
+                current_geometry.native_width,
+                current_geometry.native_height,
+            )?,
             screenshot_x,
             screenshot_y,
         })?;
         Ok(Some((admission.action_x, admission.action_y)))
     }
+}
+
+#[cfg(target_os = "windows")]
+fn live_geometry(target: WindowsCaptureTarget) -> anyhow::Result<CaptureGeometry> {
+    let png = match target {
+        WindowsCaptureTarget::Window { pid, window_id } => {
+            use windows::Win32::Foundation::HWND;
+            use windows::Win32::UI::WindowsAndMessaging::{GetWindowThreadProcessId, IsWindow};
+            let hwnd = HWND(window_id as usize as *mut std::ffi::c_void);
+            anyhow::ensure!(
+                unsafe { IsWindow(hwnd).as_bool() },
+                "native window was replaced"
+            );
+            let mut owner_pid = 0_u32;
+            unsafe { GetWindowThreadProcessId(hwnd, Some(&mut owner_pid)) };
+            anyhow::ensure!(
+                owner_pid == pid,
+                "native window owner changed after capture"
+            );
+            crate::capture::screenshot_window_bytes(window_id)?
+        }
+        WindowsCaptureTarget::PrimaryDesktop => crate::capture::screenshot_display_bytes()?,
+    };
+    let (width, height) = crate::capture::png_dimensions_pub(&png)?;
+    CaptureGeometry::new(width, height, width, height)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn live_geometry(_target: WindowsCaptureTarget) -> anyhow::Result<CaptureGeometry> {
+    anyhow::bail!("live Windows capture validation is unavailable on this platform")
 }
 
 #[cfg(test)]
@@ -226,12 +276,13 @@ mod tests {
         );
         let mut request = args();
         request["capture_id"] = json!(capture_id);
-        let admission = bridge.admit_click(
+        let admission = bridge.admit_click_with_geometry(
             &request,
             WindowsCaptureTarget::Window {
                 pid: 7,
                 window_id: 71,
             },
+            CaptureGeometry::new(1, 1, 1, 1).unwrap(),
             0.0,
             0.0,
         );
@@ -254,7 +305,13 @@ mod tests {
         bridge.service.retire_session_id("capture-test");
         let mut request = args();
         request["capture_id"] = json!(capture_id);
-        let admission = bridge.admit_click(&request, target, 0.0, 0.0);
+        let admission = bridge.admit_click_with_geometry(
+            &request,
+            target,
+            CaptureGeometry::new(1, 1, 1, 1).unwrap(),
+            0.0,
+            0.0,
+        );
         let mut dispatches = 0;
         if admission.is_ok() {
             dispatches += 1;
@@ -264,5 +321,57 @@ mod tests {
             "capture_not_found"
         );
         assert_eq!(dispatches, 0);
+    }
+
+    #[test]
+    fn live_resize_refuses_before_dispatch_without_consuming_capture() {
+        let bridge = WindowsCaptureBridge::new(Arc::new(CaptureService::default()));
+        let target = WindowsCaptureTarget::Window {
+            pid: 7,
+            window_id: 70,
+        };
+        let capture_id = publish(&bridge, target);
+        let mut request = args();
+        request["capture_id"] = json!(capture_id);
+        let mut dispatches = 0;
+        let refusal = bridge.admit_click_with_geometry(
+            &request,
+            target,
+            CaptureGeometry::new(1, 1, 2, 1).unwrap(),
+            0.25,
+            0.25,
+        );
+        if refusal.is_ok() {
+            dispatches += 1;
+        }
+        assert_eq!(dispatches, 0);
+        assert_eq!(
+            admission_error_code(&refusal.unwrap_err()),
+            "capture_frame_mismatch"
+        );
+        assert_eq!(
+            bridge
+                .admit_click_with_geometry(
+                    &request,
+                    target,
+                    CaptureGeometry::new(1, 1, 1, 1).unwrap(),
+                    0.25,
+                    0.25,
+                )
+                .unwrap(),
+            Some((0.25, 0.25))
+        );
+    }
+
+    #[test]
+    fn ordinary_click_without_capture_id_skips_live_capture_validation() {
+        let bridge = WindowsCaptureBridge::new(Arc::new(CaptureService::default()));
+        let request = json!({"_session_id": "capture-test"});
+        assert_eq!(
+            bridge
+                .admit_click(&request, WindowsCaptureTarget::PrimaryDesktop, 0.25, 0.25,)
+                .unwrap(),
+            None
+        );
     }
 }

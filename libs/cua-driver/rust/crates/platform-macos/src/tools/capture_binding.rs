@@ -127,6 +127,26 @@ impl MacCaptureBindings {
         x: f64,
         y: f64,
     ) -> Result<(f64, f64), ToolResult> {
+        let current_native_action_dimensions = live_action_dimensions(&target)?;
+        self.admit_with_live_dimensions(
+            capture_id,
+            args,
+            target,
+            current_native_action_dimensions,
+            x,
+            y,
+        )
+    }
+
+    fn admit_with_live_dimensions(
+        &self,
+        capture_id: &str,
+        args: &serde_json::Value,
+        target: CaptureTarget,
+        current_native_action_dimensions: NativeActionDimensions,
+        x: f64,
+        y: f64,
+    ) -> Result<(f64, f64), ToolResult> {
         let binding = self
             .service
             .binding_from_args(args)
@@ -139,6 +159,7 @@ impl MacCaptureBindings {
                 capture_id: parsed,
                 binding,
                 target,
+                current_native_action_dimensions,
                 screenshot_x: x,
                 screenshot_y: y,
             })
@@ -153,6 +174,54 @@ impl MacCaptureBindings {
     pub(super) fn retire_runtime(&self) {
         self.service.retire_runtime();
     }
+}
+
+fn live_action_dimensions(target: &CaptureTarget) -> Result<NativeActionDimensions, ToolResult> {
+    let (width, height) = match target {
+        CaptureTarget::Window { pid, window_id } => {
+            let pid = i32::try_from(*pid)
+                .map_err(|_| capture_error("capture_target_mismatch", "pid is out of range"))?;
+            let window_id = u32::try_from(*window_id).map_err(|_| {
+                capture_error("capture_target_mismatch", "window id is out of range")
+            })?;
+            if crate::windows::resolve_window_owner(pid, window_id)
+                != crate::windows::WindowOwner::SamePid
+            {
+                return Err(capture_error(
+                    "capture_target_mismatch",
+                    "native window identity changed after capture",
+                ));
+            }
+            let png = crate::capture::screenshot_window_bytes(window_id).map_err(|error| {
+                capture_error(
+                    "capture_target_mismatch",
+                    format!("live window capture failed: {error}"),
+                )
+            })?;
+            crate::capture::png_dimensions(&png).map_err(|error| {
+                capture_error(
+                    "capture_target_mismatch",
+                    format!("live window dimensions failed: {error}"),
+                )
+            })?
+        }
+        CaptureTarget::PrimaryDesktop => {
+            let (width, height, _) =
+                super::get_screen_size::main_screen_size().ok_or_else(|| {
+                    capture_error("capture_target_mismatch", "primary display is unavailable")
+                })?;
+            (
+                u32::try_from(width).map_err(|_| {
+                    capture_error("capture_target_mismatch", "display width is out of range")
+                })?,
+                u32::try_from(height).map_err(|_| {
+                    capture_error("capture_target_mismatch", "display height is out of range")
+                })?,
+            )
+        }
+    };
+    NativeActionDimensions::new(width, height)
+        .map_err(|error| capture_error("capture_target_mismatch", error))
 }
 
 fn scale_transform(
@@ -198,6 +267,7 @@ fn action_error_code(error: &CaptureActionError) -> &'static str {
         CaptureActionError::InvalidScreenshotPoint | CaptureActionError::InvalidMappedPoint => {
             "capture_coordinate_invalid"
         }
+        CaptureActionError::NativeActionFrameMismatch => "capture_frame_mismatch",
     }
 }
 
@@ -216,6 +286,44 @@ mod tests {
             .write_to(&mut bytes, image::ImageFormat::Png)
             .unwrap();
         bytes.into_inner()
+    }
+
+    fn admit_desktop(
+        bindings: &MacCaptureBindings,
+        capture_id: &str,
+        args: &serde_json::Value,
+        x: f64,
+        y: f64,
+        native: (u32, u32),
+    ) -> Result<(f64, f64), ToolResult> {
+        bindings.admit_with_live_dimensions(
+            capture_id,
+            args,
+            CaptureTarget::PrimaryDesktop,
+            NativeActionDimensions::new(native.0, native.1).unwrap(),
+            x,
+            y,
+        )
+    }
+
+    fn admit_window(
+        bindings: &MacCaptureBindings,
+        capture_id: &str,
+        args: &serde_json::Value,
+        pid: u32,
+        window_id: u64,
+        x: f64,
+        y: f64,
+        native: (u32, u32),
+    ) -> Result<(f64, f64), ToolResult> {
+        bindings.admit_with_live_dimensions(
+            capture_id,
+            args,
+            CaptureTarget::Window { pid, window_id },
+            NativeActionDimensions::new(native.0, native.1).unwrap(),
+            x,
+            y,
+        )
     }
 
     #[test]
@@ -291,7 +399,7 @@ mod tests {
             .publish_desktop(&args, png(4, 4), (4, 4), (2, 2))
             .unwrap();
         let mut dispatched = false;
-        let mismatch = bindings.admit_window_click(&capture_id, &args, 1, 1, 1.0, 1.0);
+        let mismatch = admit_window(&bindings, &capture_id, &args, 1, 1, 1.0, 1.0, (2, 2));
         if mismatch.is_ok() {
             dispatched = true;
         }
@@ -301,21 +409,18 @@ mod tests {
             "capture_target_mismatch"
         );
 
-        let invalid = bindings.admit_desktop_click(&capture_id, &args, 5.0, 1.0);
+        let invalid = admit_desktop(&bindings, &capture_id, &args, 5.0, 1.0, (2, 2));
         assert_eq!(
             invalid.unwrap_err().structured_content.unwrap()["code"],
             "capture_coordinate_invalid"
         );
 
         assert_eq!(
-            bindings
-                .admit_desktop_click(&capture_id, &args, 2.0, 2.0)
-                .unwrap(),
+            admit_desktop(&bindings, &capture_id, &args, 2.0, 2.0, (2, 2)).unwrap(),
             (1.0, 1.0)
         );
         assert_eq!(
-            bindings
-                .admit_desktop_click(&capture_id, &args, 2.0, 2.0)
+            admit_desktop(&bindings, &capture_id, &args, 2.0, 2.0, (2, 2))
                 .unwrap_err()
                 .structured_content
                 .unwrap()["code"],
@@ -331,9 +436,15 @@ mod tests {
         let capture_id = bindings
             .publish_desktop(&owner, png(2, 2), (2, 2), (2, 2))
             .unwrap();
-        let error = bindings
-            .admit_desktop_click(&capture_id, &args("other-session"), 1.0, 1.0)
-            .unwrap_err();
+        let error = admit_desktop(
+            &bindings,
+            &capture_id,
+            &args("other-session"),
+            1.0,
+            1.0,
+            (2, 2),
+        )
+        .unwrap_err();
         assert_eq!(
             error.structured_content.unwrap()["code"],
             "capture_generation_mismatch"
@@ -349,9 +460,37 @@ mod tests {
             .publish_desktop(&args, png(2, 2), (2, 2), (2, 2))
             .unwrap();
         bindings.retire_session("retired-session");
-        let error = bindings
-            .admit_desktop_click(&capture_id, &args, 1.0, 1.0)
-            .unwrap_err();
+        let error = admit_desktop(&bindings, &capture_id, &args, 1.0, 1.0, (2, 2)).unwrap_err();
         assert_eq!(error.structured_content.unwrap()["code"], "capture_stale");
+    }
+
+    #[test]
+    fn live_resize_refuses_before_dispatch_and_preserves_capture() {
+        let service = Arc::new(CaptureService::default());
+        let bindings = MacCaptureBindings::new(service.clone());
+        let args = args("resize-session");
+        let capture_id = bindings
+            .publish_window(&args, 8, 13, png(4, 3), (4, 3), (8, 6))
+            .unwrap();
+        let mut dispatches = 0;
+        let refusal = admit_window(&bindings, &capture_id, &args, 8, 13, 1.25, 1.5, (9, 6));
+        if refusal.is_ok() {
+            dispatches += 1;
+        }
+        assert_eq!(dispatches, 0);
+        assert_eq!(
+            refusal.unwrap_err().structured_content.unwrap()["code"],
+            "capture_frame_mismatch"
+        );
+        assert_eq!(
+            admit_window(&bindings, &capture_id, &args, 8, 13, 1.25, 1.5, (8, 6)).unwrap(),
+            (2.5, 3.0)
+        );
+        assert!(service
+            .read_for_perception(
+                service.parse_capture_id(&capture_id).unwrap(),
+                &service.binding_from_args(&args).unwrap()
+            )
+            .is_err());
     }
 }

@@ -456,7 +456,10 @@ pub struct CapturePublication {
 pub struct CaptureActionRequest {
     pub capture_id: CaptureId,
     pub binding: CaptureBinding,
+    /// Target identity observed immediately before native dispatch.
     pub target: CaptureTarget,
+    /// Native action frame observed immediately before native dispatch.
+    pub current_native_action_dimensions: NativeActionDimensions,
     pub screenshot_x: f64,
     pub screenshot_y: f64,
 }
@@ -479,6 +482,8 @@ pub enum CaptureActionError {
     InvalidScreenshotPoint,
     #[error("mapped action point is not finite")]
     InvalidMappedPoint,
+    #[error("capture native action frame no longer matches the live target")]
+    NativeActionFrameMismatch,
 }
 
 #[derive(Clone)]
@@ -780,14 +785,17 @@ impl CaptureRegistry {
         if capture.target != request.target {
             return Err(CaptureLookupError::TargetMismatch.into());
         }
+        if capture.native_action_dimensions != request.current_native_action_dimensions {
+            return Err(CaptureActionError::NativeActionFrameMismatch);
+        }
         let max_x = f64::from(capture.encoded_dimensions.width);
         let max_y = f64::from(capture.encoded_dimensions.height);
         if !request.screenshot_x.is_finite()
             || !request.screenshot_y.is_finite()
             || request.screenshot_x < 0.0
             || request.screenshot_y < 0.0
-            || request.screenshot_x > max_x
-            || request.screenshot_y > max_y
+            || request.screenshot_x >= max_x
+            || request.screenshot_y >= max_y
         {
             return Err(CaptureActionError::InvalidScreenshotPoint);
         }
@@ -1221,6 +1229,23 @@ mod tests {
         }
     }
 
+    fn action_request(
+        capture_id: CaptureId,
+        binding: CaptureBinding,
+        target: CaptureTarget,
+        native: (u32, u32),
+    ) -> CaptureActionRequest {
+        CaptureActionRequest {
+            capture_id,
+            binding,
+            target,
+            current_native_action_dimensions: NativeActionDimensions::new(native.0, native.1)
+                .unwrap(),
+            screenshot_x: 0.5,
+            screenshot_y: 0.5,
+        }
+    }
+
     #[test]
     fn stores_immutable_png_metadata_and_never_reuses_ids() {
         let registry = CaptureRegistry::new(config(2, 10_000)).unwrap();
@@ -1415,6 +1440,160 @@ mod tests {
     }
 
     #[test]
+    fn unknown_expired_session_runtime_target_replacement_eviction_and_resize_refuse_dispatch() {
+        let dispatched = AtomicU64::new(0);
+        let attempt = |registry: &CaptureRegistry, request: CaptureActionRequest| {
+            let result = registry.admit_action(request);
+            if result.is_ok() {
+                dispatched.fetch_add(1, Ordering::SeqCst);
+            }
+            result
+        };
+        let owner = binding(11, "session-a", 3);
+        let target = CaptureTarget::Window {
+            pid: 42,
+            window_id: 7,
+        };
+
+        let registry = CaptureRegistry::new(config(8, 100_000)).unwrap();
+        let unknown = CaptureId {
+            namespace: [0; 16],
+            sequence: 99,
+        };
+        assert_eq!(
+            attempt(
+                &registry,
+                action_request(unknown, owner.clone(), target.clone(), (2, 2))
+            )
+            .unwrap_err(),
+            CaptureActionError::Lookup(CaptureLookupError::Unknown)
+        );
+
+        for (wrong_binding, expected) in [
+            (
+                binding(11, "session-b", 3),
+                CaptureActionError::Lookup(CaptureLookupError::GenerationMismatch),
+            ),
+            (
+                binding(12, "session-a", 3),
+                CaptureActionError::Lookup(CaptureLookupError::GenerationMismatch),
+            ),
+        ] {
+            let id = registry
+                .store(registration(png(2, 2, 1), target.clone(), owner.clone()))
+                .unwrap();
+            assert_eq!(
+                attempt(
+                    &registry,
+                    action_request(id, wrong_binding, target.clone(), (2, 2))
+                )
+                .unwrap_err(),
+                expected
+            );
+            registry.retire(id, &owner).unwrap();
+        }
+
+        let id = registry
+            .store(registration(png(2, 2, 2), target.clone(), owner.clone()))
+            .unwrap();
+        assert_eq!(
+            attempt(
+                &registry,
+                action_request(id, owner.clone(), CaptureTarget::PrimaryDesktop, (2, 2))
+            )
+            .unwrap_err(),
+            CaptureActionError::Lookup(CaptureLookupError::TargetMismatch)
+        );
+        registry.retire(id, &owner).unwrap();
+
+        let replaced = registry
+            .store(registration(png(2, 2, 3), target.clone(), owner.clone()))
+            .unwrap();
+        registry.retire(replaced, &owner).unwrap();
+        let _replacement = registry
+            .store(registration(png(2, 2, 4), target.clone(), owner.clone()))
+            .unwrap();
+        assert_eq!(
+            attempt(
+                &registry,
+                action_request(replaced, owner.clone(), target.clone(), (2, 2))
+            )
+            .unwrap_err(),
+            CaptureActionError::Lookup(CaptureLookupError::Unknown)
+        );
+
+        let resized = registry
+            .store(registration(png(2, 2, 5), target.clone(), owner.clone()))
+            .unwrap();
+        assert_eq!(
+            attempt(
+                &registry,
+                action_request(resized, owner.clone(), target.clone(), (3, 2))
+            )
+            .unwrap_err(),
+            CaptureActionError::NativeActionFrameMismatch
+        );
+
+        let evicting = CaptureRegistry::new(config(1, 100_000)).unwrap();
+        let evicted = evicting
+            .store(registration(png(2, 2, 6), target.clone(), owner.clone()))
+            .unwrap();
+        let _newest = evicting
+            .store(registration(png(2, 2, 7), target.clone(), owner.clone()))
+            .unwrap();
+        assert_eq!(
+            attempt(
+                &evicting,
+                action_request(evicted, owner.clone(), target.clone(), (2, 2))
+            )
+            .unwrap_err(),
+            CaptureActionError::Lookup(CaptureLookupError::Unknown)
+        );
+
+        let clock = Arc::new(ManualClock::default());
+        let expiring = CaptureRegistry::with_clock(config(2, 100_000), clock.clone()).unwrap();
+        let expired = expiring
+            .store(registration(png(2, 2, 8), target.clone(), owner.clone()))
+            .unwrap();
+        clock.advance(Duration::from_secs(10));
+        assert_eq!(
+            attempt(&expiring, action_request(expired, owner, target, (2, 2))).unwrap_err(),
+            CaptureActionError::Lookup(CaptureLookupError::Expired)
+        );
+        assert_eq!(dispatched.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn encoded_pixel_edges_are_half_open_and_refuse_without_consuming() {
+        let registry = CaptureRegistry::new(config(2, 10_000)).unwrap();
+        let owner = binding(1, "edge", 1);
+        let target = CaptureTarget::PrimaryDesktop;
+        let id = registry
+            .store(registration(png(2, 2, 1), target.clone(), owner.clone()))
+            .unwrap();
+        let mut request = action_request(id, owner.clone(), target.clone(), (2, 2));
+        request.screenshot_x = 2.0;
+        assert_eq!(
+            registry.admit_action(request).unwrap_err(),
+            CaptureActionError::InvalidScreenshotPoint
+        );
+        assert!(registry.read_for_perception(id, &owner, &target).is_ok());
+
+        let mut request = action_request(id, owner.clone(), target.clone(), (2, 2));
+        request.screenshot_y = 2.0;
+        assert_eq!(
+            registry.admit_action(request).unwrap_err(),
+            CaptureActionError::InvalidScreenshotPoint
+        );
+        assert!(registry.read_for_perception(id, &owner, &target).is_ok());
+
+        let mut request = action_request(id, owner, target, (2, 2));
+        request.screenshot_x = 2.0 - f64::EPSILON;
+        request.screenshot_y = 2.0 - f64::EPSILON;
+        assert!(registry.admit_action(request).is_ok());
+    }
+
+    #[test]
     fn bounded_maintenance_releases_expired_png_without_lookup_or_store() {
         let clock = Arc::new(ManualClock::default());
         let registry = CaptureRegistry::with_clock(config(2, 10_000), clock.clone()).unwrap();
@@ -1530,6 +1709,7 @@ mod tests {
                 capture_id: id,
                 binding: binding.clone(),
                 target: target.clone(),
+                current_native_action_dimensions: NativeActionDimensions::new(40, 30).unwrap(),
                 screenshot_x: 2.5,
                 screenshot_y: 1.5,
             })
@@ -1545,6 +1725,7 @@ mod tests {
                         pid: 42,
                         window_id: 7,
                     },
+                    current_native_action_dimensions: NativeActionDimensions::new(40, 30).unwrap(),
                     screenshot_x: 2.5,
                     screenshot_y: 1.5,
                 })
@@ -1575,6 +1756,7 @@ mod tests {
                     capture_id: id,
                     binding: binding.clone(),
                     target: target.clone(),
+                    current_native_action_dimensions: NativeActionDimensions::new(2, 2).unwrap(),
                     screenshot_x: f64::NAN,
                     screenshot_y: 0.0,
                 })

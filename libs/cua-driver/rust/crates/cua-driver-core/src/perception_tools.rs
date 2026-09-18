@@ -433,6 +433,7 @@ mod tests {
         ScreenshotToActionTransform,
     };
     use crate::image_utils::encode_rgba_to_png;
+    use sha2::Digest as _;
 
     fn capture(service: &Arc<CaptureService>) -> (String, CaptureBinding) {
         let png = encode_rgba_to_png(&[7, 8, 9, 255], 1, 1).unwrap();
@@ -554,9 +555,13 @@ else:
             worker,
         ))
         .unwrap();
-        let tool =
-            ParseVisualRegionsTool::new(service, client, Arc::new(move |_| Ok(binding.clone())));
-        let result = tool.invoke(json!({"capture_id": capture_id})).await;
+        let action_binding = binding.clone();
+        let tool = ParseVisualRegionsTool::new(
+            service.clone(),
+            client,
+            Arc::new(move |_| Ok(binding.clone())),
+        );
+        let result = tool.invoke(json!({"capture_id": capture_id.clone()})).await;
         assert_ne!(result.is_error, Some(true));
         let output: ParseVisualRegionsOutput =
             serde_json::from_value(result.structured_content.unwrap()).unwrap();
@@ -566,6 +571,102 @@ else:
             output.capture.screenshot.sha256.as_deref(),
             Some(expected.as_str())
         );
+        assert_eq!(
+            output.capture.source,
+            VisualCaptureSource::PrimaryDesktop {
+                display_id: "primary".into()
+            }
+        );
+        let admitted = service
+            .admit_action(crate::capture_runtime::CaptureActionRequest {
+                capture_id: service.parse_capture_id(&capture_id).unwrap(),
+                binding: action_binding.clone(),
+                target: CaptureTarget::PrimaryDesktop,
+                current_native_action_dimensions: NativeActionDimensions::new(1, 1).unwrap(),
+                screenshot_x: 0.5,
+                screenshot_y: 0.5,
+            })
+            .unwrap();
+        assert_eq!((admitted.action_x, admitted.action_y), (0.5, 0.5));
+        assert_eq!(admitted.digest.hex(), expected);
+        assert_eq!(
+            service
+                .admit_action(crate::capture_runtime::CaptureActionRequest {
+                    capture_id: service.parse_capture_id(&capture_id).unwrap(),
+                    binding: action_binding,
+                    target: CaptureTarget::PrimaryDesktop,
+                    current_native_action_dimensions: NativeActionDimensions::new(1, 1).unwrap(),
+                    screenshot_x: 0.5,
+                    screenshot_y: 0.5,
+                })
+                .unwrap_err(),
+            crate::capture_runtime::CaptureActionError::Lookup(CaptureLookupError::Unknown)
+        );
         output.validate().unwrap();
+    }
+
+    #[test]
+    fn parsed_window_provenance_keeps_native_ids_and_full_affine_mapping() {
+        let service = Arc::new(CaptureService::default());
+        let png = encode_rgba_to_png(&vec![17; 4 * 3 * 4], 4, 3).unwrap();
+        let transform = ScreenshotToActionTransform::new(1.5, 0.25, -0.5, 2.0, 7.25, -3.5).unwrap();
+        let target = CaptureTarget::Window {
+            pid: 4242,
+            window_id: 0xfeed,
+        };
+        let id = service
+            .publish(CapturePublication {
+                png_bytes: png.clone(),
+                target: target.clone(),
+                encoded_dimensions: EncodedScreenshotDimensions::new(4, 3).unwrap(),
+                native_action_dimensions: NativeActionDimensions::new(9, 7).unwrap(),
+                screenshot_to_action: transform,
+                session_id: Arc::from("window-parse"),
+                session_generation: 1,
+            })
+            .unwrap();
+        let binding = service.binding("window-parse", 1).unwrap();
+        let capture = service.read_for_perception(id, &binding).unwrap();
+        let input = ParseVisualRegionsInput {
+            capture_id: id.to_string(),
+            options: Default::default(),
+        };
+        let output = build_output(
+            &input,
+            &capture,
+            json!({
+                "runtime": "fixture",
+                "regions": [{
+                    "id": "target",
+                    "kind": "icon",
+                    "bounds": {"x": 1, "y": 1, "width": 1, "height": 1},
+                    "label": "target",
+                    "confidence": 1.0
+                }]
+            }),
+            0,
+        )
+        .unwrap();
+        assert_eq!(
+            output.capture.source,
+            VisualCaptureSource::Window {
+                pid: 4242,
+                window_id: 0xfeed
+            }
+        );
+        assert_eq!(output.capture.capture_id, id.to_string());
+        assert_eq!(
+            output.capture.screenshot.sha256,
+            Some(
+                sha2::Sha256::digest(&png)
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect()
+            )
+        );
+        assert_eq!(
+            output.capture.action_coordinate_space.map_point(1.5, 1.5),
+            transform.apply(1.5, 1.5)
+        );
     }
 }

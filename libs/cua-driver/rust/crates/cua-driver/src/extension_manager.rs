@@ -1037,7 +1037,11 @@ fn perception_worker_config_in(store: &ExtensionStore) -> Result<Option<Percepti
         .to_str()
         .ok_or_else(|| anyhow!("perception runtime library path is not valid UTF-8"))?;
 
-    let mut config = PerceptionWorkerConfig::installed(executable);
+    let mut config = PerceptionWorkerConfig::installed_with_identity(
+        executable,
+        manifest.id.clone(),
+        manifest.version.clone(),
+    );
     config.args = vec![
         "--manifest".to_owned(),
         model_manifest.to_owned(),
@@ -4037,7 +4041,14 @@ mod tests {
                 "1.0.0"
             ]
         );
-        assert!(config.warm_worker.is_some());
+        assert!(config.warm_worker.is_none());
+        assert_eq!(
+            config
+                .expected_extension_identity
+                .as_ref()
+                .map(|identity| (identity.id.as_str(), identity.version.as_str(),)),
+            Some(("cua-perception", "1.0.0"))
+        );
     }
 
     #[test]

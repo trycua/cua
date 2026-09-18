@@ -3048,6 +3048,22 @@ async fn actuate_chain(
             continue;
         };
         let actions = action_names(&ap).await;
+        if depth == deepest && is_selectable_item_role(&role) {
+            // A file / list item under a plain click is SELECTED; its own
+            // `open` / `activate` is the double-click (Nautilus canvas items
+            // advertise `open`, which launched the file). Select it through
+            // the container; only fall back to the item's action when the
+            // container cannot select.
+            if let Some(hit) = select_item_in_chain(chain, deepest, &role, &deepest_name).await {
+                return Ok(Some(hit));
+            }
+            if actions.iter().any(|a| normalized_action_verb(a) == "open") {
+                dlog!(
+                    "hit-test ({win_x},{win_y}) -> {role:?} {deepest_name:?} only offers `open`; leaving the selection to a real click"
+                );
+                return Ok(None);
+            }
+        }
         let Some(chosen) = at_point_activation_index(&role, &actions, depth == deepest) else {
             if depth != deepest
                 && !deepest_has_action

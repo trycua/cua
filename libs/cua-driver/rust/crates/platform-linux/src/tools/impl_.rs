@@ -3381,7 +3381,10 @@ fn x11_pixel_click_no_focus_steal(
                     return Ok(PointerRoute::Mpx(effect));
                 }
                 Err(error) if crate::input::is_uinput_unavailable(&error) => return Err(error),
-                Err(error) if error.downcast_ref::<crate::input::TargetOccluded>().is_some() => {
+                Err(error)
+                    if error.downcast_ref::<crate::input::TargetOccluded>().is_some()
+                        || error.downcast_ref::<crate::input::PointOutsideWindow>().is_some() =>
+                {
                     return Err(error)
                 }
                 // The synthetic fallback is a silent no-op on GTK/VCL/Qt:
@@ -3651,8 +3654,11 @@ async fn close_window_background(pid: u32, xid: u64, display: &str) -> ToolResul
     } else {
         format!(" \"{title}\"")
     };
+    // The close request is an XSendEvent client message to the root (the
+    // transport the action contract knows as x11_xsendevent).
     let mut structured = json!({
-        "path": "x11_net_close_window",
+        "path": "x11_xsendevent",
+        "mechanism": "_NET_CLOSE_WINDOW",
         "delivery_mode": "background",
         "chord": display,
         "target_window": xid,

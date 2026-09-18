@@ -221,10 +221,21 @@ impl Tool for SetValueTool {
                 let mut msg = outcome.detail;
                 msg.push_str(&changes.result_suffix());
                 let verified = outcome.verified.unwrap_or(false);
+                // `classify_write` can prove a write did not land: a native
+                // read-back that returns the pre-write value is evidence, not
+                // an absence of evidence. Collapsing that into `unverifiable`
+                // told the caller "I could not check" when the tool had in
+                // fact checked and the answer was no — and the reasonable
+                // response to "could not check" is to escalate to a pixel
+                // retype, which is how a silently-rejected AX write turns
+                // into keystrokes aimed at whatever now holds focus. Report
+                // it as `suspected_noop`, the same tri-state `click` already
+                // uses for an unadvertised AX action.
+                let effect = effect_for(outcome.verified, outcome.changed, ax_echo_surface);
                 let mut structured = serde_json::json!({
                     "path": "ax",
                     "verified": verified,
-                    "effect": if verified { "confirmed" } else { "unverifiable" },
+                    "effect": effect,
                 });
                 if ax_echo_surface {
                     structured["escalation"] = serde_json::json!({
@@ -232,6 +243,14 @@ impl Tool for SetValueTool {
                         "reason": "AXValue read-back is not trusted for web content. Verify \
                                    through the renderer; use browser page tools for a tab or \
                                    manipulate the control through its pixel action."
+                    });
+                } else if effect == "suspected_noop" {
+                    structured["escalation"] = serde_json::json!({
+                        "recommended": "px",
+                        "reason": "AXValue read-back returned the pre-write value — the \
+                                   write was accepted and discarded. Do not retype blind: \
+                                   re-snapshot with get_window_state, confirm the element \
+                                   still holds focus, and act by pixel off that screenshot."
                     });
                 }
                 ToolResult::text(msg).with_structured(structured)
@@ -269,6 +288,32 @@ fn apply_surface_trust(outcome: &mut SetValueOutcome, ax_echo_surface: bool) {
             " AXValue read-back is not trusted for web content; verify the \
              renderer via screenshot or use the browser page tools.",
         );
+    }
+}
+
+/// Map a classified write onto the closed `effect` vocabulary from
+/// `docs/action-result-contract.md`.
+///
+/// The distinction that matters is between "no read-back was possible" and
+/// "a read-back ran and disagreed". Only the second is evidence, and only
+/// the unmoved case is evidence strong enough to call a no-op: a value that
+/// moved to something other than what was requested is a transformation
+/// (trimming, formatting, autocorrect), not a discarded write.
+///
+/// On a web-content surface none of it is evidence. Behind an `AXWebArea`
+/// the shim echoes `AXValue` without the renderer observing anything, so an
+/// unmoved value there proves no more than a moved one. Promoting that to a
+/// proved no-op would be the same mistake this module already refuses to
+/// make in the other direction by declining to call such a write confirmed.
+fn effect_for(
+    verified: Option<bool>,
+    changed: Option<bool>,
+    ax_echo_surface: bool,
+) -> &'static str {
+    match (verified, changed) {
+        (Some(true), _) => "confirmed",
+        (Some(false), Some(false)) if !ax_echo_surface => "suspected_noop",
+        _ => "unverifiable",
     }
 }
 
@@ -335,6 +380,9 @@ fn set_value_blocking(
             let suffix = match (verified, changed) {
                 (Some(true), Some(false)) => " Value already matched; write was idempotent.",
                 (Some(true), _) => "",
+                (Some(false), Some(false)) => {
+                    " Read-back returned the pre-write value: the write did not land."
+                }
                 (Some(false), _) => " Read-back did not confirm the value; verify via screenshot.",
                 (None, _) => " Value is not readable through AX; could not confirm.",
             };
@@ -665,7 +713,9 @@ fn hex_digit(n: u8) -> char {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_surface_trust, apply_verification_label, classify_write, SetValueOutcome};
+    use super::{
+        apply_surface_trust, apply_verification_label, classify_write, effect_for, SetValueOutcome,
+    };
 
     #[test]
     fn unreadable_value_reports_neither_verified_nor_changed() {
@@ -683,6 +733,53 @@ mod tests {
             classify_write(Some("old"), Some("new"), "new", false),
             (Some(true), Some(true))
         );
+    }
+
+    #[test]
+    fn a_native_read_back_that_did_not_move_is_a_suspected_noop() {
+        // The macOS Messages search field accepts an AXValue write, returns
+        // kAXErrorSuccess, and keeps its old value. That is a proved no-op,
+        // not an unverifiable one, and the difference decides whether the
+        // caller re-snapshots or blindly retypes by pixel.
+        let (verified, changed) = classify_write(Some("Search"), Some("Search"), "lunch", false);
+        assert_eq!((verified, changed), (Some(false), Some(false)));
+        assert_eq!(effect_for(verified, changed, false), "suspected_noop");
+    }
+
+    #[test]
+    fn a_web_surface_read_back_never_proves_a_noop() {
+        // Behind an AXWebArea the shim echoes AXValue without the renderer
+        // observing the write, so an unmoved value is not evidence of a
+        // discarded one. Reporting suspected_noop here would send the caller
+        // down the pixel ladder on the strength of a read-back this module
+        // already refuses to trust in the confirming direction.
+        let (verified, changed) = classify_write(Some("Search"), Some("Search"), "lunch", false);
+        assert_eq!(effect_for(verified, changed, true), "unverifiable");
+        assert_eq!(effect_for(verified, changed, false), "suspected_noop");
+    }
+
+    #[test]
+    fn an_unreadable_value_stays_unverifiable() {
+        let (verified, changed) = classify_write(Some("old"), None, "new", false);
+        assert_eq!((verified, changed), (None, None));
+        assert_eq!(effect_for(verified, changed, false), "unverifiable");
+    }
+
+    #[test]
+    fn a_value_that_moved_to_something_else_is_not_called_a_noop() {
+        // A field that trims, reformats, or autocorrects did act on the
+        // write. Calling that a no-op would send the caller down the pixel
+        // ladder for a write that landed.
+        let (verified, changed) = classify_write(Some("old"), Some("NEW"), "new", false);
+        assert_eq!((verified, changed), (Some(false), Some(true)));
+        assert_eq!(effect_for(verified, changed, false), "unverifiable");
+    }
+
+    #[test]
+    fn an_idempotent_write_stays_confirmed() {
+        let (verified, changed) = classify_write(Some("lunch"), Some("lunch"), "lunch", false);
+        assert_eq!((verified, changed), (Some(true), Some(false)));
+        assert_eq!(effect_for(verified, changed, false), "confirmed");
     }
 
     #[test]

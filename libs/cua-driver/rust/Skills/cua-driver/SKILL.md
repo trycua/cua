@@ -853,6 +853,7 @@ the response's `snapshot_id` with `element_index`; bare indices fail closed in
 | Focus + send key                 | `press_key({pid, key, element_token, modifiers})` (ax) or `press_key({pid, key, x, y})` (px)                    | ax targets the element before posting the key; **px** pixel-clicks `(x,y)` to focus, then sends the key                                                                                                               |
 | Send key to pid                  | `press_key({pid, key, modifiers})`                                                                              | no focus change; key goes to pid's current focus                                                                                                                                                                      |
 | Modifier combo                   | `hotkey({pid, keys})` (no focus) or `hotkey({pid, x, y, keys})` (px)                                            | e.g. `["cmd","c"]` / `["ctrl","c"]`; posted per-pid, not HID tap. **px** pixel-clicks `(x,y)` to focus a field first, e.g. `["cmd","v"]` to paste into it                                                             |
+| Ask which element is next        | `suggest_action({goal, pid, window_id, deny?, history?})`                                                       | **optional, absent unless the host configured it.** Advisory only: returns `element_index` + `element_token`, `kind`, `confidence`, `probabilities`, `done`, `blocked`. Never types and never acts — you still call `click` / `type_text`                |
 
 `list_windows.z_index` uses one portable convention: higher integer
 values are closer to the front. Select a frontmost candidate with the
@@ -876,6 +877,44 @@ occluded / off-desktop windows, avoids focus steal, and fails closed after a
 tree rebuild instead of silently retargeting a reused index. Labels tell you
 what you're clicking. Reach for pixel
 coordinates only when the accessibility tree can't.
+
+### Optional policy head
+
+If `suggest_action` is in your `tools/list`, the host configured an optional
+fast classifier you can ask "which of this window's elements is next" instead
+of reading the tree and deciding yourself. It is absent on a default install,
+so branch on its presence and never depend on it.
+
+It snapshots the window itself, so you do not need a fresh `get_window_state`
+first — but you do need one after acting, exactly as for any other
+element-indexed action.
+
+```jsonc
+suggest_action({
+  "goal": "open the Downloads folder",   // the outcome, not the click
+  "pid": 4711, "window_id": 82,
+  "deny": ["Move to Trash", "Eject"],    // enforced in code, not by prompt
+  "history": ["pressed Sidebar"]         // what you already did this run
+})
+```
+
+Read it like this:
+
+- `element_token` goes straight to `click` or `type_text`.
+- `kind: "type"` with `needs_text: true` names a field and stops there. The
+  policy head never writes text; choosing it stays your job.
+- `confidence` below about 0.5 means it could not tell the options apart —
+  read the tree yourself. `probabilities` shows what the alternatives were.
+- `done` and `blocked` are independent of the pick, so a screen can have a
+  sensible next element and also already satisfy the goal.
+- `elements_considered: 0` means the accessibility tree came back empty. Take
+  a `get_window_state` screenshot and act by pixel.
+- It cannot suggest a menu route: menu rows are excluded from what it sees, so
+  `invoke_menu` stays yours to choose.
+
+Any provider failure returns an error telling you to decide the step yourself.
+Nothing about the window changes on that path, so treat it as advice that did
+not arrive rather than as a failed action.
 
 ## Cross-platform parameter contract
 

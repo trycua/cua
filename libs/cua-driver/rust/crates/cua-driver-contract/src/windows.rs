@@ -257,6 +257,13 @@ pub struct WindowStateOutput {
     pub returned_element_count: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub filtered_element_count: Option<u64>,
+    /// Whether `elements` is the whole addressable-element set of the
+    /// requested window. `Some(true)` is a promise about absence: a control
+    /// missing from the array is missing from the window, so a predicate that
+    /// matches nothing is unsatisfied rather than unknown. `Some(false)` (or
+    /// absent) means the observation gave something up — an element or depth
+    /// cap, a child list that could not be read, an unresolved window — and
+    /// absence proves nothing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub elements_complete: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

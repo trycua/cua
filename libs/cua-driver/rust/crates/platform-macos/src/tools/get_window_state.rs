@@ -546,11 +546,8 @@ impl Tool for GetWindowStateTool {
             &tree_md,
         );
         let filtered_element_count = elements_json.len();
-        // The structured array intentionally contains only actionable nodes,
-        // and AX child reads can fail independently of the element/depth caps.
-        // Until the walker exposes a proof over the projected search domain,
-        // absence must remain unknown rather than being claimed complete.
-        let elements_complete = false;
+        let elements_complete =
+            elements_are_complete(scope_matched, tree_result.as_ref().map(|r| r.truncated));
 
         let mut structured = serde_json::json!({
             "window_id": window_id,
@@ -568,6 +565,9 @@ impl Tool for GetWindowStateTool {
         });
         if query.is_some() {
             structured["filtered_element_count"] = serde_json::json!(filtered_element_count);
+        }
+        if let Some(walk) = tree_result.as_ref() {
+            structured["truncated"] = serde_json::json!(walk.truncated);
         }
         // Surface 6: an opaque snapshot identifier consumers can log
         // alongside the per-element tokens for debug correlation. Same value
@@ -798,6 +798,17 @@ fn degradation_for(
         return Degradation::AxTreeEmpty;
     }
     Degradation::None
+}
+
+/// Whether `elements` may promise that a control absent from it is absent
+/// from the window.
+///
+/// Only the walk can establish that, and `truncated` is its verdict. An
+/// unresolved window scope publishes no elements at all, and neither does a
+/// snapshot taken without a walk. A `query` projects an already-complete
+/// domain, so a filtered array stays complete for that query.
+fn elements_are_complete(scope_matched: bool, walk_truncated: Option<bool>) -> bool {
+    scope_matched && walk_truncated == Some(false)
 }
 
 /// Render the actionable nodes from the AX walk into the
@@ -1571,5 +1582,33 @@ mod tests {
             r2.nodes.len(),
             "no-pid case: both bounded and unbounded must agree on the empty result"
         );
+    }
+
+    #[test]
+    fn completeness_is_promised_only_for_a_resolved_window_and_a_whole_walk() {
+        assert!(elements_are_complete(true, Some(false)));
+        // The walk hit a cap or could not read a child list, so controls it
+        // never saw could still exist.
+        assert!(!elements_are_complete(true, Some(true)));
+        // Screenshot-only path: no walk, so `elements` is empty for reasons
+        // unrelated to the window's contents.
+        assert!(!elements_are_complete(true, None));
+        // No AXWindow claimed the requested id, so the walk covered nothing.
+        assert!(!elements_are_complete(false, Some(false)));
+    }
+
+    #[test]
+    fn a_walk_that_cannot_read_the_app_never_promises_a_complete_element_set() {
+        let walk = crate::ax::tree::walk_tree_bounded(i32::MAX, Some(123), None, 20, 5);
+        assert!(
+            walk.truncated,
+            "an unreadable application child list proves nothing about absence"
+        );
+        let scope = walk.window_scope.as_ref().expect("window_id was requested");
+        assert!(!scope.is_matched(), "pid i32::MAX has no AX windows");
+        assert!(!elements_are_complete(
+            scope.is_matched(),
+            Some(walk.truncated)
+        ));
     }
 }

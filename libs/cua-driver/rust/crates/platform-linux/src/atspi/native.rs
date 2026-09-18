@@ -1708,8 +1708,34 @@ pub fn list_windows(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo> {
     list_windows_blocking(filter_pid)
 }
 
+/// Stacking position (`_NET_CLIENT_LIST_STACKING`, bottom-to-top) for an
+/// AT-SPI frame, joined to the X11 toplevels of the same pid by title (the
+/// AT-SPI xid is synthetic). `None` when X11 does not know the window.
+fn z_index_from_stacking(
+    stacking: &[crate::x11::WindowInfo],
+    pid: u32,
+    title: &str,
+) -> Option<usize> {
+    let same_pid: Vec<&crate::x11::WindowInfo> =
+        stacking.iter().filter(|w| w.pid == Some(pid)).collect();
+    same_pid
+        .iter()
+        .find(|w| w.title == title)
+        .copied()
+        .or_else(|| (same_pid.len() == 1).then(|| same_pid[0]))
+        .and_then(|w| w.z_index)
+}
+
 fn list_windows_blocking(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo> {
     use crate::x11::WindowInfo;
+    // X11 knows the stacking order the AT-SPI registry does not; on an X
+    // session the frames get their `z_index` from it so callers can rank
+    // an app's dialog above the main window it covers.
+    let stacking: Vec<WindowInfo> = if crate::wayland::is_wayland() {
+        Vec::new()
+    } else {
+        crate::x11::list_windows(filter_pid)
+    };
     runtime().block_on(async {
         let work = async {
             let conn = shared_connection().await?;
@@ -1806,13 +1832,14 @@ fn list_windows_blocking(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo>
                     .unwrap_or((observed_x, observed_y));
                     // Stable, non-zero, unique per (pid, frame ordinal).
                     let xid = (((cpid as u64) << 16) | (i as u64)).max(1);
+                    let z_index = z_index_from_stacking(&stacking, cpid, &title);
                     out.push(WindowInfo {
                         xid,
                         pid: Some(cpid),
                         app_name: app_name.clone(),
                         title,
                         is_on_screen: width > 0 && height > 0,
-                        z_index: None,
+                        z_index,
                         x,
                         y,
                         width,
@@ -4594,6 +4621,47 @@ mod screen_extents_tests {
         // Entirely off the display.
         assert!(!screen_extents_trusted((2000, 10, 40, 20), Some((1920, 1080))));
         assert!(!screen_extents_trusted((-500, 10, 40, 20), Some((1920, 1080))));
+    }
+}
+
+#[cfg(test)]
+mod stacking_z_index_tests {
+    use super::z_index_from_stacking;
+    use crate::x11::WindowInfo;
+
+    fn window(pid: u32, title: &str, z: usize) -> WindowInfo {
+        WindowInfo {
+            xid: 100 + z as u64,
+            pid: Some(pid),
+            app_name: "app".into(),
+            title: title.into(),
+            is_on_screen: true,
+            z_index: Some(z),
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 10,
+        }
+    }
+
+    #[test]
+    fn frames_take_the_stacking_position_of_the_same_pid_and_title() {
+        let stacking = vec![
+            window(7, "GNU Image Manipulation Program", 2),
+            window(9, "Other", 3),
+            window(7, "Brightness-Contrast", 4),
+        ];
+        assert_eq!(z_index_from_stacking(&stacking, 7, "Brightness-Contrast"), Some(4));
+        assert_eq!(
+            z_index_from_stacking(&stacking, 7, "GNU Image Manipulation Program"),
+            Some(2)
+        );
+        // Unknown title with several candidates: no guess.
+        assert_eq!(z_index_from_stacking(&stacking, 7, "Untitled"), None);
+        // A pid with exactly one X toplevel maps regardless of the title.
+        assert_eq!(z_index_from_stacking(&stacking, 9, "anything"), Some(3));
+        assert_eq!(z_index_from_stacking(&stacking, 11, "anything"), None);
+        assert_eq!(z_index_from_stacking(&[], 7, "anything"), None);
     }
 }
 

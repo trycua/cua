@@ -264,6 +264,76 @@ fn moveresize_window_flags() -> u32 {
     STATIC_GRAVITY | X_PRESENT | Y_PRESENT | WIDTH_PRESENT | HEIGHT_PRESENT
 }
 
+/// The listed toplevel that holds the core keyboard focus (`XGetInputFocus`),
+/// if any: the focus usually sits on a child of the client window, so the
+/// ancestors are walked until one of `candidates` is met.
+pub fn focused_window_among(candidates: &[u64]) -> Option<u64> {
+    let (conn, screen_num) = RustConnection::connect(None).ok()?;
+    let root = conn.setup().roots[screen_num].root;
+    let focus = conn.get_input_focus().ok()?.reply().ok()?.focus;
+    if focus <= 1 {
+        return None;
+    }
+    let mut current = focus;
+    for _ in 0..32 {
+        if candidates.contains(&u64::from(current)) {
+            return Some(u64::from(current));
+        }
+        let tree = conn.query_tree(current).ok()?.reply().ok()?;
+        if tree.parent == 0 || tree.parent == root {
+            return None;
+        }
+        current = tree.parent;
+    }
+    None
+}
+
+/// `WM_TRANSIENT_FOR` of a toplevel: the window it is a dialog of. `None`
+/// when unset or pointing at the root (group-transient utility windows).
+pub fn transient_for(xid: u64) -> Option<u64> {
+    let xid = u32::try_from(xid).ok()?;
+    let (conn, screen_num) = RustConnection::connect(None).ok()?;
+    let root = conn.setup().roots[screen_num].root;
+    let reply = conn
+        .get_property(false, xid, AtomEnum::WM_TRANSIENT_FOR, AtomEnum::WINDOW, 0, 1)
+        .ok()?
+        .reply()
+        .ok()?;
+    let owner = reply.value32()?.next()?;
+    (owner != 0 && owner != root).then_some(u64::from(owner))
+}
+
+/// The window a pid-only keyboard action means in a multi-window app, in
+/// order: the pid's window holding the core focus; its topmost on-screen
+/// transient dialog (a file chooser, a filter dialog); the WM's active
+/// window when it is the pid's; the largest mapped toplevel. `transient_for`
+/// answers `WM_TRANSIENT_FOR` for a window id.
+pub fn pick_pid_window(
+    windows: &[WindowInfo],
+    focused: Option<u64>,
+    transient_for: impl Fn(u64) -> Option<u64>,
+    active: Option<u64>,
+) -> Option<u64> {
+    if let Some(focused) = focused.filter(|f| windows.iter().any(|w| w.xid == *f)) {
+        return Some(focused);
+    }
+    let on_screen: Vec<&WindowInfo> = windows.iter().filter(|w| w.is_on_screen).collect();
+    if let Some(dialog) = on_screen
+        .iter()
+        .filter(|w| w.width > 0 && w.height > 0 && transient_for(w.xid).is_some())
+        .max_by_key(|w| w.z_index.unwrap_or(0))
+    {
+        return Some(dialog.xid);
+    }
+    if let Some(active) = active.filter(|a| windows.iter().any(|w| w.xid == *a)) {
+        return Some(active);
+    }
+    on_screen
+        .iter()
+        .max_by_key(|w| (u64::from(w.width) * u64::from(w.height), w.z_index.unwrap_or(0)))
+        .map(|w| w.xid)
+}
+
 /// `_NET_WM_PID` of a toplevel, when the window advertises one.
 pub fn window_pid(xid: u64) -> Option<u32> {
     let xid = u32::try_from(xid).ok()?;

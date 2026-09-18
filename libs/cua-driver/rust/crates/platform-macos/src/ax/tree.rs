@@ -393,29 +393,6 @@ unsafe fn walk_element(
 
     let in_web_content = in_web_content || is_web_content_role(&role);
 
-    // Skip pure layout containers that have no interesting content.
-    if role == "AXScrollArea" || role == "AXGroup" {
-        // Still recurse — children may be interesting. Layout containers
-        // collapse, so children inherit the parent's depth AND the same
-        // parent_index (no actionable node was emitted here).
-        let children = copy_children(element);
-        for child in children {
-            walk_element(
-                child,
-                depth,
-                parent_index,
-                in_web_content,
-                nodes,
-                lines,
-                counter,
-                budget,
-                max_depth,
-            );
-            CFRelease(child as CFTypeRef);
-        }
-        return;
-    }
-
     // Keep AXTitle and AXDescription SEPARATE so that the tree format matches
     // the Swift reference: title → "title", description → (description).
     // This is critical for Calculator where AXTitle="" but AXDescription="2"
@@ -443,6 +420,31 @@ unsafe fn walk_element(
 
     let has_content =
         !visible_title.is_empty() || !visible_description.is_empty() || !visible_value.is_empty();
+
+    // Layout containers collapse, so children inherit the parent's depth AND
+    // the same parent_index (no actionable node was emitted here).
+    if (role == "AXScrollArea" || role == "AXGroup")
+        && !has_content
+        && help.is_none()
+        && advertised.is_empty()
+    {
+        let children = copy_children(element);
+        for child in children {
+            walk_element(
+                child,
+                depth,
+                parent_index,
+                in_web_content,
+                nodes,
+                lines,
+                counter,
+                budget,
+                max_depth,
+            );
+            CFRelease(child as CFTypeRef);
+        }
+        return;
+    }
     // Some native controls expose no AX action names but do expose a writable
     // AXValue. Finder's transient inline-rename field is the important case:
     // rendering it without an element_index leaves an agent able to see the

@@ -6,7 +6,8 @@ on:
 
 permissions:
   actions: read
-  contents: read
+  # The called workflow cannot elevate this permission to discover draft assets.
+  contents: write
   pull-requests: read
 
 concurrency:

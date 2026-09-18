@@ -49,7 +49,8 @@ on:
 
 permissions:
   actions: read
-  contents: read
+  # GitHub exposes draft releases only to push-capable tokens.
+  contents: write
   pull-requests: read
 
 concurrency:

@@ -171,8 +171,8 @@ Third-party components have their own licenses:
 
 - [Kasm](libs/kasm/LICENSE) (MIT)
 - [`cua-som`](libs/python/som) is an optional package licensed under
-  AGPL-3.0-or-later. It depends on Ultralytics, which is distributed under
-  AGPL-3.0.
+  AGPL-3.0-or-later. Its Ultralytics dependency retains its own license; inspect
+  the resolved dependency version and its notices before redistribution.
 - The Microsoft OmniParser repository [states
   CC-BY-4.0](https://github.com/microsoft/OmniParser/blob/master/LICENSE) for its
   repository content. Model files downloaded from the separate OmniParser model

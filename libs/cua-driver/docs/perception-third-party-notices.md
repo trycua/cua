@@ -21,11 +21,11 @@ include the extension, model weights, or ONNX Runtime library.
 
 The release ledger marks this artifact `license-review-required`. Publication
 must remain blocked until that review passes. A distributor must preserve the
-AGPL license and notices and provide the corresponding source and pinned
-conversion/export material required for the converted artifact. Offering the
-covered perception service over a network also requires the applicable AGPL
-corresponding-source path. The artifact must not be presented as MIT merely
-because Driver invokes it through an extension protocol.
+AGPL-3.0-only license and notices and provide the corresponding source and
+pinned conversion/export material required for this artifact. Network use of a
+covered modified version may also trigger the license's corresponding-source
+requirements. The artifact must not be presented as MIT merely because Driver
+invokes it through an extension protocol.
 
 The OmniParser source repository's license for repository content and the
 separate model repository's artifact terms are different records. Verify the
@@ -38,8 +38,8 @@ recorded as Apache-2.0:
 
 | Role | Repository revision | Reviewed ONNX SHA-256 |
 | --- | --- | --- |
-| Mobile detector | `PaddlePaddle/PP-OCRv5_mobile_det` at `e6f4fa85f00e168c862bc462aebca69eef9b3d3d` | `a431985659dc921974177a95adcfbb90fd9e51989a5e04d70d0b75f597b6e61d` |
-| English recognizer | `PaddlePaddle/PP-OCRv5_mobile_rec` at `3fafbc3b5dcf93dd72add9f48368be8a3a2cd33b` | `b5f833dfc5d0eb71da397b4efa06ebeee9b431b690a47d6af40d77d8eabc557f` |
+| Mobile detector | `PaddlePaddle/PP-OCRv5_mobile_det_onnx` at `e6f4fa85f00e168c862bc462aebca69eef9b3d3d` | `a431985659dc921974177a95adcfbb90fd9e51989a5e04d70d0b75f597b6e61d` |
+| English recognizer | `PaddlePaddle/en_PP-OCRv5_mobile_rec_onnx` at `3fafbc3b5dcf93dd72add9f48368be8a3a2cd33b` | `b5f833dfc5d0eb71da397b4efa06ebeee9b431b690a47d6af40d77d8eabc557f` |
 
 The recognizer dictionary comes from the pinned recognizer repository's
 `inference.yml`, SHA-256
@@ -51,11 +51,12 @@ Preserve the Apache-2.0 license and any notices in the assembled artifact.
 The worker loads a CPU-only ONNX Runtime dynamic library from the extension
 package. Its upstream is Microsoft's
 [`microsoft/onnxruntime`](https://github.com/microsoft/onnxruntime) project,
-which publishes ONNX Runtime under the MIT license. Assembly must obtain the
-library from a reviewed upstream release and record its exact version, target,
-SHA-256, license, notices, and source location in the artifact manifest and
-SBOM. The checked-in template intentionally contains no release version or
-hash, so it is not evidence that a particular runtime shipped.
+which publishes ONNX Runtime under the MIT license. The reviewed candidate lock
+pins official CPU-only ONNX Runtime 1.26.0 archives for each supported target.
+Assembly must verify the selected archive and library hashes and record the
+exact version, target, SHA-256, license, notices, and source location in the
+artifact manifest and SBOM. These candidate records are not evidence that a
+particular runtime shipped.
 
 The reviewed OmniParser conversion used Python 3.12.13, PyTorch 2.8.0,
 torchvision 0.23.0, Ultralytics 8.3.199, ONNX 1.19.0, ONNX Runtime 1.22.1, opset

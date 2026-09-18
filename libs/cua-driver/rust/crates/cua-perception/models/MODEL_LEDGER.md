@@ -13,7 +13,8 @@ access and refuses missing or mismatched files before creating a model session.
 - Immutable source URL: `https://huggingface.co/microsoft/OmniParser-v2.0/resolve/6600256cb0f1b07651e3bc86166196307bad7e2d/icon_detect/model.pt`
 - Source file: `icon_detect/model.pt`
 - Source SHA-256: `dab3d4351ad00b035db829909a4db98354d5a90f6990e4ac00222a9a95d4bf57`
-- License shipped with the detector: AGPL-3.0
+- License recorded for this source model and converted detector artifact:
+  AGPL-3.0-only
 - Converted file: `omniparser-icon-detect-1280-opset17.onnx`
 - Converted SHA-256: `d8a876bf7f9fb73d7da9432904ade7fa78e092e9a91674e5a2806b45562a9ab2`
 - Converted size: 80,933,219 bytes
@@ -80,9 +81,9 @@ identity expose this limitation so a caller can decide whether it is suitable.
 
 ## ONNX Runtime CPU library
 
-All three targets use the official CPU-only archives at immutable tag
-`v1.26.0`. The assembler verifies each platform archive, extracts exactly one
-target member, and verifies its digest:
+The reviewed candidate lock pins official CPU-only archives at immutable tag
+`v1.26.0` for all three targets. The assembler verifies each platform archive,
+extracts exactly one target member, and verifies its digest:
 
 - macOS arm64 archive `7a1280bbb1701ea514f71828765237e7896e0f2e1cd332f1f70dbd5c3e33aca3`; `libonnxruntime.dylib` `cb0462c3fd35ad722e8772313030a33c182f3d4c6b33f4e5e1fcb2ce3199b86c`
 - Windows x64 archive `6ebe99b5564bf4d029b6e93eac9ff423682b6212eade769e9ca3f685eaf500b4`; `onnxruntime.dll` `b2ba7ca16e0e4fe71ad5148744ab885a2f5809e52a0c3de4d9ba3853a03977f9`

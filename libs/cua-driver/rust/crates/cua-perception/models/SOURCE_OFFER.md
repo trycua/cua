@@ -1,4 +1,4 @@
-# Corresponding Source Offer
+# Corresponding-Source Review Payload
 
 Every sealed Cua Perception review bundle includes `source-ledger.json` and the
 source files named there. `source/cua-perception-source.tar.gz` contains the
@@ -14,10 +14,13 @@ The exact hashed `model.pt` input is bundled under `source/upstream/`. Source
 snapshots for the principal exporter components are bundled under
 `source/exporter/`. `models/conversion-recipe.json` records the command,
 parameters, versions, absence of local patches, expected output, and the
-remaining reproducibility limitation. A distributor must retain all source
-artifacts and the ledgers with every copy of the detector.
+remaining reproducibility limitation. This payload preserves the reviewed
+inputs for assessing the source obligations that apply to a distribution.
 
-These files are a review payload, not a claim that legal review is complete.
-The model ledger remains `license-review-required`. Immutable upstream URLs are
-recorded as provenance and recovery coordinates; bundle verification uses the
-included bytes and pinned hashes rather than trusting those declarations.
+These files are a review payload, not a claim that legal review is complete or
+that the payload is sufficient corresponding source for every distribution
+scenario. The model ledger records the specific source model and converted
+detector artifact as AGPL-3.0-only and remains `license-review-required`.
+Immutable upstream URLs are recorded as provenance and recovery coordinates;
+bundle verification uses the included bytes and pinned hashes rather than
+trusting those declarations.

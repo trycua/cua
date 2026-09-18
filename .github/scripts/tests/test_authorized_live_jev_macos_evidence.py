@@ -124,6 +124,11 @@ def test_macos_live_evidence_uses_canonical_lume_and_signed_arm64_candidate() ->
     assert "CUA_E2E_SIGNING_KEYCHAIN_PASSWORD" not in run_lume
     assert "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" in workflow
     assert "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" in workflow
+    assert "actions/setup-python@" not in workflow
+    assert 'python-version: "3.12"' in workflow
+    assert "uv python install 3.12" in workflow
+    assert 'python_path="$(uv python find 3.12)"' in workflow
+    assert 'echo "$(dirname "$python_path")" >> "$GITHUB_PATH"' in workflow
     assert "driver.chmod(driver.stat().st_mode | 0o111)" in workflow
     assert workflow.index("driver.chmod(driver.stat().st_mode | 0o111)") < workflow.index(
         "seed-tcc-guest.sh"

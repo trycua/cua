@@ -73,7 +73,7 @@ class EvidenceSanitizerTests(unittest.TestCase):
                 {
                     "fixture": "visual-only-canvas/v1",
                     "ready": True,
-                    "selected": "tide",
+                    "selected": "send",
                     "action_count": 2,
                 }
             )
@@ -112,7 +112,7 @@ class EvidenceSanitizerTests(unittest.TestCase):
         self.assertEqual(manifest["platform"], inputs["platform"])
         self.assertEqual(manifest["runtime"]["model_id"], "jev/demo-v1")
         self.assertEqual(manifest["result"]["status"], "passed")
-        self.assertEqual(manifest["fixture"]["oracle"], {"selected": "tide", "action_count": 2})
+        self.assertEqual(manifest["fixture"]["oracle"], {"selected": "send", "action_count": 2})
         self.assertEqual(
             manifest["runtime"]["model_sha256"], sanitizer.sha256_file(inputs["model"])
         )

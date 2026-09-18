@@ -107,7 +107,7 @@ def load_oracle(path: Path) -> dict[str, object]:
         raise ValueError(f"fixture oracle keys must be exactly {sorted(expected)}")
     if value["fixture"] != "visual-only-canvas/v1" or value["ready"] is not True:
         raise ValueError("fixture oracle is not a ready visual-only canvas")
-    if value["selected"] not in {"ember", "tide", "moss"}:
+    if value["selected"] not in {"save", "send", "cancel"}:
         raise ValueError("fixture oracle contains an unexpected selection")
     if type(value["action_count"]) is not int or not 1 <= value["action_count"] <= 8:
         raise ValueError("fixture oracle action_count must be an integer from 1 through 8")

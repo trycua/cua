@@ -14,9 +14,9 @@ import urllib.request
 WIDTH = 760
 HEIGHT = 460
 CARDS = (
-    {"id": "ember", "label": "EMBER", "bounds": (72, 132, 276, 310), "color": "#e85d3f"},
-    {"id": "tide", "label": "TIDE", "bounds": (292, 132, 496, 310), "color": "#1e8b99"},
-    {"id": "moss", "label": "MOSS", "bounds": (512, 132, 716, 310), "color": "#6f8f3d"},
+    {"id": "save", "label": "Save", "bounds": (72, 132, 276, 310), "color": "#e85d3f"},
+    {"id": "send", "label": "Send", "bounds": (292, 132, 496, 310), "color": "#1e8b99"},
+    {"id": "cancel", "label": "Cancel", "bounds": (512, 132, 716, 310), "color": "#6f8f3d"},
 )
 
 
@@ -126,11 +126,11 @@ def main() -> int:
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     if args.self_test:
-        assert card_at(174, 220) == "ember"
-        assert card_at(394, 220) == "tide"
-        assert card_at(614, 220) == "moss"
+        assert card_at(174, 220) == "save"
+        assert card_at(394, 220) == "send"
+        assert card_at(614, 220) == "cancel"
         assert card_at(20, 20) is None
-        assert oracle_state("tide", 2)["action_count"] == 2
+        assert oracle_state("send", 2)["action_count"] == 2
         return 0
     if not args.journal_url:
         parser.error("--journal-url is required unless --self-test is used")

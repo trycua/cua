@@ -27,7 +27,7 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         self.assertNotIn("merge-base --is-ancestor", source)
         self.assertNotIn("pull_request_target", self.text)
 
-    def test_workflow_is_preflight_only_until_adapter_is_callable(self):
+    def test_workflow_stays_secret_free_and_artifact_gates_the_mock_e2e(self):
         jobs = self.workflow["jobs"]
         self.assertEqual(
             set(jobs),
@@ -36,8 +36,25 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         self.assertNotIn("environment:", self.text)
         self.assertNotIn("TYPESAFE_API_KEY", self.text)
         self.assertNotIn("${{ secrets.", self.text)
-        self.assertNotIn("upload-artifact", self.text)
-        self.assertIn("Live Jev jobs are intentionally absent", self.text)
+        self.assertIn("actions/upload-artifact@65c4c4a1", self.text)
+        upload_steps = [
+            step
+            for name in ("windows-preflight", "linux-x11-preflight")
+            for step in jobs[name]["steps"]
+            if "upload-artifact" in step.get("uses", "")
+        ]
+        self.assertEqual(len(upload_steps), 2)
+        for step in upload_steps:
+            self.assertEqual(step["if"], "inputs.signed_candidate_artifact_id != ''")
+            self.assertIn("recording.mp4", step["with"]["path"])
+            self.assertIn("manifest.json", step["with"]["path"])
+            self.assertNotIn("raw-manifest.json", step["with"]["path"])
+            self.assertNotIn("timeline.json", step["with"]["path"])
+        self.assertIn("signed_candidate_artifact_id", self.text)
+        self.assertIn("inputs.signed_candidate_artifact_id != ''", self.text)
+        self.assertIn("artifact-ids:", self.text)
+        self.assertIn("--ignored --exact", self.text)
+        self.assertIn("No live Jev/API call is made", self.text)
 
     def test_platform_preflights_use_canonical_harnesses(self):
         jobs = self.workflow["jobs"]
@@ -52,14 +69,23 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         self.assertIn("xvfb-run", linux_steps)
         self.assertEqual(jobs["windows-preflight"]["env"]["CUA_E2E_INTERNAL_LANE"], "capture")
         self.assertEqual(jobs["linux-x11-preflight"]["env"]["CUA_E2E_INTERNAL_LANE"], "capture")
+        for line in self.text.splitlines():
+            if "uses:" in line:
+                self.assertRegex(line, r"@[0-9a-f]{40}(?:\s|$)")
 
-    def test_fail_closed_orchestration_has_no_live_client(self):
+    def test_orchestration_is_mock_choice_capture_bound_and_has_no_live_client(self):
         rust_test = (
             ROOT
             / "libs/cua-driver/rust/crates/cua-driver/tests/authorized_live_jev_use_demo_test.rs"
         ).read_text()
-        self.assertIn("no committed callable live Jev adapter marker", rust_test)
-        self.assertIn("no live API request was made", rust_test)
+        self.assertIn('driver.call("parse_visual_regions"', rust_test)
+        self.assertIn('"capture_id": choice.capture_id', rust_test)
+        self.assertIn('state["selected"] == "send"', rust_test)
+        self.assertIn("capture reuse was not refused", rust_test)
+        self.assertIn("raw-manifest.json", rust_test)
+        self.assertIn("timeline.json", rust_test)
+        self.assertIn("manifest.json", rust_test)
+        self.assertIn("copy decoded recording evidence", rust_test)
         self.assertNotIn("TYPESAFE_API_KEY", rust_test)
         self.assertNotIn("reqwest", rust_test)
         self.assertNotIn("ureq", rust_test)

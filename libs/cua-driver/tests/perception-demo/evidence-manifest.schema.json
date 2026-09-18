@@ -20,7 +20,7 @@
           "additionalProperties": false,
           "required": ["selected", "action_count"],
           "properties": {
-            "selected": { "enum": ["ember", "tide", "moss"] },
+            "selected": { "enum": ["save", "send", "cancel"] },
             "action_count": { "type": "integer", "minimum": 1, "maximum": 8 }
           }
         }

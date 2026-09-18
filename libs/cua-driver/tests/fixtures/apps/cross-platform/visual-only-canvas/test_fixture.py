@@ -12,18 +12,18 @@ SPEC.loader.exec_module(fixture)
 
 class VisualOnlyCanvasTests(unittest.TestCase):
     def test_hit_testing_uses_painted_geometry(self):
-        self.assertEqual(fixture.card_at(174, 220), "ember")
-        self.assertEqual(fixture.card_at(394, 220), "tide")
-        self.assertEqual(fixture.card_at(614, 220), "moss")
+        self.assertEqual(fixture.card_at(174, 220), "save")
+        self.assertEqual(fixture.card_at(394, 220), "send")
+        self.assertEqual(fixture.card_at(614, 220), "cancel")
         self.assertIsNone(fixture.card_at(40, 220))
 
     def test_oracle_contains_behavior_without_coordinates_or_labels(self):
         self.assertEqual(
-            fixture.oracle_state("moss", 3),
+            fixture.oracle_state("send", 3),
             {
                 "fixture": "visual-only-canvas/v1",
                 "ready": True,
-                "selected": "moss",
+                "selected": "send",
                 "action_count": 3,
             },
         )

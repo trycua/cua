@@ -464,9 +464,9 @@ Print the local skill-pack path.
 
 ### `cua-driver extension`
 
-Inspect or store an unsigned, untrusted local extension prototype.
+Inspect and manage signed, target-specific optional extensions.
 
-Archive hashes are self-asserted by the same untrusted archive: they can detect later corruption but do not authenticate a publisher or establish artifact provenance. Mutation is unsupported on Windows. Uninstall is intentionally absent until descriptor-relative recursive deletion has a reviewed cross-platform design.
+Verified installs bind a pinned publisher identity and Ed25519 key validity/rotation state to exact catalog, archive, manifest, file, original-model, and converted-model hashes plus component licenses/notices and corresponding-source revisions. Inspect previews license, source, and provenance before mutation. Explicit developer-only unsigned installs remain visibly unverified. Install, update, and remove use platform-specific ownership and link/reparse-point checks on macOS, Linux, and Windows.
 
 #### `cua-driver extension list`
 
@@ -480,7 +480,7 @@ List registry-known extensions and local state.
 
 #### `cua-driver extension info`
 
-Describe one registry-known extension.
+Compatibility alias for installed extension status.
 
 **Arguments:**
 
@@ -494,9 +494,33 @@ Describe one registry-known extension.
 | ---- | ----------- |
 | `--json` | Emit machine-readable output. |
 
+#### `cua-driver extension inspect`
+
+Verify and preview license, source, provenance, and hashes without mutation.
+
+**Arguments:**
+
+| Name | Type | Required | Description |
+| ---- | ---- | -------- | ----------- |
+| `<name>` | String | Yes | Registry extension name. |
+
+**Options:**
+
+| Name | Type | Default | Description |
+| ---- | ---- | ------- | ----------- |
+| `--catalog` | String | — | Signed local catalog. |
+| `--archive` | String | — | Developer-only unsigned local archive. |
+
+**Flags:**
+
+| Name | Description |
+| ---- | ----------- |
+| `--allow-unsigned-local` | Explicitly select developer-only unverified mode. |
+| `--json` | Emit machine-readable output. |
+
 #### `cua-driver extension status`
 
-Verify installed extension state; absence is healthy.
+Verify installed integrity and optionally run the self-test hook.
 
 **Arguments:**
 
@@ -508,13 +532,14 @@ Verify installed extension state; absence is healthy.
 
 | Name | Description |
 | ---- | ----------- |
+| `--self-test` | Run the extension self-test hook. |
 | `--json` | Emit machine-readable output. |
 
 #### `cua-driver extension install`
 
-Store and activate unsigned, untrusted local code.
+Verify, stage, and durably activate an extension.
 
-Hashes are self-asserted and do not establish provenance. Unsupported on Windows.
+Supported on macOS, Linux, and Windows with platform ownership and link/reparse-point checks.
 
 **Arguments:**
 
@@ -526,13 +551,20 @@ Hashes are self-asserted and do not establish provenance. Unsupported on Windows
 
 | Name | Type | Default | Description |
 | ---- | ---- | ------- | ----------- |
-| `--archive` | String | — | Unsigned local tar.gz archive. |
+| `--catalog` | String | — | Signed local catalog. |
+| `--archive` | String | — | Developer-only unsigned local archive. |
+
+**Flags:**
+
+| Name | Description |
+| ---- | ----------- |
+| `--allow-unsigned-local` | Explicitly select developer-only unverified mode. |
 
 #### `cua-driver extension update`
 
-Store and activate unsigned, untrusted local code.
+Verify and atomically activate a newer extension version.
 
-Hashes are self-asserted and do not establish provenance. Unsupported on Windows.
+Supported on macOS, Linux, and Windows with platform ownership and link/reparse-point checks.
 
 **Arguments:**
 
@@ -544,11 +576,30 @@ Hashes are self-asserted and do not establish provenance. Unsupported on Windows
 
 | Name | Type | Default | Description |
 | ---- | ---- | ------- | ----------- |
-| `--archive` | String | — | Unsigned local tar.gz archive. |
+| `--catalog` | String | — | Signed local catalog. |
+| `--archive` | String | — | Developer-only unsigned local archive. |
+
+**Flags:**
+
+| Name | Description |
+| ---- | ----------- |
+| `--allow-unsigned-local` | Explicitly select developer-only unverified mode. |
+
+#### `cua-driver extension remove`
+
+Remove only a fully validated, manager-owned extension tree.
+
+Supported on macOS, Linux, and Windows with platform ownership and link/reparse-point checks.
+
+**Arguments:**
+
+| Name | Type | Required | Description |
+| ---- | ---- | -------- | ----------- |
+| `<name>` | String | Yes | Registry extension name. |
 
 #### `cua-driver extension path`
 
-Print the exact active version directory.
+Compatibility command that prints the exact active version directory.
 
 **Arguments:**
 

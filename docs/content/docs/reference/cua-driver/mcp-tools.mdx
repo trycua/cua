@@ -16,7 +16,7 @@ This reference describes the **macOS** native tool registry.
 Other platforms: [Linux MCP tools](/reference/cua-driver/mcp-tools-linux), [Windows MCP tools](/reference/cua-driver/mcp-tools-windows).
 See [MCP tool notes](/reference/cua-driver/mcp-tool-notes) for shared guidance.
 
-`cua-driver` exposes 56 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
+`cua-driver` exposes 58 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
 
 Tool names are `snake_case`. Responses are MCP `CallTool.Result` envelopes: a text content block prefixed with a `✅` summary (or the error reason on failure), plus optional image or structured-content blocks on tools that produce them. See the [CLI reference](/reference/cua-driver/cli-reference) for CLI-specific options like `--socket` and `--screenshot-out-file`.
 
@@ -69,7 +69,7 @@ PREFERRED CONSUMERS read `structuredContent.elements` (one entry per indexed row
 
 Always returns BOTH the element tree AND a screenshot — ground on both and cross-check (the tree lies on some surfaces: Electron echo-confirms, Catalyst null values, virtualized off-viewport rows with `h:1` frames). You choose the modality at ACTION time, not here: an element ax action (pass `element_index`/`element_token` → the accessibility rung) or an element px action (pass `x`,`y` → the pixel rung, read straight off this screenshot). `capture_mode` is deprecated and ignored. Pass `include_screenshot:false` to skip the grab and get the tree only — the cheap path when you're just re-indexing before an element ax action.
 
-The mirror image: pass `include_accessibility_tree:false` to SKIP the AX walk entirely (the expensive part, up to 20 s) and return just the screenshot plus window metadata — `window_bounds`, `screenshot_scale`, `screenshot_width`/`screenshot_height`, `app_name`, and `window_title` — the capture-only path for rendering a live window preview / picture-in-picture without paying for perception. Setting BOTH `include_accessibility_tree:false` and `include_screenshot:false` is an error (nothing to return). Optional `max_dimension` caps the returned screenshot's long edge in pixels (aspect preserved) for a cheap thumbnail.
+The mirror image: pass `include_accessibility_tree:false` to SKIP the AX walk entirely (the expensive part, up to 20 s) and return just the screenshot plus window metadata — `window_bounds`, `screenshot_scale`, `screenshot_width`/`screenshot_height`, `app_name`, and `window_title` — the capture-only path for rendering a live window preview / picture-in-picture without paying for perception. Setting BOTH `include_accessibility_tree:false` and `include_screenshot:false` is an error (nothing to return). Optional `max_image_dimension` overrides the configured screenshot long-edge limit for this call; use 0 for native resolution. The legacy `max_dimension` remains a tighter cap for compatibility.
 
 The snapshot is SCOPED to `window_id`: a window_id that no longer exists is refused with `window_id_not_found`, and one owned by another process is refused with `window_owner_pid_mismatch` naming the real `owner_pid` to retry with (macOS hosts a sandboxed app's Open/Save panel out-of-process, so its window belongs to the panel service, not the app). If the window is live under this pid but its accessibility surface can't be resolved, the tree comes back EMPTY with `degraded_reason: ax_window_unresolved` and the screenshot of the requested window — act by pixel there. This tool never returns another surface's elements under your window_id. Before exposing a screenshot, its raw dimensions are validated as a coherent 1x/2x representation of the requested WindowServer bounds. `px_frame_mismatch` or `px_capture_unavailable` omits an unprovable screenshot/pixel frame instead of guessing a transform; the truthful AX payload remains available.
 
@@ -85,6 +85,7 @@ Optional `max_elements` / `max_depth` bound the AX walk to mitigate context-wind
 - `max_depth` (integer, optional): Cap on the AX-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower this for deep menu/Electron trees. range: 1–unbounded
 - `max_dimension` (integer, optional): Optional cap on the returned screenshot's long edge, in pixels (aspect ratio preserved) — the cheap path for a small preview / thumbnail. Applied on top of the session/global max_image_dimension ceiling; the tighter of the two wins. Omit for the configured default. range: 1–unbounded
 - `max_elements` (integer, optional): Cap on the total number of AX nodes walked. Truncates depth-first; markdown and structured elements truncate together. Omit for the default (2 000). Lower this for Electron / Obsidian / large web apps that produce 10k+ element trees and blow context windows. range: 1–unbounded
+- `max_image_dimension` (integer, optional): Per-call override for the returned screenshot's long edge in pixels. An explicit value wins over the session/global setting; 0 returns native resolution. Omit to preserve configured behavior. range: 0–unbounded
 - `pid` (integer, required): Target process ID.
 - `query` (string, optional): Case-insensitive filter for tree_markdown and structured elements. Returns matching actionable rows plus their actionable ancestors without renumbering element_index values.
 - `screenshot_out_file` (string, optional): When set, write the PNG to this file path (~ expanded) instead of embedding base64 in the response. The structured output will contain screenshot_file_path instead.
@@ -245,6 +246,7 @@ from_zoom: set true after a zoom call to auto-translate zoom-image pixel coordin
 
 - `action` (string, optional): AX action: press, show_menu, pick, confirm, cancel, open.
 - `button` (string, optional): Mouse button. Default: "left" — omit for legacy left-click behaviour. Pixel path uses the matching CGEvent primitive; AX path maps "right" to AXShowMenu and falls back to a pixel middle-click at the element's center for "middle".
+- `capture_id` (string, optional): Optional immutable source capture ID returned by get_window_state or get_desktop_state. With x,y, Driver atomically admits and consumes that exact capture before dispatch; stale, mismatched, or out-of-bounds captures are refused without fallback.
 - `count` (integer, optional): Click count (pixel path only). Default 1.
 - `debug_image_out` (string, optional): Optional file path. When set on a pixel-addressed click, captures a fresh screenshot, draws a red crosshair at (x, y), and writes the PNG. Use to verify coordinate spaces. Requires window_id; incompatible with from_zoom.
 - `delivery_mode` (string, optional): Best-effort-background ladder rung (default "background"). "background": perform the AX action or post the CGEvent without fronting. "foreground": briefly front the window, act, let transient UI settle, then restore the prior frontmost app. Requires window_id. Modified clicks require "foreground" so macOS observes physical modifier-key state. A generic click has no independent postcondition read-back, except selection of list-like AX rows whose AXSelected state can be confirmed; otherwise confirm the effect from a fresh state snapshot. Use the agent loop: background AX (element_index) → snapshot → background pixel (x/y) → snapshot → delivery_mode:"foreground".
@@ -1064,3 +1066,29 @@ Deprecated compatibility alias that reads a live legacy session's capture policy
 
 - `session` (string, optional): Optional public label. When omitted, inspect the caller's attached
 implicit session.
+
+### `install_extension`
+
+Preview or install one Driver-managed optional extension. The first call without confirm returns the exact signed artifact, destination, license, source, and trust plan without mutation. Re-call with confirm=true to perform that exact verified installation.
+
+**Arguments:**
+
+- `confirm` (boolean, optional): Install the previewed extension. Omit or false for a read-only plan.
+- `name` (string, required)
+
+```json
+{"name":"perception"}
+```
+
+### `parse_visual_regions`
+
+Parse text and icon regions from an immutable Driver capture.
+
+**Arguments:**
+
+- `capture_id` (string, required)
+- `options` (object, optional): Optional, model-neutral controls for one bounded parse. default: `{}`
+
+```json
+{"capture_id":"example"}
+```

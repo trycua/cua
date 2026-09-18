@@ -266,7 +266,10 @@ test(
       assert.equal(requests[6].args.element_token, "stale-token")
       assert.equal(requests[7].args.target.window_id, 124)
       assert.equal(requests[8].name, "parse_visual_regions")
-      assert.deepEqual(requests[8].args, { capture_id: "capture-123" })
+      assert.deepEqual(requests[8].args, {
+        capture_id: "capture-123",
+        options: {},
+      })
       assert.equal(requests[0].name, "verify_state")
       assert.deepEqual(requests[0].args, {
         pid: 123,

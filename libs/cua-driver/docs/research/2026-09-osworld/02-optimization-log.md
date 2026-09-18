@@ -63,3 +63,29 @@ Image requirement: `build/99-cua-uinput.rules` + `build/uinput.conf` + `usermod 
 - Why the overlay renderer stops reporting arrival above a GIMP menu is undiagnosed (the cap makes it harmless).
 - One stale-window-id `BadWindow` in `desktop_to_window_local` is surfaced, not retried.
 - Windows/macOS accept `timeout_ms` in the schema but do not honor it yet.
+
+## Round 8: Qt popups, labels, screenshot scale (branch `feat/opt-r8-qt-keys`)
+
+From the round-7 background traces (VLC 59f21cfb, GIMP 554785e9) and the Calc
+regression analysis. Probe: `part8_qt.py` (results `part8-qt*.md`).
+
+| Finding | Root cause | Change |
+| --- | --- | --- |
+| Keys dropped while a Qt popup (combo list, completer) is open, reported "focus untouched" | The X server drops core key events from any *other* master keyboard to a client holding an active keyboard grab (`IsInterferingGrab`); the virtual master keyboard route is silently lost | `popup_of_pid` + `send_keys_under_popup_grab`: XTest on the core keyboard (the grab routes it to the target), core focus / active window verified after (`path=xtest_core_grab`); refused with `popup_keyboard_grab` when another pid owns the core focus |
+| `get_window_state(pid, popup)` returned the main menubar (Audio/Video/…) instead of the combo rows | Frames stayed in screen pixels when the override-redirect window's origin was unavailable, so the menubar "fit" the popup box; only `menu` roles were kept | Popup rectangle is the origin fallback; container-subtree scoping; list/tree/table rows win over menubar entries |
+| AT-SPI `Description` never read | — | Read for controls; rendered `(description "Pause")`, `label` falls back to it |
+| Four GIMP spin scales all `label:"0.0"` | GtkSpinButton implements AtkText with its number; the text became the name | Value controls are never named after text; LABELLED_BY, description (GIMP keeps "Hue"/"Lightness"/"Saturation" there), sibling label, else `unlabelled` + "3rd of 4 spin buttons in this window" |
+| Drop onto VLC reported "3.6% changed" | Guard watches the target pid only | `foreign_window`: title before/after + new windows of the pid under the point, as window_change evidence |
+| `parent_index` pointed at a preceding push button | "nearest preceding actionable at lower depth" | Real pre-order ancestor chain |
+| Model called `triple_click` | — | `click` documents `count: 2/3`; verified: count 3 selects a whole line in gedit, background and foreground |
+| Model's Calc coordinates 0.94x short | The API downsizes images above ~1.15 MP; a 1568x861 window shot reached the model as ~1447x795 | Window screenshots capped at 1.15 MP, element frames scaled to the delivered image, `frame_scale` reported; verified: a click at screenshot pixels selects the same cell as a real click |
+| One-row Calc misses found six values later | — | After a pointer press the focused cell is named (`focus: cell D2`) from `object:active-descendant-changed` |
+
+Probe (`part8-qt.md`, `part8-qt-b.md`, `part8-qt-c.md`): VLC Open File end to end
+by set_value + accessibility Press (title → "tone.wav - VLC media player"),
+combo popup rows listed, Escape under the popup grab delivered with focus
+verified unchanged, transport buttons described; GIMP Hue-Saturation spin
+buttons named; gedit triple click; Calc 1337x860 (1.15 MP) screenshot with
+`frame_scale` 0.955 and cell-accurate clicks with `focus: cell`.
+
+Subset run (`r8-bg-subset`, background, tasks 59f21cfb 554785e9 357ef137 abed40dc): see below.

@@ -22,6 +22,12 @@ Before evaluating or using a checkpoint, read [`MODEL_CARD.md`](MODEL_CARD.md)
 for its intended scope and limitations and [`SECURITY.md`](SECURITY.md) for
 deployment guidance.
 
+The source code in this component is available under the repository's MIT
+license. That license does not apply to future official model weights,
+datasets, hosted services, or Cua trademarks. A future checkpoint may permit
+research and evaluation while requiring a separate agreement for commercial
+production use; its release must state those artifact-specific terms clearly.
+
 ## Python package
 
 The Python distribution is named `cua-s1`, and its import name is `cua_s1`.

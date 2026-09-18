@@ -7,6 +7,7 @@ name = "cua-s1"
 version = "0.0.0"
 description = "Research tools for small, specialist computer-use models"
 readme = { text = "Cua-S1 provides research code for small, specialist computer-use models. The package does not include or download model weights.", content-type = "text/markdown" }
+license = { file = "LICENSE" }
 authors = [
     { name = "TryCua", email = "hello@trycua.com" }
 ]
@@ -19,6 +20,7 @@ classifiers = [
     "Development Status :: 2 - Pre-Alpha",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",

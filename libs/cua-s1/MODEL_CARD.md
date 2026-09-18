@@ -123,4 +123,7 @@ See [`SECURITY.md`](SECURITY.md) for threat-model and reporting guidance.
 This component does not grant rights to future checkpoint weights, external
 training data, or unlisted third-party materials. A checkpoint release must
 document its exact artifact license, data provenance, and applicable
-third-party notices before distribution or use decisions are made.
+third-party notices before distribution or use decisions are made. The source
+code is MIT-licensed, but an official checkpoint may use separate terms that
+permit research and evaluation while requiring a commercial license for
+production, hosted inference, resale, or commercial redistribution.

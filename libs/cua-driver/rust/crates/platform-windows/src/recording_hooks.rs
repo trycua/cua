@@ -152,9 +152,10 @@ pub fn element_window_local_xy(
         return Some((window_id, None));
     }
     let (sx, sy) = element.center;
-    // The cached center is in SCREEN coords. Convert to window-local pixel
-    // coords by subtracting the window's screen origin (GetWindowRect-equivalent
-    // in WindowInfo). Windows captures at logical pixels so no scale factor.
+    // The cached center is in SCREEN coords. Convert to window-local physical
+    // pixel coords by subtracting the window's screen origin
+    // (GetWindowRect-equivalent in WindowInfo). Capture and input share this
+    // physical-pixel space under Per-Monitor-V2 awareness.
     let wins = crate::win32::list_windows(Some(pid_u32));
     let point = wins
         .iter()

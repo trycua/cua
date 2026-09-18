@@ -70,6 +70,7 @@ cleanup() {
   fi
   rm -f "$signing_probe" \
     "$log_dir/import.log" "$log_dir/partition.log" \
+    "$log_dir/pkcs12-legacy.log" "$log_dir/pkcs12-fallback.log" \
     "$log_dir/identity.log" "$log_dir/probe-sign.log" \
     "$log_dir/probe-verify.log" "$log_dir/driver-sign.log" \
     "$log_dir/driver-verify.log"
@@ -112,9 +113,20 @@ openssl req -new -newkey rsa:2048 -nodes -x509 -sha256 -days 2 \
   -addext "extendedKeyUsage=codeSigning" \
   -keyout "$private_key_path" -out "$certificate_path"
 openssl x509 -in "$certificate_path" -outform der -out "$certificate_der_path"
-openssl pkcs12 -export -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 \
-  -inkey "$private_key_path" -in "$certificate_path" \
-  -name "Cua Review Candidate" -passout "pass:$identity_password" -out "$identity_path"
+if ! openssl pkcs12 -export -legacy \
+    -inkey "$private_key_path" -in "$certificate_path" \
+    -name "Cua Review Candidate" -passout "pass:$identity_password" \
+    -out "$identity_path" >"$log_dir/pkcs12-legacy.log" 2>&1; then
+  if ! openssl pkcs12 -export \
+      -inkey "$private_key_path" -in "$certificate_path" \
+      -name "Cua Review Candidate" -passout "pass:$identity_password" \
+      -out "$identity_path" >"$log_dir/pkcs12-fallback.log" 2>&1; then
+    echo "review signing step failed: pkcs12-export" >&2
+    emit_log "$log_dir/pkcs12-legacy.log"
+    emit_log "$log_dir/pkcs12-fallback.log"
+    exit 1
+  fi
+fi
 
 security create-keychain -p "$keychain_password" "$keychain_path"
 keychain_created=true

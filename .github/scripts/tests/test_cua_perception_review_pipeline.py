@@ -164,6 +164,7 @@ def test_macos_review_candidate_uses_ephemeral_certificate_signing() -> None:
         "mktemp -d",
         "security create-keychain",
         "extendedKeyUsage=codeSigning",
+        "openssl pkcs12 -export -legacy",
         '-P "$identity_password" -A -T /usr/bin/codesign',
         'run_step probe-sign codesign --force --sign "$identity_hash"',
         'run_step driver-sign codesign --force --sign "$identity_hash"',
@@ -226,6 +227,12 @@ def test_macos_review_candidate_uses_ephemeral_certificate_signing() -> None:
     ) in script
     assert "security find-identity -v" not in script
     assert "set -x" not in script
+    assert script.count("openssl pkcs12 -export") == 2
+    assert '"$log_dir/pkcs12-legacy.log" "$log_dir/pkcs12-fallback.log"' in script
+    assert 'emit_log "$log_dir/pkcs12-legacy.log"' in script
+    assert 'emit_log "$log_dir/pkcs12-fallback.log"' in script
+    assert "-keypbe PBE-SHA1-3DES" not in script
+    assert "-certpbe PBE-SHA1-3DES" not in script
     assert "[[:xdigit:]]{64}" in script
     assert 'rmdir "$work_root"' in script
     assert 'rm -rf "$work_root"' not in script

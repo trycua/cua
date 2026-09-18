@@ -413,3 +413,20 @@ Final local verification passed 34 Python tests, 24 TypeScript tests,
 TypeScript typechecking, both mock chooser commands, workflow YAML parsing, and
 `git diff --check`. The SDK client tests cover live request/response shaping
 with local fake transports; no live TypeSafe request was made locally.
+
+### Live workflow credential hardening
+
+The authorized workflow resolves and installs the locked Python and Node clients
+before the reviewer-gated secret is available. Secret-bearing steps now invoke
+the resulting `.venv/bin/python` directly; they do not run uv, pip, npm, cargo,
+or another resolver, installer, or build command. The chooser verifier continues
+to launch the absolute chooser path with that interpreter and without a shell.
+All third-party actions in the workflow are pinned to immutable commits.
+
+A focused workflow contract test enumerates every action reference and every
+step containing `TYPESAFE_API_KEY`. It requires 40-character action commits,
+the preinstalled interpreter path, and the absence of resolver, installer, and
+build invocations in those steps.
+
+Final focused verification passed 36 Python tests, 24 TypeScript tests,
+TypeScript typechecking, workflow YAML parsing, and `git diff --check`.

@@ -76,14 +76,14 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ needs.source.outputs.sha }}
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-python@v5
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           version: "0.8.15"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
       - name: Install Linux desktop dependencies
@@ -115,15 +115,17 @@ jobs:
         run: |
           mock="$RUNNER_TEMP/jev-use-mock-proof"
           live="$RUNNER_TEMP/jev-use-live-proof"
+          python_bin="$GITHUB_WORKSPACE/libs/cua-driver/examples/jev-use/.venv/bin/python"
+          test -x "$python_bin"
           # Match the repository's supported Linux X11 desktop stack while
           # keeping the live credential scoped to this reviewed step.
           xvfb-run -a --server-args="-screen 0 1920x1080x24" \
             dbus-run-session -- bash -lc \
-            'openbox >/tmp/jev-use-openbox.log 2>&1 & picom --backend xrender --config /dev/null >/tmp/jev-use-picom.log 2>&1 & sleep 2; cd libs/cua-driver/examples/jev-use; uv run --frozen python verify_setup.py --typescript --max-steps 2 --output-dir "'$mock'"; uv run --frozen python verify_setup.py --live --typescript --max-steps 2 --output-dir "'$live'"'
+            'openbox >/tmp/jev-use-openbox.log 2>&1 & picom --backend xrender --config /dev/null >/tmp/jev-use-picom.log 2>&1 & sleep 2; cd libs/cua-driver/examples/jev-use; "'$python_bin'" verify_setup.py --typescript --max-steps 2 --output-dir "'$mock'"; "'$python_bin'" verify_setup.py --live --typescript --max-steps 2 --output-dir "'$live'"'
       - name: Verify live bounded chooser CLI
         env:
           TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
-        run: uv run --frozen python verify_choice_cli.py --live
+        run: .venv/bin/python verify_choice_cli.py --live
       - name: Audit live action bound and redact evidence
         run: |
           uv run python - "$RUNNER_TEMP/jev-use-live-proof" <<'PY'

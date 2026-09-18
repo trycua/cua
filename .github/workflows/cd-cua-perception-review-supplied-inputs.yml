@@ -2,14 +2,15 @@ name: "Review: Cua Perception supplied-input candidates"
 
 on:
   workflow_dispatch:
-    inputs:
+    inputs: &review_inputs
       source_sha:
         description: "Exact current head SHA of pull request #3943"
         required: true
         type: string
       reviewed_model_asset_id:
-        description: "Asset ID for the reviewed ONNX on an unpublished draft release"
-        required: true
+        description: "Optional asset ID for the reviewed ONNX; otherwise discover one matching draft asset"
+        required: false
+        default: ""
         type: string
       catalog_version:
         description: "Positive review catalog version"
@@ -19,6 +20,12 @@ on:
         description: "Review catalog expiry as Unix seconds"
         required: true
         type: string
+  workflow_call:
+    inputs: *review_inputs
+    outputs:
+      signed_candidate_artifact_id:
+        description: "Artifact ID containing both signed review candidates"
+        value: ${{ jobs.aggregate.outputs.signed_candidate_artifact_id }}
 
 permissions:
   actions: read
@@ -96,16 +103,16 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          REVIEWED_MODEL_ASSET_ID: ${{ inputs.reviewed_model_asset_id }}
+          REQUESTED_MODEL_ASSET_ID: ${{ inputs.reviewed_model_asset_id }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import hashlib, json, os, pathlib, re, urllib.request
 
           repository = os.environ["GITHUB_REPOSITORY"]
-          asset_id = os.environ["REVIEWED_MODEL_ASSET_ID"]
-          if not re.fullmatch(r"[1-9][0-9]*", asset_id):
-              raise SystemExit("reviewed_model_asset_id must be numeric")
+          requested_asset_id = os.environ["REQUESTED_MODEL_ASSET_ID"]
+          if requested_asset_id and not re.fullmatch(r"[1-9][0-9]*", requested_asset_id):
+              raise SystemExit("reviewed_model_asset_id must be empty or numeric")
           lock = json.loads(pathlib.Path(
               "libs/cua-driver/rust/crates/cua-perception/scripts/artifacts.lock.json"
           ).read_text())
@@ -122,23 +129,27 @@ jobs:
               with urllib.request.urlopen(urllib.request.Request(url, headers=headers)) as response:
                   return json.load(response)
           api = f"https://api.github.com/repos/{repository}"
-          release = None
+          candidates = []
           for page in range(1, 11):
               releases = get_json(f"{api}/releases?per_page=100&page={page}")
               if not releases:
                   break
-              release = next((item for item in releases if any(
-                  str(asset["id"]) == asset_id for asset in item.get("assets", [])
-              )), None)
-              if release:
-                  break
-          if not release or release.get("draft") is not True or release.get("published_at") is not None:
-              raise SystemExit("supplied model asset must belong to an unpublished draft release")
-          asset = next(item for item in release["assets"] if str(item["id"]) == asset_id)
-          if asset["name"] != expected["filename"] or asset["state"] != "uploaded":
-              raise SystemExit("supplied model asset identity is not the reviewed detector")
-          if asset["size"] != expected["size"]:
-              raise SystemExit("supplied model asset metadata has the wrong size")
+              for release in releases:
+                  if release.get("draft") is not True or release.get("published_at") is not None:
+                      continue
+                  for asset in release.get("assets", []):
+                      if requested_asset_id and str(asset["id"]) != requested_asset_id:
+                          continue
+                      if (asset["name"] == expected["filename"] and
+                              asset["state"] == "uploaded" and asset["size"] == expected["size"]):
+                          candidates.append(asset)
+          if len(candidates) != 1:
+              raise SystemExit(
+                  "expected exactly one unpublished draft asset matching the reviewed detector; "
+                  f"found {len(candidates)}"
+              )
+          asset = candidates[0]
+          asset_id = str(asset["id"])
           destination = pathlib.Path("reviewed-inputs") / expected["filename"]
           destination.parent.mkdir()
           download_headers = dict(headers, Accept="application/octet-stream")
@@ -153,6 +164,8 @@ jobs:
           if size != expected["size"] or digest.hexdigest() != expected["sha256"]:
               destination.unlink(missing_ok=True)
               raise SystemExit("supplied model bytes differ from the reviewed size or SHA-256")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as github_env:
+              github_env.write(f"CUA_REVIEWED_MODEL_ASSET_ID={asset_id}\n")
           print(json.dumps({"asset_id": int(asset_id), "review_only": True,
                             "sha256": digest.hexdigest(), "size": size}, sort_keys=True))
           PY
@@ -264,7 +277,6 @@ jobs:
           CATALOG_VERSION: ${{ inputs.catalog_version }}
           DRIVER: ${{ matrix.driver }}
           EXPIRES_UNIX: ${{ inputs.expires_unix }}
-          MODEL_ASSET_ID: ${{ inputs.reviewed_model_asset_id }}
           PLATFORM: ${{ matrix.platform }}
           SOURCE_SHA: ${{ inputs.source_sha }}
           TARGET: ${{ matrix.target }}
@@ -359,7 +371,7 @@ jobs:
             review_only: true,
             source_sha: process.env.SOURCE_SHA,
             target: process.env.TARGET,
-            supplied_model_asset_id: Number(process.env.MODEL_ASSET_ID),
+            supplied_model_asset_id: Number(process.env.CUA_REVIEWED_MODEL_ASSET_ID),
             supplied_model_sha256: model.sha256,
             supplied_model_size: model.size,
             public_key_base64: publicBase64,
@@ -530,6 +542,8 @@ jobs:
     name: aggregate signed review candidates
     needs: supplied-input
     runs-on: ubuntu-latest
+    outputs:
+      signed_candidate_artifact_id: ${{ steps.upload.outputs.artifact-id }}
     steps:
       - name: Download both signed target layouts
         uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
@@ -598,7 +612,8 @@ jobs:
             }
           }
           JS
-      - name: Upload one immutable staged artifact for the authorized live workflow
+      - id: upload
+        name: Upload one immutable staged artifact for the authorized live workflow
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
         with:
           name: STAGING-cua-perception-review-candidates-${{ inputs.source_sha }}

@@ -342,6 +342,57 @@ def test_model_requires_redistributable_ledger(tmp_path: Path) -> None:
         release.load_and_validate_manifest(manifest_path, payload)
 
 
+def test_license_review_model_requires_exact_bundled_source_input(tmp_path: Path) -> None:
+    payload, manifest_path = fixture(tmp_path)
+    source_path = payload / "payload/source/upstream/omniparser-icon-detect-model.pt"
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source_path.write_bytes(b"exact detector source input\n")
+    manifest = json.loads(manifest_path.read_text())
+    manifest["artifacts"].append({
+        "kind": "source",
+        "name": "omniparser-icon-detect-model.pt",
+        "path": "payload/source/upstream/omniparser-icon-detect-model.pt",
+        "sha256": release.file_digest(source_path),
+        "size": source_path.stat().st_size,
+        "license": {
+            "spdx": "AGPL-3.0-only",
+            "source": "fixture source",
+            "notice": "payload/NOTICE",
+        },
+    })
+    manifest_path.write_text(json.dumps(manifest))
+    source_ledger_path = payload / "source-ledger.json"
+    source_ledger = json.loads(source_ledger_path.read_text())
+    source_ledger["sources"].append({
+        "artifact": "omniparser-icon-detect-model.pt",
+        "artifactSha256": release.file_digest(source_path),
+        "artifactSize": source_path.stat().st_size,
+        "repository": "fixture source",
+        "revision": "b" * 40,
+        "license": "AGPL-3.0-only",
+        "durableLocation": "candidate archive source/upstream/omniparser-icon-detect-model.pt",
+        "sourceOfferStatus": "bundled-review-only",
+        "contentKind": "model-source-input",
+        "format": "file",
+    })
+    source_ledger_path.write_text(json.dumps(source_ledger))
+    model_ledger_path = payload / "model-ledger.json"
+    model_ledger = json.loads(model_ledger_path.read_text())
+    model_ledger["models"][0]["verificationStatus"] = "license-review-required"
+    model_ledger["models"][0]["sourceArtifact"] = {
+        "artifact": "omniparser-icon-detect-model.pt",
+        "path": "payload/source/upstream/omniparser-icon-detect-model.pt",
+        "sha256": release.file_digest(source_path),
+        "size": source_path.stat().st_size,
+    }
+    model_ledger_path.write_text(json.dumps(model_ledger))
+    release.load_and_validate_manifest(manifest_path, payload)
+    model_ledger["models"][0]["sourceArtifact"]["sha256"] = "0" * 64
+    model_ledger_path.write_text(json.dumps(model_ledger))
+    with pytest.raises(release.CandidateError, match="source input binding differs"):
+        release.load_and_validate_manifest(manifest_path, payload)
+
+
 def test_source_ledger_must_bind_hash_size_revision_and_bundled_offer(tmp_path: Path) -> None:
     payload, manifest_path = fixture(tmp_path)
     ledger_path = payload / "source-ledger.json"

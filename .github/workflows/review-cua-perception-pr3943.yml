@@ -1,0 +1,88 @@
+name: "Review: labeled Cua Perception live evidence"
+
+on:
+  pull_request:
+    types: [labeled, synchronize]
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: cua-perception-live-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  resolve:
+    name: Require the labeled same-repository review heads
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.number == 3943 &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      ((github.event.action == 'labeled' &&
+        github.event.label.name == 'cua-perception-live-review') ||
+       (github.event.action == 'synchronize' &&
+        contains(github.event.pull_request.labels.*.name, 'cua-perception-live-review')))
+    runs-on: ubuntu-latest
+    outputs:
+      source_sha: ${{ steps.resolve.outputs.source_sha }}
+      jev_source_sha: ${{ steps.resolve.outputs.jev_source_sha }}
+      catalog_version: ${{ steps.resolve.outputs.catalog_version }}
+      expires_unix: ${{ steps.resolve.outputs.expires_unix }}
+    steps:
+      - id: resolve
+        name: Revalidate current heads and label
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_ACTION: ${{ github.event.action }}
+          EVENT_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_LABEL: ${{ github.event.label.name }}
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REPOSITORY" == "trycua/cua" ]]
+          [[ "$EVENT_PR_NUMBER" == "3943" ]]
+          [[ "$EVENT_HEAD_REPOSITORY" == "$GITHUB_REPOSITORY" ]]
+          [[ "$EVENT_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EVENT_ACTION" == "labeled" || "$EVENT_ACTION" == "synchronize" ]]
+          if [[ "$EVENT_ACTION" == "labeled" ]]; then
+            [[ "$EVENT_LABEL" == "cua-perception-live-review" ]]
+          fi
+
+          pr_json="$(gh api "repos/$GITHUB_REPOSITORY/pulls/3943")"
+          [[ "$(jq -r .state <<<"$pr_json")" == "open" ]]
+          [[ "$(jq -r .head.repo.full_name <<<"$pr_json")" == "$GITHUB_REPOSITORY" ]]
+          [[ "$(jq -r .head.sha <<<"$pr_json")" == "$EVENT_HEAD_SHA" ]]
+          jq -e '.labels | any(.name == "cua-perception-live-review")' <<<"$pr_json" >/dev/null
+
+          jev_json="$(gh api "repos/$GITHUB_REPOSITORY/pulls/3916")"
+          [[ "$(jq -r .state <<<"$jev_json")" == "open" ]]
+          [[ "$(jq -r .head.repo.full_name <<<"$jev_json")" == "$GITHUB_REPOSITORY" ]]
+          jev_source_sha="$(jq -r .head.sha <<<"$jev_json")"
+          [[ "$jev_source_sha" =~ ^[0-9a-f]{40}$ ]]
+
+          echo "source_sha=$EVENT_HEAD_SHA" >> "$GITHUB_OUTPUT"
+          echo "jev_source_sha=$jev_source_sha" >> "$GITHUB_OUTPUT"
+          echo "catalog_version=$GITHUB_RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "expires_unix=$(( $(date +%s) + 604800 ))" >> "$GITHUB_OUTPUT"
+
+  candidate:
+    name: Build ephemeral signed review candidates
+    needs: resolve
+    uses: ./.github/workflows/cd-cua-perception-review-supplied-inputs.yml
+    with:
+      source_sha: ${{ needs.resolve.outputs.source_sha }}
+      catalog_version: ${{ needs.resolve.outputs.catalog_version }}
+      expires_unix: ${{ needs.resolve.outputs.expires_unix }}
+
+  live:
+    name: Run protected Windows and Linux live evidence
+    needs: [resolve, candidate]
+    uses: ./.github/workflows/authorized-live-jev-use-demo.yml
+    with:
+      source_sha: ${{ needs.resolve.outputs.source_sha }}
+      jev_source_sha: ${{ needs.resolve.outputs.jev_source_sha }}
+      signed_candidate_artifact_id: ${{ needs.candidate.outputs.signed_candidate_artifact_id }}

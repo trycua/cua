@@ -157,6 +157,16 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         )
         self.assertFalse(any("${{ runner." in value for value in live_env.values()))
 
+    def test_live_linux_desktop_installs_xdpyinfo_before_readiness_probe(self):
+        prepare = next(
+            step
+            for step in self.jobs["live"]["steps"]
+            if step.get("name") == "Prepare Linux X11 desktop"
+        )
+        self.assertEqual(prepare["if"], "runner.os == 'Linux'")
+        self.assertRegex(prepare["run"], r"apt-get install[^\n]*\bx11-utils\b")
+        self.assertLess(prepare["run"].index("x11-utils"), prepare["run"].index("xdpyinfo"))
+
     def test_external_chooser_receives_only_the_key_and_windows_system_root(self):
         start = self.orchestrator.index("fn external_choice(")
         end = self.orchestrator.index("fn choose(", start)

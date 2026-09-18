@@ -3609,7 +3609,10 @@ fn windows_set_private_security(handle: *mut std::ffi::c_void) -> Result<()> {
         let result = if got_dacl == 0 || present == 0 || dacl.is_null() {
             Err(anyhow!("private extension ACL has no DACL"))
         } else {
-            let security_handle = ReOpenFile(handle, 0x0004_0000, 0x7, 0);
+            // ReOpenFile requires backup semantics for directory handles. The
+            // flag is also valid for files, so the shared hardening path can
+            // reopen either object type without weakening its ACL.
+            let security_handle = ReOpenFile(handle, 0x0004_0000, 0x7, 0x0200_0000);
             if security_handle.is_null() || security_handle as isize == -1 {
                 let _ = LocalFree(descriptor);
                 bail!("reopen extension object for Windows ACL update");
@@ -4698,6 +4701,20 @@ mod tests {
             assert!(result.is_err(), "{component} symlink was accepted");
             assert_eq!(fs::read(external.join("sentinel")).unwrap(), b"keep");
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn acl_hardening_reopens_directory_and_file_handles() {
+        let temp = TempDir::new().unwrap();
+        let parent = open_directory_path_nofollow(temp.path()).unwrap();
+
+        create_private_subdirectory(&parent, std::ffi::OsStr::new("private")).unwrap();
+        let private = parent.open_dir_nofollow("private").unwrap();
+        windows_verify_directory_handle(&private).unwrap();
+
+        write_new_file_at(&private, "owned", b"content").unwrap();
+        assert!(private_regular_file_or_missing_at(&private, "owned").unwrap());
     }
 
     #[cfg(windows)]

@@ -21,6 +21,8 @@ use std::io::{Read, Seek, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use cua_driver_core::perception_client::{PerceptionClient, PerceptionWorkerConfig};
+
 const MANIFEST_NAME: &str = "extension.json";
 const INSTALL_RECORD_NAME: &str = ".install.json";
 const ACTIVE_NAME: &str = "active.json";
@@ -51,6 +53,9 @@ const VERIFIED_PUBLIC_KEY: [u8; 32] = [
     0x74, 0x1e, 0xc4, 0xff, 0x7e, 0x9f, 0x4d, 0x72, 0xe2, 0x1c, 0xf7, 0xeb, 0xf3, 0x26, 0xb8, 0x8b,
     0x84, 0xc5, 0x6e, 0xcb, 0x14, 0xfe, 0x3a, 0x4e, 0xf7, 0x3a, 0xd2, 0xf2, 0x09, 0x78, 0x6e, 0xc4,
 ];
+const PERCEPTION_ID: &str = "cua-perception";
+const PERCEPTION_RUNTIME_CONTRACT: &str = "metadata/runtime-contract.json";
+const PERCEPTION_MODEL_MANIFEST_NAME: &str = "model-manifest.json";
 
 #[derive(Clone, Copy)]
 struct RegistryEntry {
@@ -89,6 +94,30 @@ struct ExtensionManifest {
     health_args: Vec<String>,
     #[serde(default)]
     self_test_args: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PerceptionRuntimeContract {
+    #[serde(rename = "$schema")]
+    schema: Option<String>,
+    schema_version: u32,
+    target: String,
+    protocol_version: u32,
+    worker: RuntimeBinding,
+    runtime: RuntimeBinding,
+    models: Vec<RuntimeBinding>,
+    dictionary: RuntimeBinding,
+    reject_mismatch: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeBinding {
+    name: String,
+    #[serde(default)]
+    role: Option<String>,
+    sha256: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -627,6 +656,177 @@ fn extension_root() -> Result<PathBuf> {
     Ok(PathBuf::from(home)
         .join(crate::bundle::user_home_subdirectory())
         .join("extensions"))
+}
+
+/// Resolve the optional perception worker through the same active-pointer and
+/// installed-payload verification used by extension lifecycle commands.
+pub(crate) fn perception_client() -> PerceptionClient {
+    match perception_worker_config() {
+        Ok(Some(config)) => PerceptionClient::new(config).unwrap_or_else(|error| {
+            tracing::warn!("installed cua-perception configuration is unusable: {error:?}");
+            PerceptionClient::unavailable()
+        }),
+        Ok(None) => PerceptionClient::unavailable(),
+        Err(error) => {
+            tracing::warn!("installed cua-perception extension is unavailable: {error:#}");
+            PerceptionClient::unavailable()
+        }
+    }
+}
+
+fn perception_worker_config() -> Result<Option<PerceptionWorkerConfig>> {
+    perception_worker_config_in(&ExtensionStore::new(extension_root()?))
+}
+
+fn perception_worker_config_in(store: &ExtensionStore) -> Result<Option<PerceptionWorkerConfig>> {
+    if !store.root.exists() {
+        return Ok(None);
+    }
+    let Some(active) = store.active_path(PERCEPTION_ID)? else {
+        return Ok(None);
+    };
+    let installed = open_directory_path_nofollow(&active)?;
+    let manifest = verify_installed_version_at(&installed, registry_entry(PERCEPTION_ID)?, None)?;
+
+    let contract_path = resolve_owned_file(&active, &manifest, PERCEPTION_RUNTIME_CONTRACT)?;
+    let contract: PerceptionRuntimeContract =
+        serde_json::from_slice(&read_small_local_file(&contract_path)?)
+            .context("parse perception runtime contract")?;
+    validate_runtime_contract(&manifest, &contract)?;
+
+    let executable = resolve_owned_file(&active, &manifest, &manifest.entrypoint)?;
+    let model_manifest_relative = unique_model_manifest_path(&manifest)?;
+    let model_manifest = resolve_owned_file(&active, &manifest, model_manifest_relative)?;
+    let runtime_relative = format!("runtime/{}", contract.runtime.name);
+    let runtime_library = resolve_owned_file(&active, &manifest, &runtime_relative)?;
+    let model_manifest = model_manifest
+        .to_str()
+        .ok_or_else(|| anyhow!("perception model manifest path is not valid UTF-8"))?;
+    let runtime_library = runtime_library
+        .to_str()
+        .ok_or_else(|| anyhow!("perception runtime library path is not valid UTF-8"))?;
+
+    let mut config = PerceptionWorkerConfig::installed(executable);
+    config.args = vec![
+        "--manifest".to_owned(),
+        model_manifest.to_owned(),
+        "--onnx-runtime-library".to_owned(),
+        runtime_library.to_owned(),
+    ];
+    Ok(Some(config))
+}
+
+fn validate_runtime_contract(
+    manifest: &ExtensionManifest,
+    contract: &PerceptionRuntimeContract,
+) -> Result<()> {
+    let _ = &contract.schema;
+    if contract.schema_version != 1
+        || contract.target != manifest.target
+        || contract.protocol_version != manifest.protocol_version
+        || !contract.reject_mismatch
+    {
+        bail!("perception runtime contract does not match the active extension");
+    }
+    let worker_name = Path::new(&manifest.entrypoint)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| anyhow!("perception entrypoint has no portable file name"))?;
+    if contract.worker.name != worker_name {
+        bail!("perception runtime contract names a different worker");
+    }
+    if contract.runtime.name.is_empty()
+        || Path::new(&contract.runtime.name)
+            .file_name()
+            .and_then(|name| name.to_str())
+            != Some(contract.runtime.name.as_str())
+    {
+        bail!("perception runtime contract contains an unsafe runtime name");
+    }
+    validate_runtime_binding(manifest, &manifest.entrypoint, &contract.worker)?;
+    validate_runtime_binding(
+        manifest,
+        &format!("runtime/{}", contract.runtime.name),
+        &contract.runtime,
+    )?;
+    for model in &contract.models {
+        validate_runtime_binding(manifest, &format!("models/{}", model.name), model)?;
+    }
+    validate_runtime_binding(
+        manifest,
+        &format!("models/{}", contract.dictionary.name),
+        &contract.dictionary,
+    )?;
+    let entrypoint = manifest
+        .files
+        .iter()
+        .find(|file| file.path == manifest.entrypoint)
+        .ok_or_else(|| anyhow!("perception entrypoint is not extension-owned"))?;
+    if !entrypoint.executable {
+        bail!("perception entrypoint is not marked executable");
+    }
+    Ok(())
+}
+
+fn validate_runtime_binding(
+    manifest: &ExtensionManifest,
+    relative: &str,
+    binding: &RuntimeBinding,
+) -> Result<()> {
+    safe_manifest_path(relative)?;
+    validate_sha256("perception runtime binding", &binding.sha256)?;
+    if binding.role.as_deref().is_some_and(str::is_empty) {
+        bail!("perception runtime binding has an empty role");
+    }
+    let owned = manifest
+        .files
+        .iter()
+        .find(|file| file.path == relative)
+        .ok_or_else(|| anyhow!("perception runtime binding is not extension-owned: {relative}"))?;
+    if owned.sha256 != binding.sha256 {
+        bail!("perception runtime binding hash differs from the extension manifest");
+    }
+    Ok(())
+}
+
+fn unique_model_manifest_path(manifest: &ExtensionManifest) -> Result<&str> {
+    let mut candidates = manifest.files.iter().filter(|file| {
+        Path::new(&file.path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            == Some(PERCEPTION_MODEL_MANIFEST_NAME)
+    });
+    let candidate = candidates
+        .next()
+        .ok_or_else(|| anyhow!("installed perception extension has no model manifest"))?;
+    if candidates.next().is_some() {
+        bail!("installed perception extension has ambiguous model manifests");
+    }
+    Ok(&candidate.path)
+}
+
+fn resolve_owned_file(
+    active: &Path,
+    manifest: &ExtensionManifest,
+    relative: &str,
+) -> Result<PathBuf> {
+    safe_manifest_path(relative)?;
+    if !manifest.files.iter().any(|file| file.path == relative) {
+        bail!("perception runtime path is not extension-owned: {relative}");
+    }
+    let path = active.join(relative);
+    let metadata = fs::symlink_metadata(&path)
+        .with_context(|| format!("inspect installed perception file {relative}"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        bail!("installed perception path is not a regular non-symlink file: {relative}");
+    }
+    let canonical_root = fs::canonicalize(active).context("resolve active perception directory")?;
+    let canonical_path = fs::canonicalize(&path)
+        .with_context(|| format!("resolve installed perception file {relative}"))?;
+    if !canonical_path.starts_with(&canonical_root) {
+        bail!("installed perception path escapes the active extension: {relative}");
+    }
+    Ok(canonical_path)
 }
 
 fn print_infos(store: &ExtensionStore, entries: &[RegistryEntry], json: bool) -> Result<()> {
@@ -3008,6 +3208,187 @@ mod tests {
             &hex_sha256(payload),
             &format!("={}", env!("CARGO_PKG_VERSION")),
         )
+    }
+
+    fn perception_fixture_archive(directory: &Path, version: &str, runtime_name: &str) -> PathBuf {
+        let worker = b"fixture-worker";
+        let model_manifest = b"{}";
+        let runtime = b"fixture-runtime";
+        let model = b"fixture-model";
+        let dictionary = b"fixture-dictionary";
+        let worker_name = if cfg!(windows) {
+            "cua-perception.exe"
+        } else {
+            "cua-perception"
+        };
+        let installed_runtime_name = if cfg!(target_os = "windows") {
+            "onnxruntime.dll"
+        } else if cfg!(target_os = "macos") {
+            "libonnxruntime.dylib"
+        } else {
+            "libonnxruntime.so"
+        };
+        let contract = serde_json::to_vec(&serde_json::json!({
+            "$schema": "runtime-contract.schema.json",
+            "schemaVersion": 1,
+            "target": current_target().unwrap(),
+            "protocolVersion": 1,
+            "worker": {"name": worker_name, "sha256": hex_sha256(worker)},
+            "runtime": {"name": runtime_name, "sha256": hex_sha256(runtime)},
+            "models": [
+                {"name": "icon.onnx", "role": "icon-detect", "sha256": hex_sha256(model)},
+                {"name": "ocr-det.onnx", "role": "ocr-detect", "sha256": hex_sha256(model)},
+                {"name": "ocr-rec.onnx", "role": "ocr-recognize", "sha256": hex_sha256(model)}
+            ],
+            "dictionary": {"name": "dictionary.txt", "role": "ocr-dictionary", "sha256": hex_sha256(dictionary)},
+            "rejectMismatch": true
+        }))
+        .unwrap();
+        let entrypoint = format!("bin/{worker_name}");
+        let runtime_path = format!("runtime/{installed_runtime_name}");
+        let files = vec![
+            (entrypoint.clone(), worker.as_slice(), true),
+            (
+                "models/model-manifest.json".to_owned(),
+                model_manifest.as_slice(),
+                false,
+            ),
+            (runtime_path, runtime.as_slice(), false),
+            ("models/icon.onnx".to_owned(), model.as_slice(), false),
+            ("models/ocr-det.onnx".to_owned(), model.as_slice(), false),
+            ("models/ocr-rec.onnx".to_owned(), model.as_slice(), false),
+            (
+                "models/dictionary.txt".to_owned(),
+                dictionary.as_slice(),
+                false,
+            ),
+            (
+                PERCEPTION_RUNTIME_CONTRACT.to_owned(),
+                contract.as_slice(),
+                false,
+            ),
+        ];
+        let manifest = ExtensionManifest {
+            schema_version: 1,
+            id: PERCEPTION_ID.to_owned(),
+            version: version.to_owned(),
+            driver_version: format!("={}", env!("CARGO_PKG_VERSION")),
+            protocol_version: 1,
+            target: current_target().unwrap(),
+            entrypoint,
+            files: files
+                .iter()
+                .map(|(path, bytes, executable)| ManifestFile {
+                    path: path.clone(),
+                    sha256: hex_sha256(bytes),
+                    executable: *executable,
+                })
+                .collect(),
+            models: Vec::new(),
+            components: vec![ComponentLicense {
+                name: PERCEPTION_ID.to_owned(),
+                version: version.to_owned(),
+                license: "Apache-2.0".to_owned(),
+                notice: "fixture".to_owned(),
+                source_uri: "https://github.com/trycua/cua".to_owned(),
+                source_revision: "fixture".to_owned(),
+            }],
+            license: "Apache-2.0".to_owned(),
+            source: "https://github.com/trycua/cua".to_owned(),
+            corresponding_source_uri: "https://github.com/trycua/cua".to_owned(),
+            corresponding_source_revision: "fixture".to_owned(),
+            provenance: "fixture".to_owned(),
+            health_args: Vec::new(),
+            self_test_args: Vec::new(),
+        };
+        let path = directory.join(format!("perception-{version}.tar.gz"));
+        let file = fs::File::create(&path).unwrap();
+        let encoder = GzEncoder::new(file, Compression::default());
+        let mut builder = tar::Builder::new(encoder);
+        append(
+            &mut builder,
+            MANIFEST_NAME,
+            &serde_json::to_vec_pretty(&manifest).unwrap(),
+        );
+        for (relative, bytes, _) in files {
+            append(&mut builder, &relative, bytes);
+        }
+        builder.finish().unwrap();
+        path
+    }
+
+    #[test]
+    fn absent_perception_extension_has_no_worker_config() {
+        let temp = TempDir::new().unwrap();
+        let store = ExtensionStore::new(temp.path().join("extensions"));
+        assert!(perception_worker_config_in(&store).unwrap().is_none());
+        assert!(!store.root.exists());
+    }
+
+    #[test]
+    fn active_perception_extension_resolves_owned_worker_arguments() {
+        let temp = TempDir::new().unwrap();
+        let store = ExtensionStore::new(temp.path().join("extensions"));
+        let runtime_name = if cfg!(target_os = "windows") {
+            "onnxruntime.dll"
+        } else if cfg!(target_os = "macos") {
+            "libonnxruntime.dylib"
+        } else {
+            "libonnxruntime.so"
+        };
+        let archive = perception_fixture_archive(temp.path(), "1.0.0", runtime_name);
+        store
+            .install_archive(registry_entry(PERCEPTION_ID).unwrap(), &archive)
+            .unwrap();
+
+        let config = perception_worker_config_in(&store).unwrap().unwrap();
+        assert!(config.executable.ends_with(if cfg!(windows) {
+            "bin/cua-perception.exe"
+        } else {
+            "bin/cua-perception"
+        }));
+        assert_eq!(config.args[0], "--manifest");
+        assert!(config.args[1].ends_with("models/model-manifest.json"));
+        assert_eq!(config.args[2], "--onnx-runtime-library");
+        assert!(config.args[3].ends_with(&format!("runtime/{runtime_name}")));
+        assert!(config.warm_worker.is_some());
+    }
+
+    #[test]
+    fn perception_runtime_contract_cannot_escape_the_active_directory() {
+        let temp = TempDir::new().unwrap();
+        let store = ExtensionStore::new(temp.path().join("extensions"));
+        let archive = perception_fixture_archive(temp.path(), "1.0.0", "../outside-runtime");
+        store
+            .install_archive(registry_entry(PERCEPTION_ID).unwrap(), &archive)
+            .unwrap();
+        let error = perception_worker_config_in(&store).unwrap_err();
+        assert!(error.to_string().contains("unsafe runtime name"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn perception_resolver_rejects_symlinked_installed_payload() {
+        use std::os::unix::fs::symlink;
+
+        let temp = TempDir::new().unwrap();
+        let store = ExtensionStore::new(temp.path().join("extensions"));
+        let runtime_name = if cfg!(target_os = "macos") {
+            "libonnxruntime.dylib"
+        } else {
+            "libonnxruntime.so"
+        };
+        let archive = perception_fixture_archive(temp.path(), "1.0.0", runtime_name);
+        store
+            .install_archive(registry_entry(PERCEPTION_ID).unwrap(), &archive)
+            .unwrap();
+        let active = store.active_path(PERCEPTION_ID).unwrap().unwrap();
+        let runtime = active.join("runtime").join(runtime_name);
+        fs::remove_file(&runtime).unwrap();
+        symlink(temp.path().join("outside-runtime"), &runtime).unwrap();
+
+        let error = perception_worker_config_in(&store).unwrap_err();
+        assert!(error.to_string().contains("symbolic link"));
     }
 
     fn fixture_archive_with(

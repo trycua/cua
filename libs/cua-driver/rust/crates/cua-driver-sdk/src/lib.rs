@@ -22,7 +22,7 @@ use cua_driver_core::daemon::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use thiserror::Error;
 
 mod abi;
@@ -52,6 +52,24 @@ pub use remote_mcp::{
 use runtime::RuntimeOptions;
 use service_session::ServiceSessionClient;
 use worker::{ActionCompletion, PrivateWorkerClient};
+
+type PerceptionClientProvider = fn() -> cua_driver_core::perception_client::PerceptionClient;
+static PERCEPTION_CLIENT_PROVIDER: OnceLock<PerceptionClientProvider> = OnceLock::new();
+
+/// Configure the binary-owned resolver for optional installed perception.
+/// Language SDKs without a binary host retain the typed unavailable tool.
+#[doc(hidden)]
+pub fn configure_perception_client_provider(provider: PerceptionClientProvider) {
+    let _ = PERCEPTION_CLIENT_PROVIDER.set(provider);
+}
+
+pub(crate) fn configured_perception_client() -> cua_driver_core::perception_client::PerceptionClient
+{
+    PERCEPTION_CLIENT_PROVIDER
+        .get()
+        .map(|provider| provider())
+        .unwrap_or_else(cua_driver_core::perception_client::PerceptionClient::unavailable)
+}
 
 fn host_sessions_json_for_prefix(runtime_prefix: &str) -> Value {
     let sessions = cua_driver_core::session::list_session_snapshots_with_prefix(

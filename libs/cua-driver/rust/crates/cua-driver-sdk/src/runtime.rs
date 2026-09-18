@@ -590,6 +590,16 @@ fn build_registry(options: &RuntimeOptions) -> ToolRegistry {
     if let Some(register_host_tools) = options.register_host_tools {
         register_host_tools(&mut registry);
     }
+    let perception_registered = registry.tools_list()["tools"]
+        .as_array()
+        .is_some_and(|tools| {
+            tools.iter().any(|tool| {
+                tool.get("name").and_then(Value::as_str) == Some("parse_visual_regions")
+            })
+        });
+    if !perception_registered {
+        registry.register_perception_tool(crate::configured_perception_client());
+    }
     let recording = Arc::downgrade(&registry.recording);
     let recording_session_end = cua_driver_core::session::register_scoped_fallible_session_end_hook(
         "recording",
@@ -729,6 +739,40 @@ mod tests {
             RuntimeOptions::embedded_with_ceiling(false, ceiling, PermissionMode::Standard, None);
         options.authorization_host = Some(Arc::new(TestProtectedHost));
         options
+    }
+
+    #[test]
+    fn canonical_inventory_advertises_unavailable_perception_tool() {
+        let inventory = tool_inventory(RuntimeOptions::embedded(false));
+        let tools = inventory["tools"].as_array().unwrap();
+        assert_eq!(
+            tools
+                .iter()
+                .filter(|tool| tool["name"] == "parse_visual_regions")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn host_perception_registration_is_not_duplicated_in_inventory() {
+        fn register(registry: &mut ToolRegistry) {
+            registry.register_perception_tool(
+                cua_driver_core::perception_client::PerceptionClient::unavailable(),
+            );
+        }
+        let mut options = RuntimeOptions::embedded(false);
+        options.register_host_tools = Some(register);
+        let inventory = tool_inventory(options);
+        assert_eq!(
+            inventory["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|tool| tool["name"] == "parse_visual_regions")
+                .count(),
+            1
+        );
     }
 
     #[tokio::test]

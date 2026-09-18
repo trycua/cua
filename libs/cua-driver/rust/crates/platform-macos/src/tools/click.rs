@@ -29,6 +29,7 @@ use crate::ax::bindings::{
     element_screen_rect, kAXErrorSuccess, AXUIElementPerformAction, AXUIElementRef,
 };
 use crate::focus_guard;
+use crate::input::ax_actions::{resolve_ax_action, unknown_action_refusal};
 use crate::window_change_detector::WindowChangeDetector;
 use core_foundation::base::{CFRelease, TCFType};
 
@@ -1203,18 +1204,19 @@ fn perform_ax_click(
     modifiers: &[String],
     foreground: bool,
 ) -> anyhow::Result<(String, bool, bool, bool, bool)> {
-    let ax_action = map_action(action_str);
     let element = element_ptr as AXUIElementRef;
+
+    // Capture advertised actions BEFORE dispatching so we can detect silent no-ops
+    // (AX returns success even when the element doesn't advertise the action).
+    let advertised = unsafe { copy_action_names(element) };
+    let ax_action = resolve_ax_action(action_str, &advertised)
+        .ok_or_else(|| unknown_action_refusal(action_str, &advertised))?;
 
     // Check the live value immediately before dispatch. Foreground assist can
     // enable menu items that were disabled in the cached snapshot, while a
     // background transition can disable them after that snapshot. macOS may
     // otherwise return success for a disabled action that did nothing.
     crate::input::ax_actions::ensure_ax_action_enabled(element_ptr, ax_action)?;
-
-    // Capture advertised actions BEFORE dispatching so we can detect silent no-ops
-    // (AX returns success even when the element doesn't advertise the action).
-    let advertised = unsafe { copy_action_names(element) };
 
     let role = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
     let title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
@@ -1461,18 +1463,6 @@ mod selection_fallback_tests {
         assert!(selection_readback_confirms(true, false, true, true));
         assert!(!selection_readback_confirms(true, true, true, true));
         assert!(!selection_readback_confirms(false, true, true, false));
-    }
-}
-
-fn map_action(action: &str) -> &'static str {
-    match action.to_lowercase().as_str() {
-        "press" | "click" => "AXPress",
-        "show_menu" | "right_click" => "AXShowMenu",
-        "pick" => "AXPick",
-        "confirm" => "AXConfirm",
-        "cancel" => "AXCancel",
-        "open" => "AXOpen",
-        _ => "AXPress",
     }
 }
 

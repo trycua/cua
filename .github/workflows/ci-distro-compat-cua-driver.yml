@@ -161,7 +161,7 @@ jobs:
       matrix:
         include:
           # Debian family
-          # X11 runtime libs (libx11-6 libxi6 libxtst6 libxext6), the
+          # X11 runtime libs (libx11-6 libxi6 libxtst6 libxext6 libxcb1), the
           # Wayland client lib (libwayland-client0), and libxkbcommon0 are
           # required because
           # cua-driver is dynamically linked against the X11 input stack and
@@ -176,15 +176,15 @@ jobs:
           - distro: "debian:12"
             image: "debian:12"
             glibc_version: "2.36"
-            pkg_install: "apt-get update -qq && apt-get install -y --no-install-recommends curl ca-certificates libx11-6 libxi6 libxtst6 libxext6 libwayland-client0 libxkbcommon0"
+            pkg_install: "apt-get update -qq && apt-get install -y --no-install-recommends curl ca-certificates libx11-6 libxi6 libxtst6 libxext6 libxcb1 libwayland-client0 libxkbcommon0"
           - distro: "ubuntu:22.04"
             image: "ubuntu:22.04"
             glibc_version: "2.35"
-            pkg_install: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates libx11-6 libxi6 libxtst6 libxext6 libwayland-client0 libxkbcommon0"
+            pkg_install: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates libx11-6 libxi6 libxtst6 libxext6 libxcb1 libwayland-client0 libxkbcommon0"
           - distro: "ubuntu:24.04"
             image: "ubuntu:24.04"
             glibc_version: "2.39"
-            pkg_install: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates libx11-6 libxi6 libxtst6 libxext6 libwayland-client0 libxkbcommon0"
+            pkg_install: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates libx11-6 libxi6 libxtst6 libxext6 libxcb1 libwayland-client0 libxkbcommon0"
           # RPM family
           # Rocky Linux 9 ships curl-minimal in the base image which conflicts
           # with the full curl package. Use --allowerasing to let dnf replace
@@ -194,11 +194,11 @@ jobs:
           - distro: "rockylinux:9"
             image: "rockylinux:9"
             glibc_version: "2.34"
-            pkg_install: "dnf install -y --setopt=install_weak_deps=False --allowerasing curl ca-certificates libX11 libXi libXtst libXext libwayland-client libxkbcommon"
+            pkg_install: "dnf install -y --setopt=install_weak_deps=False --allowerasing curl ca-certificates libX11 libXi libXtst libXext libxcb libwayland-client libxkbcommon"
           - distro: "fedora:41"
             image: "fedora:41"
             glibc_version: "2.40"
-            pkg_install: "dnf install -y --setopt=install_weak_deps=False curl ca-certificates libX11 libXi libXtst libXext libwayland-client libxkbcommon"
+            pkg_install: "dnf install -y --setopt=install_weak_deps=False curl ca-certificates libX11 libXi libXtst libXext libxcb libwayland-client libxkbcommon"
 
     steps:
       - name: Skip if no release binary

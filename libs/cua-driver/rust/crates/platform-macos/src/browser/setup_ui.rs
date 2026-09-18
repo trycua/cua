@@ -1747,6 +1747,7 @@ mod tests {
             tree_markdown: String::new(),
             nodes,
             truncated: false,
+            collapsed_rows: 0,
             window_scope: Some(crate::ax::WindowScope::Matched),
         }
     }
@@ -1875,6 +1876,7 @@ mod tests {
             tree_markdown: String::new(),
             nodes: Vec::new(),
             truncated: true,
+            collapsed_rows: 0,
             window_scope: Some(crate::ax::WindowScope::Matched),
         };
         assert!(

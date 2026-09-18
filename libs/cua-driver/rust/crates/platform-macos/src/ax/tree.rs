@@ -12,6 +12,7 @@
 //! - Tree is walked depth-first; element_index is assigned in DFS order.
 
 use super::bindings::*;
+use super::row_collapse::collapse_offscreen_rows;
 use super::window_scope::{decide_window_scope, TopLevelCandidate, WindowScope};
 use core_foundation::base::{CFEqual, CFRelease, CFRetain, CFTypeRef};
 
@@ -137,6 +138,7 @@ pub struct TreeWalkResult {
     pub nodes: Vec<AXNode>,
     /// True when the walk was cut short by the MAX_ELEMENTS cap.
     pub truncated: bool,
+    pub collapsed_rows: usize,
     /// Whether the requested `window_id` actually resolved to an AX surface,
     /// and if not, why. `None` when no `window_id` was requested.
     ///
@@ -195,6 +197,7 @@ pub fn walk_tree_bounded(
     // Set to true only when walk_element actually stops early due to the cap —
     // avoids a false-positive when the tree naturally ends on exactly the cap.
     let mut truncated = false;
+    let mut collapsed_rows = 0usize;
     let mut window_scope: Option<WindowScope> = None;
 
     unsafe {
@@ -204,6 +207,7 @@ pub fn walk_tree_bounded(
                 tree_markdown: String::new(),
                 nodes,
                 truncated: false,
+                collapsed_rows,
                 // No application AX element at all, so a requested window
                 // certainly did not resolve.
                 window_scope: window_id.map(|_| WindowScope::AxUnresolved { ax_window_count: 0 }),
@@ -299,6 +303,7 @@ pub fn walk_tree_bounded(
                 &mut index_counter,
                 &mut visited_count,
                 &mut truncated,
+                &mut collapsed_rows,
                 max_elements,
                 max_depth,
             );
@@ -329,10 +334,19 @@ pub fn walk_tree_bounded(
         ));
     }
 
+    if collapsed_rows > 0 {
+        tree_markdown.push_str(&format!(
+            "\n{collapsed_rows} row(s) are scrolled out of view and were not read. \
+             Scroll, or use the window's own search, to bring a row into view \
+             before acting on it."
+        ));
+    }
+
     TreeWalkResult {
         tree_markdown,
         nodes,
         truncated: truncated_flag,
+        collapsed_rows,
         window_scope,
     }
 }
@@ -348,6 +362,7 @@ unsafe fn walk_element(
     counter: &mut usize,
     visited_count: &mut usize,
     truncated: &mut bool,
+    collapsed_rows: &mut usize,
     max_elements: usize,
     max_depth: usize,
 ) {
@@ -375,23 +390,21 @@ unsafe fn walk_element(
         // Still recurse — children may be interesting. Layout containers
         // collapse, so children inherit the parent's depth AND the same
         // parent_index (no actionable node was emitted here).
-        let children = copy_children(element);
-        for child in children {
-            walk_element(
-                child,
-                depth,
-                parent_index,
-                in_web_content,
-                nodes,
-                lines,
-                counter,
-                visited_count,
-                truncated,
-                max_elements,
-                max_depth,
-            );
-            CFRelease(child as CFTypeRef);
-        }
+        walk_children(
+            element,
+            &role,
+            depth,
+            parent_index,
+            in_web_content,
+            nodes,
+            lines,
+            counter,
+            visited_count,
+            truncated,
+            collapsed_rows,
+            max_elements,
+            max_depth,
+        );
         return;
     }
 
@@ -443,23 +456,21 @@ unsafe fn walk_element(
     let is_actionable = is_addressable(!actions.is_empty(), value_settable, enabled);
 
     if !is_actionable && !has_content && role != "AXWindow" && role != "AXSheet" {
-        let children = copy_children(element);
-        for child in children {
-            walk_element(
-                child,
-                depth + 1,
-                parent_index,
-                in_web_content,
-                nodes,
-                lines,
-                counter,
-                visited_count,
-                truncated,
-                max_elements,
-                max_depth,
-            );
-            CFRelease(child as CFTypeRef);
-        }
+        walk_children(
+            element,
+            &role,
+            depth + 1,
+            parent_index,
+            in_web_content,
+            nodes,
+            lines,
+            counter,
+            visited_count,
+            truncated,
+            collapsed_rows,
+            max_elements,
+            max_depth,
+        );
         return;
     }
 
@@ -566,22 +577,71 @@ unsafe fn walk_element(
     lines.push((depth, line));
     nodes.push(node);
 
-    let children = copy_children(element);
-    for child in children {
+    walk_children(
+        element,
+        &role,
+        depth + 1,
+        next_parent,
+        in_web_content,
+        nodes,
+        lines,
+        counter,
+        visited_count,
+        truncated,
+        collapsed_rows,
+        max_elements,
+        max_depth,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn walk_children(
+    element: AXUIElementRef,
+    role: &str,
+    child_depth: usize,
+    parent_index: Option<usize>,
+    in_web_content: bool,
+    nodes: &mut Vec<AXNode>,
+    lines: &mut Vec<(usize, String)>,
+    counter: &mut usize,
+    visited_count: &mut usize,
+    truncated: &mut bool,
+    collapsed_rows: &mut usize,
+    max_elements: usize,
+    max_depth: usize,
+) {
+    let collapsed = collapse_offscreen_rows(element, role);
+    for child in copy_children(element) {
+        if collapsed.as_ref().is_some_and(|rows| rows.hides(child)) {
+            CFRelease(child as CFTypeRef);
+            continue;
+        }
         walk_element(
             child,
-            depth + 1,
-            next_parent,
+            child_depth,
+            parent_index,
             in_web_content,
             nodes,
             lines,
             counter,
             visited_count,
             truncated,
+            collapsed_rows,
             max_elements,
             max_depth,
         );
         CFRelease(child as CFTypeRef);
+    }
+    if let Some(rows) = collapsed {
+        *collapsed_rows += rows.count();
+        lines.push((
+            child_depth,
+            format!(
+                "- {} of {} rows are scrolled out of view and were not read",
+                rows.count(),
+                rows.total()
+            ),
+        ));
     }
 }
 

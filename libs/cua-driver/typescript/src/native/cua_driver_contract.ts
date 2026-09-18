@@ -4522,6 +4522,7 @@ export type WindowStateOutput = {
     returnedElementCount?: bigint,
     filteredElementCount?: bigint,
     elementsComplete?: boolean,
+    collapsedRows?: bigint,
     degraded?: boolean,
     degradedReason?: string,
     truncated?: boolean,
@@ -4572,6 +4573,7 @@ const FfiConverterTypeWindowStateOutput = (() => {
                 returnedElementCount: FfiConverterOptionalUInt64.read(from),
                 filteredElementCount: FfiConverterOptionalUInt64.read(from),
                 elementsComplete: FfiConverterOptionalBoolean.read(from),
+                collapsedRows: FfiConverterOptionalUInt64.read(from),
                 degraded: FfiConverterOptionalBoolean.read(from),
                 degradedReason: FfiConverterOptionalString.read(from),
                 truncated: FfiConverterOptionalBoolean.read(from),
@@ -4599,6 +4601,7 @@ const FfiConverterTypeWindowStateOutput = (() => {
             FfiConverterOptionalUInt64.write(value.returnedElementCount, into);
             FfiConverterOptionalUInt64.write(value.filteredElementCount, into);
             FfiConverterOptionalBoolean.write(value.elementsComplete, into);
+            FfiConverterOptionalUInt64.write(value.collapsedRows, into);
             FfiConverterOptionalBoolean.write(value.degraded, into);
             FfiConverterOptionalString.write(value.degradedReason, into);
             FfiConverterOptionalBoolean.write(value.truncated, into);
@@ -4625,6 +4628,7 @@ const FfiConverterTypeWindowStateOutput = (() => {
              FfiConverterOptionalUInt64.allocationSize(value.returnedElementCount) +
              FfiConverterOptionalUInt64.allocationSize(value.filteredElementCount) +
              FfiConverterOptionalBoolean.allocationSize(value.elementsComplete) +
+             FfiConverterOptionalUInt64.allocationSize(value.collapsedRows) +
              FfiConverterOptionalBoolean.allocationSize(value.degraded) +
              FfiConverterOptionalString.allocationSize(value.degradedReason) +
              FfiConverterOptionalBoolean.allocationSize(value.truncated) +

@@ -165,16 +165,18 @@ fn main() {
         "cua-perception"
     });
     let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
-    let output = Command::new(rustc)
-        .arg(&source)
-        .arg("--edition=2021")
+    let mut command = Command::new(rustc);
+    command.arg(&source).arg("--edition=2021");
+    if cfg!(target_os = "linux") {
         // Linux containment cannot expose a host-specific dynamic loader to an installed worker.
-        .args(
-            cfg!(target_os = "linux")
-                .then_some(["-C", "target-feature=+crt-static"])
-                .into_iter()
-                .flatten(),
-        )
+        command.args(["-C", "target-feature=+crt-static"]);
+        if let Some(path) = std::env::var_os("CUA_TEST_GLIBC_STATIC_LIB") {
+            let mut native_path = std::ffi::OsString::from("native=");
+            native_path.push(path);
+            command.arg("-L").arg(native_path);
+        }
+    }
+    let output = command
         .arg("-o")
         .arg(&worker)
         .output()

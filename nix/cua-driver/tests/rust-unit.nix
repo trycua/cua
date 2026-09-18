@@ -44,11 +44,11 @@ pkgs.rustPlatform.buildRustPackage {
     python3
   ];
   CUA_TEST_PYTHON = "${pkgs.python3}/bin/python3";
+  CUA_TEST_GLIBC_STATIC_LIB = "${pkgs.glibc.static}/lib";
   preCheck = ''
     export CUA_TEST_PYTHON_READ_ROOTS="$(paste -sd: ${pythonClosure}/store-paths)"
   '';
   buildInputs = with pkgs; [
-    glibc.static
     libx11
     libxi
     libxtst

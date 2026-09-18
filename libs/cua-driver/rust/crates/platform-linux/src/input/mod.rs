@@ -1183,6 +1183,115 @@ fn replay_shielded_presses(
     }
 }
 
+/// Modifier evdev codes the virtual keyboard may hold mid-chord.
+const MODIFIER_EVDEV_CODES: [u16; 8] = [42, 54, 29, 97, 56, 100, 125, 126];
+
+/// Buttons (1..=3) currently held on the master pointer `pointer_id`, plus the
+/// paired master keyboard's modifier state, via `XIQueryPointer`.
+fn virtual_master_input_state(
+    display: *mut x11::xlib::Display,
+    pointer_id: i32,
+) -> (Vec<u8>, x11::xinput2::XIModifierState) {
+    let root = unsafe { x11::xlib::XDefaultRootWindow(display) };
+    let mut root_ret = 0;
+    let mut child_ret = 0;
+    let (mut rx, mut ry, mut wx, mut wy) = (0f64, 0f64, 0f64, 0f64);
+    let mut buttons = x11::xinput2::XIButtonState::default();
+    let mut mods = x11::xinput2::XIModifierState::default();
+    let mut group = x11::xinput2::XIModifierState::default();
+    let prev = unsafe { x11::xlib::XSetErrorHandler(Some(ignore_x_error)) };
+    let rc = unsafe {
+        x11::xinput2::XIQueryPointer(
+            display,
+            pointer_id,
+            root,
+            &mut root_ret,
+            &mut child_ret,
+            &mut rx,
+            &mut ry,
+            &mut wx,
+            &mut wy,
+            &mut buttons,
+            &mut mods,
+            &mut group,
+        )
+    };
+    unsafe { x11::xlib::XSetErrorHandler(prev) };
+    let mut held = Vec::new();
+    if rc != 0 && !buttons.mask.is_null() && buttons.mask_len > 0 {
+        let mask = unsafe { std::slice::from_raw_parts(buttons.mask, buttons.mask_len as usize) };
+        for button in 1u8..=3 {
+            let byte = (button / 8) as usize;
+            if mask.get(byte).is_some_and(|b| b & (1 << (button % 8)) != 0) {
+                held.push(button);
+            }
+        }
+        unsafe { x11::xlib::XFree(buttons.mask as *mut _) };
+    }
+    (held, mods)
+}
+
+/// Release anything the session's virtual master still holds from an earlier
+/// aborted action: pointer buttons (a shield replay that timed out returned
+/// before the release) and keyboard modifiers (a chord interrupted mid-way).
+///
+/// A held button is not cosmetic: every key event from the paired virtual
+/// keyboard then carries `Button1Mask` (bit 8) in its core `state`, which
+/// at-spi2 forwards verbatim and Orca reads as its `ORCA_MODIFIER_MASK`
+/// (`1 << 8`) — a plain space becomes "Orca+space" and opens the Screen
+/// Reader Preferences. Returns what was released, for the tool's report.
+pub(super) fn release_stuck_virtual_input(
+    cursor_id: &str,
+    display: *mut x11::xlib::Display,
+    ids: MasterPointerIds,
+    keyboard: &Mutex<VirtualDevice>,
+) -> Vec<String> {
+    let mut released = Vec::new();
+    let (held, mods) = virtual_master_input_state(display, ids.pointer_id);
+    if !held.is_empty() {
+        if let Some(pointer) = uinput_pointers().lock().unwrap().get(cursor_id).cloned() {
+            let mut pointer = pointer.lock().unwrap();
+            for &button in &held {
+                if emit_button(&mut pointer, button, false).is_ok() {
+                    released.push(format!("button{button}"));
+                }
+            }
+        }
+    }
+    if mods.base != 0 {
+        let mut keyboard = keyboard.lock().unwrap();
+        let mut any = false;
+        for code in MODIFIER_EVDEV_CODES {
+            any |= keyboard
+                .emit(&[InputEvent::new(EventType::KEY, code, 0)])
+                .is_ok();
+        }
+        if any {
+            released.push(format!("modifiers(base=0x{:x})", mods.base));
+        }
+    }
+    if mods.locked != 0 || mods.latched != 0 {
+        // A locked/latched modifier on the virtual master (CapsLock leaked
+        // from an interrupted chord) would shift every later character.
+        unsafe {
+            let prev = x11::xlib::XSetErrorHandler(Some(ignore_x_error));
+            x11::xlib::XkbLockModifiers(display, ids.keyboard_id as u32, 0xff, 0);
+            x11::xlib::XkbLatchModifiers(display, ids.keyboard_id as u32, 0xff, 0);
+            x11::xlib::XSetErrorHandler(prev);
+        }
+        released.push(format!(
+            "locked/latched modifiers (0x{:x}/0x{:x})",
+            mods.locked, mods.latched
+        ));
+    }
+    if !released.is_empty() {
+        unsafe { x11::xlib::XSync(display, 0) };
+        tracing::warn!(cursor_id, ?released, "released stuck virtual input state");
+        sleep(Duration::from_millis(20));
+    }
+    released
+}
+
 /// Release a device frozen by a synchronous grab; harmless when not frozen.
 fn thaw_device(display: *mut x11::xlib::Display, device_id: i32) {
     unsafe {
@@ -1719,6 +1828,11 @@ pub fn send_virtual_pointer_click(cursor_id: &str, click: &VirtualPointerClick) 
                         Duration::from_millis(1000),
                     );
                     if !pending.is_empty() {
+                        // Never leave the button held on the virtual pointer:
+                        // the paired keyboard's key events would carry
+                        // Button1Mask (Orca's modifier bit) from here on.
+                        let mut device = device.lock().unwrap();
+                        let _ = emit_button(&mut device, click.button, false);
                         return Err(anyhow!(
                             "shield replay timed out before XI_ButtonPress arrived for '{cursor_id}'"
                         ));

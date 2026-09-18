@@ -2581,7 +2581,7 @@ fn key_route_result(action: &str, route: KeyRoute, mode_label: &str) -> ToolResu
                      did not confirm the last key; the keys may not have landed.",
                 );
             }
-            text.push_str(&report.focus_guard_summary());
+            text.push_str(&report.delivery_notes());
             ToolResult::text(text).with_structured(structured)
         }
         KeyRoute::Synthetic | KeyRoute::Terminal => {
@@ -5766,7 +5766,7 @@ fn type_text_mpx_result(
              not confirm the last key; the text may not have landed.",
         );
     }
-    text.push_str(&report.focus_guard_summary());
+    text.push_str(&report.delivery_notes());
     ToolResult::text(text).with_structured(structured)
 }
 
@@ -6874,7 +6874,7 @@ fn set_value_result(
     let mut structured = json!({
         "path": path,
         "verified": verified,
-        "effect": if verified { "verified" } else if readback.is_some() { "suspected_noop" } else { "unverifiable" },
+        "effect": if verified { "confirmed" } else if readback.is_some() { "suspected_noop" } else { "unverifiable" },
     });
     let mut text = format!("Set value of element [{idx}] to '{value}' (path={path})");
     match readback {
@@ -6913,7 +6913,7 @@ mod set_value_tests {
         let ok = set_value_result(3, "40", "click_type_mpx", Some("40.0".into()), None);
         let s = ok.structured_content.unwrap();
         assert_eq!(s["verified"], true);
-        assert_eq!(s["effect"], "verified");
+        assert_eq!(s["effect"], "confirmed");
         let noop = set_value_result(3, "40", "ax", Some("10.0".into()), None);
         let s = noop.structured_content.unwrap();
         assert_eq!(s["verified"], false);

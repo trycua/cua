@@ -193,6 +193,10 @@ pub struct KeyboardDeliveryReport {
     /// What the background focus guard observed and restored around the
     /// delivery (attached by the tool layer; `None` when it did not run).
     pub focus_guard: Option<super::focus_guard::FocusGuardReport>,
+    /// Stuck input the virtual master still held from an earlier aborted
+    /// action and that was released before this delivery (`button1`,
+    /// `modifiers(...)`); see `release_stuck_virtual_input`.
+    pub released_stuck: Vec<String>,
 }
 
 impl KeyboardDeliveryReport {
@@ -210,15 +214,27 @@ impl KeyboardDeliveryReport {
                 json[key] = value.clone();
             }
         }
+        if !self.released_stuck.is_empty() {
+            json["released_stuck_input"] = serde_json::json!(self.released_stuck);
+        }
         json
     }
 
-    /// Sentence describing any focus change the guard saw (empty when none).
-    pub fn focus_guard_summary(&self) -> String {
-        self.focus_guard
+    /// Sentences for the tool text: any focus change the guard saw, and any
+    /// stuck input released before delivery (empty when nothing to say).
+    pub fn delivery_notes(&self) -> String {
+        let mut notes = self
+            .focus_guard
             .as_ref()
             .map(|guard| guard.summary())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        if !self.released_stuck.is_empty() {
+            notes.push_str(&format!(
+                " Released stuck virtual input left by an earlier action before delivering: {}.",
+                self.released_stuck.join(", ")
+            ));
+        }
+        notes
     }
 }
 
@@ -259,7 +275,7 @@ fn ensure_master_keyboard(cursor_id: &str) -> Result<(MasterPointerIds, Arc<Mute
             .and_then(|(_, _, name)| name.strip_suffix(" keyboard").map(str::to_owned))
             .ok_or_else(|| anyhow!("master keyboard {} vanished", ids.keyboard_id))?;
         let device_name = slave_keyboard_name(&base);
-        let device = create_uinput_keyboard(&device_name)?;
+        let mut device = create_uinput_keyboard(&device_name)?;
         let slave_keyboard_id = wait_for_slave_id(
             display,
             &device_name,
@@ -267,6 +283,7 @@ fn ensure_master_keyboard(cursor_id: &str) -> Result<(MasterPointerIds, Arc<Mute
             Duration::from_secs(5),
         )?;
         attach_slave_to_master(display, slave_keyboard_id, ids.keyboard_id)?;
+        warm_up_keyboard(display, &mut device, slave_keyboard_id, ids.keyboard_id);
         let ids = MasterPointerIds {
             slave_keyboard_id: Some(slave_keyboard_id),
             ..ids
@@ -284,6 +301,54 @@ fn ensure_master_keyboard(cursor_id: &str) -> Result<(MasterPointerIds, Arc<Mute
     })();
     unsafe { x11::xlib::XCloseDisplay(display) };
     result
+}
+
+/// evdev `KEY_UNKNOWN`: X keycode 248, `NoSymbol` in every evdev keymap, so
+/// it types nothing anywhere.
+const WARM_UP_EVDEV_CODE: u16 = 240;
+
+/// The first key events of a freshly hot-plugged keyboard were observed to
+/// vanish (the master switches to the slave's keymap on its first event and
+/// clients only learn about the new master from the hierarchy event queued
+/// ahead of the keys). Tap a symbol-less key through the whole pipeline and
+/// wait until the server reports it back, so the real text starts on a warm
+/// device. Best effort: a failure here only costs the warm-up.
+fn warm_up_keyboard(
+    display: *mut x11::xlib::Display,
+    device: &mut VirtualDevice,
+    slave_keyboard_id: i32,
+    master_keyboard_id: i32,
+) {
+    let Some(xi_opcode) = xinput_opcode(display) else {
+        return;
+    };
+    if select_raw_key_events(display, slave_keyboard_id).is_err() {
+        return;
+    }
+    let steps = [
+        KeyStep { evdev_code: WARM_UP_EVDEV_CODE, press: true },
+        KeyStep { evdev_code: WARM_UP_EVDEV_CODE, press: false },
+    ];
+    for step in steps {
+        let _ = device.emit(&[InputEvent::new(
+            EventType::KEY,
+            step.evdev_code,
+            if step.press { 1 } else { 0 },
+        )]);
+        sleep(Duration::from_millis(KEY_DELAY_MS));
+    }
+    let seen = wait_for_raw_key(
+        display,
+        xi_opcode,
+        &[slave_keyboard_id, master_keyboard_id],
+        steps[1],
+        Duration::from_millis(1500),
+    );
+    if !seen {
+        tracing::warn!("virtual keyboard warm-up: server did not report the probe key");
+    }
+    // Give clients a beat to process the hierarchy/keymap change.
+    sleep(Duration::from_millis(120));
 }
 
 /// Shift keycode from the server's modifier map (modifier index 0).
@@ -433,6 +498,7 @@ fn deliver(
 
         let window = target_window as x11::xlib::Window;
         let core_before = core_focus(display);
+        let released_stuck = release_stuck_virtual_input(cursor_id, display, ids, &device);
         select_raw_key_events(display, slave_keyboard_id)?;
         // A BadWindow/BadMatch from XISetFocus (target unmapped meanwhile) must
         // surface as an error, not take the daemon down through Xlib's default
@@ -464,14 +530,29 @@ fn deliver(
         }
 
         let mut last = None;
+        let mut held: Vec<u16> = Vec::new();
         for step in steps {
-            {
+            let emitted = {
                 let mut device = device.lock().unwrap();
                 device.emit(&[InputEvent::new(
                     EventType::KEY,
                     step.evdev_code,
                     if step.press { 1 } else { 0 },
-                )])?;
+                )])
+            };
+            if let Err(error) = emitted {
+                // Never abort with keys down: a held modifier would chord
+                // every later key of this session.
+                let mut device = device.lock().unwrap();
+                for code in held.iter().rev() {
+                    let _ = device.emit(&[InputEvent::new(EventType::KEY, *code, 0)]);
+                }
+                return Err(error.into());
+            }
+            if step.press {
+                held.push(step.evdev_code);
+            } else {
+                held.retain(|code| *code != step.evdev_code);
             }
             last = Some(*step);
             sleep(Duration::from_millis(KEY_DELAY_MS));
@@ -507,6 +588,7 @@ fn deliver(
             key_events: steps.len(),
             skipped_characters,
             focus_guard: None,
+            released_stuck,
         })
     })();
     drop(remap_guards);
@@ -716,12 +798,15 @@ mod tests {
             key_events: 4,
             skipped_characters: vec!['€'],
             focus_guard: None,
+            released_stuck: vec!["button1".into()],
         };
         let json = report.to_json();
         assert_eq!(json["path"], MPX_UINPUT_PATH);
         assert_eq!(json["key_events"], 4);
         assert_eq!(json["delivery_confirmed"], false);
         assert_eq!(json["skipped_characters"], "€");
+        assert_eq!(json["released_stuck_input"][0], "button1");
+        assert!(report.delivery_notes().contains("button1"));
     }
 
     #[test]

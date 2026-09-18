@@ -28,6 +28,9 @@ fn window_target_candidates_for_pid(
         .filter(|window| window.pid == Some(pid))
         .map(|window| WindowTargetCandidate {
             window_id: window.xid,
+            transient_for: (!crate::wayland::is_wayland())
+                .then(|| crate::x11::transient_for(window.xid))
+                .flatten(),
             title: window.title,
             app_name: Some(window.app_name),
             is_on_screen: window.is_on_screen,
@@ -850,7 +853,100 @@ fn build_element_entry(
     if let Some((x, y, w, h)) = bounds {
         entry["frame"] = json!({ "x": x, "y": y, "w": w, "h": h });
     }
+    if let Some(description) = n.description.clone().filter(|d| !d.is_empty()) {
+        entry["description"] = json!(description);
+    }
     Some(entry)
+}
+
+/// Elements that have a frame (visible, hit-testable on the screenshot)
+/// come first, in walk order; frameless ones follow. A client that caps the
+/// result then still shows the document, toolbar and sidebar controls.
+fn framed_elements_first(elements: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
+    let (framed, frameless): (Vec<_>, Vec<_>) = elements
+        .into_iter()
+        .partition(|entry| entry.get("frame").is_some());
+    framed.into_iter().chain(frameless).collect()
+}
+
+/// Same-pid windows mapped over a target window: transient dialogs (with
+/// their modality) and override-redirect popups, plus whether any of them
+/// overlaps the target's rectangle (then its own drawable is not what the
+/// user sees).
+#[derive(Default)]
+struct WindowOverlays {
+    dialogs: Vec<serde_json::Value>,
+    popups: Vec<serde_json::Value>,
+    covers_window: bool,
+    window_rect: Option<(i32, i32, u32, u32)>,
+}
+
+impl WindowOverlays {
+    /// One sentence per overlay naming the call that acts on it.
+    fn follow_up(&self, pid: u32) -> Option<String> {
+        let mut parts = Vec::new();
+        for dialog in &self.dialogs {
+            let id = dialog["window_id"].as_u64().unwrap_or(0);
+            parts.push(format!(
+                "dialog \"{}\" (window_id {id}, transient of window {}{}) is open over this \
+                 window: call get_window_state(pid={pid}, window_id={id}) to index it and act \
+                 there (pid-only keys go to it).",
+                dialog["title"].as_str().unwrap_or(""),
+                dialog["transient_for"].as_u64().unwrap_or(0),
+                if dialog["modal"].as_bool() == Some(true) {
+                    ", modal"
+                } else {
+                    ""
+                }
+            ));
+        }
+        for popup in &self.popups {
+            let id = popup["window_id"].as_u64().unwrap_or(0);
+            parts.push(format!(
+                "popup (window_id {id}, bounds x={} y={} {}x{}) is open: call \
+                 get_window_state(pid={pid}, window_id={id}) to index its items and click them \
+                 by element_index.",
+                popup["bounds"]["x"], popup["bounds"]["y"], popup["bounds"]["width"], popup["bounds"]["height"]
+            ));
+        }
+        (!parts.is_empty()).then(|| parts.join(" "))
+    }
+}
+
+fn rects_intersect(a: (i32, i32, u32, u32), b: (i32, i32, u32, u32)) -> bool {
+    a.0 < b.0 + b.2 as i32 && a.0 + a.2 as i32 > b.0 && a.1 < b.1 + b.3 as i32 && a.1 + a.3 as i32 > b.1
+}
+
+fn window_overlays(pid: u32, xid: u64) -> WindowOverlays {
+    let mut out = WindowOverlays::default();
+    out.window_rect = crate::x11::window_info(xid).map(|w| (w.x, w.y, w.width, w.height));
+    let over = |rect: (i32, i32, u32, u32)| out.window_rect.is_some_and(|target| rects_intersect(rect, target));
+    let mut covers = false;
+    for window in crate::x11::list_windows(Some(pid)) {
+        if window.xid == xid || !window.is_on_screen || window.width == 0 || window.height == 0 {
+            continue;
+        }
+        let Some(owner) = crate::x11::transient_for(window.xid) else {
+            continue;
+        };
+        covers |= over((window.x, window.y, window.width, window.height));
+        out.dialogs.push(json!({
+            "window_id": window.xid,
+            "title": window.title,
+            "transient_for": owner,
+            "modal": crate::x11::window_is_modal(window.xid),
+            "bounds": { "x": window.x, "y": window.y, "width": window.width, "height": window.height },
+        }));
+    }
+    for popup in crate::input::mapped_popup_windows() {
+        if popup.window == xid || popup.pid.is_some_and(|owner| owner != pid) {
+            continue;
+        }
+        covers |= over((popup.x, popup.y, popup.width, popup.height));
+        out.popups.push(popup.to_json());
+    }
+    out.covers_window = covers;
+    out
 }
 
 pub struct GetWindowStateTool {
@@ -1123,8 +1219,28 @@ impl Tool for GetWindowStateTool {
             // include_screenshot:false and no disk path was requested.
             // Tuple: (Option<b64>, Option<file_path>, w, h, Option<original_w>).
             let mut screenshot_error = None;
+            // Same-pid popups (menus, combo lists) and transient dialogs mapped
+            // over this window: listed for the caller, and when one overlaps
+            // the window the screenshot is taken from the screen, since the
+            // window's own drawable never shows them.
+            let overlays = if crate::wayland::is_wayland() {
+                WindowOverlays::default()
+            } else {
+                window_overlays(pid, xid)
+            };
             let screenshot = if should_capture {
-                match crate::wayland::screenshot_dispatch_with_pid(xid, pid) {
+                let captured = if overlays.covers_window {
+                    overlays
+                        .window_rect
+                        .ok_or_else(|| anyhow::anyhow!("window geometry unavailable"))
+                        .and_then(|(x, y, w, h)| {
+                            crate::capture::screenshot_root_region_png(x, y, w, h)
+                        })
+                        .or_else(|_| crate::wayland::screenshot_dispatch_with_pid(xid, pid))
+                } else {
+                    crate::wayland::screenshot_dispatch_with_pid(xid, pid)
+                };
+                match captured {
                     Ok(raw) => {
                         let orig_w = crate::capture::png_dimensions_pub(&raw)
                             .map(|(w, _)| w)
@@ -1153,12 +1269,12 @@ impl Tool for GetWindowStateTool {
             } else {
                 None
             };
-            Ok((tree_result, screenshot, bounds, screenshot_error))
+            Ok((tree_result, screenshot, bounds, screenshot_error, overlays))
         })
         .await;
 
         match result {
-            Ok(Ok((tree_opt, shot_opt, bounds, screenshot_error))) => {
+            Ok(Ok((tree_opt, shot_opt, bounds, screenshot_error, overlays))) => {
                 let mut content = Vec::new();
                 let mut structured = json!({ "window_id": xid, "pid": pid });
 
@@ -1266,6 +1382,7 @@ impl Tool for GetWindowStateTool {
                         query.as_deref(),
                         &tr.tree_markdown,
                     );
+                    let elements = framed_elements_first(elements);
                     structured["total_element_count"] = json!(count);
                     structured["returned_element_count"] = json!(elements.len());
                     structured["elements"] = json!(elements);
@@ -1384,6 +1501,28 @@ impl Tool for GetWindowStateTool {
                         "x": meta.x, "y": meta.y, "width": meta.width, "height": meta.height
                     });
                 }
+                // Transient dialogs and popups of this pid that are open over
+                // the window, each with the call that targets it.
+                if !overlays.dialogs.is_empty() {
+                    structured["dialogs"] = json!(overlays.dialogs);
+                }
+                if !overlays.popups.is_empty() {
+                    structured["popups"] = json!(overlays.popups);
+                }
+                if overlays.covers_window {
+                    structured["screenshot_composited"] = json!(true);
+                }
+                if let Some(note) = overlays.follow_up(pid) {
+                    structured["follow_up"] = json!(note);
+                    content.push(cua_driver_core::protocol::Content::text(note));
+                }
+                structured["coordinate_frame"] = json!("window");
+                structured["frame_note"] = json!(
+                    "x/y for click / double_click / right_click / drag / scroll on this \
+                     window are pixels of THIS screenshot (window-local, 0..screenshot_width \
+                     x 0..screenshot_height); window_bounds is where it sits on the screen. \
+                     Pass scope:\"desktop\" only for get_desktop_state pixels."
+                );
 
                 // The capture-only path (include_accessibility_tree:false) leaves
                 // `content` empty when the screenshot was also unavailable — most
@@ -2946,6 +3085,11 @@ fn key_route_result(action: &str, route: KeyRoute, mode_label: &str) -> ToolResu
                 .focus_guard
                 .as_ref()
                 .is_some_and(|guard| guard.closed_window.is_some());
+            let opened_window = report
+                .focus_guard
+                .as_ref()
+                .and_then(|guard| guard.same_app_window.as_ref())
+                .filter(|_| report.delivery_confirmed);
             if closed_target && report.delivery_confirmed {
                 // The key closed the window that held the focus (Escape /
                 // Return on a dialog): the lost virtual focus is the effect,
@@ -2953,6 +3097,22 @@ fn key_route_result(action: &str, route: KeyRoute, mode_label: &str) -> ToolResu
                 structured["effect"] = json!("confirmed");
                 structured["verified"] = json!(true);
                 text.push_str(" The window that held the focus closed after the key.");
+            } else if let Some(window) = opened_window {
+                // The key mapped a new top-level of the target (F4 -> Position
+                // and Size, ctrl+1 -> Format Cells): the window change is the
+                // effect; name it and the call that targets it.
+                structured["effect"] = json!("confirmed");
+                structured["verified"] = json!(true);
+                structured["window_opened"] = json!({
+                    "window_id": window.window,
+                    "title": window.title,
+                    "focused": window.focused,
+                });
+                text.push_str(&format!(
+                    " The key opened window {} \"{}\"; call get_window_state(pid, window_id={}) \
+                     to index it and act there.",
+                    window.window, window.title, window.window
+                ));
             } else if !report.virtual_focus_held || !report.delivery_confirmed {
                 structured["effect"] = json!("suspected_noop");
                 text.push_str(
@@ -3508,6 +3668,14 @@ fn hyprland_foreground(delivery: crate::input::delivery::DeliveryMode) -> bool {
 /// pointer click at their centre is what a user does.
 fn element_needs_real_click(role: &str) -> bool {
     crate::atspi::is_focus_taking_role(role)
+}
+
+/// Menubar entries and the items of an open menu.
+fn element_is_menu_role(role: &str) -> bool {
+    matches!(
+        role.trim().to_ascii_lowercase().as_str(),
+        "menu" | "menu item" | "check menu item" | "radio menu item"
+    )
 }
 
 /// A chord the window manager, not the application, acts on.
@@ -4961,8 +5129,8 @@ impl Tool for ClickTool {
                     "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
                     "pid":{"type":"integer"},
                     "window_id":{"type":"integer"},
-                    "x":{"type":"number"},
-                    "y":{"type":"number"},
+                    "x":{"type":"number","description":"Window-local pixel X of the target window's own get_window_state screenshot (0..screenshot_width). For get_desktop_state pixels pass scope:\"desktop\" (or coordinate_frame:\"desktop\")."},
+                    "y":{"type":"number","description":"Window-local pixel Y of the target window's own get_window_state screenshot (0..screenshot_height); see x."},
                     "element_index": cua_driver_core::tool_schema::element_index_schema(),
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
                     "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
@@ -5241,9 +5409,13 @@ impl Tool for ClickTool {
             // type_text needs (GIMP spin scales, VS Code settings inputs). With
             // the MPX real pointer available, click those like a user would.
             let needs_real_click = element_needs_real_click(&observed.role);
+            // A menu / menu item's `doAction` is declined or silently ignored
+            // by LibreOffice VCL (and opens GTK menus without the pointer
+            // grab a following item click expects): with a real pointer, press
+            // it like a user would and let the popup be listed.
             let real_click_role = !delivery.is_foreground()
                 && !crate::wayland::wayland_input_enabled()
-                && needs_real_click
+                && (needs_real_click || element_is_menu_role(&observed.role))
                 && crate::input::real_pointer_input_available();
             // Without a real pointer, an editable / table cell cannot take a
             // background click that gives it focus: refuse instead of firing
@@ -8589,8 +8761,8 @@ impl Tool for DoubleClickTool {
                 "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
                 "pid":{"type":"integer"},
                 "window_id":{"type":"integer"},
-                "x":{"type":"number"},
-                "y":{"type":"number"},
+                "x":{"type":"number","description":"Window-local pixel X of the target window's own get_window_state screenshot (0..screenshot_width). For get_desktop_state pixels pass scope:\"desktop\" (or coordinate_frame:\"desktop\")."},
+                "y":{"type":"number","description":"Window-local pixel Y of the target window's own get_window_state screenshot (0..screenshot_height); see x."},
                 "coordinate_frame": coordinate_frame_schema(),
                 "element_index": cua_driver_core::tool_schema::element_index_schema(),
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
@@ -8878,8 +9050,8 @@ impl Tool for RightClickTool {
                 "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
                 "pid":{"type":"integer"},
                 "window_id":{"type":"integer"},
-                "x":{"type":"number"},
-                "y":{"type":"number"},
+                "x":{"type":"number","description":"Window-local pixel X of the target window's own get_window_state screenshot (0..screenshot_width). For get_desktop_state pixels pass scope:\"desktop\" (or coordinate_frame:\"desktop\")."},
+                "y":{"type":"number","description":"Window-local pixel Y of the target window's own get_window_state screenshot (0..screenshot_height); see x."},
                 "coordinate_frame": coordinate_frame_schema(),
                 "element_index": cua_driver_core::tool_schema::element_index_schema(),
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
@@ -9176,10 +9348,10 @@ impl Tool for DragTool {
                 "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
                 "pid":{"type":"integer"},
                 "window_id":{"type":"integer","description":"Target window XID. Required."},
-                "from_x":{"type":"number"},
-                "from_y":{"type":"number"},
-                "to_x":{"type":"number"},
-                "to_y":{"type":"number"},
+                "from_x":{"type":"number","description":"Drag start X: window-local pixels of the target window's own get_window_state screenshot; pass scope:\"desktop\" for get_desktop_state pixels."},
+                "from_y":{"type":"number","description":"Drag start Y (same frame as from_x)."},
+                "to_x":{"type":"number","description":"Drag end X (same frame as from_x)."},
+                "to_y":{"type":"number","description":"Drag end Y (same frame as from_x)."},
                 "duration_ms":{"type":"integer","minimum":0,"maximum":10000,"description":"Total drag duration. Default: 500."},
                 "steps":{"type":"integer","minimum":1,"maximum":200,"description":"Intermediate MotionNotify events. Default: 20."},
                 "modifier": cua_driver_core::tool_schema::modifier_schema(),
@@ -9850,8 +10022,8 @@ impl Tool for MouseButtonDownTool {
                 "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
                 "pid":{"type":"integer"},
                 "window_id":{"type":"integer"},
-                "x":{"type":"number"},
-                "y":{"type":"number"},
+                "x":{"type":"number","description":"Window-local pixel X of the target window's own get_window_state screenshot (0..screenshot_width). For get_desktop_state pixels pass scope:\"desktop\" (or coordinate_frame:\"desktop\")."},
+                "y":{"type":"number","description":"Window-local pixel Y of the target window's own get_window_state screenshot (0..screenshot_height); see x."},
                 "coordinate_frame": coordinate_frame_schema(),
                 "button": cua_driver_core::tool_schema::button_schema(),
                 "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."}
@@ -10024,8 +10196,8 @@ impl Tool for MouseDragTool {
                 "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
                 "pid":{"type":"integer"},
                 "window_id":{"type":"integer"},
-                "x":{"type":"number"},
-                "y":{"type":"number"},
+                "x":{"type":"number","description":"Window-local pixel X of the target window's own get_window_state screenshot (0..screenshot_width). For get_desktop_state pixels pass scope:\"desktop\" (or coordinate_frame:\"desktop\")."},
+                "y":{"type":"number","description":"Window-local pixel Y of the target window's own get_window_state screenshot (0..screenshot_height); see x."},
                 "duration_ms":{"type":"integer","minimum":0,"maximum":10000,"description":"Total drag duration. Default: 500."},
                 "steps":{"type":"integer","minimum":1,"maximum":200,"description":"Intermediate MotionNotify events. Default: 20."},
                 "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."}
@@ -10230,8 +10402,8 @@ impl Tool for MouseButtonUpTool {
                 "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
                 "pid":{"type":"integer"},
                 "window_id":{"type":"integer"},
-                "x":{"type":"number"},
-                "y":{"type":"number"},
+                "x":{"type":"number","description":"Window-local pixel X of the target window's own get_window_state screenshot (0..screenshot_width). For get_desktop_state pixels pass scope:\"desktop\" (or coordinate_frame:\"desktop\")."},
+                "y":{"type":"number","description":"Window-local pixel Y of the target window's own get_window_state screenshot (0..screenshot_height); see x."},
                 "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."}
             },"additionalProperties":false}),
             read_only: false, destructive: true, idempotent: false, open_world: true,

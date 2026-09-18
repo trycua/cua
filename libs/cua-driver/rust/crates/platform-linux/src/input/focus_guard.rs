@@ -43,10 +43,13 @@ const SETTLE_WATCH: Duration = Duration::from_millis(220);
 /// ~1 s to build) is focused by the WM only when mapped, and that steal must
 /// be undone. When the target app already owns the focus the new window is
 /// its own and there is nothing to wait for.
-const SETTLE_WATCH_NEW_WINDOW: Duration = Duration::from_millis(1400);
+const SETTLE_WATCH_NEW_WINDOW: Duration = Duration::from_millis(900);
 const SETTLE_POLL: Duration = Duration::from_millis(30);
 /// Bound on the restore loop: re-activation, verification, one re-send.
-const RESTORE_BUDGET: Duration = Duration::from_millis(1200);
+// Together with the extended settle watch this bounds the guard at
+// ~1.5 s worst case (menubar clicks were spending 4-9 s here while a popup's
+// keyboard grab kept every re-activation from sticking).
+const RESTORE_BUDGET: Duration = Duration::from_millis(600);
 const RESTORE_POLL: Duration = Duration::from_millis(50);
 /// Consecutive stable polls before the restore is called done.
 const STABLE_POLLS: u32 = 3;
@@ -370,6 +373,8 @@ impl FocusGuardReport {
             "same_app_dialog"
         } else if self.restored {
             "restored"
+        } else if self.grab_held_by.is_some() {
+            "grab_held"
         } else {
             "not_restored"
         })
@@ -453,6 +458,11 @@ impl FocusGuardReport {
             (Some(window), false) => s.push_str(&format!(
                 " The application opened its own window {} \"{}\".",
                 window.window, window.title
+            )),
+            (_, true) if self.grab_held_by.is_some() && !self.restored => s.push_str(&format!(
+                " The application moved the desktop focus ({}) and its open popup holds \
+                 the keyboard grab, so it was left in place (focus_outcome=grab_held).",
+                self.changes.join(", ")
             )),
             (_, true) => s.push_str(&format!(
                 " The application moved the desktop focus ({}); {}.",
@@ -621,6 +631,13 @@ impl FocusSnapshot {
         }
         report.changed = true;
         report.changes = changes;
+        // The target application mapped one of its own top-levels (a dialog
+        // opened by a key or a menu item) while another application owned the
+        // focus: the focus may still be restored below, but the new window is
+        // the action's effect and is reported as such.
+        if report.same_app_window.is_none() {
+            report.same_app_window = self.any_new_window_of(&x, target_pid, &new_clients);
+        }
 
         // The action closed the window that held the focus (Escape / OK on
         // a dialog): nothing to restore to, the WM already moved on.
@@ -652,6 +669,14 @@ impl FocusSnapshot {
                 title: x.window_title(window),
                 focused: true,
             });
+            report.elapsed_ms = started.elapsed().as_millis() as u64;
+            return report;
+        }
+
+        // A popup (menu, combo list) that the action opened holds a keyboard
+        // grab: re-activating the previous window cannot take effect until it
+        // closes, and closing it would undo the action. Report and return.
+        if report.grab_held_by.is_some() {
             report.elapsed_ms = started.elapsed().as_millis() as u64;
             return report;
         }
@@ -711,6 +736,27 @@ impl FocusSnapshot {
             window: u64::from(window),
             title: x.window_title(window),
             focused: false,
+        })
+    }
+
+    /// The topmost freshly mapped toplevel owned by the target pid, whoever
+    /// held the focus before; `focused` says whether it holds it now.
+    fn any_new_window_of(
+        &self,
+        x: &X,
+        target_pid: Option<u32>,
+        new_clients: &[Window],
+    ) -> Option<SameAppWindow> {
+        target_pid?;
+        let window = new_clients
+            .iter()
+            .rev()
+            .copied()
+            .find(|w| x.owner_pid(*w) == target_pid)?;
+        Some(SameAppWindow {
+            window: u64::from(window),
+            title: x.window_title(window),
+            focused: self.current_focus_window(x) == Some(window),
         })
     }
 

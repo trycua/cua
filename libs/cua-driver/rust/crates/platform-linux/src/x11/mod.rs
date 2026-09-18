@@ -393,6 +393,27 @@ pub fn close_window(xid: u64, pid: u32) -> Result<()> {
     Ok(())
 }
 
+/// `_NET_WM_STATE` carries `_NET_WM_STATE_MODAL`: the dialog blocks input to
+/// the window it is transient for.
+pub fn window_is_modal(xid: u64) -> bool {
+    let Ok(xid) = u32::try_from(xid) else {
+        return false;
+    };
+    let Ok((conn, _)) = RustConnection::connect(None) else {
+        return false;
+    };
+    let (Ok(state_atom), Ok(modal_atom)) =
+        (get_atom(&conn, "_NET_WM_STATE"), get_atom(&conn, "_NET_WM_STATE_MODAL"))
+    else {
+        return false;
+    };
+    conn.get_property(false, xid, state_atom, AtomEnum::ATOM, 0, 64)
+        .ok()
+        .and_then(|cookie| cookie.reply().ok())
+        .and_then(|reply| reply.value32().map(|atoms| atoms.collect::<Vec<_>>()))
+        .is_some_and(|atoms| atoms.contains(&modal_atom))
+}
+
 /// True while `xid` exists on the server and is viewable.
 pub fn window_is_viewable(xid: u64) -> bool {
     window_info(xid).is_some_and(|w| w.is_on_screen)

@@ -342,6 +342,7 @@ fn window_target_candidates_for_pid(
         .filter(|window| window.pid == pid)
         .map(|window| WindowTargetCandidate {
             window_id: window.hwnd,
+            transient_for: None,
             title: window.title,
             app_name: None,
             is_on_screen: window.is_on_screen,

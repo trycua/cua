@@ -14,6 +14,10 @@ use crate::tool::{ProtectedResourceOwnership, Tool, ToolDef};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WindowTargetCandidate {
     pub window_id: u64,
+    /// The window this one is a dialog of (`WM_TRANSIENT_FOR` on X11), when
+    /// the platform reports it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transient_for: Option<u64>,
     pub title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub app_name: Option<String>,
@@ -203,11 +207,14 @@ impl Tool for PidOnlyWindowTargetGuard {
                         .ok()
                         .flatten();
                     if let Some(window_id) = hit {
-                        if candidates.iter().any(|c| c.window_id == window_id) {
+                        if let Some(candidate) =
+                            candidates.iter().find(|c| c.window_id == window_id)
+                        {
                             if let Some(object) = args.as_object_mut() {
                                 object.insert("window_id".to_owned(), window_id.into());
                             }
-                            return self.inner.invoke(args).await;
+                            let result = self.inner.invoke(args).await;
+                            return note_resolved_window(result, candidate);
                         }
                     }
                 }
@@ -219,17 +226,22 @@ impl Tool for PidOnlyWindowTargetGuard {
                         .ok()
                         .flatten();
                     if let Some(window_id) = hit {
-                        if candidates.iter().any(|c| c.window_id == window_id) {
+                        if let Some(candidate) =
+                            candidates.iter().find(|c| c.window_id == window_id)
+                        {
                             if let Some(object) = args.as_object_mut() {
                                 object.insert("window_id".to_owned(), window_id.into());
                             }
-                            return self.inner.invoke(args).await;
+                            let result = self.inner.invoke(args).await;
+                            return note_resolved_window(result, candidate);
                         }
                     }
                 }
                 ToolResult::error(format!(
-                    "pid {pid} owns more than one eligible top-level window; provide window_id \
-                     (or pass desktop-frame x/y over the window you mean)."
+                    "pid {pid} owns more than one eligible top-level window: {}. Provide \
+                     window_id (an open dialog receives the keys; pass its window_id to act \
+                     on it), or pass desktop-frame x/y over the window you mean.",
+                    describe_candidates(&candidates)
                 ))
                 .with_structured(serde_json::json!({
                     "code": "ambiguous_window_target",
@@ -240,6 +252,69 @@ impl Tool for PidOnlyWindowTargetGuard {
             }
         }
     }
+}
+
+/// `window_id 7 "Position and Size" (dialog, transient of window 3); window_id 3 "doc - Writer"`
+fn describe_candidates(candidates: &[WindowTargetCandidate]) -> String {
+    candidates
+        .iter()
+        .map(|candidate| {
+            let kind = match candidate.transient_for {
+                Some(owner) => format!("dialog, transient of window {owner}"),
+                None => "top-level".to_owned(),
+            };
+            format!(
+                "window_id {} \"{}\" ({kind}{})",
+                candidate.window_id,
+                candidate.title,
+                if candidate.is_on_screen {
+                    ""
+                } else {
+                    ", off-screen"
+                }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+/// A pid-only action was routed to one of several windows: say which one in
+/// the text (the model's summary) and in the payload.
+fn note_resolved_window(mut result: ToolResult, candidate: &WindowTargetCandidate) -> ToolResult {
+    use crate::protocol::Content;
+    let note = format!(
+        " [pid-only target resolved to window {} \"{}\"{}]",
+        candidate.window_id,
+        candidate.title,
+        if candidate.transient_for.is_some() {
+            " (an open dialog)"
+        } else {
+            ""
+        }
+    );
+    match result
+        .content
+        .iter_mut()
+        .find_map(|content| match content {
+            Content::Text { text, .. } => Some(text),
+            _ => None,
+        }) {
+        Some(text) => text.push_str(&note),
+        None => result.content.push(Content::text(note.trim().to_owned())),
+    }
+    if let Some(structured) = result.structured_content.as_mut() {
+        if let Some(object) = structured.as_object_mut() {
+            object.insert(
+                "resolved_window".to_owned(),
+                serde_json::json!({
+                    "window_id": candidate.window_id,
+                    "title": candidate.title,
+                    "transient_for": candidate.transient_for,
+                }),
+            );
+        }
+    }
+    result
 }
 
 #[cfg(test)]
@@ -276,6 +351,7 @@ mod tests {
     fn candidate(window_id: u64) -> WindowTargetCandidate {
         WindowTargetCandidate {
             window_id,
+            transient_for: None,
             title: format!("Window {window_id}"),
             app_name: Some("Editor".into()),
             is_on_screen: true,
@@ -393,12 +469,14 @@ mod tests {
             vec![
                 WindowTargetCandidate {
                     window_id: 11,
+                    transient_for: None,
                     title: "a".into(),
                     app_name: None,
                     is_on_screen: true,
                 },
                 WindowTargetCandidate {
                     window_id: 22,
+                    transient_for: None,
                     title: "b".into(),
                     app_name: None,
                     is_on_screen: true,
@@ -435,12 +513,14 @@ mod tests {
             vec![
                 WindowTargetCandidate {
                     window_id: 11,
+                    transient_for: None,
                     title: "a".into(),
                     app_name: None,
                     is_on_screen: true,
                 },
                 WindowTargetCandidate {
                     window_id: 22,
+                    transient_for: None,
                     title: "b".into(),
                     app_name: None,
                     is_on_screen: true,

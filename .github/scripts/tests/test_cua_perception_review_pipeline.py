@@ -133,6 +133,27 @@ def test_review_pipeline_builds_pending_trust_override_and_exact_artifact_contra
     assert upload["with"]["path"] == "staged/"
 
 
+def test_review_pipeline_preserves_the_assembler_candidate_manifest() -> None:
+    parsed = yaml.safe_load(workflow_text())
+    conversion = next(
+        step["run"]
+        for step in parsed["jobs"]["supplied-input"]["steps"]
+        if step.get("name") == "Convert sealed assembler evidence to candidate input"
+    )
+    assert 'manifest = json.loads((root / "artifact-manifest.json").read_text())' in conversion
+    assert '(root / "release-input.json").write_text(' in conversion
+    assert '"verification-report"' not in conversion
+    assert 'artifact["kind"] = "supplied-verification-report"' not in conversion
+    assert 'report["evidenceKind"] = "supplied"' not in conversion
+    assert 'manifest.pop("verification", None)' not in conversion
+    assert 'manifest["artifacts"].append' not in conversion
+    assert '"kind": "model-manifest"' not in conversion
+    assert '"model-manifest.json"' not in conversion
+    assert "perception_release.py bind-source" in conversion
+    assert "perception_release.py validate" in conversion
+    assert 'for stale in ("artifact-manifest.json", "SHA256SUMS")' in conversion
+
+
 def test_macos_review_candidate_uses_ephemeral_certificate_signing() -> None:
     text = workflow_text()
     script = (ROOT / ".github/scripts/macos-review-codesign.sh").read_text()

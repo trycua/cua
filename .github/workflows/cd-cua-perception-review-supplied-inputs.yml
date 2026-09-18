@@ -258,35 +258,10 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import hashlib, json, pathlib
+          import json, pathlib
 
           root = pathlib.Path("perception-input")
           manifest = json.loads((root / "artifact-manifest.json").read_text())
-          supplied = {}
-          field_for = {"health": "health", "self-test": "selfTest", "real-parse": "realParse"}
-          for artifact in manifest["artifacts"]:
-              if artifact["kind"] != "verification-report":
-                  continue
-              artifact["kind"] = "supplied-verification-report"
-              report_path = root / artifact["path"]
-              report = json.loads(report_path.read_text())
-              report["evidenceKind"] = "supplied"
-              report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
-              data = report_path.read_bytes()
-              artifact["sha256"] = hashlib.sha256(data).hexdigest()
-              artifact["size"] = len(data)
-              supplied[field_for[artifact["role"]]] = artifact["path"]
-          model_manifest = root / "model-manifest.json"
-          model_bytes = model_manifest.read_bytes()
-          manifest["artifacts"].append({
-              "kind": "model-manifest", "name": "model-manifest.json",
-              "path": "model-manifest.json", "sha256": hashlib.sha256(model_bytes).hexdigest(),
-              "size": len(model_bytes),
-              "license": {"spdx": "MIT", "source": "https://github.com/trycua/cua",
-                          "notice": "THIRD_PARTY_NOTICES.md"},
-          })
-          manifest["suppliedVerification"] = supplied
-          manifest.pop("verification", None)
           (root / "release-input.json").write_text(
               json.dumps(manifest, indent=2, sort_keys=True) + "\n"
           )

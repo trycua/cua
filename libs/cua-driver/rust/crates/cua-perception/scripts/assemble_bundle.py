@@ -20,6 +20,7 @@ from artifact_tooling import (
     ArtifactError,
     CRATE_DIR,
     LOCK_PATH,
+    extension_identity,
     host_target,
     read_json,
     require_binary_target,
@@ -329,6 +330,7 @@ def assemble(args: argparse.Namespace) -> tuple[Path, Path]:
         raise ArtifactError(f"unsupported target: {args.target}")
     if args.target != host_target():
         raise ArtifactError(f"assembly must run on target host {args.target}; current host is {host_target()}")
+    identity = extension_identity({"component": "cua-perception", "version": args.version})
     if args.output.exists():
         raise ArtifactError(f"refusing to overwrite existing output: {args.output}")
     target_lock = lock["onnx_runtime"]["targets"][args.target]
@@ -408,7 +410,7 @@ def assemble(args: argparse.Namespace) -> tuple[Path, Path]:
         fixture = bundle / "verification/known-answer.png"
         fixture.parent.mkdir()
         shutil.copyfile(args.real_parse_fixture, fixture)
-        exercise_bundle(bundle, args.target, fixture, fixture.parent)
+        exercise_bundle(bundle, args.target, fixture, identity, fixture.parent)
         write_json(bundle / "artifact-manifest.json", release_manifest(bundle, lock, args.target, args.version, args.source_sha))
         write_sums(bundle)
         static_verify(bundle)

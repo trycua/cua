@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import json
+import argparse
 import io
+import json
 import sys
 import tarfile
 import tempfile
@@ -22,6 +23,8 @@ from artifact_tooling import (  # noqa: E402
     static_verify,
     verify_corresponding_sources,
 )
+import assemble_bundle  # noqa: E402
+import verify_bundle  # noqa: E402
 from assemble_bundle import immutable_url  # noqa: E402
 from verify_bundle import source_inspection  # noqa: E402
 
@@ -254,6 +257,156 @@ class ArtifactToolingTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(ArtifactError, "invalid extension identity"):
                 extension_identity(invalid)
+
+    def test_assembly_exercises_validated_identity_before_sealing_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            inputs = root / "inputs"
+            inputs.mkdir()
+            roles = (
+                "icon-detect",
+                "ocr-detect",
+                "ocr-recognize",
+                "ocr-dictionary",
+            )
+            artifacts = []
+            for role in roles:
+                path = inputs / f"{role}.bin"
+                write(path, role.encode())
+                artifacts.append(
+                    {
+                        "role": role,
+                        "filename": path.name,
+                        "sha256": sha256(path),
+                        "size": path.stat().st_size,
+                        "origin": "https://example.invalid/source",
+                        "revision": "b" * 40,
+                        "license": "MIT",
+                        "verification_status": "reviewed",
+                        "source_sha256": "c" * 64,
+                    }
+                )
+
+            target = "x86_64-unknown-linux-gnu"
+            lock = {
+                "onnx_runtime": {
+                    "version": "1.26.0",
+                    "targets": {
+                        target: {
+                            "worker_filename": "cua-perception",
+                            "filename": "libonnxruntime.so",
+                            "sha256": "d" * 64,
+                            "size": 7,
+                            "os": "linux",
+                            "arch": "x86_64",
+                            "archive_url": "https://example.invalid/runtime",
+                            "archive_sha256": "e" * 64,
+                        }
+                    },
+                },
+                "artifacts": artifacts,
+                "corresponding_source": [],
+            }
+            worker = root / "worker"
+            fixture = root / "fixture.png"
+            write(worker, b"worker")
+            write(fixture, b"fixture")
+            output = root / "bundle"
+            args = argparse.Namespace(
+                target=target,
+                worker=worker,
+                inputs=inputs,
+                cache=root / "cache",
+                real_parse_fixture=fixture,
+                source_sha="a" * 40,
+                version="1.2.3",
+                output=output,
+            )
+            events = []
+
+            def fake_extract_runtime(_lock, _target, _cache, destination):
+                write(destination, b"runtime")
+
+            def fake_corresponding_source(_repo, _revision, destination):
+                write(destination, b"source")
+
+            def fake_exercise(bundle, bundle_target, known_answer, identity, report_dir):
+                self.assertEqual(bundle_target, target)
+                self.assertEqual(known_answer, bundle / "verification/known-answer.png")
+                self.assertEqual(identity, ("cua-perception", "1.2.3"))
+                self.assertFalse((bundle / "artifact-manifest.json").exists())
+                for name in ("health", "self-test", "real-parse"):
+                    write(report_dir / f"{name}.json", f"{name}\n".encode())
+                events.append("exercise")
+                return {}
+
+            def fake_static_verify(bundle):
+                manifest_path = bundle / "artifact-manifest.json"
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                self.assertEqual(extension_identity(manifest), ("cua-perception", "1.2.3"))
+                reports = {
+                    item["role"]: item
+                    for item in manifest["artifacts"]
+                    if item["kind"] == "supplied-verification-report"
+                }
+                self.assertEqual(set(reports), {"health", "self-test", "real-parse"})
+                for role, entry in reports.items():
+                    report = bundle / entry["path"]
+                    self.assertEqual(entry["sha256"], sha256(report), role)
+                    self.assertEqual(entry["size"], report.stat().st_size, role)
+                sums = (bundle / "SHA256SUMS").read_text(encoding="utf-8")
+                self.assertIn("  artifact-manifest.json\n", sums)
+                events.append("static-verify")
+                return manifest
+
+            def fake_archive(_bundle, destination):
+                write(destination, b"archive")
+                events.append("archive")
+
+            with (
+                mock.patch("assemble_bundle.read_json", return_value=lock),
+                mock.patch("assemble_bundle.host_target", return_value=target),
+                mock.patch("assemble_bundle.require_binary_target"),
+                mock.patch("assemble_bundle.repository_root", return_value=root),
+                mock.patch("assemble_bundle.extract_runtime", side_effect=fake_extract_runtime),
+                mock.patch(
+                    "assemble_bundle.corresponding_source",
+                    side_effect=fake_corresponding_source,
+                ),
+                mock.patch("assemble_bundle.exercise_bundle", side_effect=fake_exercise),
+                mock.patch("assemble_bundle.static_verify", side_effect=fake_static_verify),
+                mock.patch(
+                    "assemble_bundle.deterministic_bundle_archive",
+                    side_effect=fake_archive,
+                ),
+            ):
+                bundle, archive = assemble_bundle.assemble(args)
+
+            self.assertEqual(bundle, output)
+            self.assertEqual(archive, root / f"cua-perception-1.2.3-{target}.tar.gz")
+            self.assertEqual(events, ["exercise", "static-verify", "archive"])
+
+    def test_installed_verification_uses_identity_from_final_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            bundle = Path(temporary)
+            manifest = {
+                "component": "cua-perception",
+                "version": "2.3.4",
+                "target": {"triple": "x86_64-unknown-linux-gnu"},
+            }
+
+            def fake_exercise(_bundle, _target, _fixture, identity):
+                self.assertEqual(identity, ("cua-perception", "2.3.4"))
+                return {}
+
+            with (
+                mock.patch.object(sys, "argv", ["verify_bundle.py", str(bundle)]),
+                mock.patch("verify_bundle.static_verify", return_value=manifest),
+                mock.patch("verify_bundle.source_inspection", return_value=[]),
+                mock.patch("verify_bundle.exercise_bundle", side_effect=fake_exercise),
+                mock.patch("builtins.print"),
+            ):
+                self.assertEqual(verify_bundle.main(), 0)
 
 
 if __name__ == "__main__":

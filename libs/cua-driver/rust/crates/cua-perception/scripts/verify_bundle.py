@@ -105,7 +105,11 @@ def mismatch_rejection(
 
 
 def exercise_bundle(
-    bundle: Path, target: str, fixture: Path, report_dir: Path | None = None
+    bundle: Path,
+    target: str,
+    fixture: Path,
+    identity: tuple[str, str],
+    report_dir: Path | None = None,
 ) -> dict[str, Any]:
     lock = read_json(LOCK_PATH)
     target_lock = lock["onnx_runtime"]["targets"].get(target)
@@ -119,8 +123,6 @@ def exercise_bundle(
     require_binary_target(runtime, target)
     worker_hash = sha256(worker)
     runtime_hash = sha256(runtime)
-    identity = extension_identity(read_json(bundle / "artifact-manifest.json"))
-
     health = worker_request(
         worker, manifest, runtime, request("health", {}, "installed-health"), *identity
     )
@@ -246,7 +248,12 @@ def main() -> int:
             print(json.dumps({"status": "passed", "target": manifest["target"]["triple"], "sources": sources}, sort_keys=True))
             return 0
         fixture = args.real_parse_fixture or args.bundle / "verification/known-answer.png"
-        reports = exercise_bundle(args.bundle, manifest["target"]["triple"], fixture)
+        reports = exercise_bundle(
+            args.bundle,
+            manifest["target"]["triple"],
+            fixture,
+            extension_identity(manifest),
+        )
         print(json.dumps({"status": "passed", "reports": reports, "sources": sources}, sort_keys=True))
         return 0
     except (ArtifactError, OSError, KeyError, subprocess.SubprocessError) as error:

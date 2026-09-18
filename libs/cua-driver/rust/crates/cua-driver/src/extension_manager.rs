@@ -1043,6 +1043,10 @@ fn perception_worker_config_in(store: &ExtensionStore) -> Result<Option<Percepti
         model_manifest.to_owned(),
         "--onnx-runtime-library".to_owned(),
         runtime_library.to_owned(),
+        "--extension-id".to_owned(),
+        manifest.id.clone(),
+        "--extension-version".to_owned(),
+        manifest.version.clone(),
     ];
     Ok(Some(config))
 }
@@ -4024,6 +4028,15 @@ mod tests {
         assert!(config.args[1].ends_with("models/model-manifest.json"));
         assert_eq!(config.args[2], "--onnx-runtime-library");
         assert!(config.args[3].ends_with(&format!("runtime/{runtime_name}")));
+        assert_eq!(
+            &config.args[4..],
+            [
+                "--extension-id",
+                "cua-perception",
+                "--extension-version",
+                "1.0.0"
+            ]
+        );
         assert!(config.warm_worker.is_some());
     }
 

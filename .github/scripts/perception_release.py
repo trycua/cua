@@ -598,8 +598,14 @@ def extension_manifest(stage: Path, manifest: Mapping[str, Any], payload_root: P
         "corresponding_source_uri": f"source/{source['name']}",
         "corresponding_source_revision": manifest["sourceSha"],
         "provenance": "metadata/provenance.redacted.json",
-        "health_args": ["--health"],
-        "self_test_args": ["--self-test"],
+        "health_args": [
+            "--health", "--extension-id", "cua-perception",
+            "--extension-version", manifest["version"],
+        ],
+        "self_test_args": [
+            "--self-test", "--extension-id", "cua-perception",
+            "--extension-version", manifest["version"],
+        ],
     }
 
 
@@ -833,12 +839,16 @@ def run_candidate_gates(
         "CUA_PERCEPTION_TARGET": manifest["target"]["triple"],
     }
     executed = []
+    identity_arguments = [
+        "--extension-id", "cua-perception", "--extension-version", manifest["version"]
+    ]
     for gate, arguments in (
         ("health", ["--health"]),
         ("self-test", ["--self-test"]),
         ("real-parse", ["--real-parse-self-test"]),
         ("mismatch-rejection", ["--mismatch-rejection-self-test"]),
     ):
+        arguments = [*arguments, *identity_arguments]
         result = subprocess.run(
             [str(worker), *arguments],
             cwd=payload_root,

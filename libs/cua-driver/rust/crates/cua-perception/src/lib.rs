@@ -173,6 +173,8 @@ pub enum StartupError {
     Manifest(#[from] ManifestError),
     #[error(transparent)]
     Inference(#[from] runtime::InferenceError),
+    #[error("invalid extension identity: {0}")]
+    InvalidExtensionIdentity(String),
 }
 
 enum Backend {
@@ -182,12 +184,16 @@ enum Backend {
 
 pub struct Worker {
     backend: Backend,
+    extension_id: String,
+    extension_version: String,
 }
 
 impl Worker {
     pub fn fixture() -> Self {
         Self {
             backend: Backend::Fixture,
+            extension_id: env!("CARGO_PKG_NAME").to_owned(),
+            extension_version: env!("CARGO_PKG_VERSION").to_owned(),
         }
     }
 
@@ -195,9 +201,26 @@ impl Worker {
         manifest_path: &Path,
         runtime_library_path: &Path,
     ) -> Result<Self, StartupError> {
+        Self::from_manifest_with_extension_identity(
+            manifest_path,
+            runtime_library_path,
+            env!("CARGO_PKG_NAME"),
+            env!("CARGO_PKG_VERSION"),
+        )
+    }
+
+    pub fn from_manifest_with_extension_identity(
+        manifest_path: &Path,
+        runtime_library_path: &Path,
+        extension_id: &str,
+        extension_version: &str,
+    ) -> Result<Self, StartupError> {
+        validate_extension_identity(extension_id, extension_version)?;
         let validated = ValidatedManifest::load(manifest_path, runtime_library_path)?;
         Ok(Self {
             backend: Backend::Onnx(Box::new(OnnxBackend::load(validated)?)),
+            extension_id: extension_id.to_owned(),
+            extension_version: extension_version.to_owned(),
         })
     }
 
@@ -262,7 +285,7 @@ impl Worker {
     }
 
     fn health(&self) -> Value {
-        match &self.backend {
+        let mut value = match &self.backend {
             Backend::Fixture => json!({
                 "ready": true,
                 "protocol": PROTOCOL_VERSION,
@@ -277,16 +300,20 @@ impl Worker {
                 "identity": backend.identity(),
                 "capabilities": ["health", "self_test", "parse", "icon_detection", "ocr"]
             }),
-        }
+        };
+        self.bind_extension_identity(&mut value);
+        value
     }
 
     fn self_test(&self) -> Result<Value, WorkerError> {
-        match &self.backend {
+        let mut value = match &self.backend {
             Backend::Fixture => run_fixture_self_test(),
             Backend::Onnx(backend) => backend
                 .self_test()
                 .map_err(|error| WorkerError::new("self_test_failed", error.to_string())),
-        }
+        }?;
+        self.bind_extension_identity(&mut value);
+        Ok(value)
     }
 
     fn parse(&self, params: ParseParams) -> Result<Value, WorkerError> {
@@ -306,7 +333,11 @@ impl Worker {
                     )
                     .with_details(json!({ "sha256": sha256 })));
                 }
-                Ok(fixture_result(&params.capture_id))
+                Ok(fixture_result(
+                    &params.capture_id,
+                    &self.extension_id,
+                    &self.extension_version,
+                ))
             }
             Backend::Onnx(backend) => {
                 let regions = backend
@@ -319,10 +350,44 @@ impl Worker {
                     params.image.height,
                     regions,
                     backend.identity(),
+                    &self.extension_id,
+                    &self.extension_version,
                 ))
             }
         }
     }
+
+    fn bind_extension_identity(&self, value: &mut Value) {
+        if let Some(root) = value.as_object_mut() {
+            let identity = root.entry("identity").or_insert_with(|| json!({}));
+            if let Some(identity) = identity.as_object_mut() {
+                identity.insert(
+                    "extension".to_owned(),
+                    json!({
+                        "id": self.extension_id,
+                        "version": self.extension_version,
+                    }),
+                );
+            }
+        }
+    }
+}
+
+fn validate_extension_identity(id: &str, version: &str) -> Result<(), StartupError> {
+    fn valid(value: &str) -> bool {
+        !value.is_empty()
+            && value.len() <= 128
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    }
+    if !valid(id) || !valid(version) {
+        return Err(StartupError::InvalidExtensionIdentity(
+            "id and version must contain 1 to 128 ASCII letters, digits, dots, underscores, or hyphens"
+                .to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 /// Compatibility helper for deterministic protocol tests.
@@ -484,7 +549,7 @@ fn map_image_error(error: ImageError, format: ImageFormat) -> WorkerError {
     }
 }
 
-fn fixture_result(capture_id: &str) -> Value {
+fn fixture_result(capture_id: &str, extension_id: &str, extension_version: &str) -> Value {
     json!({
         "capture_id": capture_id,
         "image": { "sha256": FIXTURE_SHA256, "width": 1, "height": 1 },
@@ -499,8 +564,8 @@ fn fixture_result(capture_id: &str) -> Value {
         "runtime": "fixture_only",
         "identity": {
             "extension": {
-                "id": env!("CARGO_PKG_NAME"),
-                "version": env!("CARGO_PKG_VERSION")
+                "id": extension_id,
+                "version": extension_version
             },
             "backend": "deterministic_fixture",
             "fixture_sha256": FIXTURE_SHA256
@@ -515,14 +580,16 @@ fn inference_result(
     height: u32,
     regions: Vec<InferenceRegion>,
     identity: Value,
+    extension_id: &str,
+    extension_version: &str,
 ) -> Value {
     let mut identity = identity;
     if let Some(identity) = identity.as_object_mut() {
         identity.insert(
             "extension".to_owned(),
             json!({
-                "id": env!("CARGO_PKG_NAME"),
-                "version": env!("CARGO_PKG_VERSION")
+                "id": extension_id,
+                "version": extension_version
             }),
         );
     }
@@ -582,7 +649,13 @@ fn run_fixture_self_test() -> Result<Value, WorkerError> {
         },
     };
     let result = Worker::fixture().parse(request)?;
-    if result != fixture_result("self-test") {
+    if result
+        != fixture_result(
+            "self-test",
+            env!("CARGO_PKG_NAME"),
+            env!("CARGO_PKG_VERSION"),
+        )
+    {
         return Err(WorkerError::new(
             "self_test_failed",
             "fixture parser produced an unexpected result",
@@ -659,6 +732,31 @@ mod tests {
     use crate::postprocess::Rect;
 
     #[test]
+    fn caller_supplied_extension_identity_is_reported_and_invalid_values_fail_closed() {
+        let worker = Worker {
+            backend: Backend::Fixture,
+            extension_id: "cua-perception".to_owned(),
+            extension_version: "0.1.0".to_owned(),
+        };
+        let health = worker.health();
+        assert_eq!(
+            health["identity"]["extension"],
+            json!({"id": "cua-perception", "version": "0.1.0"})
+        );
+
+        let error = match Worker::from_manifest_with_extension_identity(
+            Path::new("absent-manifest"),
+            Path::new("absent-runtime"),
+            "cua/perception",
+            "0.1.0",
+        ) {
+            Ok(_) => panic!("an unsafe identity must fail before reading artifacts"),
+            Err(error) => error,
+        };
+        assert!(matches!(error, StartupError::InvalidExtensionIdentity(_)));
+    }
+
+    #[test]
     fn private_inference_regions_map_to_protocol_dto() {
         let result = inference_result(
             "capture-1",
@@ -692,6 +790,8 @@ mod tests {
                 },
             ],
             json!({ "backend": "test" }),
+            env!("CARGO_PKG_NAME"),
+            env!("CARGO_PKG_VERSION"),
         );
         let encoded = serde_json::to_vec(&result).unwrap();
         let decoded: Value = serde_json::from_slice(&encoded).unwrap();

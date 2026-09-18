@@ -1,6 +1,7 @@
 use cua_driver_core::capture_runtime::{
-    CaptureActionRequest, CapturePublication, CaptureService, CaptureTarget,
-    EncodedScreenshotDimensions, NativeActionDimensions, ScreenshotToActionTransform,
+    CaptureActionError, CaptureActionRequest, CaptureIdParseError, CaptureLookupError,
+    CapturePublication, CaptureService, CaptureTarget, EncodedScreenshotDimensions,
+    NativeActionDimensions, ScreenshotToActionTransform,
 };
 use serde_json::Value;
 
@@ -57,11 +58,13 @@ pub fn publish_window(
     encoded_dimensions: (u32, u32),
     native_action_dimensions: (u32, u32),
 ) -> anyhow::Result<String> {
-    // Keep the established Linux screenshot coordinate contract: resize uses
-    // a uniform long-edge scale and click conversion derives that scale from
-    // width, then applies it to both axes before the existing integer cast.
-    let scale = f64::from(native_action_dimensions.0) / f64::from(encoded_dimensions.0);
-    let screenshot_to_action = ScreenshotToActionTransform::new(scale, 0.0, 0.0, scale, 0.0, 0.0)?;
+    // The resizer preserves aspect ratio before rounding each encoded axis.
+    // Derive both ratios independently so a one-pixel rounded height does not
+    // skew Y coordinates in the native window frame.
+    let scale_x = f64::from(native_action_dimensions.0) / f64::from(encoded_dimensions.0);
+    let scale_y = f64::from(native_action_dimensions.1) / f64::from(encoded_dimensions.1);
+    let screenshot_to_action =
+        ScreenshotToActionTransform::new(scale_x, 0.0, 0.0, scale_y, 0.0, 0.0)?;
     publish(
         service,
         args,
@@ -134,7 +137,7 @@ fn admit_with_live_dimensions(
 
 #[cfg(target_os = "linux")]
 fn live_action_dimensions(target: &CaptureTarget) -> anyhow::Result<NativeActionDimensions> {
-    let png = match target {
+    let dimensions = match target {
         CaptureTarget::Window { pid, window_id } => {
             let identity_matches = if crate::wayland::is_wayland() {
                 crate::wayland::window_was_listed_for_pid(*pid, *window_id)
@@ -145,17 +148,67 @@ fn live_action_dimensions(target: &CaptureTarget) -> anyhow::Result<NativeAction
                 identity_matches,
                 "native window identity changed after capture"
             );
-            crate::wayland::screenshot_dispatch_with_pid(*window_id, *pid)?
+            let png = crate::wayland::screenshot_dispatch_with_pid(*window_id, *pid)?;
+            crate::capture::png_dimensions_pub(&png)?
         }
-        CaptureTarget::PrimaryDesktop => crate::capture::screenshot_display_bytes()?,
+        CaptureTarget::PrimaryDesktop => {
+            let png = crate::capture::screenshot_display_bytes()?;
+            let native = crate::capture::png_dimensions_pub(&png)?;
+            desktop_action_dimensions(native)?
+        }
     };
-    let (width, height) = crate::capture::png_dimensions_pub(&png)?;
-    Ok(NativeActionDimensions::new(width, height)?)
+    Ok(NativeActionDimensions::new(dimensions.0, dimensions.1)?)
 }
 
 #[cfg(not(target_os = "linux"))]
 fn live_action_dimensions(_target: &CaptureTarget) -> anyhow::Result<NativeActionDimensions> {
     anyhow::bail!("live Linux capture validation is unavailable on this platform")
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn desktop_action_dimensions(native: (u32, u32)) -> anyhow::Result<(u32, u32)> {
+    let logical = if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
+        let (width, height, _) = crate::wayland::hyprland::screen_size()?;
+        Some((width, height))
+    } else {
+        None
+    };
+    select_desktop_action_dimensions(native, logical)
+}
+
+fn select_desktop_action_dimensions(
+    native: (u32, u32),
+    compositor_logical: Option<(u32, u32)>,
+) -> anyhow::Result<(u32, u32)> {
+    let dimensions = compositor_logical.unwrap_or(native);
+    anyhow::ensure!(
+        dimensions.0 > 0 && dimensions.1 > 0,
+        "desktop action frame is empty: {}x{}",
+        dimensions.0,
+        dimensions.1
+    );
+    Ok(dimensions)
+}
+
+pub(crate) fn admission_error_code(error: &anyhow::Error) -> &'static str {
+    if error.downcast_ref::<CaptureIdParseError>().is_some() {
+        return "capture_id_invalid";
+    }
+    match error.downcast_ref::<CaptureActionError>() {
+        Some(CaptureActionError::Lookup(CaptureLookupError::Unknown)) => "capture_not_found",
+        Some(CaptureActionError::Lookup(CaptureLookupError::Expired)) => "capture_expired",
+        Some(CaptureActionError::Lookup(CaptureLookupError::GenerationMismatch)) => {
+            "capture_generation_mismatch"
+        }
+        Some(CaptureActionError::Lookup(CaptureLookupError::TargetMismatch)) => {
+            "capture_target_mismatch"
+        }
+        Some(
+            CaptureActionError::InvalidScreenshotPoint | CaptureActionError::InvalidMappedPoint,
+        ) => "capture_coordinate_invalid",
+        Some(CaptureActionError::NativeActionFrameMismatch) => "capture_frame_mismatch",
+        None => "capture_action_refused",
+    }
 }
 
 pub fn admit_window_click(
@@ -311,7 +364,7 @@ mod tests {
     }
 
     #[test]
-    fn window_transform_preserves_width_derived_uniform_scale() {
+    fn window_transform_preserves_each_rounded_axis() {
         let service = CaptureService::default();
         let call_args = args("rounding");
         let id = publish_window(
@@ -327,7 +380,82 @@ mod tests {
 
         let (x, y) = admit_window(&service, &call_args, &id, 8, 13, (1.0, 1.0), (5, 3)).unwrap();
         assert_eq!(x, 5.0 / 3.0);
-        assert_eq!(y, 5.0 / 3.0);
+        assert_eq!(y, 3.0 / 2.0);
+    }
+
+    #[test]
+    fn another_session_cannot_admit_or_consume_a_capture() {
+        let service = CaptureService::default();
+        let owner = args("owner");
+        let id = publish_desktop(&service, &owner, &png(4, 3, 0x21), (4, 3)).unwrap();
+
+        let refusal = admit_desktop(&service, &args("other"), &id, (2.0, 1.0), (4, 3))
+            .expect_err("cross-session admission must fail");
+        assert_eq!(
+            admission_error_code(&refusal),
+            "capture_generation_mismatch"
+        );
+        assert_eq!(
+            admit_desktop(&service, &owner, &id, (2.0, 1.0), (4, 3)).unwrap(),
+            (2.0, 1.0)
+        );
+    }
+
+    #[test]
+    fn hidpi_desktop_uses_the_compositors_logical_action_frame() {
+        let native = (3200, 2000);
+        let logical = select_desktop_action_dimensions(native, Some((1600, 1000))).unwrap();
+        assert_eq!(logical, (1600, 1000));
+
+        let service = CaptureService::default();
+        let call_args = args("hidpi");
+        let id = publish_desktop(
+            &service,
+            &call_args,
+            &png(logical.0, logical.1, 0x31),
+            logical,
+        )
+        .unwrap();
+        assert_eq!(
+            admit_desktop(&service, &call_args, &id, (800.0, 500.0), logical).unwrap(),
+            (800.0, 500.0)
+        );
+    }
+
+    #[test]
+    fn capture_action_refusals_have_stable_specific_codes() {
+        for (error, code) in [
+            (
+                CaptureActionError::Lookup(CaptureLookupError::Unknown),
+                "capture_not_found",
+            ),
+            (
+                CaptureActionError::Lookup(CaptureLookupError::Expired),
+                "capture_expired",
+            ),
+            (
+                CaptureActionError::Lookup(CaptureLookupError::GenerationMismatch),
+                "capture_generation_mismatch",
+            ),
+            (
+                CaptureActionError::Lookup(CaptureLookupError::TargetMismatch),
+                "capture_target_mismatch",
+            ),
+            (
+                CaptureActionError::InvalidScreenshotPoint,
+                "capture_coordinate_invalid",
+            ),
+            (
+                CaptureActionError::InvalidMappedPoint,
+                "capture_coordinate_invalid",
+            ),
+            (
+                CaptureActionError::NativeActionFrameMismatch,
+                "capture_frame_mismatch",
+            ),
+        ] {
+            assert_eq!(admission_error_code(&anyhow::Error::new(error)), code);
+        }
     }
 
     #[test]

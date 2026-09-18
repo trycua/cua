@@ -3634,8 +3634,9 @@ pub struct ClickTool {
 }
 
 fn capture_admission_error(error: anyhow::Error) -> ToolResult {
+    let code = crate::capture_action_frame::admission_error_code(&error);
     ToolResult::error(format!("capture-bound click refused: {error}"))
-        .with_structured(json!({ "code": "capture_admission_failed" }))
+        .with_structured(json!({ "code": code, "effect": "refused" }))
 }
 static CLICK_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
@@ -8742,7 +8743,7 @@ impl Tool for GetDesktopStateTool {
             // Only fall back to the X11 root-window geometry off Wayland, so
             // the X11 / XWayland path is unchanged. See #2017 / Sway testing.
             let (screen_w, screen_h) = if crate::wayland::is_wayland() {
-                (native_w, native_h)
+                crate::capture_action_frame::desktop_action_dimensions((native_w, native_h))?
             } else {
                 x11_screen_size()?
             };
@@ -10760,7 +10761,7 @@ mod window_capture_dimension_tests {
 
 #[cfg(test)]
 mod desktop_capture_frame_tests {
-    use super::normalize_desktop_capture_for_action_frame;
+    use super::{capture_admission_error, normalize_desktop_capture_for_action_frame};
 
     fn png(width: u32, height: u32) -> Vec<u8> {
         let rgba = vec![0x7f; (width * height * 4) as usize];
@@ -10787,5 +10788,15 @@ mod desktop_capture_frame_tests {
         let error = normalize_desktop_capture_for_action_frame(png(3200, 2000), 1600, 1200)
             .expect_err("nonuniform mapping must fail closed");
         assert!(error.to_string().contains("cannot be mapped uniformly"));
+    }
+
+    #[test]
+    fn capture_refusal_exposes_specific_code_and_refused_effect() {
+        let refusal = capture_admission_error(anyhow::Error::new(
+            cua_driver_core::capture_runtime::CaptureActionError::NativeActionFrameMismatch,
+        ));
+        let structured = refusal.structured_content.unwrap();
+        assert_eq!(structured["code"], "capture_frame_mismatch");
+        assert_eq!(structured["effect"], "refused");
     }
 }

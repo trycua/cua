@@ -85,14 +85,20 @@ const LANDLOCK_HANDLED_ACCESS: u64 = LANDLOCK_ACCESS_FS_EXECUTE
     | LANDLOCK_ACCESS_FS_REFER
     | LANDLOCK_ACCESS_FS_TRUNCATE;
 
-/// Read and execute a directory tree. Granted on the worker bundle, the
-/// inference runtime, the model artifacts and the immutable system runtime
-/// directories the dynamic loader needs.
-const LANDLOCK_READ_TREE: u64 =
-    LANDLOCK_ACCESS_FS_READ_FILE | LANDLOCK_ACCESS_FS_READ_DIR | LANDLOCK_ACCESS_FS_EXECUTE;
+/// Read a directory tree without making every file beneath it executable.
+const LANDLOCK_READ_TREE: u64 = LANDLOCK_ACCESS_FS_READ_FILE | LANDLOCK_ACCESS_FS_READ_DIR;
+/// Immutable system trees contain the ELF interpreter used during `execve`.
+/// They remain executable, while caller-controlled readable/writable roots do
+/// not acquire this right.
+const LANDLOCK_SYSTEM_READ_TREE: u64 = LANDLOCK_READ_TREE | LANDLOCK_ACCESS_FS_EXECUTE;
 /// Read a single file. Directory-only rights would make `landlock_add_rule`
 /// reject a rule whose target is not a directory.
 const LANDLOCK_READ_FILE_ONLY: u64 = LANDLOCK_ACCESS_FS_READ_FILE;
+/// Execute one exact, prevalidated worker entry point.
+const LANDLOCK_EXECUTABLE_FILE: u64 = LANDLOCK_ACCESS_FS_READ_FILE | LANDLOCK_ACCESS_FS_EXECUTE;
+/// Writable workspace trees remain readable and may create/remove entries, but
+/// code written there must never become executable inside the worker.
+const LANDLOCK_WRITABLE_TREE: u64 = LANDLOCK_HANDLED_ACCESS & !LANDLOCK_ACCESS_FS_EXECUTE;
 /// Read and write one character device, without being able to create, replace
 /// or remove anything beside it.
 const LANDLOCK_DEVICE_ACCESS: u64 =
@@ -209,7 +215,7 @@ pub(super) async fn spawn(
     // architecture is reported explicitly rather than as an opaque
     // `pre_exec` failure after the point of no return.
     let ruleset = build_landlock_ruleset(boundary)?;
-    let filter = build_seccomp_filter()?;
+    let mut filter = build_seccomp_filter()?;
 
     let mut command = base_command(executable, working_directory);
     command.args(args).current_dir(working_directory);
@@ -251,9 +257,14 @@ pub(super) async fn spawn(
             if libc::syscall(SYS_CLOSE_RANGE, 3_u32, u32::MAX, CLOSE_RANGE_CLOEXEC) != 0 {
                 return Err(std::io::Error::last_os_error());
             }
+            // Classic seccomp cannot compare an argument with the caller's
+            // dynamic TGID. Patch the prebuilt comparison after fork, before
+            // installing it, so `tgkill` remains available to the worker's
+            // own threads without becoming a same-UID signalling primitive.
+            filter.instructions[filter.worker_tgid_instruction].k = libc::getpid() as u32;
             let program = SockFprog {
-                len: filter.len() as u16,
-                filter: filter.as_ptr(),
+                len: filter.instructions.len() as u16,
+                filter: filter.instructions.as_ptr(),
             };
             if libc::syscall(
                 libc::SYS_seccomp,
@@ -329,16 +340,20 @@ fn build_landlock_ruleset(boundary: &FilesystemBoundary) -> Result<OwnedFd, Visu
         })?;
     let ruleset = unsafe { OwnedFd::from_raw_fd(ruleset) };
 
-    // Writable roots are also readable and executable; the worker unpacks
-    // nothing but does memory-map artifacts it wrote.
+    // Writable roots are readable but intentionally non-executable. Model
+    // artifacts can be memory-mapped without granting execution of bytes the
+    // worker created or modified.
     for path in &boundary.writable {
-        add_rule(&ruleset, path, LANDLOCK_HANDLED_ACCESS, true)?;
+        add_rule(&ruleset, path, LANDLOCK_WRITABLE_TREE, true)?;
     }
     for path in &boundary.readable {
         add_rule(&ruleset, path, LANDLOCK_READ_TREE, true)?;
     }
+    for path in &boundary.executables {
+        add_rule(&ruleset, path, LANDLOCK_EXECUTABLE_FILE, true)?;
+    }
     for path in SYSTEM_READ_TREES {
-        add_rule(&ruleset, Path::new(path), LANDLOCK_READ_TREE, false)?;
+        add_rule(&ruleset, Path::new(path), LANDLOCK_SYSTEM_READ_TREE, false)?;
     }
     for path in SYSTEM_READ_FILES {
         add_rule(&ruleset, Path::new(path), LANDLOCK_READ_FILE_ONLY, false)?;
@@ -447,8 +462,11 @@ fn denied_syscalls() -> Vec<libc::c_long> {
         libc::SYS_pidfd_open,
         libc::SYS_pidfd_getfd,
         libc::SYS_pidfd_send_signal,
-        // Signalling an unrelated process or the whole session.
+        // Signalling an unrelated process or the whole session. `tgkill` is
+        // handled separately so only this worker's TGID is admitted; `tkill`
+        // has no TGID argument and therefore cannot be constrained safely.
         libc::SYS_kill,
+        libc::SYS_tkill,
         // Filesystem policy escapes: a file handle bypasses path resolution,
         // and a mount changes what a Landlock path even refers to.
         libc::SYS_name_to_handle_at,
@@ -492,14 +510,14 @@ fn denied_syscalls() -> Vec<libc::c_long> {
 }
 
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-fn build_seccomp_filter() -> Result<Vec<SockFilter>, VisualParseError> {
+fn build_seccomp_filter() -> Result<SeccompFilter, VisualParseError> {
     Err(unsupported_error(
         "the perception worker has no seccomp containment for this Linux architecture",
     ))
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-fn build_seccomp_filter() -> Result<Vec<SockFilter>, VisualParseError> {
+fn build_seccomp_filter() -> Result<SeccompFilter, VisualParseError> {
     if !seccomp_action_available(SECCOMP_RET_ERRNO) {
         return Err(unsupported_error(
             "this Linux kernel does not provide the seccomp containment the perception worker requires",
@@ -519,7 +537,7 @@ fn build_seccomp_filter() -> Result<Vec<SockFilter>, VisualParseError> {
 /// Assemble the BPF program. Kept free of host probes so its shape can be
 /// asserted on any machine.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-fn assemble_seccomp_filter(mismatch: u32) -> Vec<SockFilter> {
+fn assemble_seccomp_filter(mismatch: u32) -> SeccompFilter {
     let denied = SECCOMP_RET_ERRNO | (libc::EPERM as u32 & 0xffff);
     let unavailable = SECCOMP_RET_ERRNO | (libc::ENOSYS as u32 & 0xffff);
 
@@ -534,6 +552,15 @@ fn assemble_seccomp_filter(mismatch: u32) -> Vec<SockFilter> {
     for number in denied_syscalls() {
         filter.extend([jump_equal(number as u32, 0, 1), ret(denied)]);
     }
+    filter.extend([
+        jump_equal(libc::SYS_tgkill as u32, 0, 4),
+        load(SECCOMP_DATA_ARG0_LOW),
+        // Filled with the worker TGID between fork and filter installation.
+        jump_equal(0, 1, 0),
+        ret(denied),
+        load(SECCOMP_DATA_NR),
+    ]);
+    let worker_tgid_instruction = filter.len() - 3;
     filter.extend([
         // Do not let the worker clear the parent-death signal installed just
         // before this filter. Other prctl operations (for example thread names)
@@ -555,7 +582,15 @@ fn assemble_seccomp_filter(mismatch: u32) -> Vec<SockFilter> {
         load(SECCOMP_DATA_NR),
         ret(SECCOMP_RET_ALLOW),
     ]);
-    filter
+    SeccompFilter {
+        instructions: filter,
+        worker_tgid_instruction,
+    }
+}
+
+struct SeccompFilter {
+    instructions: Vec<SockFilter>,
+    worker_tgid_instruction: usize,
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -620,6 +655,46 @@ fn ret(action: u32) -> SockFilter {
 mod tests {
     use super::*;
 
+    fn evaluate_filter(filter: &[SockFilter], syscall: libc::c_long, arg0: u32) -> u32 {
+        let mut accumulator = 0_u32;
+        let mut pc = 0_usize;
+        loop {
+            let instruction = filter[pc];
+            match instruction.code {
+                code if code == BPF_LD | BPF_W | BPF_ABS => {
+                    accumulator = match instruction.k {
+                        SECCOMP_DATA_ARCH => AUDIT_ARCH,
+                        SECCOMP_DATA_NR => syscall as u32,
+                        SECCOMP_DATA_ARG0_LOW => arg0,
+                        offset => panic!("unexpected seccomp_data offset {offset}"),
+                    };
+                    pc += 1;
+                }
+                code if code == BPF_JMP | BPF_JEQ | BPF_K => {
+                    pc += 1 + usize::from(if accumulator == instruction.k {
+                        instruction.jt
+                    } else {
+                        instruction.jf
+                    });
+                }
+                #[cfg(target_arch = "x86_64")]
+                code if code == BPF_JMP | BPF_JGE | BPF_K => {
+                    pc += 1 + usize::from(if accumulator >= instruction.k {
+                        instruction.jt
+                    } else {
+                        instruction.jf
+                    });
+                }
+                code if code == BPF_ALU | BPF_AND | BPF_K => {
+                    accumulator &= instruction.k;
+                    pc += 1;
+                }
+                code if code == BPF_RET | BPF_K => return instruction.k,
+                code => panic!("unexpected BPF instruction {code:#x}"),
+            }
+        }
+    }
+
     #[test]
     fn the_filter_denies_every_socket_and_io_uring_entry_point() {
         let denied = denied_syscalls();
@@ -645,13 +720,58 @@ mod tests {
     #[test]
     fn the_filter_fits_the_kernel_program_ceiling_with_single_byte_jumps() {
         let filter = assemble_seccomp_filter(SECCOMP_RET_KILL_PROCESS);
-        assert!(filter.len() < 4096, "filter is {} long", filter.len());
+        assert!(
+            filter.instructions.len() < 4096,
+            "filter is {} long",
+            filter.instructions.len()
+        );
         assert!(
             filter
+                .instructions
                 .iter()
                 .all(|instruction| instruction.jt <= 4 && instruction.jf <= 4),
             "a jump offset outside this filter's fixed layout would land on the wrong instruction"
         );
+    }
+
+    #[test]
+    fn signalling_requires_the_workers_exact_thread_group() {
+        let mut filter = assemble_seccomp_filter(SECCOMP_RET_KILL_PROCESS);
+        assert!(denied_syscalls().contains(&libc::SYS_kill));
+        assert!(denied_syscalls().contains(&libc::SYS_tkill));
+        assert!(!denied_syscalls().contains(&libc::SYS_tgkill));
+        let check = filter.instructions[filter.worker_tgid_instruction];
+        assert_eq!(check.code, BPF_JMP | BPF_JEQ | BPF_K);
+        assert_eq!((check.jt, check.jf, check.k), (1, 0, 0));
+
+        filter.instructions[filter.worker_tgid_instruction].k = 4242;
+        let denied = SECCOMP_RET_ERRNO | (libc::EPERM as u32 & 0xffff);
+        assert_eq!(
+            evaluate_filter(&filter.instructions, libc::SYS_tgkill, 4242),
+            SECCOMP_RET_ALLOW
+        );
+        assert_eq!(
+            evaluate_filter(&filter.instructions, libc::SYS_tgkill, 4243),
+            denied
+        );
+        assert_eq!(
+            evaluate_filter(&filter.instructions, libc::SYS_tkill, 4242),
+            denied
+        );
+        assert_eq!(
+            evaluate_filter(&filter.instructions, libc::SYS_kill, 4242),
+            denied
+        );
+    }
+
+    #[test]
+    fn writable_roots_never_grant_execute() {
+        assert_eq!(LANDLOCK_WRITABLE_TREE & LANDLOCK_ACCESS_FS_EXECUTE, 0);
+        assert_eq!(LANDLOCK_READ_TREE & LANDLOCK_ACCESS_FS_EXECUTE, 0);
+        assert_ne!(LANDLOCK_WRITABLE_TREE & LANDLOCK_ACCESS_FS_WRITE_FILE, 0);
+        assert_ne!(LANDLOCK_WRITABLE_TREE & LANDLOCK_ACCESS_FS_READ_FILE, 0);
+        assert_ne!(LANDLOCK_EXECUTABLE_FILE & LANDLOCK_ACCESS_FS_EXECUTE, 0);
+        assert_ne!(LANDLOCK_SYSTEM_READ_TREE & LANDLOCK_ACCESS_FS_EXECUTE, 0);
     }
 
     #[test]

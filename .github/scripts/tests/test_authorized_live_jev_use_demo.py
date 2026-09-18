@@ -9,12 +9,19 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = ROOT / ".github/workflows/authorized-live-jev-use-demo.yml"
+ORCHESTRATOR = (
+    ROOT
+    / "libs/cua-driver/rust/crates/cua-driver/tests/authorized_live_jev_use_demo_test.rs"
+)
+EVIDENCE_README = ROOT / "libs/cua-driver/tests/perception-demo/README.md"
 
 
 class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.text = WORKFLOW.read_text()
+        cls.orchestrator = ORCHESTRATOR.read_text()
+        cls.evidence_readme = EVIDENCE_README.read_text()
         cls.workflow = yaml.safe_load(cls.text)
         cls.triggers = cls.workflow.get("on", cls.workflow.get(True))
         cls.jobs = cls.workflow["jobs"]
@@ -48,7 +55,8 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         self.assertIn("extension inspect cua-perception --catalog", live_text)
         self.assertIn("extension install cua-perception --catalog", live_text)
         self.assertIn("extension status cua-perception --self-test --json", live_text)
-        self.assertIn('catalog["signature_algorithm"] == "ed25519"', live_text)
+        self.assertIn('catalog["signature_algorithm"] == measured["signature_algorithm"] == "ed25519"', live_text)
+        self.assertIn('status["trust"] == "review-only-publisher-verified"', live_text)
         self.assertIn('digest == files[model["path"]] == model["conversion_sha256"]', live_text)
         self.assertNotIn("--allow-unsigned-local", live_text)
         self.assertNotRegex(live_text, r"--archive\s+[^\n]+--catalog")
@@ -74,6 +82,47 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         self.assertIn("scripts\\ci\\windows\\run-rust-e2e.ps1 -RequireGui", windows)
         self.assertIn("scripts/ci/linux/run-rust-e2e.sh", linux)
         self.assertIn("xvfb-run", linux)
+
+    def test_live_matrix_uses_review_candidates_and_orchestrator_supports_macos(self):
+        matrix = self.jobs["live"]["strategy"]["matrix"]["include"]
+        self.assertEqual(
+            {item["platform"]: item["runner"] for item in matrix},
+            {
+                "windows": "windows-latest",
+                "linux-x11": "ubuntu-latest",
+            },
+        )
+        self.assertEqual(
+            {item["platform"]: item["driver"] for item in matrix},
+            {"windows": "review-cua-driver.exe", "linux-x11": "review-cua-driver"},
+        )
+        self.assertIn('target_os = "macos"', self.orchestrator)
+        self.assertIn('#[cfg(any(target_os = "linux", target_os = "macos"))]', self.orchestrator)
+        shared = self.orchestrator.index('.arg(fixture_path())')
+        self.assertGreater(shared, self.orchestrator.index('Command::new("py")'))
+        self.assertGreater(shared, self.orchestrator.index('Command::new("python3")'))
+
+    def test_external_chooser_receives_only_the_key_and_windows_system_root(self):
+        start = self.orchestrator.index("fn external_choice(")
+        end = self.orchestrator.index("fn choose(", start)
+        external = self.orchestrator[start:end]
+        self.assertIn(".env_clear()", external)
+        self.assertIn('.env("TYPESAFE_API_KEY", required("TYPESAFE_API_KEY"))', external)
+        self.assertIn('command.env("SYSTEMROOT", system_root)', external)
+        self.assertEqual(external.count(".env("), 2)
+
+    def test_review_driver_is_consumed_from_hash_bound_aggregate(self):
+        live_text = "\n".join(step.get("run", "") for step in self.jobs["live"]["steps"])
+        self.assertIn("review-measurements.json", live_text)
+        self.assertIn('measured["review_driver_sha256"]', live_text)
+        self.assertIn('measured["review_driver_build_profile"] == "debug-review-trust-root"', live_text)
+        self.assertIn("CUA_TEST_DRIVER_BIN", live_text)
+        self.assertIn("signed-candidate-checksums.txt", live_text)
+        self.assertNotIn("cargo build --manifest-path", live_text)
+        self.assertNotIn("target/release/cua-driver", live_text)
+        self.assertNotIn("RSA-SHA256", self.evidence_readme)
+        self.assertIn("Ed25519", self.evidence_readme)
+        self.assertIn("debug review-trust-root", self.evidence_readme)
 
     def test_only_measured_binary_receives_secret_in_one_bounded_step(self):
         secret_steps = [step for step in self.jobs["live"]["steps"] if "${{ secrets." in str(step)]
@@ -154,7 +203,10 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
             'assert sorted(path.name for path in output.iterdir()) == ["manifest.json", "recording.mp4"]',
             validate,
         )
-        self.assertIn('runtime["signed_extension_sha256"] == measured["archive_sha256"]', validate)
+        self.assertIn('perception["signed_extension_archive_sha256"] == measured["archive_sha256"]', validate)
+        self.assertIn('driver = runtime["driver"]', validate)
+        self.assertIn('observation = manifest["observation"]', validate)
+        self.assertIn('manifest["os"] ==', validate)
         self.assertNotIn("raw-manifest.json", str(uploads[0]))
         self.assertNotIn("timeline.json", str(uploads[0]))
 

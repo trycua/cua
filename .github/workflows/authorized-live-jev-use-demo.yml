@@ -12,7 +12,7 @@ on:
         required: true
         type: string
       signed_candidate_artifact_id:
-        description: "Immutable Actions artifact ID containing signed Windows and Linux candidates"
+        description: "Immutable Actions artifact ID containing signed Windows and Linux review candidates"
         required: true
         type: string
   workflow_call:
@@ -161,13 +161,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {platform: windows, runner: windows-latest}
-          - {platform: linux-x11, runner: ubuntu-latest}
+          - {platform: windows, runner: windows-latest, target: x86_64-pc-windows-msvc, driver: review-cua-driver.exe}
+          - {platform: linux-x11, runner: ubuntu-latest, target: x86_64-unknown-linux-gnu, driver: review-cua-driver}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     environment: authorized-live-jev-use-demo
     env:
       CUA_E2E_SOURCE_SHA: ${{ needs.source.outputs.sha }}
+      CUA_JEV_SOURCE_SHA: ${{ needs.source.outputs.jev_sha }}
+      CUA_SESSION_LABEL: authorized-jev-choice-demo-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
       CUA_PERCEPTION_EXTENSION_HOME: ${{ runner.temp }}/cua-perception-home
       CUA_PERCEPTION_EVIDENCE_DIR: ${{ runner.temp }}/perception-evidence/live
     steps:
@@ -215,19 +217,40 @@ jobs:
           DISPLAY=:99 DBUS_SESSION_BUS_ADDRESS="$dbus_address" picom --backend xrender --config /dev/null >"$RUNNER_TEMP/picom.log" 2>&1 &
           sleep 2
           DISPLAY=:99 xdpyinfo >/dev/null
-      - name: Build Driver and verify exact signed catalog, archive, and models
+      - name: Resolve the measured review Driver and verify the signed candidate
         shell: pwsh
         env:
           PLATFORM: ${{ matrix.platform }}
+          EXPECTED_TARGET: ${{ matrix.target }}
+          EXPECTED_DRIVER: ${{ matrix.driver }}
           EXPECTED_SHA: ${{ needs.source.outputs.sha }}
         run: |
           $ErrorActionPreference = 'Stop'
           if ((git rev-parse HEAD).Trim() -ne $env:EXPECTED_SHA) { throw 'checkout does not match source_sha' }
-          $catalog = Join-Path $env:RUNNER_TEMP "perception-candidate/$($env:PLATFORM)/signed-catalog.json"
-          if (-not (Test-Path -LiteralPath $catalog -PathType Leaf)) { throw 'signed catalog is unavailable for this platform' }
-          cargo build --manifest-path libs/cua-driver/rust/Cargo.toml -p cua-driver --release --locked
-          if ($LASTEXITCODE -ne 0) { throw 'Driver build failed' }
-          $driver = if ($IsWindows) { Join-Path $env:GITHUB_WORKSPACE 'libs/cua-driver/rust/target/release/cua-driver.exe' } else { Join-Path $env:GITHUB_WORKSPACE 'libs/cua-driver/rust/target/release/cua-driver' }
+          $candidate = Join-Path $env:RUNNER_TEMP "perception-candidate/$($env:PLATFORM)"
+          $catalog = Join-Path $candidate 'signed-catalog.json'
+          $measurements = Join-Path $candidate 'review-measurements.json'
+          @'
+          import base64, hashlib, json, os, pathlib, sys
+          root, measurements_path, env_path = map(pathlib.Path, sys.argv[1:4]); expected_sha, expected_target, expected_driver = sys.argv[4:]
+          measured = json.loads(measurements_path.read_text()); assert measured["review_only"] is True and measured["source_sha"] == expected_sha and measured["target"] == expected_target
+          assert measured["review_driver_build_profile"] == "debug-review-trust-root" and measured["review_driver_relative_path"] == expected_driver
+          assert measured["key_id"] == "review-only-build-override" and measured["publisher_id"] == "cua-review-only" and measured["signature_algorithm"] == "ed25519"
+          public_key = base64.b64decode(measured["public_key_base64"], validate=True); assert len(public_key) == 32 and hashlib.sha256(public_key).hexdigest() == measured["public_key_sha256"]
+          driver = (root / expected_driver).resolve(); driver.relative_to(root.resolve()); assert driver.is_file() and hashlib.sha256(driver.read_bytes()).hexdigest() == measured["review_driver_sha256"]
+          catalog = (root / "signed-catalog.json").resolve(); assert catalog.is_file() and hashlib.sha256(catalog.read_bytes()).hexdigest() == measured["catalog_sha256"]
+          catalog_value = json.loads(catalog.read_text()); payload = catalog_value["payload"]; archive_relative = pathlib.PurePosixPath(payload["archive"]); assert not archive_relative.is_absolute() and ".." not in archive_relative.parts
+          archive = root.joinpath(*archive_relative.parts).resolve(); archive.relative_to(root.resolve()); assert archive.is_file() and hashlib.sha256(archive.read_bytes()).hexdigest() == measured["archive_sha256"] == payload["archive_sha256"]
+          checksums = root / "signed-candidate-checksums.txt"; entries = {}
+          for line in checksums.read_text().splitlines():
+              digest, relative_text = line.split(None, 1); relative = pathlib.PurePosixPath(relative_text.strip()); assert len(digest) == 64 and not relative.is_absolute() and ".." not in relative.parts
+              path = root.joinpath(*relative.parts).resolve(); path.relative_to(root.resolve()); assert path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == digest; entries[relative.as_posix()] = digest
+          assert {expected_driver, "review-measurements.json", "signed-catalog.json", archive_relative.as_posix()} <= set(entries)
+          if os.name != "nt": driver.chmod(driver.stat().st_mode | 0o100)
+          with env_path.open("a") as stream: stream.write(f"CUA_DRIVER_BIN={driver}\nCUA_TEST_DRIVER_BIN={driver}\nCUA_CANDIDATE_MEASUREMENTS={measurements_path}\nCUA_PERCEPTION_CATALOG={catalog}\nCUA_PERCEPTION_EXTENSION_ARCHIVE={archive}\n")
+          '@ | python - $candidate $measurements $env:GITHUB_ENV $env:EXPECTED_SHA $env:EXPECTED_TARGET $env:EXPECTED_DRIVER
+          if ($LASTEXITCODE -ne 0) { throw 'review candidate measurement verification failed' }
+          $driver = (Resolve-Path -LiteralPath (Join-Path $candidate $env:EXPECTED_DRIVER)).Path
           $inspect = Join-Path $env:RUNNER_TEMP 'perception-inspect.json'
           $env:CUA_DRIVER_RS_HOME = $env:CUA_PERCEPTION_EXTENSION_HOME
           & $driver extension inspect cua-perception --catalog $catalog --json | Set-Content $inspect -Encoding utf8
@@ -239,13 +262,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'installed extension self-test failed' }
           $installed = (& $driver extension path cua-perception).Trim()
           @'
-          import base64, hashlib, json, os, pathlib, sys
-          inspect_path, status_path, catalog_path, installed_path, env_path, driver = sys.argv[1:]
+          import hashlib, json, os, pathlib, sys
+          inspect_path, status_path, catalog_path, installed_path, env_path, driver, measurements_path = sys.argv[1:]
           inspect_path, status_path, catalog_path, installed_path, env_path = map(pathlib.Path, (inspect_path, status_path, catalog_path, installed_path, env_path))
-          preview = json.loads(inspect_path.read_text(encoding="utf-8-sig")); status = json.loads(status_path.read_text(encoding="utf-8-sig")); catalog = json.loads(catalog_path.read_text())
-          assert preview["publisher_signature_verified"] is True and preview["trust"] == "publisher-verified"
-          assert status["installed"] is True and status["healthy"] is True and status["trust"] == "publisher-verified"
-          assert catalog["signature_algorithm"] == "ed25519" and preview["archive_sha256"] == catalog["payload"]["archive_sha256"]
+          preview = json.loads(inspect_path.read_text(encoding="utf-8-sig")); status = json.loads(status_path.read_text(encoding="utf-8-sig")); catalog = json.loads(catalog_path.read_text()); measured = json.loads(pathlib.Path(measurements_path).read_text())
+          assert preview["publisher_signature_verified"] is True and preview["trust"] == "review-only-publisher-verified"
+          assert status["installed"] is True and status["healthy"] is True and status["trust"] == "review-only-publisher-verified"
+          assert status["publisher_id"] == measured["publisher_id"] and status["publisher_key_id"] == measured["key_id"]
+          assert catalog["signature_algorithm"] == measured["signature_algorithm"] == "ed25519" and preview["archive_sha256"] == measured["archive_sha256"] == catalog["payload"]["archive_sha256"]
           archive_rel = pathlib.PurePosixPath(catalog["payload"]["archive"]); assert not archive_rel.is_absolute() and ".." not in archive_rel.parts
           archive = catalog_path.parent.joinpath(*archive_rel.parts).resolve(); assert archive.is_file() and hashlib.sha256(archive.read_bytes()).hexdigest() == preview["archive_sha256"]
           root = installed_path.resolve(); files = {item["path"]: item["sha256"] for item in preview["files"]}; model_paths, model_hashes = [], []
@@ -255,13 +279,12 @@ jobs:
               path = root.joinpath(*relative.parts).resolve(); path.relative_to(root); digest = hashlib.sha256(path.read_bytes()).hexdigest()
               assert digest == files[model["path"]] == model["conversion_sha256"]
               model_paths.append(str(path)); model_hashes.append(digest)
-          trust = json.loads(pathlib.Path(".github/releases/cua-perception/trust-root.json").read_text()); keys = [key for key in trust["keys"] if key["keyId"] == preview["publisher_key_id"]]; assert len(keys) == 1
-          key_hash = hashlib.sha256(base64.b64decode(keys[0]["publicKeyBase64"], validate=True)).hexdigest()
-          measured = {"signature_algorithm": "ed25519", "archive_sha256": preview["archive_sha256"], "signing_key_sha256": key_hash, "model_sha256": model_hashes, "catalog_sha256": hashlib.sha256(catalog_path.read_bytes()).hexdigest()}
-          measurements = pathlib.Path(os.environ["RUNNER_TEMP"]) / "candidate-measurements.json"; measurements.write_text(json.dumps(measured, sort_keys=True) + "\n")
+          assert hashlib.sha256(catalog_path.read_bytes()).hexdigest() == measured["catalog_sha256"] and model_hashes == [measured["supplied_model_sha256"]]
+          runner_identity = {"name": os.environ.get("ImageOS", ""), "version": os.environ.get("ImageVersion", ""), "arch": os.environ.get("RUNNER_ARCH", "")}
+          assert all(runner_identity.values()), runner_identity
           with env_path.open("a") as stream:
-              stream.write(f"CUA_DRIVER_BIN={driver}\nCUA_PERCEPTION_CATALOG={catalog_path}\nCUA_PERCEPTION_EXTENSION_ARCHIVE={archive}\nCUA_PERCEPTION_MODEL={model_paths[0]}\nCUA_CANDIDATE_MEASUREMENTS={measurements}\n")
-          '@ | python - $inspect $status $catalog $installed $env:GITHUB_ENV $driver
+              stream.write(f"CUA_PERCEPTION_MODEL={model_paths[0]}\nCUA_RUNNER_OS_NAME={runner_identity['name']}\nCUA_RUNNER_OS_VERSION={runner_identity['version']}\nCUA_RUNNER_OS_ARCH={runner_identity['arch']}\n")
+          '@ | python - $inspect $status $catalog $installed $env:GITHUB_ENV $driver $measurements
           if ($LASTEXITCODE -ne 0) { throw 'candidate measurement failed' }
       - name: Install the locked reviewed chooser and resolve its interpreter
         shell: pwsh
@@ -345,10 +368,16 @@ jobs:
           from jsonschema import Draft202012Validator
           evidence, output, schema_path, measurements_path = map(pathlib.Path, sys.argv[1:]); manifest_path, recording = evidence / "manifest.json", evidence / "recording.mp4"
           manifest = json.loads(manifest_path.read_text()); schema = json.loads(schema_path.read_text()); Draft202012Validator.check_schema(schema); Draft202012Validator(schema).validate(manifest); measured = json.loads(measurements_path.read_text())
-          assert manifest["source_sha"] == os.environ["EXPECTED_SHA"] and manifest["platform"] == os.environ["EXPECTED_PLATFORM"]
+          assert manifest["platform"] == os.environ["EXPECTED_PLATFORM"]
           assert manifest["fixture"] == {"id": "visual-only-canvas/v1", "oracle": {"selected": "send", "action_count": 1}}
-          runtime = manifest["runtime"]; assert runtime["signature_algorithm"] == measured["signature_algorithm"] == "ed25519"; assert runtime["signed_extension_sha256"] == measured["archive_sha256"]; assert runtime["signing_key_sha256"] == measured["signing_key_sha256"]; assert runtime["model_sha256"] in measured["model_sha256"]
-          content = recording.read_bytes(); assert manifest["artifacts"] == [{"kind": "video", "path": "recording.mp4", "sha256": hashlib.sha256(content).hexdigest(), "size_bytes": len(content)}]; assert manifest["result"] == {"status": "passed"}
+          runtime = manifest["runtime"]; driver = runtime["driver"]; perception = runtime["perception"]; chooser = runtime["chooser"]
+          assert driver["source_sha"] == measured["source_sha"] == os.environ["EXPECTED_SHA"] and driver["binary_sha256"] == measured["review_driver_sha256"]
+          assert perception["signature_algorithm"] == measured["signature_algorithm"] == "ed25519"; assert perception["signed_extension_archive_sha256"] == measured["archive_sha256"]; assert perception["signing_key_sha256"] == measured["public_key_sha256"]; assert perception["signed_catalog_sha256"] == measured["catalog_sha256"]; assert perception["model_sha256"] == measured["supplied_model_sha256"]
+          assert chooser["adapter_source_sha"] == os.environ["EXPECTED_SHA"] and chooser["source_sha"] == os.environ["CUA_JEV_SOURCE_SHA"]
+          observation = manifest["observation"]; assert observation["session_label"] == os.environ["CUA_SESSION_LABEL"]; assert len(observation["acted_capture_id_sha256"]) == len(observation["fresh_capture_id_sha256"]) == 64
+          assert manifest["os"] == {"name": os.environ["CUA_RUNNER_OS_NAME"], "version": os.environ["CUA_RUNNER_OS_VERSION"], "arch": os.environ["CUA_RUNNER_OS_ARCH"]}
+          result = manifest["result"]; assert result["status"] == "passed" and result["stale_capture_refused"] is True
+          content = recording.read_bytes(); assert manifest["artifacts"] == [{"kind": "video", "path": "recording.mp4", "sha256": hashlib.sha256(content).hexdigest(), "size_bytes": len(content)}]
           output.mkdir(mode=0o700, parents=True, exist_ok=False); shutil.copyfile(recording, output / "recording.mp4"); shutil.copyfile(manifest_path, output / "manifest.json"); assert sorted(path.name for path in output.iterdir()) == ["manifest.json", "recording.mp4"]
           '@ | python - $evidence (Join-Path $env:RUNNER_TEMP 'publish-evidence') 'libs/cua-driver/tests/perception-demo/evidence-manifest.schema.json' $env:CUA_CANDIDATE_MEASUREMENTS
           if ($LASTEXITCODE -ne 0) { throw 'redacted evidence validation failed' }

@@ -489,7 +489,7 @@ fn chooser_response_and_live_mode_fail_closed() {
         .contains("unsafe ID"));
 }
 
-#[cfg(any(target_os = "windows", target_os = "linux"))]
+#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 mod e2e {
     use super::*;
     use cua_driver_testkit::{driver_binary, spawn_in_job, Driver, FixtureJournal, McpDriver};
@@ -507,7 +507,13 @@ mod e2e {
 
     struct Gate {
         source_sha: String,
+        jev_source_sha: String,
+        session_label: String,
+        os_name: String,
+        os_version: String,
+        os_arch: String,
         model: PathBuf,
+        candidate_measurements: PathBuf,
         extension_home: PathBuf,
         evidence_dir: PathBuf,
         choice: ChoiceConfig,
@@ -516,6 +522,32 @@ mod e2e {
     fn required(name: &str) -> String {
         std::env::var(name)
             .unwrap_or_else(|_| panic!("{name} is required for the artifact-gated demo"))
+    }
+
+    fn required_sha40(name: &str) -> String {
+        let value = required(name);
+        assert!(
+            value.len() == 40
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()),
+            "{name} must be 40 lowercase hexadecimal characters"
+        );
+        value
+    }
+
+    fn measured_sha256(value: &Value, field: &str) -> String {
+        let value = value[field]
+            .as_str()
+            .unwrap_or_else(|| panic!("candidate measurements omitted {field}"));
+        assert!(
+            value.len() == 64
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()),
+            "candidate measurements contain invalid {field}"
+        );
+        value.to_owned()
     }
 
     fn hash_file(path: &Path) -> String {
@@ -546,13 +578,31 @@ mod e2e {
         )
         .unwrap_or_else(|error| panic!("invalid chooser configuration: {error}"));
         let gate = Gate {
-            source_sha: required("CUA_E2E_SOURCE_SHA"),
+            source_sha: required_sha40("CUA_E2E_SOURCE_SHA"),
+            jev_source_sha: required_sha40("CUA_JEV_SOURCE_SHA"),
+            session_label: required("CUA_SESSION_LABEL"),
+            os_name: required("CUA_RUNNER_OS_NAME"),
+            os_version: required("CUA_RUNNER_OS_VERSION"),
+            os_arch: required("CUA_RUNNER_OS_ARCH"),
             model: required("CUA_PERCEPTION_MODEL").into(),
+            candidate_measurements: required("CUA_CANDIDATE_MEASUREMENTS").into(),
             extension_home: required("CUA_PERCEPTION_EXTENSION_HOME").into(),
             evidence_dir: required("CUA_PERCEPTION_EVIDENCE_DIR").into(),
             choice,
         };
         assert!(gate.model.is_file(), "model is not a regular file");
+        assert!(safe_id(&gate.session_label), "session label is unsafe");
+        for (label, value) in [
+            ("OS name", &gate.os_name),
+            ("OS version", &gate.os_version),
+            ("OS architecture", &gate.os_arch),
+        ] {
+            assert!(safe_id(value), "{label} is unsafe");
+        }
+        assert!(
+            gate.candidate_measurements.is_file(),
+            "candidate measurements are not a regular file"
+        );
         assert!(
             gate.extension_home.is_dir(),
             "extension home is not a directory"
@@ -581,7 +631,7 @@ mod e2e {
         assert_eq!(status["id"], "cua-perception");
         assert_eq!(status["installed"], true);
         assert_eq!(status["healthy"], true);
-        assert_eq!(status["trust"], "publisher_verified");
+        assert_eq!(status["trust"], "review-only-publisher-verified");
         assert!(status["active_version"].as_str().is_some_and(safe_id));
         assert!(status["publisher_id"].as_str().is_some_and(safe_id));
         assert!(status["publisher_key_id"].as_str().is_some_and(safe_id));
@@ -603,7 +653,7 @@ mod e2e {
             command.arg("-3");
             command
         };
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         let mut command = Command::new("python3");
         command
             .arg(fixture_path())
@@ -627,6 +677,7 @@ mod e2e {
         command
             .arg(script)
             .env_clear()
+            .env("TYPESAFE_API_KEY", required("TYPESAFE_API_KEY"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
@@ -683,7 +734,7 @@ mod e2e {
     }
 
     #[test]
-    #[ignore = "requires an installed publisher-verified perception extension and desktop session"]
+    #[ignore = "requires an installed review-only publisher-verified perception extension and desktop session"]
     fn authorized_visual_only_demo() {
         let gate = load_gate();
         let measured = Command::new("git")
@@ -697,6 +748,27 @@ mod e2e {
             gate.source_sha
         );
         let extension_status = installed_extension_status(&gate);
+        let candidate_measurements: Value = serde_json::from_slice(
+            &fs::read(&gate.candidate_measurements).expect("read candidate measurements"),
+        )
+        .expect("candidate measurements must be JSON");
+        assert_eq!(candidate_measurements["review_only"], true);
+        assert_eq!(candidate_measurements["source_sha"], gate.source_sha);
+        assert_eq!(
+            candidate_measurements["review_driver_build_profile"],
+            "debug-review-trust-root"
+        );
+        assert_eq!(candidate_measurements["signature_algorithm"], "ed25519");
+        let signed_extension_archive_sha256 =
+            measured_sha256(&candidate_measurements, "archive_sha256");
+        let signing_key_sha256 = measured_sha256(&candidate_measurements, "public_key_sha256");
+        let signed_catalog_sha256 = measured_sha256(&candidate_measurements, "catalog_sha256");
+        let driver_binary_sha256 = measured_sha256(&candidate_measurements, "review_driver_sha256");
+        assert_eq!(driver_binary_sha256, hash_file(&driver_binary()));
+        assert_eq!(
+            measured_sha256(&candidate_measurements, "supplied_model_sha256"),
+            hash_file(&gate.model)
+        );
 
         let journal = FixtureJournal::start();
         let fixture =
@@ -708,7 +780,7 @@ mod e2e {
         );
         let extension_home = gate.extension_home.to_string_lossy().into_owned();
         let mut driver = McpDriver::spawn_named_with_env(
-            "authorized-jev-choice-demo",
+            &gate.session_label,
             &[("CUA_DRIVER_RS_HOME", extension_home.as_str())],
         )
         .expect("start Driver with installed candidate extension");
@@ -812,6 +884,8 @@ mod e2e {
             .len();
         let platform = if cfg!(target_os = "windows") {
             "windows"
+        } else if cfg!(target_os = "macos") {
+            "macos"
         } else {
             "linux-x11"
         };
@@ -822,6 +896,7 @@ mod e2e {
         let raw = json!({
             "schema": "cua-visual-perception-demo-raw/v2",
             "source_sha": gate.source_sha,
+            "jev_source_sha": gate.jev_source_sha,
             "platform": platform,
             "capture_ids": {"acted": capture_id, "fresh": second_capture_id},
             "fixture_oracle": oracle,
@@ -847,30 +922,44 @@ mod e2e {
 
         let manifest = json!({
             "schema": "cua-visual-perception-demo-evidence/v2",
-            "source_sha": gate.source_sha,
             "platform": platform,
             "raw_evidence_sha256": raw_sha256,
             "fixture": {"id": "visual-only-canvas/v1", "oracle": {
                 "selected": oracle["selected"], "action_count": oracle["action_count"]
             }},
             "runtime": {
+                "driver": {
+                    "source_sha": gate.source_sha,
+                    "binary_sha256": driver_binary_sha256
+                },
                 "perception": {
                     "extension_id": "cua-perception",
                     "extension_version": extension_status["active_version"],
-                    "trust": "publisher_verified",
+                    "trust": "review-only-publisher-verified",
                     "publisher_id": extension_status["publisher_id"],
                     "publisher_key_id": extension_status["publisher_key_id"],
                     "catalog_version": extension_status["catalog_version"],
                     "signature_algorithm": "ed25519",
+                    "signed_extension_archive_sha256": signed_extension_archive_sha256,
+                    "signing_key_sha256": signing_key_sha256,
+                    "signed_catalog_sha256": signed_catalog_sha256,
                     "model_id": parser["model_id"],
                     "model_sha256": hash_file(&gate.model)
                 },
                 "chooser": {
                     "mode": mode,
                     "provider": chooser_provider,
-                    "model_id": choice_response.model
+                    "model_id": choice_response.model,
+                    "adapter_source_sha": gate.source_sha,
+                    "source_sha": gate.jev_source_sha
                 }
             },
+            "observation": {
+                "session_label": gate.session_label,
+                "acted_capture_id_sha256": hash_bytes(capture_id.as_bytes()),
+                "fresh_capture_id_sha256": hash_bytes(second_capture_id.as_bytes())
+            },
+            "os": {"name": gate.os_name, "version": gate.os_version, "arch": gate.os_arch},
             "result": {"status": "passed", "selected_candidate": selected_candidate.id, "stale_capture_refused": true},
             "artifacts": [{"kind": "video", "path": "recording.mp4", "sha256": recording_sha256, "size_bytes": recording_size}]
         });

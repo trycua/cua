@@ -4,11 +4,10 @@
   "title": "Authorized visual perception demo evidence",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "source_sha", "platform", "raw_evidence_sha256", "fixture", "runtime", "result", "artifacts"],
+  "required": ["schema", "platform", "raw_evidence_sha256", "fixture", "runtime", "observation", "os", "result", "artifacts"],
   "properties": {
     "schema": { "const": "cua-visual-perception-demo-evidence/v2" },
-    "source_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
-    "platform": { "enum": ["windows", "linux-x11"] },
+    "platform": { "enum": ["windows", "linux-x11", "macos"] },
     "raw_evidence_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "fixture": {
       "type": "object",
@@ -30,20 +29,32 @@
     "runtime": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["perception", "chooser"],
+      "required": ["driver", "perception", "chooser"],
       "properties": {
+        "driver": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source_sha", "binary_sha256"],
+          "properties": {
+            "source_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+            "binary_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+          }
+        },
         "perception": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["extension_id", "extension_version", "trust", "publisher_id", "publisher_key_id", "catalog_version", "signature_algorithm", "model_id", "model_sha256"],
+          "required": ["extension_id", "extension_version", "trust", "publisher_id", "publisher_key_id", "catalog_version", "signature_algorithm", "signed_extension_archive_sha256", "signing_key_sha256", "signed_catalog_sha256", "model_id", "model_sha256"],
           "properties": {
             "extension_id": { "const": "cua-perception" },
             "extension_version": { "type": "string", "pattern": "^[A-Za-z0-9._:/-]{1,96}$" },
-            "trust": { "const": "publisher_verified" },
+            "trust": { "const": "review-only-publisher-verified" },
             "publisher_id": { "type": "string", "pattern": "^[A-Za-z0-9._:/-]{1,96}$" },
             "publisher_key_id": { "type": "string", "pattern": "^[A-Za-z0-9._:/-]{1,96}$" },
             "catalog_version": { "type": "integer", "minimum": 1 },
             "signature_algorithm": { "const": "ed25519" },
+            "signed_extension_archive_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "signing_key_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "signed_catalog_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
             "model_id": { "type": "string", "pattern": "^[A-Za-z0-9._:/-]{1,96}$" },
             "model_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
           }
@@ -51,16 +62,38 @@
         "chooser": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["mode", "provider", "model_id"],
+          "required": ["mode", "provider", "model_id", "adapter_source_sha", "source_sha"],
           "properties": {
             "mode": { "enum": ["mock", "live"] },
             "provider": { "enum": ["fixture", "typesafe"] },
             "model_id": {
               "type": ["string", "null"],
               "pattern": "^[A-Za-z0-9._:/-]{1,96}$"
-            }
+            },
+            "adapter_source_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+            "source_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
           }
         }
+      }
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["session_label", "acted_capture_id_sha256", "fresh_capture_id_sha256"],
+      "properties": {
+        "session_label": { "type": "string", "pattern": "^[A-Za-z0-9._:/-]{1,96}$" },
+        "acted_capture_id_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "fresh_capture_id_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "os": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "arch"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[A-Za-z0-9._:/-]{1,96}$" },
+        "version": { "type": "string", "pattern": "^[A-Za-z0-9._:/-]{1,96}$" },
+        "arch": { "type": "string", "pattern": "^[A-Za-z0-9._:/-]{1,96}$" }
       }
     },
     "result": {

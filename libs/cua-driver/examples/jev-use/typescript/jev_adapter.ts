@@ -9,6 +9,56 @@ import {
 
 type TypeSafeClientLike = Pick<TypeSafeClient, 'systemOne'>;
 
+export type ProviderChoice = Readonly<{
+  selectedId: string;
+  confidence: number;
+  probabilities: Readonly<Record<string, number>>;
+  model?: string;
+}>;
+
+export async function chooseBoundedWithTypeSafe(
+  client: TypeSafeClientLike,
+  goal: string,
+  observation: Readonly<Record<string, unknown>>,
+  criteria: Readonly<Record<string, string>>
+): Promise<ProviderChoice> {
+  const response = await client.systemOne({
+    state: {
+      goal,
+      observation: JSON.stringify(observation),
+    },
+    questions: {
+      candidate: choice('Select exactly one supplied candidate ID.', { ...criteria }),
+    },
+  });
+  const answer = response.answers.candidate;
+  if (answer.type !== 'choice') throw new Error('Jev returned the wrong answer type');
+  if (!Object.hasOwn(criteria, answer.choice)) {
+    throw new Error(`Jev selected unknown candidate: ${answer.choice}`);
+  }
+  if (!Number.isFinite(answer.confidence) || answer.confidence < 0 || answer.confidence > 1) {
+    throw new Error('Jev returned invalid confidence');
+  }
+  const probabilities: Record<string, number> = {};
+  for (const [candidateId, probability] of Object.entries(answer.probabilities)) {
+    if (!Object.hasOwn(criteria, candidateId)) {
+      throw new Error(`Jev returned probability for unknown candidate: ${candidateId}`);
+    }
+    if (!Number.isFinite(probability) || probability < 0 || probability > 1) {
+      throw new Error('Jev returned invalid probability');
+    }
+    probabilities[candidateId] = probability;
+  }
+  const model =
+    typeof response.model === 'string' && response.model.trim() ? response.model : undefined;
+  return Object.freeze({
+    selectedId: answer.choice,
+    confidence: answer.confidence,
+    probabilities: Object.freeze(probabilities),
+    ...(model ? { model } : {}),
+  });
+}
+
 function candidateCriteria(candidates: Candidate[]): Record<string, string> {
   const criteria = Object.fromEntries(
     candidates.map((candidate) => [candidate.id, candidate.description])

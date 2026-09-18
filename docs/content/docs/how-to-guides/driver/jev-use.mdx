@@ -208,6 +208,24 @@ uv run --frozen python verify_setup.py --live --typescript --output-dir runs/bot
 This runs the connection and live checks for both languages. Success reports
 `"checks": 4`; the results are in `runs/both-languages/summary.json`.
 
+## Call only the bounded chooser
+
+If your application already owns the Driver loop, call the external chooser as
+a single-request process. It reads one versioned JSON request from stdin and
+writes one allowlisted response to stdout:
+
+```bash
+uv run python/choose_action.py --mock < fixtures/jev-choice-request-v1.json
+uv run python/choose_action.py < fixtures/jev-choice-request-v1.json
+```
+
+The live command lets the TypeSafe SDK read `TYPESAFE_API_KEY`. The request may
+contain only the goal, `capture_id`, compact typed regions, bounded history, and
+candidate IDs with descriptions, including `reobserve` and `abstain`. It cannot
+contain Driver tool names or arguments, screenshot bytes, or environment data.
+The chooser selects an ID; your application must still resolve the original
+action, execute it through Driver, reobserve, and verify the postcondition.
+
 ## Running from an AI agent
 
 Give the agent this guide and supply `TYPESAFE_API_KEY` through its execution

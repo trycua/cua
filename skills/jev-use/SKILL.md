@@ -14,6 +14,12 @@ Use the example at `libs/cua-driver/examples/jev-use/` as the runnable reference
 Keep TypeSafe request construction in the external Jev adapter rather than in
 Driver or a Driver extension. The Python and TypeScript adapters must expose
 equivalent mock and live behavior.
+For a process boundary, use `cua.jev_choice_request_v1` on stdin and require
+`cua.jev_choice_v1` on stdout. The request contains only a goal, capture ID,
+compact regions, bounded history, and candidate IDs with descriptions; the
+response contains only the selected ID, model identity, confidence, and
+probabilities. Invoke the Python interpreter and absolute chooser path directly
+without a shell.
 Prefer browser DOM and semantic evidence. The optional visual adapter consumes
 the public `cua.visual_regions_v1` result only when Driver advertises both
 `parse_visual_regions` and the capture-bound `click.capture_id` input.

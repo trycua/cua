@@ -54,6 +54,10 @@ jobs:
         env:
           TYPESAFE_API_KEY: ""
         run: uv run python -m unittest discover -s python/tests -v
+      - name: Verify bounded chooser CLI in mock mode
+        env:
+          TYPESAFE_API_KEY: ""
+        run: uv run --frozen python verify_choice_cli.py
 
   unit-typescript:
     name: TypeScript unit and typecheck

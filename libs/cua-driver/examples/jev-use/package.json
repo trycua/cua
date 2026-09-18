@@ -5,6 +5,8 @@
   "scripts": {
     "demo:mock": "tsx typescript/run.ts --provider mock",
     "demo:live": "tsx typescript/run.ts --provider live",
+    "choose:mock": "tsx typescript/choose_action.ts --mock",
+    "choose:live": "tsx typescript/choose_action.ts",
     "test": "node --import tsx --test typescript/*.test.ts",
     "typecheck": "tsc --noEmit"
   },

@@ -391,3 +391,25 @@ Driver 0.23.2 and independently read back
 advertise the visual contract, so the desktop proof exercised the semantic
 fallback; the typed visual/live Jev boundary is covered by the local SDK
 contract tests without a live credential or perception model.
+
+### Bounded chooser process interface
+
+The example now exposes `python/choose_action.py` as the required cross-platform
+provider process and `typescript/choose_action.ts` as an equivalent Node path.
+Both accept exactly one `cua.jev_choice_request_v1` document containing a goal,
+capture ID, compact typed regions, bounded history, and candidate IDs with
+descriptions. They require `reobserve` and `abstain`, reject duplicate or
+malformed IDs and forbidden tool, screenshot, or environment fields, and emit
+only the `cua.jev_choice_v1` response fields.
+
+`verify_choice_cli.py` launches the Python interface with the active interpreter
+and an absolute script path, passes JSON on stdin, and does not use a shell. The
+credential-free workflow runs that verifier in mock mode; the separately
+authorized live workflow runs it with the reviewer-gated TypeSafe secret. The
+chooser itself relies on the official SDK's environment handling and never
+reads, prints, or forwards the key.
+
+Final local verification passed 34 Python tests, 24 TypeScript tests,
+TypeScript typechecking, both mock chooser commands, workflow YAML parsing, and
+`git diff --check`. The SDK client tests cover live request/response shaping
+with local fake transports; no live TypeSafe request was made locally.

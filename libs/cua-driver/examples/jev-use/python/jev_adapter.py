@@ -1,12 +1,59 @@
 from __future__ import annotations
 
-from typing import Any, Protocol
+import math
+from dataclasses import dataclass
+from typing import Any, Mapping, Protocol
 
 from core import Candidate, VisualObservation, choose_mock
 
 
 class TypeSafeClientLike(Protocol):
     def system_one(self, **request: Any) -> Any: ...
+
+
+@dataclass(frozen=True)
+class ProviderChoice:
+    selected_id: str
+    confidence: float
+    probabilities: dict[str, float]
+    model: str | None
+
+
+def choose_bounded_with_typesafe(
+    client: TypeSafeClientLike,
+    *,
+    goal: str,
+    observation: Mapping[str, Any],
+    criteria: Mapping[str, str],
+) -> ProviderChoice:
+    from typesafe_sdk import Choice
+
+    response = client.system_one(
+        state={"goal": goal, "observation": dict(observation)},
+        questions={
+            "candidate": Choice(
+                instructions="Select exactly one supplied candidate ID.",
+                criteria=dict(criteria),
+            )
+        },
+    )
+    answer = response.choices["candidate"]
+    if answer.choice not in criteria:
+        raise ValueError(f"Jev selected unknown candidate: {answer.choice}")
+    confidence = float(answer.confidence)
+    if not math.isfinite(confidence) or not 0 <= confidence <= 1:
+        raise ValueError("Jev returned invalid confidence")
+    probabilities: dict[str, float] = {}
+    for candidate_id, value in answer.probabilities.items():
+        if candidate_id not in criteria:
+            raise ValueError(f"Jev returned probability for unknown candidate: {candidate_id}")
+        probability = float(value)
+        if not math.isfinite(probability) or not 0 <= probability <= 1:
+            raise ValueError("Jev returned invalid probability")
+        probabilities[candidate_id] = probability
+    model_value = getattr(response, "model", None)
+    model = model_value if isinstance(model_value, str) and model_value.strip() else None
+    return ProviderChoice(answer.choice, confidence, probabilities, model)
 
 
 def _candidate_criteria(candidates: list[Candidate]) -> dict[str, str]:

@@ -173,6 +173,33 @@ to the configured provider is appropriate.
 The repository's credential-free checks do not establish live Jev behavior.
 Record live verification separately when you run it with a valid key.
 
+## Use the bounded chooser CLI
+
+Applications that already own capture, candidate construction, execution, and
+verification can call the provider adapter as a single-request process. The
+required Python interface reads one `cua.jev_choice_request_v1` JSON document
+from stdin and writes one `cua.jev_choice_v1` response to stdout:
+
+```bash
+uv run python/choose_action.py --mock < fixtures/jev-choice-request-v1.json
+uv run python/choose_action.py < fixtures/jev-choice-request-v1.json
+```
+
+The second command is live and lets the TypeSafe SDK read `TYPESAFE_API_KEY`
+from its normal environment. The TypeScript equivalent is:
+
+```bash
+npm run choose:mock -- < fixtures/jev-choice-request-v1.json
+npm run choose:live -- < fixtures/jev-choice-request-v1.json
+```
+
+Requests contain a goal, one `capture_id`, compact typed regions, bounded
+history, and at most 32 candidate IDs with descriptions. `reobserve` and
+`abstain` are required. Tool names, action arguments, screenshot bytes, and
+environment data are rejected. Responses contain only the schema, selected
+allowlisted ID, provider model identity when available, confidence, and
+probabilities. The chooser never executes an action or verifies completion.
+
 ## Automation environment and diagnostics
 
 An automation host needs access to the network, loopback sockets, and writable

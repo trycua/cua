@@ -120,7 +120,11 @@ jobs:
           xvfb-run -a --server-args="-screen 0 1920x1080x24" \
             dbus-run-session -- bash -lc \
             'openbox >/tmp/jev-use-openbox.log 2>&1 & picom --backend xrender --config /dev/null >/tmp/jev-use-picom.log 2>&1 & sleep 2; cd libs/cua-driver/examples/jev-use; uv run --frozen python verify_setup.py --typescript --max-steps 2 --output-dir "'$mock'"; uv run --frozen python verify_setup.py --live --typescript --max-steps 2 --output-dir "'$live'"'
-      - name: Audit billing bound and redact evidence
+      - name: Verify live bounded chooser CLI
+        env:
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+        run: uv run --frozen python verify_choice_cli.py --live
+      - name: Audit live action bound and redact evidence
         run: |
           uv run python - "$RUNNER_TEMP/jev-use-live-proof" <<'PY'
           import json, pathlib, sys

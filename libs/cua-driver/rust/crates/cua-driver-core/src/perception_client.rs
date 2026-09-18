@@ -836,6 +836,7 @@ pub(crate) fn fixture_python_config() -> Result<FixturePythonConfig, String> {
     fixture_python_config_from(
         std::env::var_os("CUA_TEST_PYTHON"),
         std::env::var_os("CUA_TEST_PYTHON_READ_ROOTS"),
+        std::env::var_os("CUA_TEST_PYTHON_DYNAMIC_LINKER"),
         std::path::Path::new("/nix/store"),
     )
 }
@@ -844,6 +845,7 @@ pub(crate) fn fixture_python_config() -> Result<FixturePythonConfig, String> {
 fn fixture_python_config_from(
     configured_interpreter: Option<std::ffi::OsString>,
     configured_read_roots: Option<std::ffi::OsString>,
+    configured_dynamic_linker: Option<std::ffi::OsString>,
     trusted_store_root: &std::path::Path,
 ) -> Result<FixturePythonConfig, String> {
     if let Some(interpreter) = configured_interpreter {
@@ -890,16 +892,49 @@ fn fixture_python_config_from(
             }
             readable_roots.sort();
             readable_roots.dedup();
+            let configured_dynamic_linker = configured_dynamic_linker.ok_or_else(|| {
+                "CUA_TEST_PYTHON_DYNAMIC_LINKER is required for a Nix store interpreter".to_owned()
+            })?;
+            let dynamic_linker = PathBuf::from(configured_dynamic_linker);
+            if dynamic_linker == configured_store_root
+                || !dynamic_linker.starts_with(configured_store_root)
+            {
+                return Err(
+                    "CUA_TEST_PYTHON_DYNAMIC_LINKER must be inside the trusted Nix store".into(),
+                );
+            }
+            let resolved_dynamic_linker = validate_fixture_path(&dynamic_linker, true)?;
+            if resolved_dynamic_linker == trusted_store_root
+                || !resolved_dynamic_linker.starts_with(&trusted_store_root)
+            {
+                return Err(
+                    "CUA_TEST_PYTHON_DYNAMIC_LINKER must resolve inside the trusted Nix store"
+                        .into(),
+                );
+            }
+            if !readable_roots
+                .iter()
+                .any(|root| resolved_dynamic_linker.starts_with(root))
+            {
+                return Err(
+                    "CUA_TEST_PYTHON_DYNAMIC_LINKER must resolve inside a configured Nix closure root"
+                        .into(),
+                );
+            }
+            let mut executable_paths = vec![resolved_interpreter, resolved_dynamic_linker];
+            executable_paths.sort();
+            executable_paths.dedup();
             return Ok(FixturePythonConfig {
                 interpreter: interpreter.clone(),
                 readable_roots,
-                executable_paths: vec![interpreter],
+                executable_paths,
             });
         }
 
-        if configured_read_roots.is_some() {
+        if configured_read_roots.is_some() || configured_dynamic_linker.is_some() {
             return Err(
-                "CUA_TEST_PYTHON_READ_ROOTS is supported only for a Nix store interpreter".into(),
+                "Nix fixture path configuration is supported only for a Nix store interpreter"
+                    .into(),
             );
         }
         return Ok(FixturePythonConfig {
@@ -908,8 +943,8 @@ fn fixture_python_config_from(
             executable_paths: vec![interpreter],
         });
     }
-    if configured_read_roots.is_some() {
-        return Err("CUA_TEST_PYTHON_READ_ROOTS requires CUA_TEST_PYTHON".into());
+    if configured_read_roots.is_some() || configured_dynamic_linker.is_some() {
+        return Err("Nix fixture path configuration requires CUA_TEST_PYTHON".into());
     }
 
     #[cfg(target_os = "macos")]
@@ -1164,9 +1199,10 @@ else:
         let outside_interpreter = outside.join("python3");
         std::fs::write(&outside_interpreter, b"fixture").unwrap();
 
-        assert!(fixture_python_config_from(Some("python3".into()), None, &store).is_err());
+        assert!(fixture_python_config_from(Some("python3".into()), None, None, &store).is_err());
         let config = fixture_python_config_from(
             Some(outside_interpreter.clone().into_os_string()),
+            None,
             None,
             &store,
         )
@@ -1174,8 +1210,23 @@ else:
         assert_eq!(config.interpreter, outside_interpreter);
         assert_eq!(config.executable_paths, vec![config.interpreter.clone()]);
         assert!(fixture_python_config_from(
-            Some(config.interpreter.into_os_string()),
+            Some(config.interpreter.clone().into_os_string()),
             Some(outside.clone().into_os_string()),
+            None,
+            &store,
+        )
+        .is_err());
+        assert!(fixture_python_config_from(
+            Some(config.interpreter.into_os_string()),
+            None,
+            Some(outside_interpreter.into_os_string()),
+            &store,
+        )
+        .is_err());
+        assert!(fixture_python_config_from(
+            None,
+            None,
+            Some(outside.join("python3").into_os_string()),
             &store,
         )
         .is_err());
@@ -1196,12 +1247,14 @@ else:
         assert!(fixture_python_config_from(
             Some(interpreter.clone().into_os_string()),
             None,
+            None,
             &store,
         )
         .is_err());
         assert!(fixture_python_config_from(
             Some(interpreter.into_os_string()),
             Some(outside.into_os_string()),
+            None,
             &store,
         )
         .is_err());
@@ -1214,19 +1267,27 @@ else:
         let python = store.join("python");
         let dependency = store.join("dependency");
         std::fs::create_dir_all(python.join("bin")).unwrap();
-        std::fs::create_dir_all(&dependency).unwrap();
+        std::fs::create_dir_all(dependency.join("lib")).unwrap();
         let interpreter = python.join("bin/python3");
+        let loader = dependency.join("lib/ld-linux.so");
         std::fs::write(&interpreter, b"fixture").unwrap();
+        std::fs::write(&loader, b"fixture").unwrap();
         let roots = std::env::join_paths([python.clone(), dependency.clone()]).unwrap();
-
         let config = fixture_python_config_from(
             Some(interpreter.clone().into_os_string()),
             Some(roots),
+            Some(loader.clone().into_os_string()),
             &store,
         )
         .unwrap();
         assert_eq!(config.interpreter, interpreter);
-        assert_eq!(config.executable_paths, vec![interpreter]);
+        assert_eq!(
+            config.executable_paths,
+            vec![
+                std::fs::canonicalize(loader).unwrap(),
+                std::fs::canonicalize(&interpreter).unwrap(),
+            ]
+        );
         assert_eq!(
             config.readable_roots,
             vec![
@@ -1240,6 +1301,70 @@ else:
         assert!(fixture_python_config_from(
             Some(config.interpreter.into_os_string()),
             Some(store.clone().into_os_string()),
+            Some(store.join("dependency/lib/ld-linux.so").into_os_string()),
+            &store,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn fixture_python_config_rejects_dynamic_linker_outside_configured_closure_roots() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = temp.path().join("store");
+        let python = store.join("python");
+        let dependency = store.join("dependency");
+        let outside = store.join("outside");
+        std::fs::create_dir_all(python.join("bin")).unwrap();
+        std::fs::create_dir_all(dependency.join("lib")).unwrap();
+        std::fs::create_dir_all(outside.join("lib")).unwrap();
+        let interpreter = python.join("bin/python3");
+        let loader = dependency.join("lib/ld-linux.so");
+        let untrusted = outside.join("lib/arbitrary");
+        let escaped = dependency.join("lib/escaped-loader");
+        std::fs::write(&interpreter, b"fixture").unwrap();
+        std::fs::write(&loader, b"fixture").unwrap();
+        std::fs::write(&untrusted, b"fixture").unwrap();
+        std::os::unix::fs::symlink(&untrusted, &escaped).unwrap();
+        let roots = std::env::join_paths([python, dependency]).unwrap();
+
+        assert!(fixture_python_config_from(
+            Some(interpreter.clone().into_os_string()),
+            Some(roots.clone()),
+            Some(escaped.into_os_string()),
+            &store,
+        )
+        .is_err());
+        assert!(fixture_python_config_from(
+            Some(interpreter.into_os_string()),
+            Some(roots),
+            Some(untrusted.into_os_string()),
+            &store,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn fixture_python_config_rejects_dynamic_linker_configured_outside_store() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = temp.path().join("store");
+        let python = store.join("python");
+        let dependency = store.join("dependency");
+        let outside = temp.path().join("outside");
+        std::fs::create_dir_all(python.join("bin")).unwrap();
+        std::fs::create_dir_all(dependency.join("lib")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let interpreter = python.join("bin/python3");
+        let loader = dependency.join("lib/ld-linux.so");
+        let configured_outside = outside.join("ld-linux.so");
+        std::fs::write(&interpreter, b"fixture").unwrap();
+        std::fs::write(&loader, b"fixture").unwrap();
+        std::os::unix::fs::symlink(&loader, &configured_outside).unwrap();
+        let roots = std::env::join_paths([python, dependency]).unwrap();
+
+        assert!(fixture_python_config_from(
+            Some(interpreter.into_os_string()),
+            Some(roots),
+            Some(configured_outside.into_os_string()),
             &store,
         )
         .is_err());

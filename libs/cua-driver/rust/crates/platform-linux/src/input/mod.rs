@@ -1240,7 +1240,7 @@ fn virtual_master_input_state(
 /// at-spi2 forwards verbatim and Orca reads as its `ORCA_MODIFIER_MASK`
 /// (`1 << 8`) — a plain space becomes "Orca+space" and opens the Screen
 /// Reader Preferences. Returns what was released, for the tool's report.
-pub(super) fn release_stuck_virtual_input(
+fn release_stuck_virtual_input(
     cursor_id: &str,
     display: *mut x11::xlib::Display,
     ids: MasterPointerIds,

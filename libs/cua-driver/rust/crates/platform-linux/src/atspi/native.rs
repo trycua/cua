@@ -2336,14 +2336,35 @@ fn exact_menu_path_matches(visited: &[Visited<'_>], path: &[String]) -> Vec<usiz
 /// Every hop re-walks AT-SPI after the preceding menu has materialized; no
 /// snapshot index is retained across mutations.
 pub fn invoke_menu_path(pid: u32, path: &[String]) -> Result<()> {
+    invoke_menu_path_in(pid, 0, path)
+}
+
+/// [`invoke_menu_path`] scoped to the caller's native window: when the same
+/// menu path exists under several top-levels of the process (LibreOffice
+/// publishes every document window's menubar in one AT-SPI application),
+/// the hop under `xid`'s frame wins instead of the path being ambiguous.
+pub fn invoke_menu_path_in(pid: u32, xid: u64, path: &[String]) -> Result<()> {
     bounded(
         async {
             let conn = shared_connection().await?;
             for depth in 0..path.len() {
-                let visited = collect_visited(conn, pid)
+                let collected = collect_visited_bounded(conn, pid, xid, None, None)
                     .await?
                     .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
-                let matches = exact_menu_path_matches(&visited, &path[..=depth]);
+                let visited = collected.visited;
+                let mut matches = exact_menu_path_matches(&visited, &path[..=depth]);
+                if matches.len() > 1 {
+                    if let Some(scope) = collected.scoped_frame {
+                        let scoped: Vec<usize> = matches
+                            .iter()
+                            .copied()
+                            .filter(|index| visited[*index].frame_ordinal == scope)
+                            .collect();
+                        if !scoped.is_empty() {
+                            matches = scoped;
+                        }
+                    }
+                }
                 let target_index = match matches.as_slice() {
                     [index] => *index,
                     [] => anyhow::bail!("menu path segment {depth} was not found"),

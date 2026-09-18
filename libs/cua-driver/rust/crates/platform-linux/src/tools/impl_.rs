@@ -4514,7 +4514,7 @@ impl Tool for ClickTool {
                     ToolResult::text(format!("Clicked element [{idx}] (pid {pid})."))
                         .with_structured(structured)
                 }
-                Ok(Err(e)) => ToolResult::error(format!("AT-SPI element click failed: {e}")),
+                Ok(Err(e)) => input_error_result(e.context("AT-SPI element click failed")),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
         }
@@ -5585,7 +5585,7 @@ impl Tool for TypeTextTool {
                     text_len,
                     false,
                 )),
-                Ok(Err(e)) => ToolResult::error(e.to_string()),
+                Ok(Err(e)) => input_error_result(e),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
         }
@@ -7706,7 +7706,7 @@ impl Tool for DoubleClickTool {
                         Err(e) => ToolResult::error(format!("Task error: {e}")),
                     }
                 }
-                Ok(Err(e)) => ToolResult::error(format!("AT-SPI bounds failed: {e}")),
+                Ok(Err(e)) => input_error_result(e.context("AT-SPI bounds failed")),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
         }
@@ -7969,7 +7969,7 @@ impl Tool for RightClickTool {
                         Err(e) => ToolResult::error(format!("Task error: {e}")),
                     }
                 }
-                Ok(Err(e)) => ToolResult::error(format!("AT-SPI bounds failed: {e}")),
+                Ok(Err(e)) => input_error_result(e.context("AT-SPI bounds failed")),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
         }
@@ -8519,7 +8519,7 @@ impl Tool for DragTool {
                      from ({from_x:.0}, {from_y:.0}) → ({to_x:.0}, {to_y:.0}) \
                      in {duration_ms}ms / {steps} steps."
                 )),
-                Ok(Err(e)) => ToolResult::error(e.to_string()),
+                Ok(Err(e)) => input_error_result(e),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
         }
@@ -8574,7 +8574,7 @@ impl Tool for DragTool {
                     "verified": false,
                     "delivery_mode": "foreground"
                 })),
-                Ok(Err(e)) => ToolResult::error(e.to_string()),
+                Ok(Err(e)) => input_error_result(e),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
         }
@@ -10967,7 +10967,7 @@ impl Tool for InvokeMenuTool {
         if !crate::wayland::is_wayland() && !delivery.is_foreground() {
             let outcome = tokio::task::spawn_blocking(move || {
                 crate::input::focus_guard::guarded(Some(pid), || {
-                    crate::atspi::native::invoke_menu_path(pid, &path)
+                    crate::atspi::native::invoke_menu_path_in(pid, window_id, &path)
                 })
             })
             .await;
@@ -11039,7 +11039,7 @@ impl Tool for InvokeMenuTool {
         };
 
         let outcome = tokio::task::spawn_blocking(move || {
-            let result = crate::atspi::native::invoke_menu_path(pid, &path);
+            let result = crate::atspi::native::invoke_menu_path_in(pid, window_id, &path);
             if let Some(Some(prior_window)) = activation {
                 let _ = crate::input::x11_activate_window_persistent(prior_window);
             }

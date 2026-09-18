@@ -281,6 +281,11 @@ fn maybe_init_pip() {
 
 // ── Public SDK runtime host ──────────────────────────────────────────────
 
+fn register_host_tools(registry: &mut cua_driver_core::tool::ToolRegistry) {
+    history_runtime::register_host_tools(registry);
+    extension_manager::register_host_tools(registry);
+}
+
 /// Construct the canonical SDK-owned runtime for the CLI or daemon host.
 /// The private socket and MCP layers consume this object downstream.
 fn build_driver(
@@ -294,7 +299,7 @@ fn build_driver(
         host_bundle_id: std::env::var(cua_driver_core::HOST_BUNDLE_ID_ENV).ok(),
         claude_code_compatibility: compatibility_mode,
         prepare_desktop_environment: true,
-        register_host_tools: Some(history_runtime::register_host_tools),
+        register_host_tools: Some(register_host_tools),
         authorization_host: None,
         activity_observer: None,
     })
@@ -328,7 +333,7 @@ fn inspect_tools_without_runtime() -> serde_json::Value {
         host_bundle_id: None,
         claude_code_compatibility: false,
         prepare_desktop_environment: false,
-        register_host_tools: Some(history_runtime::register_host_tools),
+        register_host_tools: Some(register_host_tools),
         authorization_host: None,
         activity_observer: None,
     })

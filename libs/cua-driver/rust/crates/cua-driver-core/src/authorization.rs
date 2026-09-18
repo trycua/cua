@@ -308,6 +308,7 @@ const FILE_TRANSFER_OPERATIONS: &[&str] = &[
     "stop_recording",
     "replay_trajectory",
     "install_ffmpeg",
+    "install_extension",
 ];
 const FILE_TRANSFER_SCOPE_KEYS: &[&str] = &[
     "daemon_generation",
@@ -785,7 +786,8 @@ pub fn enforcement_adapters_for_call(
         || (tool == "clipboard_write"
             && (args.get("image_path").and_then(Value::as_str).is_some()
                 || args.get("file_path").and_then(Value::as_str).is_some()))
-        || (tool == "install_ffmpeg" && args.get("confirm").and_then(Value::as_bool) == Some(true))
+        || (matches!(tool, "install_ffmpeg" | "install_extension")
+            && args.get("confirm").and_then(Value::as_bool) == Some(true))
     {
         add("file_transfer_and_output");
     }
@@ -933,6 +935,7 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "stop_recording"
         | "replay_trajectory"
         | "install_ffmpeg"
+        | "install_extension"
         | "page"
         | "browser_dialog"
         | "browser_set_input_files"
@@ -1068,7 +1071,7 @@ pub fn classify_tool_call(tool: &str, args: &Value) -> RiskAssessment {
             enforcement: RiskEnforcement::Active,
             operation_sensitive: true,
         },
-        "install_ffmpeg" => {
+        "install_ffmpeg" | "install_extension" => {
             let confirmed = args.get("confirm").and_then(Value::as_bool) == Some(true);
             RiskAssessment {
                 class: if confirmed {
@@ -1913,6 +1916,17 @@ mod tests {
         );
         assert_eq!(
             ids("install_ffmpeg", serde_json::json!({"confirm": true})),
+            vec!["file_transfer_and_output"]
+        );
+        assert_eq!(
+            ids("install_extension", serde_json::json!({})),
+            Vec::<&str>::new()
+        );
+        assert_eq!(
+            ids(
+                "install_extension",
+                serde_json::json!({"name": "perception", "confirm": true})
+            ),
             vec!["file_transfer_and_output"]
         );
         assert_eq!(

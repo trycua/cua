@@ -20,8 +20,11 @@ use std::fs;
 use std::io::{Read, Seek, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
 
 use cua_driver_core::perception_client::{PerceptionClient, PerceptionWorkerConfig};
+use cua_driver_core::protocol::ToolResult;
+use cua_driver_core::tool::{Tool, ToolDef, ToolRegistry};
 
 const MANIFEST_NAME: &str = "extension.json";
 const INSTALL_RECORD_NAME: &str = ".install.json";
@@ -43,16 +46,35 @@ const MAX_IN_MEMORY_BYTES: u64 = 1024 * 1024;
 const MAX_FILE_COUNT: usize = 4_096;
 const MAX_ARCHIVE_PATH_BYTES: usize = 512;
 const DEVELOPER_TRUST_NOTICE: &str = "developer-only unsigned local install; it is not publisher-verified and cannot be represented as verified";
+#[cfg(feature = "review-trust-root")]
+const REVIEW_TRUST_NOTICE: &str = "REVIEW ONLY: locally overridden trust root; never production, release, or publishable evidence";
+#[cfg_attr(feature = "review-trust-root", allow(dead_code))]
 const VERIFIED_PUBLISHER_ID: &str = "cua";
+#[cfg_attr(feature = "review-trust-root", allow(dead_code))]
 const VERIFIED_PUBLISHER_NAME: &str = "Cua";
+#[cfg(not(feature = "review-trust-root"))]
 const VERIFIED_KEY_ID: &str = "cua-extension-ed25519-2026-01";
 // The corresponding private key is held outside this repository.
+#[cfg(not(feature = "review-trust-root"))]
 const VERIFIED_KEY_VALID_FROM_UNIX: u64 = 1_735_689_600; // 2025-01-01
+#[cfg(not(feature = "review-trust-root"))]
 const VERIFIED_KEY_VALID_UNTIL_UNIX: u64 = 2_082_758_400; // 2036-01-01
+#[cfg(any(not(feature = "review-trust-root"), test))]
 const VERIFIED_PUBLIC_KEY: [u8; 32] = [
     0x74, 0x1e, 0xc4, 0xff, 0x7e, 0x9f, 0x4d, 0x72, 0xe2, 0x1c, 0xf7, 0xeb, 0xf3, 0x26, 0xb8, 0x8b,
     0x84, 0xc5, 0x6e, 0xcb, 0x14, 0xfe, 0x3a, 0x4e, 0xf7, 0x3a, 0xd2, 0xf2, 0x09, 0x78, 0x6e, 0xc4,
 ];
+#[cfg(feature = "review-trust-root")]
+const REVIEW_PUBLISHER_ID: &str = "cua-review-only";
+#[cfg(feature = "review-trust-root")]
+const REVIEW_PUBLISHER_NAME: &str = "Cua REVIEW ONLY";
+#[cfg(feature = "review-trust-root")]
+const REVIEW_KEY_ID: &str = "review-only-build-override";
+#[cfg(feature = "review-trust-root")]
+const REVIEW_PUBLIC_KEY_BASE64: &str = env!(
+    "CUA_DRIVER_REVIEW_EXTENSION_PUBLIC_KEY_BASE64",
+    "review-trust-root requires CUA_DRIVER_REVIEW_EXTENSION_PUBLIC_KEY_BASE64 at build time"
+);
 const PERCEPTION_ID: &str = "cua-perception";
 const PERCEPTION_RUNTIME_CONTRACT: &str = "metadata/runtime-contract.json";
 const PERCEPTION_MODEL_MANIFEST_NAME: &str = "model-manifest.json";
@@ -85,6 +107,8 @@ struct ExtensionManifest {
     files: Vec<ManifestFile>,
     models: Vec<ManifestModel>,
     components: Vec<ComponentLicense>,
+    #[serde(default)]
+    corresponding_source_file: Option<ArtifactBinding>,
     license: String,
     source: String,
     corresponding_source_uri: String,
@@ -136,6 +160,8 @@ struct ManifestModel {
     revision: String,
     original_sha256: String,
     conversion_sha256: String,
+    #[serde(default)]
+    license_file: Option<ArtifactBinding>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -147,6 +173,15 @@ struct ComponentLicense {
     notice: String,
     source_uri: String,
     source_revision: String,
+    #[serde(default)]
+    notice_file: Option<ArtifactBinding>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct ArtifactBinding {
+    path: String,
+    sha256: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -206,6 +241,8 @@ struct CatalogPayload {
 #[serde(rename_all = "kebab-case")]
 enum TrustClass {
     PublisherVerified,
+    #[cfg(feature = "review-trust-root")]
+    ReviewOnlyPublisherVerified,
     DeveloperUnsignedLocal,
 }
 
@@ -251,6 +288,7 @@ struct ExtensionInfo<'a> {
     active_version: Option<String>,
     healthy: bool,
     trust: Option<TrustClass>,
+    evidence_class: Option<&'static str>,
     publisher_id: Option<String>,
     publisher_key_id: Option<String>,
     catalog_version: Option<u64>,
@@ -270,6 +308,7 @@ struct InspectedArchive {
     manifest_bytes: Vec<u8>,
     archive_sha256: String,
     archive_size: u64,
+    expanded_size: u64,
 }
 
 struct BoundedReader<R> {
@@ -430,6 +469,141 @@ pub fn run(args: &[String]) {
         eprintln!("cua-driver extension: {error:#}");
         std::process::exit(1);
     }
+}
+
+pub(crate) fn register_host_tools(registry: &mut ToolRegistry) {
+    registry.register(Box::new(InstallExtensionTool));
+}
+
+struct InstallExtensionTool;
+static INSTALL_EXTENSION_DEF: OnceLock<ToolDef> = OnceLock::new();
+
+#[async_trait::async_trait]
+impl Tool for InstallExtensionTool {
+    fn def(&self) -> &ToolDef {
+        INSTALL_EXTENSION_DEF.get_or_init(|| ToolDef {
+            name: "install_extension".to_owned(),
+            description: "Preview or install one Driver-managed optional extension. The first call without confirm returns the exact signed artifact, destination, license, source, and trust plan without mutation. Re-call with confirm=true to perform that exact verified installation.".to_owned(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "enum": ["perception"]},
+                    "confirm": {"type": "boolean", "description": "Install the previewed extension. Omit or false for a read-only plan."}
+                },
+                "required": ["name"],
+                "additionalProperties": false
+            }),
+            read_only: false,
+            destructive: true,
+            idempotent: false,
+            open_world: true,
+        })
+    }
+
+    async fn invoke(&self, args: serde_json::Value) -> ToolResult {
+        let confirmed = args.get("confirm").and_then(serde_json::Value::as_bool) == Some(true);
+        if args.get("name").and_then(serde_json::Value::as_str) != Some("perception") {
+            return ToolResult::error("install_extension requires name=\"perception\"");
+        }
+        match tokio::task::spawn_blocking(move || install_extension_from_mcp(confirmed)).await {
+            Ok(Ok((message, structured))) => ToolResult::text(message).with_structured(structured),
+            Ok(Err(error)) => ToolResult::error(format!("install_extension failed: {error:#}")),
+            Err(error) => ToolResult::error(format!("install_extension task failed: {error}")),
+        }
+    }
+}
+
+fn install_extension_from_mcp(confirmed: bool) -> Result<(String, serde_json::Value)> {
+    let catalog = std::env::var_os("CUA_DRIVER_PERCEPTION_CATALOG")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| anyhow!("CUA_DRIVER_PERCEPTION_CATALOG must name the reviewed signed catalog at daemon launch"))?;
+    let entry = registry_entry("perception")?;
+    let store = ExtensionStore::new(extension_root()?);
+    let parsed = ParsedCommand {
+        subcommand: "install".to_owned(),
+        id: Some("perception".to_owned()),
+        archive: None,
+        catalog: Some(catalog),
+        allow_unsigned_local: false,
+        self_test: false,
+        json: false,
+    };
+    let source = resolve_install_source(entry, &parsed, &store)?;
+    let inspected = inspect_without_mutation(entry, &source)?;
+    let plan = mcp_install_plan(entry, &store, &inspected, &source)?;
+    if !confirmed {
+        return Ok((
+            "Perception extension plan verified. Review the structured plan, then re-call install_extension with name=\"perception\" and confirm=true.".to_owned(),
+            plan,
+        ));
+    }
+    if store.active_path(entry.id)?.is_some() {
+        bail!("perception is already installed; use the CLI extension update command with a reviewed catalog");
+    }
+    let installed = store.install_source(entry, &source, false)?;
+    let mut result = plan;
+    result["installed"] = serde_json::Value::Bool(true);
+    result["ran"] = serde_json::Value::Bool(true);
+    result["installed_version"] = serde_json::Value::String(installed.version);
+    Ok((
+        "Perception extension installed from the verified plan.".to_owned(),
+        result,
+    ))
+}
+
+fn mcp_install_plan(
+    entry: &RegistryEntry,
+    store: &ExtensionStore,
+    inspected: &InspectedArchive,
+    source: &InstallSource,
+) -> Result<serde_json::Value> {
+    let manifest = &inspected.manifest;
+    let catalog = source
+        .catalog
+        .as_ref()
+        .ok_or_else(|| anyhow!("MCP installation requires a signed catalog"))?;
+    let notices = manifest
+        .components
+        .iter()
+        .map(|component| {
+            serde_json::json!({
+                "component": component.name,
+                "license": component.license,
+                "file": component.notice_file,
+            })
+        })
+        .collect::<Vec<_>>();
+    let model_licenses = manifest
+        .models
+        .iter()
+        .map(|model| serde_json::json!({"model": model.path, "file": model.license_file}))
+        .collect::<Vec<_>>();
+    Ok(serde_json::json!({
+        "extension": "perception",
+        "artifact": format!("{} {}", entry.id, manifest.version),
+        "backend": "icon detection and OCR",
+        "download_size": inspected.archive_size,
+        "installed_size": inspected.expanded_size,
+        "destination": store.versions_dir(entry.id).join(&manifest.version).display().to_string(),
+        "license_notices": notices,
+        "model_licenses": model_licenses,
+        "corresponding_source": {
+            "file": manifest.corresponding_source_file,
+            "uri": manifest.corresponding_source_uri,
+            "revision": manifest.corresponding_source_revision,
+        },
+        "acceleration": "CPU",
+        "target": manifest.target,
+        "catalog_version": catalog.catalog_version,
+        "catalog_expires_unix": catalog.expires_unix,
+        "archive_sha256": inspected.archive_sha256,
+        "manifest_sha256": hex_sha256(&inspected.manifest_bytes),
+        "trust": source.trust,
+        "evidence_class": evidence_class(&source.trust),
+        "installed": false,
+        "ran": false,
+    }))
 }
 
 fn run_inner(args: &[String]) -> Result<()> {
@@ -640,6 +814,10 @@ fn required_id<'a>(id: Option<&'a str>, command: &str) -> Result<&'a str> {
 }
 
 fn registry_entry(id: &str) -> Result<&'static RegistryEntry> {
+    let id = match id {
+        "perception" => PERCEPTION_ID,
+        other => other,
+    };
     REGISTRY
         .iter()
         .find(|entry| entry.id == id)
@@ -870,7 +1048,51 @@ fn print_info(
 fn trust_label(trust: &TrustClass) -> &'static str {
     match trust {
         TrustClass::PublisherVerified => "publisher-verified",
+        #[cfg(feature = "review-trust-root")]
+        TrustClass::ReviewOnlyPublisherVerified => "review-only-publisher-verified",
         TrustClass::DeveloperUnsignedLocal => "developer-unsigned-local",
+    }
+}
+
+fn evidence_class(trust: &TrustClass) -> &'static str {
+    match trust {
+        TrustClass::PublisherVerified => "production-publisher-verified",
+        #[cfg(feature = "review-trust-root")]
+        TrustClass::ReviewOnlyPublisherVerified => "review-only-not-release-evidence",
+        TrustClass::DeveloperUnsignedLocal => "developer-local-not-publisher-evidence",
+    }
+}
+
+fn expected_publisher_id() -> &'static str {
+    #[cfg(feature = "review-trust-root")]
+    {
+        REVIEW_PUBLISHER_ID
+    }
+    #[cfg(not(feature = "review-trust-root"))]
+    {
+        VERIFIED_PUBLISHER_ID
+    }
+}
+
+fn expected_publisher_name() -> &'static str {
+    #[cfg(feature = "review-trust-root")]
+    {
+        REVIEW_PUBLISHER_NAME
+    }
+    #[cfg(not(feature = "review-trust-root"))]
+    {
+        VERIFIED_PUBLISHER_NAME
+    }
+}
+
+fn verified_trust_class() -> TrustClass {
+    #[cfg(feature = "review-trust-root")]
+    {
+        TrustClass::ReviewOnlyPublisherVerified
+    }
+    #[cfg(not(feature = "review-trust-root"))]
+    {
+        TrustClass::PublisherVerified
     }
 }
 
@@ -913,7 +1135,7 @@ fn resolve_install_source(
         .join(archive_rel);
     Ok(InstallSource {
         archive,
-        trust: TrustClass::PublisherVerified,
+        trust: verified_trust_class(),
         catalog: Some(signed.payload.clone()),
         signed_catalog: Some(signed),
         trust_update: Some(trust_update),
@@ -938,9 +1160,9 @@ fn verify_catalog_at(
         bail!("catalog version must be greater than zero");
     }
     validate_catalog_freshness_at(payload, now)?;
-    if payload.publisher_id != VERIFIED_PUBLISHER_ID
-        || payload.publisher_name != VERIFIED_PUBLISHER_NAME
-        || trust.publisher_id != VERIFIED_PUBLISHER_ID
+    if payload.publisher_id != expected_publisher_id()
+        || payload.publisher_name != expected_publisher_name()
+        || trust.publisher_id != expected_publisher_id()
     {
         bail!("catalog publisher identity is not trusted");
     }
@@ -1037,16 +1259,30 @@ fn verify_catalog_at(
 }
 
 fn initial_publisher_trust() -> PublisherTrust {
+    #[cfg(feature = "review-trust-root")]
+    let (key_id, public_key_base64, valid_from_unix, valid_until_unix) = (
+        REVIEW_KEY_ID,
+        REVIEW_PUBLIC_KEY_BASE64.to_owned(),
+        1,
+        u64::MAX,
+    );
+    #[cfg(not(feature = "review-trust-root"))]
+    let (key_id, public_key_base64, valid_from_unix, valid_until_unix) = (
+        VERIFIED_KEY_ID,
+        BASE64.encode(VERIFIED_PUBLIC_KEY),
+        VERIFIED_KEY_VALID_FROM_UNIX,
+        VERIFIED_KEY_VALID_UNTIL_UNIX,
+    );
     PublisherTrust {
         schema_version: 1,
-        publisher_id: VERIFIED_PUBLISHER_ID.to_owned(),
+        publisher_id: expected_publisher_id().to_owned(),
         generation: 1,
         highest_catalog_version: 0,
         current_key: PublisherKey {
-            key_id: VERIFIED_KEY_ID.to_owned(),
-            public_key_base64: BASE64.encode(VERIFIED_PUBLIC_KEY),
-            valid_from_unix: VERIFIED_KEY_VALID_FROM_UNIX,
-            valid_until_unix: VERIFIED_KEY_VALID_UNTIL_UNIX,
+            key_id: key_id.to_owned(),
+            public_key_base64,
+            valid_from_unix,
+            valid_until_unix,
         },
         pending_key: None,
     }
@@ -1070,7 +1306,7 @@ fn load_publisher_trust_at(root: &Dir) -> Result<PublisherTrust> {
 
 fn validate_publisher_trust(trust: &PublisherTrust) -> Result<()> {
     if trust.schema_version != 1
-        || trust.publisher_id != VERIFIED_PUBLISHER_ID
+        || trust.publisher_id != expected_publisher_id()
         || trust.generation == 0
     {
         bail!("publisher trust state is invalid");
@@ -1180,8 +1416,19 @@ fn validate_source_metadata(inspected: &InspectedArchive, source: &InstallSource
         {
             bail!("manifest identity or provenance does not exactly match signed catalog");
         }
-        if manifest.components.is_empty() || manifest.models.is_empty() {
-            bail!("verified perception extensions require component notices and model provenance");
+        if manifest.components.is_empty()
+            || manifest.models.is_empty()
+            || manifest.corresponding_source_file.is_none()
+            || manifest
+                .components
+                .iter()
+                .any(|component| component.notice_file.is_none())
+            || manifest
+                .models
+                .iter()
+                .any(|model| model.license_file.is_none())
+        {
+            bail!("verified perception extensions require digest-bound notice, corresponding-source, and model-license files");
         }
     }
     Ok(())
@@ -1204,6 +1451,7 @@ fn print_preview(
         "catalog_expires_unix": source.catalog.as_ref().map(|catalog| catalog.expires_unix),
         "publisher_signature_verified": source.catalog.is_some(),
         "trust": source.trust,
+        "evidence_class": evidence_class(&source.trust),
         "license": manifest.license,
         "source": manifest.source,
         "corresponding_source_uri": manifest.corresponding_source_uri,
@@ -1221,6 +1469,11 @@ fn print_preview(
     } else {
         println!("Extension: {} {}", entry.id, manifest.version);
         println!("Trust: {}", trust_label(&source.trust));
+        println!("Evidence class: {}", evidence_class(&source.trust));
+        #[cfg(feature = "review-trust-root")]
+        if source.trust == TrustClass::ReviewOnlyPublisherVerified {
+            println!("{REVIEW_TRUST_NOTICE}");
+        }
         if let Some(catalog) = &source.catalog {
             println!(
                 "Publisher signature: verified {} with key {} (catalog {}, expires {})",
@@ -1475,7 +1728,7 @@ impl ExtensionStore {
             let installed = versions.open_dir_nofollow(&pointer.version)?;
             let manifest = verify_installed_version_at(&installed, entry, None)?;
             let record = read_install_record_at(&installed, entry.id, &manifest.version)?;
-            if record.trust == TrustClass::PublisherVerified
+            if record.trust != TrustClass::DeveloperUnsignedLocal
                 && source.trust == TrustClass::DeveloperUnsignedLocal
             {
                 bail!("developer-only unsigned mode cannot replace a publisher-verified install");
@@ -1716,6 +1969,7 @@ impl ExtensionStore {
                     active_version: None,
                     healthy: false,
                     trust: None,
+                    evidence_class: None,
                     publisher_id: None,
                     publisher_key_id: None,
                     catalog_version: None,
@@ -1739,6 +1993,7 @@ impl ExtensionStore {
                     active_version: None,
                     healthy: false,
                     trust: None,
+                    evidence_class: None,
                     publisher_id: None,
                     publisher_key_id: None,
                     catalog_version: None,
@@ -1756,6 +2011,7 @@ impl ExtensionStore {
                 active_version: None,
                 healthy: true,
                 trust: None,
+                evidence_class: None,
                 publisher_id: None,
                 publisher_key_id: None,
                 catalog_version: None,
@@ -1785,11 +2041,19 @@ impl ExtensionStore {
         match verified {
             Ok(record) => {
                 let trust = record.trust.clone();
-                let detail = if trust == TrustClass::DeveloperUnsignedLocal {
-                    format!("healthy; local integrity checks passed; {DEVELOPER_TRUST_NOTICE}")
-                } else {
-                    "healthy; integrity and publisher verification checks passed".to_owned()
+                let detail = match trust {
+                    TrustClass::DeveloperUnsignedLocal => {
+                        format!("healthy; local integrity checks passed; {DEVELOPER_TRUST_NOTICE}")
+                    }
+                    #[cfg(feature = "review-trust-root")]
+                    TrustClass::ReviewOnlyPublisherVerified => {
+                        format!("healthy; integrity and review-key verification passed; {REVIEW_TRUST_NOTICE}")
+                    }
+                    TrustClass::PublisherVerified => {
+                        "healthy; integrity and publisher verification checks passed".to_owned()
+                    }
                 };
+                let record_evidence_class = evidence_class(&trust);
                 Ok(ExtensionInfo {
                     id: entry.id,
                     display_name: entry.display_name,
@@ -1800,6 +2064,7 @@ impl ExtensionStore {
                     healthy: true,
                     detail,
                     trust: Some(trust),
+                    evidence_class: Some(record_evidence_class),
                     publisher_id: record.publisher_id,
                     publisher_key_id: record.key_id,
                     catalog_version: record.catalog_version,
@@ -1814,6 +2079,7 @@ impl ExtensionStore {
                 active_version: Some(version),
                 healthy: false,
                 trust: None,
+                evidence_class: None,
                 publisher_id: None,
                 publisher_key_id: None,
                 catalog_version: None,
@@ -1969,6 +2235,7 @@ fn inspect_archive(
         manifest_bytes,
         archive_sha256,
         archive_size: metadata.len(),
+        expanded_size: expanded,
     })
 }
 
@@ -2067,6 +2334,9 @@ fn validate_manifest(
                 model.path
             );
         }
+        if let Some(binding) = &model.license_file {
+            validate_artifact_binding("model license", binding, &declared)?;
+        }
     }
     let mut component_names = BTreeSet::new();
     for component in &manifest.components {
@@ -2085,6 +2355,12 @@ fn validate_manifest(
         if !component_names.insert(component.name.as_str()) {
             bail!("manifest declares duplicate component {}", component.name);
         }
+        if let Some(binding) = &component.notice_file {
+            validate_artifact_binding("component notice", binding, &declared)?;
+        }
+    }
+    if let Some(binding) = &manifest.corresponding_source_file {
+        validate_artifact_binding("corresponding source", binding, &declared)?;
     }
     if !declared.contains_key(manifest.entrypoint.as_str()) {
         bail!(
@@ -2123,6 +2399,25 @@ fn validate_manifest(
         if file.size > MAX_FILE_BYTES {
             bail!("file {path} exceeds the supported file limit");
         }
+    }
+    Ok(())
+}
+
+fn validate_artifact_binding(
+    label: &str,
+    binding: &ArtifactBinding,
+    declared: &BTreeMap<&str, &ManifestFile>,
+) -> Result<()> {
+    safe_manifest_path(&binding.path)?;
+    validate_sha256(label, &binding.sha256)?;
+    let file = declared
+        .get(binding.path.as_str())
+        .ok_or_else(|| anyhow!("{label} file {} is not declared in files", binding.path))?;
+    if !file.sha256.eq_ignore_ascii_case(&binding.sha256) {
+        bail!(
+            "{label} digest does not match declared file {}",
+            binding.path
+        );
     }
     Ok(())
 }
@@ -2308,26 +2603,13 @@ fn read_install_record_at(root: &Dir, id: &str, version: &str) -> Result<Install
     }
     match record.trust {
         TrustClass::PublisherVerified => {
-            if record.publisher_id.as_deref() != Some(VERIFIED_PUBLISHER_ID)
-                || record.key_id.as_deref().is_none_or(str::is_empty)
-            {
-                bail!("verified install record has an untrusted publisher identity");
-            }
-            if record.catalog_version.is_none() {
-                bail!("verified install record has no catalog anti-rollback version");
-            }
-            let trust = record.publisher_trust.as_ref().ok_or_else(|| {
-                anyhow!("verified install record has no publisher trust snapshot")
-            })?;
-            validate_publisher_trust(trust)?;
-            if Some(trust.highest_catalog_version) != record.catalog_version
-                || Some(trust.current_key.key_id.as_str()) != record.key_id.as_deref()
-                    && trust.pending_key.as_ref().map(|key| key.key_id.as_str())
-                        != record.key_id.as_deref()
-            {
-                bail!("verified install record publisher trust does not match its catalog");
-            }
+            #[cfg(feature = "review-trust-root")]
+            bail!("review-only builds cannot accept production-class install records");
+            #[cfg(not(feature = "review-trust-root"))]
+            validate_verified_install_record(&record)?;
         }
+        #[cfg(feature = "review-trust-root")]
+        TrustClass::ReviewOnlyPublisherVerified => validate_verified_install_record(&record)?,
         TrustClass::DeveloperUnsignedLocal => {
             if record.publisher_id.is_some()
                 || record.key_id.is_some()
@@ -2339,6 +2621,29 @@ fn read_install_record_at(root: &Dir, id: &str, version: &str) -> Result<Install
         }
     }
     Ok(record)
+}
+
+fn validate_verified_install_record(record: &InstallRecord) -> Result<()> {
+    if record.publisher_id.as_deref() != Some(expected_publisher_id())
+        || record.key_id.as_deref().is_none_or(str::is_empty)
+    {
+        bail!("verified install record has an untrusted publisher identity");
+    }
+    if record.catalog_version.is_none() {
+        bail!("verified install record has no catalog anti-rollback version");
+    }
+    let trust = record
+        .publisher_trust
+        .as_ref()
+        .ok_or_else(|| anyhow!("verified install record has no publisher trust snapshot"))?;
+    validate_publisher_trust(trust)?;
+    if Some(trust.highest_catalog_version) != record.catalog_version
+        || Some(trust.current_key.key_id.as_str()) != record.key_id.as_deref()
+            && trust.pending_key.as_ref().map(|key| key.key_id.as_str()) != record.key_id.as_deref()
+    {
+        bail!("verified install record publisher trust does not match its catalog");
+    }
+    Ok(())
 }
 
 fn verify_install_record_at(root: &Dir, id: &str, version: &str) -> Result<()> {
@@ -3392,6 +3697,13 @@ mod tests {
     use std::io::Cursor;
     use tempfile::TempDir;
 
+    #[cfg(feature = "review-trust-root")]
+    const REVIEW_SEED: [u8; 32] = [
+        0x9d, 0x61, 0xb1, 0x9d, 0xef, 0xfd, 0x5a, 0x60, 0xba, 0x84, 0x4a, 0xf4, 0x92, 0xec, 0x2c,
+        0xc4, 0x44, 0x49, 0xc5, 0x69, 0x7b, 0x32, 0x69, 0x19, 0x70, 0x3b, 0xac, 0x03, 0x1c, 0xae,
+        0x7f, 0x60,
+    ];
+
     fn fixture_archive(
         directory: &Path,
         version: &str,
@@ -3492,7 +3804,9 @@ mod tests {
                 notice: "fixture".to_owned(),
                 source_uri: "https://github.com/trycua/cua".to_owned(),
                 source_revision: "fixture".to_owned(),
+                notice_file: None,
             }],
+            corresponding_source_file: None,
             license: "Apache-2.0".to_owned(),
             source: "https://github.com/trycua/cua".to_owned(),
             corresponding_source_uri: "https://github.com/trycua/cua".to_owned(),
@@ -3648,7 +3962,9 @@ mod tests {
                 notice: "Copyright Cua contributors".to_owned(),
                 source_uri: "https://github.com/trycua/cua".to_owned(),
                 source_revision: "test-fixture".to_owned(),
+                notice_file: None,
             }],
+            corresponding_source_file: None,
             license: "Apache-2.0".to_owned(),
             source: "https://github.com/trycua/cua".to_owned(),
             corresponding_source_uri: "https://github.com/trycua/cua".to_owned(),
@@ -3665,6 +3981,111 @@ mod tests {
         append(&mut builder, "bin/local-extension", payload);
         builder.finish().unwrap();
         path
+    }
+
+    #[cfg(feature = "review-trust-root")]
+    fn review_fixture(directory: &Path) -> (PathBuf, PathBuf) {
+        use ring::signature::Ed25519KeyPair;
+
+        let worker = b"#!/bin/sh\nexit 0\n";
+        let model = b"model";
+        let notice = b"notice";
+        let source = b"source";
+        let model_license = b"model license";
+        let bindings = [
+            ("bin/cua-perception", worker.as_slice(), true),
+            ("models/parser.bin", model.as_slice(), false),
+            ("LICENSES/NOTICE.txt", notice.as_slice(), false),
+            ("LICENSES/model.txt", model_license.as_slice(), false),
+            ("SOURCE/source.txt", source.as_slice(), false),
+        ];
+        let manifest = ExtensionManifest {
+            schema_version: 1,
+            id: PERCEPTION_ID.to_owned(),
+            version: "1.0.0".to_owned(),
+            driver_version: format!("={}", env!("CARGO_PKG_VERSION")),
+            protocol_version: 1,
+            target: current_target().unwrap(),
+            entrypoint: "bin/cua-perception".to_owned(),
+            files: bindings
+                .iter()
+                .map(|(path, bytes, executable)| ManifestFile {
+                    path: (*path).to_owned(),
+                    sha256: hex_sha256(bytes),
+                    executable: *executable,
+                })
+                .collect(),
+            models: vec![ManifestModel {
+                path: "models/parser.bin".to_owned(),
+                revision: "model-v1".to_owned(),
+                original_sha256: "1".repeat(64),
+                conversion_sha256: hex_sha256(model),
+                license_file: Some(ArtifactBinding {
+                    path: "LICENSES/model.txt".to_owned(),
+                    sha256: hex_sha256(model_license),
+                }),
+            }],
+            components: vec![ComponentLicense {
+                name: PERCEPTION_ID.to_owned(),
+                version: "1.0.0".to_owned(),
+                license: "AGPL-3.0-or-later".to_owned(),
+                notice: "fixture notice".to_owned(),
+                source_uri: "https://github.com/trycua/cua".to_owned(),
+                source_revision: "fixture".to_owned(),
+                notice_file: Some(ArtifactBinding {
+                    path: "LICENSES/NOTICE.txt".to_owned(),
+                    sha256: hex_sha256(notice),
+                }),
+            }],
+            corresponding_source_file: Some(ArtifactBinding {
+                path: "SOURCE/source.txt".to_owned(),
+                sha256: hex_sha256(source),
+            }),
+            license: "AGPL-3.0-or-later".to_owned(),
+            source: "https://github.com/trycua/cua".to_owned(),
+            corresponding_source_uri: "https://github.com/trycua/cua".to_owned(),
+            corresponding_source_revision: "fixture".to_owned(),
+            provenance: "review fixture".to_owned(),
+            health_args: Vec::new(),
+            self_test_args: Vec::new(),
+        };
+        let manifest_bytes = serde_json::to_vec_pretty(&manifest).unwrap();
+        let archive = directory.join("review-extension.tar.gz");
+        let encoder = GzEncoder::new(fs::File::create(&archive).unwrap(), Compression::default());
+        let mut builder = tar::Builder::new(encoder);
+        append(&mut builder, MANIFEST_NAME, &manifest_bytes);
+        for (path, bytes, _) in bindings {
+            append(&mut builder, path, bytes);
+        }
+        builder.finish().unwrap();
+        drop(builder);
+        let archive_bytes = fs::read(&archive).unwrap();
+        let payload = CatalogPayload {
+            schema_version: 1,
+            catalog_version: 1,
+            expires_unix: u64::MAX,
+            publisher_id: REVIEW_PUBLISHER_ID.to_owned(),
+            publisher_name: REVIEW_PUBLISHER_NAME.to_owned(),
+            key_id: REVIEW_KEY_ID.to_owned(),
+            extension_id: PERCEPTION_ID.to_owned(),
+            version: manifest.version.clone(),
+            target: manifest.target.clone(),
+            archive: archive.file_name().unwrap().to_str().unwrap().to_owned(),
+            archive_size: archive_bytes.len() as u64,
+            archive_sha256: hex_sha256(&archive_bytes),
+            manifest_sha256: hex_sha256(&manifest_bytes),
+            license: manifest.license.clone(),
+            source: manifest.source.clone(),
+            corresponding_source_uri: manifest.corresponding_source_uri.clone(),
+            corresponding_source_revision: manifest.corresponding_source_revision.clone(),
+            provenance: manifest.provenance.clone(),
+            next_key: None,
+        };
+        let pair = Ed25519KeyPair::from_seed_unchecked(&REVIEW_SEED).unwrap();
+        let signed = sign_test_catalog(&pair, payload);
+        let catalog = directory.join("review-catalog.json");
+        fs::write(&catalog, serde_json::to_vec_pretty(&signed).unwrap()).unwrap();
+        (archive, catalog)
     }
 
     fn append(builder: &mut tar::Builder<GzEncoder<fs::File>>, path: &str, bytes: &[u8]) {
@@ -4182,6 +4603,7 @@ mod tests {
             files: Vec::new(),
             models: Vec::new(),
             components: Vec::new(),
+            corresponding_source_file: None,
             license: "Apache-2.0".to_owned(),
             source: "test".to_owned(),
             corresponding_source_uri: "test".to_owned(),
@@ -4236,13 +4658,97 @@ mod tests {
         .is_err());
     }
 
+    #[test]
+    fn python_node_catalog_golden_is_canonical_and_verified_by_rust() {
+        let golden: serde_json::Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/extension_catalog/signed-catalog.golden.json"
+        ))
+        .unwrap();
+        let payload: CatalogPayload = serde_json::from_value(golden["payload"].clone()).unwrap();
+        assert_eq!(
+            serde_json::to_string(&payload).unwrap(),
+            golden["canonical_payload"]
+        );
+        let public_key = BASE64
+            .decode(golden["public_key_base64"].as_str().unwrap())
+            .unwrap();
+        verify_ed25519_signature(
+            &public_key,
+            golden["canonical_payload"].as_str().unwrap().as_bytes(),
+            golden["signature"].as_str().unwrap(),
+        )
+        .unwrap();
+        let mut tampered = golden["canonical_payload"]
+            .as_str()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        tampered[0] ^= 1;
+        assert!(verify_ed25519_signature(
+            &public_key,
+            &tampered,
+            golden["signature"].as_str().unwrap(),
+        )
+        .is_err());
+    }
+
+    #[cfg(feature = "review-trust-root")]
+    #[test]
+    fn review_build_uses_only_the_overridden_review_key_and_evidence_class() {
+        let trust = initial_publisher_trust();
+        assert_eq!(trust.publisher_id, REVIEW_PUBLISHER_ID);
+        assert_eq!(trust.current_key.key_id, REVIEW_KEY_ID);
+        assert_eq!(
+            trust.current_key.public_key_base64,
+            REVIEW_PUBLIC_KEY_BASE64
+        );
+        assert_eq!(
+            evidence_class(&TrustClass::ReviewOnlyPublisherVerified),
+            "review-only-not-release-evidence"
+        );
+        assert_ne!(
+            trust.current_key.public_key_base64,
+            BASE64.encode(VERIFIED_PUBLIC_KEY)
+        );
+    }
+
+    #[cfg(feature = "review-trust-root")]
+    #[test]
+    fn mcp_install_requires_confirm_after_returning_the_exact_verified_plan() {
+        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = ENV_LOCK.lock().unwrap();
+        let temp = TempDir::new().unwrap();
+        let (_archive, catalog) = review_fixture(temp.path());
+        let home = temp.path().join("driver-home");
+        std::env::set_var("CUA_DRIVER_RS_HOME", &home);
+        std::env::set_var("CUA_DRIVER_PERCEPTION_CATALOG", &catalog);
+
+        let (_, plan) = install_extension_from_mcp(false).unwrap();
+        assert_eq!(plan["extension"], "perception");
+        assert_eq!(plan["artifact"], "cua-perception 1.0.0");
+        assert_eq!(plan["target"], current_target().unwrap());
+        assert_eq!(plan["trust"], "review-only-publisher-verified");
+        assert_eq!(plan["evidence_class"], "review-only-not-release-evidence");
+        assert_eq!(plan["ran"], false);
+        assert!(!home.join("extensions/cua-perception").exists());
+
+        let (_, installed) = install_extension_from_mcp(true).unwrap();
+        assert_eq!(installed["ran"], true);
+        assert_eq!(installed["installed"], true);
+        assert_eq!(installed["installed_version"], "1.0.0");
+        assert!(home.join("extensions/cua-perception/active.json").is_file());
+
+        std::env::remove_var("CUA_DRIVER_PERCEPTION_CATALOG");
+        std::env::remove_var("CUA_DRIVER_RS_HOME");
+    }
+
     fn test_catalog_payload(key_id: &str, version: u64) -> CatalogPayload {
         CatalogPayload {
             schema_version: CATALOG_SCHEMA_VERSION,
             catalog_version: version,
             expires_unix: 900,
-            publisher_id: VERIFIED_PUBLISHER_ID.to_owned(),
-            publisher_name: VERIFIED_PUBLISHER_NAME.to_owned(),
+            publisher_id: expected_publisher_id().to_owned(),
+            publisher_name: expected_publisher_name().to_owned(),
             key_id: key_id.to_owned(),
             extension_id: "cua-perception".to_owned(),
             version: format!("1.0.{version}"),
@@ -4294,7 +4800,7 @@ mod tests {
         let next_key = test_publisher_key("next", &next, 200, 900);
         let trust = PublisherTrust {
             schema_version: 1,
-            publisher_id: VERIFIED_PUBLISHER_ID.to_owned(),
+            publisher_id: expected_publisher_id().to_owned(),
             generation: 1,
             highest_catalog_version: 0,
             current_key: current_key.clone(),
@@ -4374,7 +4880,7 @@ mod tests {
         let signed = sign_test_catalog(&pair, payload.clone());
         let trust = PublisherTrust {
             schema_version: 1,
-            publisher_id: VERIFIED_PUBLISHER_ID.to_owned(),
+            publisher_id: expected_publisher_id().to_owned(),
             generation: 1,
             highest_catalog_version: 0,
             current_key: key,
@@ -4399,7 +4905,7 @@ mod tests {
             .unwrap();
         let source = InstallSource {
             archive: temp.path().join("must-not-be-opened.tar.gz"),
-            trust: TrustClass::PublisherVerified,
+            trust: verified_trust_class(),
             catalog: Some(payload),
             signed_catalog: Some(signed),
             trust_update: Some(decision),
@@ -4455,6 +4961,7 @@ mod tests {
                 revision: "model-v1".to_owned(),
                 original_sha256: "1".repeat(64),
                 conversion_sha256: "0".repeat(64),
+                license_file: None,
             }],
             components: vec![ComponentLicense {
                 name: "model-runtime".to_owned(),
@@ -4463,7 +4970,9 @@ mod tests {
                 notice: "test notice".to_owned(),
                 source_uri: "https://example.invalid/source".to_owned(),
                 source_revision: "abc123".to_owned(),
+                notice_file: None,
             }],
+            corresponding_source_file: None,
             license: "Apache-2.0".to_owned(),
             source: "https://github.com/trycua/cua".to_owned(),
             corresponding_source_uri: "https://github.com/trycua/cua".to_owned(),

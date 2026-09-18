@@ -385,6 +385,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "get_recording_state" => &["recording.state"],
         "replay_trajectory" => &["recording.replay"],
         "install_ffmpeg" => &["recording.install_dependency"],
+        "install_extension" => &["extension.install"],
 
         // ── cross-platform page ──────────────────────────────────────
         "page" => &["page.action"],
@@ -2172,6 +2173,15 @@ impl ToolRegistry {
                     "direction": "network_to_system",
                 }),
                 "Allow Cua to install ffmpeg using the detected system package manager".to_owned(),
+            ),
+            "install_extension" if args.get("confirm").and_then(Value::as_bool) == Some(true) => (
+                serde_json::json!({
+                    "kind": "extension_install",
+                    "extension": "perception",
+                    "direction": "local_catalog_to_driver",
+                }),
+                "Allow Cua to install the reviewed perception extension into the Driver home"
+                    .to_owned(),
             ),
             _ => {
                 return Err(protected_scope_refusal(
@@ -5133,6 +5143,7 @@ mod capability_tests {
         "get_recording_state",
         "replay_trajectory",
         "install_ffmpeg",
+        "install_extension",
         // misc
         "page",
         "check_for_update",
@@ -5222,6 +5233,7 @@ mod capability_tests {
         "recording.state",
         "recording.replay",
         "recording.install_dependency",
+        "extension.install",
         // page
         "page.action",
         // browser-tool v1

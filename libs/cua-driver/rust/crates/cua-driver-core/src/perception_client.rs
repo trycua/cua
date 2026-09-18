@@ -940,7 +940,7 @@ fn fixture_python_config_from(
         return Ok(FixturePythonConfig {
             interpreter: interpreter.clone(),
             readable_roots: host_python_readable_roots(),
-            executable_paths: vec![interpreter],
+            executable_paths: vec![resolved_interpreter],
         });
     }
     if configured_read_roots.is_some() || configured_dynamic_linker.is_some() {
@@ -1210,7 +1210,10 @@ else:
         )
         .unwrap();
         assert_eq!(config.interpreter, outside_interpreter);
-        assert_eq!(config.executable_paths, vec![config.interpreter.clone()]);
+        assert_eq!(
+            config.executable_paths,
+            vec![std::fs::canonicalize(&config.interpreter).unwrap()]
+        );
         assert!(fixture_python_config_from(
             Some(config.interpreter.clone().into_os_string()),
             Some(outside.clone().into_os_string()),

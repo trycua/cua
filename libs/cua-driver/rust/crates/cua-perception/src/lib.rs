@@ -350,8 +350,7 @@ impl Worker {
                     params.image.height,
                     regions,
                     backend.identity(),
-                    &self.extension_id,
-                    &self.extension_version,
+                    (&self.extension_id, &self.extension_version),
                 ))
             }
         }
@@ -580,9 +579,9 @@ fn inference_result(
     height: u32,
     regions: Vec<InferenceRegion>,
     identity: Value,
-    extension_id: &str,
-    extension_version: &str,
+    extension_identity: (&str, &str),
 ) -> Value {
+    let (extension_id, extension_version) = extension_identity;
     let mut identity = identity;
     if let Some(identity) = identity.as_object_mut() {
         identity.insert(
@@ -790,8 +789,7 @@ mod tests {
                 },
             ],
             json!({ "backend": "test" }),
-            env!("CARGO_PKG_NAME"),
-            env!("CARGO_PKG_VERSION"),
+            (env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")),
         );
         let encoded = serde_json::to_vec(&result).unwrap();
         let decoded: Value = serde_json::from_slice(&encoded).unwrap();

@@ -389,3 +389,37 @@ def test_fleet_client_requires_credentials_when_no_workload_token_exists(monkeyp
         match="Fleet cloud sandboxes require CUA_CLIENT_ID and CUA_CLIENT_SECRET",
     ):
         _FleetClient()
+
+
+@pytest.mark.parametrize(
+    "client_id,client_secret,missing",
+    [
+        (None, None, "CUA_CLIENT_ID, CUA_CLIENT_SECRET"),
+        ("synthetic-client-id", None, "CUA_CLIENT_SECRET"),
+        (None, "synthetic-client-secret", "CUA_CLIENT_ID"),
+    ],
+)
+def test_missing_fleet_auth_explains_supported_routes_without_network(
+    monkeypatch, client_id, client_secret, missing
+):
+    from cua_sandbox.transport import fleet_cloud
+
+    monkeypatch.setattr(fleet_cloud, "get_fleet_token", lambda: None)
+    monkeypatch.setattr(fleet_cloud, "get_client_id", lambda: client_id)
+    monkeypatch.setattr(fleet_cloud, "get_client_secret", lambda: client_secret)
+    monkeypatch.setattr(
+        fleet_cloud,
+        "CyclopsHttpClient",
+        lambda: pytest.fail("missing credentials must fail before network construction"),
+    )
+    with pytest.raises(ValueError) as caught:
+        _FleetClient()
+    message = str(caught.value)
+    assert "Missing client credential fields: " + missing in message
+    assert "FLEETS_TOKEN" in message
+    assert "cua.configure(fleet_token=...)" in message
+    assert "cua auth login" in message
+    assert "does not read the CLI credential store" in message
+    assert "CUA_API_KEY is not a Fleet credential" in message
+    assert "synthetic-client-id" not in message
+    assert "synthetic-client-secret" not in message

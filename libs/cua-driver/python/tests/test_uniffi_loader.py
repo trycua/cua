@@ -482,7 +482,10 @@ except FileNotFoundError:
             },
         )
         self.assertEqual(captured[2]["name"], "parse_visual_regions")
-        self.assertEqual(captured[2]["args"], {"capture_id": "capture-123"})
+        self.assertEqual(
+            captured[2]["args"],
+            {"capture_id": "capture-123", "options": {}},
+        )
 
     def test_generated_python_sdk_can_own_the_runtime_in_process(self) -> None:
         from cua_driver import CuaDriver, DriverExecutionMode

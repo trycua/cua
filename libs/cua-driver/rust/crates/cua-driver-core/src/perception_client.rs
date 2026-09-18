@@ -10,18 +10,24 @@ use std::time::{Duration, Instant};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::process::{ChildStdin, ChildStdout};
 use tokio::sync::{Mutex as AsyncMutex, Notify};
 use uuid::Uuid;
 
 use cua_driver_contract::{VisualParseError, VisualParseErrorCode};
 
-use containment::ContainedChild;
 #[cfg(test)]
 use containment::ContainmentLimits;
+use containment::{ContainedChild, WorkerExit, WorkerStdin, WorkerStdout};
 
 const PROTOCOL_VERSION: &str = "cua-perception/1";
 const DEFAULT_MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
+
+/// Signed extension identity the launched worker must echo in every result.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExpectedExtensionIdentity {
+    pub id: String,
+    pub version: String,
+}
 
 #[derive(Clone, Debug)]
 pub struct PerceptionWorkerConfig {
@@ -30,6 +36,7 @@ pub struct PerceptionWorkerConfig {
     pub request_timeout: Duration,
     pub max_frame_bytes: usize,
     pub warm_worker: Option<WarmWorkerPolicy>,
+    pub expected_extension_identity: Option<ExpectedExtensionIdentity>,
     #[cfg(test)]
     containment: ContainmentLimits,
 }
@@ -42,6 +49,7 @@ impl PerceptionWorkerConfig {
             request_timeout: Duration::from_secs(30),
             max_frame_bytes: DEFAULT_MAX_FRAME_BYTES,
             warm_worker: None,
+            expected_extension_identity: None,
             #[cfg(test)]
             containment: ContainmentLimits::default(),
         }
@@ -52,10 +60,41 @@ impl PerceptionWorkerConfig {
         self
     }
 
-    /// Configuration for an installed extension where model startup is
-    /// expensive. Reuse remains bounded by [`WarmWorkerPolicy::default`].
+    /// Configuration for an installed extension.
+    ///
+    /// The worker starts cold for every parse and is shut down afterwards. Warm
+    /// reuse stays behind [`Self::with_bounded_reuse`] until per-platform
+    /// cleanup certification passes, so an installed extension never keeps a
+    /// worker process — and the screenshot it was handed — alive between
+    /// requests by default.
     pub fn installed(executable: impl Into<PathBuf>) -> Self {
-        Self::new(executable).with_bounded_reuse(WarmWorkerPolicy::default())
+        Self::new(executable)
+    }
+
+    /// Bind an installed worker invocation and its result to the identity from
+    /// the verified signed extension manifest.
+    ///
+    /// The worker CLI must accept these arguments and copy them verbatim to
+    /// `result.identity.extension`. A missing or different identity fails the
+    /// parse before its result reaches Driver consumers.
+    pub fn installed_with_identity(
+        executable: impl Into<PathBuf>,
+        id: impl Into<String>,
+        version: impl Into<String>,
+    ) -> Self {
+        let identity = ExpectedExtensionIdentity {
+            id: id.into(),
+            version: version.into(),
+        };
+        let mut config = Self::installed(executable);
+        config.args.extend([
+            "--extension-id".to_owned(),
+            identity.id.clone(),
+            "--extension-version".to_owned(),
+            identity.version.clone(),
+        ]);
+        config.expected_extension_identity = Some(identity);
+        config
     }
 
     fn containment_limits(&self) -> containment::ContainmentLimits {
@@ -141,6 +180,20 @@ impl PerceptionClient {
     }
 
     pub fn new(config: PerceptionWorkerConfig) -> Result<Self, VisualParseError> {
+        if config
+            .expected_extension_identity
+            .as_ref()
+            .is_some_and(|identity| {
+                identity.id.trim().is_empty() || identity.version.trim().is_empty()
+            })
+        {
+            return Err(error(
+                VisualParseErrorCode::ArtifactInvalid,
+                "the verified perception extension identity must be non-empty",
+                false,
+                None,
+            ));
+        }
         if config.request_timeout.is_zero()
             || config.max_frame_bytes == 0
             || config.max_frame_bytes > u32::MAX as usize
@@ -243,22 +296,13 @@ impl PerceptionClient {
         let result = worker
             .parse(config, capture_id, width, height, png_bytes)
             .await?;
-        worker.stdin.shutdown().await.map_err(map_io_error)?;
-        let status = worker
-            .contained
-            .child
-            .wait()
-            .await
-            .map_err(map_crash_error)?;
-        if !status.success() {
-            return Err(error(
-                VisualParseErrorCode::WorkerCrashed,
-                "perception worker exited unsuccessfully after responding",
-                true,
-                Some(status.to_string()),
-            ));
+        // Dropping the writer closes the pipe on every platform, which is what
+        // the worker observes as end of file; a named-pipe shutdown would not.
+        worker.stdin.take();
+        match worker.contained.wait().await.map_err(map_crash_error)? {
+            WorkerExit::Success => Ok(result),
+            exit => Err(map_worker_exit(exit)),
         }
-        Ok(result)
     }
 
     async fn parse_warm(
@@ -341,8 +385,10 @@ impl PerceptionClient {
 
 struct WarmWorker {
     contained: ContainedChild,
-    stdin: ChildStdin,
-    stdout: ChildStdout,
+    /// Taken to close the request pipe when the worker should observe end of
+    /// file, which is the only way a named-pipe parent end signals it.
+    stdin: Option<WorkerStdin>,
+    stdout: WorkerStdout,
     _working_directory: tempfile::TempDir,
     last_used: Instant,
     idle_generation: u64,
@@ -367,9 +413,9 @@ impl WarmWorker {
             &config.args,
             working_directory.path(),
             &limits,
-        )?;
-        let child = &mut contained.child;
-        let mut stdin = child.stdin.take().ok_or_else(|| {
+        )
+        .await?;
+        let mut stdin = contained.take_stdin().ok_or_else(|| {
             error(
                 VisualParseErrorCode::WorkerLaunchFailed,
                 "perception worker stdin was unavailable",
@@ -377,7 +423,7 @@ impl WarmWorker {
                 None,
             )
         })?;
-        let mut stdout = child.stdout.take().ok_or_else(|| {
+        let mut stdout = contained.take_stdout().ok_or_else(|| {
             error(
                 VisualParseErrorCode::WorkerLaunchFailed,
                 "perception worker stdout was unavailable",
@@ -406,7 +452,7 @@ impl WarmWorker {
         }
         Ok(Self {
             contained,
-            stdin,
+            stdin: Some(stdin),
             stdout,
             _working_directory: working_directory,
             last_used: Instant::now(),
@@ -424,9 +470,17 @@ impl WarmWorker {
     ) -> Result<Value, VisualParseError> {
         use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 
+        let stdin = self.stdin.as_mut().ok_or_else(|| {
+            error(
+                VisualParseErrorCode::WorkerCrashed,
+                "the perception worker request pipe was already closed",
+                true,
+                None,
+            )
+        })?;
         let request_id = format!("parse-{}", Uuid::new_v4());
         write_json_frame(
-            &mut self.stdin,
+            stdin,
             &json!({
                 "protocol": PROTOCOL_VERSION,
                 "request_id": request_id,
@@ -445,10 +499,40 @@ impl WarmWorker {
             config.max_frame_bytes,
         )
         .await?;
-        read_response(&mut self.stdout, config.max_frame_bytes)
+        let result = read_response(&mut self.stdout, config.max_frame_bytes)
             .await?
-            .into_result(&request_id)
+            .into_result(&request_id)?;
+        verify_expected_extension_identity(&result, config.expected_extension_identity.as_ref())?;
+        Ok(result)
     }
+}
+
+fn verify_expected_extension_identity(
+    result: &Value,
+    expected: Option<&ExpectedExtensionIdentity>,
+) -> Result<(), VisualParseError> {
+    let Some(expected) = expected else {
+        return Ok(());
+    };
+    let extension = result
+        .get("identity")
+        .and_then(|identity| identity.get("extension"));
+    let actual_id = extension
+        .and_then(|value| value.get("id"))
+        .and_then(Value::as_str);
+    let actual_version = extension
+        .and_then(|value| value.get("version"))
+        .and_then(Value::as_str);
+    if actual_id != Some(expected.id.as_str()) || actual_version != Some(expected.version.as_str())
+    {
+        return Err(error(
+            VisualParseErrorCode::ArtifactInvalid,
+            "perception worker identity did not match the verified signed extension manifest",
+            false,
+            None,
+        ));
+    }
+    Ok(())
 }
 
 async fn runtime_cancelled(state: &PerceptionState, epoch: u64) {
@@ -485,11 +569,34 @@ fn schedule_idle_shutdown(
 }
 
 async fn shutdown_worker(mut worker: WarmWorker, timeout: Duration) {
-    let operation = async {
-        let _ = worker.stdin.shutdown().await;
-        let _ = worker.contained.child.wait().await;
-    };
-    let _ = tokio::time::timeout(timeout, operation).await;
+    worker.stdin.take();
+    let _ = tokio::time::timeout(timeout, worker.contained.wait()).await;
+}
+
+/// A worker that a containment ceiling ended is reported as a resource limit
+/// rather than a crash, so a caller does not retry a request that cannot
+/// succeed until the worker is replaced.
+fn map_worker_exit(exit: WorkerExit) -> VisualParseError {
+    match exit {
+        WorkerExit::Success => error(
+            VisualParseErrorCode::InferenceFailed,
+            "the perception worker reported success without a result",
+            false,
+            None,
+        ),
+        WorkerExit::ResourceLimit(detail) => error(
+            VisualParseErrorCode::ResourceLimitExceeded,
+            "the perception worker exhausted a containment resource ceiling",
+            false,
+            Some(detail),
+        ),
+        WorkerExit::Failure(detail) => error(
+            VisualParseErrorCode::WorkerCrashed,
+            "perception worker exited unsuccessfully after responding",
+            true,
+            Some(detail),
+        ),
+    }
 }
 
 #[derive(Deserialize)]
@@ -693,6 +800,14 @@ mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 
+    fn with_fixture_interpreter(script: &str) -> String {
+        #[cfg(target_os = "macos")]
+        const SHEBANG: &str = "#!/Applications/Xcode.app/Contents/Developer/usr/bin/python3";
+        #[cfg(not(target_os = "macos"))]
+        const SHEBANG: &str = "#!/usr/bin/env python3";
+        script.replacen("#!/usr/bin/env python3", SHEBANG, 1)
+    }
+
     fn fixture_worker(
         mode: &str,
         counter: Option<&std::path::Path>,
@@ -743,7 +858,7 @@ else:
     else:
         write_frame({'protocol':'cua-perception/1','request_id':request['request_id'],'status':'ok','result':{'regions':[],'runtime':'fixture'}})
 "#;
-        std::fs::write(&path, script).unwrap();
+        std::fs::write(&path, with_fixture_interpreter(script)).unwrap();
         let mut permissions = std::fs::metadata(&path).unwrap().permissions();
         permissions.set_mode(0o700);
         std::fs::set_permissions(&path, permissions).unwrap();
@@ -771,14 +886,12 @@ else:
                 .unwrap();
         PerceptionClient::new(PerceptionWorkerConfig {
             executable: path,
-            containment: ContainmentLimits {
-                additional_writable_paths: evidence_paths(&args),
-                ..ContainmentLimits::default()
-            },
+            containment: fixture_limits(&args),
             args,
             request_timeout: timeout,
             max_frame_bytes: maximum,
             warm_worker: None,
+            expected_extension_identity: None,
         })
         .unwrap()
     }
@@ -793,16 +906,27 @@ else:
                 .unwrap();
         PerceptionClient::new(PerceptionWorkerConfig {
             executable: path,
-            containment: ContainmentLimits {
-                additional_writable_paths: evidence_paths(&args),
-                ..ContainmentLimits::default()
-            },
+            containment: fixture_limits(&args),
             args,
             request_timeout: Duration::from_secs(10),
             max_frame_bytes: 1024 * 1024,
             warm_worker: Some(policy),
+            expected_extension_identity: None,
         })
         .unwrap()
+    }
+
+    /// Production limits widened by exactly what a scripted fixture needs and
+    /// nothing else. Production callers leave both lists empty, which is what
+    /// the enforcement probes below rely on: every path they are refused is
+    /// refused under a production-shaped sandbox too.
+    fn fixture_limits(args: &[String]) -> ContainmentLimits {
+        ContainmentLimits {
+            additional_writable_paths: evidence_paths(args),
+            additional_readable_paths: interpreter_read_paths(),
+            additional_executable_paths: interpreter_executable_paths(),
+            ..ContainmentLimits::default()
+        }
     }
 
     /// The fixture workers record their evidence outside their private working
@@ -813,6 +937,55 @@ else:
             .map(PathBuf::from)
             .filter(|path| path.is_absolute())
             .filter_map(|path| path.parent().map(std::path::Path::to_path_buf))
+            .collect()
+    }
+
+    /// A shipped worker is a self-contained native binary and reads only its
+    /// own bundle. The fixtures are Python scripts, so the host interpreter's
+    /// directories are opted in explicitly rather than by widening the derived
+    /// allowlist for everyone.
+    fn interpreter_read_paths() -> Vec<PathBuf> {
+        [
+            "/usr",
+            "/bin",
+            "/lib",
+            "/lib64",
+            "/etc",
+            "/opt",
+            "/System",
+            "/Library",
+            "/private/var/db",
+            "/private/var/select",
+            "/Applications/Xcode.app",
+        ]
+        .into_iter()
+        .map(PathBuf::from)
+        .filter(|path| path.is_dir())
+        .collect()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn interpreter_executable_paths() -> Vec<PathBuf> {
+        [
+            "/usr/bin/env",
+            "/usr/bin/python3",
+            "/Applications/Xcode.app/Contents/Developer/usr/bin/python3",
+            "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9",
+            "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Python3",
+            "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python",
+        ]
+        .into_iter()
+        .map(PathBuf::from)
+        .filter(|path| path.is_file())
+        .collect()
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn interpreter_executable_paths() -> Vec<PathBuf> {
+        ["/usr/bin/env", "/usr/bin/python3"]
+            .into_iter()
+            .map(PathBuf::from)
+            .filter(|path| path.is_file())
             .collect()
     }
 
@@ -845,7 +1018,7 @@ while True:
  if capture == 'hang': time.sleep(60)
  write({'protocol':'cua-perception/1','request_id':r['request_id'],'status':'ok','result':{'capture':capture,'pid':os.getpid(),'regions':[]}})
 "#;
-        std::fs::write(&path, script).unwrap();
+        std::fs::write(&path, with_fixture_interpreter(script)).unwrap();
         let mut permissions = std::fs::metadata(&path).unwrap().permissions();
         permissions.set_mode(0o700);
         std::fs::set_permissions(&path, permissions).unwrap();
@@ -861,9 +1034,10 @@ while True:
         (directory, path)
     }
 
-    /// Reports whether the containment layer actually denied a network
-    /// connection and a write outside the private working directory, and
-    /// whether a write inside it still succeeds.
+    /// Reports what the containment layer actually denied. The probe takes its
+    /// targets from `capture_id` rather than from argv, because an absolute
+    /// path argument is part of the worker's launch configuration and would
+    /// legitimately widen the read allowlist.
     fn containment_probe_worker() -> (tempfile::TempDir, PathBuf) {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("containment-probe.py");
@@ -902,6 +1076,35 @@ def probe_network():
         endpoint.close()
     return 'allowed'
 
+def probe_local_socket(path):
+    try:
+        endpoint = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    except OSError as failure:
+        return name(failure)
+    try:
+        endpoint.settimeout(2)
+        endpoint.connect(path)
+    except OSError as failure:
+        return name(failure)
+    finally:
+        endpoint.close()
+    return 'allowed'
+
+def probe_read(path):
+    try:
+        with open(path, 'rb') as handle:
+            handle.read(1)
+    except OSError as failure:
+        return name(failure)
+    return 'allowed'
+
+def probe_list(path):
+    try:
+        os.listdir(path)
+    except OSError as failure:
+        return name(failure)
+    return 'allowed'
+
 def probe_write(path):
     try:
         with open(path, 'w', encoding='utf-8') as handle:
@@ -921,17 +1124,35 @@ def probe_fork():
     os.waitpid(child, 0)
     return 'allowed'
 
+def probe_process_memory():
+    if not sys.platform.startswith('linux'):
+        return 'unavailable'
+    try:
+        import ctypes
+        libc = ctypes.CDLL(None, use_errno=True)
+        # PTRACE_ATTACH against the supervising Driver process.
+        if libc.ptrace(16, os.getppid(), 0, 0) == 0:
+            return 'allowed'
+        return errno.errorcode.get(ctypes.get_errno(), str(ctypes.get_errno()))
+    except Exception as failure:
+        return type(failure).__name__
+
 health = read_frame()
 write_frame({'protocol':'cua-perception/1','request_id':health['request_id'],'status':'ok','result':{'ready':True,'protocol':'cua-perception/1'}})
 request = read_frame()
+targets = json.loads(request['params']['capture_id'])
 write_frame({'protocol':'cua-perception/1','request_id':request['request_id'],'status':'ok','result':{
     'network': probe_network(),
+    'local_socket': probe_local_socket(targets['socket']),
+    'secret_read': probe_read(targets['secret']),
+    'secret_list': probe_list(os.path.dirname(targets['secret'])),
     'fork': probe_fork(),
-    'outside_write': probe_write('/tmp/cua-containment-probe-%d' % os.getpid()),
+    'process_memory': probe_process_memory(),
+    'outside_write': probe_write(targets['outside']),
     'inside_write': probe_write(os.path.join(os.getcwd(), 'probe')),
 }})
 "#;
-        std::fs::write(&path, script).unwrap();
+        std::fs::write(&path, with_fixture_interpreter(script)).unwrap();
         let mut permissions = std::fs::metadata(&path).unwrap().permissions();
         permissions.set_mode(0o700);
         std::fs::set_permissions(&path, permissions).unwrap();
@@ -939,10 +1160,115 @@ write_frame({'protocol':'cua-perception/1','request_id':request['request_id'],'s
         (directory, path)
     }
 
+    /// Anything the worker is refused here is refused under a production
+    /// sandbox too: the probe runs with no extra writable path and only the
+    /// interpreter's own read roots.
     #[tokio::test]
-    async fn contained_worker_is_denied_network_and_writes_outside_its_directory() {
+    async fn contained_worker_is_denied_every_route_off_its_own_bundle() {
+        let evidence = tempfile::Builder::new()
+            .prefix("cua-perception-secrets-")
+            .tempdir()
+            .unwrap();
+        let secret = evidence.path().join("credentials");
+        std::fs::write(&secret, b"token").unwrap();
+        let socket = evidence.path().join("desktop.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let targets = serde_json::json!({
+            "secret": secret.display().to_string(),
+            "socket": socket.display().to_string(),
+            "outside": evidence.path().join("escape").display().to_string(),
+        })
+        .to_string();
+
         let (directory, worker) = containment_probe_worker();
         let result = client(&directory, worker, Duration::from_secs(20), 1024 * 1024)
+            .parse(
+                &targets,
+                2,
+                2,
+                &[1, 2, 3, 4],
+                &PerceptionCancellation::default(),
+            )
+            .await
+            .unwrap();
+        drop(listener);
+
+        // A refused connection would mean the sandbox let the syscall through,
+        // so "connection refused" is not an acceptable outcome for any of these.
+        let denied = ["EPERM", "EACCES", "EAFNOSUPPORT"];
+        for (probe, allowed) in [
+            ("network", &denied[..]),
+            ("local_socket", &denied[..]),
+            ("secret_read", &denied[..2]),
+            ("secret_list", &denied[..2]),
+            ("outside_write", &denied[..2]),
+        ] {
+            let observed = result[probe].as_str().unwrap_or_default();
+            assert!(
+                allowed.contains(&observed),
+                "the {probe} probe was not denied: {result}"
+            );
+        }
+        assert!(
+            matches!(result["fork"].as_str(), Some("EPERM" | "EACCES" | "EAGAIN")),
+            "worker process creation was not denied: {result}"
+        );
+        assert!(
+            matches!(
+                result["process_memory"].as_str(),
+                Some("unavailable" | "EPERM" | "EACCES" | "ENOSYS")
+            ),
+            "the worker could attach to the Driver process: {result}"
+        );
+        assert_eq!(result["inside_write"], "allowed");
+    }
+
+    #[tokio::test]
+    async fn a_bundle_directory_too_broad_to_grant_fails_before_the_worker_runs() {
+        // `/usr/bin` is a shared system directory: granting reads beneath it
+        // would hand the worker every other program on the machine, so the
+        // launch must fail closed instead.
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("args.json"), b"[]").unwrap();
+        let failure = client(
+            &directory,
+            PathBuf::from("/usr/bin/true"),
+            Duration::from_secs(10),
+            1024 * 1024,
+        )
+        .parse(
+            "capture-test",
+            2,
+            2,
+            &[1, 2, 3, 4],
+            &PerceptionCancellation::default(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(failure.code, VisualParseErrorCode::WorkerLaunchFailed);
+        assert!(!failure.retryable);
+    }
+
+    #[tokio::test]
+    async fn a_missing_opted_in_sandbox_path_fails_closed() {
+        let directory = tempfile::tempdir().unwrap();
+        let (fixture, worker) = fixture_worker("ok", None);
+        let client = PerceptionClient::new(PerceptionWorkerConfig {
+            executable: worker,
+            containment: ContainmentLimits {
+                additional_readable_paths: vec![directory
+                    .path()
+                    .join("this-directory-does-not-exist")],
+                ..ContainmentLimits::default()
+            },
+            args: Vec::new(),
+            request_timeout: Duration::from_secs(10),
+            max_frame_bytes: 1024 * 1024,
+            warm_worker: None,
+            expected_extension_identity: None,
+        })
+        .unwrap();
+        let failure = client
             .parse(
                 "capture-test",
                 2,
@@ -951,24 +1277,62 @@ write_frame({'protocol':'cua-perception/1','request_id':request['request_id'],'s
                 &PerceptionCancellation::default(),
             )
             .await
-            .unwrap();
-        // A refused connection would mean the sandbox let the syscall through.
-        assert!(
-            matches!(
-                result["network"].as_str(),
-                Some("EPERM" | "EACCES" | "EAFNOSUPPORT")
-            ),
-            "network probe was not denied: {result}"
+            .unwrap_err();
+        assert_eq!(failure.code, VisualParseErrorCode::WorkerLaunchFailed);
+        drop(fixture);
+    }
+
+    #[test]
+    fn an_installed_extension_starts_cold() {
+        // Warm reuse keeps a worker — and the screenshot it was handed — alive
+        // between requests, so it stays behind an explicit opt-in until the
+        // per-platform cleanup certification passes.
+        assert!(PerceptionWorkerConfig::installed("/opt/cua/worker")
+            .warm_worker
+            .is_none());
+        assert!(PerceptionWorkerConfig::installed("/opt/cua/worker")
+            .with_bounded_reuse(WarmWorkerPolicy::default())
+            .warm_worker
+            .is_some());
+    }
+
+    #[test]
+    fn installed_extension_identity_is_launch_bound_and_verified() {
+        let config = PerceptionWorkerConfig::installed_with_identity(
+            "/opt/cua/worker",
+            "cua-perception",
+            "0.1.0",
         );
-        assert!(
-            matches!(result["outside_write"].as_str(), Some("EPERM" | "EACCES")),
-            "write outside the working directory was not denied: {result}"
+        assert_eq!(
+            config.args,
+            [
+                "--extension-id",
+                "cua-perception",
+                "--extension-version",
+                "0.1.0",
+            ]
         );
-        assert!(
-            matches!(result["fork"].as_str(), Some("EPERM" | "EACCES" | "EAGAIN")),
-            "worker process creation was not denied: {result}"
-        );
-        assert_eq!(result["inside_write"], "allowed");
+        let expected = config.expected_extension_identity.as_ref();
+        assert!(verify_expected_extension_identity(
+            &json!({
+                "identity": {
+                    "extension": {"id": "cua-perception", "version": "0.1.0"}
+                }
+            }),
+            expected,
+        )
+        .is_ok());
+
+        let failure = verify_expected_extension_identity(
+            &json!({
+                "identity": {
+                    "extension": {"id": "cua-perception", "version": "0.28.2"}
+                }
+            }),
+            expected,
+        )
+        .unwrap_err();
+        assert_eq!(failure.code, VisualParseErrorCode::ArtifactInvalid);
     }
 
     #[tokio::test]

@@ -1,30 +1,43 @@
 //! Linux worker containment: process group, parent-death signal, resource
-//! limits, `PR_SET_NO_NEW_PRIVS`, a Landlock ruleset that confines writes, and
-//! a seccomp filter that denies non-local socket families.
+//! limits, `PR_SET_NO_NEW_PRIVS`, a Landlock ruleset that confines reads,
+//! executes and writes to an exact allowlist, and a seccomp filter that denies
+//! every socket, `io_uring`, process creation, debugger attachment and
+//! cross-process memory access.
 //!
-//! Landlock and seccomp are the two unprivileged kernel facilities that a
-//! parent can install on a child without root, a namespace or a helper binary.
-//! Landlock alone is not enough for the network half of the contract: network
-//! restriction only arrives in Landlock ABI 4 and covers TCP bind/connect only,
-//! so the seccomp filter is what actually denies the worker every non-local
-//! address family. Both are prepared in the parent so that a kernel without
-//! them fails the launch with a stable error instead of degrading silently.
+//! Landlock and seccomp are the two unprivileged kernel facilities a parent can
+//! install on a child without root, a namespace or a helper binary. Neither is
+//! sufficient alone:
+//!
+//! - Landlock has no hook for `unix_stream_connect` through ABI 5, so it cannot
+//!   stop the worker from reaching the X11, Wayland, D-Bus or `ssh-agent`
+//!   sockets. The seccomp filter denies socket creation outright instead, which
+//!   removes every route — local and external — because the worker also
+//!   inherits no descriptors.
+//! - seccomp cannot express a path policy, and it does not see `io_uring`'s
+//!   asynchronous operations at all, which is why `io_uring_setup` is denied
+//!   rather than filtered.
+//!
+//! Both are prepared in the parent so that a kernel without them fails the
+//! launch with a stable error instead of degrading silently.
 
 use std::ffi::CString;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::process::CommandExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use cua_driver_contract::VisualParseError;
-use tokio::process::Child;
 
-use super::unix::{apply_resource_limits, ProcessGroupGuard};
+use super::unix::{apply_resource_limits, base_command, ProcessGroupGuard};
 use super::{
-    base_command, containment_error, os_detail, spawn_error, unsupported_error, ContainmentLimits,
+    containment_error, os_detail, spawn_error, unsupported_error, ContainedChild,
+    ContainmentLimits, FilesystemBoundary,
 };
 
 pub(super) type Guard = ProcessGroupGuard;
+pub(super) type Process = super::unix::Process;
+pub(super) type WorkerStdin = tokio::process::ChildStdin;
+pub(super) type WorkerStdout = tokio::process::ChildStdout;
 
 const SYS_LANDLOCK_CREATE_RULESET: libc::c_long = 444;
 const SYS_LANDLOCK_ADD_RULE: libc::c_long = 445;
@@ -35,7 +48,10 @@ const CLOSE_RANGE_CLOEXEC: u32 = 1 << 2;
 const LANDLOCK_CREATE_RULESET_VERSION: u32 = 1 << 0;
 const LANDLOCK_RULE_PATH_BENEATH: u32 = 1;
 
+const LANDLOCK_ACCESS_FS_EXECUTE: u64 = 1 << 0;
 const LANDLOCK_ACCESS_FS_WRITE_FILE: u64 = 1 << 1;
+const LANDLOCK_ACCESS_FS_READ_FILE: u64 = 1 << 2;
+const LANDLOCK_ACCESS_FS_READ_DIR: u64 = 1 << 3;
 const LANDLOCK_ACCESS_FS_REMOVE_DIR: u64 = 1 << 4;
 const LANDLOCK_ACCESS_FS_REMOVE_FILE: u64 = 1 << 5;
 const LANDLOCK_ACCESS_FS_MAKE_CHAR: u64 = 1 << 6;
@@ -50,11 +66,13 @@ const LANDLOCK_ACCESS_FS_REFER: u64 = 1 << 13;
 /// Landlock ABI 3.
 const LANDLOCK_ACCESS_FS_TRUNCATE: u64 = 1 << 14;
 
-/// Every write-shaped filesystem right available in Landlock ABI 1. Read rights
-/// are deliberately left unhandled so the ruleset never restricts reads: the
-/// worker must still load its runtime and model artifacts from outside its
-/// working directory.
-const LANDLOCK_WRITE_ACCESS_V1: u64 = LANDLOCK_ACCESS_FS_WRITE_FILE
+/// Every filesystem right Landlock ABI 1-3 can restrict. Handling all of them
+/// means the ruleset denies reads, executes and writes by default; a path is
+/// reachable only through an explicit rule below.
+const LANDLOCK_HANDLED_ACCESS: u64 = LANDLOCK_ACCESS_FS_EXECUTE
+    | LANDLOCK_ACCESS_FS_WRITE_FILE
+    | LANDLOCK_ACCESS_FS_READ_FILE
+    | LANDLOCK_ACCESS_FS_READ_DIR
     | LANDLOCK_ACCESS_FS_REMOVE_DIR
     | LANDLOCK_ACCESS_FS_REMOVE_FILE
     | LANDLOCK_ACCESS_FS_MAKE_CHAR
@@ -63,7 +81,60 @@ const LANDLOCK_WRITE_ACCESS_V1: u64 = LANDLOCK_ACCESS_FS_WRITE_FILE
     | LANDLOCK_ACCESS_FS_MAKE_SOCK
     | LANDLOCK_ACCESS_FS_MAKE_FIFO
     | LANDLOCK_ACCESS_FS_MAKE_BLOCK
-    | LANDLOCK_ACCESS_FS_MAKE_SYM;
+    | LANDLOCK_ACCESS_FS_MAKE_SYM
+    | LANDLOCK_ACCESS_FS_REFER
+    | LANDLOCK_ACCESS_FS_TRUNCATE;
+
+/// Read and execute a directory tree. Granted on the worker bundle, the
+/// inference runtime, the model artifacts and the immutable system runtime
+/// directories the dynamic loader needs.
+const LANDLOCK_READ_TREE: u64 =
+    LANDLOCK_ACCESS_FS_READ_FILE | LANDLOCK_ACCESS_FS_READ_DIR | LANDLOCK_ACCESS_FS_EXECUTE;
+/// Read a single file. Directory-only rights would make `landlock_add_rule`
+/// reject a rule whose target is not a directory.
+const LANDLOCK_READ_FILE_ONLY: u64 = LANDLOCK_ACCESS_FS_READ_FILE;
+/// Read and write one character device, without being able to create, replace
+/// or remove anything beside it.
+const LANDLOCK_DEVICE_ACCESS: u64 =
+    LANDLOCK_ACCESS_FS_READ_FILE | LANDLOCK_ACCESS_FS_WRITE_FILE | LANDLOCK_ACCESS_FS_TRUNCATE;
+
+/// Immutable system directories the native loader and inference runtime read.
+/// Each is optional: a distribution that does not have one simply contributes
+/// no rule. None of them expose user data.
+const SYSTEM_READ_TREES: &[&str] = &[
+    "/lib",
+    "/lib64",
+    "/usr/lib",
+    "/usr/lib64",
+    "/usr/lib32",
+    "/usr/libexec",
+    "/etc/ld.so.conf.d",
+    "/sys/devices/system/cpu",
+];
+
+/// Exact system files the loader and allocator read. Whole-directory rules for
+/// `/etc`, `/proc` and `/sys` would expose credentials and other processes, so
+/// only these files are granted.
+const SYSTEM_READ_FILES: &[&str] = &[
+    "/etc/ld.so.cache",
+    "/etc/ld.so.conf",
+    "/etc/ld.so.preload",
+    "/proc/cpuinfo",
+    "/proc/meminfo",
+    "/proc/stat",
+    "/proc/sys/vm/overcommit_memory",
+    "/proc/sys/vm/max_map_count",
+];
+
+/// The only devices the worker may open. A rule beneath `/dev` itself would let
+/// a worker running as root reach `/dev/mem` or a raw block device.
+const DEVICE_NODES: &[&str] = &[
+    "/dev/null",
+    "/dev/zero",
+    "/dev/full",
+    "/dev/random",
+    "/dev/urandom",
+];
 
 const SECCOMP_SET_MODE_FILTER: libc::c_ulong = 1;
 const SECCOMP_GET_ACTION_AVAIL: libc::c_ulong = 2;
@@ -80,6 +151,7 @@ const BPF_ALU: u16 = 0x04;
 const BPF_AND: u16 = 0x50;
 const BPF_JMP: u16 = 0x05;
 const BPF_JEQ: u16 = 0x10;
+const BPF_JGE: u16 = 0x30;
 const BPF_K: u16 = 0x00;
 const BPF_RET: u16 = 0x06;
 
@@ -93,6 +165,10 @@ const SECCOMP_DATA_ARG0_LOW: u32 = 16;
 const AUDIT_ARCH: u32 = 0xC000_003E;
 #[cfg(target_arch = "aarch64")]
 const AUDIT_ARCH: u32 = 0xC000_00B7;
+/// x32 shares `AUDIT_ARCH_X86_64` but renumbers its syscalls, so a filter
+/// written against the 64-bit table does not describe it.
+#[cfg(target_arch = "x86_64")]
+const X32_SYSCALL_BIT: u32 = 0x4000_0000;
 
 #[repr(C)]
 struct LandlockRulesetAttr {
@@ -122,25 +198,25 @@ struct SockFprog {
     filter: *const SockFilter,
 }
 
-pub(super) fn spawn(
+pub(super) async fn spawn(
     executable: &Path,
     args: &[String],
     working_directory: &Path,
+    boundary: &FilesystemBoundary,
     limits: &ContainmentLimits,
-) -> Result<(Child, Guard), VisualParseError> {
+) -> Result<ContainedChild, VisualParseError> {
     // Both rulesets are built in the parent so an unsupported kernel or
     // architecture is reported explicitly rather than as an opaque
     // `pre_exec` failure after the point of no return.
-    let ruleset = build_landlock_ruleset(working_directory, &limits.additional_writable_paths)?;
+    let ruleset = build_landlock_ruleset(boundary)?;
     let filter = build_seccomp_filter()?;
 
-    let mut command = base_command(executable);
+    let mut command = base_command(executable, working_directory);
     command.args(args).current_dir(working_directory);
     command.process_group(0);
 
     let max_memory_bytes = limits.max_memory_bytes;
     let max_cpu_seconds = limits.max_cpu_seconds();
-    let max_processes = limits.max_processes;
     let max_open_files = limits.max_open_files;
     // Runs between fork and exec. Every call below is a raw syscall, nothing
     // allocates, and both the ruleset descriptor and the filter program were
@@ -156,12 +232,7 @@ pub(super) fn spawn(
             if libc::getppid() != parent {
                 libc::raise(libc::SIGKILL);
             }
-            apply_resource_limits(
-                max_memory_bytes,
-                max_cpu_seconds,
-                max_processes,
-                max_open_files,
-            )?;
+            apply_resource_limits(Some(max_memory_bytes), max_cpu_seconds, max_open_files)?;
             if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
                 return Err(std::io::Error::last_os_error());
             }
@@ -197,9 +268,19 @@ pub(super) fn spawn(
         });
     }
 
-    let child = command.spawn().map_err(spawn_error)?;
-    let guard = ProcessGroupGuard::new(child.id());
-    Ok((child, guard))
+    let mut child = command.spawn().map_err(spawn_error)?;
+    let stdin = child.stdin.take();
+    let stdout = child.stdout.take();
+    // seccomp denies `fork`, `clone` without `CLONE_THREAD`, `setsid` and
+    // `setpgid`, so the worker is provably the only member of its process
+    // group and the group is empty once it is reaped.
+    let guard = ProcessGroupGuard::new(child.id(), false);
+    Ok(ContainedChild {
+        guard,
+        process: Process::new(child),
+        stdin,
+        stdout,
+    })
 }
 
 fn landlock_abi() -> Option<u32> {
@@ -214,10 +295,7 @@ fn landlock_abi() -> Option<u32> {
     u32::try_from(abi).ok().filter(|abi| *abi >= 1)
 }
 
-fn build_landlock_ruleset(
-    working_directory: &Path,
-    additional_writable_paths: &[PathBuf],
-) -> Result<OwnedFd, VisualParseError> {
+fn build_landlock_ruleset(boundary: &FilesystemBoundary) -> Result<OwnedFd, VisualParseError> {
     let Some(abi) = landlock_abi() else {
         return Err(unsupported_error(
             "this Linux kernel does not provide the Landlock filesystem containment the perception worker requires",
@@ -228,11 +306,9 @@ fn build_landlock_ruleset(
             "this Linux kernel cannot restrict file truncation for the perception worker",
         ));
     }
-    let mut handled = LANDLOCK_WRITE_ACCESS_V1;
-    handled |= LANDLOCK_ACCESS_FS_REFER | LANDLOCK_ACCESS_FS_TRUNCATE;
 
     let attribute = LandlockRulesetAttr {
-        handled_access_fs: handled,
+        handled_access_fs: LANDLOCK_HANDLED_ACCESS,
     };
     let ruleset = unsafe {
         libc::syscall(
@@ -253,15 +329,23 @@ fn build_landlock_ruleset(
         })?;
     let ruleset = unsafe { OwnedFd::from_raw_fd(ruleset) };
 
-    add_rule(&ruleset, working_directory, handled, true)?;
-    for path in additional_writable_paths {
-        add_rule(&ruleset, path, handled, true)?;
+    // Writable roots are also readable and executable; the worker unpacks
+    // nothing but does memory-map artifacts it wrote.
+    for path in &boundary.writable {
+        add_rule(&ruleset, path, LANDLOCK_HANDLED_ACCESS, true)?;
     }
-    // Native inference runtimes open GPU and accelerator character devices
-    // read-write. Opening an existing node is allowed; creating, replacing or
-    // removing entries under `/dev` is not.
-    let device_access = handled & (LANDLOCK_ACCESS_FS_WRITE_FILE | LANDLOCK_ACCESS_FS_TRUNCATE);
-    add_rule(&ruleset, Path::new("/dev"), device_access, false)?;
+    for path in &boundary.readable {
+        add_rule(&ruleset, path, LANDLOCK_READ_TREE, true)?;
+    }
+    for path in SYSTEM_READ_TREES {
+        add_rule(&ruleset, Path::new(path), LANDLOCK_READ_TREE, false)?;
+    }
+    for path in SYSTEM_READ_FILES {
+        add_rule(&ruleset, Path::new(path), LANDLOCK_READ_FILE_ONLY, false)?;
+    }
+    for path in DEVICE_NODES {
+        add_rule(&ruleset, Path::new(path), LANDLOCK_DEVICE_ACCESS, false)?;
+    }
     Ok(ruleset)
 }
 
@@ -289,7 +373,7 @@ fn add_rule(
     };
     if added != 0 {
         return Err(containment_error(
-            "failed to grant a writable path in the Landlock ruleset for the perception worker",
+            "failed to grant a path in the Landlock ruleset for the perception worker",
             os_detail(&std::io::Error::last_os_error()),
         ));
     }
@@ -299,31 +383,118 @@ fn add_rule(
 fn open_path(path: &Path, required: bool) -> Result<Option<OwnedFd>, VisualParseError> {
     let raw = CString::new(path.as_os_str().as_bytes()).map_err(|_| {
         containment_error(
-            "a writable path for the Linux worker sandbox contains an interior NUL",
+            "a path for the Linux worker sandbox contains an interior NUL",
             None,
         )
     })?;
+    // `O_PATH` resolves the object without opening it for I/O. Symlinks are
+    // followed deliberately: the worker paths are canonicalized before they
+    // reach this function, and the system directories below are symlinks to
+    // their merged-`/usr` targets on most distributions.
     let fd = unsafe { libc::open(raw.as_ptr(), libc::O_PATH | libc::O_CLOEXEC) };
     if fd < 0 {
         if !required {
             return Ok(None);
         }
         return Err(containment_error(
-            "failed to open a writable path for the Linux worker sandbox",
+            "failed to open a path for the Linux worker sandbox",
             os_detail(&std::io::Error::last_os_error()),
         ));
     }
     Ok(Some(unsafe { OwnedFd::from_raw_fd(fd) }))
 }
 
-/// Deny every socket family except `AF_UNIX`, which the worker's own runtime may
-/// use for local IPC. `socket` is the only way to obtain a fresh network
-/// endpoint, and the worker inherits no descriptors beyond its stdio pipes, so
-/// denying creation denies the network.
+/// Syscalls the worker may never make, on every architecture this filter
+/// supports.
+///
+/// The network group is complete rather than domain-filtered: an `AF_UNIX`
+/// endpoint reaches the X11, Wayland, D-Bus and `ssh-agent` sockets, which is
+/// desktop capture, input injection and credential authority, so the worker
+/// gets no socket at all. The `io_uring` group is denied because seccomp does
+/// not see the operations submitted through a ring, which would otherwise
+/// reopen every route above.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn denied_syscalls() -> Vec<libc::c_long> {
+    let mut denied = vec![
+        // Sockets: creation, connection and every operation on one.
+        libc::SYS_socket,
+        libc::SYS_socketpair,
+        libc::SYS_connect,
+        libc::SYS_bind,
+        libc::SYS_listen,
+        libc::SYS_accept,
+        libc::SYS_accept4,
+        libc::SYS_sendto,
+        libc::SYS_recvfrom,
+        libc::SYS_sendmsg,
+        libc::SYS_recvmsg,
+        libc::SYS_sendmmsg,
+        libc::SYS_recvmmsg,
+        libc::SYS_getsockname,
+        libc::SYS_getpeername,
+        libc::SYS_setsockopt,
+        libc::SYS_getsockopt,
+        libc::SYS_shutdown,
+        // io_uring: an unfiltered asynchronous path to all of the above.
+        libc::SYS_io_uring_setup,
+        libc::SYS_io_uring_enter,
+        libc::SYS_io_uring_register,
+        // Debugger attachment and cross-process memory or descriptor access.
+        libc::SYS_ptrace,
+        libc::SYS_process_vm_readv,
+        libc::SYS_process_vm_writev,
+        libc::SYS_kcmp,
+        libc::SYS_pidfd_open,
+        libc::SYS_pidfd_getfd,
+        libc::SYS_pidfd_send_signal,
+        // Signalling an unrelated process or the whole session.
+        libc::SYS_kill,
+        // Filesystem policy escapes: a file handle bypasses path resolution,
+        // and a mount changes what a Landlock path even refers to.
+        libc::SYS_name_to_handle_at,
+        libc::SYS_open_by_handle_at,
+        libc::SYS_mount,
+        libc::SYS_umount2,
+        libc::SYS_pivot_root,
+        libc::SYS_chroot,
+        // Namespaces, kernel objects and keyrings.
+        libc::SYS_unshare,
+        libc::SYS_setns,
+        libc::SYS_bpf,
+        libc::SYS_perf_event_open,
+        libc::SYS_userfaultfd,
+        libc::SYS_add_key,
+        libc::SYS_keyctl,
+        libc::SYS_request_key,
+        libc::SYS_init_module,
+        libc::SYS_finit_module,
+        libc::SYS_delete_module,
+        libc::SYS_kexec_load,
+        libc::SYS_kexec_file_load,
+        libc::SYS_reboot,
+        libc::SYS_syslog,
+        libc::SYS_acct,
+        libc::SYS_swapon,
+        libc::SYS_swapoff,
+        libc::SYS_quotactl,
+        // Execution-environment changes, including disabling ASLR.
+        libc::SYS_personality,
+        // The worker must remain its own process-group leader so the guard can
+        // always reap it.
+        libc::SYS_setsid,
+        libc::SYS_setpgid,
+    ];
+    // Process creation. Runtime threads stay available through the
+    // `CLONE_THREAD` rule in the assembled filter.
+    #[cfg(target_arch = "x86_64")]
+    denied.extend([libc::SYS_fork, libc::SYS_vfork]);
+    denied
+}
+
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 fn build_seccomp_filter() -> Result<Vec<SockFilter>, VisualParseError> {
     Err(unsupported_error(
-        "the perception worker has no seccomp network denial for this Linux architecture",
+        "the perception worker has no seccomp containment for this Linux architecture",
     ))
 }
 
@@ -331,32 +502,39 @@ fn build_seccomp_filter() -> Result<Vec<SockFilter>, VisualParseError> {
 fn build_seccomp_filter() -> Result<Vec<SockFilter>, VisualParseError> {
     if !seccomp_action_available(SECCOMP_RET_ERRNO) {
         return Err(unsupported_error(
-            "this Linux kernel does not provide the seccomp network denial the perception worker requires",
+            "this Linux kernel does not provide the seccomp containment the perception worker requires",
         ));
     }
     // A foreign audit architecture means the syscall numbers below do not
     // describe the calling ABI, so the safe response is to stop the process
-    // rather than let an unfiltered syscall through. `args[0]` is read as its
-    // low half, which is the domain argument on these little-endian targets.
+    // rather than let an unfiltered syscall through.
     let mismatch = if seccomp_action_available(SECCOMP_RET_KILL_PROCESS) {
         SECCOMP_RET_KILL_PROCESS
     } else {
         SECCOMP_RET_KILL_THREAD
     };
+    Ok(assemble_seccomp_filter(mismatch))
+}
+
+/// Assemble the BPF program. Kept free of host probes so its shape can be
+/// asserted on any machine.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn assemble_seccomp_filter(mismatch: u32) -> Vec<SockFilter> {
     let denied = SECCOMP_RET_ERRNO | (libc::EPERM as u32 & 0xffff);
     let unavailable = SECCOMP_RET_ERRNO | (libc::ENOSYS as u32 & 0xffff);
+
     let mut filter = vec![
         load(SECCOMP_DATA_ARCH),
         jump_equal(AUDIT_ARCH, 1, 0),
         ret(mismatch),
         load(SECCOMP_DATA_NR),
-        // The worker itself must remain the process-group leader so the guard
-        // can always reap it. Process creation is denied below; native runtime
-        // threads remain available through CLONE_THREAD.
-        jump_equal(libc::SYS_setsid as u32, 0, 1),
-        ret(denied),
-        jump_equal(libc::SYS_setpgid as u32, 0, 1),
-        ret(denied),
+    ];
+    #[cfg(target_arch = "x86_64")]
+    filter.extend([jump_at_least(X32_SYSCALL_BIT, 0, 1), ret(mismatch)]);
+    for number in denied_syscalls() {
+        filter.extend([jump_equal(number as u32, 0, 1), ret(denied)]);
+    }
+    filter.extend([
         // Do not let the worker clear the parent-death signal installed just
         // before this filter. Other prctl operations (for example thread names)
         // remain available.
@@ -365,15 +543,6 @@ fn build_seccomp_filter() -> Result<Vec<SockFilter>, VisualParseError> {
         jump_equal(libc::PR_SET_PDEATHSIG as u32, 0, 1),
         ret(denied),
         load(SECCOMP_DATA_NR),
-    ];
-    #[cfg(target_arch = "x86_64")]
-    filter.extend([
-        jump_equal(libc::SYS_fork as u32, 0, 1),
-        ret(denied),
-        jump_equal(libc::SYS_vfork as u32, 0, 1),
-        ret(denied),
-    ]);
-    filter.extend([
         // Returning ENOSYS for clone3 makes pthread implementations fall back
         // to clone, whose flags seccomp can inspect directly.
         jump_equal(libc::SYS_clone3 as u32, 0, 1),
@@ -384,15 +553,9 @@ fn build_seccomp_filter() -> Result<Vec<SockFilter>, VisualParseError> {
         jump_equal(libc::CLONE_THREAD as u32, 1, 0),
         ret(denied),
         load(SECCOMP_DATA_NR),
-        jump_equal(libc::SYS_socket as u32, 2, 0),
-        jump_equal(libc::SYS_socketpair as u32, 1, 0),
-        ret(SECCOMP_RET_ALLOW),
-        load(SECCOMP_DATA_ARG0_LOW),
-        jump_equal(libc::AF_UNIX as u32, 1, 0),
-        ret(SECCOMP_RET_ERRNO | (libc::EAFNOSUPPORT as u32 & 0xffff)),
         ret(SECCOMP_RET_ALLOW),
     ]);
-    Ok(filter)
+    filter
 }
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -425,6 +588,16 @@ fn jump_equal(value: u32, jt: u8, jf: u8) -> SockFilter {
     }
 }
 
+#[cfg(target_arch = "x86_64")]
+fn jump_at_least(value: u32, jt: u8, jf: u8) -> SockFilter {
+    SockFilter {
+        code: BPF_JMP | BPF_JGE | BPF_K,
+        jt,
+        jf,
+        k: value,
+    }
+}
+
 fn and(value: u32) -> SockFilter {
     SockFilter {
         code: BPF_ALU | BPF_AND | BPF_K,
@@ -440,5 +613,54 @@ fn ret(action: u32) -> SockFilter {
         jt: 0,
         jf: 0,
         k: action,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_filter_denies_every_socket_and_io_uring_entry_point() {
+        let denied = denied_syscalls();
+        for required in [
+            libc::SYS_socket,
+            libc::SYS_socketpair,
+            libc::SYS_connect,
+            libc::SYS_io_uring_setup,
+            libc::SYS_io_uring_enter,
+            libc::SYS_io_uring_register,
+            libc::SYS_ptrace,
+            libc::SYS_process_vm_readv,
+            libc::SYS_process_vm_writev,
+            libc::SYS_open_by_handle_at,
+        ] {
+            assert!(
+                denied.contains(&required),
+                "syscall {required} is not denied by the perception worker filter"
+            );
+        }
+    }
+
+    #[test]
+    fn the_filter_fits_the_kernel_program_ceiling_with_single_byte_jumps() {
+        let filter = assemble_seccomp_filter(SECCOMP_RET_KILL_PROCESS);
+        assert!(filter.len() < 4096, "filter is {} long", filter.len());
+        assert!(
+            filter
+                .iter()
+                .all(|instruction| instruction.jt <= 4 && instruction.jf <= 4),
+            "a jump offset outside this filter's fixed layout would land on the wrong instruction"
+        );
+    }
+
+    #[test]
+    fn the_device_allowlist_never_grants_a_directory_or_raw_memory() {
+        for node in DEVICE_NODES {
+            assert!(
+                !matches!(*node, "/dev" | "/dev/mem" | "/dev/kmem" | "/dev/shm"),
+                "{node} must not be in the worker device allowlist"
+            );
+        }
     }
 }

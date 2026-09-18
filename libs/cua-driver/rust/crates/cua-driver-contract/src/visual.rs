@@ -173,6 +173,7 @@ pub struct VisualCaptureProvenance {
 
 /// Optional, model-neutral controls for one bounded parse.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
+#[serde(deny_unknown_fields)]
 pub struct ParseVisualRegionsOptions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "region_kinds_schema")]
@@ -187,7 +188,9 @@ pub struct ParseVisualRegionsOptions {
 
 /// Transport-free request. Runtime use requires the future capture registry.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
+#[serde(deny_unknown_fields)]
 pub struct ParseVisualRegionsInput {
+    #[schemars(length(min = 1))]
     pub capture_id: String,
     #[serde(default)]
     pub options: ParseVisualRegionsOptions,

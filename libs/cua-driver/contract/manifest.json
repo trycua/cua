@@ -2869,14 +2869,15 @@
         "action": "observe"
       },
       "input_schema": {
-        "additionalProperties": true,
+        "additionalProperties": false,
         "description": "Transport-free request. Runtime use requires the future capture registry.",
         "properties": {
           "capture_id": {
+            "minLength": 1,
             "type": "string"
           },
           "options": {
-            "additionalProperties": true,
+            "additionalProperties": false,
             "default": {},
             "description": "Optional, model-neutral controls for one bounded parse.",
             "properties": {

@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use cua_driver_contract::{
-    ParseVisualRegionsInput, ParseVisualRegionsOutput, VisualActionCoordinateSpace,
+    ParseVisualRegionsInput, ParseVisualRegionsOutput, ToolInput, VisualActionCoordinateSpace,
     VisualCaptureProvenance, VisualCaptureSource, VisualParseError, VisualParseErrorCode,
     VisualParseTiming, VisualParserMetadata, VisualRegion, VisualRegionBounds, VisualRegionKind,
     VisualScreenshotReference, VISUAL_REGIONS_SCHEMA,
@@ -57,29 +57,7 @@ impl ParseVisualRegionsTool {
             def: ToolDef {
                 name: "parse_visual_regions".into(),
                 description: "Parse text and icon regions from an immutable Driver capture.".into(),
-                input_schema: json!({
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": ["capture_id"],
-                    "properties": {
-                        "capture_id": {"type": "string", "minLength": 1},
-                        "options": {
-                            "type": "object",
-                            "additionalProperties": false,
-                            "properties": {
-                                "kinds": {
-                                    "type": ["array", "null"],
-                                    "minItems": 1,
-                                    "maxItems": 2,
-                                    "uniqueItems": true,
-                                    "items": {"enum": ["text", "icon"]}
-                                },
-                                "min_confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
-                                "max_regions": {"type": ["integer", "null"], "minimum": 1}
-                            }
-                        }
-                    }
-                }),
+                input_schema: ParseVisualRegionsInput::input_schema(),
                 read_only: true,
                 destructive: false,
                 idempotent: true,

@@ -769,9 +769,8 @@ fn transport_from_legacy(
         "pty" => ActionTransport::LinuxPty,
         "mpx_uinput" | "mpx_pointer" => ActionTransport::LinuxX11MpxUinput,
         "x11_xsendevent" => ActionTransport::LinuxXSendEvent,
-        "x11_pixel" | "x11_pixel_fg" | "x11_xtest_fg" | "xtest" | "xtest_desktop" => {
-            ActionTransport::LinuxXTest
-        }
+        "x11_pixel" | "x11_pixel_fg" | "x11_xtest_fg" | "xtest" | "xtest_desktop"
+        | "xtest_core_grab" => ActionTransport::LinuxXTest,
         "wayland_activate" | "wayland_focused" => ActionTransport::LinuxLibei,
         "wayland_desktop" => ActionTransport::LinuxWaylandVirtualPointer,
         "cua_compositor_inject" | "wayland_cua_compositor" => {
@@ -1974,6 +1973,7 @@ mod tests {
             "x11_xtest_fg",
             "xtest",
             "xtest_desktop",
+            "xtest_core_grab",
             "wayland_activate",
             "wayland_focused",
             "wayland_desktop",

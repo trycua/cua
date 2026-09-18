@@ -173,6 +173,14 @@ async fn shared_connection() -> Result<&'static AccessibilityConnection> {
             {
                 dlog!("AT-SPI state-changed subscription failed: {error}");
             }
+            // Grids (LibreOffice Calc) keep the focus on the table and report
+            // the current cell as its active descendant.
+            if let Err(error) = conn
+                .register_event::<atspi::events::object::ActiveDescendantChangedEvent>()
+                .await
+            {
+                dlog!("AT-SPI active-descendant subscription failed: {error}");
+            }
             Ok(conn)
         })
         .await
@@ -186,6 +194,14 @@ async fn shared_connection() -> Result<&'static AccessibilityConnection> {
 /// keyed by the emitting application's bus name. Maintained by
 /// [`spawn_focus_tracker`]; consulted by the focus-aware typing paths.
 fn focus_map() -> &'static std::sync::Mutex<std::collections::HashMap<String, String>> {
+    static MAP: OnceLock<std::sync::Mutex<std::collections::HashMap<String, String>>> =
+        OnceLock::new();
+    MAP.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// Object path of the active descendant most recently reported per bus
+/// (`object:active-descendant-changed`): the current cell of a focused grid.
+fn active_descendant_map() -> &'static std::sync::Mutex<std::collections::HashMap<String, String>> {
     static MAP: OnceLock<std::sync::Mutex<std::collections::HashMap<String, String>>> =
         OnceLock::new();
     MAP.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
@@ -209,6 +225,17 @@ fn spawn_focus_tracker(conn: &'static AccessibilityConnection) {
         let stream = conn.event_stream();
         futures_util::pin_mut!(stream);
         while let Some(event) = stream.next().await {
+            if let Ok(atspi::Event::Object(atspi::ObjectEvents::ActiveDescendantChanged(active))) =
+                &event
+            {
+                if let Some(bus) = active.item.name_as_str() {
+                    active_descendant_map()
+                        .lock()
+                        .unwrap()
+                        .insert(bus.to_owned(), active.descendant.path_as_str().to_owned());
+                }
+                continue;
+            }
             let Ok(atspi::Event::Object(atspi::ObjectEvents::StateChanged(changed))) = event
             else {
                 continue;
@@ -1668,23 +1695,24 @@ fn preceding_sibling_label(visited: &[Visited<'_>], parents: &[Option<usize>], p
     None
 }
 
-/// "3rd of 4 spin buttons in this panel": the control's place among the
-/// same-role siblings of its real parent, in walk (= visual) order.
-fn sibling_ordinal(visited: &[Visited<'_>], parents: &[Option<usize>], pos: usize) -> String {
+/// "3rd of 4 spin buttons in this window": the control's place among the
+/// showing same-role controls of its top-level, in walk (= visual) order —
+/// what a screenshot shows, so the model can map the rows it sees.
+fn sibling_ordinal(visited: &[Visited<'_>], _parents: &[Option<usize>], pos: usize) -> String {
     let role = visited[pos].role.to_ascii_lowercase();
-    let same_role = |q: usize| parents[q] == parents[pos] && visited[q].role.eq_ignore_ascii_case(&role);
+    let same_role = |q: usize| {
+        visited[q].frame_ordinal == visited[pos].frame_ordinal
+            && visited[q].showing
+            && visited[q].role.eq_ignore_ascii_case(&role)
+    };
     let total = (0..visited.len()).filter(|q| same_role(*q)).count();
     let nth = (0..=pos).filter(|q| same_role(*q)).count();
-    let container = parents[pos]
-        .map(|p| visited[p].role.to_ascii_lowercase())
-        .filter(|r| !r.is_empty())
-        .unwrap_or_else(|| "window".to_owned());
     let plural = if total == 1 {
         role.clone()
     } else {
         format!("{role}s")
     };
-    format!("{} of {total} {plural} in this {container}", ordinal_word(nth))
+    format!("{} of {total} {plural} in this window", ordinal_word(nth))
 }
 
 /// Render visited nodes into the markdown + node list `walk_tree` returns.
@@ -1743,15 +1771,18 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
             let mut name = v.name.clone();
             let mut unlabelled_note = None;
             if name.trim().is_empty() && is_value_control_role(&role_lower) {
-                match preceding_sibling_label(visited, &parents, pos) {
-                    Some(label) => name = label,
-                    None => {
-                        unlabelled_note = Some(format!(
-                            "{UNLABELLED_NOTE_PREFIX} {}; {}",
-                            role_lower,
-                            sibling_ordinal(visited, &parents, pos)
-                        ))
-                    }
+                if !v.description.trim().is_empty() {
+                    // GIMP's spin scales draw their label inside the widget
+                    // and publish it as the description.
+                    name = v.description.trim().to_owned();
+                } else if let Some(label) = preceding_sibling_label(visited, &parents, pos) {
+                    name = label;
+                } else {
+                    unlabelled_note = Some(format!(
+                        "{UNLABELLED_NOTE_PREFIX} {}; {}",
+                        role_lower,
+                        sibling_ordinal(visited, &parents, pos)
+                    ));
                 }
             }
             let act_str = v.actions.join(",");
@@ -2637,14 +2668,58 @@ pub fn focused_control(pid: u32) -> Option<(String, String)> {
         Duration::from_millis(400),
         async {
             let conn = shared_connection().await?;
-            let Some((acc, _)) = focused_accessible_via_events(conn, pid).await else {
+            let Some((acc, focused_ref)) = focused_accessible_via_events(conn, pid).await else {
                 return Ok(None);
             };
             let (role, name) = tokio::join!(call(acc.get_role_name()), call(acc.name()));
-            Ok(match (role, name) {
-                (Some(Ok(role)), Some(Ok(name))) => Some((role, name)),
-                _ => None,
-            })
+            let (Some(Ok(role)), Some(Ok(name))) = (role, name) else {
+                return Ok(None);
+            };
+            // LibreOffice keeps the focus on the sheet's `table`; the current
+            // cell is its active descendant (event log), else its selected
+            // child.
+            if role.eq_ignore_ascii_case("table") {
+                let active = active_descendant_map()
+                    .lock()
+                    .unwrap()
+                    .get(&focused_ref.bus)
+                    .cloned();
+                if let Some(path) = active {
+                    let raw = RawObjectRef {
+                        name: focused_ref.bus.clone(),
+                        path,
+                    };
+                    if let Some(Ok(cell)) = call(accessible_for(conn, &raw)).await {
+                        let (cell_role, cell_name) =
+                            tokio::join!(call(cell.get_role_name()), call(cell.name()));
+                        if let (Some(Ok(cell_role)), Some(Ok(cell_name))) = (cell_role, cell_name) {
+                            if !cell_name.trim().is_empty() {
+                                return Ok(Some((cell_role, cell_name)));
+                            }
+                        }
+                    }
+                }
+                if let Some(Ok(proxies)) = call(acc.proxies()).await {
+                    if let Some(Ok(selection)) = call(proxies.selection()).await {
+                        if let Some(Ok(n)) = call(selection.n_selected_children()).await {
+                            if n > 0 {
+                                if let Some(Ok(child)) = call(selection.get_selected_child(0)).await {
+                                    if let Some(raw) = RawObjectRef::from_atspi(&child) {
+                                        if let Some(Ok(cell)) = call(accessible_for(conn, &raw)).await {
+                                            let (cell_role, cell_name) =
+                                                tokio::join!(call(cell.get_role_name()), call(cell.name()));
+                                            if let (Some(Ok(cell_role)), Some(Ok(cell_name))) = (cell_role, cell_name) {
+                                                return Ok(Some((cell_role, cell_name)));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(Some((role, name)))
         },
         || Ok(None),
     )

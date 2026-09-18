@@ -1033,7 +1033,18 @@ fn popup_menu_elements(
         .filter(|entry| popup_item_role(&role_of(entry)) && frame_inside(entry))
         .cloned()
         .collect();
-    if items.is_empty() {
+    // A popup is either a menu or a list: when list / tree / table rows are
+    // drawn inside it, menubar entries whose extents happen to fit the box
+    // (Qt reports the main window's menubar items inside a chooser popup's
+    // rectangle) are not its content.
+    let rows: Vec<serde_json::Value> = items
+        .iter()
+        .filter(|entry| !role_of(entry).contains("menu"))
+        .cloned()
+        .collect();
+    if !rows.is_empty() {
+        rows
+    } else if items.is_empty() {
         elements
     } else {
         items
@@ -8795,7 +8806,10 @@ fn set_value_result(
     readback: Option<String>,
     guard: Option<&crate::input::FocusGuardReport>,
 ) -> ToolResult {
-    let verified = readback.as_deref().is_some_and(|seen| values_agree(value, seen));
+    let normalised_path = readback
+        .as_deref()
+        .is_some_and(|seen| path_normalised_to_basename(value, seen));
+    let verified = readback.as_deref().is_some_and(|seen| values_agree(value, seen)) || normalised_path;
     let mut structured = json!({
         "path": path,
         "verified": verified,
@@ -8803,6 +8817,13 @@ fn set_value_result(
     });
     let mut text = format!("Set value of element [{idx}] to '{value}' (path={path})");
     match readback {
+        Some(seen) if normalised_path => {
+            structured["readback"] = json!(seen);
+            text.push_str(&format!(
+                "; the field reads back '{seen}': a file chooser navigated to the path's \
+                 directory and kept the file name (the write committed)."
+            ));
+        }
         Some(seen) if verified => text.push_str(&format!("; read back '{seen}'.")),
         Some(seen) => {
             structured["readback"] = json!(seen);
@@ -8820,9 +8841,31 @@ fn set_value_result(
     attach_focus_guard(ToolResult::text(text).with_structured(structured), guard)
 }
 
+/// A Qt/GTK file chooser given an absolute path in its "File name" field
+/// moves to that directory and shows only the final component: the readback
+/// is the basename, and the write committed.
+fn path_normalised_to_basename(value: &str, seen: &str) -> bool {
+    let value = value.trim();
+    let seen = seen.trim();
+    value.contains('/')
+        && !seen.is_empty()
+        && value.rsplit('/').next().is_some_and(|base| !base.is_empty() && base == seen)
+}
+
 #[cfg(test)]
 mod set_value_tests {
     use super::*;
+
+    #[test]
+    fn a_file_chooser_keeping_the_basename_counts_as_committed() {
+        assert!(path_normalised_to_basename("/home/user/Desktop/tone.wav", "tone.wav"));
+        assert!(!path_normalised_to_basename("/home/user/Desktop/tone.wav", "other.wav"));
+        assert!(!path_normalised_to_basename("tone.wav", "tone.wav"));
+        let ok = set_value_result(3, "/home/user/Desktop/tone.wav", "ax", Some("tone.wav".into()), None);
+        let s = ok.structured_content.unwrap();
+        assert_eq!(s["verified"], true);
+        assert_eq!(s["effect"], "confirmed");
+    }
 
     #[test]
     fn readback_agreement_is_numeric_aware() {
@@ -14092,7 +14135,7 @@ mod visibility_tests {
             .iter()
             .map(|e| e["element_index"].as_u64().unwrap())
             .collect();
-        assert_eq!(kept, vec![1, 8, 9]);
+        assert_eq!(kept, vec![8, 9]);
     }
 
     #[test]

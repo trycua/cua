@@ -11,18 +11,30 @@ import {
   parseVisualRegions,
   validateChoice,
   type BrowserSnapshot,
+  type Candidate,
   type Outcome,
   type VisualObservation,
 } from './core.js';
-import { chooseLive, chooseMockAdapter } from './jev_adapter.js';
+import { chooseMockAdapter } from './jev_adapter.js';
+import {
+  chooseWithBackend,
+  readJevConfig,
+  type JevConfig,
+} from './jev_backends.js';
+
+export const JEV_GOAL = 'Enter the verification token, then submit the form.';
 
 type Arguments = {
-  provider: 'mock' | 'live';
+  provider: 'mock' | 'typesafe' | 'openjev' | 'local' | 'live';
   fixtureUrl: string;
   token?: string;
   maxSteps: number;
   dryRun: boolean;
   log?: string;
+  jevBaseUrl?: string;
+  jevApiKey?: string;
+  jevModel?: string;
+  jevTimeoutMs?: number;
 };
 
 function parseArgs(argv: string[]): Arguments {
@@ -40,13 +52,38 @@ function parseArgs(argv: string[]): Arguments {
     else if (value === '--max-steps') result.maxSteps = Number(argv[++index]);
     else if (value === '--dry-run') result.dryRun = true;
     else if (value === '--log') result.log = argv[++index];
+    else if (value === '--jev-base-url') result.jevBaseUrl = argv[++index];
+    else if (value === '--jev-api-key') result.jevApiKey = argv[++index];
+    else if (value === '--jev-model') result.jevModel = argv[++index];
+    else if (value === '--jev-timeout-ms') result.jevTimeoutMs = Number(argv[++index]);
     else throw new Error(`unknown argument: ${value}`);
   }
   if (!Number.isInteger(result.maxSteps) || result.maxSteps < 1) {
     throw new Error('--max-steps must be a positive integer');
   }
+  if (
+    result.jevTimeoutMs !== undefined &&
+    (!Number.isFinite(result.jevTimeoutMs) || result.jevTimeoutMs <= 0)
+  ) {
+    throw new Error('--jev-timeout-ms must be a positive integer');
+  }
+  const providers: ReadonlySet<string> = new Set(['mock', 'typesafe', 'openjev', 'local', 'live']);
+  if (!providers.has(result.provider)) {
+    throw new Error(`--provider must be one of ${[...providers].join(', ')}`);
+  }
   result.fixtureUrl = validateFixtureUrl(result.fixtureUrl);
   return result;
+}
+
+export function jevConfigFromArgs(args: Arguments): JevConfig {
+  const env = { ...process.env };
+  // 'live' is a deprecated alias for 'typesafe'.
+  env.JEV_BACKEND = args.provider === 'live' ? 'typesafe' : args.provider;
+  if (args.jevBaseUrl) env.JEV_BASE_URL = args.jevBaseUrl;
+  if (args.jevApiKey) env.JEV_API_KEY = args.jevApiKey;
+  if (args.jevModel) env.JEV_MODEL = args.jevModel;
+  if (args.jevTimeoutMs !== undefined) env.JEV_TIMEOUT_MS = String(args.jevTimeoutMs);
+  return readJevConfig(env);
 }
 
 export function validateFixtureUrl(value: string): string {
@@ -165,8 +202,49 @@ async function writeEvent(path: string | undefined, event: Record<string, unknow
   if (path) await appendFile(path, `${line}\n`, 'utf8');
 }
 
+/**
+ * Route one choice through the configured Jev backend. Returns `null`
+ * fail-open when the backend skips (missing key, timeout, malformed output),
+ * after recording the abstain outcome with the skip reason.
+ */
+async function chooseWithJevBackend(
+  jevConfig: JevConfig,
+  candidates: Candidate[],
+  snapshot: BrowserSnapshot,
+  log: string | undefined,
+  step: number
+): Promise<{
+  choice: string;
+  confidence: number;
+  probabilities: Record<string, number>;
+} | null> {
+  const outcome = await chooseWithBackend(jevConfig, {
+    goal: JEV_GOAL,
+    observation: { page: snapshot.page ?? null, outline: snapshot.outline ?? '' },
+    criteria: Object.fromEntries(
+      candidates.map((candidate) => [candidate.id, candidate.description])
+    ),
+  });
+  if (!outcome.ok || !outcome.decision) {
+    await writeEvent(log, {
+      event: 'outcome',
+      outcome: 'abstained',
+      step,
+      backend: outcome.backend,
+      reason: outcome.reason,
+    });
+    return null;
+  }
+  return {
+    choice: outcome.decision.selectedId,
+    confidence: outcome.decision.confidence,
+    probabilities: { ...outcome.decision.probabilities },
+  };
+}
+
 async function run(args: Arguments): Promise<Outcome> {
   const token = args.token ?? `jev-${randomUUID().replaceAll('-', '').slice(0, 10)}`;
+  const jevConfig = jevConfigFromArgs(args);
   const transport = new StdioClientTransport({
     command: process.env.CUA_DRIVER_BIN ?? 'cua-driver',
     args: ['mcp'],
@@ -226,10 +304,24 @@ async function run(args: Arguments): Promise<Outcome> {
         await writeEvent(args.log, { event: 'outcome', outcome: 'abstained', step });
         return 'abstained';
       }
-      const answer =
-        args.provider === 'mock'
-          ? chooseMockAdapter(candidates, snapshot, visual, history)
-          : await chooseLive(candidates, snapshot, visual, history);
+      let answer: {
+        choice: string | null;
+        confidence: number;
+        probabilities: Record<string, number>;
+      };
+      if (args.provider === 'mock') {
+        answer = chooseMockAdapter(candidates, snapshot, visual, history);
+      } else {
+        const backendAnswer = await chooseWithJevBackend(
+          jevConfig,
+          candidates,
+          snapshot,
+          args.log,
+          step
+        );
+        if (!backendAnswer) return 'abstained';
+        answer = backendAnswer;
+      }
       if (!answer.choice) return 'abstained';
       const candidate = validateChoice(answer.choice, candidates, visual?.captureId);
       const decisionMs = Math.round((performance.now() - decisionStarted) * 100) / 100;

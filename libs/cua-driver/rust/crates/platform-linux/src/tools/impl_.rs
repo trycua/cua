@@ -1672,7 +1672,7 @@ impl Tool for LaunchAppTool {
                                         app.name, app.launch_path
                                     ),
                                     Some(pid),
-                                    app.name.clone(),
+                                    format!("{}\u{0}{cmd}\u{0}{}", app.name, app.launch_path),
                                 ));
                             }
                             // xdg-open handles URLs and file paths, not app
@@ -1709,7 +1709,10 @@ impl Tool for LaunchAppTool {
         match result {
             Ok(Ok((message, pid_opt, name))) => {
                 if let Some(launcher_pid) = pid_opt {
+                    // `name` may carry NUL-separated match keys (display name,
+                    // query, Exec=) for a desktop-entry launch.
                     let query = name.clone();
+                    let name = name.split('\u{0}').next().unwrap_or("").to_owned();
                     let resolved = tokio::task::spawn_blocking(move || {
                         resolve_launched_windows(launcher_pid, &query, &windows_before)
                     })
@@ -1789,6 +1792,13 @@ fn process_exited(pid: u32) -> bool {
 /// (`nautilus`, `org.gnome.Nautilus`, `gnome-control-center`, a display
 /// name) and a window's WM_CLASS / app id.
 fn window_matches_launch(window: &crate::x11::WindowInfo, query: &str) -> bool {
+    query
+        .split('\u{0}')
+        .filter(|key| !key.trim().is_empty())
+        .any(|key| window_matches_launch_key(window, key))
+}
+
+fn window_matches_launch_key(window: &crate::x11::WindowInfo, query: &str) -> bool {
     let class = window.app_name.to_ascii_lowercase();
     if class.is_empty() {
         return false;
@@ -1888,6 +1898,8 @@ mod launch_resolution_tests {
         assert!(window_matches_launch(&window("Gnome-terminal"), "gnome-terminal"));
         assert!(window_matches_launch(&window("Gnome-control-center"), "gnome-control-center"));
         assert!(window_matches_launch(&window("Org.gnome.Nautilus"), "org.gnome.Nautilus.desktop"));
+        assert!(window_matches_launch(&window("Org.gnome.Nautilus"), "Files\u{0}org.gnome.Nautilus\u{0}nautilus --new-window"));
+        assert!(window_matches_launch(&window("Gnome-control-center"), "Settings\u{0}Settings\u{0}gnome-control-center"));
         assert!(!window_matches_launch(&window("Gedit"), "nautilus"));
         assert!(!window_matches_launch(&window(""), "nautilus"));
     }

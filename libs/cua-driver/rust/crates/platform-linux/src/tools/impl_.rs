@@ -661,6 +661,57 @@ fn fold_max_dimension(ceiling: u32, per_call: Option<u32>) -> u32 {
 
 /// Build a single structured element entry for `get_window_state`.
 /// Returns `None` when the node has no `element_index` (non-actionable rows).
+/// Window-local frame of a screen-space element rectangle: subtract the X11
+/// window's root-relative origin. `None` origin (native Wayland, or an
+/// unresolvable window) leaves the rectangle unchanged.
+fn window_local_frame(
+    (x, y, w, h): (i32, i32, u32, u32),
+    origin: Option<(i32, i32)>,
+) -> (i32, i32, u32, u32) {
+    match origin {
+        Some((ox, oy)) => (x - ox, y - oy, w, h),
+        None => (x, y, w, h),
+    }
+}
+
+#[cfg(test)]
+mod frame_math_tests {
+    use super::window_local_frame;
+
+    #[test]
+    fn frame_is_screen_rect_minus_window_origin() {
+        // gnome-text-editor text view on the OSWorld image: AT-SPI screen
+        // extents (70,110,848,433), X11 window at (44,40) → local (26,70).
+        assert_eq!(
+            window_local_frame((70, 110, 848, 433), Some((44, 40))),
+            (26, 70, 848, 433)
+        );
+        // GIMP status-bar button at screen (76,1045) in a window at (70,64):
+        // local (6,981), inside the 1016 px tall window.
+        assert_eq!(
+            window_local_frame((76, 1045, 43, 32), Some((70, 64))),
+            (6, 981, 43, 32)
+        );
+    }
+
+    #[test]
+    fn frame_unchanged_without_an_origin() {
+        assert_eq!(window_local_frame((5, 6, 7, 8), None), (5, 6, 7, 8));
+    }
+
+    #[test]
+    fn desktop_frame_round_trips_through_the_same_origin() {
+        // A desktop-frame click at the element's screen centre must land on
+        // the same window-local pixel the published frame describes.
+        let origin = (44, 40);
+        let (lx, ly, w, h) = window_local_frame((70, 110, 848, 433), Some(origin));
+        let (cx, cy) = (lx + w as i32 / 2, ly + h as i32 / 2);
+        let desktop = (cx + origin.0, cy + origin.1);
+        assert_eq!((desktop.0 - origin.0, desktop.1 - origin.1), (cx, cy));
+        assert_eq!(desktop, (70 + 424, 110 + 216));
+    }
+}
+
 fn build_element_entry(
     n: &crate::atspi::AtspiNode,
     snapshot_id: Option<u32>,
@@ -1045,9 +1096,19 @@ impl Tool for GetWindowStateTool {
                     // toolkits leave bounds unset on hidden / virtual
                     // elements).
                     use std::collections::HashMap;
+                    // The walk produces screen extents (what the element
+                    // cache and hit-tests compare against). The published
+                    // `frame` is in the same frame as the screenshot and the
+                    // pointer tools' x/y: window-local pixels of the X11
+                    // window (its root-relative origin subtracted), the same
+                    // origin `window_bounds` and `coordinate_frame:"desktop"`
+                    // translation use.
+                    let local_origin = (!crate::wayland::is_wayland())
+                        .then(|| crate::atspi::native::x11_window_origin(xid))
+                        .flatten();
                     let bounds_by_idx: HashMap<usize, (i32, i32, u32, u32)> = bounds
                         .into_iter()
-                        .map(|(i, x, y, w, h)| (i, (x, y, w, h)))
+                        .map(|(i, x, y, w, h)| (i, window_local_frame((x, y, w, h), local_origin)))
                         .collect();
                     let elements: Vec<serde_json::Value> = tr
                         .nodes
@@ -1987,6 +2048,56 @@ fn resolve_element_local_coords(
     Ok((xid, local_x, local_y))
 }
 
+/// An element whose AT-SPI extents do not fall inside its own toplevel: GTK4
+/// reports empty extents for some widgets (a text view centre resolves to
+/// (0,0), the GNOME hot corner), and a real pointer click there would hit
+/// whatever is under that screen point. Refused before any input is sent.
+#[derive(Debug)]
+struct ElementBoundsUnusable {
+    idx: usize,
+    local: (f64, f64),
+    window: (u32, u32),
+}
+
+impl std::fmt::Display for ElementBoundsUnusable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "element [{}] resolves to window-local ({:.0}, {:.0}), outside its {}x{} window; \
+             the toolkit reported unusable AT-SPI extents, so no pointer input was sent",
+            self.idx, self.local.0, self.local.1, self.window.0, self.window.1
+        )
+    }
+}
+impl std::error::Error for ElementBoundsUnusable {}
+
+/// `resolve_element_local_coords` plus the sanity check that the centre lies
+/// inside the window it belongs to. Blocking.
+fn checked_element_local_coords(
+    pid: u32,
+    idx: usize,
+    xid_hint: Option<u64>,
+) -> anyhow::Result<(u64, f64, f64)> {
+    let (xid, lx, ly) = resolve_element_local_coords(pid, idx, xid_hint)?;
+    if crate::wayland::wayland_input_enabled() {
+        return Ok((xid, lx, ly));
+    }
+    use x11rb::protocol::xproto::ConnectionExt as _;
+    use x11rb::rust_connection::RustConnection;
+    let (conn, _) = RustConnection::connect(None)?;
+    let geom = conn.get_geometry(xid as u32)?.reply()?;
+    let (w, h) = (u32::from(geom.width), u32::from(geom.height));
+    if lx < 0.0 || ly < 0.0 || lx >= f64::from(w) || ly >= f64::from(h) {
+        return Err(ElementBoundsUnusable {
+            idx,
+            local: (lx, ly),
+            window: (w, h),
+        }
+        .into());
+    }
+    Ok((xid, lx, ly))
+}
+
 fn element_screen_center(pid: u32, idx: usize, xid: Option<u64>) -> anyhow::Result<(f64, f64)> {
     let (bx, by, bw, bh) = match xid {
         Some(xid) => crate::atspi::get_element_bounds_for_window(pid, xid, idx)?,
@@ -2685,15 +2796,165 @@ fn window_screen_center(xid: u64) -> anyhow::Result<(i32, i32)> {
     ))
 }
 
-/// X11 no-focus-steal pixel click with graceful fallback. On a real Xorg host
-/// the MPX uinput pointer + XI2 shield grab lands a *true* button event on
-/// XInput2 toolkits (GTK3/4) that silently drop synthetic `XSendEvent` pointers
-/// — so right / middle / double clicks actually register. On Xvfb / Xtigervnc /
-/// unsupported servers (`real_pointer_input_available()` returns false) or if
-/// the MPX attempt fails, it falls back to the legacy `XSendEvent` path so
-/// headless tests and core-only toolkits keep working. `lx`,`ly` are
-/// window-local; screen-absolute coords for the warp are derived here. Blocking
-/// — call inside spawn_blocking.
+/// How a background pointer action was delivered on X11, with the cheap
+/// post-checks the real-pointer route can make.
+#[derive(Debug)]
+enum PointerRoute {
+    /// Real button events from the session's MPX virtual master pointer.
+    Mpx(crate::input::PointerEffect),
+    /// Target-addressed synthetic `XSendEvent` (core-only toolkits).
+    Synthetic,
+    /// Activated the window first and used XTest (delivery_mode=foreground).
+    Foreground,
+    /// Native Wayland pointer route.
+    Wayland,
+}
+
+impl PointerRoute {
+    /// Result `path`; the Wayland routes keep their own tool-level labels.
+    fn path(&self) -> Option<&'static str> {
+        match self {
+            Self::Mpx(_) => Some(crate::input::MPX_POINTER_PATH),
+            Self::Synthetic => Some("x11_xsendevent"),
+            Self::Foreground => Some("x11_xtest_fg"),
+            Self::Wayland => None,
+        }
+    }
+
+    /// Structured fields shared by click / double_click / right_click / drag:
+    /// `path`, `verified`, `effect`, and for the MPX route the post-checks
+    /// (`focus_unchanged`, `region_diff_pct`). `verified:true` + `effect:
+    /// "landed"` only when the screen around the point visibly reacted.
+    fn structured(&self, mode_label: &str) -> Value {
+        let mut v = json!({
+            "verified": false,
+            "effect": "unverifiable",
+            "delivery_mode": mode_label,
+        });
+        if let Some(path) = self.path() {
+            v["path"] = json!(path);
+        }
+        if let Self::Mpx(effect) = self {
+            v["focus_unchanged"] = json!(effect.focus_unchanged);
+            if let Some(pct) = effect.region_diff_pct {
+                v["region_diff_pct"] = json!((pct * 100.0).round() / 100.0);
+            }
+            v["popups_appeared"] = json!(effect.popups_appeared);
+            // Evidence the action record can publish. A popup (menu, popover,
+            // combo list) appearing is a window change the public contract
+            // accepts for `effect: confirmed`; a screen-region change is
+            // recorded but, per the contract, cannot promote the effect on
+            // its own — the text still reports it.
+            let mut evidence = Vec::new();
+            if effect.popups_appeared > 0 {
+                evidence.push(json!({
+                    "kind": "window_change",
+                    "detail": format!(
+                        "{} popup window(s) appeared after the {} at ({}, {})",
+                        effect.popups_appeared, self.path().unwrap_or("pointer"), effect.x, effect.y
+                    ),
+                }));
+            }
+            if let Some(pct) = effect.region_diff_pct.filter(|pct| *pct >= crate::input::PointerEffect::LANDED_THRESHOLD_PCT) {
+                evidence.push(json!({
+                    "kind": "screenshot_comparison",
+                    "detail": format!("{pct:.2}% of the screen region around ({}, {}) changed", effect.x, effect.y),
+                }));
+            }
+            if !evidence.is_empty() {
+                v["evidence"] = json!(evidence);
+            }
+            if effect.landed() {
+                v["verified"] = json!(true);
+                v["effect"] = json!("confirmed");
+            }
+            // The background focus guard ran around the press train: report
+            // what the application moved and whether it was restored.
+            if let Some(guard) = &effect.focus_guard {
+                for (key, value) in guard.to_json().as_object().into_iter().flatten() {
+                    v[key] = value.clone();
+                }
+            }
+        }
+        v
+    }
+
+    /// Human-readable tail for the result text.
+    fn text_suffix(&self, mode_label: &str) -> String {
+        let mut text = self.text_suffix_inner(mode_label);
+        if let Self::Mpx(effect) = self {
+            if let Some(guard) = &effect.focus_guard {
+                text.push_str(&guard.summary());
+            }
+        }
+        text
+    }
+
+    fn text_suffix_inner(&self, mode_label: &str) -> String {
+        match self {
+            Self::Mpx(effect) if effect.landed() => format!(
+                "(delivery_mode={mode_label}, path={}, focus {}); {}the screen around the \
+                 point changed ({:.1}% of the region) — the action landed.",
+                crate::input::MPX_POINTER_PATH,
+                if effect.focus_unchanged { "untouched" } else { "restored" },
+                if effect.popups_appeared > 0 {
+                    format!("{} popup window(s) appeared and ", effect.popups_appeared)
+                } else {
+                    String::new()
+                },
+                effect.region_diff_pct.unwrap_or(0.0)
+            ),
+            Self::Mpx(effect) => format!(
+                "(delivery_mode={mode_label}, path={}, focus {}); real button events were \
+                 delivered but the screen around the point did not visibly change \
+                 ({}) — confirm with a screenshot.",
+                crate::input::MPX_POINTER_PATH,
+                if effect.focus_unchanged { "untouched" } else { "restored" },
+                effect
+                    .region_diff_pct
+                    .map(|pct| format!("{pct:.2}% of the region"))
+                    .unwrap_or_else(|| "region capture unavailable".to_owned())
+            ),
+            _ => format!(
+                "(delivery_mode={mode_label}{}); not verified — confirm with a screenshot.",
+                self.path().map(|p| format!(", path={p}")).unwrap_or_default()
+            ),
+        }
+    }
+}
+
+/// The focus-free real-pointer route existed but the press did not go
+/// through, on a toolkit that would silently drop the synthetic fallback.
+#[derive(Debug)]
+struct BackgroundPointerFailed {
+    reason: String,
+}
+
+impl std::fmt::Display for BackgroundPointerFailed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "background pointer delivery failed: the virtual master pointer route did not \
+             go through ({}) and this toolkit drops synthetic pointer events, so no click \
+             was delivered",
+            self.reason
+        )
+    }
+}
+impl std::error::Error for BackgroundPointerFailed {}
+
+/// X11 no-focus-steal pixel click. On a real Xorg host the MPX uinput pointer
+/// lands a *true* button event on XInput2 toolkits (GTK3/4, VCL, Qt,
+/// Chromium) that silently drop synthetic `XSendEvent` pointers — so right /
+/// middle / double clicks actually register. It refuses (typed
+/// [`crate::input::TargetOccluded`]) when another toplevel covers the point.
+/// On Xvfb / Xtigervnc / unsupported servers (`real_pointer_input_available()`
+/// returns false) it falls back to the legacy `XSendEvent` path so headless
+/// tests and core-only toolkits keep working; when the MPX attempt itself
+/// fails, the fallback is only taken for toolkits that accept synthetic
+/// events, otherwise a typed [`BackgroundPointerFailed`] is returned. `lx`,`ly`
+/// are window-local; screen-absolute coords for the warp are derived here.
+/// Blocking — call inside spawn_blocking.
 fn x11_pixel_click_no_focus_steal(
     cursor_id: &str,
     xid: u64,
@@ -2701,46 +2962,102 @@ fn x11_pixel_click_no_focus_steal(
     ly: i32,
     button: u8,
     count: usize,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<PointerRoute> {
     if crate::input::real_pointer_input_available() {
         if let Ok((sx, sy)) = window_local_to_screen(xid, lx as f64, ly as f64) {
-            match crate::input::send_virtual_pointer_click(
-                cursor_id,
-                &crate::input::VirtualPointerClick {
-                    target_window: xid,
-                    x: sx.round() as i32,
-                    y: sy.round() as i32,
-                    button,
-                    count,
-                },
-            ) {
-                Ok(()) => return Ok(()),
+            // The press train has its own save/restore fast path; the focus
+            // guard around it catches what the application does afterwards
+            // (a menu grab, a dialog it maps) and reports it.
+            let target_pid = crate::x11::window_pid(xid);
+            let (outcome, guard) = crate::input::focus_guard::guarded_settled(target_pid, || {
+                Ok(crate::input::send_virtual_pointer_click(
+                    cursor_id,
+                    &crate::input::VirtualPointerClick {
+                        target_window: xid,
+                        x: sx.round() as i32,
+                        y: sy.round() as i32,
+                        button,
+                        count,
+                    },
+                ))
+            })?;
+            match outcome {
+                Ok(mut effect) => {
+                    effect.focus_guard = guard;
+                    return Ok(PointerRoute::Mpx(effect));
+                }
                 Err(error) if crate::input::is_uinput_unavailable(&error) => return Err(error),
+                Err(error) if error.downcast_ref::<crate::input::TargetOccluded>().is_some() => {
+                    return Err(error)
+                }
                 // The synthetic fallback is a silent no-op on GTK/VCL/Qt:
                 // report the real-input failure instead of a click that
                 // changed nothing.
                 Err(error)
                     if crate::x11::window_pid(xid).is_some_and(synthetic_pointer_is_dropped) =>
                 {
-                    return Err(error.context(
-                        "no-focus-steal MPX click failed and this toolkit drops synthetic pointer events",
-                    ));
+                    tracing::warn!("MPX click failed on a toolkit that drops synthetic pointer events: {error:#}");
+                    return Err(BackgroundPointerFailed {
+                        reason: format!("{error:#}"),
+                    }
+                    .into());
                 }
-                Err(e) => tracing::warn!("MPX click fell back to XSendEvent: {e}"),
+                Err(e) => tracing::warn!("MPX click fell back to XSendEvent: {e:#}"),
             }
         }
     }
-    crate::input::send_click(xid, lx, ly, count, button)
+    crate::input::send_click(xid, lx, ly, count, button).map(|()| PointerRoute::Synthetic)
 }
 
+/// Typed tool error for a Linux input failure: uinput permission, an occluded
+/// target, or a real-pointer delivery that did not go through. Everything
+/// else keeps its full error chain in the text.
 fn linux_input_error(error: anyhow::Error) -> ToolResult {
     if crate::input::is_uinput_unavailable(&error) {
-        ToolResult::error(error.to_string()).with_structured(json!({
+        return ToolResult::error(error.to_string()).with_structured(json!({
             "code": crate::input::UINPUT_UNAVAILABLE_CODE,
-        }))
-    } else {
-        ToolResult::error(error.to_string())
+        }));
     }
+    if let Some(occluded) = error.downcast_ref::<crate::input::TargetOccluded>() {
+        let hint = "The point is under another window, so a background pointer press there \
+             would hit the covering window instead of the target; no input was sent. \
+             Move or close the covering window (or act on it), click by element_index \
+             (AT-SPI action, no pointer needed), or retry with delivery_mode:\"foreground\" \
+             to raise the target first.";
+        return ToolResult::error(format!("{occluded}. {hint}")).with_structured(json!({
+            "code": "target_occluded",
+            "effect": "refused",
+            "path": crate::input::MPX_POINTER_PATH,
+            "target_window": occluded.target_window,
+            "covering_window": occluded.covering_window,
+            "covering_title": occluded.covering_title,
+            "covering_pid": occluded.covering_pid,
+            "screen_point": [occluded.x, occluded.y],
+            "hint": hint,
+        }));
+    }
+    if let Some(unusable) = error.downcast_ref::<ElementBoundsUnusable>() {
+        let hint = "Re-snapshot with get_window_state and click by pixel (x/y) from the \
+             screenshot, or pick a child element that reports a frame.";
+        return ToolResult::error(format!("{unusable}. {hint}")).with_structured(json!({
+            "code": "element_bounds_unavailable",
+            "effect": "none",
+            "element_index": unusable.idx,
+            "hint": hint,
+        }));
+    }
+    if let Some(failed) = error.downcast_ref::<BackgroundPointerFailed>() {
+        let hint = "Click by element_index (AT-SPI action) or retry with \
+             delivery_mode:\"foreground\".";
+        return ToolResult::error(format!("{failed}. {hint}")).with_structured(json!({
+            "code": "background_pointer_failed",
+            "effect": "none",
+            "path": crate::input::MPX_POINTER_PATH,
+            "reason": failed.reason,
+            "hint": hint,
+        }));
+    }
+    ToolResult::error(format!("{error:#}"))
 }
 
 fn isolated_hyprland_background(delivery: crate::input::delivery::DeliveryMode) -> bool {
@@ -4462,8 +4779,8 @@ impl Tool for ClickTool {
             // click at the element (no focus steal), then to a target-addressed
             // X11 event for toolkits that accept it.
             let cursor_id_for_fallback = cursor_id.clone();
-            let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-                let (xid2, lx, ly) = resolve_element_local_coords(pid, idx, xid_hint)?;
+            let result = tokio::task::spawn_blocking(move || -> anyhow::Result<PointerRoute> {
+                let (xid2, lx, ly) = checked_element_local_coords(pid, idx, xid_hint)?;
                 let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
                 if crate::wayland::wayland_input_enabled() && !modifier_refs.is_empty() {
                     anyhow::bail!(
@@ -4488,6 +4805,7 @@ impl Tool for ClickTool {
                             &modifier_refs,
                         )
                     })
+                    .map(|()| PointerRoute::Foreground)
                 } else if modifier_refs.is_empty()
                     && !crate::wayland::wayland_input_enabled()
                 {
@@ -4508,24 +4826,24 @@ impl Tool for ClickTool {
                         button,
                         &modifier_refs,
                     )
+                    .map(|()| PointerRoute::Synthetic)
                 }
             })
             .await;
+            let mode_label = if delivery.is_foreground() {
+                "foreground"
+            } else {
+                "background"
+            };
             return match result {
-                // An element click is never driver-verifiable (no read-back) —
-                // verified:false; the caller confirms via screenshot. `effect` is
-                // the richer signal: a passive/role-mismatched AT-SPI actuation is
-                // a likely no-op (→ cross to vision/pixel), otherwise the dispatch
-                // was fine but unconfirmable.
-                Ok(Ok(())) => {
-                    let structured = json!({
-                        "path": "x11_pixel",
-                        "verified": false,
-                        "effect": "unverifiable",
-                    });
-                    ToolResult::text(format!("Clicked element [{idx}] (pid {pid})."))
-                        .with_structured(structured)
-                }
+                // The MPX route reports its cheap post-checks (screen region
+                // around the element, focus untouched); the other routes stay
+                // unverifiable and the caller confirms via screenshot.
+                Ok(Ok(route)) => ToolResult::text(format!(
+                    "Clicked element [{idx}] (pid {pid}) with a real pointer click {}",
+                    route.text_suffix(mode_label)
+                ))
+                .with_structured(route.structured(mode_label)),
                 Ok(Err(e)) => input_error_result(e.context("AT-SPI element click failed")),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
@@ -4672,7 +4990,7 @@ impl Tool for ClickTool {
         // foreground = activate the target window (EWMH) first, then inject,
         // then restore prior active. Mirrors macOS/Windows.
         let fg_budget = foreground_budget(0);
-        let result = spawn_blocking_bounded("foreground click", fg_budget, move || -> anyhow::Result<(&'static str, Option<crate::input::ForegroundReport>, Option<crate::input::FocusGuardReport>)> {
+        let result = spawn_blocking_bounded("foreground click", fg_budget, move || -> anyhow::Result<(&'static str, Option<crate::input::ForegroundReport>, Option<PointerRoute>, Option<crate::input::FocusGuardReport>)> {
             if crate::wayland::wayland_input_enabled() {
                 if !modifiers_for_task.is_empty() {
                     anyhow::bail!(
@@ -4691,15 +5009,15 @@ impl Tool for ClickTool {
                     if let Ok(Some(_)) =
                         crate::atspi::perform_action_at_screen_point(pid, xid, output_x, output_y)
                     {
-                        return Ok(("wayland_atspi", None, None));
+                        return Ok(("wayland_atspi", None, None, None));
                     }
                 }
                 if crate::wayland::is_inject_mode() {
                     crate::wayland::inject_click(pid, xid, x, y, count as u32, button)?;
-                    return Ok(("wayland_cua_compositor", None, None));
+                    return Ok(("wayland_cua_compositor", None, None, None));
                 }
                 if !delivery.is_foreground() {
-                    return Ok(("background_unavailable", None, None));
+                    return Ok(("background_unavailable", None, None, None));
                 }
                 // Native Wayland: focus+raise the target toplevel
                 // (foreign-toplevel `activate`), then drive `count` virtual-pointer
@@ -4707,7 +5025,7 @@ impl Tool for ClickTool {
                 crate::wayland::with_target_foreground(pid, xid, || {
                     crate::wayland::click_focused(output_x, output_y, count as u32, button)
                 })?;
-                return Ok(("wayland_activate", None, None));
+                return Ok(("wayland_activate", None, None, None));
             }
             // X11 injection. Tiered no-focus-steal delivery (background):
             //   1. Plain left single-click → AT-SPI doAction at that point.
@@ -4716,7 +5034,7 @@ impl Tool for ClickTool {
             //   3. Fallback → synthetic XSendEvent.
             // Foreground skips the AT-SPI shortcut and does a real activated pixel
             // click (the agent's escalation when background didn't land).
-            let inject = |fg: bool| -> anyhow::Result<(&'static str, Option<crate::input::FocusGuardReport>)> {
+            let inject = |fg: bool| -> anyhow::Result<(&'static str, Option<PointerRoute>, Option<crate::input::FocusGuardReport>)> {
                 if !fg && button == 1 && count == 1 && modifiers_for_task.is_empty() {
                     // The accessible action under the point may open a menu or
                     // a dialog that takes the focus: guard and restore.
@@ -4727,7 +5045,7 @@ impl Tool for ClickTool {
                             .is_some())
                     })?;
                     if hit {
-                        return Ok(("x11_atspi", guard));
+                        return Ok(("x11_atspi", None, guard));
                     }
                 }
                 if !fg
@@ -4738,7 +5056,7 @@ impl Tool for ClickTool {
                     // route left is a synthetic XSendEvent that this toolkit
                     // (GTK3/4 XInput2, LibreOffice VCL) discards. Say so
                     // instead of reporting a click that changed nothing.
-                    return Ok(("background_unavailable_pointer", None));
+                    return Ok(("background_unavailable_pointer", None, None));
                 }
                 if fg {
                     // Foreground: the window is already activated. Deliver a REAL
@@ -4758,11 +5076,13 @@ impl Tool for ClickTool {
                             count,
                             &modifier_refs,
                         )?;
-                        return Ok(("x11_xtest_fg", None));
+                        return Ok(("x11_xtest_fg", None, None));
                     }
                 }
                 if modifiers_for_task.is_empty() {
-                    x11_pixel_click_no_focus_steal(
+                    // The MPX press train runs under its own (settled) focus
+                    // guard inside the helper; its report rides on the route.
+                    let route = x11_pixel_click_no_focus_steal(
                         &cursor_id_for_task,
                         xid,
                         xi,
@@ -4770,6 +5090,7 @@ impl Tool for ClickTool {
                         button,
                         count,
                     )?;
+                    return Ok((route.path().unwrap_or("x11_pixel"), Some(route), None));
                 } else {
                     let modifier_refs: Vec<&str> =
                         modifiers_for_task.iter().map(String::as_str).collect();
@@ -4782,7 +5103,7 @@ impl Tool for ClickTool {
                         &modifier_refs,
                     )?;
                 }
-                Ok((if fg { "x11_pixel_fg" } else { "x11_pixel" }, None))
+                Ok((if fg { "x11_pixel_fg" } else { "x11_pixel" }, None, None))
             };
             if delivery.is_foreground() {
                 crate::input::with_x11_foreground_opts(
@@ -4790,9 +5111,9 @@ impl Tool for ClickTool {
                     crate::input::ForegroundOptions::pointer(),
                     || inject(true),
                 )
-                .map(|((path, guard), report)| (path, Some(report), guard))
+                .map(|((path, route, guard), report)| (path, Some(report), route, guard))
             } else {
-                inject(false).map(|(path, guard)| (path, None, guard))
+                inject(false).map(|(path, route, guard)| (path, None, route, guard))
             }
         })
         .await;
@@ -4802,12 +5123,12 @@ impl Tool for ClickTool {
             "background"
         };
         match result {
-            Ok(Ok(("background_unavailable", _, _))) => {
+            Ok(Ok(("background_unavailable", _, _, _))) => {
                 crate::input::delivery::background_unavailable_error(
                     crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
                 )
             }
-            Ok(Ok(("background_unavailable_pointer", _, _))) => {
+            Ok(Ok(("background_unavailable_pointer", _, _, _))) => {
                 let mut refusal = crate::input::delivery::background_unavailable_error(
                     crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
                 );
@@ -4826,22 +5147,29 @@ impl Tool for ClickTool {
             // verified:false, effect:"unverifiable"; the caller confirms via
             // screenshot. path reports the rung taken; a foreground click also
             // reports the activation/focus transaction it confirmed first.
-            Ok(Ok((path, report, guard))) => {
-                let mut structured = json!({
-                    "path": path,
-                    "verified": false,
-                    "effect": "unverifiable",
-                    "delivery_mode": mode_label,
-                });
+            Ok(Ok((path, report, route, guard))) => {
+                let mut structured = match &route {
+                    Some(route) => route.structured(mode_label),
+                    None => json!({
+                        "path": path,
+                        "verified": false,
+                        "effect": "unverifiable",
+                        "delivery_mode": mode_label,
+                    }),
+                };
                 if let Some(report) = report {
                     structured["foreground"] = report.to_json();
                 }
+                let suffix = match &route {
+                    Some(route) => route.text_suffix(mode_label),
+                    None => format!(
+                        "(delivery_mode={mode_label}, path={path}); not verified — confirm \
+                         with a screenshot."
+                    ),
+                };
                 attach_focus_guard(
-                    ToolResult::text(format!(
-                        "Clicked at ({x:.1}, {y:.1}) × {count} (delivery_mode={mode_label}, \
-                         path={path}); not verified — confirm with a screenshot."
-                    ))
-                    .with_structured(structured),
+                    ToolResult::text(format!("Clicked at ({x:.1}, {y:.1}) × {count} {suffix}"))
+                        .with_structured(structured),
                     guard.as_ref(),
                 )
             }
@@ -7589,7 +7917,9 @@ impl Tool for DoubleClickTool {
     fn def(&self) -> &ToolDef {
         DCLICK_DEF.get_or_init(|| ToolDef {
             name: "double_click".into(),
-            description: "Double-click at (x,y) or an element_index (AT-SPI bounds) via XSendEvent. \
+            description: "Double-click at (x,y) or an element_index (AT-SPI bounds). Background \
+                delivery on X11 sends real button events from the session's virtual master pointer \
+                (path mpx_pointer); a point covered by another window is refused (target_occluded). \
                 No focus steal. Provide either (window_id + x/y) or (pid + element_index). \
                 After a zoom call, pass from_zoom=true to auto-translate zoom-image coords.".into(),
             input_schema: json!({"type":"object","required":["pid"],"properties":{
@@ -7666,7 +7996,7 @@ impl Tool for DoubleClickTool {
         if let Some(idx) = elem_idx_resolved {
             let xid_hint = window_id_resolved;
             let result = tokio::task::spawn_blocking(move || -> anyhow::Result<(u64, f64, f64)> {
-                resolve_element_local_coords(pid, idx, xid_hint)
+                checked_element_local_coords(pid, idx, xid_hint)
             })
             .await;
             return match result {
@@ -7687,13 +8017,15 @@ impl Tool for DoubleClickTool {
                     let wayland_point = crate::wayland::wayland_input_enabled()
                         .then(|| crate::wayland::window_local_to_output(xid, lxi, lyi));
                     let cursor_id_for_task = cursor_id.clone();
-                    let click_result = tokio::task::spawn_blocking(move || {
+                    let click_result = tokio::task::spawn_blocking(move || -> anyhow::Result<PointerRoute> {
                         if crate::wayland::is_inject_mode() {
-                            return crate::wayland::inject_click(pid, xid, lx, ly, 2, 1);
+                            return crate::wayland::inject_click(pid, xid, lx, ly, 2, 1)
+                                .map(|()| PointerRoute::Wayland);
                         }
                         if crate::wayland::wayland_input_enabled() {
                             let (output_x, output_y) = wayland_point.unwrap_or((lxi, lyi));
-                            return crate::wayland::click(xid, output_x, output_y, 2, 1);
+                            return crate::wayland::click(xid, output_x, output_y, 2, 1)
+                                .map(|()| PointerRoute::Wayland);
                         }
                         if delivery.is_foreground() {
                             return crate::input::with_x11_foreground(xid, 80, || {
@@ -7704,16 +8036,24 @@ impl Tool for DoubleClickTool {
                                     1,
                                     2,
                                 )
-                            });
+                            })
+                            .map(|()| PointerRoute::Foreground);
                         }
                         x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, lxi, lyi, 1, 2)
                     })
                     .await;
+                    let mode_label = if delivery.is_foreground() {
+                        "foreground"
+                    } else {
+                        "background"
+                    };
                     match click_result {
-                        Ok(Ok(())) => {
-                            ToolResult::text(format!("✅ Double-clicked element [{idx}]."))
-                        }
-                        Ok(Err(e)) => linux_input_error(e),
+                        Ok(Ok(route)) => ToolResult::text(format!(
+                            "Double-clicked element [{idx}] {}",
+                            route.text_suffix(mode_label)
+                        ))
+                        .with_structured(route.structured(mode_label)),
+                        Ok(Err(e)) => input_error_result(e),
                         Err(e) => ToolResult::error(format!("Task error: {e}")),
                     }
                 }
@@ -7794,13 +8134,15 @@ impl Tool for DoubleClickTool {
         }
         let (xi, yi) = (x as i32, y as i32);
         let cursor_id_for_task = cursor_id.clone();
-        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<PointerRoute> {
             if crate::wayland::is_inject_mode() {
-                return crate::wayland::inject_click(pid, xid, x, y, 2, 1);
+                return crate::wayland::inject_click(pid, xid, x, y, 2, 1)
+                    .map(|()| PointerRoute::Wayland);
             }
             if crate::wayland::wayland_input_enabled() {
                 let (output_x, output_y) = wayland_output_point.unwrap_or((xi, yi));
-                return crate::wayland::click(xid, output_x, output_y, 2, 1);
+                return crate::wayland::click(xid, output_x, output_y, 2, 1)
+                    .map(|()| PointerRoute::Wayland);
             }
             if delivery.is_foreground() {
                 return crate::input::with_x11_foreground(xid, 80, || {
@@ -7818,7 +8160,9 @@ impl Tool for DoubleClickTool {
                         return Ok(());
                     }
                     x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, 1, 2)
-                });
+                        .map(|_| ())
+                })
+                .map(|()| PointerRoute::Foreground);
             }
             x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, 1, 2)
         })
@@ -7829,10 +8173,11 @@ impl Tool for DoubleClickTool {
             "background"
         };
         match result {
-            Ok(Ok(())) => ToolResult::text(format!(
-                "✅ Double-clicked at ({x:.1}, {y:.1}) (delivery_mode={mode_label})."
+            Ok(Ok(route)) => ToolResult::text(format!(
+                "Double-clicked at ({x:.1}, {y:.1}) {}",
+                route.text_suffix(mode_label)
             ))
-            .with_structured(json!({ "verified": false, "delivery_mode": mode_label })),
+            .with_structured(route.structured(mode_label)),
             Ok(Err(e)) => input_error_result(e),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
@@ -7851,7 +8196,9 @@ impl Tool for RightClickTool {
     fn def(&self) -> &ToolDef {
         RCLICK_DEF.get_or_init(|| ToolDef {
             name: "right_click".into(),
-            description: "Right-click at (x,y) or an element_index (AT-SPI bounds) via XSendEvent. \
+            description: "Right-click at (x,y) or an element_index (AT-SPI bounds). Background \
+                delivery on X11 sends real button events from the session's virtual master pointer \
+                (path mpx_pointer); a point covered by another window is refused (target_occluded). \
                 No focus steal. Provide either (window_id + x/y) or (pid + element_index). \
                 After a zoom call, pass from_zoom=true to auto-translate zoom-image coords.".into(),
             input_schema: json!({"type":"object","required":["pid"],"properties":{
@@ -7929,7 +8276,7 @@ impl Tool for RightClickTool {
         if let Some(idx) = elem_idx_resolved {
             let xid_hint = window_id_resolved;
             let result = tokio::task::spawn_blocking(move || -> anyhow::Result<(u64, f64, f64)> {
-                resolve_element_local_coords(pid, idx, xid_hint)
+                checked_element_local_coords(pid, idx, xid_hint)
             })
             .await;
             return match result {
@@ -7950,13 +8297,15 @@ impl Tool for RightClickTool {
                     let wayland_point = crate::wayland::wayland_input_enabled()
                         .then(|| crate::wayland::window_local_to_output(xid, lxi, lyi));
                     let cursor_id_for_task = cursor_id.clone();
-                    let click_result = tokio::task::spawn_blocking(move || {
+                    let click_result = tokio::task::spawn_blocking(move || -> anyhow::Result<PointerRoute> {
                         if crate::wayland::is_inject_mode() {
-                            return crate::wayland::inject_click(pid, xid, lx, ly, 1, 3);
+                            return crate::wayland::inject_click(pid, xid, lx, ly, 1, 3)
+                                .map(|()| PointerRoute::Wayland);
                         }
                         if crate::wayland::wayland_input_enabled() {
                             let (output_x, output_y) = wayland_point.unwrap_or((lxi, lyi));
-                            return crate::wayland::click(xid, output_x, output_y, 1, 3);
+                            return crate::wayland::click(xid, output_x, output_y, 1, 3)
+                                .map(|()| PointerRoute::Wayland);
                         }
                         if delivery.is_foreground() {
                             return crate::input::with_x11_foreground(xid, 80, || {
@@ -7967,16 +8316,24 @@ impl Tool for RightClickTool {
                                     3,
                                     1,
                                 )
-                            });
+                            })
+                            .map(|()| PointerRoute::Foreground);
                         }
                         x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, lxi, lyi, 3, 1)
                     })
                     .await;
+                    let mode_label = if delivery.is_foreground() {
+                        "foreground"
+                    } else {
+                        "background"
+                    };
                     match click_result {
-                        Ok(Ok(())) => {
-                            ToolResult::text(format!("✅ Right-clicked element [{idx}]."))
-                        }
-                        Ok(Err(e)) => linux_input_error(e),
+                        Ok(Ok(route)) => ToolResult::text(format!(
+                            "Right-clicked element [{idx}] {}",
+                            route.text_suffix(mode_label)
+                        ))
+                        .with_structured(route.structured(mode_label)),
+                        Ok(Err(e)) => input_error_result(e),
                         Err(e) => ToolResult::error(format!("Task error: {e}")),
                     }
                 }
@@ -8057,13 +8414,15 @@ impl Tool for RightClickTool {
         }
         let (xi, yi) = (x as i32, y as i32);
         let cursor_id_for_task = cursor_id.clone();
-        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<PointerRoute> {
             if crate::wayland::is_inject_mode() {
-                return crate::wayland::inject_click(pid, xid, x, y, 1, 3);
+                return crate::wayland::inject_click(pid, xid, x, y, 1, 3)
+                    .map(|()| PointerRoute::Wayland);
             }
             if crate::wayland::wayland_input_enabled() {
                 let (output_x, output_y) = wayland_output_point.unwrap_or((xi, yi));
-                return crate::wayland::click(xid, output_x, output_y, 1, 3);
+                return crate::wayland::click(xid, output_x, output_y, 1, 3)
+                    .map(|()| PointerRoute::Wayland);
             }
             if delivery.is_foreground() {
                 return crate::input::with_x11_foreground(xid, 80, || {
@@ -8080,7 +8439,9 @@ impl Tool for RightClickTool {
                         return Ok(());
                     }
                     x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, 3, 1)
-                });
+                        .map(|_| ())
+                })
+                .map(|()| PointerRoute::Foreground);
             }
             x11_pixel_click_no_focus_steal(&cursor_id_for_task, xid, xi, yi, 3, 1)
         })
@@ -8091,10 +8452,11 @@ impl Tool for RightClickTool {
             "background"
         };
         match result {
-            Ok(Ok(())) => ToolResult::text(format!(
-                "✅ Right-clicked at ({x:.1}, {y:.1}) (delivery_mode={mode_label})."
+            Ok(Ok(route)) => ToolResult::text(format!(
+                "Right-clicked at ({x:.1}, {y:.1}) {}",
+                route.text_suffix(mode_label)
             ))
-            .with_structured(json!({ "verified": false, "delivery_mode": mode_label })),
+            .with_structured(route.structured(mode_label)),
             Ok(Err(e)) => input_error_result(e),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
@@ -8126,8 +8488,11 @@ impl Tool for DragTool {
         DRAG_DEF.get_or_init(|| ToolDef {
             name: "drag".into(),
             description: "Press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in \
-                          window-local screenshot pixels via XSendEvent (ButtonPress + MotionNotify × steps + ButtonRelease). \
-                          duration_ms (default 500), steps (default 20). No focus steal.".into(),
+                          window-local screenshot pixels. Background delivery on X11 is one real held \
+                          gesture on the session's virtual master pointer (path mpx_pointer: press, \
+                          interpolated motion, release) — it lands on GTK/VCL/Qt/Chromium; a point \
+                          covered by another window is refused (target_occluded). Headless servers fall \
+                          back to XSendEvent. duration_ms (default 500), steps (default 20). No focus steal.".into(),
             input_schema: json!({"type":"object","required":["from_x","from_y","to_x","to_y"],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
                 "cursor_id":{"type":"string","description":"Optional multi-cursor instance id. Default: 'default'."},
@@ -8590,6 +8955,88 @@ impl Tool for DragTool {
             };
         }
 
+        // Background X11 drag. With a real Xorg server and /dev/uinput the
+        // gesture is a held press + interpolated motion + release on the
+        // session's MPX virtual master pointer (GTK/VCL/Qt/Chromium drop the
+        // synthetic XSendEvent gesture below); the target's screen points are
+        // resolved once and the agent cursor tracks the glide.
+        if crate::input::real_pointer_input_available() {
+            let screen_points = tokio::task::spawn_blocking(move || {
+                Ok::<_, anyhow::Error>((
+                    window_local_to_screen(xid, from_x, from_y)?,
+                    window_local_to_screen(xid, to_x, to_y)?,
+                ))
+            })
+            .await;
+            let ((sfx, sfy), (stx, sty)) = match screen_points {
+                Ok(Ok(points)) => points,
+                Ok(Err(e)) => return ToolResult::error(format!("{e:#}")),
+                Err(e) => return ToolResult::error(format!("Task error: {e}")),
+            };
+            crate::overlay::send_command_for(
+                cursor_id.clone(),
+                cursor_overlay::OverlayCommand::SetPressed(true),
+            );
+            let cursor_id_for_task = cursor_id.clone();
+            let drag_result = tokio::task::spawn_blocking(move || {
+                let (outcome, guard) =
+                    crate::input::focus_guard::guarded_settled(Some(pid), || {
+                        Ok(crate::input::send_virtual_pointer_drag(
+                            &cursor_id_for_task,
+                            &crate::input::VirtualPointerDrag {
+                                target_window: xid,
+                                button,
+                                path: vec![
+                                    (sfx.round() as i32, sfy.round() as i32),
+                                    (stx.round() as i32, sty.round() as i32),
+                                ],
+                                duration_ms,
+                                steps,
+                            },
+                        ))
+                    })?;
+                outcome.map(|mut effect| {
+                    effect.focus_guard = guard;
+                    effect
+                })
+            })
+            .await;
+            crate::overlay::send_command_for(
+                cursor_id.clone(),
+                cursor_overlay::OverlayCommand::SetPressed(false),
+            );
+            if matches!(&drag_result, Ok(Ok(_))) {
+                crate::overlay::send_command_for(
+                    cursor_id.clone(),
+                    cursor_overlay::track_pointer_command(stx, sty),
+                );
+                self.state
+                    .cursor_registry
+                    .update_position(&cursor_id, stx, sty);
+            }
+            return match drag_result {
+                Ok(Ok(effect)) => {
+                    let route = PointerRoute::Mpx(effect);
+                    ToolResult::text(format!(
+                        "Dragged ({button_str}) pid {pid} from ({from_x:.0}, {from_y:.0}) to \
+                         ({to_x:.0}, {to_y:.0}) in {duration_ms}ms / {steps} steps with a real \
+                         held pointer gesture {}",
+                        route.text_suffix("background")
+                    ))
+                    .with_structured(route.structured("background"))
+                }
+                Ok(Err(e)) => input_error_result(e),
+                Err(e) => ToolResult::error(format!("Task error: {e}")),
+            };
+        }
+
+        // Legacy target-addressed XSendEvent gesture (headless servers / no
+        // uinput): only core-protocol toolkits accept it.
+        if synthetic_pointer_is_dropped(pid) {
+            return crate::input::delivery::background_unavailable_error(
+                crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+            );
+        }
         crate::overlay::send_command_for(
             cursor_id.clone(),
             cursor_overlay::OverlayCommand::SetPressed(true),
@@ -8689,13 +9136,16 @@ impl Tool for DragTool {
             }
         }
 
+        let route = PointerRoute::Synthetic;
         match result {
             Ok(()) => ToolResult::text(format!(
-                "✅ Posted drag ({button_str}) to pid {pid} \
+                "Posted drag ({button_str}) to pid {pid} \
                  from ({from_x:.0}, {from_y:.0}) → ({to_x:.0}, {to_y:.0}) \
-                 in {duration_ms}ms / {steps} steps."
-            )),
-            Err(e) => ToolResult::error(e.to_string()),
+                 in {duration_ms}ms / {steps} steps {}",
+                route.text_suffix("background")
+            ))
+            .with_structured(route.structured("background")),
+            Err(e) => input_error_result(e),
         }
     }
 }

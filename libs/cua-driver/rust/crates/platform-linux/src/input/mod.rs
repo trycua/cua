@@ -157,6 +157,9 @@ static MPX_NAME_COUNTER: AtomicU64 = AtomicU64::new(1);
 const EVDEV_UINPUT_NAME_MAX_BYTES: usize = 78;
 const UINPUT_POINTER_SUFFIX: &str = " uinput pointer";
 pub const UINPUT_UNAVAILABLE_CODE: &str = "uinput_unavailable";
+/// Result `path` for pointer actions delivered as real button events from the
+/// session's MPX virtual master pointer.
+pub const MPX_POINTER_PATH: &str = "mpx_pointer";
 
 #[derive(Debug, thiserror::Error)]
 #[error("Linux uinput device unavailable: {reason}")]
@@ -1027,10 +1030,7 @@ fn root_child_of(
     result
 }
 
-/// XIAnyModifier (1u32 << 31). The x11 crate doesn't export it.
-const XI_ANY_MODIFIER: std::os::raw::c_int = 0x8000_0000u32 as std::os::raw::c_int;
-
-fn xi_mask_len() -> usize {
+pub(super) fn xi_mask_len() -> usize {
     (x11::xinput2::XI_LASTEVENT as usize >> 3) + 1
 }
 
@@ -1051,135 +1051,6 @@ fn xinput_opcode(display: *mut x11::xlib::Display) -> Option<std::os::raw::c_int
         Some(opcode)
     } else {
         None
-    }
-}
-
-/// Install a device-specific XI2 synchronous passive button grab on `window`
-/// for `device_id`. This shields the drag: the grab is newer than (and thus
-/// checked before) the window manager's click-to-focus grab on the same
-/// window, and being device-specific it does not conflict with the WM's
-/// core/all-master grabs. The matching press freezes the device and is
-/// delivered to us; replaying it (XIReplayDevice) re-checks grabs only
-/// *below* this window and then delivers the event normally to the app, so
-/// the WM never sees the press and never steals focus.
-fn install_shield_grab(
-    display: *mut x11::xlib::Display,
-    device_id: i32,
-    window: x11::xlib::Window,
-    button: u8,
-) -> Result<()> {
-    let mut mask_bits = vec![0u8; xi_mask_len()];
-    x11::xinput2::XISetMask(&mut mask_bits, x11::xinput2::XI_ButtonPress);
-    let mut evmask = x11::xinput2::XIEventMask {
-        deviceid: device_id,
-        mask_len: mask_bits.len() as std::os::raw::c_int,
-        mask: mask_bits.as_mut_ptr(),
-    };
-    let mut mods = x11::xinput2::XIGrabModifiers {
-        modifiers: XI_ANY_MODIFIER,
-        status: 0,
-    };
-    let rc = unsafe {
-        x11::xinput2::XIGrabButton(
-            display,
-            device_id,
-            button as std::os::raw::c_int,
-            window,
-            0,                             // cursor: None
-            x11::xinput2::XIGrabModeSync,  // freeze the pointer on press
-            x11::xinput2::XIGrabModeAsync, // leave the paired keyboard alone
-            x11::xlib::False,              // owner_events: deliver to us
-            &mut evmask,
-            1,
-            &mut mods,
-        )
-    };
-    unsafe { x11::xlib::XSync(display, 0) };
-    if rc != 0 {
-        bail!("XIGrabButton(shield) failed with status {rc}");
-    }
-    Ok(())
-}
-
-fn remove_shield_grab(
-    display: *mut x11::xlib::Display,
-    device_id: i32,
-    window: x11::xlib::Window,
-    button: u8,
-) {
-    let mut mods = x11::xinput2::XIGrabModifiers {
-        modifiers: XI_ANY_MODIFIER,
-        status: 0,
-    };
-    unsafe {
-        let prev = x11::xlib::XSetErrorHandler(Some(ignore_x_error));
-        x11::xinput2::XIUngrabButton(
-            display,
-            device_id,
-            button as std::os::raw::c_int,
-            window,
-            1,
-            &mut mods,
-        );
-        x11::xlib::XSync(display, 0);
-        x11::xlib::XSetErrorHandler(prev);
-    }
-}
-
-/// Drain the frozen shield presses for `pending_devices` and replay each so
-/// it continues to the application. Returns the set of device ids we failed
-/// to see within the timeout (their drags still proceed; the focus-restore
-/// safety net covers any leak).
-fn replay_shielded_presses(
-    display: *mut x11::xlib::Display,
-    xi_opcode: std::os::raw::c_int,
-    pending_devices: &mut std::collections::HashSet<i32>,
-    timeout: Duration,
-) {
-    let deadline = std::time::Instant::now() + timeout;
-    while !pending_devices.is_empty() && std::time::Instant::now() < deadline {
-        // Only block on XNextEvent when something is queued, so a missing
-        // press can't hang us past the deadline.
-        if unsafe { x11::xlib::XPending(display) } == 0 {
-            sleep(Duration::from_millis(2));
-            continue;
-        }
-        let mut ev: x11::xlib::XEvent = unsafe { std::mem::zeroed() };
-        unsafe { x11::xlib::XNextEvent(display, &mut ev) };
-        if unsafe { ev.type_ } != x11::xlib::GenericEvent {
-            continue;
-        }
-        let mut cookie = unsafe { ev.generic_event_cookie };
-        if cookie.extension != xi_opcode || cookie.evtype != x11::xinput2::XI_ButtonPress {
-            continue;
-        }
-        if unsafe { x11::xlib::XGetEventData(display, &mut cookie) } == 0 {
-            continue;
-        }
-        let de = cookie.data as *const x11::xinput2::XIDeviceEvent;
-        if !de.is_null() {
-            let device_id = unsafe { (*de).deviceid };
-            let time = unsafe { (*de).time };
-            if pending_devices.remove(&device_id) {
-                unsafe {
-                    x11::xinput2::XIAllowEvents(
-                        display,
-                        device_id,
-                        x11::xinput2::XIReplayDevice,
-                        time,
-                    );
-                    x11::xlib::XSync(display, 0);
-                }
-            }
-        }
-        unsafe { x11::xlib::XFreeEventData(display, &mut cookie) };
-    }
-    // A press that never arrived (the point was over a window whose grab beat
-    // ours, e.g. the shell's desktop) leaves the sync-grabbed device frozen.
-    // The master is retained across calls, so thaw it here or every later
-    // press on this session would queue behind the freeze.
-    for &device_id in pending_devices.iter() {
-        thaw_device(display, device_id);
     }
 }
 
@@ -1483,6 +1354,17 @@ fn emit_button(device: &mut VirtualDevice, button: u8, press: bool) -> Result<()
     Ok(())
 }
 
+/// Emit a release for `button` regardless of state; the kernel drops a
+/// release for a button that is not held, so this is safe to call on every
+/// exit path of a press train or gesture.
+fn release_button_best_effort(device: &Arc<Mutex<VirtualDevice>>, button: u8) {
+    if let Ok(mut device) = device.lock() {
+        if let Err(error) = emit_button(&mut device, button, false) {
+            tracing::warn!("virtual pointer button {button} release failed: {error:#}");
+        }
+    }
+}
+
 fn emit_relative_motion(device: &mut VirtualDevice, dx: i32, dy: i32) -> Result<()> {
     let mut events = Vec::with_capacity(2);
     if dx != 0 {
@@ -1529,7 +1411,6 @@ pub fn send_parallel_virtual_pointer_drags(drags: &[(String, VirtualPointerDrag)
     }
     let display = open_display()?;
     supports_parallel_pointer_injection(display)?;
-    let xi_opcode = xinput_opcode(display);
 
     struct ActiveDrag {
         cursor_id: String,
@@ -1549,10 +1430,10 @@ pub fn send_parallel_virtual_pointer_drags(drags: &[(String, VirtualPointerDrag)
     let start_at = std::time::Instant::now() + Duration::from_millis(120);
     let mut active = Vec::with_capacity(drags.len());
 
-    // Click-to-focus WMs grab buttons for XIAllMasterDevices, so the drag's
-    // press activates the target window exactly like a user click would.
-    // Remember the focus state and hand it back afterwards so parallel
-    // drags don't steal it.
+    // A click-to-focus WM that grabs buttons for every master device would
+    // activate the target on the press. Remember the focus state and hand it
+    // back afterwards so parallel drags don't steal it (mutter grabs for the
+    // Virtual Core Pointer only, so there the restore is a no-op).
     let saved_focus = save_focus_state(display);
 
     let result = (|| -> Result<()> {
@@ -1591,44 +1472,28 @@ pub fn send_parallel_virtual_pointer_drags(drags: &[(String, VirtualPointerDrag)
             std::thread::sleep(start_at - now);
         }
 
-        // Shield each drag from the WM's click-to-focus grab, then press.
-        // Per item: install a device-specific sync grab on the target window,
-        // warp, press, and immediately replay the frozen press so it reaches
-        // the app while the WM stays blind to it. We replay each press before
-        // emitting the next so only ONE device is ever frozen at a time — the
-        // X server drops replayed presses when several devices are frozen on
-        // the same window and replayed together. The few-ms stagger this adds
-        // to the presses is invisible; the concurrency that matters is motion.
-        // Shielding is mandatory: if install/replay fails, abort instead of
-        // continuing with a drag that could steal focus and rely on restore.
-        let mut shielded = std::collections::HashSet::new();
+        // Press each drag straight from its virtual master (see
+        // `send_virtual_pointer_click` for why there is no XI2 shield grab:
+        // on this server the grab-and-replay swallowed the press). The press
+        // point must not be covered by another toplevel.
         for item in &active {
-            let opcode = xi_opcode.ok_or_else(|| {
-                anyhow!("parallel_mouse_drag requires XInput/XI2 shield grabs for no-focus-steal operation")
-            })?;
-            install_shield_grab(
-                display,
-                item.ids.pointer_id,
-                item.drag.target_window as x11::xlib::Window,
-                item.drag.button,
-            )
-            .with_context(|| format!("shield grab failed for '{}'", item.cursor_id))?;
-            shielded.insert(item.ids.pointer_id);
             let start = *item.drag.path.first().unwrap_or(&(0, 0));
+            if let Some(occluded) = occluding_window(
+                display,
+                item.drag.target_window as x11::xlib::Window,
+                start.0,
+                start.1,
+            )? {
+                return Err(occluded.into());
+            }
+            thaw_device(display, item.ids.pointer_id);
             warp_master_pointer(display, item.ids, start.0, start.1)?;
             {
                 let mut device = item.device.lock().unwrap();
                 emit_button(&mut device, item.drag.button, true)?;
             }
-            let mut pending = std::collections::HashSet::from([item.ids.pointer_id]);
-            replay_shielded_presses(display, opcode, &mut pending, Duration::from_millis(1000));
-            if !pending.is_empty() {
-                return Err(anyhow!(
-                    "shield replay timed out before XI_ButtonPress arrived for '{}'",
-                    item.cursor_id
-                ));
-            }
         }
+        sleep(Duration::from_millis(40));
 
         while active.iter().any(|item| item.current_step < item.steps) {
             let now = std::time::Instant::now();
@@ -1686,22 +1551,15 @@ pub fn send_parallel_virtual_pointer_drags(drags: &[(String, VirtualPointerDrag)
             let mut device = item.device.lock().unwrap();
             emit_button(&mut device, item.drag.button, false)?;
         }
-
-        // Remove the shields now that the drag is done. The button is only
-        // grabbed for ButtonPress, so the shield is dormant during motion and
-        // release; this just stops it matching the next gesture's press.
-        for item in &active {
-            if shielded.contains(&item.ids.pointer_id) {
-                remove_shield_grab(
-                    display,
-                    item.ids.pointer_id,
-                    item.drag.target_window as x11::xlib::Window,
-                    item.drag.button,
-                );
-            }
-        }
         Ok(())
     })();
+    // Whatever happened above, no virtual master may keep a button held
+    // (a stuck Button1 poisons the core modifier state for later chords).
+    for (cursor_id, drag) in drags {
+        if let Some(device) = uinput_pointers().lock().unwrap().get(cursor_id).cloned() {
+            release_button_best_effort(&device, drag.button);
+        }
+    }
     // The per-session master pair is retained for reuse (torn down on
     // end_session / idle / startup reap). Creating and destroying an XI2 master
     // plus hot-plugging a uinput slave on every call churns the XInput
@@ -1718,16 +1576,22 @@ pub fn send_parallel_virtual_pointer_drags(drags: &[(String, VirtualPointerDrag)
 
 /// A discrete no-focus-steal pointer click driven through the same real-input
 /// pipeline as [`send_parallel_virtual_pointer_drags`] — MPX master pointer +
-/// uinput slave + XI2 shield grab — reduced to a press/release (or a short
-/// press/release train for `count` > 1) at one screen point.
+/// uinput slave — reduced to a press/release (or a short press/release train
+/// for `count` > 1) at one screen point.
 ///
 /// This is what lands **right / middle / double** clicks (and any left click
-/// the AT-SPI path can't actuate) on XInput2 toolkits: GTK3/4 silently drop
-/// synthetic `XSendEvent` pointer events and never see XTEST core events, so
-/// those clicks are otherwise no-ops. Coordinates are screen-absolute;
-/// `target_window` is the X11 window the shield grab is installed on so the WM
-/// never sees the press and never steals focus. `button` is an X button number
-/// (1=left, 2=middle, 3=right); `count` >= 1 (2 = double-click).
+/// the AT-SPI path can't actuate) on XInput2 toolkits: GTK3/4, VCL, Qt and
+/// Chromium silently drop synthetic `XSendEvent` pointer events, so those
+/// clicks are otherwise no-ops. Coordinates are screen-absolute;
+/// `target_window` is the X11 toplevel the caller means to hit. The press is
+/// delivered straight from the virtual master: no XI2 shield grab. On GNOME
+/// (mutter) the click-to-focus passive grab is installed for the Virtual Core
+/// Pointer only, so a second master's press never activates the window; the
+/// grab-and-replay "shield" that was meant to hide the press from the WM
+/// instead swallowed it on this server (the replayed press never reached the
+/// application) and left the device frozen. Focus is still saved and restored
+/// around the click for WMs that do grab every master device. `button` is an
+/// X button number (1=left, 2=middle, 3=right); `count` >= 1 (2 = double-click).
 #[derive(Clone, Debug)]
 pub struct VirtualPointerClick {
     pub target_window: u64,
@@ -1737,21 +1601,382 @@ pub struct VirtualPointerClick {
     pub count: usize,
 }
 
+/// The screen point the caller aimed at is covered by another toplevel, so a
+/// real pointer press there would land on the covering window, not the
+/// target. Refused before any input is sent.
+#[derive(Debug, Clone)]
+pub struct TargetOccluded {
+    pub target_window: u64,
+    pub covering_window: u64,
+    pub covering_title: String,
+    pub covering_pid: Option<u32>,
+    pub x: i32,
+    pub y: i32,
+}
+
+impl std::fmt::Display for TargetOccluded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "screen point ({}, {}) over window {} is covered by window {}{}{}; a real pointer \
+             press there would land on the covering window",
+            self.x,
+            self.y,
+            self.target_window,
+            self.covering_window,
+            if self.covering_title.is_empty() {
+                String::new()
+            } else {
+                format!(" \"{}\"", self.covering_title)
+            },
+            self.covering_pid
+                .map(|pid| format!(" (pid {pid})"))
+                .unwrap_or_default(),
+        )
+    }
+}
+impl std::error::Error for TargetOccluded {}
+
+/// Cheap post-checks a real-pointer action can make without touching the
+/// application: whether the WM's active window / core focus stayed put, and
+/// whether the screen region around the action point changed.
+#[derive(Clone, Debug, Default)]
+pub struct PointerEffect {
+    /// `_NET_ACTIVE_WINDOW` and the core input focus were the same after the
+    /// action as before it (sampled before the safety-net restore).
+    pub focus_unchanged: bool,
+    /// Percentage of pixels (0..100) that changed in a bounded region around
+    /// the action point, comparing right before the press with ~250 ms after
+    /// the release; `None` when the capture failed.
+    pub region_diff_pct: Option<f64>,
+    /// Real screen point the pointer acted at.
+    pub x: i32,
+    pub y: i32,
+    /// Mapped override-redirect toplevels (menus, popovers, combo lists,
+    /// tooltips) that appeared between the press and the post-check. A
+    /// context menu opening is a window change the contract accepts as
+    /// evidence of a landed click.
+    pub popups_appeared: usize,
+    /// Background focus-guard outcome when the tool ran the action under
+    /// [`focus_guard`]: whether the application moved the desktop focus after
+    /// the press (a menu grab, a dialog) and whether it was restored.
+    pub focus_guard: Option<FocusGuardReport>,
+}
+
+impl PointerEffect {
+    /// A region that changed more than this has plainly reacted to the click
+    /// (a menu, a caret, a selection, a pressed button). Below it the click
+    /// may still have landed without a visible reaction.
+    pub const LANDED_THRESHOLD_PCT: f64 = 0.4;
+
+    pub fn landed(&self) -> bool {
+        self.popups_appeared > 0
+            || self
+                .region_diff_pct
+                .is_some_and(|pct| pct >= Self::LANDED_THRESHOLD_PCT)
+    }
+}
+
+/// Mapped override-redirect children of the root window: popup menus and
+/// popovers, but also tooltips and the agent-cursor overlay, so only a
+/// *delta* across an action is meaningful.
+fn mapped_popup_count(display: *mut x11::xlib::Display) -> usize {
+    let root = unsafe { x11::xlib::XDefaultRootWindow(display) };
+    let previous_handler = unsafe { x11::xlib::XSetErrorHandler(Some(ignore_x_error)) };
+    let count = window_children(display, root)
+        .into_iter()
+        .filter(|&child| {
+            let mut attrs: x11::xlib::XWindowAttributes = unsafe { std::mem::zeroed() };
+            let rc = unsafe { x11::xlib::XGetWindowAttributes(display, child, &mut attrs) };
+            rc != 0 && attrs.override_redirect != 0 && attrs.map_state == x11::xlib::IsViewable
+        })
+        .count();
+    unsafe {
+        x11::xlib::XSync(display, 0);
+        x11::xlib::XSetErrorHandler(previous_handler);
+    }
+    count
+}
+
+/// Debug overrides for the multi-click cadence (milliseconds), read once.
+fn click_cadence() -> (u64, u64) {
+    fn env_ms(name: &str, default: u64) -> u64 {
+        std::env::var(name)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(default)
+    }
+    (
+        env_ms("CUA_MPX_PRESS_MS", 12),
+        env_ms("CUA_MPX_CLICK_GAP_MS", CLICK_DELAY_MS),
+    )
+}
+
+/// Half-size of the square screen region compared around the action point.
+const EFFECT_REGION_HALF: i32 = 120;
+/// Half-size of the central square masked out of the comparison: the agent
+/// cursor overlay pulses there and would count as a change.
+const EFFECT_MASK_HALF: i32 = 32;
+/// Wait for the application to react before comparing the region.
+const EFFECT_SETTLE: Duration = Duration::from_millis(250);
+
+/// Raw ZPixmap bytes of a root-window region (clamped to the screen).
+fn root_region_pixels(cx: i32, cy: i32) -> Option<(Vec<u8>, usize, usize)> {
+    let (conn, screen_num) = RustConnection::connect(None).ok()?;
+    let screen = &conn.setup().roots[screen_num];
+    let sw = i32::from(screen.width_in_pixels);
+    let sh = i32::from(screen.height_in_pixels);
+    let x0 = (cx - EFFECT_REGION_HALF).clamp(0, sw.max(1) - 1);
+    let y0 = (cy - EFFECT_REGION_HALF).clamp(0, sh.max(1) - 1);
+    let x1 = (cx + EFFECT_REGION_HALF).clamp(x0 + 1, sw);
+    let y1 = (cy + EFFECT_REGION_HALF).clamp(y0 + 1, sh);
+    let (w, h) = ((x1 - x0) as usize, (y1 - y0) as usize);
+    let reply = conn
+        .get_image(
+            ImageFormat::Z_PIXMAP,
+            screen.root,
+            x0 as i16,
+            y0 as i16,
+            w as u16,
+            h as u16,
+            u32::MAX,
+        )
+        .ok()?
+        .reply()
+        .ok()?;
+    if reply.depth < 24 || reply.data.len() < w * h * 4 {
+        return None;
+    }
+    Some((reply.data, w, h))
+}
+
+/// Percentage of pixels outside the central mask whose 8-bit channels differ
+/// by more than a small tolerance between two captures of the same region.
+pub(crate) fn region_diff_pct(
+    before: &(Vec<u8>, usize, usize),
+    after: &(Vec<u8>, usize, usize),
+) -> Option<f64> {
+    let (a, w, h) = before;
+    let (b, w2, h2) = after;
+    if w != w2 || h != h2 || a.len() != b.len() || *w == 0 || *h == 0 {
+        return None;
+    }
+    let (cx, cy) = (*w as i32 / 2, *h as i32 / 2);
+    let mut changed = 0usize;
+    let mut counted = 0usize;
+    for y in 0..*h {
+        for x in 0..*w {
+            if (x as i32 - cx).abs() <= EFFECT_MASK_HALF
+                && (y as i32 - cy).abs() <= EFFECT_MASK_HALF
+            {
+                continue;
+            }
+            counted += 1;
+            let i = (y * w + x) * 4;
+            let differs = (0..3).any(|c| {
+                let pa = i32::from(a[i + c]);
+                let pb = i32::from(b[i + c]);
+                (pa - pb).abs() > 24
+            });
+            if differs {
+                changed += 1;
+            }
+        }
+    }
+    (counted > 0).then(|| 100.0 * changed as f64 / counted as f64)
+}
+
+/// Best-effort `_NET_WM_NAME` / `WM_NAME` of a window (or of a child, for a
+/// WM frame), for naming a covering window in a refusal.
+fn window_title_for_report(display: *mut x11::xlib::Display, window: x11::xlib::Window) -> String {
+    fn name_of(display: *mut x11::xlib::Display, window: x11::xlib::Window) -> Option<String> {
+        unsafe {
+            let net_name =
+                x11::xlib::XInternAtom(display, c"_NET_WM_NAME".as_ptr(), x11::xlib::True);
+            for prop in [net_name, x11::xlib::XA_WM_NAME] {
+                if prop == 0 {
+                    continue;
+                }
+                let mut type_ret: x11::xlib::Atom = 0;
+                let mut format_ret = 0;
+                let mut nitems: std::os::raw::c_ulong = 0;
+                let mut bytes_after: std::os::raw::c_ulong = 0;
+                let mut data: *mut std::os::raw::c_uchar = std::ptr::null_mut();
+                let rc = x11::xlib::XGetWindowProperty(
+                    display,
+                    window,
+                    prop,
+                    0,
+                    256,
+                    x11::xlib::False,
+                    x11::xlib::AnyPropertyType as x11::xlib::Atom,
+                    &mut type_ret,
+                    &mut format_ret,
+                    &mut nitems,
+                    &mut bytes_after,
+                    &mut data,
+                );
+                if rc == x11::xlib::Success as i32 && !data.is_null() {
+                    let text = if format_ret == 8 && nitems > 0 {
+                        Some(
+                            String::from_utf8_lossy(std::slice::from_raw_parts(
+                                data,
+                                nitems as usize,
+                            ))
+                            .into_owned(),
+                        )
+                    } else {
+                        None
+                    };
+                    x11::xlib::XFree(data as *mut _);
+                    if let Some(text) = text.filter(|t| !t.trim().is_empty()) {
+                        return Some(text);
+                    }
+                }
+            }
+        }
+        None
+    }
+    let previous_handler = unsafe { x11::xlib::XSetErrorHandler(Some(ignore_x_error)) };
+    let mut title = name_of(display, window);
+    if title.is_none() {
+        title = window_children(display, window)
+            .into_iter()
+            .rev()
+            .find_map(|kid| name_of(display, kid));
+    }
+    unsafe {
+        x11::xlib::XSync(display, 0);
+        x11::xlib::XSetErrorHandler(previous_handler);
+    }
+    title.unwrap_or_default()
+}
+
+/// Direct children of `window` (empty on error). Caller installs the error
+/// handler.
+fn window_children(
+    display: *mut x11::xlib::Display,
+    window: x11::xlib::Window,
+) -> Vec<x11::xlib::Window> {
+    let mut root_ret: x11::xlib::Window = 0;
+    let mut parent: x11::xlib::Window = 0;
+    let mut children: *mut x11::xlib::Window = ptr::null_mut();
+    let mut count: std::os::raw::c_uint = 0;
+    let rc = unsafe {
+        x11::xlib::XQueryTree(
+            display,
+            window,
+            &mut root_ret,
+            &mut parent,
+            &mut children,
+            &mut count,
+        )
+    };
+    if rc == 0 || children.is_null() {
+        return Vec::new();
+    }
+    let kids = unsafe { std::slice::from_raw_parts(children, count as usize) }.to_vec();
+    unsafe { x11::xlib::XFree(children as *mut _) };
+    kids
+}
+
+/// The toplevel (root child) the virtual pointer would press on at `(x, y)`
+/// when the caller means `window`. `Ok(None)` when the point is over the
+/// target itself (its WM frame) or over an override-redirect popup (a menu or
+/// combo list the click is meant to reach, or the agent-cursor overlay);
+/// `Ok(Some(_))` names the window that covers the point instead.
+fn occluding_window(
+    display: *mut x11::xlib::Display,
+    window: x11::xlib::Window,
+    x: i32,
+    y: i32,
+) -> Result<Option<TargetOccluded>> {
+    let under = root_child_under_point(display, x, y);
+    let frame = root_child_of(display, window);
+    match (under, frame) {
+        (Some(under), Some(frame)) if under != frame && !is_override_redirect(display, under) => {
+            let previous_handler = unsafe { x11::xlib::XSetErrorHandler(Some(ignore_x_error)) };
+            let covering_pid = crate::x11::window_pid(under as u64).or_else(|| {
+                window_children(display, under)
+                    .into_iter()
+                    .find_map(|kid| crate::x11::window_pid(kid as u64))
+            });
+            unsafe {
+                x11::xlib::XSync(display, 0);
+                x11::xlib::XSetErrorHandler(previous_handler);
+            }
+            Ok(Some(TargetOccluded {
+                target_window: window as u64,
+                covering_window: under as u64,
+                covering_title: window_title_for_report(display, under),
+                covering_pid,
+                x,
+                y,
+            }))
+        }
+        (Some(_), Some(_)) | (None, _) => Ok(None),
+        (Some(_), None) => bail!("target window {window} is not mapped on this screen"),
+    }
+}
+
+/// True when neither the EWMH active window nor the core focus moved since
+/// `saved` was taken.
+fn focus_state_unchanged(display: *mut x11::xlib::Display, saved: &SavedFocus) -> bool {
+    unsafe { x11::xlib::XSync(display, 0) };
+    let mut core_focus: x11::xlib::Window = 0;
+    let mut revert_to: std::os::raw::c_int = 0;
+    unsafe {
+        x11::xlib::XGetInputFocus(display, &mut core_focus, &mut revert_to);
+    }
+    ewmh_active_window(display) == saved.ewmh_active && core_focus == saved.core_focus
+}
+
+fn pointer_effect(
+    display: *mut x11::xlib::Display,
+    saved: &SavedFocus,
+    before: Option<(Vec<u8>, usize, usize)>,
+    popups_before: usize,
+    x: i32,
+    y: i32,
+) -> PointerEffect {
+    unsafe { x11::xlib::XSync(display, 0) };
+    sleep(EFFECT_SETTLE);
+    let after = root_region_pixels(x, y);
+    let popups_after = mapped_popup_count(display);
+    PointerEffect {
+        focus_unchanged: focus_state_unchanged(display, saved),
+        region_diff_pct: match (before, after) {
+            (Some(b), Some(a)) => region_diff_pct(&b, &a),
+            _ => None,
+        },
+        x,
+        y,
+        popups_appeared: popups_after.saturating_sub(popups_before),
+        focus_guard: None,
+    }
+}
+
 /// Land a discrete click via the MPX real-input pipeline (see
-/// [`VirtualPointerClick`]). Mirrors the per-item press/replay logic of
-/// `send_parallel_virtual_pointer_drags`: install a device-specific synchronous
-/// XI2 shield grab on the target window, warp the master pointer, then for each
-/// press freeze→replay it so the application receives a real button event while
-/// the WM stays blind to it. The master is torn down and focus restored on exit
-/// (matching the drag) to keep non-MPX WMs' focus bookkeeping consistent.
-pub fn send_virtual_pointer_click(cursor_id: &str, click: &VirtualPointerClick) -> Result<()> {
+/// [`VirtualPointerClick`]). Refuses with [`TargetOccluded`] when another
+/// toplevel covers the point. Returns the post-checks the tool reports.
+pub fn send_virtual_pointer_click(
+    cursor_id: &str,
+    click: &VirtualPointerClick,
+) -> Result<PointerEffect> {
     let _op = mpx_op_guard(cursor_id);
+    mpx_last_use()
+        .lock()
+        .unwrap()
+        .insert(cursor_id.to_owned(), std::time::Instant::now());
     let display = open_display()?;
     supports_parallel_pointer_injection(display)?;
-    let xi_opcode = xinput_opcode(display);
     let saved_focus = save_focus_state(display);
 
-    let result = (|| -> Result<()> {
+    let result = (|| -> Result<PointerEffect> {
+        let window = click.target_window as x11::xlib::Window;
+        if let Some(occluded) = occluding_window(display, window, click.x, click.y)? {
+            return Err(occluded.into());
+        }
         let ids = ensure_master_pointer(cursor_id)?;
         let device = uinput_pointers()
             .lock()
@@ -1759,104 +1984,132 @@ pub fn send_virtual_pointer_click(cursor_id: &str, click: &VirtualPointerClick) 
             .get(cursor_id)
             .cloned()
             .ok_or_else(|| anyhow!("missing uinput pointer for '{cursor_id}'"))?;
-        let opcode = xi_opcode
-            .ok_or_else(|| anyhow!("no-focus-steal click requires XInput/XI2 shield grabs"))?;
-
-        let window = click.target_window as x11::xlib::Window;
-        // The shield grab must sit on the toplevel that will actually receive
-        // the press. With a menu open, the point is over an override-redirect
-        // popup, not the target window; a grab on the wrong window never
-        // freezes the press, the replay times out, and the click is lost.
-        let shield_window = match (
-            root_child_under_point(display, click.x, click.y),
-            root_child_of(display, window),
-        ) {
-            (Some(under), Some(frame)) if under != frame => {
-                tracing::debug!(
-                    target = window,
-                    under,
-                    "MPX click: shielding the popup under the point instead of the target"
-                );
-                under
-            }
-            _ => window,
-        };
-        // A menu/combo/tooltip popup manages its own active pointer grab; the
-        // shield-grab-and-replay would time out against it. Deliver the button
-        // straight from the virtual master instead — the popup is override-
-        // redirect, so there is no WM focus to protect.
-        let popup = is_override_redirect(display, shield_window);
         let count = click.count.max(1);
-        let click_result = if popup {
-            thaw_device(display, ids.pointer_id);
-            (|| -> Result<()> {
-                warp_master_pointer(display, ids, click.x, click.y)?;
-                for i in 0..count {
-                    {
-                        let mut device = device.lock().unwrap();
-                        emit_button(&mut device, click.button, true)?;
-                        emit_button(&mut device, click.button, false)?;
-                    }
-                    if count > 1 && i + 1 < count {
-                        sleep(Duration::from_millis(CLICK_DELAY_MS));
-                    }
+        // A device left frozen by an earlier synchronous grab (a WM that never
+        // replayed) would queue this press forever.
+        thaw_device(display, ids.pointer_id);
+        warp_master_pointer(display, ids, click.x, click.y)?;
+        let popups_before = mapped_popup_count(display);
+        let before = root_region_pixels(click.x, click.y);
+        let (press_ms, gap_ms) = click_cadence();
+        let train = (|| -> Result<()> {
+            for i in 0..count {
+                {
+                    let mut device = device.lock().unwrap();
+                    emit_button(&mut device, click.button, true)?;
+                    // A real press and release are separate evdev frames; give
+                    // the toolkit a press it can see before the release lands.
+                    sleep(Duration::from_millis(press_ms));
+                    emit_button(&mut device, click.button, false)?;
                 }
-                unsafe { x11::xlib::XSync(display, 0) };
-                Ok(())
-            })()
-        } else {
-            thaw_device(display, ids.pointer_id);
-            install_shield_grab(display, ids.pointer_id, shield_window, click.button)
-                .with_context(|| format!("shield grab failed for '{cursor_id}'"))?;
-            // Run the press train under a guard so the shield is always removed,
-            // even on an early error mid-train.
-            let r = (|| -> Result<()> {
-                warp_master_pointer(display, ids, click.x, click.y)?;
-                for i in 0..count {
-                    {
-                        let mut device = device.lock().unwrap();
-                        emit_button(&mut device, click.button, true)?;
-                    }
-                    // The shield grab freezes the device on every press; drain
-                    // and replay this one so it reaches the app (and re-arms for
-                    // the next press in a multi-click train).
-                    let mut pending = std::collections::HashSet::from([ids.pointer_id]);
-                    replay_shielded_presses(
-                        display,
-                        opcode,
-                        &mut pending,
-                        Duration::from_millis(1000),
-                    );
-                    if !pending.is_empty() {
-                        // Never leave the button held on the virtual pointer:
-                        // the paired keyboard's key events would carry
-                        // Button1Mask (Orca's modifier bit) from here on.
-                        let mut device = device.lock().unwrap();
-                        let _ = emit_button(&mut device, click.button, false);
-                        return Err(anyhow!(
-                            "shield replay timed out before XI_ButtonPress arrived for '{cursor_id}'"
-                        ));
-                    }
-                    {
-                        let mut device = device.lock().unwrap();
-                        emit_button(&mut device, click.button, false)?;
-                    }
-                    // Multi-click cadence: keep press→press well under the
-                    // toolkit double-click threshold (GTK default 250 ms) so
-                    // count=2 lands as a real double-click, not two singles.
-                    if count > 1 && i + 1 < count {
-                        sleep(Duration::from_millis(CLICK_DELAY_MS));
-                    }
+                // Multi-click cadence: keep press→press well under the toolkit
+                // double-click threshold (GTK default 250 ms) so count=2 lands
+                // as a real double-click, not two singles.
+                if count > 1 && i + 1 < count {
+                    sleep(Duration::from_millis(gap_ms));
                 }
-                Ok(())
-            })();
-            remove_shield_grab(display, ids.pointer_id, shield_window, click.button);
-            r
-        };
-        click_result
+            }
+            Ok(())
+        })();
+        // Never leave the button held: a stuck Button1 on the virtual master
+        // sets bit 8 of the core modifier state (Orca's modifier), so every
+        // later virtual-keyboard chord would open Orca's preferences.
+        release_button_best_effort(&device, click.button);
+        train?;
+        Ok(pointer_effect(display, &saved_focus, before, popups_before, click.x, click.y))
     })();
 
-    let _ = cursor_id; // master pair retained for reuse (see the drag path).
+    restore_focus_state(display, &saved_focus);
+    unsafe {
+        x11::xlib::XCloseDisplay(display);
+    }
+    result
+}
+
+/// One held drag on the session's virtual master pointer: press at
+/// `path[0]`, glide through the waypoints, release at the end. Same delivery
+/// rules as [`send_virtual_pointer_click`] (no shield grab, occlusion refusal
+/// at the press point, focus saved and restored).
+pub fn send_virtual_pointer_drag(
+    cursor_id: &str,
+    drag: &VirtualPointerDrag,
+) -> Result<PointerEffect> {
+    let _op = mpx_op_guard(cursor_id);
+    mpx_last_use()
+        .lock()
+        .unwrap()
+        .insert(cursor_id.to_owned(), std::time::Instant::now());
+    let display = open_display()?;
+    supports_parallel_pointer_injection(display)?;
+    let saved_focus = save_focus_state(display);
+
+    let result = (|| -> Result<PointerEffect> {
+        if drag.path.len() < 2 {
+            bail!("drag path needs at least 2 points");
+        }
+        let window = drag.target_window as x11::xlib::Window;
+        let start = drag.path[0];
+        let end = drag.path[drag.path.len() - 1];
+        if let Some(occluded) = occluding_window(display, window, start.0, start.1)? {
+            return Err(occluded.into());
+        }
+        let ids = ensure_master_pointer(cursor_id)?;
+        let device = uinput_pointers()
+            .lock()
+            .unwrap()
+            .get(cursor_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("missing uinput pointer for '{cursor_id}'"))?;
+        let (cum, total) = path_cumulative(&drag.path);
+        let steps = drag.steps.max(1);
+        let step_delay = Duration::from_millis(drag.duration_ms / steps as u64);
+        thaw_device(display, ids.pointer_id);
+        warp_master_pointer(display, ids, start.0, start.1)?;
+        let popups_before = mapped_popup_count(display);
+        let before = root_region_pixels(end.0, end.1);
+        let gesture = (|| -> Result<()> {
+            {
+                let mut device = device.lock().unwrap();
+                emit_button(&mut device, drag.button, true)?;
+            }
+            // Let the toolkit register the press (and arm its drag threshold)
+            // before the first motion.
+            sleep(Duration::from_millis(40));
+            let (mut last_x, mut last_y) = start;
+            for step in 1..=steps {
+                let t = step as f64 / steps as f64;
+                let (ix, iy) = point_on_path(&drag.path, &cum, total, t);
+                let (dx, dy) = (ix - last_x, iy - last_y);
+                if dx != 0 || dy != 0 {
+                    let mut device = device.lock().unwrap();
+                    emit_relative_motion(&mut device, dx, dy)?;
+                    crate::overlay::send_command_for(
+                        cursor_id.to_owned(),
+                        cursor_overlay::OverlayCommand::SnapTo {
+                            x: ix as f64,
+                            y: iy as f64,
+                            heading_radians: Some((dy as f64).atan2(dx as f64)),
+                        },
+                    );
+                }
+                last_x = ix;
+                last_y = iy;
+                sleep(step_delay);
+            }
+            // Relative motion accumulates libinput rounding; pin the release
+            // to the exact end point before letting go.
+            warp_master_pointer(display, ids, end.0, end.1)?;
+            sleep(Duration::from_millis(20));
+            let mut device = device.lock().unwrap();
+            emit_button(&mut device, drag.button, false)?;
+            Ok(())
+        })();
+        // Release on every exit path (see `send_virtual_pointer_click`).
+        release_button_best_effort(&device, drag.button);
+        gesture?;
+        Ok(pointer_effect(display, &saved_focus, before, popups_before, end.0, end.1))
+    })();
+
     restore_focus_state(display, &saved_focus);
     unsafe {
         x11::xlib::XCloseDisplay(display);
@@ -1957,6 +2210,24 @@ fn restore_focus_state(display: *mut x11::xlib::Display, saved: &SavedFocus) {
     unsafe { x11::xlib::XSync(display, 0) };
 
     if let Some(prev) = saved.ewmh_active {
+        // Fast path: on WMs whose click-to-focus grab ignores the virtual
+        // master (mutter grabs for the Virtual Core Pointer only) nothing
+        // moved, and a 300 ms settle per click would be pure latency.
+        if ewmh_active_window(display) == Some(prev) {
+            let mut stable = 0;
+            for _ in 0..4 {
+                sleep(Duration::from_millis(25));
+                if ewmh_active_window(display) == Some(prev) {
+                    stable += 1;
+                } else {
+                    stable = 0;
+                    break;
+                }
+            }
+            if stable >= 3 {
+                return;
+            }
+        }
         // EWMH path: ask the WM to re-activate, so its active-window
         // bookkeeping (decorations, stacking) stays consistent. The WM
         // processes its own click-to-focus for the drag asynchronously and

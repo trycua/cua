@@ -513,14 +513,21 @@ pub(crate) const CHILD_ENUMERATION_CAP: usize = 2048;
 /// Accessible.ChildCount: one cheap property read that tells a leaf (skip the
 /// GetChildren round-trip entirely) from a container that must not be expanded.
 async fn raw_child_count(conn: &atspi::zbus::Connection, oref: &RawObjectRef) -> Result<i32> {
-    let proxy = atspi::zbus::Proxy::new(
-        conn,
-        oref.name.as_str(),
-        oref.path.as_str(),
-        "org.a11y.atspi.Accessible",
-    )
-    .await
-    .map_err(|e| anyhow!("Accessible proxy unavailable: {e}"))?;
+    // `cache_properties(No)` is load-bearing (see `accessible_via_bus`): a
+    // zbus proxy with the default lazy cache answers this one `ChildCount`
+    // read with `Properties.GetAll`, which segfaults Qt5's AT-SPI bridge
+    // (VLC died on the first get_window_state walk).
+    let proxy = atspi::zbus::proxy::Builder::<atspi::zbus::Proxy<'_>>::new(conn)
+        .cache_properties(atspi::zbus::proxy::CacheProperties::No)
+        .destination(oref.name.as_str())
+        .map_err(|e| anyhow!("bad a11y destination: {e}"))?
+        .path(oref.path.as_str())
+        .map_err(|e| anyhow!("bad a11y path: {e}"))?
+        .interface("org.a11y.atspi.Accessible")
+        .map_err(|e| anyhow!("bad a11y interface: {e}"))?
+        .build()
+        .await
+        .map_err(|e| anyhow!("Accessible proxy unavailable: {e}"))?;
     proxy
         .get_property::<i32>("ChildCount")
         .await
@@ -2592,6 +2599,9 @@ pub fn element_bounds_ref(
     } else {
         CoordType::Screen
     };
+    let display = (!crate::wayland::is_wayland())
+        .then(x11_display_size)
+        .flatten();
     bounded_for(
         REF_ACTION_BUDGET,
         async {
@@ -2607,6 +2617,15 @@ pub fn element_bounds_ref(
                 Some(Err(e)) => return Err(anyhow!("Component unavailable: {e}")),
                 None => return Err(anyhow!("cached element did not answer in time")),
             };
+            if coord == CoordType::Window {
+                if let Some(Ok(raw)) = call(component.get_extents(CoordType::Screen)).await {
+                    if screen_extents_trusted(raw, display) {
+                        return project_screen_extents(raw, (0, 0), None).ok_or_else(|| {
+                            anyhow!("cached element reports no on-screen extents")
+                        });
+                    }
+                }
+            }
             let extents = match call(component.get_extents(coord)).await {
                 Some(Ok(extents)) => extents,
                 Some(Err(e)) => return Err(anyhow!("getExtents failed: {e}")),
@@ -3929,6 +3948,38 @@ pub fn get_element_bounds_for_window(
 
 /// Real on-screen origin (root-relative top-left) of an X11 window, or `None`
 /// if it can't be resolved. Mirrors `list_windows`' geometry path.
+/// Size of the X11 display, for sanity-checking screen extents.
+fn x11_display_size() -> Option<(u32, u32)> {
+    use x11rb::connection::Connection as _;
+    use x11rb::rust_connection::RustConnection;
+    let (conn, screen_num) = RustConnection::connect(None).ok()?;
+    let screen = &conn.setup().roots[screen_num];
+    Some((
+        u32::from(screen.width_in_pixels),
+        u32::from(screen.height_in_pixels),
+    ))
+}
+
+/// Whether a `CoordType::Screen` answer can be used as is. GTK 4.6 (Ubuntu
+/// 22.04) reports correct Screen extents while its `CoordType::Window`
+/// extents are relative to the *outer* X11 window (shadow included), so the
+/// `_GTK_FRAME_EXTENTS` reconstruction lands (left, top) px too far; newer
+/// GTK4 instead collapses Screen extents to (0,0). Trust a Screen answer when
+/// it is neither that sentinel nor off the display.
+pub(crate) fn screen_extents_trusted(
+    raw: (i32, i32, i32, i32),
+    display: Option<(u32, u32)>,
+) -> bool {
+    let (x, y, w, h) = raw;
+    if !crate::snapshot_queries::plausible_raw_extents(raw) || (x == 0 && y == 0) {
+        return false;
+    }
+    match display {
+        Some((dw, dh)) => x < dw as i32 && y < dh as i32 && x + w > 0 && y + h > 0,
+        None => true,
+    }
+}
+
 pub(crate) fn x11_window_origin(xid: u64) -> Option<(i32, i32)> {
     use x11rb::protocol::xproto::*;
     use x11rb::rust_connection::RustConnection;
@@ -4340,6 +4391,9 @@ async fn element_bounds_for_visited(
     } else {
         CoordType::Screen
     };
+    let display = (!crate::wayland::is_wayland())
+        .then(x11_display_size)
+        .flatten();
     // Chromium on X11 labels its component extents as Screen while
     // returning coordinates relative to the renderer frame. Rebase
     // those values by comparing the top-level accessible frame with
@@ -4445,6 +4499,16 @@ async fn element_bounds_for_visited(
     .map(|(idx, node)| async move {
         let proxies = call(node.acc.proxies()).await?.ok()?;
         let comp = call(proxies.component()).await?.ok()?;
+        // A trustworthy Screen answer wins over the Window reconstruction
+        // (see `screen_extents_trusted`); web content keeps its document
+        // origin path.
+        if coord == CoordType::Window && !node.in_web_doc {
+            if let Some(Ok(raw)) = call(comp.get_extents(CoordType::Screen)).await {
+                if screen_extents_trusted(raw, display) {
+                    return project_screen_extents(raw, (0, 0), None).map(|bounds| (idx, bounds));
+                }
+            }
+        }
         if let Some(Ok((x, y, w, h))) = call(comp.get_extents(coord)).await {
             let document_origin = if node.in_web_doc {
                 web_document_origin
@@ -4471,6 +4535,28 @@ async fn element_bounds_for_visited(
             .collect(),
         complete,
     )
+}
+
+#[cfg(test)]
+mod screen_extents_tests {
+    use super::screen_extents_trusted;
+
+    #[test]
+    fn trusts_plausible_on_screen_extents() {
+        assert!(screen_extents_trusted((70, 110, 848, 433), Some((1920, 1080))));
+        assert!(screen_extents_trusted((76, 1045, 43, 32), Some((1920, 1080))));
+    }
+
+    #[test]
+    fn rejects_sentinels_and_off_screen_answers() {
+        // GTK4 (newer a11y) collapses every element to the origin.
+        assert!(!screen_extents_trusted((0, 0, 100, 20), Some((1920, 1080))));
+        // Unrealized widgets report INT_MIN.
+        assert!(!screen_extents_trusted((i32::MIN, i32::MIN, 1, 1), Some((1920, 1080))));
+        // Entirely off the display.
+        assert!(!screen_extents_trusted((2000, 10, 40, 20), Some((1920, 1080))));
+        assert!(!screen_extents_trusted((-500, 10, 40, 20), Some((1920, 1080))));
+    }
 }
 
 #[cfg(test)]

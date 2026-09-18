@@ -326,6 +326,19 @@ impl FocusSnapshot {
     /// Watch briefly for a change, restore if one happened, and report.
     /// `target_pid` names the action's application for the grab attribution.
     pub fn restore_if_changed(&self, target_pid: Option<u32>) -> FocusGuardReport {
+        self.restore_if_changed_opts(target_pid, true)
+    }
+
+    /// [`Self::restore_if_changed`] with the settle watch optional: a body that
+    /// already observed the desktop for longer than the watch (the MPX pointer
+    /// route samples the screen ~250 ms after the release and has its own
+    /// fast-path restore) checks once and returns unless a new top-level is
+    /// still being mapped.
+    pub fn restore_if_changed_opts(
+        &self,
+        target_pid: Option<u32>,
+        settle_watch: bool,
+    ) -> FocusGuardReport {
         let started = Instant::now();
         let Ok(x) = X::open() else {
             return FocusGuardReport::default();
@@ -335,7 +348,14 @@ impl FocusSnapshot {
         // Settle watch: stop at the first observed change. A new top-level
         // (dialog being mapped) extends the watch, since the WM focuses it
         // only once it is mapped.
-        let mut watch_until = started + SETTLE_WATCH;
+        let mut watch_until = if settle_watch {
+            started + SETTLE_WATCH
+        } else {
+            started
+        };
+        if !settle_watch && x.client_count() > self.client_count {
+            watch_until = started + SETTLE_WATCH_NEW_WINDOW;
+        }
         let mut extended = false;
         let mut changes = self.diff(&x);
         while changes.is_empty() && Instant::now() < watch_until {
@@ -420,6 +440,19 @@ pub fn guarded<T>(
     let snapshot = FocusSnapshot::capture();
     let value = body()?;
     let report = snapshot.map(|s| s.restore_if_changed(target_pid));
+    Ok((value, report))
+}
+
+/// [`guarded`] for a body that has already let the desktop settle (the MPX
+/// pointer press train and drag gesture): one post-check, no extra settle
+/// watch, so the pointer branch's fast path keeps its latency.
+pub fn guarded_settled<T>(
+    target_pid: Option<u32>,
+    body: impl FnOnce() -> Result<T>,
+) -> Result<(T, Option<FocusGuardReport>)> {
+    let snapshot = FocusSnapshot::capture();
+    let value = body()?;
+    let report = snapshot.map(|s| s.restore_if_changed_opts(target_pid, false));
     Ok((value, report))
 }
 

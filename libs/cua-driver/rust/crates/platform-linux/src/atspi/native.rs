@@ -23,6 +23,8 @@ use atspi::{CoordType, Interface, State, StateSet};
 
 use super::{AtspiIdentity, AtspiNode};
 
+pub(crate) mod hit_test;
+
 /// Per-call D-Bus timeout: a single unresponsive accessible (common in large,
 /// lazily-built trees like Chromium's) must not stall the whole walk.
 const CALL_TIMEOUT: Duration = Duration::from_secs(3);

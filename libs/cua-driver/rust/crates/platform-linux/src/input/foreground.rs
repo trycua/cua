@@ -41,6 +41,11 @@ pub struct ForegroundOptions {
     /// Whether the body injects keyboard input. Keyboard delivery is routed by
     /// the X input focus, so the post-check is reported for it.
     pub keyboard: bool,
+    /// The process the caller resolved the target window to. The post-check
+    /// otherwise reads `_NET_WM_PID` off the window itself, which an
+    /// override-redirect popup (a LibreOffice VCL menu) never carries — and
+    /// which is gone by the post-check when the click closed it.
+    pub target_pid: Option<u32>,
 }
 
 impl ForegroundOptions {
@@ -49,6 +54,7 @@ impl ForegroundOptions {
         Self {
             settle: Duration::from_millis(800),
             keyboard: false,
+            target_pid: None,
         }
     }
 
@@ -58,6 +64,7 @@ impl ForegroundOptions {
         Self {
             settle: Duration::from_millis(1500),
             keyboard: true,
+            target_pid: None,
         }
     }
 
@@ -66,6 +73,12 @@ impl ForegroundOptions {
         let mut opts = Self::pointer();
         opts.settle = opts.settle.max(Duration::from_millis(settle_ms));
         opts
+    }
+
+    /// Name the process the target window belongs to (see `target_pid`).
+    pub fn for_pid(mut self, pid: u32) -> Self {
+        self.target_pid = Some(pid);
+        self
     }
 }
 
@@ -185,9 +198,47 @@ pub(crate) fn describe_window_change(
     Some(parts.join("; "))
 }
 
-/// How long the toolkit gets to map a menu / dialog after the body before
-/// the window set is compared.
-const WINDOW_CHANGE_SETTLE: Duration = Duration::from_millis(150);
+/// How often the target process's window set is re-read after the body.
+const WINDOW_CHANGE_POLL: Duration = Duration::from_millis(50);
+
+/// How long a toolkit gets to map a menu / dialog after the body before the
+/// window set is declared unchanged. GTK / VCL menus and dialogs map within
+/// ~100 ms of the click; a Qt file dialog (VLC "Add...", "Convert / Save")
+/// takes 300-600 ms, which a fixed 150 ms settle reported as no change.
+const WINDOW_CHANGE_DEADLINE: Duration = Duration::from_millis(800);
+
+/// After the first change is seen, a beat for the new window's title
+/// (`_NET_WM_NAME` arrives a moment after the map) so the summary names it.
+const WINDOW_CHANGE_TITLE_GRACE: Duration = Duration::from_millis(60);
+
+/// How long the post-check retries an empty core focus (`None` /
+/// `PointerRoot`): a popup destroyed by the click leaves the focus unset for
+/// a beat before the toolkit re-focuses its toplevel.
+const FOCUS_RETRY: Duration = Duration::from_millis(250);
+
+/// Poll `pid`'s window set until it differs from `before` or the deadline
+/// passes. Returns the last set read and the change description, if any.
+fn wait_for_window_change(
+    pid: Option<u32>,
+    before: &[(u64, String)],
+) -> (Vec<(u64, String)>, Option<String>) {
+    let deadline = Instant::now() + WINDOW_CHANGE_DEADLINE;
+    loop {
+        let after = pid_window_set(pid);
+        if let Some(change) = describe_window_change(before, &after) {
+            std::thread::sleep(WINDOW_CHANGE_TITLE_GRACE);
+            let settled = pid_window_set(pid);
+            return match describe_window_change(before, &settled) {
+                Some(change) => (settled, Some(change)),
+                None => (after, Some(change)),
+            };
+        }
+        if Instant::now() >= deadline {
+            return (after, None);
+        }
+        std::thread::sleep(WINDOW_CHANGE_POLL);
+    }
+}
 
 /// Extract the structured code prefix from a foreground error message.
 pub fn error_code(error: &anyhow::Error) -> Option<&'static str> {
@@ -478,19 +529,37 @@ fn confirm_phase(target: Window, settle: Duration) -> Result<ConfirmOutcome> {
     }
 }
 
-fn post_check(target: Window, target_pid: Option<u32>) -> FocusAfter {
+/// Where the focus sits after the body. `pid_windows` is the target
+/// process's window set read after the body (managed windows and popups):
+/// focus inside any of them is `SamePid` even when neither the target nor
+/// the focused window carries `_NET_WM_PID` (a VCL popup menu closed by the
+/// click, the popup that the click opened).
+fn post_check(target: Window, target_pid: Option<u32>, pid_windows: &[(u64, String)]) -> FocusAfter {
     let Ok(x) = X11::open() else {
         return FocusAfter::Unknown;
     };
-    let Some(focused) = x.focused() else {
-        return FocusAfter::Elsewhere;
+    let retry_until = Instant::now() + FOCUS_RETRY;
+    let focused = loop {
+        if let Some(focused) = x.focused() {
+            break focused;
+        }
+        if Instant::now() >= retry_until {
+            return FocusAfter::Elsewhere;
+        }
+        std::thread::sleep(Duration::from_millis(25));
     };
     if x.is_within(focused, target) {
         return FocusAfter::Target;
     }
-    // The body may have closed the target itself (Escape on a dialog, alt+F4):
-    // its pid was read before the body, so the comparison still works once
-    // the window is gone.
+    if pid_windows
+        .iter()
+        .any(|(window, _)| x.is_within(focused, *window as Window))
+    {
+        return FocusAfter::SamePid;
+    }
+    // The body may have closed the target itself (Escape on a dialog, alt+F4,
+    // a popup item click): its pid was read (or named by the caller) before
+    // the body, so the comparison still works once the window is gone.
     match (target_pid.or_else(|| x.owning_pid(target)), x.owning_pid(focused)) {
         (Some(a), Some(b)) if a == b => FocusAfter::SamePid,
         _ => FocusAfter::Elsewhere,
@@ -526,22 +595,23 @@ pub fn with_x11_foreground_opts<T>(
             outcome.focus_within
         ));
     }
-    let target_pid = crate::x11::window_pid(xid);
+    let target_pid = crate::x11::window_pid(xid).or(opts.target_pid);
     let windows_before = pid_window_set(target_pid);
     let value = body()?;
     // The post-check is what the tool reports as evidence for both keyboard
     // and pointer bodies: a real click that opened a menu or a dialog moves
     // the window set / focus within the target's process, and one that
-    // landed elsewhere moves focus out of it.
-    std::thread::sleep(WINDOW_CHANGE_SETTLE);
+    // landed elsewhere moves focus out of it. The window set is polled
+    // rather than read after a fixed settle: it returns on the first change.
+    let (windows_after, window_change) = run_with_deadline(
+        WINDOW_CHANGE_DEADLINE + Duration::from_millis(1500),
+        move || wait_for_window_change(target_pid, &windows_before),
+    )
+    .unwrap_or((Vec::new(), None));
     let focus_after = run_with_deadline(Duration::from_millis(1500), move || {
-        post_check(target, target_pid)
+        post_check(target, target_pid, &windows_after)
     })
     .unwrap_or(FocusAfter::Unknown);
-    let window_change = run_with_deadline(Duration::from_millis(1500), move || {
-        pid_window_set(target_pid)
-    })
-    .and_then(|after| describe_window_change(&windows_before, &after));
     Ok((
         value,
         ForegroundReport {
@@ -595,6 +665,13 @@ mod tests {
             ForegroundOptions::from_settle_hint(5000).settle,
             Duration::from_millis(5000)
         );
+    }
+
+    #[test]
+    fn options_carry_the_caller_resolved_pid() {
+        assert_eq!(ForegroundOptions::pointer().target_pid, None);
+        assert_eq!(ForegroundOptions::keyboard().for_pid(42).target_pid, Some(42));
+        assert!(!ForegroundOptions::from_settle_hint(80).for_pid(1).keyboard);
     }
 
     #[test]

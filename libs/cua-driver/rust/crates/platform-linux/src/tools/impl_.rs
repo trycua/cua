@@ -859,6 +859,33 @@ fn build_element_entry(
     Some(entry)
 }
 
+/// The menu entries drawn inside a popup of `width`x`height` (frames are
+/// popup-local here). Falls back to the input when nothing matches, so a
+/// popup that is not a menu (a GTK popover without its own frame) still
+/// returns what the walk found.
+fn popup_menu_elements(
+    elements: Vec<serde_json::Value>,
+    width: u32,
+    height: u32,
+) -> Vec<serde_json::Value> {
+    let inside = |entry: &serde_json::Value| {
+        let role = entry["role"].as_str().unwrap_or("").to_ascii_lowercase();
+        let frame = &entry["frame"];
+        role.contains("menu")
+            && frame.is_object()
+            && frame["x"].as_i64().unwrap_or(-1) >= -2
+            && frame["y"].as_i64().unwrap_or(-1) >= -2
+            && frame["x"].as_i64().unwrap_or(0) + frame["w"].as_i64().unwrap_or(0) <= width as i64 + 2
+            && frame["y"].as_i64().unwrap_or(0) + frame["h"].as_i64().unwrap_or(0) <= height as i64 + 2
+    };
+    let menu: Vec<serde_json::Value> = elements.iter().filter(|e| inside(e)).cloned().collect();
+    if menu.is_empty() {
+        elements
+    } else {
+        menu
+    }
+}
+
 /// Elements that have a frame (visible, hit-testable on the screenshot)
 /// come first, in walk order; frameless ones follow. A client that caps the
 /// result then still shows the document, toolbar and sidebar controls.
@@ -1383,6 +1410,16 @@ impl Tool for GetWindowStateTool {
                         &tr.tree_markdown,
                     );
                     let elements = framed_elements_first(elements);
+                    // A popup that has no AT-SPI frame of its own (LibreOffice
+                    // VCL menus live under the menubar's `menu` node): return
+                    // the open menu's items, the ones drawn inside the popup,
+                    // instead of the whole application.
+                    let elements = match (&popup_meta, tr.window_scoped) {
+                        (Some(popup), false) => {
+                            popup_menu_elements(elements, popup.width, popup.height)
+                        }
+                        _ => elements,
+                    };
                     structured["total_element_count"] = json!(count);
                     structured["returned_element_count"] = json!(elements.len());
                     structured["elements"] = json!(elements);
@@ -13256,5 +13293,73 @@ mod background_keyboard_route_tests {
         for role in ["menu item", "push button", "menu", "check box", "page tab"] {
             assert!(!element_needs_real_click(role), "{role}");
         }
+    }
+}
+
+#[cfg(test)]
+mod visibility_tests {
+    use super::*;
+
+    #[test]
+    fn framed_elements_lead_and_keep_their_relative_order() {
+        let elements = vec![
+            json!({"element_index": 0, "role": "menu"}),
+            json!({"element_index": 1, "role": "push button", "frame": {"x": 1, "y": 1, "w": 2, "h": 2}}),
+            json!({"element_index": 2, "role": "menu"}),
+            json!({"element_index": 3, "role": "paragraph", "frame": {"x": 1, "y": 9, "w": 2, "h": 2}}),
+        ];
+        let ordered: Vec<u64> = framed_elements_first(elements)
+            .iter()
+            .map(|e| e["element_index"].as_u64().unwrap())
+            .collect();
+        assert_eq!(ordered, vec![1, 3, 0, 2]);
+    }
+
+    #[test]
+    fn a_frameless_popup_returns_only_the_menu_entries_drawn_inside_it() {
+        let elements = vec![
+            json!({"element_index": 1, "role": "push button", "frame": {"x": 5, "y": 5, "w": 20, "h": 20}}),
+            json!({"element_index": 2, "role": "menu item", "label": "Paragraph...", "frame": {"x": 2, "y": 30, "w": 180, "h": 22}}),
+            json!({"element_index": 3, "role": "menu item", "label": "elsewhere", "frame": {"x": 400, "y": 30, "w": 180, "h": 22}}),
+            json!({"element_index": 4, "role": "menu", "label": "Format"}),
+        ];
+        let kept: Vec<u64> = popup_menu_elements(elements.clone(), 200, 400)
+            .iter()
+            .map(|e| e["element_index"].as_u64().unwrap())
+            .collect();
+        assert_eq!(kept, vec![2]);
+        assert_eq!(popup_menu_elements(elements[..1].to_vec(), 200, 400).len(), 1);
+    }
+
+    #[test]
+    fn menu_roles_take_the_real_press() {
+        for role in ["menu", "Menu Item", "check menu item", "radio menu item"] {
+            assert!(element_is_menu_role(role), "{role}");
+        }
+        for role in ["menu bar", "push button", "text"] {
+            assert!(!element_is_menu_role(role), "{role}");
+        }
+    }
+
+    #[test]
+    fn overlays_name_the_follow_up_call_per_dialog_and_popup() {
+        let overlays = WindowOverlays {
+            dialogs: vec![json!({
+                "window_id": 71, "title": "Position and Size", "transient_for": 3, "modal": true,
+                "bounds": {"x": 100, "y": 100, "width": 400, "height": 300}
+            })],
+            popups: vec![json!({
+                "window_id": 72, "title": "", "pid": 5,
+                "bounds": {"x": 10, "y": 30, "width": 200, "height": 400}
+            })],
+            covers_window: true,
+            window_rect: Some((0, 0, 800, 600)),
+        };
+        let note = overlays.follow_up(5).unwrap();
+        assert!(note.contains("dialog \"Position and Size\" (window_id 71, transient of window 3, modal)"), "{note}");
+        assert!(note.contains("get_window_state(pid=5, window_id=71)"), "{note}");
+        assert!(note.contains("popup (window_id 72, bounds x=10 y=30 200x400)"), "{note}");
+        assert!(rects_intersect((0, 0, 800, 600), (100, 100, 400, 300)));
+        assert!(!rects_intersect((0, 0, 800, 600), (800, 0, 10, 10)));
     }
 }

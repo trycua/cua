@@ -549,3 +549,58 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }
+
+#[cfg(test)]
+mod visibility_tests {
+    use super::*;
+    use crate::protocol::Content;
+
+    fn candidates() -> Vec<WindowTargetCandidate> {
+        vec![
+            WindowTargetCandidate {
+                window_id: 3,
+                transient_for: None,
+                title: "doc - LibreOffice Writer".into(),
+                app_name: Some("soffice".into()),
+                is_on_screen: true,
+            },
+            WindowTargetCandidate {
+                window_id: 7,
+                transient_for: Some(3),
+                title: "Position and Size".into(),
+                app_name: Some("soffice".into()),
+                is_on_screen: true,
+            },
+        ]
+    }
+
+    #[test]
+    fn ambiguity_names_every_candidate_and_its_transient_owner() {
+        let text = describe_candidates(&candidates());
+        assert_eq!(
+            text,
+            "window_id 3 \"doc - LibreOffice Writer\" (top-level); window_id 7 \"Position and Size\" (dialog, transient of window 3)"
+        );
+        let json = serde_json::to_value(&candidates()[1]).unwrap();
+        assert_eq!(json["transient_for"], 3);
+        assert!(serde_json::to_value(&candidates()[0]).unwrap().get("transient_for").is_none());
+    }
+
+    #[test]
+    fn auto_resolved_pid_only_actions_say_which_window_received_them() {
+        let result = ToolResult::text("Pressed Escape.").with_structured(serde_json::json!({"path": "mpx"}));
+        let result = note_resolved_window(result, &candidates()[1]);
+        let text = match &result.content[0] {
+            Content::Text { text, .. } => text.clone(),
+            _ => panic!("text"),
+        };
+        assert_eq!(
+            text,
+            "Pressed Escape. [pid-only target resolved to window 7 \"Position and Size\" (an open dialog)]"
+        );
+        let structured = result.structured_content.unwrap();
+        assert_eq!(structured["resolved_window"]["window_id"], 7);
+        assert_eq!(structured["resolved_window"]["transient_for"], 3);
+        assert_eq!(structured["path"], "mpx");
+    }
+}

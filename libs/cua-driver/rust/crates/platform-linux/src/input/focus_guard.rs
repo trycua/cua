@@ -944,3 +944,31 @@ mod tests {
         assert!(snapshot.is_none());
     }
 }
+
+#[cfg(test)]
+mod grab_tests {
+    use super::*;
+
+    #[test]
+    fn a_popup_grab_is_reported_instead_of_a_failed_restore() {
+        let report = FocusGuardReport {
+            changed: true,
+            restored: false,
+            changes: vec!["active 0x1->0x2".into()],
+            grab_held_by: Some(77),
+            same_app_window: None,
+            closed_window: None,
+            elapsed_ms: 40,
+        };
+        assert_eq!(report.outcome(), Some("grab_held"));
+        assert_eq!(report.to_json()["focus_outcome"], "grab_held");
+        let summary = report.summary();
+        assert!(summary.contains("focus_outcome=grab_held"), "{summary}");
+        assert!(summary.contains("pid 77 holds a keyboard grab"), "{summary}");
+    }
+
+    #[test]
+    fn restore_and_settle_budgets_bound_the_guard_under_1500ms() {
+        assert!(SETTLE_WATCH_NEW_WINDOW + RESTORE_BUDGET <= Duration::from_millis(1500));
+    }
+}

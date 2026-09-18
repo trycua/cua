@@ -1319,7 +1319,24 @@ async fn collect_visited_bounded<'a>(
         // any menu that is not showing) keeps its child count and is not
         // walked: its items are hidden, never indexed, and cost a round-trip
         // each. Open menus (expanded / showing popup contents) still descend.
-        let closed_menu = role_lower == "menu" && (!showing || (under_menubar && !expanded));
+        let mut closed_menu = role_lower == "menu" && (!showing || (under_menubar && !expanded));
+        if closed_menu && showing && under_menubar {
+            // LibreOffice VCL never sets EXPANDED on an open menubar menu; its
+            // items are simply SHOWING. One extra state read on the first
+            // child (a dozen menus per menubar) tells an open menu from a
+            // closed one.
+            if let Some(Ok(children)) = &children_r {
+                if let Some(first) = children.first() {
+                    if let Some(Ok(child)) = call(accessible_for(conn, first)).await {
+                        if let Some(Ok(state)) = call(child.get_state()).await {
+                            if is_showing_state(&state) {
+                                closed_menu = false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
         let mut collapsed_children = None;
         if descend && closed_menu {
             if let Some(Ok(children)) = &children_r {

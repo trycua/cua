@@ -134,6 +134,47 @@ click the menu (a real press) and read the popup by its window_id.
 with `window_change` evidence. Action results carry the same text as
 `summary` inside `structuredContent`, for clients that only show that.
 
+**Screenshot scale.** The window screenshot is delivered at or below 1.15
+megapixels (long edge ≤ `max_image_dimension`, 1568 by default): larger
+images are downsized before a model reads them, and its pixel coordinates
+would then be uniformly short. Element `frame`s and pointer `x`/`y` are pixels
+of the delivered image; `frame_scale` < 1 and `screenshot_original_width`
+report the downsizing, and the driver scales your pixels back to the window.
+
+**Keys while the app's own popup is open.** A Qt combo list / completer or a
+GTK/VCL menu holds a keyboard grab that makes the X server drop keys from the
+virtual keyboard. `press_key` / `hotkey` / `type_text` / `set_value` then go
+through the core keyboard (`path: "xtest_core_grab"`, the result names the
+popup and states that the core focus and active window were verified
+unchanged), or — when another application holds the core focus — are refused
+with `code: "popup_keyboard_grab"` and a hint: dismiss the popup (click
+outside it, or click one of its rows by element_index after
+`get_window_state(pid, window_id=<popup>)`) and retry. Typing an absolute path
+into a Qt file dialog opens its completer after the first `/`; prefer
+`set_value` on the "File name" field, which writes the path in one go.
+
+**Popup walks, labels, descriptions.** `get_window_state(pid, window_id=<popup>)`
+returns the popup's own rows (list / tree / menu items), never the main
+window's menubar. Elements carry `description` when the toolkit publishes one
+(Qt keeps a button's tooltip there: `push button "" (description "Pause")`;
+`label` falls back to it). A control's `label` is never its value: a spin
+button or slider nobody names is `unlabelled: true` with its place in
+`description` (`unlabelled spin button; 3rd of 4 spin buttons in this panel`,
+in visual order). `parent_index` is the nearest indexed real ancestor.
+
+**Grid presses.** After a click that lands on a table cell (LibreOffice Calc),
+the result appends `focus: cell D2` (`focused_cell`, evidence) read from the
+focus log, so a one-row miss is visible before you type.
+
+**Multi-click.** `click` takes `count: 2` (double) or `count: 3` (triple, a
+line/paragraph selection in editors) as one press train with real double-click
+cadence in both delivery modes; there is no `triple_click` tool.
+
+**Cross-application drops.** A pointer action whose point lies over another
+application's window (a drag dropped onto VLC) reports that window's title
+change and the windows its pid opened as `foreign_window` / `window_change`
+evidence; the focus guard alone only watches the target pid.
+
 `get_window_state` returning `degraded:true` (empty AT-SPI walk) is the cue to
 do an **element px action** off that same screenshot (X11) or escalate to
 `delivery_mode:"foreground"` when authorized (standard Wayland has no general

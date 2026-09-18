@@ -8,6 +8,7 @@
 //! window/target space it needs. No-op until an embedder registers a hook, so
 //! there is zero cost in the common (daemon / CLI) case.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
 /// One cursor update: the cursor identified by `cursor_id` is at screen point
@@ -30,8 +31,37 @@ pub fn set_cursor_hook_fn(f: impl Fn(CursorHookEvent) + Send + Sync + 'static) {
 }
 
 /// True when an observer is registered (lets hot paths skip building an event).
+///
+/// This answers "does anybody want these events", **not** "will any arrive".
+/// See [`cursor_hook_supported`] for the latter.
 pub fn cursor_hook_enabled() -> bool {
     CURSOR_HOOK_FN.get().is_some()
+}
+
+static EMITTER_DECLARED: AtomicBool = AtomicBool::new(false);
+
+/// Declare that this platform adapter emits cursor events. Called once by an
+/// adapter that actually drives [`push_cursor_event`] from its cursor write
+/// path, during tool registration.
+pub fn declare_cursor_hook_emitter() {
+    EMITTER_DECLARED.store(true, Ordering::Release);
+}
+
+/// Whether this build emits cursor events at all.
+///
+/// Registering a hook always succeeds, so `cursor_hook_enabled()` cannot tell
+/// an embedder whether events will ever arrive. Today only the macOS adapter
+/// emits; the Windows, X11 and Wayland adapters have no cursor write path
+/// wired to this hook, so on those hosts a registered hook stays silent
+/// forever.
+///
+/// Per the cross-platform contract, a host must publish that limitation
+/// explicitly — "cursor tracking unavailable on this platform" — rather than
+/// showing a viewer a pointer that never moves and letting it look like a
+/// hung stream. Check this at startup, not by waiting for a first event that
+/// is not coming.
+pub fn cursor_hook_supported() -> bool {
+    EMITTER_DECLARED.load(Ordering::Acquire)
 }
 
 /// Fire a cursor update. No-op when nothing is registered.

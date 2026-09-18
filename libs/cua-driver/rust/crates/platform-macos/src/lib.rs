@@ -123,6 +123,13 @@ pub fn register_tools_with_cursor_and_provider(
         if session::has_graphic_access() {
             cursor::shape::install();
         }
+        // This adapter drives `push_cursor_event` from the cursor write path in
+        // `cursor::state`, so declare cursor tracking as supported. The Windows
+        // and Linux adapters make no such declaration, which is how an embedder
+        // learns it must publish the limitation instead of waiting for events
+        // that will never arrive. Unconditional: emission depends on the
+        // registry write path, not on the overlay or on graphic access.
+        cua_driver_core::cursor_hook::declare_cursor_hook_emitter();
         let mut r = ToolRegistry::new_with_protected_consent_provider(provider);
         tools::register_all(
             &mut r,

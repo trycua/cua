@@ -129,6 +129,10 @@ jobs:
             --exclude-path libs/cua-driver/docs \
             --exclude-path libs/cua-driver/python \
             --exclude-path libs/cua-driver/tests \
+            --exclude-path libs/cua-driver/rust/crates/cua-perception \
+            --exclude-path libs/cua-driver/experiments/cua-perception-inference \
+            --exclude-companion-path libs/cua-driver/rust/Cargo.toml \
+            --exclude-companion-path libs/cua-driver/rust/Cargo.lock \
             --changelog libs/cua-driver/rust/CHANGELOG.md \
             --output "$RUNNER_TEMP/cua-driver-release-manifest.json"
 
@@ -1247,6 +1251,10 @@ jobs:
             --exclude-path libs/cua-driver/docs \
             --exclude-path libs/cua-driver/python \
             --exclude-path libs/cua-driver/tests \
+            --exclude-path libs/cua-driver/rust/crates/cua-perception \
+            --exclude-path libs/cua-driver/experiments/cua-perception-inference \
+            --exclude-companion-path libs/cua-driver/rust/Cargo.toml \
+            --exclude-companion-path libs/cua-driver/rust/Cargo.lock \
             --changelog libs/cua-driver/rust/CHANGELOG.md \
             --asset-dir release-upload \
             --output release-metadata/release-manifest.json

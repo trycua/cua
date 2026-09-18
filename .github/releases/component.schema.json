@@ -54,6 +54,16 @@
           "items": { "$ref": "#/$defs/repositoryPath" },
           "uniqueItems": true
         },
+        "changeDetectionExcludePaths": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/repositoryPath" },
+          "uniqueItems": true
+        },
+        "changeDetectionCompanionPaths": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/repositoryPath" },
+          "uniqueItems": true
+        },
         "buildVersionSites": {
           "type": "array",
           "minItems": 1,

@@ -76,7 +76,9 @@ jobs:
             input_artifact: cua-perception-input-windows-x86_64
             worker: cua-perception.exe
             driver: cua-driver.exe
-          - runner: macos-15
+          # Match the production Driver build and hosted desktop E2E image.
+          # The macOS 15 image cannot use the ephemeral self-signed review key.
+          - runner: macos-26
             target: aarch64-apple-darwin
             platform: macos
             input_artifact: cua-perception-input-macos-aarch64

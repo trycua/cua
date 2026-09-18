@@ -198,8 +198,8 @@ trusted_identity="$identity_hash"
 if [[ "${GITHUB_ACTIONS:-}" == true \
     && "${RUNNER_ENVIRONMENT:-}" == github-hosted \
     && "${RUNNER_OS:-}" == macOS ]]; then
-  # GitHub's macOS 15 image resolves the imported key for codesign only after
-  # the self-signed certificate has a temporary code-signing trust setting.
+  # The hosted runner resolves the imported key for codesign only after the
+  # self-signed certificate has a temporary code-signing trust setting.
   run_step sudo-preflight sudo -n -v
   admin_trust_cleanup_needed=true
   run_step add-trust sudo -n security add-trusted-cert -d -r trustRoot \
@@ -219,7 +219,7 @@ if [[ "${GITHUB_ACTIONS:-}" == true \
   }
 fi
 
-# Some macOS 15 runners cannot update partitions on a freshly imported key.
+# Some hosted runners cannot update partitions on a freshly imported key.
 # The signing probe below is the authoritative noninteractive usability check.
 if ! run_bounded security set-key-partition-list \
     -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain_path" \

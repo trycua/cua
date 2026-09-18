@@ -157,7 +157,9 @@ def test_review_pipeline_preserves_the_assembler_candidate_manifest() -> None:
 def test_macos_review_candidate_uses_ephemeral_certificate_signing() -> None:
     text = workflow_text()
     script = (ROOT / ".github/scripts/macos-review-codesign.sh").read_text()
-    assert "runner: macos-15" in text
+    assert "runner: macos-26" in text
+    assert "runner: macos-15" not in text
+    assert "Match the production Driver build and hosted desktop E2E image" in text
     assert "bash .github/scripts/macos-review-codesign.sh" in text
     assert 'code_signing: codeSigning' in text
     for contract in (

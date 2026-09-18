@@ -12,7 +12,7 @@ must also set the required boolean `run_live` acknowledgement to `true` before
 the source gate permits protected work.
 
 The private candidate producer runs without an environment or production
-secrets on Linux, Windows, and `macos-15`, then returns both its Actions run ID
+secrets on Linux, Windows, and `macos-26`, then returns both its Actions run ID
 and the immutable aggregate artifact ID. Consumers require both identifiers so
 the artifact download is bound to the reviewed exact-SHA producer run. The
 candidate aggregate has `windows`, `linux-x11`, and `macos` directories. Each

@@ -1,7 +1,9 @@
 //! Windows identity and endpoint evidence for the first-class browser tools.
 
 use std::collections::HashMap;
+use std::ffi::c_void;
 use std::future::Future;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
@@ -22,7 +24,14 @@ use cua_driver_core::browser::types::{
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{CloseHandle, E_ACCESSDENIED, FILETIME, HWND, RECT};
+use windows::Win32::Foundation::{
+    CloseHandle, ERROR_INSUFFICIENT_BUFFER, E_ACCESSDENIED, FILETIME, HWND, NO_ERROR, RECT,
+};
+use windows::Win32::NetworkManagement::IpHelper::{
+    GetExtendedTcpTable, MIB_TCP6ROW_OWNER_PID, MIB_TCP6TABLE_OWNER_PID, MIB_TCPROW_OWNER_PID,
+    MIB_TCPTABLE_OWNER_PID, MIB_TCP_STATE_LISTEN, TCP_TABLE_OWNER_PID_LISTENER,
+};
+use windows::Win32::Networking::WinSock::{AF_INET, AF_INET6};
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, DELETE, FILE_ADD_FILE, FILE_ADD_SUBDIRECTORY, FILE_APPEND_DATA, FILE_DELETE_CHILD,
     FILE_FLAGS_AND_ATTRIBUTES, FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_DELETE, FILE_SHARE_READ,
@@ -461,16 +470,7 @@ fn user_data_dir_from_command_line(
 }
 
 fn system_powershell_path() -> Result<PathBuf, BrowserRefusal> {
-    let system = system_netstat_path()?
-        .parent()
-        .map(PathBuf::from)
-        .ok_or_else(|| {
-            refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                "could not resolve the trusted Windows system directory",
-            )
-        })?;
-    Ok(system.join("WindowsPowerShell\\v1.0\\powershell.exe"))
+    Ok(system_directory_path()?.join("WindowsPowerShell\\v1.0\\powershell.exe"))
 }
 
 async fn browser_command_line(pid: u32) -> Result<String, BrowserRefusal> {
@@ -754,43 +754,224 @@ fn overlay_window_and_scale(window_id: u64) -> Option<(u64, f64)> {
     Some((overlay_window, scale))
 }
 
-fn parse_netstat_loopback_listeners(text: &str, allowed_pids: &[u32]) -> Vec<(u16, u32)> {
-    let mut listeners = text
-        .lines()
-        .filter_map(|line| {
-            let fields = line.split_whitespace().collect::<Vec<_>>();
-            if fields.len() < 5
-                || !fields[0].eq_ignore_ascii_case("TCP")
-                || !fields[3].eq_ignore_ascii_case("LISTENING")
-            {
-                return None;
-            }
-            let owner_pid = fields[4].parse::<u32>().ok()?;
-            if !allowed_pids.contains(&owner_pid) {
-                return None;
-            }
-            let local = fields[1];
-            let (host, port) = local.rsplit_once(':')?;
-            let host = host.trim_matches(['[', ']']);
-            matches!(host, "127.0.0.1" | "::1" | "localhost")
-                .then(|| port.parse::<u16>().ok().map(|port| (port, owner_pid)))
-                .flatten()
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TcpOwnerRow {
+    local_ip: IpAddr,
+    local_port: u16,
+    state: u32,
+    owner_pid: u32,
+}
+
+fn network_port(value: u32) -> u16 {
+    u16::from_be((value & u32::from(u16::MAX)) as u16)
+}
+
+const MAX_TCP_OWNER_TABLE_BYTES: usize = 64 * 1024 * 1024;
+const TCP_OWNER_TABLE_READ_ATTEMPTS: usize = 3;
+
+fn select_loopback_listeners(rows: &[TcpOwnerRow], allowed_pids: &[u32]) -> Vec<(u16, u32)> {
+    let mut listeners = rows
+        .iter()
+        .filter(|row| {
+            row.state == MIB_TCP_STATE_LISTEN.0 as u32
+                && row.local_ip.is_loopback()
+                && allowed_pids.contains(&row.owner_pid)
         })
+        .map(|row| (row.local_port, row.owner_pid))
         .collect::<Vec<_>>();
     listeners.sort_unstable();
     listeners.dedup();
     listeners
 }
 
-#[cfg(test)]
-fn parse_netstat_loopback_ports(text: &str, allowed_pids: &[u32]) -> Vec<u16> {
-    let mut ports = parse_netstat_loopback_listeners(text, allowed_pids)
-        .into_iter()
-        .map(|(port, _owner_pid)| port)
-        .collect::<Vec<_>>();
-    ports.sort_unstable();
-    ports.dedup();
-    ports
+/// # Safety
+///
+/// `R` must be a Windows owner-table row whose every bit pattern is valid.
+/// `row_offset` must identify the first row in the table; invalid offsets are
+/// bounds-checked and refused rather than read.
+unsafe fn decode_owner_table<R: Copy>(
+    bytes: &[u8],
+    row_offset: usize,
+) -> Result<Vec<R>, BrowserRefusal> {
+    let count_bytes: [u8; 4] = bytes
+        .get(..4)
+        .and_then(|part| part.try_into().ok())
+        .ok_or_else(|| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                "Windows returned a truncated TCP owner table",
+            )
+        })?;
+    let count = u32::from_ne_bytes(count_bytes) as usize;
+    let row_size = std::mem::size_of::<R>();
+    if row_offset < count_bytes.len() || row_size == 0 {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            "Windows returned an invalid TCP owner table layout",
+        ));
+    }
+    let required = count
+        .checked_mul(row_size)
+        .and_then(|rows| rows.checked_add(row_offset))
+        .filter(|required| *required <= bytes.len())
+        .ok_or_else(|| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                "Windows returned an invalid TCP owner table length",
+            )
+        })?;
+
+    let mut rows = Vec::with_capacity(count);
+    let mut offset = row_offset;
+    while offset < required {
+        rows.push(unsafe { std::ptr::read_unaligned(bytes.as_ptr().add(offset).cast::<R>()) });
+        offset += row_size;
+    }
+    Ok(rows)
+}
+
+fn query_tcp_owner_table_with(
+    mut query: impl FnMut(Option<*mut c_void>, &mut u32) -> u32,
+) -> Result<Vec<u8>, BrowserRefusal> {
+    let mut size = 0u32;
+    let status = query(None, &mut size);
+    if status != ERROR_INSUFFICIENT_BUFFER.0 && status != NO_ERROR.0 {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            format!("could not size the Windows TCP owner table: error {status}"),
+        ));
+    }
+    if size == 0 {
+        return Ok(0u32.to_ne_bytes().to_vec());
+    }
+
+    for _ in 0..TCP_OWNER_TABLE_READ_ATTEMPTS {
+        let requested = size as usize;
+        if requested > MAX_TCP_OWNER_TABLE_BYTES {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("Windows TCP owner table exceeded {MAX_TCP_OWNER_TABLE_BYTES} bytes"),
+            ));
+        }
+        let word_count = requested.div_ceil(std::mem::size_of::<u32>());
+        let mut buffer = vec![0u32; word_count];
+        let mut buffer_size = (word_count * std::mem::size_of::<u32>()) as u32;
+        let status = query(Some(buffer.as_mut_ptr().cast()), &mut buffer_size);
+        if status == NO_ERROR.0 {
+            let returned = buffer_size as usize;
+            let allocated = buffer.len() * std::mem::size_of::<u32>();
+            if returned > allocated {
+                return Err(refusal(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    "Windows returned an oversized TCP owner table",
+                ));
+            }
+            let bytes =
+                unsafe { std::slice::from_raw_parts(buffer.as_ptr().cast::<u8>(), returned) };
+            return Ok(bytes.to_vec());
+        }
+        if status != ERROR_INSUFFICIENT_BUFFER.0 {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("could not read the Windows TCP owner table: error {status}"),
+            ));
+        }
+        size = buffer_size;
+    }
+
+    Err(refusal(
+        BrowserRefusalCode::BrowserRouteUnavailable,
+        format!(
+            "Windows TCP owner table changed during {TCP_OWNER_TABLE_READ_ATTEMPTS} consecutive reads"
+        ),
+    ))
+}
+
+fn query_tcp_owner_table(address_family: u32) -> Result<Vec<u8>, BrowserRefusal> {
+    query_tcp_owner_table_with(|buffer, size| unsafe {
+        GetExtendedTcpTable(
+            buffer,
+            size,
+            false,
+            address_family,
+            TCP_TABLE_OWNER_PID_LISTENER,
+            0,
+        )
+    })
+}
+
+fn windows_loopback_listeners_with(
+    allowed_pids: &[u32],
+    mut query: impl FnMut(u32) -> Result<Vec<u8>, BrowserRefusal>,
+) -> Result<Vec<(u16, u32)>, BrowserRefusal> {
+    let ipv4 = query(u32::from(AF_INET.0));
+    let ipv6 = query(u32::from(AF_INET6.0));
+    if let (Err(ipv4), Err(ipv6)) = (&ipv4, &ipv6) {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            format!(
+                "could not inspect either Windows TCP owner table: IPv4: {}; IPv6: {}",
+                ipv4.message, ipv6.message
+            ),
+        ));
+    }
+    if let Err(error) = &ipv4 {
+        tracing::warn!(
+            code = ?error.code,
+            message = %error.message,
+            "continuing Windows listener discovery without the IPv4 owner table"
+        );
+    }
+    if let Err(error) = &ipv6 {
+        tracing::warn!(
+            code = ?error.code,
+            message = %error.message,
+            "continuing Windows listener discovery without the IPv6 owner table"
+        );
+    }
+
+    // These Win32 rows contain only integer fields and byte arrays, so every
+    // bit pattern returned by the operating system is a valid Rust value.
+    let mut rows = Vec::new();
+    if let Ok(ipv4) = ipv4 {
+        rows.extend(
+            unsafe {
+                decode_owner_table::<MIB_TCPROW_OWNER_PID>(
+                    &ipv4,
+                    std::mem::offset_of!(MIB_TCPTABLE_OWNER_PID, table),
+                )
+            }?
+            .into_iter()
+            .map(|row| TcpOwnerRow {
+                local_ip: IpAddr::V4(Ipv4Addr::from(u32::from_be(row.dwLocalAddr))),
+                local_port: network_port(row.dwLocalPort),
+                state: row.dwState,
+                owner_pid: row.dwOwningPid,
+            }),
+        );
+    }
+    if let Ok(ipv6) = ipv6 {
+        rows.extend(
+            unsafe {
+                decode_owner_table::<MIB_TCP6ROW_OWNER_PID>(
+                    &ipv6,
+                    std::mem::offset_of!(MIB_TCP6TABLE_OWNER_PID, table),
+                )
+            }?
+            .into_iter()
+            .map(|row| TcpOwnerRow {
+                local_ip: IpAddr::V6(Ipv6Addr::from(row.ucLocalAddr)),
+                local_port: network_port(row.dwLocalPort),
+                state: row.dwState,
+                owner_pid: row.dwOwningPid,
+            }),
+        );
+    }
+    Ok(select_loopback_listeners(&rows, allowed_pids))
+}
+
+fn windows_loopback_listeners(allowed_pids: &[u32]) -> Result<Vec<(u16, u32)>, BrowserRefusal> {
+    windows_loopback_listeners_with(allowed_pids, query_tcp_owner_table)
 }
 
 fn system_directory_path() -> Result<PathBuf, BrowserRefusal> {
@@ -805,30 +986,18 @@ fn system_directory_path() -> Result<PathBuf, BrowserRefusal> {
     Ok(PathBuf::from(String::from_utf16_lossy(&buffer[..length])))
 }
 
-fn system_netstat_path() -> Result<PathBuf, BrowserRefusal> {
-    Ok(system_directory_path()?.join("netstat.exe"))
-}
-
-async fn netstat_loopback_listeners(
+async fn native_loopback_listeners(
     allowed_pids: &[u32],
 ) -> Result<Vec<(u16, u32)>, BrowserRefusal> {
-    let netstat = system_netstat_path()?;
-    let output = tokio::process::Command::new(netstat)
-        .args(["-ano", "-p", "tcp"])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
+    let allowed_pids = allowed_pids.to_vec();
+    tokio::task::spawn_blocking(move || windows_loopback_listeners(&allowed_pids))
         .await
         .map_err(|error| {
             refusal(
                 BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("could not inspect browser listeners: {error}"),
+                format!("could not inspect Windows TCP listener ownership: {error}"),
             )
-        })?;
-    Ok(parse_netstat_loopback_listeners(
-        &String::from_utf8_lossy(&output.stdout),
-        allowed_pids,
-    ))
+        })?
 }
 
 async fn raw_loopback_listeners_for_process_tree(
@@ -843,7 +1012,7 @@ async fn raw_loopback_listeners_for_process_tree(
                     format!("could not inspect browser process tree: {error}"),
                 )
             })?;
-    let observed = netstat_loopback_listeners(&allowed_pids).await?;
+    let observed = native_loopback_listeners(&allowed_pids).await?;
     tokio::task::spawn_blocking(move || {
         observed
             .into_iter()
@@ -882,7 +1051,7 @@ async fn loopback_listeners_for_process_tree(
         )
     })?;
 
-    let observed = netstat_loopback_listeners(&tree.pids).await?;
+    let observed = native_loopback_listeners(&tree.pids).await?;
     let expected_starts = tree.started_at;
     tokio::task::spawn_blocking(move || {
         retain_identity_matched_listeners(observed, &expected_starts, |pid| {
@@ -908,7 +1077,7 @@ async fn loopback_listeners_for_exact_pid(pid: u32) -> Result<Vec<(u16, u32)>, B
                     format!("could not inspect browser process identity: {error}"),
                 )
             })??;
-    let observed = netstat_loopback_listeners(&[pid]).await?;
+    let observed = native_loopback_listeners(&[pid]).await?;
     tokio::task::spawn_blocking(move || {
         retain_identity_matched_listeners(
             observed,
@@ -941,7 +1110,7 @@ async fn loopback_ports_for_exact_pid(pid: u32) -> Result<Vec<u16>, BrowserRefus
 }
 
 async fn unfiltered_loopback_ports_for_exact_pid(pid: u32) -> Result<Vec<u16>, BrowserRefusal> {
-    let mut ports = netstat_loopback_listeners(&[pid])
+    let mut ports = native_loopback_listeners(&[pid])
         .await?
         .into_iter()
         .map(|(port, _owner_pid)| port)
@@ -2190,34 +2359,243 @@ mod tests {
     }
 
     #[test]
-    fn netstat_parser_requires_loopback_listening_and_browser_process_tree() {
-        let input = "\
-  TCP    127.0.0.1:9222       0.0.0.0:0       LISTENING       42\n\
-  TCP    0.0.0.0:9333         0.0.0.0:0       LISTENING       43\n\
-  TCP    [::1]:9444           [::]:0          LISTENING       43\n\
-  TCP    127.0.0.1:9555       0.0.0.0:0       LISTENING       7\n";
+    fn native_listener_selection_requires_loopback_listen_state_and_process_tree() {
+        let rows = [
+            TcpOwnerRow {
+                local_ip: "127.0.0.1".parse().unwrap(),
+                local_port: 9222,
+                state: MIB_TCP_STATE_LISTEN.0 as u32,
+                owner_pid: 42,
+            },
+            TcpOwnerRow {
+                local_ip: "0.0.0.0".parse().unwrap(),
+                local_port: 9333,
+                state: MIB_TCP_STATE_LISTEN.0 as u32,
+                owner_pid: 43,
+            },
+            TcpOwnerRow {
+                local_ip: "::1".parse().unwrap(),
+                local_port: 9444,
+                state: MIB_TCP_STATE_LISTEN.0 as u32,
+                owner_pid: 43,
+            },
+            TcpOwnerRow {
+                local_ip: "127.0.0.1".parse().unwrap(),
+                local_port: 9555,
+                state: MIB_TCP_STATE_LISTEN.0 as u32,
+                owner_pid: 7,
+            },
+            TcpOwnerRow {
+                local_ip: "127.0.0.1".parse().unwrap(),
+                local_port: 9666,
+                state: 5,
+                owner_pid: 42,
+            },
+        ];
         assert_eq!(
-            parse_netstat_loopback_ports(input, &[42, 43]),
-            vec![9222, 9444]
+            select_loopback_listeners(&rows, &[42, 43]),
+            vec![(9222, 42), (9444, 43)]
         );
     }
 
     #[test]
-    fn netstat_parser_rejects_unrelated_process_trees() {
-        let input = "\
-  TCP    127.0.0.1:9222       0.0.0.0:0       LISTENING       42\n\
-  TCP    127.0.0.1:9555       0.0.0.0:0       LISTENING       99\n";
-        assert_eq!(parse_netstat_loopback_ports(input, &[42, 43]), vec![9222]);
+    fn native_listener_selection_preserves_owner_and_deduplicates_rows() {
+        let row = TcpOwnerRow {
+            local_ip: "127.0.0.1".parse().unwrap(),
+            local_port: 9222,
+            state: MIB_TCP_STATE_LISTEN.0 as u32,
+            owner_pid: 43,
+        };
+        assert_eq!(
+            select_loopback_listeners(&[row, row], &[42, 43]),
+            vec![(9222, 43)]
+        );
     }
 
     #[test]
-    fn netstat_parser_preserves_the_exact_listener_owner() {
-        let input = "\
-  TCP    127.0.0.1:9222       0.0.0.0:0       LISTENING       43\n\
-  TCP    127.0.0.1:9555       0.0.0.0:0       LISTENING       99\n";
-        assert_eq!(
-            parse_netstat_loopback_listeners(input, &[42, 43]),
-            vec![(9222, 43)]
+    fn native_owner_table_port_uses_network_byte_order() {
+        assert_eq!(network_port(0x0000_0624), 9222);
+    }
+
+    fn owner_table_bytes<R: Copy>(row_offset: usize, rows: &[R]) -> Vec<u8> {
+        // The Win32 owner rows used by these tests contain no padding.
+        let mut bytes = vec![0; row_offset + std::mem::size_of_val(rows)];
+        bytes[..4].copy_from_slice(&(rows.len() as u32).to_ne_bytes());
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                rows.as_ptr().cast::<u8>(),
+                bytes.as_mut_ptr().add(row_offset),
+                std::mem::size_of_val(rows),
+            );
+        }
+        bytes
+    }
+
+    #[test]
+    fn native_owner_table_decoder_rejects_truncated_and_invalid_counts() {
+        let truncated = unsafe { decode_owner_table::<u32>(&[0, 0, 0], 4) }.unwrap_err();
+        assert!(truncated.message.contains("truncated TCP owner table"));
+
+        let invalid_offset = unsafe { decode_owner_table::<u32>(&[0; 8], 3) }.unwrap_err();
+        assert!(invalid_offset
+            .message
+            .contains("invalid TCP owner table layout"));
+
+        let impossible_count = u32::MAX.to_ne_bytes();
+        let invalid = unsafe { decode_owner_table::<u32>(&impossible_count, 4) }.unwrap_err();
+        assert!(invalid.message.contains("invalid TCP owner table length"));
+    }
+
+    #[test]
+    fn native_owner_table_decoder_uses_the_real_ipv4_and_ipv6_layouts() {
+        let ipv4_offset = std::mem::offset_of!(MIB_TCPTABLE_OWNER_PID, table);
+        assert_eq!(ipv4_offset, 4);
+        assert_eq!(std::mem::size_of::<MIB_TCPROW_OWNER_PID>(), 24);
+        let ipv4_row = MIB_TCPROW_OWNER_PID {
+            dwState: MIB_TCP_STATE_LISTEN.0 as u32,
+            dwLocalAddr: u32::from_ne_bytes(Ipv4Addr::LOCALHOST.octets()),
+            dwLocalPort: 0x0000_0624,
+            dwRemoteAddr: 0,
+            dwRemotePort: 0,
+            dwOwningPid: 42,
+        };
+        let ipv4_bytes = owner_table_bytes(ipv4_offset, &[ipv4_row]);
+        let decoded_ipv4 =
+            unsafe { decode_owner_table::<MIB_TCPROW_OWNER_PID>(&ipv4_bytes, ipv4_offset) }
+                .unwrap();
+        assert_eq!(decoded_ipv4, vec![ipv4_row]);
+
+        let ipv6_offset = std::mem::offset_of!(MIB_TCP6TABLE_OWNER_PID, table);
+        assert_eq!(ipv6_offset, 4);
+        assert_eq!(std::mem::size_of::<MIB_TCP6ROW_OWNER_PID>(), 56);
+        let ipv6_row = MIB_TCP6ROW_OWNER_PID {
+            ucLocalAddr: Ipv6Addr::LOCALHOST.octets(),
+            dwLocalScopeId: 0,
+            dwLocalPort: 0x0000_0624,
+            ucRemoteAddr: Ipv6Addr::UNSPECIFIED.octets(),
+            dwRemoteScopeId: 0,
+            dwRemotePort: 0,
+            dwState: MIB_TCP_STATE_LISTEN.0 as u32,
+            dwOwningPid: 43,
+        };
+        let ipv6_bytes = owner_table_bytes(ipv6_offset, &[ipv6_row]);
+        let decoded_ipv6 =
+            unsafe { decode_owner_table::<MIB_TCP6ROW_OWNER_PID>(&ipv6_bytes, ipv6_offset) }
+                .unwrap();
+        assert_eq!(decoded_ipv6, vec![ipv6_row]);
+    }
+
+    #[test]
+    fn native_listener_discovery_keeps_ipv4_when_ipv6_is_unavailable() {
+        let ipv4_offset = std::mem::offset_of!(MIB_TCPTABLE_OWNER_PID, table);
+        let ipv4 = owner_table_bytes(
+            ipv4_offset,
+            &[MIB_TCPROW_OWNER_PID {
+                dwState: MIB_TCP_STATE_LISTEN.0 as u32,
+                dwLocalAddr: u32::from_ne_bytes(Ipv4Addr::LOCALHOST.octets()),
+                dwLocalPort: 0x0000_0624,
+                dwRemoteAddr: 0,
+                dwRemotePort: 0,
+                dwOwningPid: 42,
+            }],
+        );
+
+        let listeners = windows_loopback_listeners_with(&[42], |family| {
+            if family == u32::from(AF_INET.0) {
+                Ok(ipv4.clone())
+            } else {
+                Err(refusal(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    "IPv6 owner table is unsupported",
+                ))
+            }
+        })
+        .unwrap();
+        assert_eq!(listeners, vec![(9222, 42)]);
+    }
+
+    #[test]
+    fn native_listener_discovery_refuses_when_both_families_fail() {
+        let error = windows_loopback_listeners_with(&[42], |family| {
+            Err(refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("family {family} unavailable"),
+            ))
+        })
+        .unwrap_err();
+        assert!(error.message.contains("either Windows TCP owner table"));
+        assert!(error.message.contains("IPv4:"));
+        assert!(error.message.contains("IPv6:"));
+    }
+
+    #[test]
+    fn native_owner_table_query_rejects_sizing_and_read_errors() {
+        let sizing = query_tcp_owner_table_with(|_, _| 5).unwrap_err();
+        assert!(sizing.message.contains("size the Windows TCP owner table"));
+
+        let mut calls = 0;
+        let reading = query_tcp_owner_table_with(|buffer, size| {
+            calls += 1;
+            if buffer.is_none() {
+                *size = 4;
+                ERROR_INSUFFICIENT_BUFFER.0
+            } else {
+                5
+            }
+        })
+        .unwrap_err();
+        assert_eq!(calls, 2);
+        assert!(reading.message.contains("read the Windows TCP owner table"));
+    }
+
+    #[test]
+    fn native_owner_table_query_bounds_growth_and_retry_churn() {
+        let oversized = query_tcp_owner_table_with(|buffer, size| {
+            assert!(buffer.is_none());
+            *size = (MAX_TCP_OWNER_TABLE_BYTES as u32) + 1;
+            ERROR_INSUFFICIENT_BUFFER.0
+        })
+        .unwrap_err();
+        assert!(oversized
+            .message
+            .contains("TCP owner table exceeded 67108864 bytes"));
+
+        let mut calls = 0;
+        let churn = query_tcp_owner_table_with(|buffer, size| {
+            calls += 1;
+            *size = if buffer.is_none() { 4 } else { *size + 4 };
+            ERROR_INSUFFICIENT_BUFFER.0
+        })
+        .unwrap_err();
+        assert_eq!(calls, TCP_OWNER_TABLE_READ_ATTEMPTS + 1);
+        assert!(churn.message.contains("changed during 3 consecutive reads"));
+    }
+
+    #[test]
+    fn native_owner_table_query_rejects_oversized_success_length() {
+        let oversized = query_tcp_owner_table_with(|buffer, size| {
+            if buffer.is_none() {
+                *size = 4;
+                ERROR_INSUFFICIENT_BUFFER.0
+            } else {
+                *size = 8;
+                NO_ERROR.0
+            }
+        })
+        .unwrap_err();
+        assert!(oversized.message.contains("oversized TCP owner table"));
+    }
+
+    #[test]
+    fn native_owner_table_observes_a_real_loopback_listener() {
+        let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let pid = std::process::id();
+
+        let listeners = windows_loopback_listeners(&[pid]).unwrap();
+        assert!(
+            listeners.contains(&(port, pid)),
+            "native owner table did not report current-process listener {port}: {listeners:?}"
         );
     }
 

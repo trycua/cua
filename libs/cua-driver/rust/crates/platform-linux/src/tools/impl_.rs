@@ -3507,6 +3507,204 @@ fn element_needs_real_click(role: &str) -> bool {
     crate::atspi::is_focus_taking_role(role)
 }
 
+/// A chord the window manager, not the application, acts on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WmChord {
+    /// Alt+F4: close the target window (`_NET_CLOSE_WINDOW`).
+    CloseWindow,
+    /// Super+*, Alt+Tab, Ctrl+Alt+*, Alt+F7/F8/F10/space/Escape: a WM binding
+    /// with no window-addressed equivalent.
+    Unavailable,
+}
+
+/// mutter's key bindings are passive grabs on the core keyboard. A chord from
+/// the session's virtual master keyboard (background delivery) reaches the
+/// client window, never the WM, so `alt+F4` / `super+a` / `alt+tab` silently
+/// do nothing. Recognise them so the tool can act (close the window through
+/// EWMH) or refuse with a typed reason instead of reporting `unverifiable`.
+fn wm_chord_kind(key: &str, modifiers: &[String]) -> Option<WmChord> {
+    let mods: Vec<String> = modifiers
+        .iter()
+        .map(|m| m.trim().to_ascii_lowercase())
+        .collect();
+    let has = |names: &[&str]| mods.iter().any(|m| names.contains(&m.as_str()));
+    let alt = has(&["alt", "alt_l", "alt_r", "option"]);
+    let ctrl = has(&["ctrl", "control", "ctrl_l", "ctrl_r"]);
+    let shift = has(&["shift", "shift_l", "shift_r"]);
+    let super_ = has(&["super", "super_l", "super_r", "meta", "win", "cmd", "command", "hyper"]);
+    let key_lower = key.trim().to_ascii_lowercase();
+    if super_ {
+        return Some(WmChord::Unavailable);
+    }
+    if alt && ctrl {
+        return Some(WmChord::Unavailable);
+    }
+    if alt && !ctrl && key_lower == "f4" {
+        return Some(WmChord::CloseWindow);
+    }
+    if alt && !ctrl && !shift
+        && matches!(
+            key_lower.as_str(),
+            "tab" | "f5" | "f7" | "f8" | "f10" | "space" | "escape" | "esc"
+        )
+    {
+        return Some(WmChord::Unavailable);
+    }
+    if alt && shift && key_lower == "tab" {
+        return Some(WmChord::Unavailable);
+    }
+    None
+}
+
+/// Background delivery of a WM-level chord: close the window for Alt+F4,
+/// refuse the rest (`wm_chord_unavailable`). `None` for ordinary chords.
+async fn wm_chord_background(
+    pid: u32,
+    xid: u64,
+    key: &str,
+    modifiers: &[String],
+    delivery: crate::input::delivery::DeliveryMode,
+) -> Option<ToolResult> {
+    if delivery.is_foreground()
+        || crate::wayland::wayland_input_enabled()
+        || crate::wayland::is_inject_mode()
+    {
+        return None;
+    }
+    let chord = wm_chord_kind(key, modifiers)?;
+    let display = format!("{}+{}", modifiers.join("+"), key);
+    match chord {
+        WmChord::CloseWindow => Some(close_window_background(pid, xid, &display).await),
+        WmChord::Unavailable => {
+            let hint = format!(
+                "{display} is a window-manager binding (mutter's passive grab on the core \
+                 keyboard); a virtual-keyboard chord in background mode reaches the window, \
+                 not the WM, so it would do nothing. Use the driver instead: launch_app / \
+                 list_windows / bring_to_front to switch windows, hotkey alt+F4 (or \
+                 kill_app) to close one, or retry with delivery_mode:\"foreground\"."
+            );
+            Some(
+                ToolResult::error(format!("Refused {display} on pid {pid}: {hint}")).with_structured(
+                    json!({
+                        "code": "wm_chord_unavailable",
+                        "effect": "refused",
+                        "verified": false,
+                        "delivery_mode": "background",
+                        "chord": display,
+                        "hint": hint,
+                    }),
+                ),
+            )
+        }
+    }
+}
+
+/// Alt+F4 in background mode: ask the WM to close the window
+/// (`_NET_CLOSE_WINDOW` -> `WM_DELETE_WINDOW`) and watch it go.
+async fn close_window_background(pid: u32, xid: u64, display: &str) -> ToolResult {
+    let before: Vec<crate::x11::WindowInfo> =
+        tokio::task::spawn_blocking(move || crate::x11::list_windows(Some(pid)))
+            .await
+            .unwrap_or_default();
+    let title = before
+        .iter()
+        .find(|w| w.xid == xid)
+        .map(|w| w.title.clone())
+        .unwrap_or_default();
+    let sent = tokio::task::spawn_blocking(move || crate::x11::close_window(xid, pid)).await;
+    match sent {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            return ToolResult::error(format!(
+                "{display} on pid {pid}: could not request the window manager to close \
+                 window {xid}: {error:#}"
+            ))
+            .with_structured(json!({
+                "code": "close_window_failed",
+                "effect": "none",
+                "detail": error.to_string(),
+            }))
+        }
+        Err(error) => return ToolResult::error(format!("Task error: {error}")),
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(2000);
+    let mut closed = false;
+    while std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let viewable =
+            tokio::task::spawn_blocking(move || crate::x11::window_is_viewable(xid)).await;
+        if matches!(viewable, Ok(false)) {
+            closed = true;
+            break;
+        }
+    }
+    let after: Vec<crate::x11::WindowInfo> =
+        tokio::task::spawn_blocking(move || crate::x11::list_windows(Some(pid)))
+            .await
+            .unwrap_or_default();
+    let new_windows: Vec<&crate::x11::WindowInfo> = after
+        .iter()
+        .filter(|w| w.is_on_screen && !before.iter().any(|old| old.xid == w.xid))
+        .collect();
+    let quoted = if title.is_empty() {
+        String::new()
+    } else {
+        format!(" \"{title}\"")
+    };
+    let mut structured = json!({
+        "path": "x11_net_close_window",
+        "delivery_mode": "background",
+        "chord": display,
+        "target_window": xid,
+        "window_closed": closed,
+    });
+    if closed {
+        structured["verified"] = json!(true);
+        structured["effect"] = json!("confirmed");
+        structured["closed_window"] = json!(xid);
+        structured["evidence"] = json!([{
+            "kind": "window_change",
+            "detail": format!("window {xid}{quoted} of pid {pid} closed after _NET_CLOSE_WINDOW"),
+        }]);
+        let mut text = format!(
+            "Pressed {display} on pid {pid} as a window-manager close request \
+             (_NET_CLOSE_WINDOW -> WM_DELETE_WINDOW; a virtual-keyboard Alt+F4 never reaches \
+             mutter): window {xid}{quoted} closed."
+        );
+        if let Some(w) = new_windows.first() {
+            text.push_str(&format!(
+                " The application then opened window {} \"{}\".",
+                w.xid, w.title
+            ));
+            structured["opened_window"] = json!({ "window_id": w.xid, "title": w.title });
+        }
+        ToolResult::text(text).with_structured(structured)
+    } else {
+        structured["verified"] = json!(false);
+        structured["effect"] = json!("unverifiable");
+        let mut text = format!(
+            "Pressed {display} on pid {pid} as a window-manager close request \
+             (_NET_CLOSE_WINDOW -> WM_DELETE_WINDOW): window {xid}{quoted} is still mapped \
+             after 2 s."
+        );
+        if let Some(w) = new_windows.first() {
+            text.push_str(&format!(
+                " The application opened window {} \"{}\" instead (a save / confirm \
+                 dialog?); act on it with get_window_state / click.",
+                w.xid, w.title
+            ));
+            structured["opened_window"] = json!({ "window_id": w.xid, "title": w.title });
+            structured["evidence"] = json!([{
+                "kind": "window_change",
+                "detail": format!("the application opened window {} \"{}\" after the close request", w.xid, w.title),
+            }]);
+        } else {
+            text.push_str(" Confirm with list_windows; kill_app force-closes the application.");
+        }
+        ToolResult::text(text).with_structured(structured)
+    }
+}
+
 /// `press_key` accepts `"alt+F4"` / `"ctrl+shift+t"` style keys: everything
 /// before the last `+` is a modifier. A bare `"+"` stays the plus key.
 fn split_key_combo(key: &str) -> (Vec<String>, String) {
@@ -6801,6 +6999,9 @@ impl Tool for PressKeyTool {
         if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, true) {
             return refusal;
         }
+        if let Some(result) = wm_chord_background(pid, xid, &key, &mods, delivery).await {
+            return result;
+        }
 
         let px = args.get("x").and_then(|value| value.as_f64());
         let py = args.get("y").and_then(|value| value.as_f64());
@@ -7030,7 +7231,12 @@ impl Tool for HotkeyTool {
         HOTKEY_DEF.get_or_init(|| ToolDef {
             name: "hotkey".into(),
             description: "Press a combination of keys simultaneously, e.g. [\"ctrl\",\"c\"] for Copy. \
-                Sent via XSendEvent directly to the target pid; target does NOT need to be frontmost.".into(),
+                Delivered to the target window without focus steal (real key events from a virtual \
+                master keyboard on X11); target does NOT need to be frontmost. Window-manager chords \
+                cannot reach the WM that way: alt+F4 on a window target closes that window through \
+                the WM (_NET_CLOSE_WINDOW, effect confirmed when it unmaps); super+*, alt+tab, \
+                ctrl+alt+* and other WM bindings are refused with code wm_chord_unavailable — use \
+                bring_to_front / list_windows / kill_app or delivery_mode:\"foreground\" instead.".into(),
             input_schema: json!({
                 "type":"object","required":["keys"],"properties":{
                     "session": cua_driver_core::tool_schema::session_schema(),
@@ -7244,6 +7450,9 @@ impl Tool for HotkeyTool {
         }
         if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, true) {
             return refusal;
+        }
+        if let Some(result) = wm_chord_background(pid, xid, &key, &mods, delivery).await {
+            return result;
         }
 
         let px = args.get("x").and_then(|value| value.as_f64());
@@ -12824,7 +13033,7 @@ mod background_budget_tests {
 
 #[cfg(test)]
 mod background_keyboard_route_tests {
-    use super::{element_needs_real_click, split_key_combo};
+    use super::{element_needs_real_click, split_key_combo, wm_chord_kind, WmChord};
 
     #[test]
     fn key_combos_split_into_modifiers_and_key() {
@@ -12841,6 +13050,24 @@ mod background_keyboard_route_tests {
         assert_eq!(split_key_combo("Return"), (vec![], "Return".to_owned()));
         // Not a modifier prefix: left untouched for the keysym resolver.
         assert_eq!(split_key_combo("a+b"), (vec![], "a+b".to_owned()));
+    }
+
+    #[test]
+    fn wm_chords_are_recognised() {
+        let m = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(wm_chord_kind("F4", &m(&["alt"])), Some(WmChord::CloseWindow));
+        assert_eq!(wm_chord_kind("f4", &m(&["Alt_L"])), Some(WmChord::CloseWindow));
+        assert_eq!(wm_chord_kind("Tab", &m(&["alt"])), Some(WmChord::Unavailable));
+        assert_eq!(wm_chord_kind("Tab", &m(&["alt", "shift"])), Some(WmChord::Unavailable));
+        assert_eq!(wm_chord_kind("a", &m(&["super"])), Some(WmChord::Unavailable));
+        assert_eq!(wm_chord_kind("t", &m(&["ctrl", "alt"])), Some(WmChord::Unavailable));
+        assert_eq!(wm_chord_kind("F4", &m(&["ctrl", "alt"])), Some(WmChord::Unavailable));
+        // Application chords stay with the application.
+        assert_eq!(wm_chord_kind("c", &m(&["ctrl"])), None);
+        assert_eq!(wm_chord_kind("F4", &m(&["ctrl"])), None);
+        assert_eq!(wm_chord_kind("f", &m(&["alt"])), None);
+        assert_eq!(wm_chord_kind("F4", &m(&[])), None);
+        assert_eq!(wm_chord_kind("s", &m(&["ctrl", "shift"])), None);
     }
 
     #[test]

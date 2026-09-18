@@ -32,7 +32,7 @@
 //! terminates the suspended process and returns a fail-closed error.
 
 use std::ffi::{c_void, OsStr};
-use std::os::windows::ffi::OsStrExt as _;
+use std::os::windows::ffi::{OsStrExt as _, OsStringExt as _};
 use std::path::Path;
 
 use cua_driver_contract::VisualParseError;
@@ -57,7 +57,16 @@ const GENERIC_READ: u32 = 0x8000_0000;
 const GENERIC_WRITE: u32 = 0x4000_0000;
 const GENERIC_EXECUTE: u32 = 0x2000_0000;
 const GENERIC_ALL: u32 = 0x1000_0000;
+const READ_CONTROL: u32 = 0x0002_0000;
+const WRITE_DAC: u32 = 0x0004_0000;
 const OPEN_EXISTING: u32 = 3;
+const FILE_SHARE_READ: u32 = 0x0000_0001;
+const FILE_SHARE_WRITE: u32 = 0x0000_0002;
+const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+const FILE_ATTRIBUTE_TAG_INFO_CLASS: u32 = 9;
+const FILE_NAME_NORMALIZED: u32 = 0;
 
 const CREATE_SUSPENDED: u32 = 0x0000_0004;
 const CREATE_UNICODE_ENVIRONMENT: u32 = 0x0000_0400;
@@ -280,6 +289,12 @@ struct ExplicitAccessW {
     trustee: TrusteeW,
 }
 
+#[repr(C)]
+struct FileAttributeTagInfo {
+    file_attributes: u32,
+    reparse_tag: u32,
+}
+
 #[link(name = "kernel32")]
 extern "system" {
     fn CloseHandle(object: Handle) -> Bool;
@@ -310,6 +325,13 @@ extern "system" {
     fn GetExitCodeProcess(process: Handle, exit_code: *mut u32) -> Bool;
     fn GetCurrentProcess() -> Handle;
     fn GetSystemWindowsDirectoryW(buffer: *mut u16, size: u32) -> u32;
+    fn GetFinalPathNameByHandleW(file: Handle, path: *mut u16, path_size: u32, flags: u32) -> u32;
+    fn GetFileInformationByHandleEx(
+        file: Handle,
+        information_class: u32,
+        information: *mut c_void,
+        size: u32,
+    ) -> Bool;
     fn CreateJobObjectW(attributes: *const SecurityAttributes, name: *const u16) -> Handle;
     fn SetInformationJobObject(
         job: Handle,
@@ -360,8 +382,8 @@ extern "system" {
         old_acl: *mut c_void,
         new_acl: *mut *mut c_void,
     ) -> u32;
-    fn GetNamedSecurityInfoW(
-        object_name: *const u16,
+    fn GetSecurityInfo(
+        object: Handle,
         object_type: u32,
         security_information: u32,
         owner: *mut *mut c_void,
@@ -370,8 +392,8 @@ extern "system" {
         sacl: *mut *mut c_void,
         security_descriptor: *mut *mut c_void,
     ) -> u32;
-    fn SetNamedSecurityInfoW(
-        object_name: *mut u16,
+    fn SetSecurityInfo(
+        object: Handle,
         object_type: u32,
         security_information: u32,
         owner: *mut c_void,
@@ -494,8 +516,9 @@ pub(super) async fn spawn(
         (container.sid(), DESKTOP_WORKER_ACCESS),
     ])?;
 
-    let inbound = ProtocolPipe::create(&token, "out", Direction::FromWorker, &protocol_security)?;
-    let outbound = ProtocolPipe::create(&token, "in", Direction::ToWorker, &protocol_security)?;
+    let mut inbound =
+        ProtocolPipe::create(&token, "out", Direction::FromWorker, &protocol_security)?;
+    let mut outbound = ProtocolPipe::create(&token, "in", Direction::ToWorker, &protocol_security)?;
     // Both ends already exist, so the connections complete before any worker
     // code is created, let alone resumed.
     outbound.connect().await?;
@@ -551,6 +574,10 @@ pub(super) async fn spawn(
 /// A handle that is closed when it is dropped unless ownership is released to a
 /// longer-lived guard.
 struct OwnedHandle(Handle);
+
+// Win32 kernel handles are process-wide values. Ownership stays unique in this
+// wrapper, and moving it between executor threads does not change validity.
+unsafe impl Send for OwnedHandle {}
 
 impl OwnedHandle {
     fn get(&self) -> Handle {
@@ -798,7 +825,7 @@ impl ProtocolPipe {
         self.client.get()
     }
 
-    async fn connect(&self) -> Result<(), VisualParseError> {
+    async fn connect(&mut self) -> Result<(), VisualParseError> {
         self.server.connect().await.map_err(|cause| {
             containment_error(
                 "failed to connect a private perception worker protocol pipe",
@@ -1000,6 +1027,10 @@ impl Drop for AttributeList {
 /// The worker's AppContainer identity.
 struct AppContainerSid(*mut c_void);
 
+// The SID is an owned allocation released by `FreeSid`; no thread-local state
+// is associated with the pointer.
+unsafe impl Send for AppContainerSid {}
+
 impl AppContainerSid {
     fn resolve() -> Result<Self, VisualParseError> {
         let name = wide(APP_CONTAINER_NAME);
@@ -1150,6 +1181,10 @@ impl PrivateSecurity {
 /// An access control list allocated by `SetEntriesInAclW`.
 struct LocalAcl(*mut c_void);
 
+// The ACL is an owned `LocalAlloc` allocation and is only read while installed
+// in a descriptor or passed to the security APIs.
+unsafe impl Send for LocalAcl {}
+
 impl Drop for LocalAcl {
     fn drop(&mut self) {
         if !self.0.is_null() {
@@ -1235,13 +1270,14 @@ fn grant_worker_paths(
 }
 
 fn set_protected_dacl(path: &Path, grants: &[(*mut c_void, u32)]) -> Result<(), VisualParseError> {
+    let target = AclTarget::open(path)?;
     let acl = build_acl(
         grants,
         SUB_CONTAINERS_AND_OBJECTS_INHERIT,
         std::ptr::null_mut(),
     )?;
     apply_dacl(
-        path,
+        target.handle.get(),
         acl.0,
         DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
         "failed to apply the private access control list to the perception worker directory",
@@ -1249,12 +1285,12 @@ fn set_protected_dacl(path: &Path, grants: &[(*mut c_void, u32)]) -> Result<(), 
 }
 
 fn merge_grant(path: &Path, sid: *mut c_void, access: u32) -> Result<(), VisualParseError> {
-    let name = wide(path.as_os_str());
+    let target = AclTarget::open(path)?;
     let mut existing: *mut c_void = std::ptr::null_mut();
     let mut descriptor: *mut c_void = std::ptr::null_mut();
     let status = unsafe {
-        GetNamedSecurityInfoW(
-            name.as_ptr(),
+        GetSecurityInfo(
+            target.handle.get(),
             SE_FILE_OBJECT,
             DACL_SECURITY_INFORMATION,
             std::ptr::null_mut(),
@@ -1277,7 +1313,7 @@ fn merge_grant(path: &Path, sid: *mut c_void, access: u32) -> Result<(), VisualP
         existing,
     )?;
     let result = apply_dacl(
-        path,
+        target.handle.get(),
         acl.0,
         DACL_SECURITY_INFORMATION,
         "failed to grant the perception worker access to its own bundle",
@@ -1287,15 +1323,14 @@ fn merge_grant(path: &Path, sid: *mut c_void, access: u32) -> Result<(), VisualP
 }
 
 fn apply_dacl(
-    path: &Path,
+    target: Handle,
     acl: *mut c_void,
     information: u32,
     message: &'static str,
 ) -> Result<(), VisualParseError> {
-    let mut name = wide(path.as_os_str());
     let status = unsafe {
-        SetNamedSecurityInfoW(
-            name.as_mut_ptr(),
+        SetSecurityInfo(
+            target,
             SE_FILE_OBJECT,
             information,
             std::ptr::null_mut(),
@@ -1311,6 +1346,114 @@ fn apply_dacl(
         ));
     }
     Ok(())
+}
+
+/// An ACL target opened without following a final reparse point and held
+/// without delete sharing until the descriptor update finishes. The final
+/// kernel-resolved name is compared with the already canonical policy path
+/// before any grant is applied. A concurrent ancestor swap that redirects the
+/// open resolves to a different name and is refused; after the open, withholding
+/// delete sharing leaves this exact directory pinned through the ACL update.
+struct AclTarget {
+    handle: OwnedHandle,
+}
+
+impl AclTarget {
+    fn open(path: &Path) -> Result<Self, VisualParseError> {
+        let name = wide(path.as_os_str());
+        let handle = unsafe {
+            CreateFileW(
+                name.as_ptr(),
+                READ_CONTROL | WRITE_DAC,
+                // Allow ordinary readers and writers to keep using shared
+                // installation roots. Deliberately withhold delete sharing so
+                // this object cannot be renamed out from under the ACL update.
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                std::ptr::null(),
+                OPEN_EXISTING,
+                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                std::ptr::null_mut(),
+            )
+        };
+        if handle as isize == -1 {
+            return Err(last_error(
+                "failed to open a perception worker path for an ACL update",
+            ));
+        }
+        let handle = OwnedHandle(handle);
+
+        let mut tag = FileAttributeTagInfo {
+            file_attributes: 0,
+            reparse_tag: 0,
+        };
+        if unsafe {
+            GetFileInformationByHandleEx(
+                handle.get(),
+                FILE_ATTRIBUTE_TAG_INFO_CLASS,
+                std::ptr::addr_of_mut!(tag).cast(),
+                std::mem::size_of::<FileAttributeTagInfo>() as u32,
+            )
+        } == FALSE
+        {
+            return Err(last_error(
+                "failed to validate a perception worker ACL target",
+            ));
+        }
+        if tag.file_attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(containment_error(
+                "a perception worker ACL target is a reparse point",
+                None,
+            ));
+        }
+
+        let resolved = final_path(&handle)?;
+        if normalize_windows_path(&resolved) != normalize_windows_path(path) {
+            return Err(containment_error(
+                "a perception worker ACL target changed while it was opened",
+                None,
+            ));
+        }
+        Ok(Self { handle })
+    }
+}
+
+fn final_path(handle: &OwnedHandle) -> Result<std::path::PathBuf, VisualParseError> {
+    let required = unsafe {
+        GetFinalPathNameByHandleW(handle.get(), std::ptr::null_mut(), 0, FILE_NAME_NORMALIZED)
+    };
+    if required == 0 {
+        return Err(last_error(
+            "failed to size a perception worker ACL target path",
+        ));
+    }
+    let mut path = vec![0_u16; required as usize];
+    let written = unsafe {
+        GetFinalPathNameByHandleW(
+            handle.get(),
+            path.as_mut_ptr(),
+            path.len() as u32,
+            FILE_NAME_NORMALIZED,
+        )
+    };
+    if written == 0 || written as usize >= path.len() {
+        return Err(last_error(
+            "failed to read a perception worker ACL target path",
+        ));
+    }
+    path.truncate(written as usize);
+    Ok(std::path::PathBuf::from(std::ffi::OsString::from_wide(
+        &path,
+    )))
+}
+
+fn normalize_windows_path(path: &Path) -> String {
+    let mut text = path.as_os_str().to_string_lossy().replace('/', "\\");
+    if let Some(stripped) = text.strip_prefix(r"\\?\UNC\") {
+        text = format!(r"\\{stripped}");
+    } else if let Some(stripped) = text.strip_prefix(r"\\?\") {
+        text = stripped.to_owned();
+    }
+    text.trim_end_matches('\\').to_ascii_lowercase()
 }
 
 /// A minimal environment block. The worker inherits nothing from the Driver, so
@@ -1471,5 +1614,17 @@ mod tests {
             assert!(!rendered.contains(leaked), "{leaked} reached the worker");
         }
         assert!(rendered.ends_with("\0\0"));
+    }
+
+    #[test]
+    fn final_handle_paths_compare_without_win32_namespace_prefixes() {
+        assert_eq!(
+            normalize_windows_path(Path::new(r"\\?\C:\Cua\Worker")),
+            normalize_windows_path(Path::new(r"c:\cua\worker\"))
+        );
+        assert_eq!(
+            normalize_windows_path(Path::new(r"\\?\UNC\server\share\worker")),
+            normalize_windows_path(Path::new(r"\\server\share\worker"))
+        );
     }
 }

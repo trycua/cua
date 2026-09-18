@@ -26,9 +26,8 @@
 //!   desktop and working directory, a private desktop, and a Job Object with
 //!   kill-on-close, memory, CPU-time, active-process and UI restrictions. The
 //!   worker is created suspended and resumed only after every boundary is in
-//!   place. Windows currently reports filesystem isolation as unavailable and
-//!   refuses launch because its ACL setup is still name based and cannot prove
-//!   resistance to reparse-point swaps.
+//!   place. Filesystem ACLs are read and updated through verified no-follow
+//!   handles so reparse-point swaps cannot redirect a grant.
 //!
 //! Network denial, read confinement and write confinement are deliberately not
 //! configurable. The only tunable surface is [`ContainmentLimits`], including
@@ -199,12 +198,8 @@ pub const fn capabilities() -> ContainmentCapabilities {
             cpu_limit: true,
             process_creation_denial: true,
             file_descriptor_limit: false,
-            // `grant_worker_paths` still mutates ACLs by path. Until it opens
-            // and verifies every target without following reparse points, a
-            // concurrent path swap could redirect a grant. Refuse all Windows
-            // worker launches rather than claim that boundary.
-            filesystem_read_isolation: false,
-            filesystem_write_isolation: false,
+            filesystem_read_isolation: true,
+            filesystem_write_isolation: true,
             network_isolation: true,
             process_memory_isolation: true,
             desktop_input_isolation: true,
@@ -306,6 +301,7 @@ struct FilesystemBoundary {
     /// Directories the worker may write to.
     writable: Vec<PathBuf>,
     /// Exact files the worker may execute or map as executable code.
+    #[cfg_attr(windows, allow(dead_code))]
     executables: Vec<PathBuf>,
 }
 
@@ -657,12 +653,12 @@ mod tests {
         // A target that cannot install one of these boundaries must reach the
         // fail-closed branch in `spawn` instead of launching a worker.
         let reported = capabilities();
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        #[cfg(any(target_os = "linux", target_os = "macos", windows))]
         assert!(
             reported.meets_contract(),
             "a supported target reported an incomplete boundary set: {reported:?}"
         );
-        #[cfg(any(windows, not(any(target_os = "linux", target_os = "macos", windows))))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
         assert!(!reported.meets_contract());
     }
 

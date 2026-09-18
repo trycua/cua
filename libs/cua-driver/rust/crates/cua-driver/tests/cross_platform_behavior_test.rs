@@ -1637,6 +1637,9 @@ fn shared_case_with_native_hyprland(
         }
     } else if cfg!(target_os = "macos") && delivery_kind == Delivery::Background {
         match (spec.name, action, targeting) {
+            ("electron", "type_text" | "type_submit" | "editor_save", Targeting::Ax) => {
+                vec![RefusalCode::BackgroundUnavailable]
+            }
             ("electron", "scroll", _) | (_, "drag", Targeting::Px) => {
                 vec![RefusalCode::BackgroundUnavailable]
             }

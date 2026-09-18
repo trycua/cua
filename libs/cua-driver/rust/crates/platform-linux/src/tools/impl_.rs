@@ -792,6 +792,7 @@ impl Tool for GetWindowStateTool {
             .and_then(|value| value.as_bool())
             == Some(true);
         let state = self.state.clone();
+        let state_for_capture = state.clone();
         let query_for_walk = query.clone();
 
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
@@ -842,7 +843,7 @@ impl Tool for GetWindowStateTool {
                             None
                         } else {
                             Some(crate::capture_action_frame::publish_window(
-                                &state.capture_service,
+                                &state_for_capture.capture_service,
                                 &args,
                                 &png,
                                 pid,

@@ -78,8 +78,8 @@ jobs:
       CUA_E2E_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
       CUA_JEV_SOURCE_SHA: ${{ needs.resolve.outputs.jev_source_sha }}
       CUA_SESSION_LABEL: authorized-jev-choice-demo-macos
-      CUA_PERCEPTION_EXTENSION_HOME: ${{ runner.temp }}/cua-perception-home
-      CUA_PERCEPTION_EVIDENCE_DIR: ${{ runner.temp }}/perception-evidence/live
+      CUA_PERCEPTION_EXTENSION_HOME: ${{ github.workspace }}/.cua-perception-home
+      CUA_PERCEPTION_EVIDENCE_DIR: ${{ github.workspace }}/.cua-perception-evidence/live
       CUA_DESKTOP_SESSION_TYPE: macos-aqua
       CUA_RUNNER_IDENTITY_CLASS: self-hosted-lume
     steps:

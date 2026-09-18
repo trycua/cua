@@ -22,6 +22,14 @@ def test_macos_live_evidence_is_manual_exact_sha_and_protected() -> None:
 
 def test_macos_live_evidence_uses_canonical_lume_and_signed_arm64_candidate() -> None:
     workflow = (ROOT / ".github/workflows/authorized-live-jev-macos-evidence.yml").read_text()
+    assert (
+        "CUA_PERCEPTION_EXTENSION_HOME: ${{ github.workspace }}/.cua-perception-home"
+        in workflow
+    )
+    assert (
+        "CUA_PERCEPTION_EVIDENCE_DIR: ${{ github.workspace }}/.cua-perception-evidence/live"
+        in workflow
+    )
     assert "libs/cua-driver/tests/runners/macos-lume/run-all.sh --standalone-browser" in workflow
     assert 'measured["target"] == "aarch64-apple-darwin"' in workflow
     assert 'codesign", "--verify", "--strict"' in workflow

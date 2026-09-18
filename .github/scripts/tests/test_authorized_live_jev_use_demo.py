@@ -102,6 +102,18 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         self.assertGreater(shared, self.orchestrator.index('Command::new("py")'))
         self.assertGreater(shared, self.orchestrator.index('Command::new("python3")'))
 
+    def test_job_level_paths_use_a_context_available_before_runner_assignment(self):
+        live_env = self.jobs["live"]["env"]
+        self.assertEqual(
+            live_env["CUA_PERCEPTION_EXTENSION_HOME"],
+            "${{ github.workspace }}/.cua-perception-home",
+        )
+        self.assertEqual(
+            live_env["CUA_PERCEPTION_EVIDENCE_DIR"],
+            "${{ github.workspace }}/.cua-perception-evidence/live",
+        )
+        self.assertFalse(any("${{ runner." in value for value in live_env.values()))
+
     def test_external_chooser_receives_only_the_key_and_windows_system_root(self):
         start = self.orchestrator.index("fn external_choice(")
         end = self.orchestrator.index("fn choose(", start)

@@ -43,7 +43,7 @@
         "model_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "signed_extension_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "signing_key_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-        "signature_algorithm": { "const": "rsa-sha256" }
+        "signature_algorithm": { "enum": ["ed25519", "rsa-sha256"] }
       }
     },
     "result": {

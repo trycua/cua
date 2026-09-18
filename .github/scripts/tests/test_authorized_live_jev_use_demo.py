@@ -1,6 +1,7 @@
-"""Static contracts for the review-gated visual perception demo preflight."""
+"""Static security contracts for the review-gated live Jev visual demo."""
 
 from pathlib import Path
+import re
 import unittest
 
 import yaml
@@ -15,80 +16,153 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
     def setUpClass(cls):
         cls.text = WORKFLOW.read_text()
         cls.workflow = yaml.safe_load(cls.text)
+        cls.triggers = cls.workflow.get("on", cls.workflow.get(True))
+        cls.jobs = cls.workflow["jobs"]
 
-    def test_is_manual_only_and_accepts_only_the_current_pr_3943_head(self):
-        triggers = self.workflow.get("on", self.workflow.get(True))
-        self.assertEqual(set(triggers), {"workflow_dispatch"})
-        source = self.workflow["jobs"]["source"]["steps"][0]["run"]
-        self.assertIn("^[0-9a-f]{40}$", source)
-        self.assertIn("pulls/3943", source)
-        self.assertIn('"$REQUESTED_SHA" != "$head_sha"', source)
-        self.assertIn('"$head_repo" != "$GITHUB_REPOSITORY"', source)
+    def test_is_manual_or_callable_with_two_exact_current_pr_heads(self):
+        self.assertEqual(set(self.triggers), {"workflow_dispatch", "workflow_call"})
+        for trigger in self.triggers.values():
+            self.assertEqual(
+                set(trigger["inputs"]),
+                {"source_sha", "jev_source_sha", "signed_candidate_artifact_id"},
+            )
+            self.assertTrue(all(value["required"] for value in trigger["inputs"].values()))
+        source = self.jobs["source"]["steps"][0]["run"]
+        self.assertIn("validate_pr_head 3943", source)
+        self.assertIn("validate_pr_head 3916", source)
+        self.assertIn('[[ "$requested" == "$head_sha" ]]', source)
+        self.assertIn('"$head_repo" == "$GITHUB_REPOSITORY"', source)
         self.assertNotIn("merge-base --is-ancestor", source)
         self.assertNotIn("pull_request_target", self.text)
 
-    def test_workflow_stays_secret_free_and_artifact_gates_the_mock_e2e(self):
-        jobs = self.workflow["jobs"]
+    def test_artifact_is_source_bound_and_verified_by_actual_driver_trust(self):
+        source = self.jobs["source"]["steps"][0]["run"]
+        for contract in (
+            "actions/artifacts/$CANDIDATE_ARTIFACT_ID",
+            ".workflow_run.head_sha",
+            "candidate artifact is expired",
+            ".conclusion",
+        ):
+            self.assertIn(contract, source)
+        live_text = "\n".join(step.get("run", "") for step in self.jobs["live"]["steps"])
+        self.assertIn("extension inspect cua-perception --catalog", live_text)
+        self.assertIn("extension install cua-perception --catalog", live_text)
+        self.assertIn("extension status cua-perception --self-test --json", live_text)
+        self.assertIn('catalog["signature_algorithm"] == "ed25519"', live_text)
+        self.assertIn('digest == files[model["path"]] == model["conversion_sha256"]', live_text)
+        self.assertNotIn("--allow-unsigned-local", live_text)
+        self.assertNotRegex(live_text, r"--archive\s+[^\n]+--catalog")
+
+    def test_canonical_secret_free_preflights_finish_before_protected_live_job(self):
         self.assertEqual(
-            set(jobs),
+            set(self.jobs),
+            {"source", "mock-preflight", "windows-preflight", "linux-x11-preflight", "live"},
+        )
+        preflights = "\n".join(
+            str(self.jobs[name])
+            for name in ("source", "mock-preflight", "windows-preflight", "linux-x11-preflight")
+        )
+        self.assertNotIn("environment", preflights)
+        self.assertNotIn("TYPESAFE_API_KEY", preflights)
+        self.assertEqual(self.jobs["live"]["environment"], "authorized-live-jev-use-demo")
+        self.assertEqual(
+            set(self.jobs["live"]["needs"]),
             {"source", "mock-preflight", "windows-preflight", "linux-x11-preflight"},
         )
-        self.assertNotIn("environment:", self.text)
-        self.assertNotIn("TYPESAFE_API_KEY", self.text)
-        self.assertNotIn("${{ secrets.", self.text)
-        self.assertIn("actions/upload-artifact@65c4c4a1", self.text)
-        upload_steps = [
+        windows = "\n".join(step.get("run", "") for step in self.jobs["windows-preflight"]["steps"])
+        linux = "\n".join(step.get("run", "") for step in self.jobs["linux-x11-preflight"]["steps"])
+        self.assertIn("scripts\\ci\\windows\\run-rust-e2e.ps1 -RequireGui", windows)
+        self.assertIn("scripts/ci/linux/run-rust-e2e.sh", linux)
+        self.assertIn("xvfb-run", linux)
+
+    def test_only_measured_binary_receives_secret_in_one_bounded_step(self):
+        secret_steps = [step for step in self.jobs["live"]["steps"] if "${{ secrets." in str(step)]
+        self.assertEqual(len(secret_steps), 1)
+        secret = secret_steps[0]
+        self.assertEqual(secret["timeout-minutes"], 15)
+        self.assertEqual(
+            secret["env"], {"LIVE_TYPESAFE_API_KEY": "${{ secrets.TYPESAFE_API_KEY }}"}
+        )
+        self.assertNotIn("cargo ", secret["run"])
+        self.assertIn("CUA_LIVE_TEST_BINARY_SHA256", secret["run"])
+        self.assertIn("Remove-Item Env:LIVE_TYPESAFE_API_KEY", secret["run"])
+        self.assertIn("Remove-Item Env:TYPESAFE_API_KEY", secret["run"])
+        self.assertIn(
+            "& $env:CUA_LIVE_TEST_BINARY --ignored --exact authorized_visual_only_demo",
+            secret["run"],
+        )
+        compile_step = next(
             step
-            for name in ("windows-preflight", "linux-x11-preflight")
-            for step in jobs[name]["steps"]
-            if "upload-artifact" in step.get("uses", "")
+            for step in self.jobs["live"]["steps"]
+            if step.get("name", "").startswith("Compile and measure")
+        )
+        self.assertIn("--no-run --message-format=json", compile_step["run"])
+        self.assertIn('"authorized_visual_only_demo: test"', compile_step["run"])
+
+    def test_chooser_is_exact_fixed_and_fails_closed_when_absent(self):
+        live = self.jobs["live"]
+        checkout = next(
+            step
+            for step in live["steps"]
+            if step.get("name") == "Check out the exact reviewed Jev chooser"
+        )
+        self.assertEqual(checkout["with"]["ref"], "${{ needs.source.outputs.jev_sha }}")
+        setup = next(
+            step
+            for step in live["steps"]
+            if step.get("name", "").startswith("Install the locked reviewed chooser")
+        )
+        self.assertIn("python/choose_action.py", setup["run"])
+        self.assertIn("uv sync --frozen --project", setup["run"])
+        self.assertIn("reviewed live chooser contract is unavailable", setup["run"])
+        secret = next(step for step in live["steps"] if "${{ secrets." in str(step))
+        self.assertIn("CUA_JEV_CHOOSER_PROGRAM", secret["run"])
+        self.assertIn("CUA_JEV_CHOOSER_SCRIPT", secret["run"])
+        self.assertNotIn("Invoke-Expression", self.text)
+        self.assertNotIn("bash -c", secret["run"])
+
+    def test_mock_has_no_chooser_or_key(self):
+        mock = next(
+            step
+            for step in self.jobs["live"]["steps"]
+            if "deterministic mock" in step.get("name", "")
+        )
+        self.assertEqual(
+            mock["env"],
+            {
+                "CUA_JEV_MOCK_DEMO": "1",
+                "CUA_PERCEPTION_EVIDENCE_DIR": "${{ runner.temp }}/perception-evidence/mock",
+            },
+        )
+        self.assertNotIn("CHOOSER", str(mock))
+        self.assertNotIn("TYPESAFE", str(mock))
+
+    def test_only_decoded_schema_validated_redacted_evidence_is_uploaded(self):
+        uploads = [
+            step for step in self.jobs["live"]["steps"] if "upload-artifact" in step.get("uses", "")
         ]
-        self.assertEqual(len(upload_steps), 2)
-        for step in upload_steps:
-            self.assertEqual(step["if"], "inputs.signed_candidate_artifact_id != ''")
-            self.assertIn("recording.mp4", step["with"]["path"])
-            self.assertIn("manifest.json", step["with"]["path"])
-            self.assertNotIn("raw-manifest.json", step["with"]["path"])
-            self.assertNotIn("timeline.json", step["with"]["path"])
-        self.assertIn("signed_candidate_artifact_id", self.text)
-        self.assertIn("inputs.signed_candidate_artifact_id != ''", self.text)
-        self.assertIn("artifact-ids:", self.text)
-        self.assertIn("--ignored --exact", self.text)
-        self.assertIn("No live Jev/API call is made", self.text)
-
-    def test_platform_preflights_use_canonical_harnesses(self):
-        jobs = self.workflow["jobs"]
-        windows_steps = "\n".join(
-            step.get("run", "") for step in jobs["windows-preflight"]["steps"]
+        self.assertEqual(len(uploads), 1)
+        self.assertEqual(uploads[0]["with"]["path"], "${{ runner.temp }}/publish-evidence/")
+        validate = next(
+            step
+            for step in self.jobs["live"]["steps"]
+            if step.get("name", "").startswith("Fully decode")
+        )["run"]
+        self.assertIn("ffmpeg -v error -xerror", validate)
+        self.assertIn("Draft202012Validator(schema).validate(manifest)", validate)
+        self.assertIn(
+            'assert sorted(path.name for path in output.iterdir()) == ["manifest.json", "recording.mp4"]',
+            validate,
         )
-        linux_steps = "\n".join(
-            step.get("run", "") for step in jobs["linux-x11-preflight"]["steps"]
-        )
-        self.assertIn("scripts\\ci\\windows\\run-rust-e2e.ps1 -RequireGui", windows_steps)
-        self.assertIn("scripts/ci/linux/run-rust-e2e.sh", linux_steps)
-        self.assertIn("xvfb-run", linux_steps)
-        self.assertEqual(jobs["windows-preflight"]["env"]["CUA_E2E_INTERNAL_LANE"], "capture")
-        self.assertEqual(jobs["linux-x11-preflight"]["env"]["CUA_E2E_INTERNAL_LANE"], "capture")
-        for line in self.text.splitlines():
-            if "uses:" in line:
-                self.assertRegex(line, r"@[0-9a-f]{40}(?:\s|$)")
+        self.assertIn('runtime["signed_extension_sha256"] == measured["archive_sha256"]', validate)
+        self.assertNotIn("raw-manifest.json", str(uploads[0]))
+        self.assertNotIn("timeline.json", str(uploads[0]))
 
-    def test_orchestration_is_mock_choice_capture_bound_and_has_no_live_client(self):
-        rust_test = (
-            ROOT
-            / "libs/cua-driver/rust/crates/cua-driver/tests/authorized_live_jev_use_demo_test.rs"
-        ).read_text()
-        self.assertIn('driver.call("parse_visual_regions"', rust_test)
-        self.assertIn('"capture_id": choice.capture_id', rust_test)
-        self.assertIn('state["selected"] == "send"', rust_test)
-        self.assertIn("capture reuse was not refused", rust_test)
-        self.assertIn("raw-manifest.json", rust_test)
-        self.assertIn("timeline.json", rust_test)
-        self.assertIn("manifest.json", rust_test)
-        self.assertIn("copy decoded recording evidence", rust_test)
-        self.assertNotIn("TYPESAFE_API_KEY", rust_test)
-        self.assertNotIn("reqwest", rust_test)
-        self.assertNotIn("ureq", rust_test)
+    def test_all_actions_are_full_sha_pinned(self):
+        uses = re.findall(r"^\s*-?\s*uses:\s*([^\s#]+)", self.text, re.MULTILINE)
+        self.assertTrue(uses)
+        for action in uses:
+            self.assertRegex(action, r"^[^@]+@[0-9a-f]{40}$")
 
 
 if __name__ == "__main__":

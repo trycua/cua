@@ -169,6 +169,10 @@ class EvidenceSanitizerTests(unittest.TestCase):
         self.assertFalse(runtime["additionalProperties"])
         self.assertIn("model_sha256", runtime["required"])
         self.assertIn("signing_key_sha256", runtime["required"])
+        self.assertEqual(
+            runtime["properties"]["signature_algorithm"]["enum"],
+            ["ed25519", "rsa-sha256"],
+        )
         artifacts = schema["properties"]["artifacts"]
         self.assertEqual(artifacts["maxItems"], 1)
         self.assertEqual(artifacts["items"]["properties"]["path"]["const"], "recording.mp4")

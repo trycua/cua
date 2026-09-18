@@ -109,7 +109,19 @@ def test_macos_live_evidence_uses_canonical_lume_and_signed_arm64_candidate() ->
     ) < workflow.index("Install and measure the signed perception extension")
     assert "Preflight noninteractive Lume privileges, keychains, and browsers" in workflow
     assert "/usr/bin/sudo -n -v" in workflow
-    assert "/usr/bin/security unlock-keychain" in workflow
+    preflight = workflow.split(
+        "- name: Preflight noninteractive Lume privileges, keychains, and browsers", 1
+    )[1].split("- name:", 1)[0]
+    run_lume = workflow.split(
+        "- name: Run the canonical logged-in Lume matrix at the exact SHA", 1
+    )[1].split("- name:", 1)[0]
+    assert "secrets.CUA_E2E_SIGNING_KEYCHAIN_PASSWORD" not in workflow
+    assert "export CUA_E2E_RUNNER_LIB_ONLY=1" in preflight
+    assert "source libs/cua-driver/tests/runners/macos-lume/run-all.sh" in preflight
+    assert "unset CUA_E2E_RUNNER_LIB_ONLY" in preflight
+    assert "unlock_required_keychains" in preflight
+    assert "security unlock-keychain" not in preflight
+    assert "CUA_E2E_SIGNING_KEYCHAIN_PASSWORD" not in run_lume
     assert "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" in workflow
     assert "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" in workflow
     assert "driver.chmod(driver.stat().st_mode | 0o111)" in workflow

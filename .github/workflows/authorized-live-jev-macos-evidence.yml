@@ -153,8 +153,10 @@ jobs:
           login_keychain="$HOME/Library/Keychains/login.keychain-db"
           [[ -f "$signing_keychain" ]] || fail "dedicated signing keychain is missing: $signing_keychain"
           [[ -f "$login_keychain" ]] || fail "console login keychain is missing: $login_keychain"
-          /usr/bin/security unlock-keychain "$signing_keychain" </dev/null 2>/dev/null || fail "dedicated signing keychain cannot be unlocked noninteractively"
-          /usr/bin/security unlock-keychain "$login_keychain" </dev/null 2>/dev/null || fail "login keychain cannot be unlocked noninteractively"
+          export CUA_E2E_RUNNER_LIB_ONLY=1
+          source libs/cua-driver/tests/runners/macos-lume/run-all.sh
+          unset CUA_E2E_RUNNER_LIB_ONLY
+          unlock_required_keychains
           /usr/bin/security find-identity -v -p codesigning "$signing_keychain" | \
             /usr/bin/grep -F "CuaDriver Local Signing (cua-driver-rs)" >/dev/null || \
             fail "dedicated signing keychain lacks the required CuaDriver Local Signing identity"

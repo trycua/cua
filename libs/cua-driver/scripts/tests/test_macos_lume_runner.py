@@ -14,6 +14,7 @@ import re
 import shutil
 import sqlite3
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -799,6 +800,237 @@ def test_required_keychains_unlock_login_without_retaining_password(
         f"unlock-keychain -p fixture-password {signing_keychain}",
         f"unlock-keychain -p fixture-password {login_keychain}",
     ]
+
+
+def test_required_keychains_accept_already_unlocked_noninteractive_keychains(
+    tmp_path: Path,
+) -> None:
+    signing_keychain = tmp_path / "signing.keychain-db"
+    login_keychain = tmp_path / "login.keychain-db"
+    signing_keychain.touch()
+    login_keychain.touch()
+    fake_security = tmp_path / "bin/security"
+    fake_codesign = tmp_path / "bin/codesign"
+    security_log = tmp_path / "security.log"
+    codesign_log = tmp_path / "codesign.log"
+    _write_executable(
+        fake_security,
+        """printf '%s\n' "$*" >> "$CUA_TEST_SECURITY_LOG"
+command="$1"
+shift
+if [ "$command" = find-generic-password ]; then
+    while [ "$#" -gt 0 ]; do
+        if [ "$1" = -s ]; then
+            printf '%s' "$2"
+            exit 0
+        fi
+        shift
+    done
+    exit 1
+fi
+""",
+    )
+    _write_executable(
+        fake_codesign,
+        """printf '%s\n' "$*" >> "$CUA_TEST_CODESIGN_LOG"
+""",
+    )
+    completed = _run(
+        RUN_ALL,
+        "unlock_required_keychains\n",
+        env={
+            "PATH": f"{fake_codesign.parent}:{os.environ['PATH']}",
+            "CUA_E2E_SIGNING_KEYCHAIN": str(signing_keychain),
+            "CUA_E2E_LOGIN_KEYCHAIN": str(login_keychain),
+            "CUA_E2E_SIGNING_KEYCHAIN_PASSWORD": "",
+            "CUA_TEST_SECURITY_LOG": str(security_log),
+            "CUA_TEST_CODESIGN_LOG": str(codesign_log),
+        },
+    )
+    assert completed.returncode == 0, completed.stderr
+    codesign_calls = codesign_log.read_text(encoding="utf-8").splitlines()
+    assert len(codesign_calls) == 2
+    assert codesign_calls[0].startswith(
+        "--force --timestamp=none --sign CuaDriver Local Signing "
+        f"(cua-driver-rs) --keychain {signing_keychain} "
+    )
+    probe_binary = codesign_calls[0].rsplit(" ", 1)[1]
+    assert codesign_calls[1] == f"--verify --strict {probe_binary}"
+    security_calls = security_log.read_text(encoding="utf-8").splitlines()
+    assert len(security_calls) == 3
+    assert security_calls[0].startswith("add-generic-password -a cua-driver-keychain-probe -s ")
+    service = security_calls[0].split(" -s ", 1)[1].split(" -w ", 1)[0]
+    assert security_calls[0].endswith(f" -w {service} {login_keychain}")
+    assert security_calls[1] == (
+        f"find-generic-password -a cua-driver-keychain-probe -s {service} "
+        f"-w {login_keychain}"
+    )
+    assert security_calls[2] == (
+        f"delete-generic-password -a cua-driver-keychain-probe -s {service} "
+        f"{login_keychain}"
+    )
+
+
+def test_required_keychains_fail_when_noninteractive_keychain_is_locked(
+    tmp_path: Path,
+) -> None:
+    signing_keychain = tmp_path / "signing.keychain-db"
+    login_keychain = tmp_path / "login.keychain-db"
+    signing_keychain.touch()
+    login_keychain.touch()
+    fake_codesign = tmp_path / "bin/codesign"
+    probe_tmp = tmp_path / "probe-tmp"
+    probe_tmp.mkdir()
+    log = tmp_path / "codesign.log"
+    _write_executable(
+        fake_codesign,
+        """printf '%s\n' "$*" >> "$CUA_TEST_SECURITY_LOG"
+exit 1
+""",
+    )
+    completed = _run(
+        RUN_ALL,
+        "unlock_required_keychains\n",
+        env={
+            "PATH": f"{fake_codesign.parent}:{os.environ['PATH']}",
+            "CUA_E2E_SIGNING_KEYCHAIN": str(signing_keychain),
+            "CUA_E2E_LOGIN_KEYCHAIN": str(login_keychain),
+            "CUA_E2E_SIGNING_KEYCHAIN_PASSWORD": "",
+            "CUA_TEST_SECURITY_LOG": str(log),
+            "TMPDIR": str(probe_tmp),
+        },
+    )
+    assert completed.returncode == 2
+    assert "did not permit the bounded signing and verification probe" in completed.stderr
+    assert log.read_text(encoding="utf-8").splitlines()[0].startswith(
+        "--force --timestamp=none --sign"
+    )
+    assert list(probe_tmp.iterdir()) == []
+
+
+def test_login_keychain_probe_deletes_item_after_failed_read(tmp_path: Path) -> None:
+    login_keychain = tmp_path / "login.keychain-db"
+    login_keychain.touch()
+    fake_security = tmp_path / "bin/security"
+    log = tmp_path / "security.log"
+    _write_executable(
+        fake_security,
+        """printf '%s\n' "$*" >> "$CUA_TEST_SECURITY_LOG"
+if [ "$1" = find-generic-password ]; then
+    exit 1
+fi
+""",
+    )
+    completed = _run(
+        RUN_ALL,
+        'probe_login_keychain "$CUA_E2E_LOGIN_KEYCHAIN"\n',
+        env={
+            "PATH": f"{fake_security.parent}:{os.environ['PATH']}",
+            "CUA_E2E_LOGIN_KEYCHAIN": str(login_keychain),
+            "CUA_TEST_SECURITY_LOG": str(log),
+        },
+    )
+    assert completed.returncode == 1
+    calls = log.read_text(encoding="utf-8").splitlines()
+    assert [call.split(" ", 1)[0] for call in calls] == [
+        "add-generic-password",
+        "find-generic-password",
+        "delete-generic-password",
+    ]
+
+
+def test_login_keychain_probe_reports_repeated_cleanup_failure(tmp_path: Path) -> None:
+    login_keychain = tmp_path / "login.keychain-db"
+    login_keychain.touch()
+    fake_security = tmp_path / "bin/security"
+    log = tmp_path / "security.log"
+    _write_executable(
+        fake_security,
+        """printf '%s\n' "$*" >> "$CUA_TEST_SECURITY_LOG"
+if [ "$1" = find-generic-password ]; then
+    exit 3
+fi
+if [ "$1" = delete-generic-password ]; then
+    exit 7
+fi
+""",
+    )
+    completed = _run(
+        RUN_ALL,
+        'probe_login_keychain "$CUA_E2E_LOGIN_KEYCHAIN"\n',
+        env={
+            "PATH": f"{fake_security.parent}:{os.environ['PATH']}",
+            "CUA_E2E_LOGIN_KEYCHAIN": str(login_keychain),
+            "CUA_TEST_SECURITY_LOG": str(log),
+        },
+    )
+    assert completed.returncode == 7
+    calls = log.read_text(encoding="utf-8").splitlines()
+    assert [call.split(" ", 1)[0] for call in calls] == [
+        "add-generic-password",
+        "find-generic-password",
+        "delete-generic-password",
+        "delete-generic-password",
+    ]
+    assert "cleanup failed; retrying the bounded delete once" in completed.stderr
+    assert "cleanup failed after two bounded delete attempts" in completed.stderr
+    assert "temporary item cua-driver-keychain-probe-" in completed.stderr
+
+
+def test_bounded_command_kills_the_entire_subprocess_group(tmp_path: Path) -> None:
+    hanging_command = tmp_path / "bin/hanging-command"
+    child_pid_path = tmp_path / "child.pid"
+    _write_executable(
+        hanging_command,
+        """trap '' TERM
+sleep 30 &
+child_pid=$!
+printf '%s\n' "$child_pid" > "$CUA_TEST_CHILD_PID"
+wait "$child_pid"
+""",
+    )
+    started = time.monotonic()
+    completed = _run(
+        RUN_ALL,
+        "KEYCHAIN_COMMAND_TIMEOUT_SECONDS=0.2\n"
+        "KEYCHAIN_COMMAND_KILL_GRACE_SECONDS=0.1\n"
+        'run_bounded_command "$CUA_TEST_HANGING_COMMAND"\n',
+        env={
+            "CUA_TEST_HANGING_COMMAND": str(hanging_command),
+            "CUA_TEST_CHILD_PID": str(child_pid_path),
+        },
+    )
+    elapsed = time.monotonic() - started
+    assert completed.returncode == 124
+    assert elapsed < 2
+    child_pid = int(child_pid_path.read_text(encoding="utf-8"))
+    for _ in range(20):
+        try:
+            os.kill(child_pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.05)
+    else:
+        pytest.fail(f"timed-out child process {child_pid} is still alive")
+
+
+def test_bounded_command_requires_python_and_uses_process_group_kills() -> None:
+    text = RUN_ALL.read_text(encoding="utf-8")
+    function = text.split("run_bounded_command() {", 1)[1].split("\n}\n", 1)[0]
+    assert "command -v python3" in function
+    assert "subprocess.Popen(sys.argv[3:], start_new_session=True)" in function
+    assert function.count("os.killpg(process.pid") == 2
+    assert "osascript python3 security xcrun" in text
+
+
+def test_required_keychains_keep_terminal_prompt_fallback() -> None:
+    text = RUN_ALL.read_text(encoding="utf-8")
+    function = text.split("prepare_keychain() {", 1)[1].split("\n}\n", 1)[0]
+    assert '[[ -z "${keychain_password}" && -t 0 ]]' in function
+    assert 'read -r -s -p "${label} password: "' in function
+    assert "run_bounded_command security unlock-keychain -p" in function
+    assert 'probe_signing_keychain "${keychain}"' in function
+    assert 'probe_login_keychain "${keychain}"' in function
 
 
 # --------------------------------------------------------------------------

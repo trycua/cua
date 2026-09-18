@@ -68,6 +68,10 @@ impl Harness {
         Self::launch_with_command_oracle(None)
     }
 
+    fn launch_with_env(env: &[(&str, &str)]) -> Self {
+        Self::launch_with(None, None, false, env)
+    }
+
     fn launch_with_command_oracle(command_oracle: Option<&Path>) -> Self {
         Self::launch_with_oracles(command_oracle, None)
     }
@@ -80,6 +84,15 @@ impl Harness {
         command_oracle: Option<&Path>,
         pointer_oracle: Option<&Path>,
         keep_ordered_front: bool,
+    ) -> Self {
+        Self::launch_with(command_oracle, pointer_oracle, keep_ordered_front, &[])
+    }
+
+    fn launch_with(
+        command_oracle: Option<&Path>,
+        pointer_oracle: Option<&Path>,
+        keep_ordered_front: bool,
+        env: &[(&str, &str)],
     ) -> Self {
         let exe = harness_exe();
         assert!(
@@ -99,6 +112,9 @@ impl Harness {
         }
         if keep_ordered_front {
             command.env("CUA_APPKIT_KEEP_ORDERED_FRONT", "1");
+        }
+        for (name, value) in env {
+            command.env(name, value);
         }
         let app = command
             .spawn()
@@ -180,13 +196,21 @@ fn run_case(
     case: cua_driver_testkit::e2e::CaseSpec,
     test: impl FnOnce(u32, u64, &mut McpDriver) -> Observation,
 ) {
+    run_case_with_env(case, &[], test);
+}
+
+fn run_case_with_env(
+    case: cua_driver_testkit::e2e::CaseSpec,
+    env: &[(&str, &str)],
+    test: impl FnOnce(u32, u64, &mut McpDriver) -> Observation,
+) {
     let cell_id = case.cell_id.clone();
     let delivery = case.delivery;
     execute_case(case, |evidence| {
         let mut driver = McpDriver::spawn_macos_daemon_proxy_named(&cell_id)
             .expect("start installed macOS daemon proxy");
         *evidence = recording_evidence(driver.recording_dir());
-        let harness = Harness::launch();
+        let harness = Harness::launch_with_env(env);
         let (wid, _) = driver
             .find_window(harness.pid as i64, "CuaTestHarness AppKit")
             .expect("AppKit main window not found");
@@ -211,8 +235,19 @@ fn run_background_case_targeting(
     route: DriverRoute,
     test: impl FnOnce(u32, u64, &mut McpDriver),
 ) {
-    run_case(
+    run_background_case_with_env(action, targeting, route, &[], test);
+}
+
+fn run_background_case_with_env(
+    action: &str,
+    targeting: Targeting,
+    route: DriverRoute,
+    env: &[(&str, &str)],
+    test: impl FnOnce(u32, u64, &mut McpDriver),
+) {
+    run_case_with_env(
         native_background_case("appkit", action, targeting, route),
+        env,
         |pid, wid, driver| {
             let (_, passed) = run_with_background_oracles(
                 driver,
@@ -1115,6 +1150,54 @@ fn harness_appkit_type_text_background() {
             assert!(
                 post.contains("kbd-cua"),
                 "type_text keystroke did not land in the text field; snapshot:\n{post}"
+            );
+        },
+    );
+}
+
+/// A field whose `AXValue` catches up with the write over the next second is
+/// not a partially typed field. The AX rung used to read the value back once,
+/// microseconds after the write returned, and published the prefix it caught
+/// as `type_text_incomplete` — measured in Contacts as "delivered 6 of 14"
+/// for a phone number the card in fact held in full.
+#[test]
+#[ignore]
+fn harness_appkit_type_text_waits_for_a_lagging_value_readback() {
+    run_background_case_with_env(
+        "type_text_lagging_readback",
+        Targeting::Ax,
+        DriverRoute::MacosAxValue,
+        &[("CUA_APPKIT_AX_VALUE_LAG_MS", "900")],
+        |pid, wid, driver| {
+            let snap_pre = snapshot_elements(driver, pid, wid);
+            let idx = element_index_by_id(snap_pre.tree_text(), "txt-input")
+                .expect("txt-input element_index not found");
+            let text = "lagging-readback-cua";
+            let resp = driver.call(
+                "type_text",
+                serde_json::json!({
+                    "pid": pid as i64, "window_id": wid, "element_index": idx,
+                    "snapshot_id": snap_pre.snapshot_id(),
+                    "text": text, "delivery_mode": "background"
+                }),
+            );
+            assert!(
+                !resp.is_error(),
+                "a value the field was still publishing was reported as a failure: {}",
+                resp.text()
+            );
+            assert_eq!(
+                resp.structured()["delivery"]["delivered_count"],
+                serde_json::json!(text.chars().count()),
+                "type_text under-counted a complete insertion: {}",
+                resp.raw
+            );
+
+            std::thread::sleep(Duration::from_millis(1200));
+            let post = snapshot_elements(driver, pid, wid).tree_text().to_owned();
+            assert!(
+                post.contains(text),
+                "the fixture never took the whole string:\n{post}"
             );
         },
     );

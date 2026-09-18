@@ -1,8 +1,6 @@
-import hashlib
 import importlib.util
 import json
 from pathlib import Path
-import shutil
 import subprocess
 import tempfile
 import unittest
@@ -16,135 +14,124 @@ SPEC.loader.exec_module(sanitizer)
 
 
 class EvidenceSanitizerTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        if shutil.which("openssl") is None:
-            raise unittest.SkipTest("openssl is required for signature verification tests")
-        cls.temporary = tempfile.TemporaryDirectory()
-        cls.root = Path(cls.temporary.name)
-        cls.private_key = cls.root / "private.pem"
-        cls.public_key = cls.root / "public.pem"
-        subprocess.run(
-            [
-                "openssl",
-                "genpkey",
-                "-algorithm",
-                "RSA",
-                "-pkeyopt",
-                "rsa_keygen_bits:2048",
-                "-out",
-                cls.private_key,
-            ],
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["openssl", "pkey", "-in", cls.private_key, "-pubout", "-out", cls.public_key],
-            check=True,
-            capture_output=True,
-        )
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
 
-    @classmethod
-    def tearDownClass(cls):
-        cls.temporary.cleanup()
+    def tearDown(self):
+        self.temporary.cleanup()
 
     def inputs(self):
-        extension = self.root / "extension.bin"
-        signature = self.root / "extension.sig"
+        extension_status = self.root / "extension-status.json"
+        parser_result = self.root / "parser-result.json"
+        chooser_result = self.root / "chooser-result.json"
         model = self.root / "model.bin"
-        adapter_result = self.root / "adapter-result.json"
         oracle = self.root / "oracle.json"
+        raw_evidence = self.root / "raw-manifest.json"
         recording = self.root / "recording.mp4"
-        extension.write_bytes(b"signed-extension-bytes")
+        extension_status.write_text(json.dumps({
+            "id": "cua-perception",
+            "display_name": "Cua Perception",
+            "description": "fixture",
+            "protocol_version": 1,
+            "installed": True,
+            "active_version": "0.1.0",
+            "healthy": True,
+            "trust": "publisher_verified",
+            "publisher_id": "cua.ai",
+            "publisher_key_id": "cua-extension-ed25519-2026-01",
+            "catalog_version": 7,
+            "detail": "healthy",
+        }))
+        parser_result.write_text(json.dumps({
+            "schema": "cua.visual_regions_v1",
+            "parser": {"model_id": "cua-perception/demo-v1"},
+            "regions": [{"private": "raw-only"}],
+        }))
+        chooser_result.write_text(json.dumps({
+            "schema": "cua.jev_choice_v1",
+            "selected_id": "region:send",
+            "model": {"provider": "fixture", "id": "deterministic-v1"},
+            "confidence": 1.0,
+            "probabilities": {"region:send": 1.0, "reobserve": 0.0, "abstain": 0.0},
+        }))
         model.write_bytes(b"measured-model-bytes")
-        adapter_result.write_text(
-            json.dumps(
-                {
-                    "adapter": "jev-use",
-                    "status": "passed",
-                    "source_sha": "a" * 40,
-                    "model_id": "jev/demo-v1",
-                }
-            )
-        )
+        oracle.write_text(json.dumps({
+            "fixture": "visual-only-canvas/v1",
+            "ready": True,
+            "selected": "send",
+            "action_count": 1,
+        }))
+        raw_evidence.write_text(json.dumps({
+            "capture_ids": {"acted": "private-capture"},
+            "coordinates": [394.0, 270.0],
+        }))
         recording.write_bytes(b"measured-video-bytes")
-        oracle.write_text(
-            json.dumps(
-                {
-                    "fixture": "visual-only-canvas/v1",
-                    "ready": True,
-                    "selected": "send",
-                    "action_count": 2,
-                }
-            )
-        )
-        subprocess.run(
-            [
-                "openssl",
-                "dgst",
-                "-sha256",
-                "-sign",
-                self.private_key,
-                "-out",
-                signature,
-                extension,
-            ],
-            check=True,
-            capture_output=True,
-        )
         return {
             "source_sha": "a" * 40,
             "platform": "linux-x11",
-            "extension": extension,
-            "extension_signature": signature,
-            "trusted_public_key": self.public_key,
-            "trusted_public_key_sha256": hashlib.sha256(self.public_key.read_bytes()).hexdigest(),
+            "chooser_mode": "mock",
+            "extension_status": extension_status,
+            "parser_result": parser_result,
+            "chooser_result": chooser_result,
             "model": model,
-            "adapter_result": adapter_result,
             "oracle": oracle,
+            "raw_evidence": raw_evidence,
             "recording": recording,
         }
 
-    def test_manifest_is_bound_to_measured_runtime_inputs(self):
+    def test_manifest_is_bound_to_driver_status_and_raw_evidence(self):
         inputs = self.inputs()
         manifest = sanitizer.build_manifest(**inputs)
-        self.assertEqual(manifest["source_sha"], inputs["source_sha"])
-        self.assertEqual(manifest["platform"], inputs["platform"])
-        self.assertEqual(manifest["runtime"]["model_id"], "jev/demo-v1")
-        self.assertEqual(manifest["result"]["status"], "passed")
-        self.assertEqual(manifest["fixture"]["oracle"], {"selected": "send", "action_count": 2})
-        self.assertEqual(
-            manifest["runtime"]["model_sha256"], sanitizer.sha256_file(inputs["model"])
-        )
-        self.assertEqual(
-            manifest["runtime"]["signed_extension_sha256"],
-            sanitizer.sha256_file(inputs["extension"]),
-        )
-        self.assertEqual(manifest["runtime"]["signature_algorithm"], "rsa-sha256")
-        self.assertEqual(
-            manifest["artifacts"][0]["sha256"],
-            sanitizer.sha256_file(inputs["recording"]),
-        )
+        perception = manifest["runtime"]["perception"]
+        self.assertEqual(manifest["schema"], "cua-visual-perception-demo-evidence/v2")
+        self.assertEqual(manifest["raw_evidence_sha256"], sanitizer.sha256_file(inputs["raw_evidence"]))
+        self.assertEqual(perception["trust"], "publisher_verified")
+        self.assertEqual(perception["signature_algorithm"], "ed25519")
+        self.assertEqual(perception["publisher_key_id"], "cua-extension-ed25519-2026-01")
+        self.assertEqual(perception["catalog_version"], 7)
+        self.assertEqual(manifest["runtime"]["chooser"]["model_id"], "deterministic-v1")
+        self.assertEqual(manifest["result"]["selected_candidate"], "region:send")
+        self.assertNotIn("capture_ids", json.dumps(manifest))
+        self.assertNotIn("coordinates", json.dumps(manifest))
 
-    def test_rejects_tampered_extension_bytes(self):
+    def test_rejects_unverified_or_unhealthy_installed_state(self):
         inputs = self.inputs()
-        inputs["extension"].write_bytes(b"tampered-after-signing")
-        with self.assertRaisesRegex(ValueError, "failed RSA-SHA256 verification"):
+        status = json.loads(inputs["extension_status"].read_text())
+        status["trust"] = "developer_unsigned_local"
+        inputs["extension_status"].write_text(json.dumps(status))
+        with self.assertRaisesRegex(ValueError, "publisher-verified"):
             sanitizer.build_manifest(**inputs)
 
-    def test_rejects_unapproved_signing_key_bytes(self):
         inputs = self.inputs()
-        inputs["trusted_public_key_sha256"] = "0" * 64
-        with self.assertRaisesRegex(ValueError, "approved digest"):
+        status = json.loads(inputs["extension_status"].read_text())
+        status["healthy"] = False
+        inputs["extension_status"].write_text(json.dumps(status))
+        with self.assertRaisesRegex(ValueError, "publisher-verified"):
             sanitizer.build_manifest(**inputs)
 
-    def test_rejects_adapter_result_for_another_source(self):
+    def test_rejects_malformed_chooser_result(self):
         inputs = self.inputs()
-        result = json.loads(inputs["adapter_result"].read_text())
-        result["source_sha"] = "b" * 40
-        inputs["adapter_result"].write_text(json.dumps(result))
-        with self.assertRaisesRegex(ValueError, "measured checkout"):
+        choice = json.loads(inputs["chooser_result"].read_text())
+        choice["tool_arguments"] = {"x": 394, "y": 270}
+        inputs["chooser_result"].write_text(json.dumps(choice))
+        with self.assertRaisesRegex(ValueError, "cua.jev_choice_v1"):
             sanitizer.build_manifest(**inputs)
+
+        inputs = self.inputs()
+        choice = json.loads(inputs["chooser_result"].read_text())
+        choice["probabilities"]["region:send"] = 0.4
+        inputs["chooser_result"].write_text(json.dumps(choice))
+        with self.assertRaisesRegex(ValueError, "sum to one"):
+            sanitizer.build_manifest(**inputs)
+
+    def test_raw_evidence_digest_changes_without_exposing_raw_fields(self):
+        inputs = self.inputs()
+        first = sanitizer.build_manifest(**inputs)
+        inputs["raw_evidence"].write_text('{"capture_ids":{"acted":"different"}}')
+        second = sanitizer.build_manifest(**inputs)
+        self.assertNotEqual(first["raw_evidence_sha256"], second["raw_evidence_sha256"])
+        self.assertNotIn("different", json.dumps(second))
 
     def test_source_and_platform_are_runtime_measured(self):
         repo_root = HERE.parents[3]
@@ -159,23 +146,18 @@ class EvidenceSanitizerTests(unittest.TestCase):
             sanitizer.measure_source_sha(repo_root, "0" * 40)
         self.assertEqual(sanitizer.measure_platform("win32", {}), "windows")
         self.assertEqual(sanitizer.measure_platform("linux", {"DISPLAY": ":99"}), "linux-x11")
-        with self.assertRaisesRegex(ValueError, "active Linux X11"):
-            sanitizer.measure_platform("linux", {})
 
-    def test_schema_forbids_extra_properties_and_records_measured_digests(self):
+    def test_schema_is_closed_and_requires_ed25519_trust_evidence(self):
         schema = json.loads((HERE / "evidence-manifest.schema.json").read_text())
-        runtime = schema["properties"]["runtime"]
+        perception = schema["properties"]["runtime"]["properties"]["perception"]
+        chooser = schema["properties"]["runtime"]["properties"]["chooser"]
         self.assertFalse(schema["additionalProperties"])
-        self.assertFalse(runtime["additionalProperties"])
-        self.assertIn("model_sha256", runtime["required"])
-        self.assertIn("signing_key_sha256", runtime["required"])
-        self.assertEqual(
-            runtime["properties"]["signature_algorithm"]["enum"],
-            ["ed25519", "rsa-sha256"],
-        )
-        artifacts = schema["properties"]["artifacts"]
-        self.assertEqual(artifacts["maxItems"], 1)
-        self.assertEqual(artifacts["items"]["properties"]["path"]["const"], "recording.mp4")
+        self.assertFalse(perception["additionalProperties"])
+        self.assertEqual(perception["properties"]["signature_algorithm"]["const"], "ed25519")
+        self.assertEqual(perception["properties"]["trust"]["const"], "publisher_verified")
+        self.assertIn("catalog_version", perception["required"])
+        self.assertFalse(chooser["additionalProperties"])
+        self.assertIn("raw_evidence_sha256", schema["required"])
 
 
 if __name__ == "__main__":

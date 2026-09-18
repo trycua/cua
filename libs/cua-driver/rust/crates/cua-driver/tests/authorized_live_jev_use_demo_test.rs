@@ -1,22 +1,113 @@
-//! Artifact-gated, offline perception demo for a custom-painted surface.
+//! Artifact-gated perception demo for a custom-painted surface.
+//!
+//! The provider-neutral chooser sees bounded descriptions, never Driver tool
+//! arguments, coordinates, environment variables, or credentials. The host
+//! validates one selected ID and resolves it to the capture-bound action.
 
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
 
 const MAX_REGIONS: usize = 64;
+const MAX_ACTION_CANDIDATES: usize = 16;
+const MAX_SAFE_ID_BYTES: usize = 96;
 const MIN_CONFIDENCE: f64 = 0.80;
+
+#[derive(Clone, Debug, PartialEq)]
+struct ClickAction {
+    capture_id: String,
+    x: f64,
+    y: f64,
+}
 
 #[derive(Clone, Debug, PartialEq)]
 struct Candidate {
     id: String,
-    label: String,
-    capture_id: String,
-    x: f64,
-    y: f64,
-    confidence: f64,
+    description: String,
+    action: Option<ClickAction>,
 }
 
-fn bounded_candidates(payload: &Value, capture_id: &str) -> Result<Vec<Candidate>, String> {
-    if payload["schema"] != "cua.visual_regions_v1"
+#[derive(Clone, Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct CompactRegion {
+    id: String,
+    kind: String,
+    content: String,
+    confidence: f64,
+    interactive: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct CandidateDescription {
+    id: String,
+    description: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct HistoryEntry {
+    selected_id: String,
+    outcome: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ChoiceRequest {
+    schema: &'static str,
+    goal: &'static str,
+    capture_id: String,
+    regions: Vec<CompactRegion>,
+    history: Vec<HistoryEntry>,
+    candidates: Vec<CandidateDescription>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct ChooserModel {
+    provider: String,
+    id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct ChoiceResponse {
+    schema: String,
+    selected_id: String,
+    model: ChooserModel,
+    confidence: f64,
+    probabilities: BTreeMap<String, f64>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum ChoiceConfig {
+    Mock,
+    Live { program: PathBuf, script: PathBuf },
+}
+
+fn safe_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= MAX_SAFE_ID_BYTES
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._:-/".contains(&byte))
+}
+
+fn safe_region_id(value: &str) -> bool {
+    safe_id(value) && value.len() <= MAX_SAFE_ID_BYTES - "region:".len()
+}
+
+fn safe_text(value: &str, maximum: usize) -> bool {
+    !value.trim().is_empty() && value.len() <= maximum && !value.chars().any(char::is_control)
+}
+
+fn bounded_candidates(
+    payload: &Value,
+    capture_id: &str,
+) -> Result<(Vec<Candidate>, Vec<CompactRegion>), String> {
+    if !safe_id(capture_id)
+        || payload["schema"] != "cua.visual_regions_v1"
         || payload["capture"]["capture_id"].as_str() != Some(capture_id)
     {
         return Err("visual result has invalid schema or capture provenance".into());
@@ -24,118 +115,350 @@ fn bounded_candidates(payload: &Value, capture_id: &str) -> Result<Vec<Candidate
     let screenshot = &payload["capture"]["screenshot"];
     let screen_width = screenshot["width"]
         .as_u64()
-        .filter(|v| *v > 0)
+        .filter(|value| *value > 0)
         .ok_or("invalid screenshot width")?;
     let screen_height = screenshot["height"]
         .as_u64()
-        .filter(|v| *v > 0)
+        .filter(|value| *value > 0)
         .ok_or("invalid screenshot height")?;
     let regions = payload["regions"]
         .as_array()
         .ok_or("visual result omitted regions")?;
     if regions.len() > MAX_REGIONS {
-        return Err("visual result exceeded the candidate bound".into());
+        return Err("visual result exceeded the region bound".into());
     }
-    let mut ids = std::collections::BTreeSet::new();
+
+    let mut region_ids = BTreeSet::new();
     let mut candidates = Vec::new();
+    let mut compact = Vec::with_capacity(regions.len());
     for region in regions {
         let id = region["id"]
             .as_str()
-            .filter(|v| !v.trim().is_empty())
-            .ok_or("region has no ID")?;
-        if !ids.insert(id) {
+            .filter(|value| safe_region_id(value))
+            .ok_or("region has an unsafe ID")?;
+        if !region_ids.insert(id) {
             return Err("duplicate region ID".into());
         }
+        let kind = region["kind"]
+            .as_str()
+            .filter(|kind| matches!(*kind, "text" | "icon"))
+            .ok_or("invalid region kind")?;
         let confidence = region["confidence"]
             .as_f64()
-            .filter(|v| v.is_finite() && (0.0..=1.0).contains(v))
+            .filter(|value| value.is_finite() && (0.0..=1.0).contains(value))
             .ok_or("invalid confidence")?;
-        let bounds = &region["bounds"];
-        let x = bounds["x"].as_u64().ok_or("invalid x")?;
-        let y = bounds["y"].as_u64().ok_or("invalid y")?;
-        let width = bounds["width"]
-            .as_u64()
-            .filter(|v| *v > 0)
-            .ok_or("invalid width")?;
-        let height = bounds["height"]
-            .as_u64()
-            .filter(|v| *v > 0)
-            .ok_or("invalid height")?;
-        if x.checked_add(width).is_none_or(|v| v > screen_width)
-            || y.checked_add(height).is_none_or(|v| v > screen_height)
-        {
-            return Err("region lies outside its source screenshot".into());
-        }
-        let label = region
+        let interactive = region["interactive"]
+            .as_bool()
+            .ok_or("invalid interactivity")?;
+        let content = region
             .get("text")
             .or_else(|| region.get("label"))
             .and_then(Value::as_str)
             .unwrap_or("")
             .trim();
-        if confidence >= MIN_CONFIDENCE && label.eq_ignore_ascii_case("send") {
+        if !content.is_empty() && !safe_text(content, 128) {
+            return Err("region content is unsafe".into());
+        }
+        compact.push(CompactRegion {
+            id: id.into(),
+            kind: kind.into(),
+            content: content.into(),
+            confidence,
+            interactive,
+        });
+
+        let bounds = &region["bounds"];
+        let x = bounds["x"].as_u64().ok_or("invalid x")?;
+        let y = bounds["y"].as_u64().ok_or("invalid y")?;
+        let width = bounds["width"]
+            .as_u64()
+            .filter(|value| *value > 0)
+            .ok_or("invalid width")?;
+        let height = bounds["height"]
+            .as_u64()
+            .filter(|value| *value > 0)
+            .ok_or("invalid height")?;
+        if x.checked_add(width)
+            .is_none_or(|value| value > screen_width)
+            || y.checked_add(height)
+                .is_none_or(|value| value > screen_height)
+        {
+            return Err("region lies outside its source screenshot".into());
+        }
+        if interactive && confidence >= MIN_CONFIDENCE && !content.is_empty() {
+            if candidates.len() >= MAX_ACTION_CANDIDATES {
+                return Err("visual result exceeded the action candidate bound".into());
+            }
             candidates.push(Candidate {
-                id: id.into(),
-                label: "Send".into(),
-                capture_id: capture_id.into(),
-                x: x as f64 + width as f64 / 2.0,
-                y: y as f64 + height as f64 / 2.0,
-                confidence,
+                id: format!("region:{id}"),
+                description: format!("Activate the visual region labeled {content}."),
+                action: Some(ClickAction {
+                    capture_id: capture_id.into(),
+                    x: x as f64 + width as f64 / 2.0,
+                    y: y as f64 + height as f64 / 2.0,
+                }),
             });
         }
     }
-    Ok(candidates)
+    candidates.extend([
+        Candidate {
+            id: "reobserve".into(),
+            description: "Discard this decision set and capture a fresh observation.".into(),
+            action: None,
+        },
+        Candidate {
+            id: "abstain".into(),
+            description: "Stop without acting when no proposed action is safe.".into(),
+            action: None,
+        },
+    ]);
+    Ok((candidates, compact))
 }
 
-fn choose_send(candidates: &[Candidate]) -> Result<&Candidate, String> {
-    let mut matches = candidates
-        .iter()
-        .filter(|candidate| candidate.label == "Send");
-    let selected = matches.next().ok_or("no bounded Send candidate")?;
-    if matches.next().is_some() {
-        return Err("Send candidate is ambiguous".into());
+fn choice_request(
+    capture_id: &str,
+    regions: Vec<CompactRegion>,
+    candidates: &[Candidate],
+) -> ChoiceRequest {
+    ChoiceRequest {
+        schema: "cua.jev_choice_request_v1",
+        goal: "Select the painted Send control, or reobserve/abstain if it is not unambiguous.",
+        capture_id: capture_id.into(),
+        regions,
+        history: Vec::new(),
+        candidates: candidates
+            .iter()
+            .map(|candidate| CandidateDescription {
+                id: candidate.id.clone(),
+                description: candidate.description.clone(),
+            })
+            .collect(),
     }
-    Ok(selected)
+}
+
+fn validate_choice(
+    response: ChoiceResponse,
+    candidates: &[Candidate],
+) -> Result<(ChoiceResponse, Candidate), String> {
+    if response.schema != "cua.jev_choice_v1"
+        || !safe_id(&response.selected_id)
+        || !safe_id(&response.model.provider)
+        || !safe_id(&response.model.id)
+        || !response.confidence.is_finite()
+        || !(0.0..=1.0).contains(&response.confidence)
+    {
+        return Err("chooser returned invalid metadata".into());
+    }
+    let ids = candidates
+        .iter()
+        .map(|candidate| candidate.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let probability_ids = response
+        .probabilities
+        .keys()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    if ids != probability_ids {
+        return Err("chooser probabilities do not match the supplied candidate IDs".into());
+    }
+    let sum = response
+        .probabilities
+        .values()
+        .try_fold(0.0, |sum, value| {
+            if value.is_finite() && (0.0..=1.0).contains(value) {
+                Ok(sum + value)
+            } else {
+                Err("chooser returned an invalid probability")
+            }
+        })?;
+    if (sum - 1.0_f64).abs() > 0.001 {
+        return Err("chooser probabilities must sum to one".into());
+    }
+    let candidate = candidates
+        .iter()
+        .find(|candidate| candidate.id == response.selected_id)
+        .cloned()
+        .ok_or("chooser selected an ID that was not supplied")?;
+    Ok((response, candidate))
+}
+
+fn mock_choice(candidates: &[Candidate]) -> ChoiceResponse {
+    let selected_id = candidates
+        .iter()
+        .find(|candidate| candidate.description.contains("Send"))
+        .expect("fixture must expose a Send candidate")
+        .id
+        .clone();
+    let probabilities = candidates
+        .iter()
+        .map(|candidate| {
+            (
+                candidate.id.clone(),
+                if candidate.id == selected_id {
+                    1.0
+                } else {
+                    0.0
+                },
+            )
+        })
+        .collect();
+    ChoiceResponse {
+        schema: "cua.jev_choice_v1".into(),
+        selected_id,
+        model: ChooserModel {
+            provider: "fixture".into(),
+            id: "deterministic-v1".into(),
+        },
+        confidence: 1.0,
+        probabilities,
+    }
+}
+
+fn choice_config_from(
+    live: Option<&str>,
+    mock: Option<&str>,
+    program: Option<&str>,
+    script: Option<&str>,
+) -> Result<ChoiceConfig, String> {
+    if live.is_some_and(|value| value != "1") || mock.is_some_and(|value| value != "1") {
+        return Err("chooser mode flags, when present, must equal 1".into());
+    }
+    if live == Some("1") {
+        if mock.is_some() {
+            return Err("CUA_JEV_LIVE forbids CUA_JEV_MOCK_DEMO".into());
+        }
+        let program = PathBuf::from(program.ok_or("CUA_JEV_CHOOSER_PROGRAM is required")?);
+        let script = PathBuf::from(script.ok_or("CUA_JEV_CHOOSER_SCRIPT is required")?);
+        if !program.is_absolute() || !script.is_absolute() {
+            return Err("reviewed chooser program and script paths must be absolute".into());
+        }
+        if !program.is_file() || !script.is_file() {
+            return Err("reviewed chooser program and script must be regular files".into());
+        }
+        return Ok(ChoiceConfig::Live { program, script });
+    }
+    if mock == Some("1") {
+        if program.is_some() || script.is_some() {
+            return Err("mock mode forbids external chooser paths".into());
+        }
+        return Ok(ChoiceConfig::Mock);
+    }
+    Err("set CUA_JEV_MOCK_DEMO=1 or CUA_JEV_LIVE=1 with a reviewed chooser".into())
 }
 
 #[test]
-fn mock_choice_is_bounded_capture_bound_and_deterministic() {
-    let payload = json!({
+fn chooser_request_is_bounded_and_contains_no_action_arguments() {
+    let mut payload = json!({
         "schema": "cua.visual_regions_v1",
         "capture": {"capture_id": "capture-1", "screenshot": {"width": 760, "height": 460}},
         "regions": [
-            {"id": "save", "bounds": {"x": 72, "y": 250, "width": 204, "height": 40}, "text": "Save", "confidence": 0.99},
-            {"id": "send", "bounds": {"x": 292, "y": 250, "width": 204, "height": 40}, "text": "Send", "confidence": 0.98}
+            {"id": "save", "kind": "text", "bounds": {"x": 72, "y": 250, "width": 204, "height": 40}, "text": "Save", "confidence": 0.99, "interactive": true},
+            {"id": "send", "kind": "text", "bounds": {"x": 292, "y": 250, "width": 204, "height": 40}, "text": "Send", "confidence": 0.98, "interactive": true}
         ]
     });
-    let candidates = bounded_candidates(&payload, "capture-1").unwrap();
-    let choice = choose_send(&candidates).unwrap();
-    assert_eq!(choice.capture_id, "capture-1");
-    assert_eq!((choice.x, choice.y), (394.0, 270.0));
+    let (candidates, regions) = bounded_candidates(&payload, "capture-1").unwrap();
+    let request = serde_json::to_value(choice_request("capture-1", regions, &candidates)).unwrap();
+    assert_eq!(request["schema"], "cua.jev_choice_request_v1");
+    assert_eq!(request["candidates"].as_array().unwrap().len(), 4);
+    assert!(request.to_string().contains("reobserve"));
+    assert!(request.to_string().contains("abstain"));
+    for forbidden in [
+        "\"x\"",
+        "\"y\"",
+        "tool",
+        "arguments",
+        "delivery_mode",
+        "secret",
+    ] {
+        assert!(
+            !request.to_string().contains(forbidden),
+            "leaked {forbidden}"
+        );
+    }
+
+    let (response, selected) = validate_choice(mock_choice(&candidates), &candidates).unwrap();
+    assert_eq!(response.selected_id, "region:send");
+    assert_eq!(selected.action.unwrap().capture_id, "capture-1");
+
+    let oversized_capture_id = "a".repeat(MAX_SAFE_ID_BYTES + 1);
+    payload["capture"]["capture_id"] = json!(oversized_capture_id);
+    assert!(bounded_candidates(&payload, &oversized_capture_id).is_err());
+}
+
+#[test]
+fn chooser_response_and_live_mode_fail_closed() {
+    let candidates = vec![
+        Candidate {
+            id: "region:send".into(),
+            description: "Activate Send.".into(),
+            action: Some(ClickAction {
+                capture_id: "capture-1".into(),
+                x: 1.0,
+                y: 2.0,
+            }),
+        },
+        Candidate {
+            id: "reobserve".into(),
+            description: "Reobserve.".into(),
+            action: None,
+        },
+        Candidate {
+            id: "abstain".into(),
+            description: "Abstain.".into(),
+            action: None,
+        },
+    ];
+    let mut response = mock_choice(&candidates);
+    response.selected_id = "invented".into();
+    assert!(validate_choice(response, &candidates).is_err());
+    let mut response = mock_choice(&candidates);
+    response.probabilities.insert("invented".into(), 0.1);
+    assert!(validate_choice(response, &candidates).is_err());
+    assert!(choice_config_from(Some("1"), Some("1"), None, None)
+        .unwrap_err()
+        .contains("forbids"));
+    assert!(choice_config_from(None, None, None, None).is_err());
+
+    let oversized_region_id = "a".repeat(MAX_SAFE_ID_BYTES - "region:".len() + 1);
+    let payload = json!({
+        "schema": "cua.visual_regions_v1",
+        "capture": {"capture_id": "capture-1", "screenshot": {"width": 10, "height": 10}},
+        "regions": [{
+            "id": oversized_region_id,
+            "kind": "text",
+            "bounds": {"x": 0, "y": 0, "width": 10, "height": 10},
+            "text": "Send",
+            "confidence": 1.0,
+            "interactive": true
+        }]
+    });
+    assert!(bounded_candidates(&payload, "capture-1")
+        .unwrap_err()
+        .contains("unsafe ID"));
 }
 
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 mod e2e {
-    use super::{bounded_candidates, choose_send, MAX_REGIONS, MIN_CONFIDENCE};
-    use cua_driver_testkit::{spawn_in_job, Driver, FixtureJournal, McpDriver};
-    use serde_json::json;
+    use super::*;
+    use cua_driver_testkit::{driver_binary, spawn_in_job, Driver, FixtureJournal, McpDriver};
     use sha2::{Digest, Sha256};
     use std::fs;
-    use std::io::Read;
-    use std::path::{Path, PathBuf};
+    use std::io::{Read, Write};
+    use std::path::Path;
     use std::process::{Command, Stdio};
+    use std::thread;
     use std::time::{Duration, Instant};
 
     const FIXTURE_TITLE: &str = "Cua Visual-Only Canvas Fixture";
+    const CHOOSER_TIMEOUT: Duration = Duration::from_secs(30);
+    const MAX_CHOOSER_OUTPUT: u64 = 64 * 1024;
 
     struct Gate {
         source_sha: String,
-        extension: PathBuf,
-        signature: PathBuf,
-        public_key: PathBuf,
-        public_key_sha256: String,
         model: PathBuf,
         extension_home: PathBuf,
         evidence_dir: PathBuf,
+        choice: ChoiceConfig,
     }
 
     fn required(name: &str) -> String {
@@ -145,11 +468,11 @@ mod e2e {
 
     fn hash_file(path: &Path) -> String {
         let mut file =
-            fs::File::open(path).unwrap_or_else(|e| panic!("open {}: {e}", path.display()));
+            fs::File::open(path).unwrap_or_else(|error| panic!("open {}: {error}", path.display()));
         let mut hasher = Sha256::new();
         let mut buffer = [0_u8; 64 * 1024];
         loop {
-            let read = file.read(&mut buffer).expect("hash candidate artifact");
+            let read = file.read(&mut buffer).expect("hash evidence file");
             if read == 0 {
                 break;
             }
@@ -158,45 +481,62 @@ mod e2e {
         format!("{:x}", hasher.finalize())
     }
 
+    fn hash_bytes(bytes: &[u8]) -> String {
+        format!("{:x}", Sha256::digest(bytes))
+    }
+
     fn load_gate() -> Gate {
-        assert_eq!(required("CUA_JEV_MOCK_DEMO"), "1");
+        let choice = choice_config_from(
+            std::env::var("CUA_JEV_LIVE").ok().as_deref(),
+            std::env::var("CUA_JEV_MOCK_DEMO").ok().as_deref(),
+            std::env::var("CUA_JEV_CHOOSER_PROGRAM").ok().as_deref(),
+            std::env::var("CUA_JEV_CHOOSER_SCRIPT").ok().as_deref(),
+        )
+        .unwrap_or_else(|error| panic!("invalid chooser configuration: {error}"));
         let gate = Gate {
             source_sha: required("CUA_E2E_SOURCE_SHA"),
-            extension: required("CUA_PERCEPTION_EXTENSION_ARCHIVE").into(),
-            signature: required("CUA_PERCEPTION_EXTENSION_SIGNATURE").into(),
-            public_key: required("CUA_PERCEPTION_TRUSTED_PUBLIC_KEY").into(),
-            public_key_sha256: required("CUA_PERCEPTION_TRUSTED_PUBLIC_KEY_SHA256"),
             model: required("CUA_PERCEPTION_MODEL").into(),
             extension_home: required("CUA_PERCEPTION_EXTENSION_HOME").into(),
             evidence_dir: required("CUA_PERCEPTION_EVIDENCE_DIR").into(),
+            choice,
         };
-        for path in [
-            &gate.extension,
-            &gate.signature,
-            &gate.public_key,
-            &gate.model,
-        ] {
-            assert!(
-                path.is_file(),
-                "candidate artifact is not a regular file: {}",
-                path.display()
-            );
-        }
-        assert_eq!(
-            hash_file(&gate.public_key),
-            gate.public_key_sha256,
-            "unapproved signing key"
+        assert!(gate.model.is_file(), "model is not a regular file");
+        assert!(
+            gate.extension_home.is_dir(),
+            "extension home is not a directory"
         );
-        let status = Command::new("openssl")
-            .args(["dgst", "-sha256", "-verify"])
-            .arg(&gate.public_key)
-            .arg("-signature")
-            .arg(&gate.signature)
-            .arg(&gate.extension)
-            .status()
-            .expect("run signature verification");
-        assert!(status.success(), "candidate extension signature is invalid");
         gate
+    }
+
+    fn installed_extension_status(gate: &Gate) -> Value {
+        let output = Command::new(driver_binary())
+            .args([
+                "extension",
+                "status",
+                "cua-perception",
+                "--self-test",
+                "--json",
+            ])
+            .env("CUA_DRIVER_RS_HOME", &gate.extension_home)
+            .output()
+            .expect("measure installed extension state through Driver");
+        assert!(
+            output.status.success(),
+            "Driver rejected installed extension state"
+        );
+        let status: Value =
+            serde_json::from_slice(&output.stdout).expect("Driver extension status must be JSON");
+        assert_eq!(status["id"], "cua-perception");
+        assert_eq!(status["installed"], true);
+        assert_eq!(status["healthy"], true);
+        assert_eq!(status["trust"], "publisher_verified");
+        assert!(status["active_version"].as_str().is_some_and(safe_id));
+        assert!(status["publisher_id"].as_str().is_some_and(safe_id));
+        assert!(status["publisher_key_id"].as_str().is_some_and(safe_id));
+        assert!(status["catalog_version"]
+            .as_u64()
+            .is_some_and(|value| value > 0));
+        status
     }
 
     fn fixture_path() -> PathBuf {
@@ -207,9 +547,9 @@ mod e2e {
     fn fixture_command(journal_url: &str) -> Command {
         #[cfg(target_os = "windows")]
         let mut command = {
-            let mut c = Command::new("py");
-            c.arg("-3");
-            c
+            let mut command = Command::new("py");
+            command.arg("-3");
+            command
         };
         #[cfg(target_os = "linux")]
         let mut command = Command::new("python3");
@@ -226,12 +566,72 @@ mod e2e {
         let deadline = Instant::now() + Duration::from_secs(10);
         while !predicate() {
             assert!(Instant::now() < deadline, "{message}");
-            std::thread::sleep(Duration::from_millis(50));
+            thread::sleep(Duration::from_millis(50));
         }
     }
 
+    fn external_choice(program: &Path, script: &Path, request: &ChoiceRequest) -> ChoiceResponse {
+        let mut command = Command::new(program);
+        command
+            .arg(script)
+            .env_clear()
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        #[cfg(target_os = "windows")]
+        if let Some(system_root) = std::env::var_os("SYSTEMROOT") {
+            command.env("SYSTEMROOT", system_root);
+        }
+        let mut child = spawn_in_job(&mut command).expect("start reviewed chooser directly");
+        let payload = serde_json::to_vec(request).expect("serialize chooser request");
+        let mut stdin = child.stdin.take().expect("chooser stdin");
+        stdin.write_all(&payload).expect("write chooser request");
+        drop(stdin);
+        let stdout = child.stdout.take().expect("chooser stdout");
+        let reader = thread::spawn(move || {
+            let mut bytes = Vec::new();
+            stdout
+                .take(MAX_CHOOSER_OUTPUT + 1)
+                .read_to_end(&mut bytes)
+                .expect("read chooser response");
+            bytes
+        });
+        let deadline = Instant::now() + CHOOSER_TIMEOUT;
+        let status = loop {
+            if let Some(status) = child.try_wait().expect("poll chooser") {
+                break status;
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("chooser exceeded its 30 second deadline");
+            }
+            thread::sleep(Duration::from_millis(25));
+        };
+        assert!(status.success(), "chooser exited unsuccessfully");
+        let bytes = reader.join().expect("join chooser response reader");
+        assert!(
+            bytes.len() as u64 <= MAX_CHOOSER_OUTPUT,
+            "chooser response exceeded 64 KiB"
+        );
+        serde_json::from_slice(&bytes).expect("chooser response must match the exact JSON contract")
+    }
+
+    fn choose(
+        config: &ChoiceConfig,
+        request: &ChoiceRequest,
+        candidates: &[Candidate],
+    ) -> (ChoiceResponse, Candidate) {
+        let response = match config {
+            ChoiceConfig::Mock => mock_choice(candidates),
+            ChoiceConfig::Live { program, script } => external_choice(program, script, request),
+        };
+        validate_choice(response, candidates)
+            .unwrap_or_else(|error| panic!("chooser response refused: {error}"))
+    }
+
     #[test]
-    #[ignore = "requires an installed signed candidate perception extension and desktop session"]
+    #[ignore = "requires an installed publisher-verified perception extension and desktop session"]
     fn authorized_visual_only_demo() {
         let gate = load_gate();
         let measured = Command::new("git")
@@ -244,6 +644,7 @@ mod e2e {
             String::from_utf8(measured.stdout).unwrap().trim(),
             gate.source_sha
         );
+        let extension_status = installed_extension_status(&gate);
 
         let journal = FixtureJournal::start();
         let fixture =
@@ -255,7 +656,7 @@ mod e2e {
         );
         let extension_home = gate.extension_home.to_string_lossy().into_owned();
         let mut driver = McpDriver::spawn_named_with_env(
-            "authorized-jev-mock-choice-demo",
+            "authorized-jev-choice-demo",
             &[("CUA_DRIVER_RS_HOME", extension_home.as_str())],
         )
         .expect("start Driver with installed candidate extension");
@@ -267,9 +668,7 @@ mod e2e {
         let started = Instant::now();
         let first = driver.call(
             "get_window_state",
-            json!({
-                "pid": pid, "window_id": window_id, "capture_mode": "ax"
-            }),
+            json!({"pid": pid, "window_id": window_id, "capture_mode": "ax"}),
         );
         assert!(
             !first.is_error(),
@@ -284,7 +683,7 @@ mod e2e {
         }
         let capture_id = first.structured()["capture_id"]
             .as_str()
-            .expect("observation must publish capture_id")
+            .expect("capture_id")
             .to_owned();
         driver.start_behavior_recording();
         let parsed = driver.call("parse_visual_regions", json!({
@@ -296,12 +695,14 @@ mod e2e {
             "perception worker failed: {}",
             parsed.text()
         );
-        let choice = choose_send(
-            &bounded_candidates(parsed.structured(), &capture_id)
-                .expect("build bounded candidates"),
-        )
-        .expect("choose Send")
-        .clone();
+        let (candidates, regions) =
+            bounded_candidates(parsed.structured(), &capture_id).expect("bounded candidates");
+        let request = choice_request(&capture_id, regions, &candidates);
+        let (choice_response, selected_candidate) = choose(&gate.choice, &request, &candidates);
+        let choice = selected_candidate
+            .action
+            .clone()
+            .expect("demo chooser must select an action");
 
         let click_args = json!({
             "pid": pid, "window_id": window_id, "x": choice.x, "y": choice.y,
@@ -327,9 +728,7 @@ mod e2e {
 
         let second = driver.call(
             "get_window_state",
-            json!({
-                "pid": pid, "window_id": window_id, "capture_mode": "ax"
-            }),
+            json!({"pid": pid, "window_id": window_id, "capture_mode": "ax"}),
         );
         assert!(
             !second.is_error(),
@@ -348,77 +747,92 @@ mod e2e {
             .expect("recording directory")
             .to_path_buf();
         let parser = parsed.structured()["parser"].clone();
-        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let duration_ms = started.elapsed().as_millis() as u64;
         drop(driver);
         let recording = recording_dir.join("recording.mp4");
         assert!(recording.is_file(), "testkit recording did not finalize");
         fs::create_dir_all(&gate.evidence_dir).expect("create evidence directory");
         let published_recording = gate.evidence_dir.join("recording.mp4");
         fs::copy(&recording, &published_recording).expect("copy decoded recording evidence");
+        let recording_sha256 = hash_file(&published_recording);
         let recording_size = fs::metadata(&published_recording)
-            .expect("measure recording evidence")
+            .expect("measure recording")
             .len();
         let platform = if cfg!(target_os = "windows") {
             "windows"
         } else {
             "linux-x11"
         };
-        let manifest = json!({
-            "schema": "cua-visual-perception-demo-raw/v1", "source_sha": gate.source_sha,
-            "platform": platform, "capture_ids": {"acted": capture_id, "fresh": second_capture_id},
-            "fixture_oracle": oracle, "parser": parser,
-            "candidate": {"id": choice.id, "label": choice.label, "x": choice.x, "y": choice.y, "confidence": choice.confidence},
-            "artifacts": {
-                "extension_sha256": hash_file(&gate.extension), "model_sha256": hash_file(&gate.model),
-                "recording": recording.to_string_lossy(), "recording_sha256": hash_file(&recording)
-            }
-        });
-        let timeline = json!({
-            "schema": "cua-visual-perception-demo-timeline/v1", "duration_ms": elapsed_ms,
-            "events": ["observed", "parsed", "selected_send", "clicked", "journal_verified", "stale_capture_refused", "reobserved"]
-        });
-        let redacted_manifest = json!({
-            "schema": "cua-visual-perception-demo-evidence/v1",
+        let mode = match gate.choice {
+            ChoiceConfig::Mock => "mock",
+            ChoiceConfig::Live { .. } => "live",
+        };
+        let raw = json!({
+            "schema": "cua-visual-perception-demo-raw/v2",
             "source_sha": gate.source_sha,
             "platform": platform,
+            "capture_ids": {"acted": capture_id, "fresh": second_capture_id},
+            "fixture_oracle": oracle,
+            "extension_status": extension_status,
+            "parser": parser,
+            "chooser": {"mode": mode, "request": request, "response": choice_response},
+            "resolved_action": {"candidate_id": selected_candidate.id, "x": choice.x, "y": choice.y},
+            "verification": {"oracle": "passed", "stale_capture_refused": true},
+            "timeline": {"duration_ms": duration_ms, "events": [
+                "observed", "parsed", "chosen", "clicked", "oracle_verified", "stale_capture_refused", "reobserved"
+            ]},
+            "recording": {"local_path": recording.to_string_lossy(), "sha256": recording_sha256}
+        });
+        let raw_bytes = serde_json::to_vec_pretty(&raw).expect("serialize raw evidence");
+        let raw_sha256 = hash_bytes(&raw_bytes);
+        fs::write(gate.evidence_dir.join("raw-manifest.json"), &raw_bytes)
+            .expect("write raw evidence");
+        fs::write(
+            gate.evidence_dir.join("timeline.json"),
+            serde_json::to_vec_pretty(&raw["timeline"]).expect("serialize private timeline"),
+        )
+        .expect("write private timeline evidence");
+
+        let manifest = json!({
+            "schema": "cua-visual-perception-demo-evidence/v2",
+            "source_sha": gate.source_sha,
+            "platform": platform,
+            "raw_evidence_sha256": raw_sha256,
             "fixture": {"id": "visual-only-canvas/v1", "oracle": {
                 "selected": oracle["selected"], "action_count": oracle["action_count"]
             }},
             "runtime": {
-                "adapter": "jev-use",
-                "model_id": parser["model_id"].as_str().expect("parser model_id"),
-                "model_sha256": hash_file(&gate.model),
-                "signed_extension_sha256": hash_file(&gate.extension),
-                "signing_key_sha256": gate.public_key_sha256,
-                "signature_algorithm": "rsa-sha256"
+                "perception": {
+                    "extension_id": "cua-perception",
+                    "extension_version": extension_status["active_version"],
+                    "trust": "publisher_verified",
+                    "publisher_id": extension_status["publisher_id"],
+                    "publisher_key_id": extension_status["publisher_key_id"],
+                    "catalog_version": extension_status["catalog_version"],
+                    "signature_algorithm": "ed25519",
+                    "model_id": parser["model_id"],
+                    "model_sha256": hash_file(&gate.model)
+                },
+                "chooser": {
+                    "mode": mode,
+                    "provider": choice_response.model.provider,
+                    "model_id": choice_response.model.id
+                }
             },
-            "result": {"status": "passed"},
-            "artifacts": [{
-                "kind": "video", "path": "recording.mp4",
-                "sha256": hash_file(&published_recording), "size_bytes": recording_size
-            }]
+            "result": {"status": "passed", "selected_candidate": selected_candidate.id, "stale_capture_refused": true},
+            "artifacts": [{"kind": "video", "path": "recording.mp4", "sha256": recording_sha256, "size_bytes": recording_size}]
         });
-        let evidence_schema: serde_json::Value = serde_json::from_str(include_str!(
+        let schema: Value = serde_json::from_str(include_str!(
             "../../../../tests/perception-demo/evidence-manifest.schema.json"
         ))
         .expect("parse evidence schema");
         assert!(
-            jsonschema::is_valid(&evidence_schema, &redacted_manifest),
-            "redacted manifest must satisfy the public evidence schema"
+            jsonschema::is_valid(&schema, &manifest),
+            "redacted manifest must satisfy schema"
         );
         fs::write(
-            gate.evidence_dir.join("raw-manifest.json"),
-            serde_json::to_vec_pretty(&manifest).unwrap(),
-        )
-        .expect("write raw manifest");
-        fs::write(
-            gate.evidence_dir.join("timeline.json"),
-            serde_json::to_vec_pretty(&timeline).unwrap(),
-        )
-        .expect("write timeline");
-        fs::write(
             gate.evidence_dir.join("manifest.json"),
-            serde_json::to_vec_pretty(&redacted_manifest).unwrap(),
+            serde_json::to_vec_pretty(&manifest).unwrap(),
         )
         .expect("write redacted manifest");
     }

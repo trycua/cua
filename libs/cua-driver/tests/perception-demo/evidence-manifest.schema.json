@@ -1,14 +1,15 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://cua.ai/schemas/visual-perception-demo-evidence-v1.json",
+  "$id": "https://cua.ai/schemas/visual-perception-demo-evidence-v2.json",
   "title": "Authorized visual perception demo evidence",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "source_sha", "platform", "fixture", "runtime", "result", "artifacts"],
+  "required": ["schema", "source_sha", "platform", "raw_evidence_sha256", "fixture", "runtime", "result", "artifacts"],
   "properties": {
-    "schema": { "const": "cua-visual-perception-demo-evidence/v1" },
+    "schema": { "const": "cua-visual-perception-demo-evidence/v2" },
     "source_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
     "platform": { "enum": ["windows", "linux-x11"] },
+    "raw_evidence_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "fixture": {
       "type": "object",
       "additionalProperties": false,
@@ -29,28 +30,45 @@
     "runtime": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "adapter",
-        "model_id",
-        "model_sha256",
-        "signed_extension_sha256",
-        "signing_key_sha256",
-        "signature_algorithm"
-      ],
+      "required": ["perception", "chooser"],
       "properties": {
-        "adapter": { "const": "jev-use" },
-        "model_id": { "type": "string", "pattern": "^[A-Za-z0-9._/-]{1,96}$" },
-        "model_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-        "signed_extension_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-        "signing_key_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-        "signature_algorithm": { "enum": ["ed25519", "rsa-sha256"] }
+        "perception": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["extension_id", "extension_version", "trust", "publisher_id", "publisher_key_id", "catalog_version", "signature_algorithm", "model_id", "model_sha256"],
+          "properties": {
+            "extension_id": { "const": "cua-perception" },
+            "extension_version": { "type": "string", "pattern": "^[A-Za-z0-9._:/-]{1,96}$" },
+            "trust": { "const": "publisher_verified" },
+            "publisher_id": { "type": "string", "pattern": "^[A-Za-z0-9._:/-]{1,96}$" },
+            "publisher_key_id": { "type": "string", "pattern": "^[A-Za-z0-9._:/-]{1,96}$" },
+            "catalog_version": { "type": "integer", "minimum": 1 },
+            "signature_algorithm": { "const": "ed25519" },
+            "model_id": { "type": "string", "pattern": "^[A-Za-z0-9._:/-]{1,96}$" },
+            "model_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+          }
+        },
+        "chooser": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "provider", "model_id"],
+          "properties": {
+            "mode": { "enum": ["mock", "live"] },
+            "provider": { "type": "string", "pattern": "^[A-Za-z0-9._:/-]{1,96}$" },
+            "model_id": { "type": "string", "pattern": "^[A-Za-z0-9._:/-]{1,96}$" }
+          }
+        }
       }
     },
     "result": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["status"],
-      "properties": { "status": { "const": "passed" } }
+      "required": ["status", "selected_candidate", "stale_capture_refused"],
+      "properties": {
+        "status": { "const": "passed" },
+        "selected_candidate": { "type": "string", "pattern": "^[A-Za-z0-9._:/-]{1,96}$" },
+        "stale_capture_refused": { "const": true }
+      }
     },
     "artifacts": {
       "type": "array",

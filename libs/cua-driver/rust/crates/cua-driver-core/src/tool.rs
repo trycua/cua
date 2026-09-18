@@ -1590,7 +1590,7 @@ impl ToolRegistry {
                 None
             }
         });
-        if result.is_error != Some(true) && crate::action_record::is_action_tool(resolved_name) {
+        if requires_action_projection(resolved_name, &result) {
             if let Err(error) = publish_action_result(&mut result) {
                 result = ToolResult::error(format!(
                     "internal action outcome mismatch for {resolved_name}: {error}; the tool may have executed. Verify state before retrying."
@@ -2709,6 +2709,17 @@ fn session_selecting_tool(tool_name: &str) -> bool {
         )
 }
 
+fn requires_action_projection(tool_name: &str, result: &ToolResult) -> bool {
+    result.is_error != Some(true)
+        && crate::action_record::is_action_tool(tool_name)
+        && !result
+            .structured_content
+            .as_ref()
+            .is_some_and(|structured| {
+                cua_driver_contract::is_action_listing_output(tool_name, structured)
+            })
+}
+
 fn publish_action_result(result: &mut ToolResult) -> Result<(), String> {
     let action = result
         .action_record
@@ -2782,8 +2793,8 @@ fn restore_public_runtime_value(value: &mut Value, runtime_prefix: &str) -> bool
 mod runtime_isolation_tests {
     use super::{
         canonical_proposed_path, desktop_action_coordinator, namespace_runtime_args,
-        publish_action_result, restore_public_runtime_result, try_admit_text_input,
-        TrustedInvocationEvidence, DISPATCH_RUNTIME_SCOPE,
+        publish_action_result, requires_action_projection, restore_public_runtime_result,
+        try_admit_text_input, TrustedInvocationEvidence, DISPATCH_RUNTIME_SCOPE,
     };
     use crate::{
         authorization::PermissionMode,
@@ -4543,6 +4554,37 @@ resources:
                     if text.contains("browser_ref_stale")
             )
         }));
+    }
+
+    #[test]
+    fn a_menu_listing_success_is_not_held_to_an_execution_record() {
+        let listing = serde_json::json!({
+            "status": "listed",
+            "resolved_path": ["Card", "Add Field"],
+            "items": [{"title": "Phone", "has_submenu": false}],
+        });
+        assert!(!requires_action_projection(
+            "invoke_menu",
+            &ToolResult::text("listed").with_structured(listing.clone())
+        ));
+        let mut unprojectable = ToolResult::text("listed").with_structured(listing.clone());
+        assert_eq!(
+            publish_action_result(&mut unprojectable).unwrap_err(),
+            "successful action omitted its internal execution record"
+        );
+        assert!(requires_action_projection(
+            "click",
+            &ToolResult::text("listed").with_structured(listing)
+        ));
+        assert!(requires_action_projection(
+            "invoke_menu",
+            &ToolResult::text("listed")
+                .with_structured(serde_json::json!({"status": "listed", "items": []}))
+        ));
+        assert!(requires_action_projection(
+            "invoke_menu",
+            &ToolResult::text("dispatched the final accessibility action")
+        ));
     }
 
     #[tokio::test]

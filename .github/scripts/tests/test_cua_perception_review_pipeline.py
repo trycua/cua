@@ -166,6 +166,7 @@ def test_macos_review_candidate_uses_ephemeral_certificate_signing() -> None:
         "extendedKeyUsage=codeSigning",
         "openssl pkcs12 -export -legacy",
         '-P "$identity_password" -A -T /usr/bin/codesign',
+        'cp "$driver_path" "$signing_probe"',
         'identity_selector="$identity_name"',
         'codesign --force --sign "$identity_selector" "$signing_probe"',
         'run_step driver-sign codesign --force --sign "$identity_selector"',
@@ -244,6 +245,7 @@ def test_macos_review_candidate_uses_ephemeral_certificate_signing() -> None:
     assert '--keychain "$keychain_path"' not in script[probe_sign:]
     assert '--keychain "$keychain_path" "$signing_probe"' not in script
     assert '--keychain "$keychain_path" "$driver_path"' not in script
+    assert 'cp /bin/echo "$signing_probe"' not in script
     assert script.count("openssl pkcs12 -export") == 2
     assert '"$log_dir/pkcs12-legacy.log" "$log_dir/pkcs12-fallback.log"' in script
     assert 'emit_log "$log_dir/pkcs12-legacy.log"' in script

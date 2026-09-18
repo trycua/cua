@@ -229,10 +229,10 @@ if ! run_bounded security set-key-partition-list \
 fi
 
 # Identity discovery proves presence; this probe proves the private key can sign
-# without a GUI authorization prompt before the candidate is modified. Prefer
+# the same unsigned Mach-O bytes without modifying the candidate first. Prefer
 # the unique certificate name and default keychain path used by release signing;
 # retain the exact certificate hash as a compatibility fallback.
-cp /bin/echo "$signing_probe"
+cp "$driver_path" "$signing_probe"
 identity_selector="$identity_name"
 if ! run_bounded codesign --force --sign "$identity_selector" "$signing_probe" \
     >"$log_dir/probe-sign-name.log" 2>&1; then

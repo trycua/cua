@@ -1562,6 +1562,7 @@ fn inspect_without_mutation(
     create_private_subdirectory(&parent, name)?;
     let staging = parent.open_dir_nofollow(name)?;
     let result = inspect_archive(&source.archive, entry, &staging);
+    drop(staging);
     let cleanup = remove_cap_subdirectory(&parent, name);
     let inspected = match (result, cleanup) {
         (Ok(inspected), Ok(())) => inspected,

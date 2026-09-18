@@ -3565,7 +3565,7 @@ fn windows_reopen_for_security(
         let path = windows_final_path(handle)?;
         let reopened = CreateFileW(
             path.as_ptr(),
-            0x0004_0000 | 0x0002_0000,
+            0x0008_0000 | 0x0004_0000 | 0x0002_0000,
             0x1 | 0x2 | 0x4,
             std::ptr::null(),
             3,
@@ -3755,8 +3755,8 @@ fn windows_set_private_security(handle: *mut std::ffi::c_void) -> Result<()> {
                 let status = SetSecurityInfo(
                     security_handle.as_raw_handle().cast(),
                     1,
-                    0x4 | 0x8000_0000,
-                    std::ptr::null_mut(),
+                    0x1 | 0x4 | 0x8000_0000,
+                    user_ptr,
                     std::ptr::null_mut(),
                     dacl,
                     std::ptr::null_mut(),

@@ -170,12 +170,24 @@ fn action_record(confirmed: bool, foreground: bool) -> ActionExecutionRecord {
     record.build().expect("press_key record is valid")
 }
 
-fn delivery_failed(error: impl std::fmt::Display) -> ToolResult {
+fn delivery_failed(error: anyhow::Error) -> ToolResult {
     let message = format!("press_key delivery failed: {error}");
-    ToolResult::error(&message).with_structured(serde_json::json!({
+    let mut details = serde_json::json!({
         "code": "delivery_failed",
         "message": message,
-    }))
+    });
+    if let Some(refusal) =
+        error.downcast_ref::<crate::input::skylight::ForegroundActivationRefused>()
+    {
+        details["target_window_id"] = serde_json::json!(refusal.target_window_id);
+        if let Some(focused_window_id) = refusal.focused_window_id {
+            details["focused_window_id"] = serde_json::json!(focused_window_id);
+        }
+        if let Some(relation) = refusal.relation {
+            details["focused_window_relation"] = serde_json::json!(relation);
+        }
+    }
+    ToolResult::error(&message).with_structured(details)
 }
 
 fn def() -> &'static ToolDef {
@@ -489,6 +501,49 @@ impl Tool for PressKeyTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_sheet_that_held_focus_is_named_in_the_refusal() {
+        let failure = delivery_failed(
+            crate::input::skylight::ForegroundActivationRefused {
+                target_window_id: 11139,
+                focused_window_id: Some(11151),
+                relation: Some("sheet"),
+            }
+            .into(),
+        );
+        let details = failure.structured_content.expect("structured refusal");
+        assert_eq!(details["code"], "delivery_failed");
+        assert_eq!(details["focused_window_id"], 11151);
+        assert_eq!(details["target_window_id"], 11139);
+        assert_eq!(details["focused_window_relation"], "sheet");
+        assert!(
+            details["message"]
+                .as_str()
+                .expect("message")
+                .contains("window 11151, a sheet attached to 11139"),
+            "{details}"
+        );
+    }
+
+    #[test]
+    fn an_unidentified_focus_thief_leaves_the_refusal_unembellished() {
+        let failure = delivery_failed(
+            crate::input::skylight::ForegroundActivationRefused {
+                target_window_id: 11139,
+                focused_window_id: None,
+                relation: None,
+            }
+            .into(),
+        );
+        let details = failure.structured_content.expect("structured refusal");
+        assert!(details.get("focused_window_id").is_none(), "{details}");
+        assert!(
+            details.get("focused_window_relation").is_none(),
+            "{details}"
+        );
+        assert_eq!(details["target_window_id"], 11139);
+    }
 
     #[test]
     fn delivery_outcome_mapper_distinguishes_confirmed_unverifiable_and_failed() {

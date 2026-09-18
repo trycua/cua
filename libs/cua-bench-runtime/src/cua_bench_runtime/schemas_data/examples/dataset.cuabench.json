@@ -1,0 +1,52 @@
+{
+  "schema_version": "0.1.0",
+  "id": "cua.synthetic.dataset",
+  "version": "1.0.0",
+  "tasks": [
+    {
+      "id": "cua.synthetic.background-note",
+      "version": "1.0.0",
+      "manifest": {
+        "path": "task.cuabench.json",
+        "sha256": "38380f0f9277a6bb5b6ce687a09190485dd7d12dc278dfa93674100097954868"
+      },
+      "variants": ["fixture.alpha"]
+    }
+  ],
+  "freeze": {
+    "algorithm": "sha256-canonical-json-v1",
+    "digest": "bb0cdefaa74107d64526087c1432cd4c0618791cba933664dc55e92f7696e413",
+    "inputs": {
+      "task_manifests": [
+        {
+          "path": "task.cuabench.json",
+          "sha256": "38380f0f9277a6bb5b6ce687a09190485dd7d12dc278dfa93674100097954868"
+        }
+      ],
+      "fixture_artifacts": [
+        {
+          "path": "freeze-inputs/fixture.json",
+          "sha256": "93ac39a437f48af1c8a5afe95cdf2ca142bec46cfe9516f0146b5903dd3b9db6"
+        },
+        {
+          "path": "freeze-inputs/reset-retained-note.json",
+          "sha256": "9de699c02ef52a14bd1f9e14cff3a3510c229f06869fbe78fdbe5760f75dfed4"
+        }
+      ],
+      "evaluator_artifacts": [
+        {
+          "path": "freeze-inputs/evaluator.txt",
+          "sha256": "101a1639b91e8dde0cd80baed1f3fb2d8d3bf11451cebf867c0833f48aa7f125"
+        }
+      ],
+      "normalized_facade_contract": {
+        "path": "freeze-inputs/facade.json",
+        "sha256": "8c94fd9839765227a60e39caae1051e357290718f7fe97e9493d0d87738447df"
+      },
+      "neutral_instructions": {
+        "path": "freeze-inputs/neutral-instructions.txt",
+        "sha256": "ff67877777532043e46f3c08aa57531603d8f65bd26ab38e5be358c244251e66"
+      }
+    }
+  }
+}

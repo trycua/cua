@@ -303,6 +303,12 @@ pub struct CreateClaimRequest {
     #[serde(default)]
     #[uniffi(default = None)]
     pub name: Option<String>,
+    /// Labels stamped onto the created claim's metadata verbatim. Grouping
+    /// helpers (for example fleet fan-out) rely on this to tag related claims
+    /// so they can be listed back by label within a namespace.
+    #[serde(default)]
+    #[uniffi(default = None)]
+    pub labels: Option<HashMap<String, String>>,
 }
 
 impl PartialEq for CreateClaimRequest {
@@ -310,6 +316,30 @@ impl PartialEq for CreateClaimRequest {
         self.pool == other.pool
             && schema_values_equal(&self.spec, &other.spec)
             && self.name == other.name
+            && self.labels == other.labels
+    }
+}
+
+/// Where a native client opens its own WebSocket to a sandbox service through
+/// the gateway's `/api/svc` proxy. `url` is the `ws(s)://` endpoint;
+/// `auth_header_name`/`auth_header_value` carry the bearer the socket's HTTP
+/// upgrade request must send. Deliberately not serde-serializable: the value
+/// holds a live credential and must not be logged or persisted.
+#[derive(Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ServiceStreamTarget {
+    pub url: String,
+    pub auth_header_name: String,
+    pub auth_header_value: String,
+}
+
+impl fmt::Debug for ServiceStreamTarget {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ServiceStreamTarget")
+            .field("url", &self.url)
+            .field("auth_header_name", &self.auth_header_name)
+            .field("auth_header_value", &"<redacted>")
+            .finish()
     }
 }
 

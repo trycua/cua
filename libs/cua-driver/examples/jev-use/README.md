@@ -173,6 +173,56 @@ to the configured provider is appropriate.
 The repository's credential-free checks do not establish live Jev behavior.
 Record live verification separately when you run it with a valid key.
 
+## Jev backends: mock, TypeSafe, OpenJev, local
+
+`python/jev_backends.py` (and its TypeScript twin `typescript/jev_backends.ts`)
+generalize the provider layer beyond the TypeSafe SDK. Four backends share one
+fail-open envelope and one System One HTTP wire format
+(`POST {base}/v1/systemone` with `{state, model, questions}`):
+
+| Backend    | Source                                        | Credential |
+|------------|-----------------------------------------------|------------|
+| `mock`     | Deterministic canned chooser (default)        | none       |
+| `typesafe` | TypeSafe cloud (`https://api.typesafe.ai`)    | `JEV_API_KEY` (or `TYPESAFE_API_KEY`) required |
+| `openjev`  | Any OpenJev-compatible System One endpoint    | `JEV_BASE_URL` required; key optional |
+| `local`    | A locally running Jev (default `http://127.0.0.1:8787`) | none required; URL must stay on loopback |
+
+Select with `--provider` or `JEV_BACKEND`; `--live` remains a deprecated alias
+for `typesafe`. Shared settings come from the environment, with per-run
+overrides:
+
+```bash
+export JEV_BACKEND=local            # or typesafe | openjev | mock
+export JEV_BASE_URL=http://127.0.0.1:8787
+export JEV_MODEL=jev-latest
+export JEV_TIMEOUT_MS=2500          # per-request budget, default 2500
+uv run python/run.py --provider local
+```
+
+The HTTP backends use only the standard library -- no SDK dependency. A
+missing key, missing base URL, timeout, HTTP error, or malformed model output
+never raises into the loop: it comes back as a skipped decision with a
+machine-readable reason (`missing_credentials`, `missing_base_url`, `timeout`,
+`http_error`, `invalid_response`, `validation_error`) and the runner abstains
+for that step. Malformed model output is fail-closed, not trusted: choice
+answers must name a supplied candidate ID, carry finite probabilities in
+`[0,1]` whose keys are exactly the candidate set, sum to ~1, and pick the
+argmax. This ports the decision-lane semantics from Kevin's Hermes and
+oh-my-pi computer-use integrations.
+
+## Factorized decisions
+
+`python/factorized.py` (and `typescript/factorized.ts`) port the factorized
+question recipe from those integrations: one `choice` question (`selection`,
+which complete action to run) plus two cheap `noul` gates (`goal_achieved`,
+`needs_reobserve`). Gates fire at 0.7 confidence and resolve to the reserved
+`abstain` / `reobserve` candidates; anything malformed or below 0.4 confidence
+fails open to `None`. `DecisionPacket` bundles the decision with latency and a
+`sha256:` state digest -- no screenshots, pixels, or secrets -- so decisions
+are safe to log and replay against fixtures. The credential-free tests in
+`python/tests/test_factorized.py` exercise the builder, gates, and parser
+without a backend.
+
 ## Use the bounded chooser CLI
 
 Applications that already own capture, candidate construction, execution, and

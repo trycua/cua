@@ -131,6 +131,16 @@ impl WorkerProcess {
     }
 }
 
+// The private worker communicates over pipes and is not an interactive CLI.
+// Suppress console allocation when its host is a Windows GUI application.
+#[cfg(windows)]
+fn configure_private_worker_console(command: &mut Command) {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
 pub(crate) struct PrivateWorkerClient {
     generation: String,
     process: Mutex<WorkerProcess>,
@@ -141,6 +151,8 @@ impl PrivateWorkerClient {
     pub(crate) fn spawn(options: ValidatedWorkerOptions) -> Result<Arc<Self>, DriverError> {
         let generation = Uuid::new_v4().to_string();
         let mut command = Command::new(&options.binary_path);
+        #[cfg(windows)]
+        configure_private_worker_console(&mut command);
         command
             .arg("__private-worker")
             .arg("--generation")
@@ -548,6 +560,70 @@ pub(crate) fn validate_worker_options(
 #[cfg(test)]
 mod tests {
     use crate::embedded::{allowed_environment_name, inherited_managed_environment_name};
+
+    // Re-execute only this probe under the same console policy used by spawn().
+    // A normal test run leaves it dormant; no process-global environment changes
+    // are needed, so the parent test is safe to run alongside other tests.
+    #[cfg(windows)]
+    #[test]
+    fn private_worker_console_probe() {
+        if std::env::var("CUA_TEST_PRIVATE_WORKER_CONSOLE").as_deref() != Ok("1") {
+            return;
+        }
+
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn GetConsoleWindow() -> *mut std::ffi::c_void;
+            fn GetConsoleCP() -> u32;
+        }
+
+        // Both functions are parameterless queries with no ownership transfer.
+        unsafe {
+            assert!(GetConsoleWindow().is_null(), "worker has a console window");
+            assert_eq!(GetConsoleCP(), 0, "worker is attached to a console");
+        }
+        let mut message = String::new();
+        std::io::stdin().read_line(&mut message).unwrap();
+        assert_eq!(message, "private-worker-ping\n");
+        println!("private-worker-pong");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn private_worker_suppresses_console_and_preserves_pipes() {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+
+        for inherit_stderr in [false, true] {
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            super::configure_private_worker_console(&mut command);
+            command
+                .args([
+                    "--exact",
+                    "worker::tests::private_worker_console_probe",
+                    "--nocapture",
+                ])
+                .env("CUA_TEST_PRIVATE_WORKER_CONSOLE", "1")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(if inherit_stderr {
+                    Stdio::inherit()
+                } else {
+                    Stdio::null()
+                });
+            let mut child = command.spawn().unwrap();
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(b"private-worker-ping\n")
+                .unwrap();
+            let output = child.wait_with_output().unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(output.status.success(), "probe failed: {stdout}");
+            assert!(stdout.contains("private-worker-pong"), "missing reply: {stdout}");
+        }
+    }
 
     #[test]
     fn managed_authorization_is_inherited_but_cannot_be_overridden() {

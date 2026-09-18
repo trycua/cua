@@ -2817,6 +2817,26 @@ pub fn element_bounds_ref(
     )
 }
 
+/// Whether a snapshot-cached element is currently on screen: its own AT-SPI
+/// state set carries `Showing` (a GTK menu item whose menu is closed, or a
+/// widget on an unmapped notebook page, lacks it even though the object
+/// still exists). `Ok(true)` when the toolkit exposes no state set.
+pub fn element_showing_ref(object_ref: &ObjectRef) -> Result<bool> {
+    bounded_for(
+        REF_ACTION_BUDGET,
+        async {
+            let conn = shared_connection().await?;
+            let (acc, _) = live_accessible(conn, object_ref).await?;
+            match call(acc.get_state()).await {
+                Some(Ok(state)) => Ok(is_showing_state(&state)),
+                Some(Err(_)) => Ok(true),
+                None => Err(anyhow!("cached element did not answer in time")),
+            }
+        },
+        || Err(anyhow!("element_showing (cached element) timed out")),
+    )
+}
+
 /// [`focus_element`] on a snapshot-cached element identity.
 pub fn focus_element_ref(object_ref: &ObjectRef) -> Result<bool> {
     bounded_for(
@@ -4230,10 +4250,34 @@ pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> 
 /// therefore the same index space) `get_window_state` used for the snapshot
 /// the index came from; an application-wide pre-order would number a
 /// multi-window app (GIMP's docks, LibreOffice dialogs) differently.
+/// Screen bounds a walk resolved are usable for a pointer action only when
+/// they have a real size and intersect the display. `display` is `None` when
+/// the display size is unknown (Wayland); the size check still applies.
+pub(crate) fn walk_bounds_usable(
+    bounds: Option<(i32, i32, u32, u32)>,
+    display: Option<(u32, u32)>,
+) -> Option<(i32, i32, u32, u32)> {
+    let (x, y, w, h) = bounds?;
+    if w == 0 || h == 0 {
+        return None;
+    }
+    if let Some((dw, dh)) = display {
+        let right = i64::from(x) + i64::from(w);
+        let bottom = i64::from(y) + i64::from(h);
+        if x >= dw as i32 || y >= dh as i32 || right <= 0 || bottom <= 0 {
+            return None;
+        }
+    }
+    Some((x, y, w, h))
+}
+
 fn element_bounds_by_walk(pid: u32, xid: u64, idx: usize) -> Result<(i32, i32, u32, u32)> {
     // Synchronous X11 lookups stay on the caller's blocking thread, outside
     // the AT-SPI runtime.
     let offset = window_to_screen_offset(pid, xid, None);
+    let display = (!crate::wayland::is_wayland())
+        .then(x11_display_size)
+        .flatten();
     bounded_for(
         INDEX_RESOLVE_BUDGET,
         async {
@@ -4265,28 +4309,39 @@ fn element_bounds_by_walk(pid: u32, xid: u64, idx: usize) -> Result<(i32, i32, u
             // Screen on Wayland / when no X11 window resolves (offset is None).
             match offset {
                 Some((ox, oy)) => {
-                    let (x, y, w, h) = comp
+                    let raw = comp
                         .get_extents(CoordType::Window)
                         .await
                         .map_err(|e| anyhow!("getExtents failed: {e}"))?;
-                    let (document_x, document_y) = if target.in_web_doc {
-                        web_document_origin
-                    } else {
-                        (0, 0)
-                    };
-                    Ok((
-                        x + ox + document_x,
-                        y + oy + document_y,
-                        w.max(0) as u32,
-                        h.max(0) as u32,
-                    ))
+                    let document_origin = target.in_web_doc.then_some(web_document_origin);
+                    // An unrealized widget (a menu item whose menu is closed)
+                    // answers (0,0,0,0) in Window coordinates; projected onto
+                    // the window origin that would be a "valid" centre at the
+                    // window's top-left corner. Refuse it like the cached
+                    // path does.
+                    walk_bounds_usable(
+                        project_screen_extents(raw, (ox, oy), document_origin),
+                        display,
+                    )
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "element {idx} ({}) reports no usable on-screen extents                              (raw window extents {raw:?}); it may be inside a closed menu                              or an unmapped page",
+                            target.role
+                        )
+                    })
                 }
                 None => {
-                    let (x, y, w, h) = comp
+                    let raw = comp
                         .get_extents(CoordType::Screen)
                         .await
                         .map_err(|e| anyhow!("getExtents failed: {e}"))?;
-                    Ok((x, y, w.max(0) as u32, h.max(0) as u32))
+                    walk_bounds_usable(project_screen_extents(raw, (0, 0), None), display)
+                        .ok_or_else(|| {
+                            anyhow!(
+                                "element {idx} ({}) reports no usable on-screen extents                                  (raw screen extents {raw:?})",
+                                target.role
+                            )
+                        })
                 }
             }
         },
@@ -4928,6 +4983,33 @@ async fn element_bounds_for_visited(
             .collect(),
         complete,
     )
+}
+
+#[cfg(test)]
+mod walk_bounds_tests {
+    use super::walk_bounds_usable;
+
+    #[test]
+    fn degenerate_window_origin_is_rejected() {
+        // A closed menu item projects (0,0,0,0) onto the window origin.
+        assert_eq!(walk_bounds_usable(Some((40, 60, 0, 0)), Some((1920, 1080))), None);
+        assert_eq!(walk_bounds_usable(None, Some((1920, 1080))), None);
+    }
+
+    #[test]
+    fn off_screen_bounds_are_rejected() {
+        assert_eq!(walk_bounds_usable(Some((2000, 10, 50, 20)), Some((1920, 1080))), None);
+        assert_eq!(walk_bounds_usable(Some((-80, 10, 50, 20)), Some((1920, 1080))), None);
+    }
+
+    #[test]
+    fn real_bounds_pass_through() {
+        assert_eq!(
+            walk_bounds_usable(Some((100, 200, 80, 24)), Some((1920, 1080))),
+            Some((100, 200, 80, 24))
+        );
+        assert_eq!(walk_bounds_usable(Some((100, 200, 80, 24)), None), Some((100, 200, 80, 24)));
+    }
 }
 
 #[cfg(test)]

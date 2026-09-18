@@ -298,6 +298,17 @@ pub fn perform_action_observed(element: &cache::CachedElement) -> Result<(String
     native::perform_action_ref(object_ref)
 }
 
+/// Whether the exact object a snapshot observed is on screen right now
+/// (its own state set carries `Showing`). Never re-walks.
+pub fn element_showing_observed(element: &cache::CachedElement) -> Result<bool> {
+    let Some(object_ref) = element.object_ref.as_ref() else {
+        return Err(
+            native::CachedElementGone("observed element has no D-Bus address".into()).into(),
+        );
+    };
+    native::element_showing_ref(object_ref)
+}
+
 /// Give an indexed AT-SPI element keyboard focus without activating its window.
 pub fn focus_element(pid: u32, idx: usize) -> Result<bool> {
     if let Some(object_ref) = cache::cached_element(pid, None, idx).and_then(|e| e.object_ref) {

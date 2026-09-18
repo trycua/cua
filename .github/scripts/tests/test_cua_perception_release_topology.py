@@ -8,7 +8,7 @@ import subprocess
 import tarfile
 
 import pytest
-from jsonschema import Draft202012Validator
+from jsonschema import Draft202012Validator, ValidationError
 import yaml
 
 
@@ -211,11 +211,34 @@ def test_templates_and_schemas_are_valid_and_pin_known_models() -> None:
     assert models[0]["license"] == "AGPL-3.0-only"
     assert models[0]["verificationStatus"] == "license-review-required"
     platforms = json.loads((CONTROL / "platform-inputs.json").read_text())
-    Draft202012Validator(json.loads((CONTROL / "platform-inputs.schema.json").read_text())).validate(platforms)
+    platform_validator = Draft202012Validator(json.loads(
+        (CONTROL / "platform-inputs.schema.json").read_text()
+    ))
+    platform_validator.validate(platforms)
     assert [item["triple"] for item in platforms["platforms"]] == [
-        "x86_64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-pc-windows-msvc"
+        "x86_64-unknown-linux-gnu", "aarch64-apple-darwin", "x86_64-pc-windows-msvc"
     ]
     assert all(item["modelManifest"] == "model-manifest.json" for item in platforms["platforms"])
+    artifact_lock = json.loads((
+        ROOT / "libs/cua-driver/rust/crates/cua-perception/scripts/artifacts.lock.json"
+    ).read_text())
+    locked_targets = artifact_lock["onnx_runtime"]["targets"]
+    assert all(item["triple"] in locked_targets for item in platforms["platforms"])
+    macos = next(item for item in platforms["platforms"] if item["os"] == "macos")
+    assert (macos["arch"], macos["runner"], macos["bundleArtifact"]) == (
+        "aarch64", "macos-15", "cua-perception-input-macos-aarch64"
+    )
+    stale_intel_platforms = json.loads(json.dumps(platforms))
+    stale_intel_macos = next(
+        item for item in stale_intel_platforms["platforms"] if item["os"] == "macos"
+    )
+    stale_intel_macos.update({
+        "arch": "x86_64",
+        "triple": "x86_64-apple-darwin",
+        "runner": "macos-15-intel",
+    })
+    with pytest.raises(ValidationError):
+        platform_validator.validate(stale_intel_platforms)
 
 
 def test_packages_deterministically_with_catalog_sbom_and_redacted_provenance(tmp_path: Path) -> None:
@@ -445,13 +468,17 @@ def test_workflows_are_valid_and_candidate_workflow_cannot_publish() -> None:
     assert "verify-checksums" in candidate
     assert "bind-source" in candidate and "--executed-evidence" in candidate
     assert "refs/cua-reviewed/source" in candidate
+    assert "macos:aarch64-apple-darwin" in candidate
+    assert "macos-15-intel" not in candidate
     assert "refs/pull/3943/head" in manual_path.read_text()
     parsed = yaml.safe_load(candidate)
     assert "PRIVATE_KEY_BASE64" not in json.dumps(parsed["jobs"]["package"])
     assert "PRIVATE_KEY_BASE64" in json.dumps(parsed["jobs"]["sign"])
     manual = manual_path.read_text()
-    for value in ("x86_64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-pc-windows-msvc"):
+    for value in ("x86_64-unknown-linux-gnu", "aarch64-apple-darwin", "x86_64-pc-windows-msvc"):
         assert value in manual
+    assert "cua-perception-input-macos-aarch64" in manual
+    assert "x86_64-apple-darwin" not in manual
 
 
 def test_trust_root_and_rfc8032_vector_match_extension_manager_contract() -> None:

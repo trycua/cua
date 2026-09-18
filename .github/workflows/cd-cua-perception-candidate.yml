@@ -50,7 +50,7 @@ concurrency:
 jobs:
   package:
     name: verify and package ${{ inputs.target_triple }}
-    runs-on: ${{ inputs.target_os == 'windows' && 'windows-latest' || inputs.target_os == 'macos' && 'macos-15-intel' || inputs.target_os == 'linux' && 'ubuntu-latest' || 'invalid-runner' }}
+    runs-on: ${{ inputs.target_os == 'windows' && 'windows-latest' || inputs.target_os == 'macos' && 'macos-15' || inputs.target_os == 'linux' && 'ubuntu-latest' || 'invalid-runner' }}
     steps:
       - name: Check out exact candidate source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -81,7 +81,7 @@ jobs:
           git -C source fetch --no-tags origin "+$REVIEWED_REF:refs/cua-reviewed/source"
           test "$SOURCE_REF" = "$(git -C source rev-parse refs/cua-reviewed/source)"
           case "$TARGET_OS:$TARGET_TRIPLE" in
-            linux:x86_64-unknown-linux-gnu|macos:x86_64-apple-darwin|windows:x86_64-pc-windows-msvc) ;;
+            linux:x86_64-unknown-linux-gnu|macos:aarch64-apple-darwin|windows:x86_64-pc-windows-msvc) ;;
             *) echo "unsupported target mapping: $TARGET_OS:$TARGET_TRIPLE" >&2; exit 1 ;;
           esac
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065

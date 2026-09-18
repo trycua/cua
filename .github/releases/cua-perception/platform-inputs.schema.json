@@ -13,10 +13,28 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": { "os": { "const": "macos" } },
+              "required": ["os"]
+            },
+            "then": {
+              "properties": {
+                "arch": { "const": "aarch64" },
+                "triple": { "const": "aarch64-apple-darwin" },
+                "runner": { "const": "macos-15" }
+              }
+            },
+            "else": {
+              "properties": { "arch": { "const": "x86_64" } }
+            }
+          }
+        ],
         "required": ["os", "arch", "triple", "runner", "bundleArtifact", "worker", "runtime", "modelManifest"],
         "properties": {
           "os": { "enum": ["linux", "macos", "windows"] },
-          "arch": { "const": "x86_64" },
+          "arch": { "enum": ["aarch64", "x86_64"] },
           "triple": { "type": "string", "minLength": 1 },
           "runner": { "type": "string", "minLength": 1 },
           "bundleArtifact": { "type": "string", "pattern": "^cua-perception-input-[A-Za-z0-9_-]+$" },

@@ -534,6 +534,8 @@ fn ensure_private_directory_path(path: &Path) -> Result<Dir> {
         #[cfg(windows)]
         windows_reject_reparse_directory(&directory)?;
     }
+    #[cfg(windows)]
+    windows_secure_handle(&directory)?;
     verify_cap_directory_permissions_portable(&directory)?;
     Ok(directory)
 }
@@ -1025,11 +1027,9 @@ fn perception_worker_config_in(store: &ExtensionStore) -> Result<Option<Percepti
     if !store.root.exists() {
         return Ok(None);
     }
-    let Some(active) = store.active_path(PERCEPTION_ID)? else {
+    let Some((active, manifest)) = store.active_path_for_startup(PERCEPTION_ID)? else {
         return Ok(None);
     };
-    let installed = open_directory_path_nofollow(&active)?;
-    let manifest = verify_installed_version_at(&installed, registry_entry(PERCEPTION_ID)?, None)?;
 
     let contract_path = resolve_owned_file(&active, &manifest, PERCEPTION_RUNTIME_CONTRACT)?;
     let contract: PerceptionRuntimeContract =
@@ -1810,6 +1810,45 @@ impl ExtensionStore {
         Ok(())
     }
 
+    fn recover_activation_for_startup_locked(&self, root: &Dir, id: &str) -> Result<()> {
+        let Some(extension) = open_private_subdirectory_if_present(root, id)? else {
+            return Ok(());
+        };
+        let mut has_active = private_regular_file_or_missing_at(&extension, ACTIVE_NAME)?;
+        let mut has_backup = private_regular_file_or_missing_at(&extension, ACTIVE_BACKUP_NAME)?;
+        let has_new = private_regular_file_or_missing_at(&extension, ACTIVE_NEW_NAME)?;
+        if !has_backup && !has_new {
+            return Ok(());
+        }
+        if has_active {
+            self.validate_pointer_target_for_startup_locked(id, &extension, ACTIVE_NAME)?;
+        }
+        if has_backup {
+            self.validate_pointer_target_for_startup_locked(id, &extension, ACTIVE_BACKUP_NAME)?;
+        }
+        if !has_active && has_backup {
+            extension
+                .rename(ACTIVE_BACKUP_NAME, &extension, ACTIVE_NAME)
+                .with_context(|| format!("restore interrupted activation for {id}"))?;
+            sync_cap_dir(&extension)?;
+            has_active = true;
+            has_backup = false;
+        }
+        if has_active && has_backup {
+            extension
+                .remove_file(ACTIVE_BACKUP_NAME)
+                .with_context(|| format!("remove stale activation backup for {id}"))?;
+            sync_cap_dir(&extension)?;
+        }
+        if has_new {
+            extension
+                .remove_file(ACTIVE_NEW_NAME)
+                .with_context(|| format!("remove stale activation candidate for {id}"))?;
+            sync_cap_dir(&extension)?;
+        }
+        Ok(())
+    }
+
     fn recover_publisher_trust_from_active_locked(&self, root: &Dir, id: &str) -> Result<()> {
         let Some(pointer) = self.active_pointer_locked(root, id)? else {
             return Ok(());
@@ -1819,6 +1858,16 @@ impl ExtensionStore {
             .open_dir_nofollow("versions")?
             .open_dir_nofollow(&pointer.version)?;
         let manifest = verify_installed_version_at(&version, registry_entry(id)?, None)?;
+        self.recover_publisher_trust_from_verified_active_locked(root, id, &version, &manifest)
+    }
+
+    fn recover_publisher_trust_from_verified_active_locked(
+        &self,
+        root: &Dir,
+        id: &str,
+        version: &Dir,
+        manifest: &ExtensionManifest,
+    ) -> Result<()> {
         let record = read_install_record_at(&version, id, &manifest.version)?;
         let Some(candidate) = record.publisher_trust else {
             return Ok(());
@@ -1864,6 +1913,36 @@ impl ExtensionStore {
             })?;
         verify_cap_directory_permissions_portable(&version)?;
         verify_installed_version_at(&version, registry_entry(id)?, None)?;
+        Ok(())
+    }
+
+    fn validate_pointer_target_for_startup_locked(
+        &self,
+        id: &str,
+        extension: &Dir,
+        pointer_name: &str,
+    ) -> Result<()> {
+        let bytes = read_small_file_at(extension, Path::new(pointer_name))?;
+        let pointer: ActivePointer = serde_json::from_slice(&bytes)
+            .with_context(|| format!("parse activation pointer {pointer_name}"))?;
+        if pointer.id != id {
+            bail!("activation pointer for {id} names extension {}", pointer.id);
+        }
+        validate_version_segment(&pointer.version)?;
+        let versions = extension
+            .open_dir_nofollow("versions")
+            .context("active extension has no owned versions directory")?;
+        verify_cap_directory_permissions_portable(&versions)?;
+        let version = versions
+            .open_dir_nofollow(&pointer.version)
+            .with_context(|| {
+                format!(
+                    "active extension version {} is not an owned directory",
+                    pointer.version
+                )
+            })?;
+        verify_cap_directory_permissions_portable(&version)?;
+        verify_installed_version_for_startup_at(&version, registry_entry(id)?)?;
         Ok(())
     }
 
@@ -2154,6 +2233,36 @@ impl ExtensionStore {
         let path = self.versions_dir(id).join(&pointer.version);
         verify_installed_version_at(&version, registry_entry(id)?, None)?;
         Ok(Some(path))
+    }
+
+    fn active_path_for_startup(&self, id: &str) -> Result<Option<(PathBuf, ExtensionManifest)>> {
+        let lock = self.lock(id)?;
+        self.recover_activation_for_startup_locked(&lock.root, id)?;
+        let Some(pointer) = self.active_pointer_locked(&lock.root, id)? else {
+            return Ok(None);
+        };
+        let extension = lock.root.open_dir_nofollow(id)?;
+        let versions = extension
+            .open_dir_nofollow("versions")
+            .context("active extension has no owned versions directory")?;
+        verify_cap_directory_permissions_portable(&versions)?;
+        let version = versions
+            .open_dir_nofollow(&pointer.version)
+            .with_context(|| {
+                format!(
+                    "active extension version {} is not an owned directory",
+                    pointer.version
+                )
+            })?;
+        verify_cap_directory_permissions_portable(&version)?;
+        let manifest = verify_installed_version_for_startup_at(&version, registry_entry(id)?)?;
+        self.recover_publisher_trust_from_verified_active_locked(
+            &lock.root, id, &version, &manifest,
+        )?;
+        Ok(Some((
+            self.versions_dir(id).join(&pointer.version),
+            manifest,
+        )))
     }
 
     fn info<'a>(&self, entry: &'a RegistryEntry, self_test: bool) -> Result<ExtensionInfo<'a>> {
@@ -2728,6 +2837,107 @@ fn verify_installed_version_at(
     validate_manifest(&manifest, entry, &all_files)?;
     verify_manifest_permissions_at(root, &manifest)?;
     verify_install_record_at(root, entry.id, &manifest.version)?;
+    Ok(manifest)
+}
+
+/// Verify the installed payload needed to construct the perception worker
+/// without rehashing large, non-executed compliance and corresponding-source
+/// files on every daemon start. Lifecycle commands continue to use the full
+/// verifier above.
+fn verify_installed_version_for_startup_at(
+    root: &Dir,
+    entry: &RegistryEntry,
+) -> Result<ExtensionManifest> {
+    let bytes = read_small_file_at(root, Path::new(MANIFEST_NAME))?;
+    let manifest: ExtensionManifest = serde_json::from_slice(&bytes)?;
+    read_install_record_at(root, entry.id, &manifest.version)?;
+    safe_manifest_path(&manifest.entrypoint)?;
+    for file in &manifest.files {
+        safe_manifest_path(&file.path)?;
+    }
+
+    let actual_paths = installed_regular_files_at(root)?;
+    let expected_paths: BTreeSet<String> = manifest
+        .files
+        .iter()
+        .map(|file| file.path.clone())
+        .chain([MANIFEST_NAME.to_owned(), INSTALL_RECORD_NAME.to_owned()])
+        .collect();
+    if actual_paths != expected_paths {
+        bail!("installed file set does not exactly match the ownership record");
+    }
+    verify_manifest_permissions_at(root, &manifest)?;
+
+    let contract_file = manifest
+        .files
+        .iter()
+        .find(|file| file.path == PERCEPTION_RUNTIME_CONTRACT)
+        .ok_or_else(|| anyhow!("perception runtime contract is not extension-owned"))?;
+    let contract_hash = hash_file_at(root, Path::new(PERCEPTION_RUNTIME_CONTRACT), MAX_FILE_BYTES)?;
+    if !contract_hash.eq_ignore_ascii_case(&contract_file.sha256) {
+        bail!("SHA-256 mismatch for {PERCEPTION_RUNTIME_CONTRACT}");
+    }
+    let contract: PerceptionRuntimeContract = serde_json::from_slice(&read_small_file_at(
+        root,
+        Path::new(PERCEPTION_RUNTIME_CONTRACT),
+    )?)
+    .context("parse perception runtime contract")?;
+    validate_runtime_contract(&manifest, &contract)?;
+
+    let mut required = manifest
+        .files
+        .iter()
+        .filter(|file| {
+            file.executable
+                || ["bin/", "runtime/", "models/"]
+                    .iter()
+                    .any(|prefix| file.path.starts_with(prefix))
+        })
+        .map(|file| file.path.clone())
+        .collect::<BTreeSet<_>>();
+    required.insert(manifest.entrypoint.clone());
+    required.insert(PERCEPTION_RUNTIME_CONTRACT.to_owned());
+    required.insert(unique_model_manifest_path(&manifest)?.to_owned());
+    required.extend(manifest.models.iter().map(|model| model.path.clone()));
+    required.insert(format!("runtime/{}", contract.runtime.name));
+    required.extend(
+        contract
+            .models
+            .iter()
+            .map(|model| format!("models/{}", model.name)),
+    );
+    required.insert(format!("models/{}", contract.dictionary.name));
+    // Reuse complete manifest validation while hashing only worker execution
+    // inputs. Non-executed compliance payload remains covered by exact file-set,
+    // ownership, permissions, and full lifecycle/status verification.
+    let mut startup_files = manifest
+        .files
+        .iter()
+        .map(|file| {
+            let path = Path::new(&file.path);
+            let metadata = root
+                .symlink_metadata(path)
+                .with_context(|| format!("inspect installed file {}", path.display()))?;
+            if !metadata.file_type().is_file() {
+                bail!("installed path is not a regular file: {}", path.display());
+            }
+            Ok(ArchiveFile {
+                path: file.path.clone(),
+                sha256: if required.contains(&file.path) {
+                    hash_file_at(root, path, MAX_FILE_BYTES)?
+                } else {
+                    file.sha256.clone()
+                },
+                size: metadata.len(),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    startup_files.push(ArchiveFile {
+        path: MANIFEST_NAME.to_owned(),
+        sha256: hex_sha256(&bytes),
+        size: bytes.len() as u64,
+    });
+    validate_manifest(&manifest, entry, &startup_files)?;
     Ok(manifest)
 }
 
@@ -4038,10 +4248,12 @@ mod tests {
 
     fn perception_fixture_archive(directory: &Path, version: &str, runtime_name: &str) -> PathBuf {
         let worker = b"fixture-worker";
+        let helper = b"fixture-helper";
         let model_manifest = b"{}";
         let runtime = b"fixture-runtime";
         let model = b"fixture-model";
         let dictionary = b"fixture-dictionary";
+        let notice = b"fixture-notice";
         let worker_name = if cfg!(windows) {
             "cua-perception.exe"
         } else {
@@ -4074,6 +4286,7 @@ mod tests {
         let runtime_path = format!("runtime/{installed_runtime_name}");
         let files = vec![
             (entrypoint.clone(), worker.as_slice(), true),
+            ("bin/helper.dat".to_owned(), helper.as_slice(), false),
             (
                 "models/model-manifest.json".to_owned(),
                 model_manifest.as_slice(),
@@ -4091,6 +4304,11 @@ mod tests {
             (
                 PERCEPTION_RUNTIME_CONTRACT.to_owned(),
                 contract.as_slice(),
+                false,
+            ),
+            (
+                "notices/THIRD_PARTY_NOTICES.md".to_owned(),
+                notice.as_slice(),
                 false,
             ),
         ];
@@ -4196,6 +4414,76 @@ mod tests {
                 .map(|identity| (identity.id.as_str(), identity.version.as_str(),)),
             Some(("cua-perception", "1.0.0"))
         );
+    }
+
+    #[test]
+    fn perception_startup_rejects_tampered_execution_inputs() {
+        let runtime_name = if cfg!(target_os = "windows") {
+            "onnxruntime.dll"
+        } else if cfg!(target_os = "macos") {
+            "libonnxruntime.dylib"
+        } else {
+            "libonnxruntime.so"
+        };
+        let worker = if cfg!(windows) {
+            "bin/cua-perception.exe"
+        } else {
+            "bin/cua-perception"
+        };
+        for relative in [
+            worker.to_owned(),
+            "bin/helper.dat".to_owned(),
+            "models/model-manifest.json".to_owned(),
+            "models/icon.onnx".to_owned(),
+            format!("runtime/{runtime_name}"),
+            "models/dictionary.txt".to_owned(),
+            PERCEPTION_RUNTIME_CONTRACT.to_owned(),
+        ] {
+            let temp = TempDir::new().unwrap();
+            let store = ExtensionStore::new(temp.path().join("extensions"));
+            let archive = perception_fixture_archive(temp.path(), "1.0.0", runtime_name);
+            store
+                .install_archive(registry_entry(PERCEPTION_ID).unwrap(), &archive)
+                .unwrap();
+            let active = store.active_path(PERCEPTION_ID).unwrap().unwrap();
+            fs::write(active.join(&relative), b"tampered execution input").unwrap();
+
+            let error = perception_worker_config_in(&store).unwrap_err();
+            assert!(
+                error.to_string().contains("SHA-256 mismatch"),
+                "relative={relative}, error={error:#}"
+            );
+        }
+    }
+
+    #[test]
+    fn nonexecuted_tampering_is_deferred_to_full_verification() {
+        let temp = TempDir::new().unwrap();
+        let store = ExtensionStore::new(temp.path().join("extensions"));
+        let runtime_name = if cfg!(target_os = "windows") {
+            "onnxruntime.dll"
+        } else if cfg!(target_os = "macos") {
+            "libonnxruntime.dylib"
+        } else {
+            "libonnxruntime.so"
+        };
+        let archive = perception_fixture_archive(temp.path(), "1.0.0", runtime_name);
+        store
+            .install_archive(registry_entry(PERCEPTION_ID).unwrap(), &archive)
+            .unwrap();
+        let active = store.active_path(PERCEPTION_ID).unwrap().unwrap();
+        fs::write(
+            active.join("notices/THIRD_PARTY_NOTICES.md"),
+            b"tampered notice",
+        )
+        .unwrap();
+
+        perception_worker_config_in(&store).unwrap().unwrap();
+        let installed = open_directory_path_nofollow(&active).unwrap();
+        let error =
+            verify_installed_version_at(&installed, registry_entry(PERCEPTION_ID).unwrap(), None)
+                .unwrap_err();
+        assert!(error.to_string().contains("SHA-256 mismatch"));
     }
 
     #[test]
@@ -4836,6 +5124,37 @@ mod tests {
             assert!(result.is_err(), "{component} symlink was accepted");
             assert_eq!(fs::read(external.join("sentinel")).unwrap(), b"keep");
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn hardens_a_precreated_extension_root_with_a_broad_acl() {
+        let temp = TempDir::new().unwrap();
+        let root_path = temp.path().join("extensions");
+        fs::create_dir(&root_path).unwrap();
+        let root = open_directory_path_nofollow(&root_path).unwrap();
+        windows_secure_handle(&root).unwrap();
+        drop(root);
+        let acl = std::process::Command::new("icacls")
+            .arg(&root_path)
+            .args(["/grant", "*S-1-1-0:(W)"])
+            .output()
+            .unwrap();
+        assert!(
+            acl.status.success(),
+            "{}",
+            String::from_utf8_lossy(&acl.stderr)
+        );
+
+        let broad = open_directory_path_nofollow(&root_path).unwrap();
+        assert!(windows_verify_directory_handle(&broad)
+            .unwrap_err()
+            .to_string()
+            .contains("untrusted principal"));
+        drop(broad);
+
+        let hardened = ensure_private_directory_path(&root_path).unwrap();
+        windows_verify_directory_handle(&hardened).unwrap();
     }
 
     #[cfg(windows)]

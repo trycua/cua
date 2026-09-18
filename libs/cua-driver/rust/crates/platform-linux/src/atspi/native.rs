@@ -1238,7 +1238,7 @@ async fn collect_visited_bounded<'a>(
         let showing = state_r
             .as_ref()
             .and_then(|state| state.as_ref().ok())
-            .is_none_or(|state| is_showing_state(state));
+            .is_none_or(|state| counts_as_showing(&role_lower, state));
         let selected = if role_lower.contains("check") {
             checked
         } else if role_lower.contains("radio")
@@ -1520,6 +1520,24 @@ fn passive_marker(role: &str, has_action: bool, has_component: bool, enabled: Op
 /// that carries neither is a hidden widget, not an old bridge.
 fn is_showing_state(state: &StateSet) -> bool {
     state.contains(State::Showing)
+}
+
+/// Menu entries are the exception to the `Showing` gate: gail (GTK2, e.g.
+/// GIMP 2.10) never publishes `Showing` on a menu item, open menu or not,
+/// and an item in a closed menu is still reachable through its AT-SPI
+/// `click` action (that is how a background click opens a GIMP dialog). A
+/// `Visible` menu entry therefore stays indexed; a foreground click on one
+/// that is not actually on screen takes the action route instead of the
+/// pointer (see the click tool), so listing it is safe.
+fn is_menu_entry_role(role_lower: &str) -> bool {
+    matches!(
+        role_lower,
+        "menu" | "menu item" | "check menu item" | "radio menu item" | "tear off menu item"
+    )
+}
+
+fn counts_as_showing(role_lower: &str, state: &StateSet) -> bool {
+    is_showing_state(state) || (is_menu_entry_role(role_lower) && state.contains(State::Visible))
 }
 
 /// Format an AT-SPI numeric value like the historical `str(currentValue)`
@@ -5299,7 +5317,8 @@ mod coord_tests {
     use super::{
         activation_index, before_snapshot_deadline, combine_wayland_content_offsets,
         hyprland_document_top_inset, is_activation_action, is_enabled_state,
-        is_indexable_capabilities, is_passive_role, is_showing_state, is_web_process_bus,
+        counts_as_showing, is_indexable_capabilities, is_passive_role, is_showing_state,
+        is_web_process_bus,
         passive_marker, prefer_authoritative_wayland_origin, project_screen_extents, rebase_renderer_window_offset,
         scoped_component_nodes, screen_extent_rebase, select_click_target, select_web_document,
         ApplicationSelection,
@@ -5453,6 +5472,11 @@ mod coord_tests {
         assert!(is_showing_state(&StateSet::new(
             State::Enabled | State::Visible | State::Showing
         )));
+        // ...but a GTK2 menu item is never `Showing`, and stays indexed while `Visible`.
+        assert!(!counts_as_showing("push button", &StateSet::new(State::Enabled | State::Visible)));
+        assert!(counts_as_showing("menu item", &StateSet::new(State::Enabled | State::Visible)));
+        assert!(counts_as_showing("check menu item", &StateSet::new(State::Visible)));
+        assert!(!counts_as_showing("menu item", &StateSet::new(State::Enabled)));
         // A visible but insensitive button keeps a marker in the markdown.
         assert_eq!(passive_marker("push button", true, true, Some(false)), " (disabled)");
         assert_eq!(passive_marker("push button", false, true, Some(false)), " (disabled)");

@@ -7,6 +7,11 @@ on:
         description: "Optional full 40-character commit SHA; defaults to dispatch SHA"
         required: false
         default: ""
+      windows_edge_only:
+        description: "Disposable diagnostic: hide installed Chrome and require Edge fallback"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -34,7 +39,7 @@ jobs:
           echo "sha=${sha,,}" >> "$GITHUB_OUTPUT"
 
   browser:
-    name: "${{ matrix.label }} / ${{ matrix.products }}"
+    name: "${{ matrix.label }} / ${{ inputs.windows_edge_only && matrix.label == 'Windows' && 'edge-only-fallback' || matrix.products }}"
     needs: source
     strategy:
       fail-fast: false
@@ -56,7 +61,7 @@ jobs:
       CUA_E2E_FORBID_SKIPS: "1"
       CUA_TEST_DRIVER_STDERR: "1"
       CUA_E2E_BROWSER_STDERR: "1"
-      CUA_E2E_BROWSER_PRODUCTS: ${{ matrix.products }}
+      CUA_E2E_BROWSER_PRODUCTS: ${{ inputs.windows_edge_only && matrix.label == 'Windows' && 'edge' || matrix.products }}
       CUA_TEST_REQUIRE_PROTECTED_WINDOWS_BROWSER: ${{ matrix.label == 'Windows' && '1' || '0' }}
       CUA_E2E_WINDOWS_BROWSER_LIMITATION: ${{ matrix.label == 'Windows' && 'hosted_runner_token' || '0' }}
       RUST_BACKTRACE: "1"
@@ -114,6 +119,40 @@ jobs:
             }
             Write-Host "[browser-trust] verified vendor-signed candidate: $($browser.Executable)"
           }
+      - name: Hide Chrome for Edge-only fallback diagnostic
+        if: runner.os == 'Windows' && inputs.windows_edge_only
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $chromeCandidates = @(
+            (Join-Path ${env:ProgramFiles} 'Google\Chrome\Application\chrome.exe'),
+            (Join-Path ${env:ProgramFiles(x86)} 'Google\Chrome\Application\chrome.exe')
+          ) | Select-Object -Unique
+          $hiddenCount = 0
+          foreach ($candidate in $chromeCandidates) {
+            $hidden = "$candidate.cua-edge-only-e2e"
+            if (Test-Path -LiteralPath $hidden) {
+              throw "Edge-only diagnostic found a stale hidden Chrome executable: $hidden"
+            }
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+              Move-Item -LiteralPath $candidate -Destination $hidden
+              $hiddenCount++
+            }
+          }
+          if ($hiddenCount -eq 0) {
+            throw 'Edge-only diagnostic requires Chrome to be installed before it is hidden'
+          }
+          if ($chromeCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }) {
+            throw 'Chrome remained discoverable after the Edge-only diagnostic setup'
+          }
+          $edgeCandidates = @(
+            (Join-Path ${env:ProgramFiles} 'Microsoft\Edge\Application\msedge.exe'),
+            (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application\msedge.exe')
+          ) | Select-Object -Unique
+          if (-not ($edgeCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })) {
+            throw 'Edge-only diagnostic requires an installed Microsoft Edge executable'
+          }
+          Write-Host "[browser-trust] hid $hiddenCount Chrome candidate(s); Edge is the only supported installed browser"
       - name: Run standalone browsers on Windows with admin refusal and restricted positives
         if: runner.os == 'Windows'
         shell: pwsh
@@ -126,6 +165,24 @@ jobs:
           $env:CUA_E2E_ARTIFACT_DIR = $artifactDir
           & $scriptPath -NoBuild
           if ($LASTEXITCODE -ne 0) { throw "standalone-browser E2E failed with exit code $LASTEXITCODE" }
+      - name: Restore Chrome after Edge-only fallback diagnostic
+        if: always() && runner.os == 'Windows' && inputs.windows_edge_only
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $chromeCandidates = @(
+            (Join-Path ${env:ProgramFiles} 'Google\Chrome\Application\chrome.exe'),
+            (Join-Path ${env:ProgramFiles(x86)} 'Google\Chrome\Application\chrome.exe')
+          ) | Select-Object -Unique
+          foreach ($candidate in $chromeCandidates) {
+            $hidden = "$candidate.cua-edge-only-e2e"
+            if (Test-Path -LiteralPath $hidden -PathType Leaf) {
+              if (Test-Path -LiteralPath $candidate) {
+                throw "cannot restore Chrome because both paths exist: $candidate and $hidden"
+              }
+              Move-Item -LiteralPath $hidden -Destination $candidate
+            }
+          }
       - name: Build source driver on Linux
         if: runner.os == 'Linux'
         shell: bash

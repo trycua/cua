@@ -233,6 +233,11 @@ pub(crate) struct ValidatedTab {
     pub conn: Arc<CdpConnection>,
     pub record: TargetRecord,
     pub tab: TabRecord,
+    /// Top-level URL from the browser-level `Target.getTargets` proof used
+    /// during this revalidation. Page-domain commands can stall while a
+    /// JavaScript modal is open, so dialog resolution uses this exact-target
+    /// metadata instead of querying the blocked renderer.
+    pub target_url: String,
     /// Live native metadata from this mutation's revalidation, rather than
     /// the bind-time geometry retained in `record`.
     pub native: NativeWindowInfo,
@@ -1722,6 +1727,32 @@ impl BrowserEngine {
         target_id: &str,
         tab_id: Option<&str>,
     ) -> Result<ValidatedTab, BrowserRefusal> {
+        self.revalidate_for_mutation_with_origin_proof(session, target_id, tab_id, false)
+            .await
+    }
+
+    /// Revalidate an exact tab for page-dialog inspection or resolution.
+    /// Chromium stalls Page-domain document queries while a JavaScript modal
+    /// is open, but its browser-level target metadata remains available. The
+    /// caller must still require and generation-check the exact current dialog
+    /// before issuing `Page.handleJavaScriptDialog`.
+    pub(crate) async fn revalidate_for_dialog_mutation(
+        &self,
+        session: &str,
+        target_id: &str,
+        tab_id: &str,
+    ) -> Result<ValidatedTab, BrowserRefusal> {
+        self.revalidate_for_mutation_with_origin_proof(session, target_id, Some(tab_id), true)
+            .await
+    }
+
+    async fn revalidate_for_mutation_with_origin_proof(
+        &self,
+        session: &str,
+        target_id: &str,
+        tab_id: Option<&str>,
+        use_target_url_for_manifest: bool,
+    ) -> Result<ValidatedTab, BrowserRefusal> {
         let record = self.store.get_target(session, target_id)?;
 
         if record.quality != BindingQuality::Exact {
@@ -1859,6 +1890,7 @@ impl BrowserEngine {
                     format!("tab {tab_id} no longer has a live CDP page target"),
                 )
             })?;
+        let target_url = live.url.clone();
         if let Some(bound_window_id) = record.cdp_window_id {
             if live.cdp_window_id != Some(bound_window_id) {
                 return Err(refuse(
@@ -1906,7 +1938,16 @@ impl BrowserEngine {
             .as_deref()
             .is_some_and(|context| context.capability_manifest().is_some())
         {
-            let live_url = self.live_top_level_url(&conn, &cdp_session).await?;
+            let live_url = if use_target_url_for_manifest {
+                // Browser-level target metadata is the only non-stalling URL
+                // proof while a page-owned modal blocks renderer commands.
+                // Validate it with the same canonical scope parser used by
+                // protected authorization before consulting the manifest.
+                protected_live_origin_scope(&target_url)?;
+                target_url.clone()
+            } else {
+                self.live_top_level_url(&conn, &cdp_session).await?
+            };
             // A browser mutation admitted for a delegated session must use
             // that exact session's capability manifest. Falling back to the
             // process compatibility manifest would let a missing task-local
@@ -1926,6 +1967,7 @@ impl BrowserEngine {
             conn,
             record,
             tab,
+            target_url,
             native,
             cdp_session,
         })
@@ -2079,17 +2121,41 @@ impl BrowserEngine {
         validated: &ValidatedTab,
     ) -> Result<OriginAdmissionGuard, BrowserRefusal> {
         let (origin, admission) = self.lock_live_origin_admission(session, validated).await?;
+        self.finish_origin_action_admission(session, validated, &origin, admission)
+    }
+
+    /// Admit an action against the exact top-level target URL proven during
+    /// dialog revalidation. Page-domain probes cannot be used here because a
+    /// JavaScript modal blocks the renderer until this action resolves it.
+    pub(crate) async fn admit_dialog_origin_action(
+        &self,
+        session: &str,
+        validated: &ValidatedTab,
+    ) -> Result<OriginAdmissionGuard, BrowserRefusal> {
+        protected_live_origin_scope(&validated.target_url)?;
+        let origin = browser_origin(&validated.target_url);
+        let admission = self.lock_origin_admission(session, &origin).await;
+        self.finish_origin_action_admission(session, validated, &origin, admission)
+    }
+
+    fn finish_origin_action_admission(
+        &self,
+        session: &str,
+        validated: &ValidatedTab,
+        origin: &str,
+        admission: OriginAdmissionGuard,
+    ) -> Result<OriginAdmissionGuard, BrowserRefusal> {
         if self
             .store
-            .active_origin_blocker(session, &origin)
+            .active_origin_blocker(session, origin)
             .is_some_and(|blocker| blocker.requires_session_end())
         {
             return self
-                .enforce_origin_not_blocked(session, &origin)
+                .enforce_origin_not_blocked(session, origin)
                 .map(|_| admission);
         }
-        self.enforce_tab_navigation_known(session, validated, &origin)?;
-        self.enforce_origin_not_blocked(session, &origin)?;
+        self.enforce_tab_navigation_known(session, validated, origin)?;
+        self.enforce_origin_not_blocked(session, origin)?;
         Ok(admission)
     }
 
@@ -2268,6 +2334,22 @@ impl BrowserEngine {
             .live_top_level_url(&validated.conn, &validated.cdp_session)
             .await?;
         let live_origin = protected_live_origin_scope(&live_url)?;
+        Ok((validated, live_origin))
+    }
+
+    /// Protected-resource attestation for page dialogs. `Target.getTargets`
+    /// is already part of exact tab revalidation and remains responsive while
+    /// Chromium's renderer is blocked by the modal.
+    pub(crate) async fn attest_protected_dialog_tab(
+        &self,
+        session: &str,
+        target_id: &str,
+        tab_id: &str,
+    ) -> Result<(ValidatedTab, String), BrowserRefusal> {
+        let validated = self
+            .revalidate_for_dialog_mutation(session, target_id, tab_id)
+            .await?;
+        let live_origin = protected_live_origin_scope(&validated.target_url)?;
         Ok((validated, live_origin))
     }
 

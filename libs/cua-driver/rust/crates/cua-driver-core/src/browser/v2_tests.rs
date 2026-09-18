@@ -29,8 +29,8 @@ use super::platform::{
 use super::pointer::BrowserPointerTool;
 use super::refusal::BrowserRefusal;
 use super::tools::{
-    browser_protected_resource_scope, BrowserClickTool, BrowserNavigateTool, BrowserPrepareTool,
-    BrowserResumeTool, BrowserTypeTool, GetBrowserStateTool,
+    browser_protected_resource_scope, BrowserClickTool, BrowserDialogTool, BrowserNavigateTool,
+    BrowserPrepareTool, BrowserResumeTool, BrowserTypeTool, GetBrowserStateTool,
 };
 use super::types::{
     BrowserClassification, BrowserEngineFamily, BrowserProcessRole, BrowserProduct,
@@ -91,6 +91,7 @@ struct FixtureState {
     viewport_css_width: f64,
     viewport_css_height: f64,
     tab_visible: bool,
+    dialog_open: bool,
     /// Every incoming CDP call: (sessionId, method, params).
     calls: Vec<(Option<String>, String, Value)>,
 }
@@ -144,6 +145,7 @@ impl Default for FixtureState {
             viewport_css_width: 800.0,
             viewport_css_height: 600.0,
             tab_visible: true,
+            dialog_open: false,
             calls: Vec::new(),
         }
     }
@@ -534,6 +536,32 @@ fn fixture_handler(state: SharedState) -> MockHandler {
             "Target.attachToTarget" => {
                 st.tab_sessions += 1;
                 MockReply::ok(json!({ "sessionId": format!("tab-sess-{}", st.tab_sessions) }))
+            }
+            "Page.enable" if is_tab && st.dialog_open => {
+                MockReply::ok(json!({})).with_events(vec![MockEvent {
+                    method: "Page.javascriptDialogOpening".into(),
+                    session_id: Some(sess.clone()),
+                    params: json!({
+                        "type": "confirm",
+                        "message": "fixture dialog",
+                        "url": st.main_url.clone(),
+                    }),
+                }])
+            }
+            "Page.enable" if is_tab => MockReply::ok(json!({})),
+            "Page.handleJavaScriptDialog" if is_tab && st.dialog_open => {
+                st.dialog_open = false;
+                MockReply::ok(json!({})).with_events(vec![MockEvent {
+                    method: "Page.javascriptDialogClosed".into(),
+                    session_id: Some(sess.clone()),
+                    params: json!({}),
+                }])
+            }
+            "Page.handleJavaScriptDialog" if is_tab => {
+                MockReply::err(-32000, "no fixture dialog is open")
+            }
+            "Page.getFrameTree" if is_tab && st.dialog_open => {
+                MockReply::err(-32000, "renderer is blocked by the fixture dialog")
             }
             "Page.getFrameTree" if is_tab => MockReply::ok(json!({
                 "frameTree": {
@@ -1253,6 +1281,130 @@ async fn bind(f: &Fixture) -> (String, String) {
     let target_id = s["target_id"].as_str().unwrap().to_owned();
     let tab_id = s["tabs"][0]["tab_id"].as_str().unwrap().to_owned();
     (target_id, tab_id)
+}
+
+#[tokio::test]
+async fn dialog_resolution_uses_target_metadata_while_modal_blocks_page_queries() {
+    let f = fixture().await;
+    let (target_id, tab_id) = bind(&f).await;
+    let call_offset = {
+        let mut state = f.state.lock().unwrap();
+        state.dialog_open = true;
+        state.calls.len()
+    };
+
+    let scope = browser_protected_resource_scope(
+        &f.engine,
+        &json!({
+            "session": SESSION,
+            "target_id": target_id,
+            "tab_id": tab_id,
+            "action": "inspect",
+        }),
+        "browser_dialog",
+    )
+    .await
+    .expect("dialog scope attestation")
+    .expect("dialog scope");
+    assert_eq!(scope["live_origin"], "https://fixture.test");
+
+    let tool = BrowserDialogTool::new(f.engine.clone());
+    let inspected = tool
+        .invoke(json!({
+            "session": SESSION,
+            "target_id": target_id,
+            "tab_id": tab_id,
+            "action": "inspect",
+        }))
+        .await;
+    assert_eq!(structured(&inspected)["status"], "ok");
+    assert_eq!(structured(&inspected)["present"], true);
+    let dialog_id = structured(&inspected)["dialog_id"]
+        .as_str()
+        .expect("dialog id")
+        .to_owned();
+
+    let accepted = tool
+        .invoke(json!({
+            "session": SESSION,
+            "target_id": target_id,
+            "tab_id": tab_id,
+            "action": "accept",
+            "dialog_id": dialog_id,
+            "delivery_mode": "foreground",
+        }))
+        .await;
+    assert_eq!(structured(&accepted)["status"], "ok", "{accepted:?}");
+
+    let state = f.state.lock().unwrap();
+    assert!(!state.dialog_open);
+    let dialog_calls = &state.calls[call_offset..];
+    assert!(dialog_calls
+        .iter()
+        .any(|(_, method, _)| method == "Page.handleJavaScriptDialog"));
+    assert!(
+        dialog_calls
+            .iter()
+            .all(|(_, method, _)| method != "Page.getFrameTree"),
+        "dialog admission must not query the blocked renderer: {dialog_calls:?}"
+    );
+}
+
+#[tokio::test]
+async fn dialog_resolution_still_refuses_an_origin_blocker_without_page_queries() {
+    let f = fixture().await;
+    let (target_id, tab_id) = bind(&f).await;
+    let call_offset = {
+        let mut state = f.state.lock().unwrap();
+        state.dialog_open = true;
+        state.calls.len()
+    };
+    let tool = BrowserDialogTool::new(f.engine.clone());
+    let inspected = tool
+        .invoke(json!({
+            "session": SESSION,
+            "target_id": target_id,
+            "tab_id": tab_id,
+            "action": "inspect",
+        }))
+        .await;
+    let dialog_id = structured(&inspected)["dialog_id"]
+        .as_str()
+        .expect("dialog id")
+        .to_owned();
+    f.engine.store.block_origin_for_challenge(
+        SESSION,
+        "https://fixture.test",
+        BrowserChallengeSource::Semantic,
+        None,
+    );
+
+    let refused = tool
+        .invoke(json!({
+            "session": SESSION,
+            "target_id": target_id,
+            "tab_id": tab_id,
+            "action": "accept",
+            "dialog_id": dialog_id,
+            "delivery_mode": "foreground",
+        }))
+        .await;
+    assert_eq!(
+        structured(&refused)["refusal"]["code"],
+        "browser_origin_blocked",
+        "{}",
+        structured(&refused)
+    );
+
+    let state = f.state.lock().unwrap();
+    assert!(state.dialog_open);
+    let dialog_calls = &state.calls[call_offset..];
+    assert!(dialog_calls
+        .iter()
+        .all(|(_, method, _)| method != "Page.handleJavaScriptDialog"));
+    assert!(dialog_calls
+        .iter()
+        .all(|(_, method, _)| method != "Page.getFrameTree"));
 }
 
 #[tokio::test]

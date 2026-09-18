@@ -147,10 +147,16 @@ pub(crate) async fn browser_protected_resource_scope(
     let runtime_session = crate::tool::current_dispatch_authorization_context()
         .map(|context| context.runtime_session_key(session))
         .unwrap_or_else(|| session.to_owned());
-    let (validated, live_origin) = engine
-        .attest_protected_tab(&runtime_session, target_id, tab_id)
-        .await
-        .map_err(|error| error.message)?;
+    let (validated, live_origin) = if tool_name == "browser_dialog" {
+        engine
+            .attest_protected_dialog_tab(&runtime_session, target_id, tab_id)
+            .await
+    } else {
+        engine
+            .attest_protected_tab(&runtime_session, target_id, tab_id)
+            .await
+    }
+    .map_err(|error| error.message)?;
     let target = validated.record;
     let tab = validated.tab;
     let requested_origin = match tool_name {
@@ -2854,25 +2860,11 @@ impl Tool for BrowserDialogTool {
         };
         let validated = match self
             .engine
-            .revalidate_for_mutation(&session, &target_id, Some(&tab_id))
+            .revalidate_for_dialog_mutation(&session, &target_id, &tab_id)
             .await
         {
             Ok(validated) => validated,
             Err(refusal) => return refusal.to_tool_result(),
-        };
-        let _origin_admission = if action != "inspect" {
-            Some(
-                match self
-                    .engine
-                    .admit_live_origin_action(&session, &validated)
-                    .await
-                {
-                    Ok(admission) => admission,
-                    Err(refusal) => return refusal.to_tool_result(),
-                },
-            )
-        } else {
-            None
         };
         if cfg!(target_os = "linux") && action != "inspect" && delivery_mode == "background" {
             return BrowserRefusal::new(
@@ -2928,6 +2920,19 @@ impl Tool for BrowserDialogTool {
                 }));
         }
 
+        // A page-owned modal blocks renderer Page-domain queries. The exact
+        // browser target URL was re-proven above; once the current dialog is
+        // journaled, that modal also prevents its document from navigating
+        // until it is resolved.
+        let _origin_admission = match self
+            .engine
+            .admit_dialog_origin_action(&session, &validated)
+            .await
+        {
+            Ok(admission) => admission,
+            Err(refusal) => return refusal.to_tool_result(),
+        };
+
         let supplied_id = match args.require_str("dialog_id") {
             Ok(id) => id,
             Err(error) => return error,
@@ -2942,6 +2947,13 @@ impl Tool for BrowserDialogTool {
         let prompt_text = args.opt_str("prompt_text");
         if prompt_text.is_some() && (action != "accept" || dialog.kind != "prompt") {
             return ToolResult::error("prompt_text is valid only when accepting a prompt dialog");
+        }
+        if conn.dialog_state(cdp_target_id).as_ref() != Some(&dialog) {
+            return BrowserRefusal::new(
+                BrowserRefusalCode::BrowserActionUnavailable,
+                "the dialog capability changed while the action was being admitted",
+            )
+            .to_tool_result();
         }
         let mut params = json!({ "accept": action == "accept" });
         if let Some(text) = prompt_text {

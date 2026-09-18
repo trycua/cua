@@ -26,6 +26,7 @@ import measure_quality
 
 
 MAX_FRAME_BYTES = 16 * 1024 * 1024
+MAX_BOUND_FILE_BYTES = 2 * 1024 * 1024 * 1024
 PROTOCOL = "cua-perception/1"
 
 
@@ -98,6 +99,24 @@ def _directory(root: Path, value: Any, where: str) -> Path:
     if (path != root and root not in path.parents) or not path.is_dir():
         raise RunnerError(f"{where} is not a confined directory")
     return path
+
+
+def _directory_binding(root: Path, value: Any, where: str) -> dict[str, Any]:
+    return {
+        "source": _directory(root, value, where),
+        "root": root,
+        "relative_path": _string(value, where),
+    }
+
+
+def _verify_bound_directory(binding: dict[str, Any], where: str) -> Path:
+    try:
+        current = _directory(binding["root"], binding["relative_path"], where)
+    except (OSError, RunnerError) as error:
+        raise RunnerError(f"{where} changed after configuration validation: {error}") from error
+    if current != binding["source"]:
+        raise RunnerError(f"{where} changed after configuration validation")
+    return current
 
 
 def _load_config(path: Path, engine: str) -> dict[str, Any]:
@@ -344,10 +363,13 @@ def _validate_execution(
         _artifact_binding(value, "config.execution.ocr_model_artifact_ids", artifacts, "ocr_model")
         for value in ocr_ids
     ]
+    python_home = _directory_binding(root, item["python_home"], "config.execution.python_home")
+    site_packages = _directory_binding(root, item["site_packages"], "config.execution.site_packages")
+    cache_binding = _directory_binding(root, item["cache_dir"], "config.execution.cache_dir")
     return {
         "python": python,
-        "python_home": _directory(root, item["python_home"], "config.execution.python_home"),
-        "site_packages": _directory(root, item["site_packages"], "config.execution.site_packages"),
+        "python_home": python_home["source"],
+        "site_packages": site_packages["source"],
         "package": package_artifact["source"],
         "package_sha256": package_artifact["sha256"],
         "model": model_artifact["source"],
@@ -359,6 +381,15 @@ def _validate_execution(
         "use_ocr": item["use_ocr"],
         "timeout": _number(item["timeout_seconds"], "config.execution.timeout_seconds", 0.001),
         "executed_artifacts": [python_artifact, package_artifact, model_artifact, *ocr_artifacts],
+        "python_artifact": python_artifact,
+        "package_artifact": package_artifact,
+        "model_artifact": model_artifact,
+        "ocr_artifacts": ocr_artifacts,
+        "directory_bindings": {
+            "python_home": python_home,
+            "site_packages": site_packages,
+            "cache_dir": cache_binding,
+        },
     }
 
 
@@ -685,6 +716,35 @@ def _image_result(image: dict[str, Any], regions: list[dict[str, Any]], space: s
     }
 
 
+def _stage_verified_file(
+    artifact: dict[str, Any],
+    destination: Path,
+    where: str,
+    *,
+    maximum_bytes: int = MAX_BOUND_FILE_BYTES,
+) -> Path:
+    source = artifact["source"]
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha256()
+    total = 0
+    try:
+        if source.is_symlink() or not source.is_file():
+            raise RunnerError(f"{where} is not a regular file")
+        with source.open("rb") as input_stream, destination.open("xb") as output_stream:
+            while block := input_stream.read(1024 * 1024):
+                total += len(block)
+                if total > maximum_bytes:
+                    raise RunnerError(f"{where} exceeds its size limit")
+                digest.update(block)
+                output_stream.write(block)
+    except OSError as error:
+        raise RunnerError(f"cannot stage {where}: {error}") from error
+    if digest.hexdigest() != artifact["sha256"]:
+        raise RunnerError(f"{where} changed while it was staged")
+    destination.chmod(0o400)
+    return destination
+
+
 def _extract_bound_wheel(wheel: Path, expected_sha256: str, destination: Path) -> None:
     if _sha256(wheel) != expected_sha256:
         raise RunnerError("bound Python wheel changed after configuration validation")
@@ -736,18 +796,65 @@ def _python_child_invocation(execution: dict[str, Any], options: dict[str, Any])
     return command, environment
 
 
+def _verify_python_directories(execution: dict[str, Any], where: str) -> None:
+    bindings = execution["directory_bindings"]
+    _verify_bound_directory(bindings["python_home"], f"{where} python_home")
+    _verify_bound_directory(bindings["site_packages"], f"{where} site_packages")
+    cache_dir = _verify_bound_directory(bindings["cache_dir"], f"{where} cache_dir")
+    model_cache = cache_dir / "model"
+    if model_cache.is_symlink() or not model_cache.is_dir():
+        raise RunnerError(f"{where} cache_dir/model changed after configuration validation")
+
+
 def _run_python_image(execution: dict[str, Any], image: dict[str, Any], image_path: Path) -> dict[str, Any]:
     _verify_bound_artifacts(execution["executed_artifacts"], "Python execution")
-    with tempfile.TemporaryDirectory(prefix="cua-quality-wheel-") as temporary, tempfile.TemporaryFile() as stderr:
-        import_root = Path(temporary).resolve()
-        _extract_bound_wheel(execution["package"], execution["package_sha256"], import_root)
+    _verify_python_directories(execution, "Python execution")
+    with tempfile.TemporaryDirectory(prefix="cua-quality-python-") as temporary, tempfile.TemporaryFile() as stderr:
+        runtime_root = Path(temporary).resolve()
+        staged_wheel = _stage_verified_file(
+            execution["package_artifact"], runtime_root / "package.whl", "bound Python wheel"
+        )
+        staged_model = _stage_verified_file(
+            execution["model_artifact"], runtime_root / "model.pt", "bound detector model"
+        )
+        staged_cache = runtime_root / "cache"
+        for artifact in execution["ocr_artifacts"]:
+            _stage_verified_file(
+                artifact,
+                staged_cache / "model" / artifact["source"].name,
+                f"bound OCR model {artifact['id']}",
+            )
+        import_root = runtime_root / "wheel"
+        import_root.mkdir()
+        _extract_bound_wheel(staged_wheel, execution["package_sha256"], import_root)
+        image_artifact = {"source": image_path, "sha256": image["sha256"]}
+        staged_image = _stage_verified_file(
+            image_artifact,
+            runtime_root / "input.png",
+            "corpus image",
+            maximum_bytes=MAX_FRAME_BYTES,
+        )
         options = {
             "import_root": str(import_root), "site_packages": str(execution["site_packages"]),
-            "model": str(execution["model"]), "cache_dir": str(execution["cache_dir"]),
+            "python_home_binding": {
+                "root": str(execution["directory_bindings"]["python_home"]["root"]),
+                "relative_path": execution["directory_bindings"]["python_home"]["relative_path"],
+                "source": str(execution["python_home"]),
+            },
+            "site_packages_binding": {
+                "root": str(execution["directory_bindings"]["site_packages"]["root"]),
+                "relative_path": execution["directory_bindings"]["site_packages"]["relative_path"],
+                "source": str(execution["site_packages"]),
+            },
+            "model": str(staged_model), "cache_dir": str(staged_cache),
             "force_device": execution["force_device"], "box_threshold": execution["box_threshold"], "iou_threshold": execution["iou_threshold"],
-            "use_ocr": execution["use_ocr"], "image": str(image_path),
+            "use_ocr": execution["use_ocr"], "image": str(staged_image), "image_sha256": image["sha256"],
         }
-        command, environment = _python_child_invocation(execution, options)
+        child_execution = dict(execution)
+        child_execution["cache_dir"] = staged_cache
+        command, environment = _python_child_invocation(child_execution, options)
+        _verify_bound_artifacts([execution["python_artifact"]], "Python launch")
+        _verify_python_directories(execution, "Python launch")
         cold_start = time.perf_counter_ns()
         process = subprocess.Popen(
             command,
@@ -890,6 +997,23 @@ def _validate_bound_som_modules(import_root: Path) -> None:
                 _bound_module_path(location, import_root, f"loaded {name} package search path[{index}]", directory=True)
 
 
+def _child_bound_directory(value: Any, where: str) -> Path:
+    item = _closed(value, ("root", "relative_path", "source"), (), where)
+    root = Path(_string(item["root"], f"{where}.root"))
+    expected = Path(_string(item["source"], f"{where}.source"))
+    path = _directory(root, item["relative_path"], f"{where}.relative_path")
+    if path != expected:
+        raise RunnerError(f"{where} changed after launch")
+    return path
+
+
+def _png_dimensions_bytes(data: bytes) -> tuple[int, int]:
+    header = data[:24]
+    if len(header) != 24 or header[:8] != b"\x89PNG\r\n\x1a\n" or header[12:16] != b"IHDR":
+        raise RunnerError("corpus image is not a PNG with an IHDR header")
+    return struct.unpack(">II", header[16:24])
+
+
 def _python_child(encoded: str) -> int:
     try:
         options = json.loads(encoded)
@@ -904,21 +1028,38 @@ def _python_child(encoded: str) -> int:
                 raise OSError("network access is disabled by quality_runner")
 
         socket.socket = OfflineSocket
-        import_root = Path(options["import_root"]).resolve()
-        site_packages = Path(options["site_packages"]).resolve()
-        if not site_packages.is_dir() or site_packages.is_symlink():
-            raise RunnerError("configured site_packages is not a regular directory")
+        import_candidate = Path(options["import_root"])
+        if import_candidate.is_symlink():
+            raise RunnerError("extracted bound wheel is not a regular directory")
+        import_root = import_candidate.resolve(strict=True)
+        _child_bound_directory(options["python_home_binding"], "configured python_home")
+        site_packages = _child_bound_directory(options["site_packages_binding"], "configured site_packages")
+        if str(site_packages) != options["site_packages"]:
+            raise RunnerError("configured site_packages does not match its binding")
+        cache_candidate = Path(options["cache_dir"])
+        if cache_candidate.is_symlink() or not cache_candidate.is_dir():
+            raise RunnerError("staged cache_dir is not a regular directory")
+        cache_dir = cache_candidate.resolve(strict=True)
+        model_cache = cache_dir / "model"
+        if model_cache.is_symlink() or not model_cache.is_dir():
+            raise RunnerError("staged cache_dir/model is not a regular directory")
         sys.path.append(str(site_packages))
         sys.path.insert(0, str(import_root))
         _clear_som_modules()
         som = importlib.import_module("som")
         _validate_bound_som_modules(import_root)
         image_path = Path(options["image"])
+        if image_path.is_symlink() or not image_path.is_file():
+            raise RunnerError("staged corpus image is not a regular file")
         image = image_path.read_bytes()
-        width, height = measure_quality._png_dimensions(image_path)
+        if len(image) > MAX_FRAME_BYTES:
+            raise RunnerError("staged corpus image exceeds its size limit")
+        if hashlib.sha256(image).hexdigest() != options["image_sha256"]:
+            raise RunnerError("staged corpus image does not match the manifest SHA-256")
+        width, height = _png_dimensions_bytes(image)
 
         def cold_call() -> tuple[Any, Any]:
-            parser_instance = som.OmniParser(model_path=options["model"], cache_dir=options["cache_dir"], force_device=options["force_device"])
+            parser_instance = som.OmniParser(model_path=options["model"], cache_dir=str(cache_dir), force_device=options["force_device"])
             _validate_bound_som_modules(import_root)
             result = parser_instance.parse(image, box_threshold=options["box_threshold"], iou_threshold=options["iou_threshold"], use_ocr=options["use_ocr"])
             _validate_bound_som_modules(import_root)

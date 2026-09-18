@@ -88,17 +88,25 @@ Python execution requires `python_interpreter_artifact_id`, `python_home`,
 `timeout_seconds`. The bound Python interpreter has role `worker`; the detector
 has role `source_model`; and each bound `ocr_model` file must be directly under
 `cache_dir/model` so EasyOCR uses the measured offline cache. For every image,
-the runner hash-verifies `package_artifact_id`, safely extracts that exact wheel
-into a fresh runner-owned temporary directory, and imports `som` only from the
-extracted wheel while retaining the configured offline `site_packages`
-dependencies. The child starts with inherited `PYTHON*` settings removed and
-Python site initialization disabled, so `sitecustomize`, `usercustomize`, and
-`.pth` startup hooks cannot run before the bound wheel is selected. Arbitrary
-`source_root` configuration is rejected.
+the runner copies the hash-verified wheel, detector, OCR models, and
+manifest-declared corpus image into a fresh runner-owned temporary directory.
+The child verifies the staged image hash before inference and uses those same
+bytes for both parses. It safely extracts the staged wheel and imports `som`
+only from that extraction while retaining the configured offline
+`site_packages` dependencies. The child starts with inherited `PYTHON*`
+settings removed and Python site initialization disabled, so `sitecustomize`,
+`usercustomize`, and `.pth` startup hooks cannot run before the bound wheel is
+selected. Arbitrary `source_root` configuration is rejected.
 
-Immediately before each engine process starts, the runner resolves and hashes
-the bound executable, manifest, runtime, package, and model files again. This
-fails closed if a configured file or path changed after initial validation.
+Shortly before each engine process starts, the runner resolves and hashes the
+bound executable, manifest, runtime, package, and model files again. Python
+execution additionally revalidates `python_home`, `site_packages`, and
+`cache_dir` immediately before launch, and the child repeats the directory
+checks it can perform after startup. These checks fail closed for changes they
+observe; path revalidation alone is not a defense against a same-user process
+that races a remaining path-based Rust or Python dependency after its final
+check. The staged Python files and corpus input avoid that pathname race for
+the bytes copied into the runner-owned directory.
 The Python `dependency_lock` binds the declared dependency resolution, but the
 current result format has no installed-file manifest for `python_home` or
 `site_packages`; the runner therefore does not claim cryptographic proof of

@@ -74,6 +74,19 @@ def bound(root: Path, artifact_id: str, path: Path) -> dict[str, object]:
     }
 
 
+def directory_binding(root: Path, path: Path) -> dict[str, object]:
+    return {
+        "source": path.resolve(),
+        "root": root.resolve(),
+        "relative_path": path.relative_to(root).as_posix(),
+    }
+
+
+def json_directory_binding(root: Path, path: Path) -> dict[str, str]:
+    binding = directory_binding(root, path)
+    return {key: str(value) for key, value in binding.items()}
+
+
 class QualityRunnerTests(unittest.TestCase):
     def test_python_invocation_disables_site_startup_and_inherited_python_paths(self) -> None:
         execution = {
@@ -202,10 +215,13 @@ class QualityRunnerTests(unittest.TestCase):
             model = write(root / "model.pt", b"model")
             (root / "cache/model").mkdir(parents=True)
             (root / "site-packages").mkdir()
+            (root / "python-home").mkdir()
             image = png(root / "screen.png")
             options = {
                 "import_root": str(import_root),
-                "site_packages": str(root / "site-packages"),
+                "site_packages": str((root / "site-packages").resolve()),
+                "python_home_binding": json_directory_binding(root, root / "python-home"),
+                "site_packages_binding": json_directory_binding(root, root / "site-packages"),
                 "model": str(model),
                 "cache_dir": str(root / "cache"),
                 "force_device": "cpu",
@@ -213,6 +229,7 @@ class QualityRunnerTests(unittest.TestCase):
                 "iou_threshold": 0.1,
                 "use_ocr": True,
                 "image": str(image),
+                "image_sha256": sha256(image),
             }
             process = subprocess.Popen(
                 [sys.executable, str(SCRIPT), "--python-child", json.dumps(options, separators=(",", ":"))],
@@ -251,10 +268,13 @@ class QualityRunnerTests(unittest.TestCase):
             )
             model = write(root / "model.pt", b"model")
             (root / "cache/model").mkdir(parents=True)
+            (root / "python-home").mkdir()
             image = png(root / "screen.png")
             options = {
                 "import_root": str(import_root),
-                "site_packages": str(site_packages),
+                "site_packages": str(site_packages.resolve()),
+                "python_home_binding": json_directory_binding(root, root / "python-home"),
+                "site_packages_binding": json_directory_binding(root, site_packages),
                 "model": str(model),
                 "cache_dir": str(root / "cache"),
                 "force_device": "cpu",
@@ -262,6 +282,7 @@ class QualityRunnerTests(unittest.TestCase):
                 "iou_threshold": 0.1,
                 "use_ocr": False,
                 "image": str(image),
+                "image_sha256": sha256(image),
             }
             process = subprocess.Popen(
                 [sys.executable, "-S", str(SCRIPT), "--python-child", json.dumps(options, separators=(",", ":"))],
@@ -348,6 +369,95 @@ class QualityRunnerTests(unittest.TestCase):
             config_path.write_text(json.dumps(config), encoding="utf-8")
             with self.assertRaisesRegex(quality_runner.RunnerError, "model directory"):
                 quality_runner._load_config(config_path, "python")
+
+    def test_python_execution_rejects_replaced_site_packages_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            python_home = root / "python-home"
+            site_packages = root / "site-packages"
+            cache_dir = root / "cache"
+            for directory in (python_home, site_packages, cache_dir / "model"):
+                directory.mkdir(parents=True)
+            execution = {
+                "directory_bindings": {
+                    "python_home": directory_binding(root, python_home),
+                    "site_packages": directory_binding(root, site_packages),
+                    "cache_dir": directory_binding(root, cache_dir),
+                }
+            }
+            site_packages.rmdir()
+            site_packages.symlink_to(python_home, target_is_directory=True)
+            with self.assertRaisesRegex(quality_runner.RunnerError, "site_packages changed"):
+                quality_runner._verify_python_directories(execution, "Python launch")
+
+    def test_python_execution_uses_staged_manifest_image_when_source_mutates(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            python_home = root / "python-home"
+            site_packages = root / "site-packages"
+            cache_dir = root / "cache"
+            for directory in (python_home, site_packages, cache_dir / "model"):
+                directory.mkdir(parents=True)
+            python = executable(root / "python", "#!/bin/sh\nexit 1\n")
+            package = wheel(root / "package.whl", "class OmniParser: pass")
+            model = write(root / "model.pt", b"model")
+            ocr = write(cache_dir / "model/ocr.pth", b"ocr")
+            image_path = png(root / "screen.png")
+            expected_sha256 = sha256(image_path)
+            helper = executable(
+                root / "child.py",
+                """\
+                import hashlib, json, struct, sys, time
+                options = json.loads(sys.argv[1])
+                data = open(options['image'], 'rb').read()
+                if hashlib.sha256(data).hexdigest() != options['image_sha256']:
+                    raise SystemExit(2)
+                for phase in ('cold', 'warm'):
+                    payload = json.dumps({'status': 'ok', 'phase': phase, 'regions': []}, separators=(',', ':')).encode()
+                    sys.stdout.buffer.write(struct.pack('>I', len(payload)) + payload)
+                    sys.stdout.buffer.flush()
+                    time.sleep(0.02)
+                """,
+            )
+            python_artifact = bound(root, "python", python)
+            package_artifact = bound(root, "package", package)
+            model_artifact = bound(root, "model", model)
+            ocr_artifact = bound(root, "ocr", ocr)
+            execution = {
+                "python": python,
+                "python_home": python_home,
+                "site_packages": site_packages,
+                "package": package,
+                "package_sha256": package_artifact["sha256"],
+                "model": model,
+                "ocr_models": [ocr],
+                "cache_dir": cache_dir,
+                "force_device": "cpu",
+                "box_threshold": 0.3,
+                "iou_threshold": 0.1,
+                "use_ocr": True,
+                "timeout": 5.0,
+                "executed_artifacts": [python_artifact, package_artifact, model_artifact, ocr_artifact],
+                "python_artifact": python_artifact,
+                "package_artifact": package_artifact,
+                "model_artifact": model_artifact,
+                "ocr_artifacts": [ocr_artifact],
+                "directory_bindings": {
+                    "python_home": directory_binding(root, python_home),
+                    "site_packages": directory_binding(root, site_packages),
+                    "cache_dir": directory_binding(root, cache_dir),
+                },
+            }
+            image = {"file": "screen.png", "sha256": expected_sha256, "width": 100, "height": 80}
+
+            def child_invocation(_: dict[str, object], options: dict[str, object]) -> tuple[list[str], dict[str, str]]:
+                self.assertNotEqual(Path(str(options["image"])), image_path)
+                image_path.write_bytes(b"mutated after staging")
+                return [sys.executable, str(helper), json.dumps(options, separators=(",", ":"))], dict(os.environ)
+
+            with mock.patch.object(quality_runner, "_python_child_invocation", side_effect=child_invocation):
+                result = quality_runner._run_python_image(execution, image, image_path)
+            self.assertEqual(result["image_sha256"], expected_sha256)
 
     def test_rust_config_binds_every_worker_loaded_manifest_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

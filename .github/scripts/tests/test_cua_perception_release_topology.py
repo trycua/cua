@@ -125,6 +125,8 @@ esac
             "status": "passed",
             "target": target["triple"],
             "protocolVersion": 1,
+            "extensionId": "cua-perception",
+            "extensionVersion": (CONTROL / "VERSION").read_text().strip(),
             "workerSha256": worker_hash,
             "runtimeSha256": runtime_hash,
         }
@@ -464,6 +466,30 @@ def test_release_gates_reject_worker_identity_outside_signed_manifest(tmp_path: 
     (payload / "wrong-identity").write_text("wrong\n")
     with pytest.raises(release.CandidateError, match="reported extension identity"):
         release.run_candidate_gates(manifest_path, payload)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("extensionId", "wrong"), ("extensionVersion", "9.9.9")],
+)
+def test_supplied_verification_requires_signed_manifest_identity(
+    tmp_path: Path, field: str, value: str
+) -> None:
+    payload, manifest_path = fixture(tmp_path)
+    manifest = json.loads(manifest_path.read_text())
+    report_path = payload / manifest["suppliedVerification"]["health"]
+    report = json.loads(report_path.read_text())
+    report[field] = value
+    report_bytes = (json.dumps(report) + "\n").encode()
+    report_path.write_bytes(report_bytes)
+    report_artifact = next(
+        item for item in manifest["artifacts"] if item.get("role") == "health"
+    )
+    report_artifact["sha256"] = digest(report_bytes)
+    report_artifact["size"] = len(report_bytes)
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises((release.CandidateError, ValidationError)):
+        release.load_and_validate_manifest(manifest_path, payload)
 
 
 def test_packaging_rejects_executed_evidence_for_another_candidate(tmp_path: Path) -> None:

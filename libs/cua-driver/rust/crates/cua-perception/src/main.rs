@@ -83,12 +83,7 @@ fn parse_startup() -> Result<Startup, String> {
 fn parse_extension_identity(
     args: &mut impl Iterator<Item = std::ffi::OsString>,
 ) -> Result<ExtensionIdentity, String> {
-    let Some(flag) = args.next() else {
-        return Ok(ExtensionIdentity {
-            id: env!("CARGO_PKG_NAME").to_owned(),
-            version: env!("CARGO_PKG_VERSION").to_owned(),
-        });
-    };
+    let flag = args.next().ok_or_else(usage)?;
     if flag != "--extension-id" {
         return Err(usage());
     }
@@ -110,7 +105,7 @@ fn parse_extension_identity(
 }
 
 fn usage() -> String {
-    "usage: cua-perception --fixture | --manifest <manifest.json> --onnx-runtime-library <library> [--extension-id <id> --extension-version <version>] | (--health | --self-test | --real-parse-self-test | --mismatch-rejection-self-test) [--extension-id <id> --extension-version <version>]".to_owned()
+    "usage: cua-perception --fixture | --manifest <manifest.json> --onnx-runtime-library <library> --extension-id <id> --extension-version <version> | (--health | --self-test | --real-parse-self-test | --mismatch-rejection-self-test) --extension-id <id> --extension-version <version>".to_owned()
 }
 
 fn run_gate(gate: Gate, identity: &ExtensionIdentity) -> Result<(), String> {
@@ -125,7 +120,7 @@ fn run_gate(gate: Gate, identity: &ExtensionIdentity) -> Result<(), String> {
     )?;
     let runtime = resolve_runtime(&root)?;
     if matches!(gate, Gate::MismatchRejection) {
-        return run_mismatch_rejection(&manifest, &runtime);
+        return run_mismatch_rejection(&manifest, &runtime, identity);
     }
 
     let worker = Worker::from_manifest_with_extension_identity(
@@ -238,7 +233,11 @@ fn resolve_runtime(root: &Path) -> Result<PathBuf, String> {
     }
 }
 
-fn run_mismatch_rejection(manifest: &Path, runtime: &Path) -> Result<(), String> {
+fn run_mismatch_rejection(
+    manifest: &Path,
+    runtime: &Path,
+    identity: &ExtensionIdentity,
+) -> Result<(), String> {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|error| error.to_string())?
@@ -256,7 +255,12 @@ fn run_mismatch_rejection(manifest: &Path, runtime: &Path) -> Result<(), String>
             .open(&tampered)
             .and_then(|mut file| file.write_all(b"tampered"))
             .map_err(|error| format!("tamper runtime mismatch fixture: {error}"))?;
-        match Worker::from_manifest(manifest, &tampered) {
+        match Worker::from_manifest_with_extension_identity(
+            manifest,
+            &tampered,
+            &identity.id,
+            &identity.version,
+        ) {
             Err(error)
                 if error
                     .to_string()
@@ -321,4 +325,33 @@ fn write_response(writer: &mut impl Write, response: &Response) -> io::Result<()
     let payload = serde_json::to_vec(response)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     write_frame(writer, &payload)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsString;
+
+    #[test]
+    fn real_startup_identity_is_explicit_and_complete() {
+        let mut missing = Vec::<OsString>::new().into_iter();
+        assert_eq!(parse_extension_identity(&mut missing).err(), Some(usage()));
+
+        let mut partial = ["--extension-id", "cua-perception"]
+            .map(OsString::from)
+            .into_iter();
+        assert_eq!(parse_extension_identity(&mut partial).err(), Some(usage()));
+
+        let mut complete = [
+            "--extension-id",
+            "cua-perception",
+            "--extension-version",
+            "0.1.0",
+        ]
+        .map(OsString::from)
+        .into_iter();
+        let identity = parse_extension_identity(&mut complete).unwrap();
+        assert_eq!(identity.id, "cua-perception");
+        assert_eq!(identity.version, "0.1.0");
+    }
 }

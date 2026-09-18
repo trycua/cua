@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import platform
+import re
 import struct
 import subprocess
 import tarfile
@@ -17,6 +18,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 CRATE_DIR = SCRIPT_DIR.parent
 LOCK_PATH = SCRIPT_DIR / "artifacts.lock.json"
 PROTOCOL = "cua-perception/1"
+EXTENSION_ID = "cua-perception"
 
 
 class ArtifactError(RuntimeError):
@@ -68,6 +70,16 @@ def host_target() -> str:
     if os_name == "linux" and machine in {"amd64", "x86_64"}:
         return "x86_64-unknown-linux-gnu"
     raise ArtifactError(f"unsupported verification host: {platform.system()} {platform.machine()}")
+
+
+def extension_identity(manifest: dict[str, Any]) -> tuple[str, str]:
+    extension_id = manifest.get("component")
+    version = manifest.get("version")
+    if extension_id != EXTENSION_ID or not isinstance(version, str) or not re.fullmatch(
+        r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", version
+    ):
+        raise ArtifactError("artifact manifest has an invalid extension identity")
+    return extension_id, version
 
 
 def binary_target(path: Path) -> str:
@@ -131,11 +143,28 @@ def read_model_paths(bundle: Path, target: str) -> tuple[Path, Path, list[Path]]
     return bundle / "model-manifest.json", runtime, paths
 
 
-def worker_request(worker: Path, manifest: Path, runtime: Path, request: dict[str, Any]) -> dict[str, Any]:
+def worker_request(
+    worker: Path,
+    manifest: Path,
+    runtime: Path,
+    request: dict[str, Any],
+    extension_id: str,
+    extension_version: str,
+) -> dict[str, Any]:
     payload = json.dumps(request, separators=(",", ":")).encode()
     framed = struct.pack(">I", len(payload)) + payload
     process = subprocess.run(
-        [str(worker), "--manifest", str(manifest), "--onnx-runtime-library", str(runtime)],
+        [
+            str(worker),
+            "--manifest",
+            str(manifest),
+            "--onnx-runtime-library",
+            str(runtime),
+            "--extension-id",
+            extension_id,
+            "--extension-version",
+            extension_version,
+        ],
         input=framed,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -245,6 +274,7 @@ def verify_corresponding_sources(bundle: Path, manifest: dict[str, Any], lock: d
 
 def static_verify(bundle: Path, require_host: bool = True) -> dict[str, Any]:
     manifest = read_json(bundle / "artifact-manifest.json")
+    extension_identity(manifest)
     target = manifest.get("target", {}).get("triple")
     lock = read_json(LOCK_PATH)
     if target not in lock["onnx_runtime"]["targets"]:

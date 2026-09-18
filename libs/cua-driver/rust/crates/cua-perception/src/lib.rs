@@ -197,18 +197,6 @@ impl Worker {
         }
     }
 
-    pub fn from_manifest(
-        manifest_path: &Path,
-        runtime_library_path: &Path,
-    ) -> Result<Self, StartupError> {
-        Self::from_manifest_with_extension_identity(
-            manifest_path,
-            runtime_library_path,
-            env!("CARGO_PKG_NAME"),
-            env!("CARGO_PKG_VERSION"),
-        )
-    }
-
     pub fn from_manifest_with_extension_identity(
         manifest_path: &Path,
         runtime_library_path: &Path,

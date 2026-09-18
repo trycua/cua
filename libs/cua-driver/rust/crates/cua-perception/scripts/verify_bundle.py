@@ -16,6 +16,7 @@ from typing import Any
 from artifact_tooling import (
     ArtifactError,
     LOCK_PATH,
+    extension_identity,
     host_target,
     read_json,
     read_model_paths,
@@ -52,14 +53,30 @@ def source_inspection(bundle: Path, manifest: dict[str, Any]) -> list[dict[str, 
     ]
 
 
-def mismatch_rejection(worker: Path, manifest: Path, runtime: Path, target: str) -> None:
+def mismatch_rejection(
+    worker: Path,
+    manifest: Path,
+    runtime: Path,
+    target: str,
+    identity: tuple[str, str],
+) -> None:
     with tempfile.TemporaryDirectory(prefix="cua-perception-mismatch-") as temporary:
         tampered = Path(temporary) / runtime.name
         shutil.copyfile(runtime, tampered)
         with tampered.open("ab") as stream:
             stream.write(b"tampered")
         process = subprocess.run(
-            [str(worker), "--manifest", str(manifest), "--onnx-runtime-library", str(tampered)],
+            [
+                str(worker),
+                "--manifest",
+                str(manifest),
+                "--onnx-runtime-library",
+                str(tampered),
+                "--extension-id",
+                identity[0],
+                "--extension-version",
+                identity[1],
+            ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=30,
@@ -102,22 +119,35 @@ def exercise_bundle(
     require_binary_target(runtime, target)
     worker_hash = sha256(worker)
     runtime_hash = sha256(runtime)
+    identity = extension_identity(read_json(bundle / "artifact-manifest.json"))
 
-    health = worker_request(worker, manifest, runtime, request("health", {}, "installed-health"))
+    health = worker_request(
+        worker, manifest, runtime, request("health", {}, "installed-health"), *identity
+    )
     result = health.get("result", {})
     if (
         result.get("ready") is not True
         or result.get("runtime") != "onnx_runtime_cpu"
         or result.get("identity", {}).get("backend") != "onnx_runtime_cpu"
+        or result.get("identity", {}).get("extension")
+        != {"id": identity[0], "version": identity[1]}
     ):
         raise ArtifactError(f"health returned the wrong backend: {health}")
 
     self_test = worker_request(
-        worker, manifest, runtime, request("self_test", {}, "installed-self-test")
+        worker,
+        manifest,
+        runtime,
+        request("self_test", {}, "installed-self-test"),
+        *identity,
     )
-    if self_test.get("result", {}).get("passed") is not True:
+    if (
+        self_test.get("result", {}).get("passed") is not True
+        or self_test.get("result", {}).get("identity", {}).get("extension")
+        != {"id": identity[0], "version": identity[1]}
+    ):
         raise ArtifactError(f"self_test did not pass: {self_test}")
-    mismatch_rejection(worker, manifest, runtime, target)
+    mismatch_rejection(worker, manifest, runtime, target, identity)
 
     width, height = image_dimensions(fixture)
     fixture_bytes = fixture.read_bytes()
@@ -139,38 +169,54 @@ def exercise_bundle(
             },
             "installed-real-parse",
         ),
+        *identity,
     )
     parse_result = parse.get("result", {})
     regions = parse_result.get("regions")
-    if parse_result.get("runtime") != "onnx_runtime_cpu" or not isinstance(regions, list) or not regions:
+    if (
+        parse_result.get("runtime") != "onnx_runtime_cpu"
+        or not isinstance(regions, list)
+        or not regions
+        or parse_result.get("identity", {}).get("extension")
+        != {"id": identity[0], "version": identity[1]}
+    ):
         raise ArtifactError(f"real parse returned no observations: {parse}")
 
     reports = {
         "health": {
             "schemaVersion": 1,
+            "evidenceKind": "supplied",
             "gate": "health",
             "status": "passed",
             "target": target,
             "protocolVersion": 1,
+            "extensionId": identity[0],
+            "extensionVersion": identity[1],
             "workerSha256": worker_hash,
             "runtimeSha256": runtime_hash,
         },
         "self-test": {
             "schemaVersion": 1,
+            "evidenceKind": "supplied",
             "gate": "self-test",
             "status": "passed",
             "target": target,
             "protocolVersion": 1,
+            "extensionId": identity[0],
+            "extensionVersion": identity[1],
             "workerSha256": worker_hash,
             "runtimeSha256": runtime_hash,
             "mismatchRejectionPassed": True,
         },
         "real-parse": {
             "schemaVersion": 1,
+            "evidenceKind": "supplied",
             "gate": "real-parse",
             "status": "passed",
             "target": target,
             "protocolVersion": 1,
+            "extensionId": identity[0],
+            "extensionVersion": identity[1],
             "workerSha256": worker_hash,
             "runtimeSha256": runtime_hash,
             "fixtureSha256": sha256(fixture),

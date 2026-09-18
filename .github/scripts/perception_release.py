@@ -239,6 +239,13 @@ def _validate_verification_reports(
             raise CandidateError(f"verification gate {gate} targets a different platform")
         if report["protocolVersion"] != manifest["protocol"]["version"]:
             raise CandidateError(f"verification gate {gate} uses a different protocol")
+        expected_identity = (manifest["component"], manifest["version"])
+        report_identity = (report["extensionId"], report["extensionVersion"])
+        if report_identity != expected_identity:
+            raise CandidateError(
+                f"verification gate {gate} reports extension identity {report_identity!r}; "
+                f"expected {expected_identity!r}"
+            )
         if report["workerSha256"] != worker["sha256"] or report["runtimeSha256"] != runtime["sha256"]:
             raise CandidateError(f"verification gate {gate} hashes a different worker or runtime")
         if gate == "real-parse" and (not report.get("fixtureSha256") or not report.get("observations")):
@@ -840,7 +847,7 @@ def run_candidate_gates(
     }
     executed = []
     identity_arguments = [
-        "--extension-id", "cua-perception", "--extension-version", manifest["version"]
+        "--extension-id", manifest["component"], "--extension-version", manifest["version"]
     ]
     for gate, arguments in (
         ("health", ["--health"]),
@@ -863,7 +870,9 @@ def run_candidate_gates(
                 f"executed {gate} gate failed with exit {result.returncode}: "
                 f"{result.stderr.decode(errors='replace')[:500]}"
             )
-        validate_candidate_gate_output(gate, result.stdout, manifest["version"])
+        validate_candidate_gate_output(
+            gate, result.stdout, manifest["component"], manifest["version"]
+        )
         executed.append({
             "gate": gate,
             "arguments": arguments,
@@ -889,7 +898,9 @@ def run_candidate_gates(
     return evidence
 
 
-def validate_candidate_gate_output(gate: str, stdout: bytes, extension_version: str) -> None:
+def validate_candidate_gate_output(
+    gate: str, stdout: bytes, extension_id: str, extension_version: str
+) -> None:
     try:
         output = json.loads(stdout)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
@@ -907,7 +918,7 @@ def validate_candidate_gate_output(gate: str, stdout: bytes, extension_version: 
         raise CandidateError(f"executed {gate} gate omitted its result object")
     identity = result.get("identity")
     extension = identity.get("extension") if isinstance(identity, dict) else None
-    expected_identity = {"id": "cua-perception", "version": extension_version}
+    expected_identity = {"id": extension_id, "version": extension_version}
     if extension != expected_identity:
         raise CandidateError(
             f"executed {gate} gate reported extension identity {extension!r}; "

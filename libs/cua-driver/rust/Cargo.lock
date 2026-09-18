@@ -1353,7 +1353,7 @@ dependencies = [
 
 [[package]]
 name = "cua-perception"
-version = "0.28.2"
+version = "0.1.0"
 dependencies = [
  "base64",
  "image",

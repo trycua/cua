@@ -11,7 +11,13 @@ fn pinned_real_models_match_the_synthetic_ui_known_answer() {
     let manifest = required_path("CUA_PERCEPTION_REAL_MANIFEST");
     let runtime = required_path("CUA_PERCEPTION_ORT_LIBRARY");
     let image_path = required_path("CUA_PERCEPTION_KNOWN_ANSWER_IMAGE");
-    let worker = Worker::from_manifest(&manifest, &runtime).expect("load pinned real models");
+    let worker = Worker::from_manifest_with_extension_identity(
+        &manifest,
+        &runtime,
+        "cua-perception",
+        env!("CARGO_PKG_VERSION"),
+    )
+    .expect("load pinned real models");
     let bytes = fs::read(&image_path).expect("read known-answer image");
     let dimensions = ImageReader::open(&image_path)
         .expect("open known-answer image")

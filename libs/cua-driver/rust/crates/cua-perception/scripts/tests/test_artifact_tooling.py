@@ -17,6 +17,7 @@ from artifact_tooling import (  # noqa: E402
     CRATE_DIR,
     LOCK_PATH,
     binary_target,
+    extension_identity,
     sha256,
     static_verify,
     verify_corresponding_sources,
@@ -209,7 +210,12 @@ class ArtifactToolingTests(unittest.TestCase):
                     "role": role, "name": name, "path": "models/" + name,
                     "sha256": digest, "size": model_path.stat().st_size,
                 })
-            manifest = {"target": {"triple": "x86_64-unknown-linux-gnu"}, "artifacts": entries}
+            manifest = {
+                "component": "cua-perception",
+                "version": "0.1.0",
+                "target": {"triple": "x86_64-unknown-linux-gnu"},
+                "artifacts": entries,
+            }
             (bundle / "artifact-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
             real_read_json = __import__("artifact_tooling").read_json
             synthetic_lock = {
@@ -237,6 +243,17 @@ class ArtifactToolingTests(unittest.TestCase):
             write(path, windows_header())
             self.assertEqual(binary_target(path), "x86_64-pc-windows-msvc")
             self.assertNotEqual(binary_target(path), "x86_64-unknown-linux-gnu")
+
+    def test_extension_identity_requires_exact_component_and_stable_version(self) -> None:
+        manifest = {"component": "cua-perception", "version": "0.1.0"}
+        self.assertEqual(extension_identity(manifest), ("cua-perception", "0.1.0"))
+        for invalid in (
+            {"component": "cua-driver", "version": "0.1.0"},
+            {"component": "cua-perception", "version": "0.1.0-dev"},
+            {"component": "cua-perception"},
+        ):
+            with self.assertRaisesRegex(ArtifactError, "invalid extension identity"):
+                extension_identity(invalid)
 
 
 if __name__ == "__main__":

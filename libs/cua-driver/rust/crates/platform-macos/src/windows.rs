@@ -134,10 +134,9 @@ fn enumerate_windows(options: u32, layers: LayerFilter) -> WindowEnumeration {
     }
 
     let raw: CFArray<CFTypeRef> = unsafe { CFArray::wrap_under_create_rule(raw_ref as _) };
-    let total = raw.len() as usize;
     let mut results = Vec::new();
 
-    for (idx, item) in raw.iter().enumerate() {
+    for item in raw.iter() {
         let item = *item;
         // Each item should be a CFDictionary.
         let dict_type = CFDictionary::<*const c_void, *const c_void>::type_id();
@@ -234,9 +233,6 @@ fn enumerate_windows(options: u32, layers: LayerFilter) -> WindowEnumeration {
                 })
         };
 
-        // z_index: CGWindowList front-to-back → assign reverse index.
-        let z_index = z_index_from_front_to_back(total, idx);
-
         results.push(WindowInfo {
             window_id,
             pid,
@@ -244,12 +240,19 @@ fn enumerate_windows(options: u32, layers: LayerFilter) -> WindowEnumeration {
             title,
             bounds,
             layer,
-            z_index,
+            z_index: 0,
             is_on_screen,
             current_space_id: None,
             on_current_space: None,
             space_ids: None,
         });
+    }
+
+    // CGWindowList is front-to-back. Normalize after layer filtering so the
+    // returned set is always zero-based and contiguous.
+    let total = results.len();
+    for (position, window) in results.iter_mut().enumerate() {
+        window.z_index = z_index_from_front_to_back(total, position);
     }
 
     if layers == LayerFilter::ZeroOnly {
@@ -292,7 +295,7 @@ fn window_on_current_space(
 }
 
 fn z_index_from_front_to_back(total: usize, position: usize) -> usize {
-    total.saturating_sub(position)
+    total.saturating_sub(1).saturating_sub(position)
 }
 
 fn get_bounds_num(
@@ -408,7 +411,7 @@ mod tests {
         let indices: Vec<_> = (0..3)
             .map(|position| z_index_from_front_to_back(3, position))
             .collect();
-        assert_eq!(indices, vec![3, 2, 1]);
+        assert_eq!(indices, vec![2, 1, 0]);
         assert!(indices[0] > indices[2]);
     }
 

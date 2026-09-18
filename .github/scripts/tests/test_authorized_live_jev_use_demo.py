@@ -236,11 +236,11 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         self.assertIn("cua-perception-live-review", secret["run"])
         self.assertIn("Remove-Item Env:GH_TOKEN", secret["run"])
         self.assertIn(
-            "& $env:CUA_LIVE_TEST_BINARY --ignored --exact authorized_visual_only_window_demo",
+            "& $env:CUA_LIVE_TEST_BINARY --ignored --exact $env:CUA_LIVE_WINDOW_TEST",
             secret["run"],
         )
         self.assertIn(
-            "& $env:CUA_LIVE_TEST_BINARY --ignored --exact authorized_visual_only_primary_desktop_demo",
+            "& $env:CUA_LIVE_TEST_BINARY --ignored --exact $env:CUA_LIVE_DESKTOP_TEST",
             secret["run"],
         )
         compile_step = next(
@@ -249,8 +249,13 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
             if step.get("name", "").startswith("Compile and measure")
         )
         self.assertIn("--no-run --message-format=json", compile_step["run"])
-        self.assertIn('"authorized_visual_only_window_demo: test"', compile_step["run"])
-        self.assertIn('"authorized_visual_only_primary_desktop_demo: test"', compile_step["run"])
+        self.assertIn('name.endswith(f"::{short_name}")', compile_step["run"])
+        self.assertIn("assert len(matches) == 1", compile_step["run"])
+        self.assertIn("re.fullmatch", compile_step["run"])
+        self.assertIn('resolve("authorized_visual_only_window_demo")', compile_step["run"])
+        self.assertIn('resolve("authorized_visual_only_primary_desktop_demo")', compile_step["run"])
+        self.assertIn("CUA_LIVE_WINDOW_TEST={window_test}", compile_step["run"])
+        self.assertIn("CUA_LIVE_DESKTOP_TEST={desktop_test}", compile_step["run"])
 
     def test_chooser_is_exact_fixed_and_fails_closed_when_absent(self):
         live = self.jobs["live"]
@@ -289,8 +294,8 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         )
         self.assertNotIn("CHOOSER", str(mock))
         self.assertNotIn("TYPESAFE", str(mock))
-        self.assertIn("authorized_visual_only_window_demo", mock["run"])
-        self.assertIn("authorized_visual_only_primary_desktop_demo", mock["run"])
+        self.assertIn("--exact $env:CUA_LIVE_WINDOW_TEST", mock["run"])
+        self.assertIn("--exact $env:CUA_LIVE_DESKTOP_TEST", mock["run"])
 
     def test_only_encrypted_schema_validated_evidence_is_uploaded(self):
         uploads = [

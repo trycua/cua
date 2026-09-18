@@ -402,20 +402,25 @@ jobs:
           cargo test --manifest-path libs/cua-driver/rust/Cargo.toml -p cua-driver --test authorized_live_jev_use_demo_test --locked --no-run --message-format=json-render-diagnostics | Set-Content $messages -Encoding utf8
           if ($LASTEXITCODE -ne 0) { throw 'live test build failed' }
           @'
-          import hashlib, json, os, pathlib, subprocess, sys
+          import hashlib, json, os, pathlib, re, subprocess, sys
           records = []
           for line in pathlib.Path(sys.argv[1]).read_text(encoding="utf-8-sig").splitlines():
               try: value = json.loads(line)
               except json.JSONDecodeError: continue
               if value.get("reason") == "compiler-artifact" and value.get("target", {}).get("name") == "authorized_live_jev_use_demo_test" and value.get("executable"): records.append(pathlib.Path(value["executable"]).resolve())
           assert len(records) == 1 and records[0].is_file(), records
-          binary = records[0]; listing = subprocess.run([str(binary), "--list"], check=True, capture_output=True, text=True).stdout.splitlines()
-          required = {
-              "authorized_visual_only_window_demo: test",
-              "authorized_visual_only_primary_desktop_demo: test",
-          }
-          assert required.issubset(listing), "fixed window and desktop orchestrator tests are unavailable"
-          with pathlib.Path(os.environ["GITHUB_ENV"]).open("a") as stream: stream.write(f"CUA_LIVE_TEST_BINARY={binary}\nCUA_LIVE_TEST_BINARY_SHA256={hashlib.sha256(binary.read_bytes()).hexdigest()}\n")
+          binary = records[0]
+          listing = subprocess.run([str(binary), "--list"], check=True, capture_output=True, text=True).stdout.splitlines()
+          available = [line.removesuffix(": test") for line in listing if line.endswith(": test")]
+          def resolve(short_name):
+              matches = [name for name in available if name == short_name or name.endswith(f"::{short_name}")]
+              assert len(matches) == 1, f"required live test {short_name!r} resolved to {matches!r}"
+              assert re.fullmatch(r"[A-Za-z0-9_]+(?:::[A-Za-z0-9_]+)*", matches[0]), matches[0]
+              return matches[0]
+          window_test = resolve("authorized_visual_only_window_demo")
+          desktop_test = resolve("authorized_visual_only_primary_desktop_demo")
+          with pathlib.Path(os.environ["GITHUB_ENV"]).open("a") as stream:
+              stream.write(f"CUA_LIVE_TEST_BINARY={binary}\nCUA_LIVE_TEST_BINARY_SHA256={hashlib.sha256(binary.read_bytes()).hexdigest()}\nCUA_LIVE_WINDOW_TEST={window_test}\nCUA_LIVE_DESKTOP_TEST={desktop_test}\n")
           '@ | python - $messages
           if ($LASTEXITCODE -ne 0) { throw 'live test binary measurement failed' }
       - name: Run installed candidate with deterministic mock chooser
@@ -424,9 +429,9 @@ jobs:
           CUA_JEV_MOCK_DEMO: "1"
           CUA_PERCEPTION_EVIDENCE_DIR: ${{ runner.temp }}/perception-evidence/mock
         run: |
-          & $env:CUA_LIVE_TEST_BINARY --ignored --exact authorized_visual_only_window_demo --nocapture
+          & $env:CUA_LIVE_TEST_BINARY --ignored --exact $env:CUA_LIVE_WINDOW_TEST --nocapture
           if ($LASTEXITCODE -ne 0) { throw 'artifact-gated mock window demo failed' }
-          & $env:CUA_LIVE_TEST_BINARY --ignored --exact authorized_visual_only_primary_desktop_demo --nocapture
+          & $env:CUA_LIVE_TEST_BINARY --ignored --exact $env:CUA_LIVE_DESKTOP_TEST --nocapture
           if ($LASTEXITCODE -ne 0) { throw 'artifact-gated mock primary-desktop demo failed' }
       - name: Run bounded live Jev chooser against the measured binary
         shell: pwsh
@@ -449,9 +454,9 @@ jobs:
           if (-not (Test-Path $env:CUA_FIXED_CHOOSER_SCRIPT -PathType Leaf)) { throw 'chooser script disappeared after setup' }
           $env:CUA_JEV_LIVE = '1'; $env:CUA_JEV_CHOOSER_PROGRAM = $env:CUA_FIXED_CHOOSER_PROGRAM; $env:CUA_JEV_CHOOSER_SCRIPT = $env:CUA_FIXED_CHOOSER_SCRIPT; $env:TYPESAFE_API_KEY = $key
           try {
-            & $env:CUA_LIVE_TEST_BINARY --ignored --exact authorized_visual_only_window_demo --nocapture
+            & $env:CUA_LIVE_TEST_BINARY --ignored --exact $env:CUA_LIVE_WINDOW_TEST --nocapture
             if ($LASTEXITCODE -ne 0) { throw 'live Jev window demo failed' }
-            & $env:CUA_LIVE_TEST_BINARY --ignored --exact authorized_visual_only_primary_desktop_demo --nocapture
+            & $env:CUA_LIVE_TEST_BINARY --ignored --exact $env:CUA_LIVE_DESKTOP_TEST --nocapture
             if ($LASTEXITCODE -ne 0) { throw 'live Jev primary-desktop demo failed' }
           } finally {
             Remove-Item Env:TYPESAFE_API_KEY -ErrorAction SilentlyContinue; Remove-Item Env:CUA_JEV_LIVE -ErrorAction SilentlyContinue; Remove-Item Env:CUA_JEV_CHOOSER_PROGRAM -ErrorAction SilentlyContinue; Remove-Item Env:CUA_JEV_CHOOSER_SCRIPT -ErrorAction SilentlyContinue; $key = $null

@@ -34,6 +34,28 @@ def _write_zip(path: Path, contract: ArchiveContract) -> None:
             archive.writestr(name, f"payload for {name}")
 
 
+def _rewrite_with_extra_member(
+    path: Path, contract: ArchiveContract, name: str, payload: bytes = b"optional payload"
+) -> None:
+    if path.name.endswith(".tar.gz"):
+        with tarfile.open(path, "w:gz") as archive:
+            for member_name in (*contract.members, name):
+                member_payload = (
+                    payload if member_name == name else f"payload for {member_name}".encode()
+                )
+                info = tarfile.TarInfo(member_name)
+                info.size = len(member_payload)
+                info.mode = 0o755 if member_name in contract.executable_members else 0o644
+                archive.addfile(info, BytesIO(member_payload))
+    else:
+        with zipfile.ZipFile(path, "w") as archive:
+            for member_name in (*contract.members, name):
+                member_payload = (
+                    payload if member_name == name else f"payload for {member_name}".encode()
+                )
+                archive.writestr(member_name, member_payload)
+
+
 def _write_valid_release(root: Path) -> tuple[ArchiveContract, ...]:
     contracts = release_contracts(VERSION)
     for contract in contracts:
@@ -97,4 +119,45 @@ def test_non_executable_unix_binary_fails_closed(tmp_path: Path) -> None:
         ContractError,
         match=rf"{target.filename} contains non-executable member cua-driver",
     ):
+        verify_release_archives(tmp_path, VERSION)
+
+
+@pytest.mark.parametrize(
+    ("archive_suffix", "member", "reason"),
+    (
+        ("linux-x86_64-binary.tar.gz", "cua-perception", "cua-perception worker"),
+        ("darwin-universal.tar.gz", "models/detector.onnx", "model directory"),
+        ("windows-x86_64.zip", "onnxruntime.dll", "ONNX Runtime"),
+        ("windows-arm64-binary.zip", "signed-catalog.json", "extension catalog"),
+    ),
+)
+def test_optional_perception_payload_fails_closed(
+    tmp_path: Path, archive_suffix: str, member: str, reason: str
+) -> None:
+    contracts = _write_valid_release(tmp_path)
+    target = next(contract for contract in contracts if contract.filename.endswith(archive_suffix))
+    _rewrite_with_extra_member(tmp_path / target.filename, target, member)
+
+    with pytest.raises(
+        ContractError,
+        match=rf"{target.filename} contains forbidden optional perception payload "
+        rf"\({reason}\): {member}",
+    ):
+        verify_release_archives(tmp_path, VERSION)
+
+
+def test_agpl_notice_content_fails_closed(tmp_path: Path) -> None:
+    contracts = _write_valid_release(tmp_path)
+    target = next(
+        contract for contract in contracts if contract.filename.endswith("linux-arm64.tar.gz")
+    )
+    member = f"cua-driver-rs-{VERSION}-linux-arm64/THIRD_PARTY_NOTICES.txt"
+    _rewrite_with_extra_member(
+        tmp_path / target.filename,
+        target,
+        member,
+        b"GNU AFFERO GENERAL PUBLIC LICENSE Version 3",
+    )
+
+    with pytest.raises(ContractError, match=rf"\(AGPL notice\): {member}"):
         verify_release_archives(tmp_path, VERSION)

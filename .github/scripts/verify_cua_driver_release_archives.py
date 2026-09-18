@@ -10,6 +10,11 @@ import tarfile
 import zipfile
 
 
+FORBIDDEN_MODEL_SUFFIXES = (".onnx", ".ort", ".gguf", ".safetensors")
+AGPL_MARKERS = (b"agpl-", b"agpl ", b"gnu affero general public license")
+NOTICE_NAMES = ("license", "notice", "copying")
+
+
 class ContractError(RuntimeError):
     """Raised when a release archive is missing or malformed."""
 
@@ -129,13 +134,59 @@ def _find_archive(root: Path, filename: str) -> Path:
     return matches[0]
 
 
+def _forbidden_member_reason(name: str) -> str | None:
+    normalized = _normalize_member(name).lower()
+    path = f"/{normalized.strip('/')}"
+    basename = PurePosixPath(normalized).name
+    if "cua-perception" in normalized:
+        return "cua-perception worker"
+    if "/models/" in f"{path}/" or basename == "models":
+        return "model directory"
+    if basename.endswith(FORBIDDEN_MODEL_SUFFIXES):
+        return "model payload"
+    if "onnxruntime" in normalized:
+        return "ONNX Runtime"
+    if "catalog" in basename:
+        return "extension catalog"
+    if "agpl" in normalized:
+        return "AGPL notice"
+    return None
+
+
+def _verify_member_names(path: Path, names: tuple[str, ...]) -> None:
+    for name in names:
+        if reason := _forbidden_member_reason(name):
+            raise ContractError(
+                f"{path.name} contains forbidden optional perception payload "
+                f"({reason}): {_normalize_member(name)}"
+            )
+
+
+def _verify_notice_content(path: Path, name: str, payload: bytes) -> None:
+    basename = PurePosixPath(_normalize_member(name)).name.lower()
+    if not any(token in basename for token in NOTICE_NAMES):
+        return
+    lowered = payload.lower()
+    if any(marker in lowered for marker in AGPL_MARKERS):
+        raise ContractError(
+            f"{path.name} contains forbidden optional perception payload "
+            f"(AGPL notice): {_normalize_member(name)}"
+        )
+
+
 def _verify_tar(path: Path, contract: ArchiveContract) -> None:
     with tarfile.open(path, "r:gz") as archive:
+        archive_members = archive.getmembers()
+        _verify_member_names(path, tuple(member.name for member in archive_members))
         members = {
-            _normalize_member(member.name): member
-            for member in archive.getmembers()
-            if member.isfile()
+            _normalize_member(member.name): member for member in archive_members if member.isfile()
         }
+
+        for name, member in members.items():
+            if any(token in PurePosixPath(name).name.lower() for token in NOTICE_NAMES):
+                extracted = archive.extractfile(member)
+                if extracted is not None:
+                    _verify_notice_content(path, name, extracted.read())
 
         for expected in contract.members:
             member = members.get(expected)
@@ -152,11 +203,15 @@ def _verify_tar(path: Path, contract: ArchiveContract) -> None:
 
 def _verify_zip(path: Path, contract: ArchiveContract) -> None:
     with zipfile.ZipFile(path) as archive:
+        archive_members = archive.infolist()
+        _verify_member_names(path, tuple(info.filename for info in archive_members))
         members = {
-            _normalize_member(info.filename): info
-            for info in archive.infolist()
-            if not info.is_dir()
+            _normalize_member(info.filename): info for info in archive_members if not info.is_dir()
         }
+
+        for name, member in members.items():
+            if any(token in PurePosixPath(name).name.lower() for token in NOTICE_NAMES):
+                _verify_notice_content(path, name, archive.read(member))
 
         for expected in contract.members:
             member = members.get(expected)

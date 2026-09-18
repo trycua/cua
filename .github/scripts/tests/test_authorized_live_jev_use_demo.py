@@ -209,6 +209,8 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         self.assertIn('manifest["environment"] ==', validate)
         self.assertIn('perception["models"] == measured["models"]', validate)
         self.assertIn('chooser["model_id"]', validate)
+        self.assertIn('chooser["mode"] == "live"', validate)
+        self.assertIn('chooser["provider"] == "typesafe"', validate)
         self.assertIn('recording_value["frame_rate"]', validate)
         self.assertIn('recording_value["edit_operations"]', validate)
         self.assertNotIn("raw-manifest.json", str(uploads[0]))

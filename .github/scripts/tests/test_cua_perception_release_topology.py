@@ -553,6 +553,7 @@ def test_workflows_are_valid_and_candidate_workflow_cannot_publish() -> None:
     parsed = yaml.safe_load(candidate)
     assert "PRIVATE_KEY_BASE64" not in json.dumps(parsed["jobs"]["package"])
     assert "PRIVATE_KEY_BASE64" in json.dumps(parsed["jobs"]["sign"])
+    assert parsed["jobs"]["sign"]["environment"] == "cua-perception-candidate-signing"
     manual = manual_path.read_text()
     for value in ("x86_64-unknown-linux-gnu", "aarch64-apple-darwin", "x86_64-pc-windows-msvc"):
         assert value in manual

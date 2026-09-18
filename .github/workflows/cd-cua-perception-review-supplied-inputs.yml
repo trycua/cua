@@ -284,37 +284,10 @@ jobs:
           set -euo pipefail
           [[ "$CATALOG_VERSION" =~ ^[1-9][0-9]*$ ]]
           [[ "$EXPIRES_UNIX" =~ ^[1-9][0-9]*$ ]]
-          python3 - <<'PY'
-          import hashlib, json, pathlib
-          root = pathlib.Path("perception-input")
-          manifest = json.loads((root / "release-input.json").read_text())
-          worker = next(item for item in manifest["artifacts"] if item["kind"] == "worker")
-          runtime = next(item for item in manifest["artifacts"] if item["kind"] == "runtime")
-          empty = hashlib.sha256(b"").hexdigest()
-          reports = {
-              gate: (root / manifest["suppliedVerification"][field]).read_bytes()
-              for gate, field in (("health", "health"), ("self-test", "selfTest"),
-                                  ("real-parse", "realParse"))
-          }
-          evidence = {
-              "schemaVersion": 1, "evidenceKind": "executed",
-              "sourceSha": manifest["sourceSha"], "target": manifest["target"]["triple"],
-              "protocolVersion": manifest["protocol"]["version"],
-              "workerSha256": worker["sha256"], "runtimeSha256": runtime["sha256"],
-              "gates": [
-                  {"gate": gate, "arguments": [f"assembler:worker-protocol:{gate}"],
-                   "status": "passed", "exitCode": 0,
-                   "stdoutSha256": hashlib.sha256(reports[source]).hexdigest(),
-                   "stderrSha256": empty}
-                  for gate, source in (("health", "health"), ("self-test", "self-test"),
-                                       ("real-parse", "real-parse"),
-                                       ("mismatch-rejection", "self-test"))
-              ],
-          }
-          pathlib.Path("executed-verification.json").write_text(
-              json.dumps(evidence, indent=2, sort_keys=True) + "\n"
-          )
-          PY
+          python3 .github/scripts/perception_release.py run-gates \
+            --manifest perception-input/release-input.json \
+            --payload-root perception-input \
+            --evidence executed-verification.json
           python3 .github/scripts/perception_release.py package \
             --manifest perception-input/release-input.json \
             --payload-root perception-input \

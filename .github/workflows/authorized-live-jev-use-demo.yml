@@ -385,7 +385,8 @@ jobs:
           assert driver["build"] == {"profile": measured["review_driver_build_profile"], "target": measured["target"], "sealed_artifact_manifest_sha256": measured["sealed_artifact_manifest_sha256"], "sealed_extension_manifest_sha256": measured["sealed_extension_manifest_sha256"]}
           assert perception["signature_algorithm"] == measured["signature_algorithm"] == "ed25519"; assert perception["signed_extension_archive_sha256"] == measured["archive_sha256"]; assert perception["signing_key_sha256"] == measured["public_key_sha256"]; assert perception["signed_catalog_sha256"] == measured["catalog_sha256"]
           assert perception["protocol_version"] == measured["protocol_version"] and perception["worker_sha256"] == measured["worker_sha256"] and perception["self_test"] == measured["self_test"] and perception["models"] == measured["models"] and perception["onnx_runtime"] == measured["onnx_runtime"]
-          assert chooser["adapter_source_sha"] == os.environ["EXPECTED_SHA"] and chooser["source_sha"] == os.environ["CUA_JEV_SOURCE_SHA"] and chooser["model_id"]
+          assert chooser["mode"] == "live" and chooser["provider"] == "typesafe" and chooser["model_id"]
+          assert chooser["adapter_source_sha"] == os.environ["EXPECTED_SHA"] and chooser["source_sha"] == os.environ["CUA_JEV_SOURCE_SHA"]
           result = manifest["result"]
           observation = manifest["observation"]; assert observation["session_label"] == os.environ["CUA_SESSION_LABEL"]; assert len(observation["acted_capture_id_sha256"]) == len(observation["fresh_capture_id_sha256"]) == len(observation["capture_trace_sha256"]) == 64
           assert 2 <= len(observation["candidates"]) <= 18 and result["selected_candidate"] in {item["id"] for item in observation["candidates"]}

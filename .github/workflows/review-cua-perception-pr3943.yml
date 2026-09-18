@@ -2,7 +2,7 @@ name: "Review: labeled Cua Perception live evidence"
 
 on:
   pull_request:
-    types: [labeled, synchronize]
+    types: [labeled]
 
 permissions:
   actions: read
@@ -20,10 +20,8 @@ jobs:
       github.event_name == 'pull_request' &&
       github.event.pull_request.number == 3943 &&
       github.event.pull_request.head.repo.full_name == github.repository &&
-      ((github.event.action == 'labeled' &&
-        github.event.label.name == 'cua-perception-live-review') ||
-       (github.event.action == 'synchronize' &&
-        contains(github.event.pull_request.labels.*.name, 'cua-perception-live-review')))
+      github.event.action == 'labeled' &&
+      github.event.label.name == 'cua-perception-live-review'
     runs-on: ubuntu-latest
     outputs:
       source_sha: ${{ steps.resolve.outputs.source_sha }}
@@ -41,16 +39,15 @@ jobs:
           EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           EVENT_LABEL: ${{ github.event.label.name }}
           EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
+          REVIEWED_JEV_SHA: 201732fffd81a40818be7ce2e04269aec962bc42
         run: |
           set -euo pipefail
           [[ "$GITHUB_REPOSITORY" == "trycua/cua" ]]
           [[ "$EVENT_PR_NUMBER" == "3943" ]]
           [[ "$EVENT_HEAD_REPOSITORY" == "$GITHUB_REPOSITORY" ]]
           [[ "$EVENT_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$EVENT_ACTION" == "labeled" || "$EVENT_ACTION" == "synchronize" ]]
-          if [[ "$EVENT_ACTION" == "labeled" ]]; then
-            [[ "$EVENT_LABEL" == "cua-perception-live-review" ]]
-          fi
+          [[ "$EVENT_ACTION" == "labeled" ]]
+          [[ "$EVENT_LABEL" == "cua-perception-live-review" ]]
 
           pr_json="$(gh api "repos/$GITHUB_REPOSITORY/pulls/3943")"
           [[ "$(jq -r .state <<<"$pr_json")" == "open" ]]
@@ -61,11 +58,10 @@ jobs:
           jev_json="$(gh api "repos/$GITHUB_REPOSITORY/pulls/3916")"
           [[ "$(jq -r .state <<<"$jev_json")" == "open" ]]
           [[ "$(jq -r .head.repo.full_name <<<"$jev_json")" == "$GITHUB_REPOSITORY" ]]
-          jev_source_sha="$(jq -r .head.sha <<<"$jev_json")"
-          [[ "$jev_source_sha" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$(jq -r .head.sha <<<"$jev_json")" == "$REVIEWED_JEV_SHA" ]]
 
           echo "source_sha=$EVENT_HEAD_SHA" >> "$GITHUB_OUTPUT"
-          echo "jev_source_sha=$jev_source_sha" >> "$GITHUB_OUTPUT"
+          echo "jev_source_sha=$REVIEWED_JEV_SHA" >> "$GITHUB_OUTPUT"
           echo "catalog_version=$GITHUB_RUN_ID" >> "$GITHUB_OUTPUT"
           echo "expires_unix=$(( $(date +%s) + 604800 ))" >> "$GITHUB_OUTPUT"
 

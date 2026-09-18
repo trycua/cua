@@ -23,10 +23,10 @@ def triggers(workflow: dict) -> dict:
     return workflow.get("on", workflow.get(True))
 
 
-def test_trigger_is_only_labeled_or_synchronized_pull_request() -> None:
+def test_trigger_is_only_labeled_pull_request() -> None:
     text, workflow = load_workflow(TRIGGER)
     assert triggers(workflow) == {
-        "pull_request": {"types": ["labeled", "synchronize"]},
+        "pull_request": {"types": ["labeled"]},
     }
     assert "workflow_dispatch" not in text
     assert "pull_request_target" not in text
@@ -39,8 +39,7 @@ def test_unlabelled_and_unrelated_pull_requests_skip_before_any_runner() -> None
     assert "github.event.pull_request.number == 3943" in condition
     assert "github.event.pull_request.head.repo.full_name == github.repository" in condition
     assert "github.event.label.name == 'cua-perception-live-review'" in condition
-    assert "github.event.action == 'synchronize'" in condition
-    assert "contains(github.event.pull_request.labels.*.name, 'cua-perception-live-review')" in condition
+    assert "synchronize" not in condition
     assert workflow["concurrency"]["cancel-in-progress"] is True
     assert workflow["concurrency"]["group"] == (
         "cua-perception-live-review-${{ github.event.pull_request.number }}"
@@ -57,6 +56,7 @@ def test_gate_revalidates_current_same_repository_heads_and_label() -> None:
         '.labels | any(.name == "cua-perception-live-review")',
         'gh api "repos/$GITHUB_REPOSITORY/pulls/3916"',
         '[[ "$(jq -r .head.repo.full_name <<<"$jev_json")" == "$GITHUB_REPOSITORY" ]]',
+        '[[ "$(jq -r .head.sha <<<"$jev_json")" == "$REVIEWED_JEV_SHA" ]]',
     ):
         assert contract in gate
     assert "secrets." not in text
@@ -65,6 +65,15 @@ def test_gate_revalidates_current_same_repository_heads_and_label() -> None:
         "contents": "read",
         "pull-requests": "read",
     }
+    resolve_env = workflow["jobs"]["resolve"]["steps"][0]["env"]
+    assert resolve_env["REVIEWED_JEV_SHA"] == "201732fffd81a40818be7ce2e04269aec962bc42"
+
+
+def test_review_candidate_executes_release_gates_instead_of_synthesizing_evidence() -> None:
+    text, _ = load_workflow(CANDIDATE)
+    assert "perception_release.py run-gates" in text
+    assert "--evidence executed-verification.json" in text
+    assert "assembler:worker-protocol:" not in text
 
 
 def test_candidate_is_callable_discovers_one_draft_asset_and_returns_artifact_id() -> None:
@@ -119,3 +128,9 @@ def test_chain_passes_exact_outputs_to_existing_protected_live_workflow() -> Non
     assert "TYPESAFE_API_KEY" not in "\n".join(
         str(job) for name, job in live_workflow["jobs"].items() if name != "live"
     )
+    validation = next(
+        step["run"] for step in live_job["steps"]
+        if step.get("name", "").startswith("Fully decode")
+    )
+    assert 'chooser["mode"] == "live"' in validation
+    assert 'chooser["provider"] == "typesafe"' in validation

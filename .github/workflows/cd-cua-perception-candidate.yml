@@ -154,6 +154,7 @@ jobs:
     name: sign verified ${{ inputs.target_triple }} catalog
     needs: package
     runs-on: ubuntu-latest
+    environment: cua-perception-candidate-signing
     steps:
       - name: Check out trusted release tooling
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683

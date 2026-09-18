@@ -299,6 +299,9 @@ impl Tool for ClickTool {
             self.state
                 .cursor_registry
                 .update_position(&cursor_key, sx, sy);
+            // Press edge for the agent-cursor overlay (renders a click pulse on
+            // viewers via the cursor hook).
+            self.state.cursor_registry.note_press(&cursor_key, sx, sy);
 
             let btn = button.clone();
             let desktop_modifiers: Vec<String> = args.str_array("modifier");
@@ -487,6 +490,7 @@ impl Tool for ClickTool {
                 self.state
                     .cursor_registry
                     .update_position(&cursor_key, cx, cy);
+                self.state.cursor_registry.note_press(&cursor_key, cx, cy);
 
                 let mods_owned = modifiers.clone();
                 let foreground = delivery_mode.is_foreground();
@@ -531,6 +535,7 @@ impl Tool for ClickTool {
                 self.state
                     .cursor_registry
                     .update_position(&cursor_key, cx, cy);
+                self.state.cursor_registry.note_press(&cursor_key, cx, cy);
             }
 
             // Finder icon/list items can expose a readable AXSelected state
@@ -963,6 +968,9 @@ impl Tool for ClickTool {
             self.state
                 .cursor_registry
                 .update_position(&cursor_key, screen_x, screen_y);
+            self.state
+                .cursor_registry
+                .note_press(&cursor_key, screen_x, screen_y);
 
             // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
             // A pixel click can land on a "Sign In" button that opens a sheet

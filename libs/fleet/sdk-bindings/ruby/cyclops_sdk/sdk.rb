@@ -198,6 +198,7 @@ private_constant :UniffiHandleMap
     RustBuffer.check_lower_TypePool(v.pool)
     RustBuffer.check_lower_OptionalTypeClaimSpec(v.spec)
     RustBuffer.check_lower_Optionalstring(v.name)
+    RustBuffer.check_lower_OptionalMapStringString(v.labels)
   end
 
   def self.alloc_from_TypeCreateClaimRequest(v)
@@ -341,6 +342,46 @@ private_constant :UniffiHandleMap
   def consumeIntoTypeCyclopsTokenProviderConfiguration
     consumeWithStream do |stream|
       return stream.readTypeCyclopsTokenProviderConfiguration
+    end
+  end
+
+  # The Record type FleetClaims.
+
+  def self.check_lower_TypeFleetClaims(v)
+
+    RustBuffer.check_lower_SequenceTypeClaim(v.claims)
+  end
+
+  def self.alloc_from_TypeFleetClaims(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_TypeFleetClaims(v)
+      return builder.finalize
+    end
+  end
+
+  def consumeIntoTypeFleetClaims
+    consumeWithStream do |stream|
+      return stream.readTypeFleetClaims
+    end
+  end
+
+  # The Record type FleetPoolRequest.
+
+  def self.check_lower_TypeFleetPoolRequest(v)
+
+
+  end
+
+  def self.alloc_from_TypeFleetPoolRequest(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_TypeFleetPoolRequest(v)
+      return builder.finalize
+    end
+  end
+
+  def consumeIntoTypeFleetPoolRequest
+    consumeWithStream do |stream|
+      return stream.readTypeFleetPoolRequest
     end
   end
 
@@ -642,6 +683,27 @@ private_constant :UniffiHandleMap
   def consumeIntoTypeSandbox
     consumeWithStream do |stream|
       return stream.readTypeSandbox
+    end
+  end
+
+  # The Record type ServiceStreamTarget.
+
+  def self.check_lower_TypeServiceStreamTarget(v)
+
+
+
+  end
+
+  def self.alloc_from_TypeServiceStreamTarget(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_TypeServiceStreamTarget(v)
+      return builder.finalize
+    end
+  end
+
+  def consumeIntoTypeServiceStreamTarget
+    consumeWithStream do |stream|
+      return stream.readTypeServiceStreamTarget
     end
   end
 
@@ -972,6 +1034,27 @@ private_constant :UniffiHandleMap
   def consumeIntoSequenceTypeClaim
     consumeWithStream do |stream|
       return stream.readSequenceTypeClaim
+    end
+  end
+
+  # The Sequence<T> type for TypeFleetPoolRequest.
+
+  def self.check_lower_SequenceTypeFleetPoolRequest(v)
+    v.each do |item|
+      RustBuffer.check_lower_TypeFleetPoolRequest(item)
+    end
+  end
+
+  def self.alloc_from_SequenceTypeFleetPoolRequest(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_SequenceTypeFleetPoolRequest(v)
+      return builder.finalize()
+    end
+  end
+
+  def consumeIntoSequenceTypeFleetPoolRequest
+    consumeWithStream do |stream|
+      return stream.readSequenceTypeFleetPoolRequest
     end
   end
 
@@ -1348,7 +1431,8 @@ class RustBufferStream
     CreateClaimRequest.new(
       pool: readTypePool,
       spec: readOptionalTypeClaimSpec,
-      name: readOptionalstring
+      name: readOptionalstring,
+      labels: readOptionalMapStringString
     )
   end
 
@@ -1414,6 +1498,24 @@ class RustBufferStream
       pool_poll_limit: readU32,
       claim_poll_interval_ms: readU64,
       claim_poll_limit: readU32
+    )
+  end
+
+  # The Record type FleetClaims.
+
+  def readTypeFleetClaims
+    FleetClaims.new(
+      fleet_id: readString,
+      claims: readSequenceTypeClaim
+    )
+  end
+
+  # The Record type FleetPoolRequest.
+
+  def readTypeFleetPoolRequest
+    FleetPoolRequest.new(
+      pool: readString,
+      replicas: readU32
     )
   end
 
@@ -1561,6 +1663,16 @@ class RustBufferStream
       claim: readString,
       name: readString,
       services: readSequencestring
+    )
+  end
+
+  # The Record type ServiceStreamTarget.
+
+  def readTypeServiceStreamTarget
+    ServiceStreamTarget.new(
+      url: readString,
+      auth_header_name: readString,
+      auth_header_value: readString
     )
   end
 
@@ -1928,6 +2040,22 @@ class RustBufferStream
     items
   end
 
+  # The Sequence<T> type for TypeFleetPoolRequest.
+
+  def readSequenceTypeFleetPoolRequest
+    count = unpack_from 4, 'l>'
+
+    raise InternalError, 'Unexpected negative sequence length' if count.negative?
+
+    items = []
+
+    count.times do
+      items.append readTypeFleetPoolRequest
+    end
+
+    items
+  end
+
   # The Sequence<T> type for TypeHttpHeader.
 
   def readSequenceTypeHttpHeader
@@ -2246,6 +2374,7 @@ class RustBufferBuilder
     self.write_TypePool(v.pool)
     self.write_OptionalTypeClaimSpec(v.spec)
     self.write_Optionalstring(v.name)
+    self.write_OptionalMapStringString(v.labels)
   end
 
   # The Record type CreatePoolRequest.
@@ -2299,6 +2428,20 @@ class RustBufferBuilder
     self.write_U32(v.pool_poll_limit)
     self.write_U64(v.claim_poll_interval_ms)
     self.write_U32(v.claim_poll_limit)
+  end
+
+  # The Record type FleetClaims.
+
+  def write_TypeFleetClaims(v)
+    self.write_String(v.fleet_id)
+    self.write_SequenceTypeClaim(v.claims)
+  end
+
+  # The Record type FleetPoolRequest.
+
+  def write_TypeFleetPoolRequest(v)
+    self.write_String(v.pool)
+    self.write_U32(v.replicas)
   end
 
   # The Record type HttpHeader.
@@ -2418,6 +2561,14 @@ class RustBufferBuilder
     self.write_String(v.claim)
     self.write_String(v.name)
     self.write_Sequencestring(v.services)
+  end
+
+  # The Record type ServiceStreamTarget.
+
+  def write_TypeServiceStreamTarget(v)
+    self.write_String(v.url)
+    self.write_String(v.auth_header_name)
+    self.write_String(v.auth_header_value)
   end
 
   # The Record type SignedServiceUrl.
@@ -2583,6 +2734,16 @@ class RustBufferBuilder
 
     items.each do |item|
       self.write_TypeClaim(item)
+    end
+  end
+
+  # The Sequence<T> type for TypeFleetPoolRequest.
+
+  def write_SequenceTypeFleetPoolRequest(items)
+    pack_into(4, 'l>', items.size)
+
+    items.each do |item|
+      self.write_TypeFleetPoolRequest(item)
     end
   end
 
@@ -3211,6 +3372,15 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_access_token,
+    [:uint64, :int8, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_create_fleet_claims,
+    [:uint64, RustBuffer.by_value, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_list_fleet_claims,
+    [:uint64, RustBuffer.by_value, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_presign_image_uploads,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
@@ -3261,6 +3431,9 @@ module UniFFILib
     :uint64
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_service_request,
     [:uint64, RustBuffer.by_value, RustBuffer.by_value, RustBuffer.by_value, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_service_websocket_url,
+    [:uint64, RustBuffer.by_value, RustBuffer.by_value, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_create_signed_service_url,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
@@ -3362,6 +3535,9 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_build,
     [:uint64, RustCallStatus.by_ref],
     RustBuffer.by_value
+  attach_function :uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_labels,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
   attach_function :uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_name,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
@@ -3542,6 +3718,9 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_fn_method_templatebuilder_spec,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
+  attach_function :uniffi_cyclops_sdk_fn_func_fleet_label_key,
+    [RustCallStatus.by_ref],
+    RustBuffer.by_value
   attach_function :uniffi_cyclops_sdk_fn_func_healthy_pool_display_status,
     [RustCallStatus.by_ref],
     RustBuffer.by_value
@@ -3569,6 +3748,9 @@ module UniFFILib
   attach_function :ffi_cyclops_sdk_rustbuffer_reserve,
     [RustBuffer.by_value, :uint64, RustCallStatus.by_ref],
     RustBuffer.by_value
+  attach_function :uniffi_cyclops_sdk_checksum_func_fleet_label_key,
+    [RustCallStatus.by_ref],
+    :uint16
   attach_function :uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status,
     [RustCallStatus.by_ref],
     :uint16
@@ -3600,6 +3782,15 @@ module UniFFILib
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_access_token,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_fleet_claims,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_fleet_claims,
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_presign_image_uploads,
@@ -3653,6 +3844,9 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request,
     [RustCallStatus.by_ref],
     :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_websocket_url,
+    [RustCallStatus.by_ref],
+    :uint16
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_signed_service_url,
     [RustCallStatus.by_ref],
     :uint16
@@ -3696,6 +3890,9 @@ module UniFFILib
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_build,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_labels,
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_name,
@@ -3881,6 +4078,48 @@ end
 
 
 
+  # Record type FleetClaims
+class FleetClaims
+  attr_reader :fleet_id, :claims
+
+  def initialize(fleet_id:, claims:)
+    @fleet_id = fleet_id
+    @claims = claims
+  end
+
+  def ==(other)
+    if @fleet_id != other.fleet_id
+      return false
+    end
+    if @claims != other.claims
+      return false
+    end
+
+    true
+  end
+end
+
+  # Record type FleetPoolRequest
+class FleetPoolRequest
+  attr_reader :pool, :replicas
+
+  def initialize(pool:, replicas:)
+    @pool = pool
+    @replicas = replicas
+  end
+
+  def ==(other)
+    if @pool != other.pool
+      return false
+    end
+    if @replicas != other.replicas
+      return false
+    end
+
+    true
+  end
+end
+
   # Record type ImageUploadFileRequest
 class ImageUploadFileRequest
   attr_reader :digest, :size_bytes, :name
@@ -4058,12 +4297,13 @@ end
 
   # Record type CreateClaimRequest
 class CreateClaimRequest
-  attr_reader :pool, :spec, :name
+  attr_reader :pool, :spec, :name, :labels
 
-  def initialize(pool:, spec:, name: nil)
+  def initialize(pool:, spec:, name: nil, labels: nil)
     @pool = pool
     @spec = spec
     @name = name
+    @labels = labels
   end
 
   def ==(other)
@@ -4074,6 +4314,9 @@ class CreateClaimRequest
       return false
     end
     if @name != other.name
+      return false
+    end
+    if @labels != other.labels
       return false
     end
 
@@ -4487,6 +4730,31 @@ class Sandbox
   end
 end
 
+  # Record type ServiceStreamTarget
+class ServiceStreamTarget
+  attr_reader :url, :auth_header_name, :auth_header_value
+
+  def initialize(url:, auth_header_name:, auth_header_value:)
+    @url = url
+    @auth_header_name = auth_header_name
+    @auth_header_value = auth_header_value
+  end
+
+  def ==(other)
+    if @url != other.url
+      return false
+    end
+    if @auth_header_name != other.auth_header_name
+      return false
+    end
+    if @auth_header_value != other.auth_header_value
+      return false
+    end
+
+    true
+  end
+end
+
   # Record type SignedServiceUrl
 class SignedServiceUrl
   attr_reader :id, :namespace, :claim, :sandbox, :service, :label, :url, :created_at, :expires_at, :revoked_at
@@ -4596,6 +4864,15 @@ class UserApiKey
 
     true
   end
+end
+
+
+
+
+
+def self.fleet_label_key()
+  result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_func_fleet_label_key,)
+  return result.consumeIntoString
 end
 
 
@@ -4829,6 +5106,43 @@ end
     )
     return result.consumeIntoTypeSandbox
   end
+  def access_token(force_refresh)
+        force_refresh = force_refresh ? true : false
+
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
+
+      SdkError,
+
+      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_access_token(uniffi_clone_handle(),(force_refresh ? 1 : 0),RustCallStatus.new),
+
+    )
+    return result.consumeIntoString
+  end
+  def create_fleet_claims(fleet_id, requests)
+        fleet_id = FleetSdk::uniffi_utf8(fleet_id)
+
+        requests = requests
+        RustBuffer.check_lower_SequenceTypeFleetPoolRequest(requests)
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
+      SdkError,
+      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_fleet_claims(uniffi_clone_handle(),RustBuffer.allocFromString(fleet_id),RustBuffer.alloc_from_SequenceTypeFleetPoolRequest(requests),RustCallStatus.new),
+    )
+    return result.consumeIntoTypeFleetClaims
+  end
+  def list_fleet_claims(namespace, fleet_id)
+        namespace = FleetSdk::uniffi_utf8(namespace)
+
+        fleet_id = FleetSdk::uniffi_utf8(fleet_id)
+
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
+
+      SdkError,
+
+      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_fleet_claims(uniffi_clone_handle(),RustBuffer.allocFromString(namespace),RustBuffer.allocFromString(fleet_id),RustCallStatus.new),
+
+    )
+    return result.consumeIntoTypeFleetClaims
+  end
   def presign_image_uploads(request)
         request = request
         RustBuffer.check_lower_TypeImageUploadRequest(request)
@@ -5022,6 +5336,22 @@ end
       UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_service_request(uniffi_clone_handle(),RustBuffer.alloc_from_TypeSandbox(sandbox),RustBuffer.allocFromString(service),RustBuffer.allocFromString(path),RustBuffer.alloc_from_TypeHttpRequest(request),RustCallStatus.new),
     )
     return result.consumeIntoTypeHttpResponse
+  end
+  def service_websocket_url(sandbox, service, path)
+        sandbox = sandbox
+        RustBuffer.check_lower_TypeSandbox(sandbox)
+        service = FleetSdk::uniffi_utf8(service)
+
+        path = FleetSdk::uniffi_utf8(path)
+
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
+
+      SdkError,
+
+      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_service_websocket_url(uniffi_clone_handle(),RustBuffer.alloc_from_TypeSandbox(sandbox),RustBuffer.allocFromString(service),RustBuffer.allocFromString(path),RustCallStatus.new),
+
+    )
+    return result.consumeIntoTypeServiceStreamTarget
   end
   def create_signed_service_url(request)
         request = request
@@ -5320,6 +5650,12 @@ end
   def build()
     result = FleetSdk.rust_call_with_error(SdkBuildError,:uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_build,uniffi_clone_handle(),)
     return result.consumeIntoTypeCreateClaimRequest
+  end
+  def labels(value)
+        value = value.each.with_object({}) { |(k, v), res| res[FleetSdk::uniffi_utf8(k)] = FleetSdk::uniffi_utf8(v) }
+        RustBuffer.check_lower_MapStringString(value)
+    result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_labels,uniffi_clone_handle(),RustBuffer.alloc_from_MapStringString(value))
+    return CreateClaimRequestBuilder.uniffi_allocate(result)
   end
   def name(value)
         value = FleetSdk::uniffi_utf8(value)

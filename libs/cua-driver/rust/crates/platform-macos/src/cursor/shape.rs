@@ -24,7 +24,7 @@ use std::sync::OnceLock;
 
 use cua_driver_core::cursor_shape::{ResizeAxis, SystemCursorShape};
 use objc2::rc::Retained;
-use objc2_app_kit::NSCursor;
+use objc2_app_kit::{NSCursor, NSImage};
 use objc2_foundation::NSData;
 
 /// A cursor's identity: hot spot rounded to whole pixels plus a hash of its
@@ -68,12 +68,27 @@ pub fn appkit_cursors_available() -> bool {
     standard_cursor!(arrowCursor).is_some()
 }
 
+/// `-[NSCursor image]` as an `Option`.
+///
+/// objc2's generated `image()` accessor `expect()`s a non-NULL result and so
+/// aborts the process if AppKit hands back nil -- which it does for a cursor
+/// built from a Window Server description that carries no image. Every read of
+/// the image goes through here so a missing image degrades to `Unknown` or
+/// `None`, never a crash in the embedder.
+fn cursor_image(cursor: &NSCursor) -> Option<Retained<NSImage>> {
+    unsafe { objc2::msg_send_id![cursor, image] }
+}
+
+/// `-[NSImage TIFFRepresentation]` as an `Option`. Nil for an image with no
+/// bitmap representation.
+fn tiff_data(image: &NSImage) -> Option<Retained<NSData>> {
+    unsafe { objc2::msg_send_id![image, TIFFRepresentation] }
+}
+
 fn tiff_bytes(cursor: &NSCursor) -> Option<Vec<u8>> {
-    unsafe {
-        let image = cursor.image();
-        let data: Option<Retained<NSData>> = objc2::msg_send_id![&*image, TIFFRepresentation];
-        data.map(|data| data.bytes().to_vec())
-    }
+    let image = cursor_image(cursor)?;
+    let data = tiff_data(&image)?;
+    Some(unsafe { data.bytes() }.to_vec())
 }
 
 fn fingerprint(cursor: &NSCursor) -> Option<Fingerprint> {
@@ -197,15 +212,22 @@ pub fn current_shape() -> SystemCursorShape {
 
 fn custom_shape(cursor: &NSCursor) -> Option<SystemCursorShape> {
     unsafe {
-        let image = cursor.image();
-        let tiff: Retained<NSData> = objc2::msg_send_id![&*image, TIFFRepresentation];
+        // Every step here can legitimately return nil -- a cursor with no
+        // image, an image with no bitmap representation, bytes AppKit declines
+        // to decode. Each is `Option` + `?` so an unclassifiable cursor falls
+        // back to `Unknown` rather than aborting the host process. `custom_shape`
+        // already returns `Option` for exactly this reason.
+        let image = cursor_image(cursor)?;
+        let tiff = tiff_data(&image)?;
         // NSBitmapImageRep -> PNG. NSBitmapImageFileTypePNG = 4.
-        let rep: Retained<objc2::runtime::AnyObject> = objc2::msg_send_id![
+        let rep: Option<Retained<objc2::runtime::AnyObject>> = objc2::msg_send_id![
             objc2::class!(NSBitmapImageRep),
             imageRepWithData: &*tiff
         ];
-        let empty: Retained<objc2_foundation::NSDictionary> =
+        let rep = rep?;
+        let empty: Option<Retained<objc2_foundation::NSDictionary>> =
             objc2::msg_send_id![objc2::class!(NSDictionary), dictionary];
+        let empty = empty?;
         let png: Option<Retained<NSData>> = objc2::msg_send_id![
             &*rep,
             representationUsingType: 4usize,

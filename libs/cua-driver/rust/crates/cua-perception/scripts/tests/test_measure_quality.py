@@ -242,6 +242,58 @@ class MeasureQualityTests(unittest.TestCase):
                 self.assertEqual(metric["coverage"], {"available": 0, "eligible": 1, "ratio": 0.0})
                 self.assertIsNone(metric["ratio"])
 
+    def test_generic_control_and_icon_families_leave_control_kind_unknown(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = QualityFixture(Path(temporary))
+            for engine, kind in (("rust", "control"), ("python", "icon")):
+                results = fixture.results(engine)
+                image = results["images"][0]
+                image["regions"] = [
+                    {"kind": kind, "bounds": {"x": 8, "y": 30, "width": 30, "height": 20}},
+                ]
+                fixture.write_results(engine, results)
+
+            report = measure_quality.build_report(
+                fixture.manifest_path, fixture.root / "rust.json", fixture.root / "python.json"
+            )
+            rust_quality = report["engines"]["rust"]["quality"]
+            python_quality = report["engines"]["python"]["quality"]
+            self.assertEqual(rust_quality, python_quality)
+            self.assertEqual(rust_quality["expected_control_recall"], {"matched": 1, "expected": 2, "ratio": 0.5})
+            self.assertEqual(rust_quality["control_kind_accuracy"], {
+                "status": "unavailable", "correct": 0, "matched": 1, "evaluated": 0,
+                "coverage": {"available": 0, "eligible": 1, "ratio": 0.0}, "ratio": None,
+            })
+
+    def test_center_containment_does_not_match_when_iou_is_below_threshold(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = QualityFixture(Path(temporary))
+            for engine in ("rust", "python"):
+                results = fixture.results(engine)
+                results["images"][0]["regions"] = [
+                    {
+                        "kind": "text",
+                        "bounds": {"x": 0, "y": 0, "width": 100, "height": 80},
+                        "text": "Save",
+                    },
+                    {
+                        "kind": "icon",
+                        "bounds": {"x": 0, "y": 0, "width": 100, "height": 80},
+                        "control_kind": "button",
+                    },
+                ]
+                fixture.write_results(engine, results)
+
+            report = measure_quality.build_report(
+                fixture.manifest_path, fixture.root / "rust.json", fixture.root / "python.json"
+            )
+            quality = report["engines"]["rust"]["quality"]
+            self.assertEqual(quality["expected_control_recall"], {"matched": 0, "expected": 2, "ratio": 0.0})
+            self.assertEqual(quality["ocr_target_string_recall"], {"matched": 0, "expected": 2, "ratio": 0.0})
+            self.assertEqual(quality["text_detection_iou"]["count"], 0)
+            self.assertEqual(quality["control_detection_iou"]["count"], 0)
+            self.assertEqual(quality["false_positives"], {"count": 2, "text": 1, "control": 1})
+
     def test_distinct_ocr_conversion_and_runtime_artifacts_are_comparable(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             fixture = QualityFixture(Path(temporary))

@@ -42,9 +42,13 @@ Each image must contain exactly one cold sample followed by exactly one warm
 sample. RSS is sampled every 5 ms for the single worker process; it does not
 include descendants and may miss peaks between samples.
 Confidence and duplicate detections do not affect matching. Expected and
-predicted regions are compatible when either geometric center lies in the
-other half-open box. OCR additionally requires the manifest's case-sensitive,
-outer-whitespace-trimmed target string. No quality threshold is implied.
+predicted regions are compatible when their intersection over union is at least
+0.5. OCR additionally requires the manifest's case-sensitive,
+outer-whitespace-trimmed target string. Result kinds describe detection
+families: both ``control`` and ``icon`` are control detections. Neither family
+implies a manifest control subtype; only an explicit ``control_kind`` is scored,
+and a missing subtype is reported as unknown through metric coverage. No
+release quality threshold is implied.
 """
 
 from __future__ import annotations
@@ -66,6 +70,7 @@ MAX_IMAGES = 10_000
 MAX_REGIONS_PER_IMAGE = 100_000
 MAX_SAMPLES_PER_IMAGE = 10_000
 SHA256_RE = re.compile(r"[0-9a-f]{64}")
+MIN_MATCH_IOU = 0.5
 
 
 class MeasurementError(RuntimeError):
@@ -607,15 +612,6 @@ def _center(bounds: tuple[float, float, float, float]) -> tuple[float, float]:
     return x + width / 2.0, y + height / 2.0
 
 
-def _contains(bounds: tuple[float, float, float, float], point: tuple[float, float]) -> bool:
-    x, y, width, height = bounds
-    return x <= point[0] < x + width and y <= point[1] < y + height
-
-
-def _geometrically_compatible(left: tuple[float, float, float, float], right: tuple[float, float, float, float]) -> bool:
-    return _contains(left, _center(right)) or _contains(right, _center(left))
-
-
 def _center_error(left: tuple[float, float, float, float], right: tuple[float, float, float, float]) -> float:
     left_center = _center(left)
     right_center = _center(right)
@@ -630,6 +626,10 @@ def _iou(left: tuple[float, float, float, float], right: tuple[float, float, flo
     intersection = intersection_width * intersection_height
     union = left_width * left_height + right_width * right_height - intersection
     return intersection / union if union else 0.0
+
+
+def _geometrically_compatible(left: tuple[float, float, float, float], right: tuple[float, float, float, float]) -> bool:
+    return _iou(left, right) >= MIN_MATCH_IOU
 
 
 def _maximum_matching(

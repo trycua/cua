@@ -11,6 +11,11 @@ icon-only controls, overlapping OCR/control boxes, an empty surface, and noise.
 top left. It records each image's SHA-256 digest and dimensions, scenario tags,
 and expected text and control annotations. Metric definitions describe how a
 consumer can report results; the corpus intentionally sets no quality floors.
+The canonical scorer matches detections one-to-one at `IoU >= 0.5`. Its result
+kind mapping treats both `control` and `icon` regions as control detections so
+generic Rust regions and Python `cua-som` icon-only output share a denominator,
+but leaves the annotated subtype unknown unless the producer explicitly
+supplies `control_kind`.
 
 Regenerate the checked-in PNGs and manifest with:
 

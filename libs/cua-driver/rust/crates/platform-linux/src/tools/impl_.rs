@@ -759,6 +759,55 @@ fn fold_max_dimension(ceiling: u32, per_call: Option<u32>) -> u32 {
     }
 }
 
+/// The largest window screenshot delivered as-is. The Anthropic API downsizes
+/// any image above ~1.15 megapixels before the model sees it, so a 1568x861
+/// PNG reached the model as ~1447x795 while the driver still mapped its x/y
+/// as 1568x861: every pixel click landed a uniform 0.94x short. Capping here
+/// keeps "pixels of THIS screenshot" true for the image the model reads.
+const WINDOW_SCREENSHOT_MAX_PIXELS: u64 = 1_150_000;
+
+/// The long edge a `w`x`h` image must shrink to so that it holds at most
+/// `max_pixels` pixels; `None` when it already fits.
+fn megapixel_long_edge_cap(w: u32, h: u32, max_pixels: u64) -> Option<u32> {
+    let pixels = u64::from(w) * u64::from(h);
+    if w == 0 || h == 0 || pixels <= max_pixels {
+        return None;
+    }
+    let long = w.max(h) as f64;
+    let short = w.min(h) as f64;
+    let mut edge = (long * (max_pixels as f64 / pixels as f64).sqrt()).floor() as u32;
+    // The resizer rounds both sides; step down until the rounded image fits.
+    while edge > 1 {
+        let scale = edge as f64 / long;
+        let fits = ((long * scale).round() as u64) * ((short * scale).round() as u64) <= max_pixels;
+        if fits {
+            break;
+        }
+        edge -= 1;
+    }
+    Some(edge)
+}
+
+#[cfg(test)]
+mod megapixel_cap_tests {
+    use super::{megapixel_long_edge_cap, WINDOW_SCREENSHOT_MAX_PIXELS};
+
+    #[test]
+    fn a_window_shot_above_the_api_threshold_is_capped_below_it() {
+        let edge = megapixel_long_edge_cap(1568, 861, WINDOW_SCREENSHOT_MAX_PIXELS).expect("capped");
+        let scale = edge as f64 / 1568.0;
+        let (w, h) = ((1568.0 * scale).round() as u64, (861.0 * scale).round() as u64);
+        assert!(w * h <= WINDOW_SCREENSHOT_MAX_PIXELS, "{w}x{h}");
+        assert!(edge >= 1440 && edge < 1568, "{edge}");
+    }
+
+    #[test]
+    fn a_shot_within_the_threshold_is_left_alone() {
+        assert_eq!(megapixel_long_edge_cap(1280, 800, WINDOW_SCREENSHOT_MAX_PIXELS), None);
+        assert_eq!(megapixel_long_edge_cap(0, 800, WINDOW_SCREENSHOT_MAX_PIXELS), None);
+    }
+}
+
 /// Build a single structured element entry for `get_window_state`.
 /// Returns `None` when the node has no `element_index` (non-actionable rows).
 /// Window-local frame of a screen-space element rectangle: subtract the X11
@@ -770,6 +819,20 @@ fn window_local_frame(
 ) -> (i32, i32, u32, u32) {
     match origin {
         Some((ox, oy)) => (x - ox, y - oy, w, h),
+        None => (x, y, w, h),
+    }
+}
+
+/// A window-local frame in the pixels of a screenshot downsized by `scale`
+/// (< 1.0); unchanged when the screenshot was delivered at full size.
+fn scale_frame((x, y, w, h): (i32, i32, u32, u32), scale: Option<f64>) -> (i32, i32, u32, u32) {
+    match scale {
+        Some(s) => (
+            (x as f64 * s).round() as i32,
+            (y as f64 * s).round() as i32,
+            (w as f64 * s).round() as u32,
+            (h as f64 * s).round() as u32,
+        ),
         None => (x, y, w, h),
     }
 }
@@ -819,12 +882,18 @@ fn build_element_entry(
 ) -> Option<serde_json::Value> {
     let idx = n.element_index?;
     // `label` mirrors what a human reading the markdown row would call this
-    // element: name first, then value, then description.
+    // element: its name, else its description (Qt keeps a button's tooltip
+    // there: "Play"/"Pause"). Never its value: four spin buttons all labelled
+    // "0.0" cannot be told apart — such a control is `unlabelled` instead,
+    // with its place among its siblings in `description`.
+    let unlabelled = n.name.is_none()
+        && n.description
+            .as_deref()
+            .is_some_and(|d| d.starts_with(crate::atspi::native::UNLABELLED_NOTE_PREFIX));
     let label = n
         .name
         .clone()
-        .or_else(|| n.value.clone())
-        .or_else(|| n.description.clone());
+        .or_else(|| n.description.clone().filter(|_| !unlabelled));
     let mut entry = json!({
         "element_index": idx,
         "role": n.role,
@@ -838,6 +907,9 @@ fn build_element_entry(
     }
     if let Some(label) = label {
         entry["label"] = json!(label);
+    }
+    if unlabelled {
+        entry["unlabelled"] = json!(true);
     }
     // Surface the element's value separately from `label` (which collapses
     // name→value→description): a field with both a name AND typed text would
@@ -874,30 +946,97 @@ fn build_element_entry(
     Some(entry)
 }
 
-/// The menu entries drawn inside a popup of `width`x`height` (frames are
-/// popup-local here). Falls back to the input when nothing matches, so a
-/// popup that is not a menu (a GTK popover without its own frame) still
-/// returns what the walk found.
+/// Roles a popup's rows carry: menu entries, and the list / tree / table
+/// rows of a combo list, a completer or a chooser popover.
+fn popup_item_role(role: &str) -> bool {
+    let role = role.trim().to_ascii_lowercase();
+    role.contains("menu item")
+        || role == "menu"
+        || role.contains("list item")
+        || role.contains("tree item")
+        || role.contains("table cell")
+        || role == "cell"
+        || role == "item"
+        || role == "option"
+}
+
+/// The entries drawn inside a popup of `width`x`height` (frames are
+/// popup-local here). When an indexed container (Qt exposes the combo list
+/// under the combo box inside the dialog) fills the popup, its subtree is
+/// the popup's content; otherwise the item-role elements inside the box.
+/// Falls back to the input when nothing matches, so a popup that is not a
+/// menu (a GTK popover without its own frame) still returns what the walk
+/// found.
 fn popup_menu_elements(
     elements: Vec<serde_json::Value>,
     width: u32,
     height: u32,
 ) -> Vec<serde_json::Value> {
-    let inside = |entry: &serde_json::Value| {
-        let role = entry["role"].as_str().unwrap_or("").to_ascii_lowercase();
+    let frame_inside = |entry: &serde_json::Value| {
         let frame = &entry["frame"];
-        role.contains("menu")
-            && frame.is_object()
+        frame.is_object()
             && frame["x"].as_i64().unwrap_or(-1) >= -2
             && frame["y"].as_i64().unwrap_or(-1) >= -2
             && frame["x"].as_i64().unwrap_or(0) + frame["w"].as_i64().unwrap_or(0) <= width as i64 + 2
             && frame["y"].as_i64().unwrap_or(0) + frame["h"].as_i64().unwrap_or(0) <= height as i64 + 2
     };
-    let menu: Vec<serde_json::Value> = elements.iter().filter(|e| inside(e)).cloned().collect();
-    if menu.is_empty() {
+    let role_of = |entry: &serde_json::Value| entry["role"].as_str().unwrap_or("").to_ascii_lowercase();
+    // A container whose frame covers most of the popup: the list behind a
+    // combo box / completer, the menu behind a context menu.
+    let popup_area = u64::from(width) * u64::from(height);
+    let container = elements
+        .iter()
+        .filter(|entry| frame_inside(entry))
+        .filter(|entry| {
+            let role = role_of(entry);
+            matches!(
+                role.as_str(),
+                "list" | "list box" | "menu" | "tree" | "tree table" | "table" | "panel" | "scroll pane" | "filler"
+            )
+        })
+        .filter(|entry| {
+            let frame = &entry["frame"];
+            let area = frame["w"].as_u64().unwrap_or(0) * frame["h"].as_u64().unwrap_or(0);
+            popup_area > 0 && area * 10 >= popup_area * 6
+        })
+        .max_by_key(|entry| {
+            let frame = &entry["frame"];
+            frame["w"].as_u64().unwrap_or(0) * frame["h"].as_u64().unwrap_or(0)
+        })
+        .and_then(|entry| entry["element_index"].as_u64());
+    if let Some(container) = container {
+        let parent_of: std::collections::HashMap<u64, u64> = elements
+            .iter()
+            .filter_map(|entry| Some((entry["element_index"].as_u64()?, entry["parent_index"].as_u64()?)))
+            .collect();
+        let descends = |mut idx: u64| {
+            for _ in 0..64 {
+                match parent_of.get(&idx) {
+                    Some(parent) if *parent == container => return true,
+                    Some(parent) => idx = *parent,
+                    None => return false,
+                }
+            }
+            false
+        };
+        let subtree: Vec<serde_json::Value> = elements
+            .iter()
+            .filter(|entry| entry["element_index"].as_u64().is_some_and(|idx| idx != container && descends(idx)))
+            .cloned()
+            .collect();
+        if !subtree.is_empty() {
+            return subtree;
+        }
+    }
+    let items: Vec<serde_json::Value> = elements
+        .iter()
+        .filter(|entry| popup_item_role(&role_of(entry)) && frame_inside(entry))
+        .cloned()
+        .collect();
+    if items.is_empty() {
         elements
     } else {
-        menu
+        items
     }
 }
 
@@ -1056,6 +1195,11 @@ impl Tool for GetWindowStateTool {
                 clickable; elements after the cut are simply missing. Retry with a \
                 larger `timeout_ms` (e.g. 5000) or narrow with `query`/`max_depth` \
                 when the element you need is absent.\n\n\
+                SCREENSHOT SCALE: the screenshot is delivered at or below 1.15 megapixels \
+                (long edge <= max_image_dimension, 1568 by default), because larger images \
+                are downsized before a model reads them and its pixel coordinates would then \
+                be uniformly short. Element `frame`s and x/y for the pointer tools are pixels \
+                of the delivered screenshot; `frame_scale` < 1 reports the downsizing.\n\n\
                 POPUP MENUS: a context menu / popover / combo list is an \
                 override-redirect window that list_windows never shows. A click or \
                 right_click that opened one names it in its result (`popup: \
@@ -1296,6 +1440,11 @@ impl Tool for GetWindowStateTool {
                             .unwrap_or(0);
                         let png = crate::capture::resize_png_if_needed(&raw, max_dim)?;
                         let (w, h) = crate::capture::png_dimensions_pub(&png)?;
+                        let png = match megapixel_long_edge_cap(w, h, WINDOW_SCREENSHOT_MAX_PIXELS) {
+                            Some(edge) => crate::capture::resize_png_if_needed(&png, edge)?,
+                            None => png,
+                        };
+                        let (w, h) = crate::capture::png_dimensions_pub(&png)?;
                         let original_w = if w < orig_w { Some(orig_w) } else { None };
                         if let Some(ref path) = screenshot_out_file {
                             std::fs::write(path, &png)?;
@@ -1408,12 +1557,29 @@ impl Tool for GetWindowStateTool {
                     // window (its root-relative origin subtracted), the same
                     // origin `window_bounds` and `coordinate_frame:"desktop"`
                     // translation use.
+                    // A popup (override-redirect) window is not in the WM's
+                    // client list; when its origin cannot be read, the popup's
+                    // own screen rectangle is the origin — otherwise frames
+                    // would stay in screen pixels and the "inside the popup"
+                    // filter below would keep the main window's menubar.
                     let local_origin = (!crate::wayland::is_wayland())
                         .then(|| crate::atspi::native::x11_window_origin(xid))
-                        .flatten();
+                        .flatten()
+                        .or_else(|| popup_meta.as_ref().map(|popup| (popup.x, popup.y)));
+                    // Frames are pixels of THE DELIVERED screenshot: when the
+                    // capture was downsized, the frames shrink with it, so a
+                    // frame centre passed back as x/y (scaled up by the same
+                    // ratio) lands on the element.
+                    let shot_scale = shot_opt
+                        .as_ref()
+                        .and_then(|(_, _, w, _, orig_w)| orig_w.map(|ow| *w as f64 / ow as f64))
+                        .filter(|scale| *scale > 0.0 && *scale < 1.0);
                     let bounds_by_idx: HashMap<usize, (i32, i32, u32, u32)> = bounds
                         .into_iter()
-                        .map(|(i, x, y, w, h)| (i, window_local_frame((x, y, w, h), local_origin)))
+                        .map(|(i, x, y, w, h)| {
+                            let frame = window_local_frame((x, y, w, h), local_origin);
+                            (i, scale_frame(frame, shot_scale))
+                        })
                         .collect();
                     let elements: Vec<serde_json::Value> = tr
                         .nodes
@@ -1530,6 +1696,12 @@ impl Tool for GetWindowStateTool {
                     }
                     structured["screenshot_width"] = json!(w);
                     structured["screenshot_height"] = json!(h);
+                    if let Some(ow) = orig_w {
+                        if ow > 0 {
+                            structured["frame_scale"] = json!(w as f64 / ow as f64);
+                            structured["screenshot_original_width"] = json!(ow);
+                        }
+                    }
                     // Surface 7: mirror the MCP image part's `mimeType` onto
                     // the structured payload so consumers don't have to sniff
                     // magic bytes off the base64 to know the format.
@@ -1579,8 +1751,11 @@ impl Tool for GetWindowStateTool {
                 structured["frame_note"] = json!(
                     "x/y for click / double_click / right_click / drag / scroll on this \
                      window are pixels of THIS screenshot (window-local, 0..screenshot_width \
-                     x 0..screenshot_height); window_bounds is where it sits on the screen. \
-                     Pass scope:\"desktop\" only for get_desktop_state pixels."
+                     x 0..screenshot_height), as are the element frames; the screenshot is \
+                     kept at or below 1.15 megapixels so the image you read is the image these \
+                     pixels index (frame_scale < 1 says the window was downsized to it). \
+                     window_bounds is where it sits on the screen. Pass scope:\"desktop\" only \
+                     for get_desktop_state pixels."
                 );
 
                 // The capture-only path (include_accessibility_tree:false) leaves
@@ -3138,6 +3313,46 @@ enum KeyRoute {
     Terminal,
 }
 
+/// Background key delivery that honours a keyboard grab held by the target's
+/// own popup (a Qt combo list / completer, a GTK or VCL menu): the X server
+/// drops core key events from any other master keyboard to a client that
+/// holds an active keyboard grab, so the virtual master keyboard route would
+/// be silently lost; the core keyboard (XTest) reaches the grab holder, which
+/// is the target itself, without any focus change.
+fn background_virtual_key(
+    cursor_id: &str,
+    pid: u32,
+    xid: u64,
+    key: &str,
+    modifiers: &[&str],
+) -> anyhow::Result<crate::input::KeyboardDeliveryReport> {
+    if let Some(popup) = crate::input::popup_of_pid(pid) {
+        return crate::input::send_keys_under_popup_grab(pid, popup, || {
+            crate::input::send_key_xtest(key, modifiers)
+        });
+    }
+    crate::input::send_virtual_keyboard_key(cursor_id, xid, key, modifiers)
+}
+
+/// Text counterpart of [`background_virtual_key`].
+fn background_virtual_text(
+    cursor_id: &str,
+    pid: u32,
+    xid: u64,
+    text: &str,
+) -> anyhow::Result<crate::input::KeyboardDeliveryReport> {
+    if let Some(popup) = crate::input::popup_of_pid(pid) {
+        return crate::input::send_keys_under_popup_grab(pid, popup, || {
+            crate::input::send_type_text_xtest(text)
+        });
+    }
+    crate::input::send_virtual_keyboard_text(cursor_id, xid, text)
+}
+
+fn is_popup_keyboard_grab(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<crate::input::PopupKeyboardGrab>().is_some()
+}
+
 /// Deliver a background key/chord: prefer the focus-free real-input route
 /// (MPX virtual master keyboard) when the host supports it, otherwise the
 /// legacy synthetic XSendEvent. A uinput permission failure is surfaced as is
@@ -3159,7 +3374,7 @@ fn background_key_route(
         // restores the user's focus and reports it (see `focus_guard`).
         let delivered = crate::input::focus_guard::guarded(Some(pid), || {
             grab_focus_for_background(pid, element_index)?;
-            crate::input::send_virtual_keyboard_key(cursor_id, xid, key, modifiers)
+            background_virtual_key(cursor_id, pid, xid, key, modifiers)
         });
         match delivered {
             Ok((mut report, guard)) => {
@@ -3167,6 +3382,7 @@ fn background_key_route(
                 return Ok(KeyRoute::Mpx(report));
             }
             Err(error) if crate::input::is_uinput_unavailable(&error) => return Err(error),
+            Err(error) if is_popup_keyboard_grab(&error) => return Err(error),
             Err(error)
                 if is_grab_focus_failure(&error)
                     || is_gtk_process(pid)
@@ -3240,6 +3456,40 @@ fn attach_focus_guard(
     result
 }
 
+/// After a pointer press: name the grid cell that holds the widget focus now
+/// (LibreOffice reports "D2"), so a one-row miss shows in the click result
+/// instead of after six typed values. Read from the focus-event log only,
+/// so it costs nothing when the press did not land on a grid.
+async fn attach_focused_cell(mut result: ToolResult, pid: u32) -> ToolResult {
+    if result.is_error == Some(true) {
+        return result;
+    }
+    let focused = tokio::task::spawn_blocking(move || crate::atspi::focused_control(pid))
+        .await
+        .ok()
+        .flatten();
+    let Some((role, name)) = focused.filter(|(role, name)| {
+        let role = role.to_ascii_lowercase();
+        (role.contains("cell") || role == "table cell") && !name.trim().is_empty()
+    }) else {
+        return result;
+    };
+    result.content.push(cua_driver_core::protocol::Content::text(format!(
+        "focus: cell {name}"
+    )));
+    let mut structured = result.structured_content.take().unwrap_or_else(|| json!({}));
+    structured["focused_cell"] = json!(name);
+    push_evidence(
+        &mut structured,
+        json!({
+            "kind": "native_api_result",
+            "detail": format!("the accessible holding the focus after the press is {role} \"{name}\""),
+        }),
+    );
+    result.structured_content = Some(structured);
+    result
+}
+
 /// Append an `evidence[]` item to a structured payload (the public action
 /// contract keeps `evidence`, while flat diagnostic fields are reduced away).
 fn push_evidence(structured: &mut Value, item: Value) {
@@ -3268,10 +3518,9 @@ fn key_route_result(action: &str, route: KeyRoute, mode_label: &str) -> ToolResu
             structured["delivery_mode"] = json!(mode_label);
             structured["effect"] = json!("unverifiable");
             let mut text = format!(
-                "{action} as real key events through a virtual master keyboard \
-                 (delivery_mode={mode_label}, path={}, focus untouched); not verified — \
+                "{action} as real key events {} (delivery_mode={mode_label}); not verified — \
                  confirm with a screenshot.",
-                crate::input::MPX_UINPUT_PATH
+                report.route_phrase()
             );
             let closed_target = report
                 .focus_guard
@@ -3523,6 +3772,15 @@ impl PointerRoute {
                 }
                 evidence.extend(guard.evidence_item());
             }
+            if let Some(foreign) = &effect.foreign_window {
+                v["foreign_window"] = foreign.to_json();
+                if foreign.changed() {
+                    evidence.push(json!({
+                        "kind": "window_change",
+                        "detail": foreign.describe(),
+                    }));
+                }
+            }
             if let Some(cover) = &effect.retargeted_to {
                 v["retargeted_to"] = json!({
                     "window_id": cover.window,
@@ -3539,7 +3797,7 @@ impl PointerRoute {
             if !evidence.is_empty() {
                 v["evidence"] = json!(evidence);
             }
-            if effect.landed() {
+            if effect.landed() || effect.foreign_window.as_ref().is_some_and(|f| f.changed()) {
                 v["verified"] = json!(true);
                 v["effect"] = json!("confirmed");
             }
@@ -3573,6 +3831,10 @@ impl PointerRoute {
                      (retargeted_to), so the press went to that window.",
                     cover.window, cover.title
                 ));
+            }
+            if let Some(foreign) = &effect.foreign_window {
+                text.push(' ');
+                text.push_str(&foreign.describe());
             }
             if let Some(guard) = &effect.focus_guard {
                 text.push_str(&guard.summary());
@@ -3799,6 +4061,28 @@ fn linux_input_error(error: anyhow::Error) -> ToolResult {
             "covering_title": occluded.covering_title,
             "covering_pid": occluded.covering_pid,
             "screen_point": [occluded.x, occluded.y],
+            "hint": hint,
+        }));
+    }
+    if let Some(grab) = error.downcast_ref::<crate::input::PopupKeyboardGrab>() {
+        let hint = format!(
+            "Keys for pid {} cannot be delivered while its {} is open: the popup's keyboard \
+             grab drops keys from the virtual keyboard, and the core keyboard would go to the \
+             focused application instead. Dismiss the popup first (click outside it, or \
+             click an item in it with pid/window_id={}), or click the popup's item by \
+             element_index after get_window_state(pid={}, window_id={}); then retry.",
+            grab.pid,
+            grab.popup.describe(),
+            grab.popup.window,
+            grab.pid,
+            grab.popup.window
+        );
+        return ToolResult::error(format!("{grab}. {hint}")).with_structured(json!({
+            "code": "popup_keyboard_grab",
+            "effect": "refused",
+            "verified": false,
+            "popup": grab.popup.to_json(),
+            "focus_owner_pid": grab.focus_owner,
             "hint": hint,
         }));
     }
@@ -5582,6 +5866,9 @@ impl Tool for ClickTool {
                 re-snapshot every turn before clicking.\n\n\
                 After a zoom call, pass from_zoom=true to auto-translate zoom-image coords \
                 back to full-window space.\n\n\
+                `count`: 1 (default), 2 for a double-click, 3 for a triple-click (selects a \
+                line / paragraph in editors) — one press train with real double-click cadence, \
+                in background and foreground alike; there is no separate triple_click tool.\n\n\
                 button: \"left\" (default), \"right\", or \"middle\". Defaults to left so the \
                 field is fully back-compat. X11: routes through XSendEvent ButtonPress/Release \
                 with the matching button code. Native Wayland: only left-button is supported \
@@ -5608,7 +5895,7 @@ impl Tool for ClickTool {
                     // [left,right,middle]); kept inline to carry the Linux/Wayland
                     // back-compat prose the click button-schema test asserts on.
                     "button":{"type":"string","enum":["left","right","middle"],"description":"Mouse button. Default: \"left\" (legacy back-compat). X11: routed via ButtonPress/Release with the matching evdev code. Native Wayland: only left-button is supported via the virtual-pointer protocol; right/middle return an error."},
-                    "count":{"type":"integer"},
+                    "count":{"type":"integer","minimum":1,"description":"Number of clicks in one press train: 1 (default), 2 = double-click, 3 = triple-click (line/paragraph selection)."},
                     "modifier": cua_driver_core::tool_schema::modifier_schema(),
                     "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."},
                     "scope":{"type":"string","enum":["window","desktop"],"default":"window"},
@@ -6088,11 +6375,17 @@ impl Tool for ClickTool {
                 // The MPX route reports its cheap post-checks (screen region
                 // around the element, focus untouched); the other routes stay
                 // unverifiable and the caller confirms via screenshot.
-                Ok(Ok(route)) => ToolResult::text(format!(
-                    "Clicked element [{idx}] (pid {pid}) with a real pointer click {}",
-                    route.text_suffix(mode_label)
-                ))
-                .with_structured(route.structured(mode_label)),
+                Ok(Ok(route)) => {
+                    attach_focused_cell(
+                        ToolResult::text(format!(
+                            "Clicked element [{idx}] (pid {pid}) with a real pointer click {}",
+                            route.text_suffix(mode_label)
+                        ))
+                        .with_structured(route.structured(mode_label)),
+                        pid,
+                    )
+                    .await
+                }
                 Ok(Err(e)) => input_error_result(e.context("AT-SPI element click failed")),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
@@ -6439,6 +6732,7 @@ impl Tool for ClickTool {
             Ok(Err(e)) => input_error_result(e),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         };
+        let outcome = attach_focused_cell(outcome, pid).await;
         with_pixel_points(outcome, pixel_screen_point, (xi, yi))
     }
 }
@@ -7337,13 +7631,14 @@ fn background_text_route(
         return Ok(None);
     }
     match crate::input::focus_guard::guarded(Some(pid), || {
-        crate::input::send_virtual_keyboard_text(cursor_id, xid, text)
+        background_virtual_text(cursor_id, pid, xid, text)
     }) {
         Ok((mut report, guard)) => {
             report.focus_guard = guard;
             Ok(Some(KeyRoute::Mpx(report)))
         }
         Err(error) if crate::input::is_uinput_unavailable(&error) => Err(error),
+        Err(error) if is_popup_keyboard_grab(&error) => Err(error),
         Err(error) => {
             tracing::warn!(pid, "MPX keyboard text delivery failed: {error}");
             Err(error.context("virtual master keyboard delivery failed"))
@@ -7356,16 +7651,15 @@ fn type_text_mpx_result(
     text_len: usize,
     report: crate::input::KeyboardDeliveryReport,
 ) -> ToolResult {
-    let mut structured = type_text_structured(crate::input::MPX_UINPUT_PATH, text_len, false);
+    let mut structured = type_text_structured(report.path, text_len, false);
     for (key, value) in report.to_json().as_object().into_iter().flatten() {
         structured[key] = value.clone();
     }
     structured["delivery_mode"] = json!("background");
     let mut text = format!(
-        "Typed {text_len} character(s) as real key events through a virtual master \
-         keyboard (delivery_mode=background, path={}, focus untouched); not verified — \
-         confirm with a screenshot.",
-        crate::input::MPX_UINPUT_PATH
+        "Typed {text_len} character(s) as real key events {} (delivery_mode=background); \
+         not verified — confirm with a screenshot.",
+        report.route_phrase()
     );
     if !report.skipped_characters.is_empty() {
         text.push_str(&format!(
@@ -8446,9 +8740,9 @@ impl Tool for SetValueTool {
                 let (_, guard) = crate::input::focus_guard::guarded(Some(pid), || {
                     x11_pixel_click_no_focus_steal(&cursor_id, win, lx as i32, ly as i32, 1, 1)?;
                     std::thread::sleep(std::time::Duration::from_millis(80));
-                    crate::input::send_virtual_keyboard_key(&cursor_id, win, "a", &["ctrl"])?;
-                    crate::input::send_virtual_keyboard_text(&cursor_id, win, &value_for_keys)?;
-                    crate::input::send_virtual_keyboard_key(&cursor_id, win, "Tab", &[])?;
+                    background_virtual_key(&cursor_id, pid, win, "a", &["ctrl"])?;
+                    background_virtual_text(&cursor_id, pid, win, &value_for_keys)?;
+                    background_virtual_key(&cursor_id, pid, win, "Tab", &[])?;
                     Ok(())
                 })?;
                 Ok(guard)
@@ -13766,6 +14060,39 @@ mod visibility_tests {
             .collect();
         assert_eq!(kept, vec![2]);
         assert_eq!(popup_menu_elements(elements[..1].to_vec(), 200, 400).len(), 1);
+    }
+
+    #[test]
+    fn a_combo_popup_returns_the_rows_of_the_list_that_fills_it() {
+        // Qt: the combo list lives under the combo box inside the dialog; the
+        // main window's menubar entries are elsewhere on the screen.
+        let elements = vec![
+            json!({"element_index": 1, "role": "menu", "label": "Audio", "frame": {"x": -600, "y": -300, "w": 50, "h": 20}}),
+            json!({"element_index": 7, "role": "list", "frame": {"x": 1, "y": 1, "w": 198, "h": 118}}),
+            json!({"element_index": 8, "role": "list item", "label": "Desktop", "parent_index": 7, "frame": {"x": 2, "y": 2, "w": 190, "h": 22}}),
+            json!({"element_index": 9, "role": "list item", "label": "user", "parent_index": 7, "frame": {"x": 2, "y": 26, "w": 190, "h": 22}}),
+            json!({"element_index": 12, "role": "push button", "label": "Open", "frame": {"x": 20, "y": 20, "w": 60, "h": 20}}),
+        ];
+        let kept: Vec<u64> = popup_menu_elements(elements, 200, 120)
+            .iter()
+            .map(|e| e["element_index"].as_u64().unwrap())
+            .collect();
+        assert_eq!(kept, vec![8, 9]);
+    }
+
+    #[test]
+    fn a_list_popup_without_an_indexed_container_keeps_its_item_rows_only() {
+        let elements = vec![
+            json!({"element_index": 1, "role": "menu", "label": "Audio", "frame": {"x": 1, "y": 1, "w": 50, "h": 20}}),
+            json!({"element_index": 8, "role": "list item", "label": "Desktop", "frame": {"x": 2, "y": 2, "w": 190, "h": 22}}),
+            json!({"element_index": 9, "role": "tree item", "label": "user", "frame": {"x": 2, "y": 26, "w": 190, "h": 22}}),
+            json!({"element_index": 12, "role": "push button", "label": "Open", "frame": {"x": 20, "y": 20, "w": 60, "h": 20}}),
+        ];
+        let kept: Vec<u64> = popup_menu_elements(elements, 200, 120)
+            .iter()
+            .map(|e| e["element_index"].as_u64().unwrap())
+            .collect();
+        assert_eq!(kept, vec![1, 8, 9]);
     }
 
     #[test]

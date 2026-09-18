@@ -2881,7 +2881,18 @@ fn key_route_result(action: &str, route: KeyRoute, mode_label: &str) -> ToolResu
                  confirm with a screenshot.",
                 crate::input::MPX_UINPUT_PATH
             );
-            if !report.virtual_focus_held || !report.delivery_confirmed {
+            let closed_target = report
+                .focus_guard
+                .as_ref()
+                .is_some_and(|guard| guard.closed_window.is_some());
+            if closed_target && report.delivery_confirmed {
+                // The key closed the window that held the focus (Escape /
+                // Return on a dialog): the lost virtual focus is the effect,
+                // and the window change is evidence the contract publishes.
+                structured["effect"] = json!("confirmed");
+                structured["verified"] = json!(true);
+                text.push_str(" The window that held the focus closed after the key.");
+            } else if !report.virtual_focus_held || !report.delivery_confirmed {
                 structured["effect"] = json!("suspected_noop");
                 text.push_str(
                     " Warning: the target lost the virtual keyboard's focus or the server \

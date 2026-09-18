@@ -130,6 +130,15 @@ impl X {
             .filter(|w| *w != 0 && *w != self.root)
     }
 
+    /// The window still exists and is mapped (a destroyed dialog fails both).
+    fn window_viewable(&self, window: Window) -> bool {
+        self.conn
+            .get_window_attributes(window)
+            .ok()
+            .and_then(|c| c.reply().ok())
+            .is_some_and(|a| a.map_state == MapState::VIEWABLE)
+    }
+
     fn parent(&self, window: Window) -> Option<Window> {
         let tree = self.conn.query_tree(window).ok()?.reply().ok()?;
         (tree.parent != 0 && tree.parent != self.root).then_some(tree.parent)
@@ -340,17 +349,24 @@ pub struct FocusGuardReport {
     /// The target application opened (and possibly focused) one of its own
     /// windows; the guard left it alone.
     pub same_app_window: Option<SameAppWindow>,
+    /// The window that held the focus before the action no longer exists
+    /// (the action closed a dialog); there is nothing to restore to, the
+    /// focus went to `same_app_window` / wherever the WM put it.
+    pub closed_window: Option<u64>,
     /// Milliseconds spent watching and restoring after delivery.
     pub elapsed_ms: u64,
 }
 
 impl FocusGuardReport {
-    /// `same_app_dialog` / `restored` / `not_restored` once something moved.
+    /// `window_closed` / `same_app_dialog` / `restored` / `not_restored`
+    /// once something moved.
     pub fn outcome(&self) -> Option<&'static str> {
         if !self.changed {
             return None;
         }
-        Some(if self.same_app_window.as_ref().is_some_and(|w| w.focused) {
+        Some(if self.closed_window.is_some() {
+            "window_closed"
+        } else if self.same_app_window.as_ref().is_some_and(|w| w.focused) {
             "same_app_dialog"
         } else if self.restored {
             "restored"
@@ -373,6 +389,9 @@ impl FocusGuardReport {
         if let Some(pid) = self.grab_held_by {
             v["grab_held_by"] = serde_json::json!(pid);
         }
+        if let Some(closed) = self.closed_window {
+            v["focus_window_closed"] = serde_json::json!(closed);
+        }
         if let Some(window) = &self.same_app_window {
             v["app_window_opened"] = serde_json::json!({
                 "window_id": window.window,
@@ -384,9 +403,22 @@ impl FocusGuardReport {
     }
 
     /// A `window_change` evidence item when the target application mapped or
-    /// focused one of its own windows: the public action contract keeps
-    /// `evidence[]`, while the flat guard fields are reduced away.
+    /// focused one of its own windows, or closed the one holding the focus:
+    /// the public action contract keeps `evidence[]`, while the flat guard
+    /// fields are reduced away.
     pub fn evidence_item(&self) -> Option<serde_json::Value> {
+        if let Some(closed) = self.closed_window {
+            return Some(serde_json::json!({
+                "kind": "window_change",
+                "detail": format!(
+                    "window {closed}, which held the focus, was closed by the action{}",
+                    self.same_app_window
+                        .as_ref()
+                        .map(|w| format!("; the focus moved to {} \"{}\"", w.window, w.title))
+                        .unwrap_or_default()
+                ),
+            }));
+        }
         let window = self.same_app_window.as_ref()?;
         Some(serde_json::json!({
             "kind": "window_change",
@@ -403,6 +435,15 @@ impl FocusGuardReport {
     pub fn summary(&self) -> String {
         let mut s = String::new();
         match (&self.same_app_window, self.changed) {
+            _ if self.closed_window.is_some() => s.push_str(&format!(
+                " The window that held the focus ({}) was closed by this action \
+                 (focus_outcome=window_closed); the focus moved to {}.",
+                self.closed_window.unwrap_or(0),
+                self.same_app_window
+                    .as_ref()
+                    .map(|w| format!("{} \"{}\"", w.window, w.title))
+                    .unwrap_or_else(|| "another window".to_owned())
+            )),
             (Some(window), _) if window.focused => s.push_str(&format!(
                 " The application opened its own window {} \"{}\" and it now holds the \
                  focus (focus_outcome=same_app_dialog, left in place); pid-only \
@@ -490,13 +531,20 @@ impl FocusSnapshot {
             .collect()
     }
 
-    /// The window the desktop focus sits on now (the WM's active window,
-    /// else the core focus).
+    /// The window the desktop focus sits on now (the WM's active window when
+    /// it still exists — `_NET_ACTIVE_WINDOW` lags a destroyed dialog by a
+    /// beat — else the core focus).
     fn current_focus_window(&self, x: &X) -> Option<Window> {
-        x.active_window().or_else(|| {
+        x.active_window().filter(|w| x.window_viewable(*w)).or_else(|| {
             let (focus, _) = x.core_focus();
             (focus > 1).then_some(focus)
         })
+    }
+
+    /// The window that held the focus at capture time (active, else core).
+    fn previous_focus_window(&self) -> Option<Window> {
+        self.active
+            .or_else(|| (self.core_focus > 1).then_some(self.core_focus))
     }
 
     /// Watch briefly for a change, restore if one happened, and report.
@@ -574,9 +622,25 @@ impl FocusSnapshot {
         report.changed = true;
         report.changes = changes;
 
+        // The action closed the window that held the focus (Escape / OK on
+        // a dialog): nothing to restore to, the WM already moved on.
+        let focus_window = self.current_focus_window(&x);
+        if let Some(previous) = self
+            .previous_focus_window()
+            .filter(|w| !x.window_viewable(*w))
+        {
+            report.closed_window = Some(u64::from(previous));
+            report.same_app_window = focus_window.map(|w| SameAppWindow {
+                window: u64::from(w),
+                title: x.window_title(w),
+                focused: true,
+            });
+            report.elapsed_ms = started.elapsed().as_millis() as u64;
+            return report;
+        }
+
         // Same-app rule: the focus stayed inside the target application
         // (it opened a dialog). Leave it and say so.
-        let focus_window = self.current_focus_window(&x);
         let new_owner = focus_window.and_then(|w| x.owner_pid(w));
         if target_owns_focus
             && classify_focus_move(target_pid, self.previous_owner, new_owner)
@@ -697,6 +761,7 @@ mod tests {
             changes: vec!["focus 0x1->0x2".into()],
             grab_held_by: Some(42),
             same_app_window: None,
+            closed_window: None,
             elapsed_ms: 7,
         };
         let json = report.to_json();
@@ -734,6 +799,7 @@ mod tests {
                 title: "Brightness-Contrast".into(),
                 focused: true,
             }),
+            closed_window: None,
             elapsed_ms: 3,
         };
         let json = report.to_json();
@@ -765,6 +831,29 @@ mod tests {
         assert!(report.outcome().is_none());
         assert!(report.summary().contains("Format Cells"));
         assert!(report.evidence_item().is_some());
+    }
+
+    #[test]
+    fn a_closed_focus_holder_is_window_closed_evidence_not_a_failed_restore() {
+        let report = FocusGuardReport {
+            changed: true,
+            restored: false,
+            changes: vec!["focus 0x2->0x1".into()],
+            closed_window: Some(2),
+            same_app_window: Some(SameAppWindow {
+                window: 1,
+                title: "GNU Image Manipulation Program".into(),
+                focused: true,
+            }),
+            ..FocusGuardReport::default()
+        };
+        assert_eq!(report.outcome(), Some("window_closed"));
+        assert_eq!(report.to_json()["focus_outcome"], "window_closed");
+        assert_eq!(report.to_json()["focus_window_closed"], 2);
+        let evidence = report.evidence_item().unwrap();
+        assert!(evidence["detail"].as_str().unwrap().contains("closed"));
+        assert!(report.summary().contains("window_closed"));
+        assert!(!report.summary().contains("not_restored"));
     }
 
     #[test]

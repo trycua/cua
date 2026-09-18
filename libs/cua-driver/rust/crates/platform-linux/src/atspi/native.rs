@@ -375,6 +375,10 @@ struct Visited<'a> {
     /// widget exists in the tree but is not on screen (a hidden button, a
     /// widget on an unmapped page). Unknown state sets count as showing.
     showing: bool,
+    /// Children this walk deliberately did not enumerate: the items of a
+    /// menu that is not open (every closed LibreOffice menu would otherwise
+    /// put ~500 frameless entries ahead of the document).
+    collapsed_children: Option<usize>,
     actions: Vec<String>,
     has_editable: bool,
     has_value: bool,
@@ -1035,6 +1039,10 @@ async fn collect_visited_bounded<'a>(
         }
     }
     let mut stack: Vec<(RawObjectRef, usize, bool, usize)> = ordered.into_iter().rev().collect();
+    // Direct children of a `menu bar`: a top-level menu whose popup is not
+    // open keeps its child count but is not descended into.
+    let mut menubar_children: std::collections::HashSet<(String, String)> =
+        std::collections::HashSet::new();
 
     let mut visited: Vec<Visited<'a>> = Vec::new();
     let mut identity_owners = std::collections::HashMap::new();
@@ -1084,7 +1092,6 @@ async fn collect_visited_bounded<'a>(
             stack.push((oref, depth, inherited_web_doc, frame_ordinal));
             break;
         }
-        budget -= 1;
         // WebKitGTK publishes its embedded page on a distinct WebProcess
         // D-Bus peer and can expose blank role names for the entire subtree.
         // The peer identity is therefore the reliable document boundary when
@@ -1223,6 +1230,11 @@ async fn collect_visited_bounded<'a>(
             .as_ref()
             .and_then(|state| state.as_ref().ok())
             .is_none_or(|state| is_showing_state(state));
+        let expanded = state_r
+            .as_ref()
+            .and_then(|state| state.as_ref().ok())
+            .is_some_and(|state| state.contains(State::Expanded));
+        let under_menubar = menubar_children.remove(&(oref.name.clone(), oref.path.clone()));
         let selected = if role_lower.contains("check") {
             checked
         } else if role_lower.contains("radio")
@@ -1303,9 +1315,25 @@ async fn collect_visited_bounded<'a>(
         // Honor max_depth (#22865): skip enqueueing descendants whose depth
         // would exceed the cap.
         let descend = max_depth.map(|d| depth + 1 <= d).unwrap_or(true);
-        if descend {
+        // A menu that is not open (a menubar entry that is not expanded, or
+        // any menu that is not showing) keeps its child count and is not
+        // walked: its items are hidden, never indexed, and cost a round-trip
+        // each. Open menus (expanded / showing popup contents) still descend.
+        let closed_menu = role_lower == "menu" && (!showing || (under_menubar && !expanded));
+        let mut collapsed_children = None;
+        if descend && closed_menu {
+            if let Some(Ok(children)) = &children_r {
+                collapsed_children = Some(children.len());
+            }
+        }
+        if descend && !closed_menu {
             match children_r {
                 Some(Ok(children)) => {
+                    if role_lower == "menu bar" {
+                        for c in &children {
+                            menubar_children.insert((c.name.clone(), c.path.clone()));
+                        }
+                    }
                     for c in children.into_iter().rev() {
                         stack.push((c, depth + 1, child_in_web_doc, frame_ordinal));
                     }
@@ -1315,6 +1343,21 @@ async fn collect_visited_bounded<'a>(
             }
         }
 
+        // Only nodes the caller can act on count against `max_elements`, so
+        // a budget of N returns N elements rather than N visited containers.
+        if showing
+            && is_indexable_capabilities(
+                &role,
+                !actions.is_empty(),
+                has_editable,
+                has_value,
+                selectable,
+                has_component,
+                enabled,
+            )
+        {
+            budget -= 1;
+        }
         visited.push(Visited {
             depth,
             role,
@@ -1325,6 +1368,7 @@ async fn collect_visited_bounded<'a>(
             selected,
             selectable,
             showing,
+            collapsed_children,
             actions,
             has_editable,
             has_value,
@@ -1432,8 +1476,12 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
                 Some(val) if !val.is_empty() => format!(" value=\"{val}\""),
                 _ => String::new(),
             };
+            let collapsed_note = v
+                .collapsed_children
+                .map(|n| format!(" (closed menu, {n} items; click it to open)"))
+                .unwrap_or_default();
             md.push_str(&format!(
-                "{indent}- [{idx}] {role} \"{name}\"{val_part} [actions=[{act_str}]]\n",
+                "{indent}- [{idx}] {role} \"{name}\"{val_part} [actions=[{act_str}]]{collapsed_note}\n",
                 role = v.role,
                 name = v.name,
             ));
@@ -1449,7 +1497,9 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
                 checked: v.checked,
                 enabled: v.enabled,
                 selected: v.selected,
-                description: None,
+                description: v
+                    .collapsed_children
+                    .map(|n| format!("closed menu with {n} items; not expanded: click it to open")),
                 actions: v.actions.clone(),
                 element_key: idx as u64,
                 identity: v.identity.clone(),
@@ -2551,6 +2601,9 @@ pub fn invoke_menu_path_in(pid: u32, xid: u64, path: &[String]) -> Result<()> {
                         }
                     }
                 }
+                if matches.len() > 1 {
+                    matches = dedupe_menu_matches(&visited, matches);
+                }
                 let target_index = match matches.as_slice() {
                     [index] => *index,
                     [] => anyhow::bail!("menu path segment {depth} was not found"),
@@ -2587,6 +2640,36 @@ pub fn invoke_menu_path_in(pid: u32, xid: u64, path: &[String]) -> Result<()> {
         },
         || Err(anyhow!("invoke_menu timed out for pid {pid}")),
     )
+}
+
+/// Several nodes matched one menu path segment inside the scoped frame.
+/// LibreOffice publishes its menubar twice per document frame (the VCL
+/// menubar and its accessible mirror), so the same item shows up under two
+/// parents: prefer the SHOWING instances, then collapse nodes that share one
+/// D-Bus object path, and when what is left still carries one role and name
+/// take the first (they are the same menu).
+fn dedupe_menu_matches(visited: &[Visited<'_>], matches: Vec<usize>) -> Vec<usize> {
+    let showing: Vec<usize> = matches
+        .iter()
+        .copied()
+        .filter(|index| visited[*index].showing)
+        .collect();
+    let mut candidates = if showing.is_empty() { matches } else { showing };
+    let mut seen = std::collections::HashSet::new();
+    candidates.retain(|index| {
+        let node = &visited[*index];
+        seen.insert((node.object_ref.bus.clone(), node.object_ref.path.clone()))
+    });
+    if candidates.len() > 1 {
+        let first = &visited[candidates[0]];
+        let same = candidates
+            .iter()
+            .all(|index| visited[*index].role == first.role && visited[*index].name == first.name);
+        if same {
+            candidates.truncate(1);
+        }
+    }
+    candidates
 }
 
 pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
@@ -2630,11 +2713,18 @@ pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
                 .await
                 .map_err(|e| anyhow!("Action unavailable: {e}"))?;
             let action = target.actions.get(chosen).cloned().unwrap_or_default();
-            match call(ap.do_action(chosen as i32)).await {
-                Some(Ok(_)) => {}
+            // `doAction` answers a bool: `false` is the toolkit declining the
+            // request (LibreOffice VCL menus answer it for a closed menu), not
+            // a delivered click, so it is reported as a suspected no-op.
+            let rejected = match call(ap.do_action(chosen as i32)).await {
+                Some(Ok(accepted)) => !accepted,
                 Some(Err(e)) => return Err(anyhow!("doAction failed: {e}")),
-                None => dlog!("doAction dispatched but not acknowledged in time"),
-            }
+                None => {
+                    dlog!("doAction dispatched but not acknowledged in time");
+                    false
+                }
+            };
+            let suspected_noop = suspected_noop || rejected;
             // AT-SPI's doAction acknowledgement can precede the renderer's
             // queued DOM mutation. Give WebKit/Chromium one short event-loop
             // turn before returning success so a caller's immediate external
@@ -2742,17 +2832,23 @@ pub fn perform_action_ref(object_ref: &ObjectRef) -> Result<(String, bool)> {
             let chosen = activation_index(&role, &actions).ok_or_else(|| {
                 anyhow!("element does not advertise a safe activation action")
             })?;
-            match call(ap.do_action(chosen as i32)).await {
-                Some(Ok(_)) => {}
+            let rejected = match call(ap.do_action(chosen as i32)).await {
+                Some(Ok(accepted)) => !accepted,
                 Some(Err(e)) => return Err(anyhow!("doAction failed: {e}")),
                 // The request was delivered; a GTK item whose action opens a
                 // dialog (nested main loop) only replies once that dialog
                 // closes. Treat the timeout as dispatched-but-unconfirmed:
                 // falling back to another route would fire the item twice.
-                None => dlog!("doAction dispatched but not acknowledged in time"),
-            }
+                None => {
+                    dlog!("doAction dispatched but not acknowledged in time");
+                    false
+                }
+            };
             tokio::time::sleep(Duration::from_millis(50)).await;
-            Ok((actions.get(chosen).cloned().unwrap_or_default(), suspected_noop))
+            Ok((
+                actions.get(chosen).cloned().unwrap_or_default(),
+                suspected_noop || rejected,
+            ))
         },
         || Err(anyhow!("perform_action (cached element) timed out")),
     )
@@ -3993,7 +4089,13 @@ pub fn perform_action_at_screen_point(
                 .await
                 .map_err(|e| anyhow!("Action unavailable: {e}"))?;
             match call(ap.do_action(chosen as i32)).await {
-                Some(Ok(_)) => {}
+                Some(Ok(true)) => {}
+                // Declined by the toolkit (a closed VCL menu): no accessible
+                // hit, so the caller falls through to the real pointer press.
+                Some(Ok(false)) => {
+                    dlog!("doAction declined at point; falling through to the pointer route");
+                    return Ok(None);
+                }
                 Some(Err(e)) => return Err(anyhow!("doAction failed: {e}")),
                 None => dlog!("doAction dispatched but not acknowledged in time"),
             }

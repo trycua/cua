@@ -863,6 +863,7 @@ def run_candidate_gates(
                 f"executed {gate} gate failed with exit {result.returncode}: "
                 f"{result.stderr.decode(errors='replace')[:500]}"
             )
+        validate_candidate_gate_output(gate, result.stdout, manifest["version"])
         executed.append({
             "gate": gate,
             "arguments": arguments,
@@ -886,6 +887,40 @@ def run_candidate_gates(
     if evidence_path is not None:
         canonical_json(evidence_path, evidence)
     return evidence
+
+
+def validate_candidate_gate_output(gate: str, stdout: bytes, extension_version: str) -> None:
+    try:
+        output = json.loads(stdout)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise CandidateError(f"executed {gate} gate returned invalid JSON: {error}") from error
+    if not isinstance(output, dict):
+        raise CandidateError(f"executed {gate} gate returned a non-object response")
+    if gate == "mismatch-rejection":
+        if output != {"mismatch_rejection": True}:
+            raise CandidateError("executed mismatch-rejection gate did not prove hash rejection")
+        return
+    if output.get("protocol") != "cua-perception/1" or output.get("status") != "ok":
+        raise CandidateError(f"executed {gate} gate returned an unsuccessful protocol response")
+    result = output.get("result")
+    if not isinstance(result, dict):
+        raise CandidateError(f"executed {gate} gate omitted its result object")
+    identity = result.get("identity")
+    extension = identity.get("extension") if isinstance(identity, dict) else None
+    expected_identity = {"id": "cua-perception", "version": extension_version}
+    if extension != expected_identity:
+        raise CandidateError(
+            f"executed {gate} gate reported extension identity {extension!r}; "
+            f"expected {expected_identity!r}"
+        )
+    if gate == "health" and result.get("ready") is not True:
+        raise CandidateError("executed health gate did not report ready=true")
+    if gate == "self-test" and result.get("passed") is not True:
+        raise CandidateError("executed self-test gate did not report passed=true")
+    if gate == "real-parse":
+        regions = result.get("regions")
+        if not isinstance(regions, list) or not regions:
+            raise CandidateError("executed real-parse gate did not return any real regions")
 
 
 def verify_checksums(checksum_path: Path) -> None:

@@ -30,7 +30,18 @@ def digest(data: bytes) -> str:
 def fixture(tmp_path: Path) -> tuple[Path, Path]:
     payload = tmp_path / "payload-root"
     values = {
-        "payload/worker": b"#!/bin/sh\n[ -f fail-gates ] && exit 7\ncase \"$1\" in --health|--self-test|--real-parse-self-test|--mismatch-rejection-self-test) exit 0;; *) exit 2;; esac\n",
+        "payload/worker": b'''#!/bin/sh
+[ -f fail-gates ] && exit 7
+version="$5"
+[ -f wrong-identity ] && version="9.9.9"
+case "$1" in
+  --health) printf '{"protocol":"cua-perception/1","status":"ok","result":{"ready":true,"identity":{"extension":{"id":"cua-perception","version":"%s"}}}}\n' "$version";;
+  --self-test) printf '{"protocol":"cua-perception/1","status":"ok","result":{"passed":true,"identity":{"extension":{"id":"cua-perception","version":"%s"}}}}\n' "$version";;
+  --real-parse-self-test) printf '{"protocol":"cua-perception/1","status":"ok","result":{"regions":[{"id":"fixture-region"}],"identity":{"extension":{"id":"cua-perception","version":"%s"}}}}\n' "$version";;
+  --mismatch-rejection-self-test) printf '{"mismatch_rejection":true}\n';;
+  *) exit 2;;
+esac
+''',
         "payload/libonnxruntime.so": b"runtime-v1\n",
         "payload/NOTICE": b"Apache-2.0 notice\n",
         "payload/model.onnx": b"model\n",
@@ -445,6 +456,13 @@ def test_release_gates_execute_worker_instead_of_trusting_reports(tmp_path: Path
     assert json.loads(evidence_path.read_text()) == evidence
     (payload / "fail-gates").write_text("fail\n")
     with pytest.raises(release.CandidateError, match="executed health gate failed"):
+        release.run_candidate_gates(manifest_path, payload)
+
+
+def test_release_gates_reject_worker_identity_outside_signed_manifest(tmp_path: Path) -> None:
+    payload, manifest_path = fixture(tmp_path)
+    (payload / "wrong-identity").write_text("wrong\n")
+    with pytest.raises(release.CandidateError, match="reported extension identity"):
         release.run_candidate_gates(manifest_path, payload)
 
 

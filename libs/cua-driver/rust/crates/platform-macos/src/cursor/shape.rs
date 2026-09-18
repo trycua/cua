@@ -284,14 +284,24 @@ mod tests {
         assert!(standard_table().is_empty());
     }
 
-    /// The fingerprint must discriminate. Runs only where AppKit answers; it
-    /// asserts nothing when it cannot, and `probe_degrades_to_unknown_without_appkit`
-    /// is what covers that case.
+    /// The fingerprint must discriminate: if arrow and I-beam hashed alike,
+    /// every shape would collapse to one value and the probe would be a
+    /// confident liar.
+    ///
+    /// `#[ignore]` because this needs a live `NSApplication`, which the Rust
+    /// test harness does not provide. It is marked rather than early-returned
+    /// so CI reports it as *ignored* instead of *passed*: a test that returns
+    /// before its first assertion still prints "ok", which reads as coverage
+    /// that does not exist. Run it on an AppKit-hosted machine with
+    /// `cargo test -p platform-macos -- --ignored`.
     #[test]
+    #[ignore = "requires a live NSApplication; run with --ignored on an AppKit host"]
     fn fingerprint_distinguishes_arrow_from_ibeam() {
-        if !appkit_cursors_available() {
-            return;
-        }
+        assert!(
+            appkit_cursors_available(),
+            "this test was run without AppKit; it can only assert anything \
+             where the standard cursor singletons are available"
+        );
         let (Some(arrow), Some(ibeam)) =
             (standard_cursor!(arrowCursor), standard_cursor!(IBeamCursor))
         else {

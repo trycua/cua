@@ -1298,6 +1298,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-perception"
+version = "0.28.2"
+dependencies = [
+ "base64",
+ "image",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "cursor-overlay"
 version = "0.28.2"
 dependencies = [

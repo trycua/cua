@@ -1,0 +1,120 @@
+name: "CI: cua-s1"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua-s1/**"
+      - ".github/workflows/ci-cua-s1.yml"
+  pull_request:
+    paths:
+      - "libs/cua-s1/**"
+      - ".github/workflows/ci-cua-s1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Lint, test, and train smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CUA_TELEMETRY_ENABLED: "false"
+      HF_DATASETS_OFFLINE: "1"
+      HF_HUB_OFFLINE: "1"
+      PYTHONHASHSEED: "0"
+      TRANSFORMERS_OFFLINE: "1"
+      WANDB_MODE: disabled
+    defaults:
+      run:
+        working-directory: libs/cua-s1/python
+
+    steps:
+      - name: Check out Cua
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: libs/cua-s1/python/uv.lock
+
+      - name: Install test dependencies
+        run: uv sync --frozen --extra pdf --group test
+
+      - name: Check formatting and lint
+        run: |
+          uv run --frozen ruff format --check src tests ../evals ../training
+          uv run --frozen ruff check src tests ../evals ../training
+
+      - name: Check package imports
+        run: |
+          uv run --frozen python - <<'PY'
+          import cua_s1
+          from cua_s1 import checkpoint, model, pdf, schema, synth
+
+          assert cua_s1.__version__
+          assert all((checkpoint, model, pdf, schema, synth))
+          PY
+
+      - name: Run unit tests without model downloads
+        run: uv run --frozen pytest -q
+
+      - name: Run deterministic CPU training smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          smoke_root="$RUNNER_TEMP/cua-s1-training-smoke"
+          data_dir="$smoke_root/data"
+
+          uv run --frozen python -m cua_s1.synth \
+            --output "$data_dir" \
+            --episodes 48 \
+            --seed 2026 \
+            --train-ratio 0.5 \
+            --validation-ratio 0.25 \
+            --test-ratio 0.25
+          test -s "$data_dir/train.jsonl"
+          test -s "$data_dir/validation.jsonl"
+
+          for replay in first second; do
+            uv run --frozen python ../training/train.py train "$data_dir/train.jsonl" \
+              --validation "$data_dir/validation.jsonl" \
+              --output "$smoke_root/$replay" \
+              --encoder tiny \
+              --width 8 \
+              --rank 4 \
+              --context-tokens 32 \
+              --option-tokens 16 \
+              --epochs 1 \
+              --batch-size 256 \
+              --workers 0 \
+              --device cpu \
+              --seed 7
+          done
+
+          SMOKE_ROOT="$smoke_root" uv run --frozen python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          import torch
+
+          from cua_s1.checkpoint import load_checkpoint_files
+
+          root = Path(os.environ["SMOKE_ROOT"])
+          first_state, first_config, first_metadata = load_checkpoint_files(root / "first")
+          second_state, second_config, second_metadata = load_checkpoint_files(root / "second")
+
+          assert first_config == second_config
+          assert first_metadata == second_metadata
+          assert first_state.keys() == second_state.keys()
+          assert all(torch.equal(first_state[name], second_state[name]) for name in first_state)
+
+          first_document = json.loads((root / "first/config.json").read_text(encoding="utf-8"))
+          second_document = json.loads((root / "second/config.json").read_text(encoding="utf-8"))
+          assert first_document == second_document
+          PY

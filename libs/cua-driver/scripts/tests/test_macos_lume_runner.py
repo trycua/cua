@@ -309,7 +309,9 @@ def test_tcc_guest_seed_sql_executes_against_modern_tcc_schema(tmp_path: Path) -
 
 def test_tcc_guest_seed_requires_certificate_backed_requirement_by_default() -> None:
     text = SEED_TCC_GUEST.read_text(encoding="utf-8")
-    assert '[[ "${ALLOW_ADHOC}" != 1 && "${REQUIREMENT}" != *"certificate leaf"* ]]' in text
+    assert '[[ "${ALLOW_ADHOC}" != 1 ]]' in text
+    assert "^Signature=adhoc$" in text
+    assert 'certificate (leaf|root) = H"[[:xdigit:]]{40}"' in text
     assert "is not signed with a certificate-backed identity" in text
 
 

@@ -11,10 +11,10 @@ use cua_driver_contract::{
     GetDesktopStateInput, GetScreenSizeInput, GetSessionInput, GetSessionStateInput,
     GetWindowStateInput, HotkeyInput, InvokeMenuInput, ListAppsInput, ListAppsOutput,
     ListSessionsInput, ListSessionsOutput, ListWindowsInput, ListWindowsOutput, MoveCursorInput,
-    PressKeyInput, ScrollInput, SessionOutput, SessionStateOutput, SetAgentCursorEnabledInput,
-    SetAgentCursorMotionInput, SetAgentCursorThemeInput, SetWindowFrameInput, SnapshotImage,
-    StartSessionInput, StartSessionOutput, ToolInput, ToolOutput, TypeTextInput, VerifyStateInput,
-    VerifyStateOutput, WindowStateOutput,
+    ParseVisualRegionsInput, PressKeyInput, ScrollInput, SessionOutput, SessionStateOutput,
+    SetAgentCursorEnabledInput, SetAgentCursorMotionInput, SetAgentCursorThemeInput,
+    SetWindowFrameInput, SnapshotImage, StartSessionInput, StartSessionOutput, ToolInput,
+    ToolOutput, TypeTextInput, VerifyStateInput, VerifyStateOutput, WindowStateOutput,
 };
 use cua_driver_core::daemon::{
     is_daemon_listening, request_daemon_metadata, send_request, socket_path_for_namespace,
@@ -641,6 +641,7 @@ macro_rules! desktop_tool_methods {
             get_screen_size: GetScreenSizeInput,
             get_cursor_position: GetCursorPositionInput,
             verify_state: VerifyStateInput,
+            parse_visual_regions: ParseVisualRegionsInput,
             move_cursor: MoveCursorInput,
             set_window_frame: SetWindowFrameInput,
             invoke_menu: InvokeMenuInput,
@@ -1982,6 +1983,7 @@ mod snapshot_lifecycle_tests;
 mod tests {
     mod native_windows;
     use super::*;
+    use cua_driver_contract::{ParseVisualRegionsOutput, VisualParseError};
     #[cfg(unix)]
     use std::io::{BufRead, BufReader, Write};
     #[cfg(unix)]
@@ -2783,6 +2785,75 @@ mod tests {
         assert_eq!(request["args"], serde_json::json!({"session": "run-1"}));
         assert_eq!(request["observation_origin"], "direct");
         assert_eq!(request["client_kind"], "python_sdk");
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn visual_parse_call_preserves_success_and_error_dtos() {
+        let mut output: Value = serde_json::from_str(include_str!(
+            "../../cua-driver-contract/tests/fixtures/parse-visual-regions-output-full-v1.json"
+        ))
+        .unwrap();
+        output["capture"]["capture_id"] = "capture-123".into();
+        let response = serde_json::json!({
+            "ok": true,
+            "result": {
+                "content": [{"type": "text", "text": "parsed"}],
+                "structuredContent": output,
+                "isError": false
+            }
+        });
+        let (_directory, socket, server) = serve_once(response);
+        let driver =
+            CuaDriver::connect_with_client_kind(Some(socket), SdkClientKind::Typescript).unwrap();
+        let result = driver
+            .parse_visual_regions(ParseVisualRegionsInput {
+                capture_id: "capture-123".into(),
+                options: cua_driver_contract::ParseVisualRegionsOptions::default(),
+            })
+            .await
+            .unwrap();
+        let structured = result.structured_json.as_deref().unwrap();
+        let decoded: ParseVisualRegionsOutput = serde_json::from_str(structured).unwrap();
+        decoded.validate().unwrap();
+        assert_eq!(decoded.schema, "cua.visual_regions_v1");
+        assert_eq!(decoded.capture.capture_id, "capture-123");
+        let request = server.join().unwrap();
+        assert_eq!(request["name"], "parse_visual_regions");
+        assert_eq!(
+            request["args"],
+            serde_json::json!({"capture_id": "capture-123", "options": {}})
+        );
+        assert_eq!(request["client_kind"], "typescript_sdk");
+
+        let response = serde_json::json!({
+            "ok": true,
+            "result": {
+                "content": [{"type": "text", "text": "not installed"}],
+                "structuredContent": {
+                    "code": "not_installed",
+                    "message": "the optional cua-perception extension is not installed",
+                    "retryable": false
+                },
+                "isError": true
+            }
+        });
+        let (_directory, socket, server) = serve_once(response);
+        let driver = CuaDriver::connect(Some(socket)).unwrap();
+        let result = driver
+            .parse_visual_regions(ParseVisualRegionsInput {
+                capture_id: "capture-123".into(),
+                options: cua_driver_contract::ParseVisualRegionsOptions::default(),
+            })
+            .await
+            .unwrap();
+        assert!(result.is_error);
+        assert_eq!(result.error_code.as_deref(), Some("not_installed"));
+        let error: VisualParseError =
+            serde_json::from_str(result.structured_json.as_deref().unwrap()).unwrap();
+        error.validate().unwrap();
+        assert!(!error.retryable);
+        assert_eq!(server.join().unwrap()["name"], "parse_visual_regions");
     }
 
     #[test]

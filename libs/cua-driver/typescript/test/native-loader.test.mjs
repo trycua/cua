@@ -114,7 +114,7 @@ test(
           fixture.on("error", reject)
           fixture.on("message", (message) => {
             if (message.request) requests.push(message.request)
-            if (requests.length === 8) resolve(requests)
+            if (requests.length === 9) resolve(requests)
           })
         }),
     )
@@ -132,6 +132,8 @@ test(
         ClickButton,
         ClickInput,
         CuaDriver,
+        ParseVisualRegionsInput,
+        ParseVisualRegionsOptions,
         StatePredicate,
         VerificationStatus,
         VerifyStateInput,
@@ -168,6 +170,7 @@ test(
         "pressKey",
         "hotkey",
         "verifyState",
+        "parseVisualRegions",
       ]
       assert.equal(
         expectedMethods.every((name) => typeof driver[name] === "function"),
@@ -231,6 +234,12 @@ test(
           return true
         })
       }
+      const visualResult = await driver.parseVisualRegions(
+        ParseVisualRegionsInput.new({
+          captureId: "capture-123",
+          options: ParseVisualRegionsOptions.new({}),
+        }),
+      )
       await requestsPromise
       driver.uniffiDestroy()
 
@@ -241,6 +250,7 @@ test(
       assert.equal(actionResult.verification, undefined)
       assert.equal(actionResult.effect, ActionEffect.Unverifiable)
       assert.equal(actionResult.route, ActionRoute.GlobalInput)
+      assert.equal(JSON.parse(visualResult.structuredJson).schema, "cua.visual_regions_v1")
       assert.equal("verified" in actionResult, false)
       assert.deepEqual(requests[2].args, {})
       assert.deepEqual(requests[3].args, { pid: 42, on_screen_only: true })
@@ -255,6 +265,8 @@ test(
       })
       assert.equal(requests[6].args.element_token, "stale-token")
       assert.equal(requests[7].args.target.window_id, 124)
+      assert.equal(requests[8].name, "parse_visual_regions")
+      assert.deepEqual(requests[8].args, { capture_id: "capture-123" })
       assert.equal(requests[0].name, "verify_state")
       assert.deepEqual(requests[0].args, {
         pid: 123,

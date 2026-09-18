@@ -57,7 +57,15 @@ tempfile = "3"
 libc = "0.2"
 
 # Used by `cursor_sampler::sample_cursor` to poll the OS mouse position
-# during video recording. Same version as platform-windows uses to avoid
-# a duplicate crate version.
+# during video recording, and by `perception_client::containment` for the
+# worker's Job Object. Same version as platform-windows uses to avoid a
+# duplicate crate version.
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.58", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }

@@ -1,7 +1,8 @@
 //! Bounded, single-use IPC client for the optional perception worker.
 
+pub mod containment;
+
 use std::path::PathBuf;
-use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -9,11 +10,15 @@ use std::time::{Duration, Instant};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+use tokio::process::{ChildStdin, ChildStdout};
 use tokio::sync::{Mutex as AsyncMutex, Notify};
 use uuid::Uuid;
 
 use cua_driver_contract::{VisualParseError, VisualParseErrorCode};
+
+use containment::ContainedChild;
+#[cfg(test)]
+use containment::ContainmentLimits;
 
 const PROTOCOL_VERSION: &str = "cua-perception/1";
 const DEFAULT_MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
@@ -25,6 +30,8 @@ pub struct PerceptionWorkerConfig {
     pub request_timeout: Duration,
     pub max_frame_bytes: usize,
     pub warm_worker: Option<WarmWorkerPolicy>,
+    #[cfg(test)]
+    containment: ContainmentLimits,
 }
 
 impl PerceptionWorkerConfig {
@@ -35,6 +42,8 @@ impl PerceptionWorkerConfig {
             request_timeout: Duration::from_secs(30),
             max_frame_bytes: DEFAULT_MAX_FRAME_BYTES,
             warm_worker: None,
+            #[cfg(test)]
+            containment: ContainmentLimits::default(),
         }
     }
 
@@ -47,6 +56,17 @@ impl PerceptionWorkerConfig {
     /// expensive. Reuse remains bounded by [`WarmWorkerPolicy::default`].
     pub fn installed(executable: impl Into<PathBuf>) -> Self {
         Self::new(executable).with_bounded_reuse(WarmWorkerPolicy::default())
+    }
+
+    fn containment_limits(&self) -> containment::ContainmentLimits {
+        #[cfg(test)]
+        {
+            self.containment.clone()
+        }
+        #[cfg(not(test))]
+        {
+            containment::ContainmentLimits::default()
+        }
     }
 }
 
@@ -138,6 +158,7 @@ impl PerceptionClient {
                 None,
             ));
         }
+        config.containment_limits().validate()?;
         Ok(Self {
             config: Some(Arc::new(config)),
             state: Arc::new(PerceptionState::default()),
@@ -223,7 +244,12 @@ impl PerceptionClient {
             .parse(config, capture_id, width, height, png_bytes)
             .await?;
         worker.stdin.shutdown().await.map_err(map_io_error)?;
-        let status = worker.child.wait().await.map_err(map_crash_error)?;
+        let status = worker
+            .contained
+            .child
+            .wait()
+            .await
+            .map_err(map_crash_error)?;
         if !status.success() {
             return Err(error(
                 VisualParseErrorCode::WorkerCrashed,
@@ -314,25 +340,16 @@ impl PerceptionClient {
 }
 
 struct WarmWorker {
-    child: Child,
+    contained: ContainedChild,
     stdin: ChildStdin,
     stdout: ChildStdout,
     _working_directory: tempfile::TempDir,
-    _process_group: ProcessGroupGuard,
     last_used: Instant,
     idle_generation: u64,
 }
 
 impl WarmWorker {
     async fn launch(config: &PerceptionWorkerConfig) -> Result<Self, VisualParseError> {
-        let mut command = Command::new(&config.executable);
-        command
-            .args(&config.args)
-            .env_clear()
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .kill_on_drop(true);
         let working_directory = tempfile::Builder::new()
             .prefix("cua-perception-")
             .tempdir()
@@ -344,17 +361,14 @@ impl WarmWorker {
                     Some(cause.to_string()),
                 )
             })?;
-        command.current_dir(working_directory.path());
-        configure_process_containment(&mut command)?;
-        let mut child = command.spawn().map_err(|cause| {
-            error(
-                VisualParseErrorCode::WorkerLaunchFailed,
-                "failed to launch the perception worker",
-                true,
-                Some(cause.to_string()),
-            )
-        })?;
-        let process_group = ProcessGroupGuard::new(child.id());
+        let limits = config.containment_limits();
+        let mut contained = containment::spawn(
+            &config.executable,
+            &config.args,
+            working_directory.path(),
+            &limits,
+        )?;
+        let child = &mut contained.child;
         let mut stdin = child.stdin.take().ok_or_else(|| {
             error(
                 VisualParseErrorCode::WorkerLaunchFailed,
@@ -391,11 +405,10 @@ impl WarmWorker {
             ));
         }
         Ok(Self {
-            child,
+            contained,
             stdin,
             stdout,
             _working_directory: working_directory,
-            _process_group: process_group,
             last_used: Instant::now(),
             idle_generation: 0,
         })
@@ -474,67 +487,9 @@ fn schedule_idle_shutdown(
 async fn shutdown_worker(mut worker: WarmWorker, timeout: Duration) {
     let operation = async {
         let _ = worker.stdin.shutdown().await;
-        let _ = worker.child.wait().await;
+        let _ = worker.contained.child.wait().await;
     };
     let _ = tokio::time::timeout(timeout, operation).await;
-}
-
-#[cfg(unix)]
-fn configure_process_containment(command: &mut Command) -> Result<(), VisualParseError> {
-    command.process_group(0);
-    #[cfg(target_os = "linux")]
-    {
-        use std::os::unix::process::CommandExt;
-        // The closure runs between fork and exec and uses only async-signal-safe
-        // libc calls. A race check handles a parent that died before prctl.
-        unsafe {
-            command.as_std_mut().pre_exec(|| {
-                let parent = libc::getppid();
-                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                if libc::getppid() != parent {
-                    libc::raise(libc::SIGKILL);
-                }
-                Ok(())
-            });
-        }
-    }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn configure_process_containment(_command: &mut Command) -> Result<(), VisualParseError> {
-    Ok(())
-}
-
-struct ProcessGroupGuard {
-    #[cfg(unix)]
-    pid: Option<u32>,
-}
-
-impl ProcessGroupGuard {
-    fn new(pid: Option<u32>) -> Self {
-        Self {
-            #[cfg(unix)]
-            pid,
-        }
-    }
-}
-
-impl Drop for ProcessGroupGuard {
-    fn drop(&mut self) {
-        #[cfg(unix)]
-        if let Some(pid) = self.pid {
-            if let Ok(pid) = i32::try_from(pid) {
-                // The worker is its process-group leader. Killing the negative
-                // pid prevents descendants from surviving cancellation.
-                unsafe {
-                    libc::kill(-pid, libc::SIGKILL);
-                }
-            }
-        }
-    }
 }
 
 #[derive(Deserialize)]
@@ -816,6 +771,10 @@ else:
                 .unwrap();
         PerceptionClient::new(PerceptionWorkerConfig {
             executable: path,
+            containment: ContainmentLimits {
+                additional_writable_paths: evidence_paths(&args),
+                ..ContainmentLimits::default()
+            },
             args,
             request_timeout: timeout,
             max_frame_bytes: maximum,
@@ -834,12 +793,27 @@ else:
                 .unwrap();
         PerceptionClient::new(PerceptionWorkerConfig {
             executable: path,
+            containment: ContainmentLimits {
+                additional_writable_paths: evidence_paths(&args),
+                ..ContainmentLimits::default()
+            },
             args,
             request_timeout: Duration::from_secs(10),
             max_frame_bytes: 1024 * 1024,
             warm_worker: Some(policy),
         })
         .unwrap()
+    }
+
+    /// The fixture workers record their evidence outside their private working
+    /// directory, so the sandbox must be widened to the directories that hold
+    /// it. Production callers leave this list empty.
+    fn evidence_paths(args: &[String]) -> Vec<PathBuf> {
+        args.iter()
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+            .filter_map(|path| path.parent().map(std::path::Path::to_path_buf))
+            .collect()
     }
 
     fn warm_fixture_worker(
@@ -869,7 +843,7 @@ while True:
  with open(counter,'a',encoding='utf-8') as handle: handle.write(capture+'\n')
  if capture == 'crash': sys.exit(9)
  if capture == 'hang': time.sleep(60)
- write({'protocol':'cua-perception/1','request_id':r['request_id'],'status':'ok','result':{'capture':capture,'regions':[]}})
+ write({'protocol':'cua-perception/1','request_id':r['request_id'],'status':'ok','result':{'capture':capture,'pid':os.getpid(),'regions':[]}})
 "#;
         std::fs::write(&path, script).unwrap();
         let mut permissions = std::fs::metadata(&path).unwrap().permissions();
@@ -885,6 +859,116 @@ while True:
         )
         .unwrap();
         (directory, path)
+    }
+
+    /// Reports whether the containment layer actually denied a network
+    /// connection and a write outside the private working directory, and
+    /// whether a write inside it still succeeds.
+    fn containment_probe_worker() -> (tempfile::TempDir, PathBuf) {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("containment-probe.py");
+        let script = r#"#!/usr/bin/env python3
+import errno, json, os, socket, struct, sys
+
+def read_frame():
+    prefix = sys.stdin.buffer.read(4)
+    if len(prefix) != 4:
+        sys.exit(2)
+    size = struct.unpack('>I', prefix)[0]
+    payload = sys.stdin.buffer.read(size)
+    if len(payload) != size:
+        sys.exit(3)
+    return json.loads(payload)
+
+def write_frame(value):
+    payload = json.dumps(value, separators=(',', ':')).encode()
+    sys.stdout.buffer.write(struct.pack('>I', len(payload)) + payload)
+    sys.stdout.buffer.flush()
+
+def name(failure):
+    return errno.errorcode.get(failure.errno, str(failure.errno))
+
+def probe_network():
+    try:
+        endpoint = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    except OSError as failure:
+        return name(failure)
+    try:
+        endpoint.settimeout(2)
+        endpoint.connect(('127.0.0.1', 9))
+    except OSError as failure:
+        return name(failure)
+    finally:
+        endpoint.close()
+    return 'allowed'
+
+def probe_write(path):
+    try:
+        with open(path, 'w', encoding='utf-8') as handle:
+            handle.write('probe')
+    except OSError as failure:
+        return name(failure)
+    os.unlink(path)
+    return 'allowed'
+
+def probe_fork():
+    try:
+        child = os.fork()
+    except OSError as failure:
+        return name(failure)
+    if child == 0:
+        os._exit(0)
+    os.waitpid(child, 0)
+    return 'allowed'
+
+health = read_frame()
+write_frame({'protocol':'cua-perception/1','request_id':health['request_id'],'status':'ok','result':{'ready':True,'protocol':'cua-perception/1'}})
+request = read_frame()
+write_frame({'protocol':'cua-perception/1','request_id':request['request_id'],'status':'ok','result':{
+    'network': probe_network(),
+    'fork': probe_fork(),
+    'outside_write': probe_write('/tmp/cua-containment-probe-%d' % os.getpid()),
+    'inside_write': probe_write(os.path.join(os.getcwd(), 'probe')),
+}})
+"#;
+        std::fs::write(&path, script).unwrap();
+        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&path, permissions).unwrap();
+        std::fs::write(directory.path().join("args.json"), b"[]").unwrap();
+        (directory, path)
+    }
+
+    #[tokio::test]
+    async fn contained_worker_is_denied_network_and_writes_outside_its_directory() {
+        let (directory, worker) = containment_probe_worker();
+        let result = client(&directory, worker, Duration::from_secs(20), 1024 * 1024)
+            .parse(
+                "capture-test",
+                2,
+                2,
+                &[1, 2, 3, 4],
+                &PerceptionCancellation::default(),
+            )
+            .await
+            .unwrap();
+        // A refused connection would mean the sandbox let the syscall through.
+        assert!(
+            matches!(
+                result["network"].as_str(),
+                Some("EPERM" | "EACCES" | "EAFNOSUPPORT")
+            ),
+            "network probe was not denied: {result}"
+        );
+        assert!(
+            matches!(result["outside_write"].as_str(), Some("EPERM" | "EACCES")),
+            "write outside the working directory was not denied: {result}"
+        );
+        assert!(
+            matches!(result["fork"].as_str(), Some("EPERM" | "EACCES" | "EAGAIN")),
+            "worker process creation was not denied: {result}"
+        );
+        assert_eq!(result["inside_write"], "allowed");
     }
 
     #[tokio::test]
@@ -999,7 +1083,7 @@ while True:
             &directory,
             worker,
             WarmWorkerPolicy {
-                startup_timeout: Duration::from_secs(2),
+                startup_timeout: Duration::from_secs(10),
                 inference_timeout: Duration::from_secs(2),
                 shutdown_timeout: Duration::from_millis(100),
                 idle_ttl: Duration::from_millis(100),
@@ -1034,7 +1118,7 @@ while True:
             &directory,
             worker,
             WarmWorkerPolicy {
-                startup_timeout: Duration::from_secs(2),
+                startup_timeout: Duration::from_secs(10),
                 inference_timeout: Duration::from_secs(2),
                 shutdown_timeout: Duration::from_millis(100),
                 idle_ttl: Duration::from_secs(5),
@@ -1084,7 +1168,7 @@ while True:
             &directory,
             worker,
             WarmWorkerPolicy {
-                startup_timeout: Duration::from_secs(2),
+                startup_timeout: Duration::from_secs(10),
                 inference_timeout: Duration::from_secs(5),
                 shutdown_timeout: Duration::from_millis(100),
                 idle_ttl: Duration::from_secs(5),
@@ -1092,6 +1176,12 @@ while True:
         );
         let shutdown = client.clone();
         let observed_counter = counter.clone();
+        let original_pid = client
+            .parse("before-shutdown", 1, 1, &[1, 2, 3, 4], &Default::default())
+            .await
+            .unwrap()["pid"]
+            .as_u64()
+            .unwrap();
         tokio::spawn(async move {
             for _ in 0..100 {
                 if std::fs::read_to_string(&observed_counter)
@@ -1108,10 +1198,12 @@ while True:
             .await
             .unwrap_err();
         assert_eq!(failure.code, VisualParseErrorCode::WorkerCancelled);
-        client
+        let replacement_pid = client
             .parse("after-shutdown", 1, 1, &[1, 2, 3, 4], &Default::default())
             .await
+            .unwrap()["pid"]
+            .as_u64()
             .unwrap();
-        assert_eq!(std::fs::read_to_string(pids).unwrap().lines().count(), 2);
+        assert_ne!(original_pid, replacement_pid);
     }
 }

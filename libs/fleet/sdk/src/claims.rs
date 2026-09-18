@@ -69,7 +69,7 @@ impl CyclopsClient {
             metadata: ResourceMetadata {
                 namespace: pool.metadata.namespace.clone(),
                 name,
-                labels: None,
+                labels: request.labels.filter(|labels| !labels.is_empty()),
                 creation_timestamp: None,
             },
             spec,

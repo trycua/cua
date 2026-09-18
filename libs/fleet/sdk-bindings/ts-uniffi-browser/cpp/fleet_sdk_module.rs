@@ -63,6 +63,17 @@ extern "C" {
     ) -> u64;
     fn uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim(ptr: u64, claim: u::RustBuffer)
         -> u64;
+    fn uniffi_cyclops_sdk_fn_method_cyclopsclient_access_token(ptr: u64, force_refresh: i8) -> u64;
+    fn uniffi_cyclops_sdk_fn_method_cyclopsclient_create_fleet_claims(
+        ptr: u64,
+        fleet_id: u::RustBuffer,
+        requests: u::RustBuffer,
+    ) -> u64;
+    fn uniffi_cyclops_sdk_fn_method_cyclopsclient_list_fleet_claims(
+        ptr: u64,
+        namespace: u::RustBuffer,
+        fleet_id: u::RustBuffer,
+    ) -> u64;
     fn uniffi_cyclops_sdk_fn_method_cyclopsclient_presign_image_uploads(
         ptr: u64,
         request: u::RustBuffer,
@@ -128,6 +139,12 @@ extern "C" {
         service: u::RustBuffer,
         path: u::RustBuffer,
         request: u::RustBuffer,
+    ) -> u64;
+    fn uniffi_cyclops_sdk_fn_method_cyclopsclient_service_websocket_url(
+        ptr: u64,
+        sandbox: u::RustBuffer,
+        service: u::RustBuffer,
+        path: u::RustBuffer,
     ) -> u64;
     fn uniffi_cyclops_sdk_fn_method_cyclopsclient_create_signed_service_url(
         ptr: u64,
@@ -208,6 +225,11 @@ extern "C" {
         ptr: u64,
         status_: &mut u::RustCallStatus,
     ) -> u::RustBuffer;
+    fn uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_labels(
+        ptr: u64,
+        value: u::RustBuffer,
+        status_: &mut u::RustCallStatus,
+    ) -> u64;
     fn uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_name(
         ptr: u64,
         value: u::RustBuffer,
@@ -462,6 +484,8 @@ extern "C" {
         value: u::RustBuffer,
         status_: &mut u::RustCallStatus,
     ) -> u64;
+    fn uniffi_cyclops_sdk_fn_func_fleet_label_key(status_: &mut u::RustCallStatus)
+        -> u::RustBuffer;
     fn uniffi_cyclops_sdk_fn_func_healthy_pool_display_status(
         status_: &mut u::RustCallStatus,
     ) -> u::RustBuffer;
@@ -601,6 +625,7 @@ extern "C" {
     fn ffi_cyclops_sdk_rust_future_cancel_void(handle: u64);
     fn ffi_cyclops_sdk_rust_future_free_void(handle: u64);
     fn ffi_cyclops_sdk_rust_future_complete_void(handle: u64, status_: &mut u::RustCallStatus);
+    fn uniffi_cyclops_sdk_checksum_func_fleet_label_key() -> u16;
     fn uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status() -> u16;
     fn uniffi_cyclops_sdk_checksum_func_pool_display_status() -> u16;
     fn uniffi_cyclops_sdk_checksum_func_removed_pool_display_status() -> u16;
@@ -612,6 +637,9 @@ extern "C" {
     fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_claims() -> u16;
     fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim() -> u16;
     fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim() -> u16;
+    fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_access_token() -> u16;
+    fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_fleet_claims() -> u16;
+    fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_fleet_claims() -> u16;
     fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_presign_image_uploads() -> u16;
     fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_upload_image_file() -> u16;
     fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_image() -> u16;
@@ -629,6 +657,7 @@ extern "C" {
     fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_pool() -> u16;
     fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_pool() -> u16;
     fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request() -> u16;
+    fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_websocket_url() -> u16;
     fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_signed_service_url() -> u16;
     fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_signed_service_urls() -> u16;
     fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_revoke_signed_service_url() -> u16;
@@ -644,6 +673,7 @@ extern "C" {
     fn uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token() -> u16;
     fn uniffi_cyclops_sdk_checksum_method_httpclient_execute() -> u16;
     fn uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_build() -> u16;
+    fn uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_labels() -> u16;
     fn uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_name() -> u16;
     fn uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_pool() -> u16;
     fn uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_spec() -> u16;
@@ -910,6 +940,43 @@ pub unsafe fn ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim(
     .into_js()
 }
 #[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_access_token(
+    ptr: js::Handle,
+    force_refresh: js::Int8,
+) -> js::Handle {
+    uniffi_cyclops_sdk_fn_method_cyclopsclient_access_token(
+        u64::into_rust(ptr),
+        i8::into_rust(force_refresh),
+    )
+    .into_js()
+}
+#[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_create_fleet_claims(
+    ptr: js::Handle,
+    fleet_id: js::ForeignBytes,
+    requests: js::ForeignBytes,
+) -> js::Handle {
+    uniffi_cyclops_sdk_fn_method_cyclopsclient_create_fleet_claims(
+        u64::into_rust(ptr),
+        u::RustBuffer::into_rust(fleet_id),
+        u::RustBuffer::into_rust(requests),
+    )
+    .into_js()
+}
+#[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_list_fleet_claims(
+    ptr: js::Handle,
+    namespace: js::ForeignBytes,
+    fleet_id: js::ForeignBytes,
+) -> js::Handle {
+    uniffi_cyclops_sdk_fn_method_cyclopsclient_list_fleet_claims(
+        u64::into_rust(ptr),
+        u::RustBuffer::into_rust(namespace),
+        u::RustBuffer::into_rust(fleet_id),
+    )
+    .into_js()
+}
+#[wasm_bindgen]
 pub unsafe fn ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_presign_image_uploads(
     ptr: js::Handle,
     request: js::ForeignBytes,
@@ -1104,6 +1171,21 @@ pub unsafe fn ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_service_request(
         u::RustBuffer::into_rust(service),
         u::RustBuffer::into_rust(path),
         u::RustBuffer::into_rust(request),
+    )
+    .into_js()
+}
+#[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_service_websocket_url(
+    ptr: js::Handle,
+    sandbox: js::ForeignBytes,
+    service: js::ForeignBytes,
+    path: js::ForeignBytes,
+) -> js::Handle {
+    uniffi_cyclops_sdk_fn_method_cyclopsclient_service_websocket_url(
+        u64::into_rust(ptr),
+        u::RustBuffer::into_rust(sandbox),
+        u::RustBuffer::into_rust(service),
+        u::RustBuffer::into_rust(path),
     )
     .into_js()
 }
@@ -1362,6 +1444,23 @@ pub fn ubrn_uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_build(
     let value_ = unsafe {
         uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_build(
             u64::into_rust(ptr),
+            &mut u_status_,
+        )
+    };
+    f_status_.copy_from(u_status_);
+    value_.into_js()
+}
+#[wasm_bindgen]
+pub fn ubrn_uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_labels(
+    ptr: js::Handle,
+    value: js::ForeignBytes,
+    f_status_: &mut js::RustCallStatus,
+) -> js::Handle {
+    let mut u_status_ = u::RustCallStatus::default();
+    let value_ = unsafe {
+        uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_labels(
+            u64::into_rust(ptr),
+            u::RustBuffer::into_rust(value),
             &mut u_status_,
         )
     };
@@ -2259,6 +2358,15 @@ pub fn ubrn_uniffi_cyclops_sdk_fn_method_templatebuilder_spec(
     value_.into_js()
 }
 #[wasm_bindgen]
+pub fn ubrn_uniffi_cyclops_sdk_fn_func_fleet_label_key(
+    f_status_: &mut js::RustCallStatus,
+) -> js::ForeignBytes {
+    let mut u_status_ = u::RustCallStatus::default();
+    let value_ = unsafe { uniffi_cyclops_sdk_fn_func_fleet_label_key(&mut u_status_) };
+    f_status_.copy_from(u_status_);
+    value_.into_js()
+}
+#[wasm_bindgen]
 pub fn ubrn_uniffi_cyclops_sdk_fn_func_healthy_pool_display_status(
     f_status_: &mut js::RustCallStatus,
 ) -> js::ForeignBytes {
@@ -2682,6 +2790,10 @@ pub fn ubrn_ffi_cyclops_sdk_rust_future_complete_void(
     f_status_.copy_from(u_status_);
 }
 #[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_func_fleet_label_key() -> js::UInt16 {
+    uniffi_cyclops_sdk_checksum_func_fleet_label_key().into_js()
+}
+#[wasm_bindgen]
 pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status() -> js::UInt16 {
     uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status().into_js()
 }
@@ -2725,6 +2837,20 @@ pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim(
 #[wasm_bindgen]
 pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim() -> js::UInt16 {
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim().into_js()
+}
+#[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_access_token() -> js::UInt16 {
+    uniffi_cyclops_sdk_checksum_method_cyclopsclient_access_token().into_js()
+}
+#[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_fleet_claims(
+) -> js::UInt16 {
+    uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_fleet_claims().into_js()
+}
+#[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_fleet_claims() -> js::UInt16
+{
+    uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_fleet_claims().into_js()
 }
 #[wasm_bindgen]
 pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_presign_image_uploads(
@@ -2801,6 +2927,11 @@ pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_requ
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request().into_js()
 }
 #[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_websocket_url(
+) -> js::UInt16 {
+    uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_websocket_url().into_js()
+}
+#[wasm_bindgen]
 pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_signed_service_url(
 ) -> js::UInt16 {
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_signed_service_url().into_js()
@@ -2871,6 +3002,11 @@ pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_httpclient_execute() -> js
 pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_build() -> js::UInt16
 {
     uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_build().into_js()
+}
+#[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_labels(
+) -> js::UInt16 {
+    uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_labels().into_js()
 }
 #[wasm_bindgen]
 pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_name() -> js::UInt16

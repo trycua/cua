@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use cyclops_sdk::{
     Claim, CreateClaimRequest, CreatePoolRequest, CyclopsClient, CyclopsConfiguration,
@@ -330,10 +330,16 @@ fn resources_use_canonical_schema_specs_and_statuses() {
     }
 
     fn assert_create_claim_request(request: CreateClaimRequest) {
-        let CreateClaimRequest { pool, spec, name } = request;
+        let CreateClaimRequest {
+            pool,
+            spec,
+            name,
+            labels,
+        } = request;
         assert_pool_types(pool);
         let _: Option<ClaimSpec> = spec;
         let _: Option<String> = name;
+        let _: Option<HashMap<String, String>> = labels;
     }
 
     let _: fn(Claim) = assert_claim_types;
@@ -359,6 +365,7 @@ fn resources_support_equality_and_kubernetes_camel_case_json() {
         pool: pool.clone(),
         spec: Some(claim.spec.clone()),
         name: None,
+        labels: None,
     };
 
     assert_eq!(pool, pool.clone());

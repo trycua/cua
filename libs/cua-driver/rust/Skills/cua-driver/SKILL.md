@@ -78,8 +78,9 @@ Cross-cutting topics also have their own files:
 - `BROWSER.md` — exact native-window binding, explicit browser preparation,
   typed Chromium/Electron page tools, input trust classes, and native
   fallbacks for browser chrome and unsupported engines.
-- `VISUAL.md` — optional visual-region parsing, extension inspection and
-  installation, capture binding, bounded pixel actions, and reobservation.
+- `VISUAL.md` — optional visual-region parsing, separate artifact obligations,
+  extension inspection and installation, one-use capture-bound pixel actions,
+  external chooser boundaries, and reobservation.
 - `RECORDING.md` — session recording + `replay_trajectory`.
 
 Use whichever combination matches the host. When in doubt, run

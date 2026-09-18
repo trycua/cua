@@ -13,6 +13,7 @@
     "connect-your-agent",
     "run-with-local-model",
     "parse-visual-regions",
+    "use-jev-use-with-visual-regions",
     "drive-a-web-page",
     "record-and-render-a-trajectory",
     "keep-running",

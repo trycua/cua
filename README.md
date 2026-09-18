@@ -178,6 +178,11 @@ Third-party components have their own licenses:
   repository content. Model files downloaded from the separate OmniParser model
   repository are distinct artifacts; verify the terms published with the exact
   model revision before redistributing them.
+- The optional `cua-perception` extension is installed separately from the MIT
+  Cua Driver. Its reviewed candidate combines an AGPL-3.0-only OmniParser model
+  artifact, Apache-2.0 PP-OCR model artifacts, and a separately packaged ONNX
+  Runtime. See the [perception third-party notices](libs/cua-driver/docs/perception-third-party-notices.md)
+  before using or redistributing an extension artifact.
 
 ## Trademarks
 

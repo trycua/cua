@@ -7,12 +7,15 @@ interactive, choose an action, or grant permission to act.
 
 This capability is a developer preview delivered by the separately installed
 `cua-perception` extension. It is absent from the default Cua Driver
-installation. The default local Driver remains MIT licensed. The final packaged
-worker and model license set, notices, and source obligations are pending
-packaging and release verification; inspect the exact catalog, manifest, and
-built artifact rather than assuming that the Driver license applies to those
-artifacts. A hosted or Fleet deployment that exposes AGPL-covered perception
-remotely also needs a separately reviewed source-offer path before release.
+installation. The default local Driver remains MIT licensed. The reviewed
+candidate records the OmniParser detector artifact as AGPL-3.0-only and the
+PP-OCR detector and recognizer as Apache-2.0. The packaged ONNX Runtime must
+report its exact version, hash, license, and notices. Inspect the exact catalog,
+manifest, SBOM, source ledger, model ledger, and built artifact rather than
+applying the Driver license to them. Publication remains blocked while the
+OmniParser ledger says `license-review-required`; distribution and remote
+service require the applicable notices, corresponding source/conversion
+material, and AGPL network source path.
 
 ## Inspect before installing
 
@@ -55,7 +58,8 @@ loop. A one-shot CLI tool call owns a disposable runtime, so a later process
 cannot resolve its `capture_id`. Keep the four stages separate within the same
 runtime:
 
-1. Capture the exact window or explicitly authorized desktop. Use a
+1. Capture the exact native window with `get_window_state`, or an explicitly
+   authorized desktop with `get_desktop_state`. Use a
    native-resolution capture when the preview requires it and retain the
    returned `capture_id`, target, dimensions, and action-coordinate mapping.
 2. Call `parse_visual_regions` with that `capture_id` and bounded options. For
@@ -63,7 +67,10 @@ runtime:
 3. Prefer accessibility or typed browser evidence when it identifies the same
    control. If a pixel action is necessary, construct one complete action
    locally from one region, validate that its bounds and target still match the
-   source capture, then dispatch at most one action derived from that capture.
+   source capture, then dispatch one `click` containing `x`, `y`, the exact
+   target, `delivery_mode`, and that same `capture_id`. Never retry a capture
+   refusal without `capture_id`. Dispatch at most one action derived from that
+   capture.
 4. Reobserve after every action attempt, including a timeout, unknown result,
    partial delivery, or suspected no-op. Verify the postcondition from fresh
    state before choosing another action.
@@ -107,3 +114,15 @@ move, scroll, navigation, display-layout change, or target-identity change.
 The worker parses only the admitted screenshot and bounded options. It does not
 own desktop capture, accessibility, browser, input, credential-store, or action
 authority.
+
+Parsing a window does not make its pixel input background-safe. Preserve the
+platform action ladder and exact `background_unavailable` refusal. Foreground
+delivery and desktop input can change focus, workspace, or the system cursor;
+use them only when already authorized for the workflow.
+
+An external chooser, including a `jev-use` recipe, receives a bounded table of
+opaque action IDs rather than open-ended Driver tool access. The caller keeps
+provider setup and credentials outside Driver, validates one returned ID, and
+dispatches the complete prebuilt action unchanged. See [Use jev-use with visual
+regions](https://cua.ai/docs/how-to-guides/driver/use-jev-use-with-visual-regions);
+do not add provider SDK logic or credentials to this skill.

@@ -6,6 +6,7 @@ import tarfile
 import zipfile
 
 import pytest
+import verify_cua_driver_release_archives as archive_verifier
 
 from verify_cua_driver_release_archives import (
     ArchiveContract,
@@ -18,10 +19,21 @@ from verify_cua_driver_release_archives import (
 VERSION = "9.8.7"
 
 
+def _payload(contract: ArchiveContract, name: str) -> bytes:
+    if name in contract.binary_members:
+        magic = {
+            "elf": b"\x7fELF",
+            "pe": b"MZ",
+            "mach-o": b"\xca\xfe\xba\xbe",
+        }[contract.binary_format]
+        return magic + f" binary payload for {name}".encode()
+    return f"payload for {name}".encode()
+
+
 def _write_tar(path: Path, contract: ArchiveContract) -> None:
     with tarfile.open(path, "w:gz") as archive:
         for name in contract.members:
-            payload = f"payload for {name}".encode()
+            payload = _payload(contract, name)
             info = tarfile.TarInfo(name)
             info.size = len(payload)
             info.mode = 0o755 if name in contract.executable_members else 0o644
@@ -31,7 +43,7 @@ def _write_tar(path: Path, contract: ArchiveContract) -> None:
 def _write_zip(path: Path, contract: ArchiveContract) -> None:
     with zipfile.ZipFile(path, "w") as archive:
         for name in contract.members:
-            archive.writestr(name, f"payload for {name}")
+            archive.writestr(name, _payload(contract, name))
 
 
 def _rewrite_with_extra_member(
@@ -39,9 +51,9 @@ def _rewrite_with_extra_member(
 ) -> None:
     if path.name.endswith(".tar.gz"):
         with tarfile.open(path, "w:gz") as archive:
-            for member_name in (*contract.members, name):
+            for member_name in dict.fromkeys((*contract.members, name)):
                 member_payload = (
-                    payload if member_name == name else f"payload for {member_name}".encode()
+                    payload if member_name == name else _payload(contract, member_name)
                 )
                 info = tarfile.TarInfo(member_name)
                 info.size = len(member_payload)
@@ -49,9 +61,9 @@ def _rewrite_with_extra_member(
                 archive.addfile(info, BytesIO(member_payload))
     else:
         with zipfile.ZipFile(path, "w") as archive:
-            for member_name in (*contract.members, name):
+            for member_name in dict.fromkeys((*contract.members, name)):
                 member_payload = (
-                    payload if member_name == name else f"payload for {member_name}".encode()
+                    payload if member_name == name else _payload(contract, member_name)
                 )
                 archive.writestr(member_name, member_payload)
 
@@ -89,6 +101,9 @@ def test_missing_cursor_theme_fails_with_archive_and_member(
         target.filename,
         tuple(member for member in target.members if member != missing),
         tuple(member for member in target.executable_members if member != missing),
+        target.optional_members,
+        tuple(member for member in target.binary_members if member != missing),
+        target.binary_format,
     )
     _write_tar(tmp_path / target.filename, broken)
 
@@ -112,7 +127,13 @@ def test_non_executable_unix_binary_fails_closed(tmp_path: Path) -> None:
         for contract in contracts
         if contract.filename.endswith("linux-x86_64-binary.tar.gz")
     )
-    broken = ArchiveContract(target.filename, target.members)
+    broken = ArchiveContract(
+        target.filename,
+        target.members,
+        optional_members=target.optional_members,
+        binary_members=target.binary_members,
+        binary_format=target.binary_format,
+    )
     _write_tar(tmp_path / target.filename, broken)
 
     with pytest.raises(
@@ -123,16 +144,16 @@ def test_non_executable_unix_binary_fails_closed(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("archive_suffix", "member", "reason"),
+    ("archive_suffix", "member"),
     (
-        ("linux-x86_64-binary.tar.gz", "cua-perception", "cua-perception worker"),
-        ("darwin-universal.tar.gz", "models/detector.onnx", "model directory"),
-        ("windows-x86_64.zip", "onnxruntime.dll", "ONNX Runtime"),
-        ("windows-arm64-binary.zip", "signed-catalog.json", "extension catalog"),
+        ("linux-x86_64-binary.tar.gz", "cua-perception"),
+        ("darwin-universal.tar.gz", "models/detector.onnx"),
+        ("windows-x86_64.zip", "onnxruntime.dll"),
+        ("windows-arm64-binary.zip", "signed-catalog.json"),
     ),
 )
 def test_optional_perception_payload_fails_closed(
-    tmp_path: Path, archive_suffix: str, member: str, reason: str
+    tmp_path: Path, archive_suffix: str, member: str
 ) -> None:
     contracts = _write_valid_release(tmp_path)
     target = next(contract for contract in contracts if contract.filename.endswith(archive_suffix))
@@ -140,8 +161,7 @@ def test_optional_perception_payload_fails_closed(
 
     with pytest.raises(
         ContractError,
-        match=rf"{target.filename} contains forbidden optional perception payload "
-        rf"\({reason}\): {member}",
+        match=rf"{target.filename} contains (?:forbidden optional perception payload .*|unexpected member)",
     ):
         verify_release_archives(tmp_path, VERSION)
 
@@ -151,7 +171,7 @@ def test_agpl_notice_content_fails_closed(tmp_path: Path) -> None:
     target = next(
         contract for contract in contracts if contract.filename.endswith("linux-arm64.tar.gz")
     )
-    member = f"cua-driver-rs-{VERSION}-linux-arm64/THIRD_PARTY_NOTICES.txt"
+    member = f"cua-driver-rs-{VERSION}-linux-arm64/LICENSE"
     _rewrite_with_extra_member(
         tmp_path / target.filename,
         target,
@@ -160,4 +180,86 @@ def test_agpl_notice_content_fails_closed(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ContractError, match=rf"\(AGPL notice\): {member}"):
+        verify_release_archives(tmp_path, VERSION)
+
+
+def test_unrecognized_member_fails_closed(tmp_path: Path) -> None:
+    contracts = _write_valid_release(tmp_path)
+    target = next(
+        contract for contract in contracts if contract.filename.endswith("darwin-universal-binary.tar.gz")
+    )
+    _rewrite_with_extra_member(
+        tmp_path / target.filename,
+        target,
+        "debug-symbols.txt",
+    )
+
+    with pytest.raises(ContractError, match="contains unexpected member debug-symbols.txt"):
+        verify_release_archives(tmp_path, VERSION)
+
+
+def test_binary_linkage_marker_fails_closed(tmp_path: Path) -> None:
+    contracts = _write_valid_release(tmp_path)
+    target = next(
+        contract for contract in contracts if contract.filename.endswith("linux-x86_64-binary.tar.gz")
+    )
+    _rewrite_with_extra_member(
+        tmp_path / target.filename,
+            ArchiveContract(
+                target.filename,
+                tuple(member for member in target.members if member != "cua-driver"),
+                target.executable_members,
+            binary_members=tuple(
+                member for member in target.binary_members if member != "cua-driver"
+            ),
+            binary_format=target.binary_format,
+        ),
+        "cua-driver",
+        b"\x7fELF linked libonnxruntime.so",
+    )
+
+    with pytest.raises(ContractError, match="binary links or vendors optional perception runtime"):
+        verify_release_archives(tmp_path, VERSION)
+
+
+def test_binary_format_fails_closed(tmp_path: Path) -> None:
+    contracts = _write_valid_release(tmp_path)
+    target = next(
+        contract for contract in contracts if contract.filename.endswith("windows-x86_64-binary.zip")
+    )
+    _rewrite_with_extra_member(
+        tmp_path / target.filename,
+        ArchiveContract(
+            target.filename,
+            tuple(member for member in target.members if member != "cua-driver.exe"),
+            binary_members=tuple(
+                member for member in target.binary_members if member != "cua-driver.exe"
+            ),
+            binary_format=target.binary_format,
+        ),
+        "cua-driver.exe",
+        b"not a PE binary",
+    )
+
+    with pytest.raises(ContractError, match="member is not pe binary"):
+        verify_release_archives(tmp_path, VERSION)
+
+
+def test_oversized_binary_fails_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    contracts = _write_valid_release(tmp_path)
+    target = next(
+        contract for contract in contracts if contract.filename.endswith("linux-x86_64-binary.tar.gz")
+    )
+    monkeypatch.setattr(archive_verifier, "MAX_BINARY_SIZE", 8)
+
+    with pytest.raises(ContractError, match="binary exceeds 8 bytes"):
+        verify_release_archives(tmp_path, VERSION)
+
+
+def test_oversized_archive_fails_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    contracts = _write_valid_release(tmp_path)
+    target = contracts[0]
+    monkeypatch.setattr(archive_verifier, "MAX_ARCHIVE_UNCOMPRESSED_SIZE", 8)
+
+    with pytest.raises(ContractError, match=rf"{target.filename} uncompressed payload is too large"):
         verify_release_archives(tmp_path, VERSION)

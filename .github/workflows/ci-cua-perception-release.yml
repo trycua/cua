@@ -5,11 +5,17 @@ on:
     paths:
       - ".github/releases/**"
       - ".github/scripts/perception_release.py"
+      - ".github/scripts/verify_cua_driver_release_archives.py"
+      - ".github/scripts/tests/test_cua_driver_default_distribution.py"
       - ".github/scripts/tests/test_cua_perception_release_topology.py"
+      - ".github/scripts/tests/test_verify_cua_driver_release_archives.py"
       - ".github/workflows/cd-cua-perception-candidate.yml"
+      - ".github/workflows/cd-rust-cua-driver.yml"
       - ".github/workflows/ci-cua-perception-release.yml"
       - ".github/workflows/release-please.yml"
       - "libs/cua-driver/rust/crates/cua-perception/**"
+      - "libs/cua-driver/rust/**/Cargo.toml"
+      - "libs/cua-driver/rust/Cargo.lock"
       - ".release-please-manifest.json"
       - "release-please-config.json"
   push:
@@ -17,9 +23,15 @@ on:
     paths:
       - ".github/releases/**"
       - ".github/scripts/perception_release.py"
+      - ".github/scripts/verify_cua_driver_release_archives.py"
+      - ".github/scripts/tests/test_cua_driver_default_distribution.py"
+      - ".github/scripts/tests/test_verify_cua_driver_release_archives.py"
       - ".github/workflows/cd-cua-perception-candidate.yml"
+      - ".github/workflows/cd-rust-cua-driver.yml"
       - ".github/workflows/ci-cua-perception-release.yml"
       - "libs/cua-driver/rust/crates/cua-perception/**"
+      - "libs/cua-driver/rust/**/Cargo.toml"
+      - "libs/cua-driver/rust/Cargo.lock"
       - ".release-please-manifest.json"
       - "release-please-config.json"
 
@@ -63,7 +75,9 @@ jobs:
         run: |
           python3 .github/scripts/release_channels.py validate
           python3 -m pytest \
+            .github/scripts/tests/test_cua_driver_default_distribution.py \
             .github/scripts/tests/test_cua_perception_release_topology.py \
+            .github/scripts/tests/test_verify_cua_driver_release_archives.py \
             .github/scripts/tests/test_release_channels.py \
             .github/scripts/tests/test_resolve_release_please_request.py \
             .github/scripts/tests/test_merge_release_please_manifests.py
@@ -71,7 +85,8 @@ jobs:
         working-directory: libs/cua-driver/rust
         run: |
           set -euo pipefail
-          if cargo tree --locked -p cua-driver --edges normal,build | grep -q 'cua-perception'; then
+          if cargo tree --locked -p cua-driver --edges normal,build --prefix none | \
+            grep -q '^cua-perception v'; then
             echo "::error::Default Cua Driver dependency graph includes cua-perception"
             exit 1
           fi

@@ -6686,8 +6686,7 @@ impl Tool for SetValueTool {
                     "element_index": cua_driver_core::tool_schema::element_index_schema(),
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
                     "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
-                    "value":{"type":["string","number"],"description":"New value. Written through AT-SPI EditableText/Value when the element exposes them; otherwise (GTK2 spin scales, VCL spin buttons) the field is clicked with the session's real pointer, its text selected and replaced through the virtual keyboard and committed with Tab, then read back."},
-                    "delivery_mode": crate::input::delivery::delivery_mode_schema()
+                    "value":{"type":["string","number"],"description":"New value. Written through AT-SPI EditableText/Value when the element exposes them; otherwise (GTK2 spin scales, VCL spin buttons) the field is clicked with the session's real pointer, its text selected and replaced through the virtual keyboard and committed with Tab, then read back."}
                 },"additionalProperties":false
             }),
             read_only: false, destructive: true, idempotent: false, open_world: true,
@@ -10947,6 +10946,11 @@ impl Tool for InvokeMenuTool {
         // under the focus guard). `delivery_mode:"foreground"` is the explicit
         // escalation that activates the window first, as every other tool.
         let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
+        let mut args = args;
+        if let Some(object) = args.as_object_mut() {
+            // Not part of the closed InvokeMenuInput contract; consumed above.
+            object.remove("delivery_mode");
+        }
         let input: InvokeMenuInput = match parse_typed_input("invoke_menu", args) {
             Ok(input) => input,
             Err(result) => return result,

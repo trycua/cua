@@ -305,19 +305,15 @@ pub(crate) async fn acquire_background_mutation(pid: i32) -> BackgroundMutationL
     }
 }
 
-/// Finish the post-action observation window. Embedded interactive clients
-/// that already observe the target continuously may opt out through the
-/// private registry argument to avoid adding a one-second acknowledgement
-/// delay to every input event. Regular MCP callers retain the full observer.
+/// Finish the post-action observation window. A caller that enumerates windows
+/// itself may opt out with `detect_window_change: false` and keep the up-to-one-
+/// second poll off its action latency; embedded interactive clients opt out
+/// through the private registry argument. Otherwise the full observer runs.
 pub(crate) async fn finish_window_observation(
     snapshot: crate::window_change_detector::Snapshot,
     args: &serde_json::Value,
 ) -> crate::window_change_detector::Changes {
-    if args
-        .get("_skip_window_change_detection")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false)
-    {
+    if window_change_detection_declined(args) {
         drop(snapshot);
         crate::window_change_detector::Changes::no_change()
     } else {
@@ -325,9 +321,37 @@ pub(crate) async fn finish_window_observation(
     }
 }
 
+pub(crate) fn window_change_detection_declined(args: &serde_json::Value) -> bool {
+    args.get("_skip_window_change_detection")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+        || args
+            .get("detect_window_change")
+            .and_then(serde_json::Value::as_bool)
+            .is_some_and(|detect| !detect)
+}
+
 #[cfg(test)]
 mod interactive_observation_tests {
     use super::*;
+
+    #[test]
+    fn only_an_explicit_false_declines_the_window_poll() {
+        assert!(window_change_detection_declined(
+            &serde_json::json!({"detect_window_change": false})
+        ));
+        assert!(window_change_detection_declined(
+            &serde_json::json!({"_skip_window_change_detection": true})
+        ));
+        for accepted in [
+            serde_json::json!({}),
+            serde_json::json!({"detect_window_change": true}),
+            serde_json::json!({"detect_window_change": "false"}),
+            serde_json::json!({"_skip_window_change_detection": false}),
+        ] {
+            assert!(!window_change_detection_declined(&accepted), "{accepted}");
+        }
+    }
 
     #[tokio::test]
     async fn embedded_interactive_input_can_finish_without_polling() {

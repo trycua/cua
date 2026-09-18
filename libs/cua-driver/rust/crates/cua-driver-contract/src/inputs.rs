@@ -79,6 +79,10 @@ fn menu_path_schema(_: &mut SchemaGenerator) -> Schema {
     })
 }
 
+fn bool_schema(generator: &mut SchemaGenerator) -> Schema {
+    bool::json_schema(generator)
+}
+
 fn number_schema(_: &mut SchemaGenerator) -> Schema {
     json_schema!({ "type": "number" })
 }
@@ -621,6 +625,8 @@ pub struct ClickInput {
     pub button: Option<ClickButton>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detect_window_change: Option<bool>,
 }
 
 // Parse the flat wire shape before constructing the sum type: an untagged
@@ -630,6 +636,9 @@ pub struct ClickInput {
 struct ClickWireInput {
     target: ActionTarget,
     delivery_mode: InputDeliveryMode,
+    #[serde(default)]
+    #[schemars(schema_with = "bool_schema")]
+    detect_window_change: Option<bool>,
     #[serde(default, deserialize_with = "present_click_field")]
     #[schemars(schema_with = "number_schema")]
     x: Option<f64>,
@@ -675,6 +684,7 @@ impl TryFrom<ClickWireInput> for ClickInput {
             session: wire.session,
             button: wire.button,
             count: wire.count,
+            detect_window_change: wire.detect_window_change,
         };
         input.validate()?;
         Ok(input)
@@ -759,6 +769,9 @@ pub struct DragInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_list_schema")]
     pub modifier: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "bool_schema")]
+    pub detect_window_change: Option<bool>,
 }
 
 impl ToolInput for DragInput {
@@ -790,6 +803,9 @@ pub struct ScrollInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "scroll_amount_schema")]
     pub amount: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "bool_schema")]
+    pub detect_window_change: Option<bool>,
 }
 
 impl ToolInput for ScrollInput {
@@ -811,6 +827,9 @@ pub struct TypeTextInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub session: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "bool_schema")]
+    pub detect_window_change: Option<bool>,
 }
 
 impl ToolInput for TypeTextInput {
@@ -879,6 +898,9 @@ pub struct PressKeyInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_list_schema")]
     pub modifiers: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "bool_schema")]
+    pub detect_window_change: Option<bool>,
 }
 
 impl ToolInput for PressKeyInput {
@@ -901,6 +923,9 @@ pub struct HotkeyInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub session: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "bool_schema")]
+    pub detect_window_change: Option<bool>,
 }
 
 impl ToolInput for HotkeyInput {
@@ -960,6 +985,7 @@ mod tests {
             session: None,
             button: None,
             count: None,
+            detect_window_change: None,
         };
         assert!(input.validate().is_ok());
         input.position = ClickPosition::Coordinates {

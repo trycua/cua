@@ -76,7 +76,8 @@ fn def() -> &'static ToolDef {
                 "value": {
                     "type": "string",
                     "description": "New value. AX will coerce to the element's native type."
-                }
+                },
+                "detect_window_change": { "type": "boolean", "description": "Default true: after the action the driver polls WindowServer for up to one second so the reply can name a window the action opened. Pass false when you enumerate windows yourself — the poll is then skipped (roughly a second off this call) and the reply carries no opened-window evidence." },
             },
             "additionalProperties": false
         }),
@@ -212,7 +213,7 @@ impl Tool for SetValueTool {
         )
         .await;
 
-        let changes = snapshot.detect_async().await;
+        let changes = super::finish_window_observation(snapshot, &args).await;
 
         match result {
             Ok(Ok(mut outcome)) => {

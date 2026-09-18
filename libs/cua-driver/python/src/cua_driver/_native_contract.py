@@ -2017,21 +2017,47 @@ class _UniffiFfiConverterOptionalTypeClickButton(_UniffiConverterRustBuffer):
         else:
             raise InternalError("Unexpected flag byte for optional type")
 
+class _UniffiFfiConverterOptionalBoolean(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterBoolean.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterBoolean.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterBoolean.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
 @dataclass
 class ClickInput:
-    def __init__(self, *, target:ActionTarget, position:ClickPosition, delivery_mode:InputDeliveryMode, session:typing.Optional[str], button:typing.Optional[ClickButton], count:typing.Optional[int]):
+    def __init__(self, *, target:ActionTarget, position:ClickPosition, delivery_mode:InputDeliveryMode, session:typing.Optional[str], button:typing.Optional[ClickButton], count:typing.Optional[int], detect_window_change:typing.Optional[bool]):
         self.target = target
         self.position = position
         self.delivery_mode = delivery_mode
         self.session = session
         self.button = button
         self.count = count
+        self.detect_window_change = detect_window_change
 
 
 
 
     def __str__(self):
-        return "ClickInput(target={}, position={}, delivery_mode={}, session={}, button={}, count={})".format(self.target, self.position, self.delivery_mode, self.session, self.button, self.count)
+        return "ClickInput(target={}, position={}, delivery_mode={}, session={}, button={}, count={}, detect_window_change={})".format(self.target, self.position, self.delivery_mode, self.session, self.button, self.count, self.detect_window_change)
     def __eq__(self, other):
         if self.target != other.target:
             return False
@@ -2045,6 +2071,8 @@ class ClickInput:
             return False
         if self.count != other.count:
             return False
+        if self.detect_window_change != other.detect_window_change:
+            return False
         return True
 
 class _UniffiFfiConverterTypeClickInput(_UniffiConverterRustBuffer):
@@ -2057,6 +2085,7 @@ class _UniffiFfiConverterTypeClickInput(_UniffiConverterRustBuffer):
             session=_UniffiFfiConverterOptionalString.read(buf),
             button=_UniffiFfiConverterOptionalTypeClickButton.read(buf),
             count=_UniffiFfiConverterOptionalUInt32.read(buf),
+            detect_window_change=_UniffiFfiConverterOptionalBoolean.read(buf),
         )
 
     @staticmethod
@@ -2067,6 +2096,7 @@ class _UniffiFfiConverterTypeClickInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.check_lower(value.session)
         _UniffiFfiConverterOptionalTypeClickButton.check_lower(value.button)
         _UniffiFfiConverterOptionalUInt32.check_lower(value.count)
+        _UniffiFfiConverterOptionalBoolean.check_lower(value.detect_window_change)
 
     @staticmethod
     def write(value, buf):
@@ -2076,6 +2106,7 @@ class _UniffiFfiConverterTypeClickInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.write(value.session, buf)
         _UniffiFfiConverterOptionalTypeClickButton.write(value.button, buf)
         _UniffiFfiConverterOptionalUInt32.write(value.count, buf)
+        _UniffiFfiConverterOptionalBoolean.write(value.detect_window_change, buf)
 
 @dataclass
 class ClipboardReadInput:
@@ -2858,7 +2889,7 @@ class _UniffiFfiConverterOptionalSequenceString(_UniffiConverterRustBuffer):
 
 @dataclass
 class DragInput:
-    def __init__(self, *, from_x:float, from_y:float, to_x:float, to_y:float, target:typing.Optional[ActionTarget], scope:typing.Optional[DesktopScope], session:typing.Optional[str], duration_ms:typing.Optional[int], steps:typing.Optional[int], button:typing.Optional[ClickButton], modifier:typing.Optional[typing.List[str]]):
+    def __init__(self, *, from_x:float, from_y:float, to_x:float, to_y:float, target:typing.Optional[ActionTarget], scope:typing.Optional[DesktopScope], session:typing.Optional[str], duration_ms:typing.Optional[int], steps:typing.Optional[int], button:typing.Optional[ClickButton], modifier:typing.Optional[typing.List[str]], detect_window_change:typing.Optional[bool]):
         self.from_x = from_x
         self.from_y = from_y
         self.to_x = to_x
@@ -2870,12 +2901,13 @@ class DragInput:
         self.steps = steps
         self.button = button
         self.modifier = modifier
+        self.detect_window_change = detect_window_change
 
 
 
 
     def __str__(self):
-        return "DragInput(from_x={}, from_y={}, to_x={}, to_y={}, target={}, scope={}, session={}, duration_ms={}, steps={}, button={}, modifier={})".format(self.from_x, self.from_y, self.to_x, self.to_y, self.target, self.scope, self.session, self.duration_ms, self.steps, self.button, self.modifier)
+        return "DragInput(from_x={}, from_y={}, to_x={}, to_y={}, target={}, scope={}, session={}, duration_ms={}, steps={}, button={}, modifier={}, detect_window_change={})".format(self.from_x, self.from_y, self.to_x, self.to_y, self.target, self.scope, self.session, self.duration_ms, self.steps, self.button, self.modifier, self.detect_window_change)
     def __eq__(self, other):
         if self.from_x != other.from_x:
             return False
@@ -2899,6 +2931,8 @@ class DragInput:
             return False
         if self.modifier != other.modifier:
             return False
+        if self.detect_window_change != other.detect_window_change:
+            return False
         return True
 
 class _UniffiFfiConverterTypeDragInput(_UniffiConverterRustBuffer):
@@ -2916,6 +2950,7 @@ class _UniffiFfiConverterTypeDragInput(_UniffiConverterRustBuffer):
             steps=_UniffiFfiConverterOptionalUInt64.read(buf),
             button=_UniffiFfiConverterOptionalTypeClickButton.read(buf),
             modifier=_UniffiFfiConverterOptionalSequenceString.read(buf),
+            detect_window_change=_UniffiFfiConverterOptionalBoolean.read(buf),
         )
 
     @staticmethod
@@ -2931,6 +2966,7 @@ class _UniffiFfiConverterTypeDragInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalUInt64.check_lower(value.steps)
         _UniffiFfiConverterOptionalTypeClickButton.check_lower(value.button)
         _UniffiFfiConverterOptionalSequenceString.check_lower(value.modifier)
+        _UniffiFfiConverterOptionalBoolean.check_lower(value.detect_window_change)
 
     @staticmethod
     def write(value, buf):
@@ -2945,6 +2981,7 @@ class _UniffiFfiConverterTypeDragInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalUInt64.write(value.steps, buf)
         _UniffiFfiConverterOptionalTypeClickButton.write(value.button, buf)
         _UniffiFfiConverterOptionalSequenceString.write(value.modifier, buf)
+        _UniffiFfiConverterOptionalBoolean.write(value.detect_window_change, buf)
 
 @dataclass
 class ElementFrame:
@@ -3029,31 +3066,6 @@ class _UniffiFfiConverterTypeElementSelector(_UniffiConverterRustBuffer):
     def write(value, buf):
         _UniffiFfiConverterOptionalString.write(value.role, buf)
         _UniffiFfiConverterOptionalString.write(value.label_contains, buf)
-
-class _UniffiFfiConverterOptionalBoolean(_UniffiConverterRustBuffer):
-    @classmethod
-    def check_lower(cls, value):
-        if value is not None:
-            _UniffiFfiConverterBoolean.check_lower(value)
-
-    @classmethod
-    def write(cls, value, buf):
-        if value is None:
-            buf.write_u8(0)
-            return
-
-        buf.write_u8(1)
-        _UniffiFfiConverterBoolean.write(value, buf)
-
-    @classmethod
-    def read(cls, buf):
-        flag = buf.read_u8()
-        if flag == 0:
-            return None
-        elif flag == 1:
-            return _UniffiFfiConverterBoolean.read(buf)
-        else:
-            raise InternalError("Unexpected flag byte for optional type")
 
 @dataclass
 class ElementPredicate:
@@ -3641,17 +3653,18 @@ class _UniffiFfiConverterTypeGetWindowStateInput(_UniffiConverterRustBuffer):
 
 @dataclass
 class HotkeyInput:
-    def __init__(self, *, keys:typing.List[str], target:typing.Optional[ActionTarget], scope:typing.Optional[DesktopScope], session:typing.Optional[str]):
+    def __init__(self, *, keys:typing.List[str], target:typing.Optional[ActionTarget], scope:typing.Optional[DesktopScope], session:typing.Optional[str], detect_window_change:typing.Optional[bool]):
         self.keys = keys
         self.target = target
         self.scope = scope
         self.session = session
+        self.detect_window_change = detect_window_change
 
 
 
 
     def __str__(self):
-        return "HotkeyInput(keys={}, target={}, scope={}, session={})".format(self.keys, self.target, self.scope, self.session)
+        return "HotkeyInput(keys={}, target={}, scope={}, session={}, detect_window_change={})".format(self.keys, self.target, self.scope, self.session, self.detect_window_change)
     def __eq__(self, other):
         if self.keys != other.keys:
             return False
@@ -3660,6 +3673,8 @@ class HotkeyInput:
         if self.scope != other.scope:
             return False
         if self.session != other.session:
+            return False
+        if self.detect_window_change != other.detect_window_change:
             return False
         return True
 
@@ -3671,6 +3686,7 @@ class _UniffiFfiConverterTypeHotkeyInput(_UniffiConverterRustBuffer):
             target=_UniffiFfiConverterOptionalTypeActionTarget.read(buf),
             scope=_UniffiFfiConverterOptionalTypeDesktopScope.read(buf),
             session=_UniffiFfiConverterOptionalString.read(buf),
+            detect_window_change=_UniffiFfiConverterOptionalBoolean.read(buf),
         )
 
     @staticmethod
@@ -3679,6 +3695,7 @@ class _UniffiFfiConverterTypeHotkeyInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalTypeActionTarget.check_lower(value.target)
         _UniffiFfiConverterOptionalTypeDesktopScope.check_lower(value.scope)
         _UniffiFfiConverterOptionalString.check_lower(value.session)
+        _UniffiFfiConverterOptionalBoolean.check_lower(value.detect_window_change)
 
     @staticmethod
     def write(value, buf):
@@ -3686,6 +3703,7 @@ class _UniffiFfiConverterTypeHotkeyInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalTypeActionTarget.write(value.target, buf)
         _UniffiFfiConverterOptionalTypeDesktopScope.write(value.scope, buf)
         _UniffiFfiConverterOptionalString.write(value.session, buf)
+        _UniffiFfiConverterOptionalBoolean.write(value.detect_window_change, buf)
 
 @dataclass
 class InvokeMenuInput:
@@ -4775,18 +4793,19 @@ class _UniffiFfiConverterTypePredicateOutcome(_UniffiConverterRustBuffer):
 
 @dataclass
 class PressKeyInput:
-    def __init__(self, *, key:str, target:typing.Optional[ActionTarget], scope:typing.Optional[DesktopScope], session:typing.Optional[str], modifiers:typing.Optional[typing.List[str]]):
+    def __init__(self, *, key:str, target:typing.Optional[ActionTarget], scope:typing.Optional[DesktopScope], session:typing.Optional[str], modifiers:typing.Optional[typing.List[str]], detect_window_change:typing.Optional[bool]):
         self.key = key
         self.target = target
         self.scope = scope
         self.session = session
         self.modifiers = modifiers
+        self.detect_window_change = detect_window_change
 
 
 
 
     def __str__(self):
-        return "PressKeyInput(key={}, target={}, scope={}, session={}, modifiers={})".format(self.key, self.target, self.scope, self.session, self.modifiers)
+        return "PressKeyInput(key={}, target={}, scope={}, session={}, modifiers={}, detect_window_change={})".format(self.key, self.target, self.scope, self.session, self.modifiers, self.detect_window_change)
     def __eq__(self, other):
         if self.key != other.key:
             return False
@@ -4797,6 +4816,8 @@ class PressKeyInput:
         if self.session != other.session:
             return False
         if self.modifiers != other.modifiers:
+            return False
+        if self.detect_window_change != other.detect_window_change:
             return False
         return True
 
@@ -4809,6 +4830,7 @@ class _UniffiFfiConverterTypePressKeyInput(_UniffiConverterRustBuffer):
             scope=_UniffiFfiConverterOptionalTypeDesktopScope.read(buf),
             session=_UniffiFfiConverterOptionalString.read(buf),
             modifiers=_UniffiFfiConverterOptionalSequenceString.read(buf),
+            detect_window_change=_UniffiFfiConverterOptionalBoolean.read(buf),
         )
 
     @staticmethod
@@ -4818,6 +4840,7 @@ class _UniffiFfiConverterTypePressKeyInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalTypeDesktopScope.check_lower(value.scope)
         _UniffiFfiConverterOptionalString.check_lower(value.session)
         _UniffiFfiConverterOptionalSequenceString.check_lower(value.modifiers)
+        _UniffiFfiConverterOptionalBoolean.check_lower(value.detect_window_change)
 
     @staticmethod
     def write(value, buf):
@@ -4826,6 +4849,7 @@ class _UniffiFfiConverterTypePressKeyInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalTypeDesktopScope.write(value.scope, buf)
         _UniffiFfiConverterOptionalString.write(value.session, buf)
         _UniffiFfiConverterOptionalSequenceString.write(value.modifiers, buf)
+        _UniffiFfiConverterOptionalBoolean.write(value.detect_window_change, buf)
 
 
 
@@ -4950,7 +4974,7 @@ class _UniffiFfiConverterOptionalTypeScrollBy(_UniffiConverterRustBuffer):
 
 @dataclass
 class ScrollInput:
-    def __init__(self, *, x:float, y:float, direction:ScrollDirection, target:typing.Optional[ActionTarget], scope:typing.Optional[DesktopScope], session:typing.Optional[str], by:typing.Optional[ScrollBy], amount:typing.Optional[int]):
+    def __init__(self, *, x:float, y:float, direction:ScrollDirection, target:typing.Optional[ActionTarget], scope:typing.Optional[DesktopScope], session:typing.Optional[str], by:typing.Optional[ScrollBy], amount:typing.Optional[int], detect_window_change:typing.Optional[bool]):
         self.x = x
         self.y = y
         self.direction = direction
@@ -4959,12 +4983,13 @@ class ScrollInput:
         self.session = session
         self.by = by
         self.amount = amount
+        self.detect_window_change = detect_window_change
 
 
 
 
     def __str__(self):
-        return "ScrollInput(x={}, y={}, direction={}, target={}, scope={}, session={}, by={}, amount={})".format(self.x, self.y, self.direction, self.target, self.scope, self.session, self.by, self.amount)
+        return "ScrollInput(x={}, y={}, direction={}, target={}, scope={}, session={}, by={}, amount={}, detect_window_change={})".format(self.x, self.y, self.direction, self.target, self.scope, self.session, self.by, self.amount, self.detect_window_change)
     def __eq__(self, other):
         if self.x != other.x:
             return False
@@ -4982,6 +5007,8 @@ class ScrollInput:
             return False
         if self.amount != other.amount:
             return False
+        if self.detect_window_change != other.detect_window_change:
+            return False
         return True
 
 class _UniffiFfiConverterTypeScrollInput(_UniffiConverterRustBuffer):
@@ -4996,6 +5023,7 @@ class _UniffiFfiConverterTypeScrollInput(_UniffiConverterRustBuffer):
             session=_UniffiFfiConverterOptionalString.read(buf),
             by=_UniffiFfiConverterOptionalTypeScrollBy.read(buf),
             amount=_UniffiFfiConverterOptionalUInt64.read(buf),
+            detect_window_change=_UniffiFfiConverterOptionalBoolean.read(buf),
         )
 
     @staticmethod
@@ -5008,6 +5036,7 @@ class _UniffiFfiConverterTypeScrollInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.check_lower(value.session)
         _UniffiFfiConverterOptionalTypeScrollBy.check_lower(value.by)
         _UniffiFfiConverterOptionalUInt64.check_lower(value.amount)
+        _UniffiFfiConverterOptionalBoolean.check_lower(value.detect_window_change)
 
     @staticmethod
     def write(value, buf):
@@ -5019,6 +5048,7 @@ class _UniffiFfiConverterTypeScrollInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.write(value.session, buf)
         _UniffiFfiConverterOptionalTypeScrollBy.write(value.by, buf)
         _UniffiFfiConverterOptionalUInt64.write(value.amount, buf)
+        _UniffiFfiConverterOptionalBoolean.write(value.detect_window_change, buf)
 
 
 
@@ -5860,17 +5890,18 @@ class _UniffiFfiConverterTypeStatePredicate(_UniffiConverterRustBuffer):
 
 @dataclass
 class TypeTextInput:
-    def __init__(self, *, text:str, target:typing.Optional[ActionTarget], scope:typing.Optional[DesktopScope], session:typing.Optional[str]):
+    def __init__(self, *, text:str, target:typing.Optional[ActionTarget], scope:typing.Optional[DesktopScope], session:typing.Optional[str], detect_window_change:typing.Optional[bool]):
         self.text = text
         self.target = target
         self.scope = scope
         self.session = session
+        self.detect_window_change = detect_window_change
 
 
 
 
     def __str__(self):
-        return "TypeTextInput(text={}, target={}, scope={}, session={})".format(self.text, self.target, self.scope, self.session)
+        return "TypeTextInput(text={}, target={}, scope={}, session={}, detect_window_change={})".format(self.text, self.target, self.scope, self.session, self.detect_window_change)
     def __eq__(self, other):
         if self.text != other.text:
             return False
@@ -5879,6 +5910,8 @@ class TypeTextInput:
         if self.scope != other.scope:
             return False
         if self.session != other.session:
+            return False
+        if self.detect_window_change != other.detect_window_change:
             return False
         return True
 
@@ -5890,6 +5923,7 @@ class _UniffiFfiConverterTypeTypeTextInput(_UniffiConverterRustBuffer):
             target=_UniffiFfiConverterOptionalTypeActionTarget.read(buf),
             scope=_UniffiFfiConverterOptionalTypeDesktopScope.read(buf),
             session=_UniffiFfiConverterOptionalString.read(buf),
+            detect_window_change=_UniffiFfiConverterOptionalBoolean.read(buf),
         )
 
     @staticmethod
@@ -5898,6 +5932,7 @@ class _UniffiFfiConverterTypeTypeTextInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalTypeActionTarget.check_lower(value.target)
         _UniffiFfiConverterOptionalTypeDesktopScope.check_lower(value.scope)
         _UniffiFfiConverterOptionalString.check_lower(value.session)
+        _UniffiFfiConverterOptionalBoolean.check_lower(value.detect_window_change)
 
     @staticmethod
     def write(value, buf):
@@ -5905,6 +5940,7 @@ class _UniffiFfiConverterTypeTypeTextInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalTypeActionTarget.write(value.target, buf)
         _UniffiFfiConverterOptionalTypeDesktopScope.write(value.scope, buf)
         _UniffiFfiConverterOptionalString.write(value.session, buf)
+        _UniffiFfiConverterOptionalBoolean.write(value.detect_window_change, buf)
 
 class _UniffiFfiConverterSequenceTypeStatePredicate(_UniffiConverterRustBuffer):
     @classmethod

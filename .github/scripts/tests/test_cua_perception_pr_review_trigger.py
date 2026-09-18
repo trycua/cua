@@ -69,9 +69,14 @@ def test_gate_revalidates_current_same_repository_heads_and_label() -> None:
     assert "secrets." not in text
     assert workflow["permissions"] == {
         "actions": "read",
-        "contents": "read",
+        "contents": "write",
         "pull-requests": "read",
     }
+    assert {
+        scope for scope, access in workflow["permissions"].items() if access == "write"
+    } == {"contents"}
+    assert "called workflow cannot elevate this permission to discover draft assets" in text
+    assert all("permissions" not in job for job in workflow["jobs"].values())
     resolve_env = workflow["jobs"]["resolve"]["steps"][0]["env"]
     assert resolve_env["REVIEWED_JEV_SHA"] == "201732fffd81a40818be7ce2e04269aec962bc42"
 
@@ -133,7 +138,9 @@ def test_chain_passes_exact_outputs_to_existing_protected_live_workflow() -> Non
     }
     assert "secrets" not in live
     assert "secrets: inherit" not in trigger_text
-    assert not re.findall(r"^\s*[\w-]+:\s*write\s*$", trigger_text, re.MULTILINE)
+    assert re.findall(r"^\s*([\w-]+):\s*write\s*$", trigger_text, re.MULTILINE) == [
+        "contents"
+    ]
     assert not re.findall(r"^\s*environment:", trigger_text, re.MULTILINE)
 
     live_text, live_workflow = load_workflow(LIVE)

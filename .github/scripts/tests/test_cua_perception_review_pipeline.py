@@ -35,15 +35,24 @@ def test_review_pipeline_is_valid_pinned_and_nonpublishing() -> None:
     assert isinstance(parsed, dict)
     assert parsed["permissions"] == {
         "actions": "read",
-        "contents": "read",
+        "contents": "write",
         "pull-requests": "read",
     }
+    assert {
+        scope for scope, access in parsed["permissions"].items() if access == "write"
+    } == {"contents"}
+    assert "GitHub exposes draft releases only to push-capable tokens" in text
     uses = re.findall(r"^\s*uses:\s*([^\s#]+)", text, flags=re.MULTILINE)
     assert uses
     assert all(re.fullmatch(r"[^@]+@[0-9a-f]{40}", use) for use in uses)
     lowered = text.lower()
     assert "gh release" not in lowered
-    assert "contents: write" not in lowered
+    assert "--method" not in lowered
+    assert "method=" not in lowered
+    assert "data=" not in lowered
+    assert "softprops/action-gh-release" not in lowered
+    assert "actions/create-release" not in lowered
+    assert "actions/upload-release-asset" not in lowered
     assert "perception_ed25519_private_key_base64" not in lowered
     assert "review_only: true" in lowered
     assert "environment:" not in text

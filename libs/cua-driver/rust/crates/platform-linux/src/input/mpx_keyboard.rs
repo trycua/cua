@@ -213,6 +213,9 @@ impl KeyboardDeliveryReport {
             for (key, value) in guard.to_json().as_object().into_iter().flatten() {
                 json[key] = value.clone();
             }
+            if let Some(item) = guard.evidence_item() {
+                json["evidence"] = serde_json::json!([item]);
+            }
         }
         if !self.released_stuck.is_empty() {
             json["released_stuck_input"] = serde_json::json!(self.released_stuck);

@@ -10,11 +10,18 @@
 //!
 //! [`FocusSnapshot::capture`] records the three signals before an action and
 //! [`FocusSnapshot::restore_if_changed`] re-asserts them afterwards when they
-//! moved: the previously active window is re-activated through EWMH (so the
-//! WM's own bookkeeping and stacking follow) and the previous core focus is
-//! re-set. The outcome is reported, never hidden: a toolkit keyboard grab held
-//! by an open menu cannot be undone without closing the menu, so it is
-//! surfaced as `grab_held_by` instead.
+//! moved *away from the user*: the previously active window is re-activated
+//! through EWMH (so the WM's own bookkeeping and stacking follow) and the
+//! previous core focus is re-set.
+//!
+//! A move that stays inside the target application is not an intrusion: when
+//! the target app already owned the focus and it opens a dialog that mutter
+//! focuses, the user (or the agent) asked for that dialog. Re-activating the
+//! main window there would undo the app's own behaviour and send the next
+//! pid-only keystrokes to the wrong window, so the guard leaves it and reports
+//! `focus_outcome: same_app_dialog` instead. The outcome is reported, never
+//! hidden: a toolkit keyboard grab held by an open menu cannot be undone
+//! without closing the menu, so it is surfaced as `grab_held_by`.
 
 use anyhow::{anyhow, Result};
 use std::collections::HashSet;
@@ -31,8 +38,11 @@ use x11rb::COPY_DEPTH_FROM_PARENT;
 /// How long the guard watches for a late focus change after delivery (a
 /// transient dialog is mapped and focused by the WM a beat after the action).
 const SETTLE_WATCH: Duration = Duration::from_millis(220);
-/// Longer watch once a new top-level appeared during the short one: a dialog
-/// (LibreOffice's take ~1 s to build) is focused by the WM only when mapped.
+/// Longer watch once a new top-level appeared during the short one while the
+/// focus belonged to *another* application: a dialog (LibreOffice's take
+/// ~1 s to build) is focused by the WM only when mapped, and that steal must
+/// be undone. When the target app already owns the focus the new window is
+/// its own and there is nothing to wait for.
 const SETTLE_WATCH_NEW_WINDOW: Duration = Duration::from_millis(1400);
 const SETTLE_POLL: Duration = Duration::from_millis(30);
 /// Bound on the restore loop: re-activation, verification, one re-send.
@@ -40,11 +50,15 @@ const RESTORE_BUDGET: Duration = Duration::from_millis(1200);
 const RESTORE_POLL: Duration = Duration::from_millis(50);
 /// Consecutive stable polls before the restore is called done.
 const STABLE_POLLS: u32 = 3;
+/// Bound on the ancestor / transient walk when attributing a window to a pid.
+const OWNER_WALK_LIMIT: usize = 16;
 
 struct Atoms {
     net_active_window: u32,
     net_client_list_stacking: u32,
     net_wm_pid: u32,
+    net_wm_name: u32,
+    utf8_string: u32,
 }
 
 struct X {
@@ -65,6 +79,8 @@ impl X {
             net_active_window: intern(b"_NET_ACTIVE_WINDOW")?,
             net_client_list_stacking: intern(b"_NET_CLIENT_LIST_STACKING")?,
             net_wm_pid: intern(b"_NET_WM_PID")?,
+            net_wm_name: intern(b"_NET_WM_NAME")?,
+            utf8_string: intern(b"UTF8_STRING")?,
         };
         Ok(Self { conn, root, atoms })
     }
@@ -85,16 +101,12 @@ impl X {
             .filter(|w| *w != 0)
     }
 
-    fn stacking_top(&self) -> Option<Window> {
+    fn client_list(&self) -> Vec<Window> {
         self.window_property(self.root, self.atoms.net_client_list_stacking, u32::MAX)
-            .last()
-            .copied()
-            .filter(|w| *w != 0)
     }
 
-    fn client_count(&self) -> usize {
-        self.window_property(self.root, self.atoms.net_client_list_stacking, u32::MAX)
-            .len()
+    fn stacking_top(&self) -> Option<Window> {
+        self.client_list().last().copied().filter(|w| *w != 0)
     }
 
     fn core_focus(&self) -> (Window, InputFocus) {
@@ -109,6 +121,53 @@ impl X {
             .first()
             .copied()
             .filter(|p| *p != 0)
+    }
+
+    fn transient_for(&self, window: Window) -> Option<Window> {
+        self.window_property(window, AtomEnum::WM_TRANSIENT_FOR.into(), 1)
+            .first()
+            .copied()
+            .filter(|w| *w != 0 && *w != self.root)
+    }
+
+    fn parent(&self, window: Window) -> Option<Window> {
+        let tree = self.conn.query_tree(window).ok()?.reply().ok()?;
+        (tree.parent != 0 && tree.parent != self.root).then_some(tree.parent)
+    }
+
+    /// The pid that owns `window`: its own `_NET_WM_PID`, else the one of
+    /// the window it is transient for, else its ancestors' (the core focus
+    /// often sits on a child of the client toplevel).
+    fn owner_pid(&self, window: Window) -> Option<u32> {
+        let mut current = window;
+        for _ in 0..OWNER_WALK_LIMIT {
+            if current == 0 || current == self.root {
+                return None;
+            }
+            if let Some(pid) = self.window_pid(current) {
+                return Some(pid);
+            }
+            match self.transient_for(current).or_else(|| self.parent(current)) {
+                Some(next) if next != current => current = next,
+                _ => return None,
+            }
+        }
+        None
+    }
+
+    fn window_title(&self, window: Window) -> String {
+        let read = |atom: u32, ty: u32| -> Option<String> {
+            let reply = self
+                .conn
+                .get_property(false, window, atom, ty, 0, 256)
+                .ok()?
+                .reply()
+                .ok()?;
+            (!reply.value.is_empty()).then(|| String::from_utf8_lossy(&reply.value).into_owned())
+        };
+        read(self.atoms.net_wm_name, self.atoms.utf8_string)
+            .or_else(|| read(AtomEnum::WM_NAME.into(), AtomEnum::STRING.into()))
+            .unwrap_or_default()
     }
 
     /// Mapped override-redirect children of the root: menus, combo popups,
@@ -214,6 +273,34 @@ impl X {
     }
 }
 
+/// Where a focus move went, relative to the action's target application.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FocusMove {
+    /// The target app owned the focus before and still does: it opened one
+    /// of its own windows (a dialog). Not an intrusion; leave it.
+    SameAppDialog,
+    /// The focus left the user's application (or arrived in the target from
+    /// another app): restore it.
+    OtherApp,
+}
+
+/// The same-app rule: a move is the app's own dialog only when the target
+/// pid owned the focus before the action *and* owns it now. A move from a
+/// decoy (another pid) into the target's dialog is a steal, as is a move
+/// from the target to anything else.
+pub fn classify_focus_move(
+    target_pid: Option<u32>,
+    previous_owner: Option<u32>,
+    new_owner: Option<u32>,
+) -> FocusMove {
+    match (target_pid, previous_owner, new_owner) {
+        (Some(target), Some(previous), Some(new)) if previous == target && new == target => {
+            FocusMove::SameAppDialog
+        }
+        _ => FocusMove::OtherApp,
+    }
+}
+
 /// What a background action must not change.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FocusSnapshot {
@@ -222,7 +309,19 @@ pub struct FocusSnapshot {
     active: Option<Window>,
     stacking_top: Option<Window>,
     popups: HashSet<Window>,
-    client_count: usize,
+    clients: HashSet<Window>,
+    /// Pid that owned the active window (else the core focus) before the
+    /// action: the application the user was working in.
+    previous_owner: Option<u32>,
+}
+
+/// A window of the target application that appeared or took the focus.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SameAppWindow {
+    pub window: u64,
+    pub title: String,
+    /// It received the desktop focus (else it was merely mapped).
+    pub focused: bool,
 }
 
 /// Outcome of the post-action check and restore.
@@ -238,38 +337,92 @@ pub struct FocusGuardReport {
     /// toolkit now holds a keyboard grab that cannot be released without
     /// closing it; the pid that owns it (falls back to the action's target).
     pub grab_held_by: Option<u32>,
+    /// The target application opened (and possibly focused) one of its own
+    /// windows; the guard left it alone.
+    pub same_app_window: Option<SameAppWindow>,
     /// Milliseconds spent watching and restoring after delivery.
     pub elapsed_ms: u64,
 }
 
 impl FocusGuardReport {
+    /// `same_app_dialog` / `restored` / `not_restored` once something moved.
+    pub fn outcome(&self) -> Option<&'static str> {
+        if !self.changed {
+            return None;
+        }
+        Some(if self.same_app_window.as_ref().is_some_and(|w| w.focused) {
+            "same_app_dialog"
+        } else if self.restored {
+            "restored"
+        } else {
+            "not_restored"
+        })
+    }
+
     pub fn to_json(&self) -> serde_json::Value {
         let mut v = serde_json::json!({
             "focus_changed": self.changed,
             "focus_restored": self.restored,
         });
+        if let Some(outcome) = self.outcome() {
+            v["focus_outcome"] = serde_json::json!(outcome);
+        }
         if !self.changes.is_empty() {
             v["focus_changes"] = serde_json::json!(self.changes);
         }
         if let Some(pid) = self.grab_held_by {
             v["grab_held_by"] = serde_json::json!(pid);
         }
+        if let Some(window) = &self.same_app_window {
+            v["app_window_opened"] = serde_json::json!({
+                "window_id": window.window,
+                "title": window.title,
+                "focused": window.focused,
+            });
+        }
         v
+    }
+
+    /// A `window_change` evidence item when the target application mapped or
+    /// focused one of its own windows: the public action contract keeps
+    /// `evidence[]`, while the flat guard fields are reduced away.
+    pub fn evidence_item(&self) -> Option<serde_json::Value> {
+        let window = self.same_app_window.as_ref()?;
+        Some(serde_json::json!({
+            "kind": "window_change",
+            "detail": format!(
+                "the application {} its own window {} \"{}\"",
+                if window.focused { "opened and focused" } else { "opened" },
+                window.window,
+                window.title
+            ),
+        }))
     }
 
     /// One sentence for the tool's text content; empty when nothing moved.
     pub fn summary(&self) -> String {
         let mut s = String::new();
-        if self.changed {
-            s.push_str(&format!(
+        match (&self.same_app_window, self.changed) {
+            (Some(window), _) if window.focused => s.push_str(&format!(
+                " The application opened its own window {} \"{}\" and it now holds the \
+                 focus (focus_outcome=same_app_dialog, left in place); pid-only \
+                 type_text/press_key go to that window.",
+                window.window, window.title
+            )),
+            (Some(window), false) => s.push_str(&format!(
+                " The application opened its own window {} \"{}\".",
+                window.window, window.title
+            )),
+            (_, true) => s.push_str(&format!(
                 " The application moved the desktop focus ({}); {}.",
                 self.changes.join(", "),
                 if self.restored {
-                    "it was restored to the previous window"
+                    "it was restored to the previous window (focus_outcome=restored)"
                 } else {
-                    "restoring it did not hold"
+                    "restoring it did not hold (focus_outcome=not_restored)"
                 }
-            ));
+            )),
+            _ => {}
         }
         if let Some(pid) = self.grab_held_by {
             s.push_str(&format!(
@@ -286,13 +439,18 @@ impl FocusSnapshot {
     pub fn capture() -> Option<Self> {
         let x = X::open().ok()?;
         let (core_focus, revert_to) = x.core_focus();
+        let active = x.active_window();
+        let previous_owner = active
+            .or_else(|| (core_focus > 1).then_some(core_focus))
+            .and_then(|w| x.owner_pid(w));
         Some(Self {
             core_focus,
             revert_to,
-            active: x.active_window(),
+            active,
             stacking_top: x.stacking_top(),
             popups: x.mapped_popups(),
-            client_count: x.client_count(),
+            clients: x.client_list().into_iter().collect(),
+            previous_owner,
         })
     }
 
@@ -323,8 +481,27 @@ impl FocusSnapshot {
         changes
     }
 
+    /// Managed toplevels that were not in the client list at capture time,
+    /// topmost last.
+    fn new_clients(&self, x: &X) -> Vec<Window> {
+        x.client_list()
+            .into_iter()
+            .filter(|w| *w != 0 && !self.clients.contains(w))
+            .collect()
+    }
+
+    /// The window the desktop focus sits on now (the WM's active window,
+    /// else the core focus).
+    fn current_focus_window(&self, x: &X) -> Option<Window> {
+        x.active_window().or_else(|| {
+            let (focus, _) = x.core_focus();
+            (focus > 1).then_some(focus)
+        })
+    }
+
     /// Watch briefly for a change, restore if one happened, and report.
-    /// `target_pid` names the action's application for the grab attribution.
+    /// `target_pid` names the action's application for the grab attribution
+    /// and the same-app rule.
     pub fn restore_if_changed(&self, target_pid: Option<u32>) -> FocusGuardReport {
         self.restore_if_changed_opts(target_pid, true)
     }
@@ -344,24 +521,33 @@ impl FocusSnapshot {
             return FocusGuardReport::default();
         };
         let mut report = FocusGuardReport::default();
+        // The target app owns the focus: whatever it maps next is its own.
+        let target_owns_focus = target_pid.is_some() && self.previous_owner == target_pid;
 
         // Settle watch: stop at the first observed change. A new top-level
-        // (dialog being mapped) extends the watch, since the WM focuses it
-        // only once it is mapped.
+        // (dialog being mapped) extends the watch when the focus belongs to
+        // another application, since the WM focuses it only once mapped and
+        // that steal must be undone; when the target app already owns the
+        // focus the new window is its own and the watch ends at once.
         let mut watch_until = if settle_watch {
             started + SETTLE_WATCH
         } else {
             started
         };
-        if !settle_watch && x.client_count() > self.client_count {
-            watch_until = started + SETTLE_WATCH_NEW_WINDOW;
-        }
         let mut extended = false;
         let mut changes = self.diff(&x);
-        while changes.is_empty() && Instant::now() < watch_until {
+        let mut new_clients = self.new_clients(&x);
+        let mut own_window = self.own_new_window(&x, target_pid, &new_clients);
+        if !settle_watch && !new_clients.is_empty() && own_window.is_none() {
+            extended = true;
+            watch_until = started + SETTLE_WATCH_NEW_WINDOW;
+        }
+        while changes.is_empty() && own_window.is_none() && Instant::now() < watch_until {
             std::thread::sleep(SETTLE_POLL);
             changes = self.diff(&x);
-            if !extended && x.client_count() > self.client_count {
+            new_clients = self.new_clients(&x);
+            own_window = self.own_new_window(&x, target_pid, &new_clients);
+            if !extended && !new_clients.is_empty() && own_window.is_none() {
                 extended = true;
                 watch_until = started + SETTLE_WATCH_NEW_WINDOW;
             }
@@ -381,11 +567,30 @@ impl FocusSnapshot {
         }
 
         if changes.is_empty() {
+            report.same_app_window = own_window;
             report.elapsed_ms = started.elapsed().as_millis() as u64;
             return report;
         }
         report.changed = true;
         report.changes = changes;
+
+        // Same-app rule: the focus stayed inside the target application
+        // (it opened a dialog). Leave it and say so.
+        let focus_window = self.current_focus_window(&x);
+        let new_owner = focus_window.and_then(|w| x.owner_pid(w));
+        if target_owns_focus
+            && classify_focus_move(target_pid, self.previous_owner, new_owner)
+                == FocusMove::SameAppDialog
+        {
+            let window = focus_window.unwrap_or(0);
+            report.same_app_window = Some(SameAppWindow {
+                window: u64::from(window),
+                title: x.window_title(window),
+                focused: true,
+            });
+            report.elapsed_ms = started.elapsed().as_millis() as u64;
+            return report;
+        }
 
         // Restore. EWMH re-activation makes the WM restore stacking and its
         // own focus bookkeeping; the explicit XSetInputFocus covers WMs that
@@ -419,6 +624,30 @@ impl FocusSnapshot {
         }
         report.elapsed_ms = started.elapsed().as_millis() as u64;
         report
+    }
+
+    /// The topmost freshly mapped toplevel of the target pid, when the target
+    /// already owned the focus (so the window is the app's own and the watch
+    /// need not wait for the WM to focus it).
+    fn own_new_window(
+        &self,
+        x: &X,
+        target_pid: Option<u32>,
+        new_clients: &[Window],
+    ) -> Option<SameAppWindow> {
+        if target_pid.is_none() || self.previous_owner != target_pid {
+            return None;
+        }
+        let window = new_clients
+            .iter()
+            .rev()
+            .copied()
+            .find(|w| x.owner_pid(*w) == target_pid)?;
+        Some(SameAppWindow {
+            window: u64::from(window),
+            title: x.window_title(window),
+            focused: false,
+        })
     }
 
     fn reassert(&self, x: &X) {
@@ -467,13 +696,16 @@ mod tests {
             restored: true,
             changes: vec!["focus 0x1->0x2".into()],
             grab_held_by: Some(42),
+            same_app_window: None,
             elapsed_ms: 7,
         };
         let json = report.to_json();
         assert_eq!(json["focus_changed"], true);
         assert_eq!(json["focus_restored"], true);
+        assert_eq!(json["focus_outcome"], "restored");
         assert_eq!(json["grab_held_by"], 42);
         assert_eq!(json["focus_changes"][0], "focus 0x1->0x2");
+        assert!(report.evidence_item().is_none());
         let summary = report.summary();
         assert!(summary.contains("restored"), "{summary}");
         assert!(summary.contains("pid 42"), "{summary}");
@@ -485,8 +717,84 @@ mod tests {
         assert_eq!(report.summary(), "");
         let json = report.to_json();
         assert_eq!(json["focus_changed"], false);
+        assert!(json.get("focus_outcome").is_none());
         assert!(json.get("grab_held_by").is_none());
         assert!(json.get("focus_changes").is_none());
+    }
+
+    #[test]
+    fn same_app_dialog_is_reported_not_restored() {
+        let report = FocusGuardReport {
+            changed: true,
+            restored: false,
+            changes: vec!["active 0x1->0x2".into()],
+            grab_held_by: None,
+            same_app_window: Some(SameAppWindow {
+                window: 2,
+                title: "Brightness-Contrast".into(),
+                focused: true,
+            }),
+            elapsed_ms: 3,
+        };
+        let json = report.to_json();
+        assert_eq!(json["focus_outcome"], "same_app_dialog");
+        assert_eq!(json["app_window_opened"]["window_id"], 2);
+        assert_eq!(json["app_window_opened"]["focused"], true);
+        let evidence = report.evidence_item().expect("window_change evidence");
+        assert_eq!(evidence["kind"], "window_change");
+        assert!(evidence["detail"]
+            .as_str()
+            .unwrap()
+            .contains("Brightness-Contrast"));
+        let summary = report.summary();
+        assert!(summary.contains("same_app_dialog"), "{summary}");
+        assert!(summary.contains("Brightness-Contrast"), "{summary}");
+        assert!(!summary.contains("restored"), "{summary}");
+    }
+
+    #[test]
+    fn mapped_but_unfocused_own_window_is_mentioned_without_a_focus_outcome() {
+        let report = FocusGuardReport {
+            same_app_window: Some(SameAppWindow {
+                window: 9,
+                title: "Format Cells".into(),
+                focused: false,
+            }),
+            ..FocusGuardReport::default()
+        };
+        assert!(report.outcome().is_none());
+        assert!(report.summary().contains("Format Cells"));
+        assert!(report.evidence_item().is_some());
+    }
+
+    #[test]
+    fn same_app_rule_only_when_the_target_owned_the_focus_before_and_after() {
+        // The target app was active and opened its own dialog: leave it.
+        assert_eq!(
+            classify_focus_move(Some(7), Some(7), Some(7)),
+            FocusMove::SameAppDialog
+        );
+        // Decoy case: another app owned the focus and the target's dialog
+        // stole it -> restore.
+        assert_eq!(
+            classify_focus_move(Some(7), Some(3), Some(7)),
+            FocusMove::OtherApp
+        );
+        // The target was active and something else took the focus -> restore.
+        assert_eq!(
+            classify_focus_move(Some(7), Some(7), Some(3)),
+            FocusMove::OtherApp
+        );
+        // Unknown owners never qualify.
+        assert_eq!(
+            classify_focus_move(Some(7), None, Some(7)),
+            FocusMove::OtherApp
+        );
+        assert_eq!(
+            classify_focus_move(Some(7), Some(7), None),
+            FocusMove::OtherApp
+        );
+        assert_eq!(classify_focus_move(None, Some(7), Some(7)), FocusMove::OtherApp);
     }
 
     #[test]

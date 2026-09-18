@@ -93,6 +93,11 @@ pub struct AtspiTreeResult {
     /// snapshot of a multi-window app carries every window's controls; callers
     /// that act on behalf of an exact native window must require this.
     pub window_scoped: bool,
+    /// True only when a native walk enumerated the tree without truncation
+    /// (budget, deadline, depth cap, or a fetch failure), so absence of an
+    /// element within the emitted scope can be proven. The X11 property
+    /// fallback is a partial discovery aid and is never complete.
+    pub elements_complete: bool,
 }
 
 /// Walk the AT-SPI tree for a window identified by (pid, xid).
@@ -122,6 +127,7 @@ pub(crate) fn walk_tree_for_recording(
                 trusted: true,
                 degraded_reason: None,
                 window_scoped: walked.window_scoped,
+                elements_complete: walked.elements_complete,
             };
         }
     }
@@ -170,6 +176,7 @@ pub fn walk_tree_bounded(
                         trusted: true,
                         degraded_reason: None,
                         window_scoped: walked.window_scoped,
+                        elements_complete: walked.elements_complete,
                     };
                 }
             }
@@ -311,6 +318,7 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
                 trusted: false,
                 degraded_reason: None,
                 window_scoped: false,
+                elements_complete: false,
             }
         }
     };
@@ -370,8 +378,10 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
         trusted: false,
         // Built by reading this exact window's X11 properties, so it describes
         // one window by construction — but `trusted: false` still bars it from
-        // proving anything a caller acts on.
+        // proving anything a caller acts on, and a property snapshot cannot
+        // prove element absence.
         window_scoped: true,
+        elements_complete: false,
         degraded_reason: None,
     }
 }

@@ -888,9 +888,10 @@ impl Tool for GetWindowStateTool {
                         header + &tr.tree_markdown,
                     ));
                     structured["element_count"] = json!(count);
-                    // AT-SPI's current bounded walker does not surface an
-                    // exhaustive-walk proof. Keep negative existence unknown.
-                    structured["elements_complete"] = json!(false);
+                    // The walker reports whether the enumeration was
+                    // exhaustive for this window, so negative existence is
+                    // provable instead of permanently unknown (#3812).
+                    structured["elements_complete"] = json!(tr.elements_complete);
                     structured["tree_markdown"] = json!(tr.tree_markdown);
 
                     let target_scoped = !(crate::wayland::is_wayland()

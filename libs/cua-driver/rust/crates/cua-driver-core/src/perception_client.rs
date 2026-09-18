@@ -1186,7 +1186,9 @@ else:
     fn fixture_interpreter_uses_an_absolute_containment_grant() {
         let interpreter = fixture_python_interpreter();
         assert!(interpreter.is_absolute());
-        assert!(interpreter_executable_paths().contains(&interpreter));
+        assert!(
+            interpreter_executable_paths().contains(&std::fs::canonicalize(interpreter).unwrap())
+        );
     }
 
     #[test]

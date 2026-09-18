@@ -1338,15 +1338,23 @@ async fn collect_visited_bounded<'a>(
         let mut closed_menu = role_lower == "menu" && (!showing || (under_menubar && !expanded));
         if closed_menu && showing && under_menubar {
             // LibreOffice VCL never sets EXPANDED on an open menubar menu; its
-            // items are simply SHOWING. One extra state read on the first
-            // child (a dozen menus per menubar) tells an open menu from a
-            // closed one.
+            // items are simply SHOWING. A few extra state reads on the first
+            // children (a dozen menus per menubar) tell an open menu from a
+            // closed one. gail (GTK2, e.g. GIMP 2.10) never sets EXPANDED
+            // either and never marks a menu entry SHOWING, open or not: its
+            // entries are VISIBLE only (the leading tearoff item carries no
+            // state at all). Such a menu cannot be told closed from open,
+            // and its entries stay reachable through their AT-SPI `click`
+            // action, so a VISIBLE entry keeps the menu walked (see
+            // `counts_as_showing`); a closed VCL / GTK3 menu, whose entries
+            // are neither SHOWING nor VISIBLE, stays collapsed.
             if let Some(Ok(children)) = &children_r {
-                if let Some(first) = children.first() {
-                    if let Some(Ok(child)) = call(accessible_for(conn, first)).await {
+                for child_ref in children.iter().take(MENU_PEEK_CHILDREN) {
+                    if let Some(Ok(child)) = call(accessible_for(conn, child_ref)).await {
                         if let Some(Ok(state)) = call(child.get_state()).await {
-                            if is_showing_state(&state) {
+                            if menu_entry_state_keeps_menu_open(&state) {
                                 closed_menu = false;
+                                break;
                             }
                         }
                     }
@@ -1605,6 +1613,18 @@ fn is_menu_entry_role(role_lower: &str) -> bool {
 
 fn counts_as_showing(role_lower: &str, state: &StateSet) -> bool {
     is_showing_state(state) || (is_menu_entry_role(role_lower) && state.contains(State::Visible))
+}
+
+/// How many leading children of a menubar menu the closed-menu peek reads
+/// (gail puts a state-less tearoff item first).
+const MENU_PEEK_CHILDREN: usize = 3;
+
+/// A menubar menu whose child carries this state set is walked: `Showing`
+/// is an open GTK3 / VCL menu, `Visible` alone is a gail entry (never
+/// `Showing`, reachable through its action whether the menu is open or
+/// not). A child with neither is an entry of a closed VCL / GTK3 menu.
+fn menu_entry_state_keeps_menu_open(state: &StateSet) -> bool {
+    is_showing_state(state) || state.contains(State::Visible)
 }
 
 /// Format an AT-SPI numeric value like the historical `str(currentValue)`
@@ -6155,6 +6175,20 @@ mod at_point_rules_tests {
             at_point_activation_index("push button", &acts(&["buffer.delete-line"]), true),
             None
         );
+    }
+
+    #[test]
+    fn menu_peek_keeps_visible_or_showing_entries() {
+        // gail: entries are Visible only, open or closed; the tearoff has no state.
+        assert!(menu_entry_state_keeps_menu_open(&StateSet::new(State::Visible)));
+        assert!(!menu_entry_state_keeps_menu_open(&StateSet::new(
+            State::Enabled | State::Sensitive
+        )));
+        // VCL open menu: items Showing.
+        assert!(menu_entry_state_keeps_menu_open(&StateSet::new(
+            State::Enabled | State::Visible | State::Showing
+        )));
+        assert!(!menu_entry_state_keeps_menu_open(&StateSet::new(State::Enabled)));
     }
 
     #[test]

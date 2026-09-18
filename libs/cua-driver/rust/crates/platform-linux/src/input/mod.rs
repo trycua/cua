@@ -19,7 +19,7 @@ pub mod foreground;
 mod mpx_keyboard;
 mod mpx_owner;
 
-pub use focus_guard::{FocusGuardReport, FocusSnapshot};
+pub use focus_guard::{FocusGuardReport, FocusSnapshot, SameAppWindow};
 pub use foreground::{with_x11_foreground_opts, FocusAfter, ForegroundOptions, ForegroundReport};
 pub use mpx_keyboard::{
     real_keyboard_input_available, send_virtual_keyboard_key, send_virtual_keyboard_text,
@@ -1478,7 +1478,7 @@ pub fn send_parallel_virtual_pointer_drags(drags: &[(String, VirtualPointerDrag)
         // point must not be covered by another toplevel.
         for item in &active {
             let start = *item.drag.path.first().unwrap_or(&(0, 0));
-            if let Some(occluded) = occluding_window(
+            if let PointCover::Occluded(occluded) = occluding_window(
                 display,
                 item.drag.target_window as x11::xlib::Window,
                 start.0,
@@ -1661,6 +1661,9 @@ pub struct PointerEffect {
     /// [`focus_guard`]: whether the application moved the desktop focus after
     /// the press (a menu grab, a dialog) and whether it was restored.
     pub focus_guard: Option<FocusGuardReport>,
+    /// The point was under another window of the target's own pid (its
+    /// dialog over its main window) and the press went to that window.
+    pub retargeted_to: Option<SameAppCover>,
 }
 
 impl PointerEffect {
@@ -1890,33 +1893,64 @@ fn occluding_window(
     window: x11::xlib::Window,
     x: i32,
     y: i32,
-) -> Result<Option<TargetOccluded>> {
+) -> Result<PointCover> {
     let under = root_child_under_point(display, x, y);
     let frame = root_child_of(display, window);
     match (under, frame) {
         (Some(under), Some(frame)) if under != frame && !is_override_redirect(display, under) => {
             let previous_handler = unsafe { x11::xlib::XSetErrorHandler(Some(ignore_x_error)) };
-            let covering_pid = crate::x11::window_pid(under as u64).or_else(|| {
-                window_children(display, under)
-                    .into_iter()
-                    .find_map(|kid| crate::x11::window_pid(kid as u64))
-            });
+            let covering_client = window_children(display, under)
+                .into_iter()
+                .find(|kid| crate::x11::window_pid(*kid as u64).is_some());
+            let covering_pid = crate::x11::window_pid(under as u64)
+                .or_else(|| covering_client.and_then(|kid| crate::x11::window_pid(kid as u64)));
             unsafe {
                 x11::xlib::XSync(display, 0);
                 x11::xlib::XSetErrorHandler(previous_handler);
             }
-            Ok(Some(TargetOccluded {
+            let target_pid = crate::x11::window_pid(window as u64);
+            let title = window_title_for_report(display, under);
+            // The app's own window (a dialog, a file chooser) sits over the
+            // point: the press goes where the caller can see it, on that
+            // window, and the effect reports the retarget.
+            if target_pid.is_some() && covering_pid == target_pid {
+                return Ok(PointCover::SameApp(SameAppCover {
+                    window: covering_client.map(u64::from).unwrap_or(under as u64),
+                    title,
+                }));
+            }
+            Ok(PointCover::Occluded(TargetOccluded {
                 target_window: window as u64,
                 covering_window: under as u64,
-                covering_title: window_title_for_report(display, under),
+                covering_title: title,
                 covering_pid,
                 x,
                 y,
             }))
         }
-        (Some(_), Some(_)) | (None, _) => Ok(None),
+        (Some(_), Some(_)) | (None, _) => Ok(PointCover::Clear),
         (Some(_), None) => bail!("target window {window} is not mapped on this screen"),
     }
+}
+
+/// What sits over the screen point a background pointer action aims at.
+#[derive(Debug, Clone)]
+enum PointCover {
+    /// The target (or a popup meant to receive the press).
+    Clear,
+    /// A window of the target's own pid; the press is retargeted to it.
+    SameApp(SameAppCover),
+    /// Another application's window; refused.
+    Occluded(TargetOccluded),
+}
+
+/// The target application's own window that received a press aimed at a
+/// point of another of its windows (its dialog over its main window).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SameAppCover {
+    /// Client window id (the `list_windows` id, not the WM frame).
+    pub window: u64,
+    pub title: String,
 }
 
 /// True when neither the EWMH active window nor the core focus moved since
@@ -1953,6 +1987,7 @@ fn pointer_effect(
         y,
         popups_appeared: popups_after.saturating_sub(popups_before),
         focus_guard: None,
+        retargeted_to: None,
     }
 }
 
@@ -1974,9 +2009,11 @@ pub fn send_virtual_pointer_click(
 
     let result = (|| -> Result<PointerEffect> {
         let window = click.target_window as x11::xlib::Window;
-        if let Some(occluded) = occluding_window(display, window, click.x, click.y)? {
-            return Err(occluded.into());
-        }
+        let retargeted_to = match occluding_window(display, window, click.x, click.y)? {
+            PointCover::Clear => None,
+            PointCover::SameApp(cover) => Some(cover),
+            PointCover::Occluded(occluded) => return Err(occluded.into()),
+        };
         let ids = ensure_master_pointer(cursor_id)?;
         let device = uinput_pointers()
             .lock()
@@ -2016,7 +2053,10 @@ pub fn send_virtual_pointer_click(
         // later virtual-keyboard chord would open Orca's preferences.
         release_button_best_effort(&device, click.button);
         train?;
-        Ok(pointer_effect(display, &saved_focus, before, popups_before, click.x, click.y))
+        let mut effect =
+            pointer_effect(display, &saved_focus, before, popups_before, click.x, click.y);
+        effect.retargeted_to = retargeted_to;
+        Ok(effect)
     })();
 
     restore_focus_state(display, &saved_focus);
@@ -2050,9 +2090,11 @@ pub fn send_virtual_pointer_drag(
         let window = drag.target_window as x11::xlib::Window;
         let start = drag.path[0];
         let end = drag.path[drag.path.len() - 1];
-        if let Some(occluded) = occluding_window(display, window, start.0, start.1)? {
-            return Err(occluded.into());
-        }
+        let retargeted_to = match occluding_window(display, window, start.0, start.1)? {
+            PointCover::Clear => None,
+            PointCover::SameApp(cover) => Some(cover),
+            PointCover::Occluded(occluded) => return Err(occluded.into()),
+        };
         let ids = ensure_master_pointer(cursor_id)?;
         let device = uinput_pointers()
             .lock()
@@ -2107,7 +2149,9 @@ pub fn send_virtual_pointer_drag(
         // Release on every exit path (see `send_virtual_pointer_click`).
         release_button_best_effort(&device, drag.button);
         gesture?;
-        Ok(pointer_effect(display, &saved_focus, before, popups_before, end.0, end.1))
+        let mut effect = pointer_effect(display, &saved_focus, before, popups_before, end.0, end.1);
+        effect.retargeted_to = retargeted_to;
+        Ok(effect)
     })();
 
     restore_focus_state(display, &saved_focus);

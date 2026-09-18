@@ -50,23 +50,34 @@ fn desktop_point_window_resolver(
     Arc::new(move |pid, x, y| {
         let pid = u32::try_from(pid).ok()?;
         let (sx, sy) = state.desktop_to_screen(x, y);
-        crate::wayland::list_windows_dispatch(Some(pid))
-            .into_iter()
-            .filter(|w| w.pid == Some(pid) && w.is_on_screen && w.width > 0 && w.height > 0)
-            .filter(|w| {
-                sx >= f64::from(w.x)
-                    && sy >= f64::from(w.y)
-                    && sx < f64::from(w.x) + f64::from(w.width)
-                    && sy < f64::from(w.y) + f64::from(w.height)
-            })
-            .max_by_key(|w| w.z_index.unwrap_or(0))
-            .map(|w| w.xid)
+        topmost_window_at(&crate::wayland::list_windows_dispatch(Some(pid)), pid, sx, sy)
     })
 }
 
+/// The pid's topmost on-screen window containing screen point `(sx, sy)`:
+/// the highest `z_index` (bottom-to-top stacking position) wins, so an
+/// app's own dialog beats the main window it covers. Windows without a
+/// stacking position rank lowest.
+fn topmost_window_at(windows: &[crate::x11::WindowInfo], pid: u32, sx: f64, sy: f64) -> Option<u64> {
+    windows
+        .iter()
+        .filter(|w| w.pid == Some(pid) && w.is_on_screen && w.width > 0 && w.height > 0)
+        .filter(|w| {
+            sx >= f64::from(w.x)
+                && sy >= f64::from(w.y)
+                && sx < f64::from(w.x) + f64::from(w.width)
+                && sy < f64::from(w.y) + f64::from(w.height)
+        })
+        .max_by_key(|w| w.z_index.map(|z| z as i64).unwrap_or(-1))
+        .map(|w| w.xid)
+}
+
 /// The window a pid-only keyboard action means in a multi-window app: the
-/// pid's active window when the WM reports one, else its topmost on-screen
-/// window.
+/// pid's window that holds the core focus, else its topmost transient dialog,
+/// else the WM's active window when it is the pid's, else the largest mapped
+/// toplevel (see [`crate::x11::pick_pid_window`]). A dialog the app just
+/// opened therefore receives the following `type_text` / `press_key` even
+/// while the main window is still the WM's active window.
 fn pid_fallback_window_resolver() -> cua_driver_core::window_target::PidFallbackWindowResolver {
     Arc::new(|pid| {
         let pid = u32::try_from(pid).ok()?;
@@ -74,19 +85,90 @@ fn pid_fallback_window_resolver() -> cua_driver_core::window_target::PidFallback
             .into_iter()
             .filter(|w| w.pid == Some(pid))
             .collect();
-        if !crate::wayland::is_wayland() {
-            if let Some(active) = crate::x11::active_window() {
-                if windows.iter().any(|w| w.xid == active) {
-                    return Some(active);
-                }
-            }
+        if crate::wayland::is_wayland() {
+            return windows
+                .into_iter()
+                .filter(|w| w.is_on_screen)
+                .max_by_key(|w| w.z_index.unwrap_or(0))
+                .map(|w| w.xid);
         }
-        windows
-            .into_iter()
-            .filter(|w| w.is_on_screen)
-            .max_by_key(|w| w.z_index.unwrap_or(0))
-            .map(|w| w.xid)
+        let ids: Vec<u64> = windows.iter().map(|w| w.xid).collect();
+        crate::x11::pick_pid_window(
+            &windows,
+            crate::x11::focused_window_among(&ids),
+            crate::x11::transient_for,
+            crate::x11::active_window(),
+        )
     })
+}
+
+#[cfg(test)]
+mod pid_window_resolver_tests {
+    use super::*;
+
+    fn win(xid: u64, z: Option<usize>, on_screen: bool, w: u32, h: u32) -> crate::x11::WindowInfo {
+        crate::x11::WindowInfo {
+            xid,
+            pid: Some(7),
+            app_name: "gimp".into(),
+            title: format!("w{xid}"),
+            is_on_screen: on_screen,
+            z_index: z,
+            x: 0,
+            y: 0,
+            width: w,
+            height: h,
+        }
+    }
+
+    #[test]
+    fn point_resolver_prefers_the_topmost_window_by_stacking_position() {
+        // Main window listed last (as `_NET_CLIENT_LIST_STACKING` bottom-up
+        // enumeration does when a dialog sits above it); the dialog wins.
+        let dialog = crate::x11::WindowInfo { z_index: Some(5), ..win(2, None, true, 400, 300) };
+        let main = crate::x11::WindowInfo { z_index: Some(3), ..win(1, None, true, 1920, 1080) };
+        assert_eq!(topmost_window_at(&[main.clone(), dialog.clone()], 7, 100.0, 100.0), Some(2));
+        assert_eq!(topmost_window_at(&[dialog, main], 7, 100.0, 100.0), Some(2));
+    }
+
+    #[test]
+    fn point_resolver_ignores_windows_without_a_stacking_position_when_one_has_it() {
+        let ranked = win(2, Some(0), true, 400, 300);
+        let unranked = win(1, None, true, 1920, 1080);
+        assert_eq!(topmost_window_at(&[ranked, unranked], 7, 10.0, 10.0), Some(2));
+    }
+
+    #[test]
+    fn pid_only_resolver_orders_focus_then_dialog_then_active_then_largest() {
+        let main = win(1, Some(1), true, 1920, 1080);
+        let dialog = win(2, Some(2), true, 400, 300);
+        let dock = win(3, Some(0), true, 200, 900);
+        let hidden = win(4, None, false, 3000, 3000);
+        let windows = vec![main, dialog, dock, hidden];
+        let transient = |xid: u64| (xid == 2).then_some(1u64);
+        // 1. core focus inside the pid wins outright (even over a dialog).
+        assert_eq!(crate::x11::pick_pid_window(&windows, Some(3), transient, Some(1)), Some(3));
+        // 2. no focus in the pid: its topmost transient dialog.
+        assert_eq!(crate::x11::pick_pid_window(&windows, None, transient, Some(1)), Some(2));
+        // 3. no dialog: the WM's active window when it is the pid's.
+        assert_eq!(crate::x11::pick_pid_window(&windows, None, |_| None, Some(3)), Some(3));
+        // 4. otherwise the largest mapped toplevel (never the unmapped one).
+        assert_eq!(crate::x11::pick_pid_window(&windows, None, |_| None, None), Some(1));
+        assert_eq!(crate::x11::pick_pid_window(&windows, None, |_| None, Some(99)), Some(1));
+        // A focused window that is not the pid's is ignored.
+        assert_eq!(crate::x11::pick_pid_window(&windows, Some(42), |_| None, None), Some(1));
+    }
+
+    #[test]
+    fn pid_only_resolver_skips_unmapped_dialogs() {
+        let main = win(1, Some(1), true, 800, 600);
+        let unmapped_dialog = win(2, Some(2), false, 400, 300);
+        let windows = vec![main, unmapped_dialog];
+        assert_eq!(
+            crate::x11::pick_pid_window(&windows, None, |xid| (xid == 2).then_some(1u64), None),
+            Some(1)
+        );
+    }
 }
 
 type PidWindowGuardParts = (
@@ -2321,6 +2403,96 @@ fn type_text_structured_electron(text_len: usize) -> Value {
     })
 }
 
+/// [`type_text_ax_result`] for an element-addressed insert: the snapshot
+/// object is read back (as `set_value` does) and, when the typed text is now
+/// part of its value, the result is `effect: confirmed` with a
+/// `value_readback` evidence item instead of `unverifiable`.
+async fn type_text_ax_result_verified(
+    pid: u32,
+    xid_opt: Option<u64>,
+    idx: usize,
+    text: &str,
+    route: &str,
+) -> ToolResult {
+    let text_len = text.chars().count();
+    if is_chromium_embedder(pid) {
+        return type_text_ax_result(pid, text_len, route);
+    }
+    let readback = tokio::task::spawn_blocking(move || crate::atspi::read_value_in(pid, xid_opt, idx))
+        .await
+        .ok()
+        .flatten();
+    type_text_readback_result(pid, idx, text, route, readback)
+}
+
+/// The typed text is confirmed when the element's fresh value contains it
+/// (an insert at the caret) or agrees with it numerically (a spin button
+/// that reformats "-40" as "-40.0").
+fn type_text_readback_result(
+    pid: u32,
+    idx: usize,
+    text: &str,
+    route: &str,
+    readback: Option<String>,
+) -> ToolResult {
+    let text_len = text.chars().count();
+    match readback {
+        Some(seen) if !text.trim().is_empty() && (seen.contains(text) || values_agree(text, &seen))
+        => {
+            let shown: String = seen.chars().take(200).collect();
+            ToolResult::text(format!(
+                "Typed {text_len} character(s) into element [{idx}] ({route}); it reads back '{shown}'."
+            ))
+            .with_structured(json!({
+                "path": "ax",
+                "characters": text_len,
+                "verified": true,
+                "effect": "confirmed",
+                "readback": shown,
+                "evidence": [{
+                    "kind": "value_readback",
+                    "detail": format!("element [{idx}] reads back the typed text"),
+                }],
+            }))
+        }
+        Some(seen) => {
+            let mut result = type_text_ax_result(pid, text_len, route);
+            let shown: String = seen.chars().take(200).collect();
+            if let Some(structured) = result.structured_content.as_mut() {
+                structured["readback"] = json!(shown);
+            }
+            result.content.push(cua_driver_core::protocol::Content::text(format!(
+                "The element reads back '{shown}', which does not contain the typed text; \
+                 confirm with get_window_state."
+            )));
+            result
+        }
+        None => type_text_ax_result(pid, text_len, route),
+    }
+}
+
+#[cfg(test)]
+mod type_text_readback_tests {
+    use super::*;
+
+    #[test]
+    fn typed_text_is_confirmed_only_when_read_back() {
+        let confirmed = type_text_readback_result(1, 3, "-40", "via targeted AT-SPI", Some("-40.0".into()));
+        let s = confirmed.structured_content.clone().unwrap();
+        assert_eq!(s["effect"], "confirmed");
+        assert_eq!(s["verified"], true);
+        assert_eq!(s["evidence"][0]["kind"], "value_readback");
+        let contained = type_text_readback_result(1, 3, "ab", "r", Some("xxabyy".into()));
+        assert_eq!(contained.structured_content.unwrap()["effect"], "confirmed");
+        let mismatch = type_text_readback_result(1, 3, "ab", "r", Some("zz".into()));
+        let s = mismatch.structured_content.unwrap();
+        assert_eq!(s["effect"], "unverifiable");
+        assert_eq!(s["readback"], "zz");
+        let blind = type_text_readback_result(1, 3, "ab", "r", None);
+        assert_eq!(blind.structured_content.unwrap()["effect"], "unverifiable");
+    }
+}
+
 /// Build the success `ToolResult` for an AT-SPI insert. The EditableText
 /// method's boolean is a delivery acknowledgement, not a fresh value readback,
 /// so native widgets remain `unverifiable`. Chromium embedders additionally
@@ -2669,8 +2841,20 @@ fn attach_focus_guard(
     for (key, value) in report.to_json().as_object().into_iter().flatten() {
         structured[key] = value.clone();
     }
+    if let Some(item) = report.evidence_item() {
+        push_evidence(&mut structured, item);
+    }
     result.structured_content = Some(structured);
     result
+}
+
+/// Append an `evidence[]` item to a structured payload (the public action
+/// contract keeps `evidence`, while flat diagnostic fields are reduced away).
+fn push_evidence(structured: &mut Value, item: Value) {
+    match structured.get_mut("evidence").and_then(Value::as_array_mut) {
+        Some(items) => items.push(item),
+        None => structured["evidence"] = json!([item]),
+    }
 }
 
 /// Tool result for a completed keyboard route (`press_key` / `hotkey`).
@@ -2861,19 +3045,34 @@ impl PointerRoute {
                     "detail": format!("{pct:.2}% of the screen region around ({}, {}) changed", effect.x, effect.y),
                 }));
             }
+            // The background focus guard ran around the press train: report
+            // what the application moved and whether it was restored. An own
+            // window it opened is a window change the contract publishes.
+            if let Some(guard) = &effect.focus_guard {
+                for (key, value) in guard.to_json().as_object().into_iter().flatten() {
+                    v[key] = value.clone();
+                }
+                evidence.extend(guard.evidence_item());
+            }
+            if let Some(cover) = &effect.retargeted_to {
+                v["retargeted_to"] = json!({
+                    "window_id": cover.window,
+                    "title": cover.title,
+                });
+                evidence.push(json!({
+                    "kind": "window_change",
+                    "detail": format!(
+                        "the point was under the application's own window {} \"{}\"; the press went to it",
+                        cover.window, cover.title
+                    ),
+                }));
+            }
             if !evidence.is_empty() {
                 v["evidence"] = json!(evidence);
             }
             if effect.landed() {
                 v["verified"] = json!(true);
                 v["effect"] = json!("confirmed");
-            }
-            // The background focus guard ran around the press train: report
-            // what the application moved and whether it was restored.
-            if let Some(guard) = &effect.focus_guard {
-                for (key, value) in guard.to_json().as_object().into_iter().flatten() {
-                    v[key] = value.clone();
-                }
             }
         }
         v
@@ -2883,6 +3082,13 @@ impl PointerRoute {
     fn text_suffix(&self, mode_label: &str) -> String {
         let mut text = self.text_suffix_inner(mode_label);
         if let Self::Mpx(effect) = self {
+            if let Some(cover) = &effect.retargeted_to {
+                text.push_str(&format!(
+                    " The point was under this application's own window {} \"{}\" \
+                     (retargeted_to), so the press went to that window.",
+                    cover.window, cover.title
+                ));
+            }
             if let Some(guard) = &effect.focus_guard {
                 text.push_str(&guard.summary());
             }
@@ -3019,11 +3225,28 @@ fn linux_input_error(error: anyhow::Error) -> ToolResult {
         }));
     }
     if let Some(occluded) = error.downcast_ref::<crate::input::TargetOccluded>() {
-        let hint = "The point is under another window, so a background pointer press there \
-             would hit the covering window instead of the target; no input was sent. \
-             Move or close the covering window (or act on it), click by element_index \
-             (AT-SPI action, no pointer needed), or retry with delivery_mode:\"foreground\" \
-             to raise the target first.";
+        let hint = format!(
+            "The point is under window {}{}{}, which belongs to a different application, so \
+             a background pointer press there would hit that window instead of the target; \
+             no input was sent. Either act on that window (pass its window_id{} and click / \
+             press keys there, or dismiss it), click the target by element_index (an AT-SPI \
+             action that needs no pointer), or pick a point of the target that is not \
+             covered (list_windows gives bounds and z_index).",
+            occluded.covering_window,
+            if occluded.covering_title.is_empty() {
+                String::new()
+            } else {
+                format!(" \"{}\"", occluded.covering_title)
+            },
+            occluded
+                .covering_pid
+                .map(|pid| format!(" of pid {pid}"))
+                .unwrap_or_default(),
+            occluded
+                .covering_pid
+                .map(|pid| format!(" with pid {pid}"))
+                .unwrap_or_default(),
+        );
         return ToolResult::error(format!("{occluded}. {hint}")).with_structured(json!({
             "code": "target_occluded",
             "effect": "refused",
@@ -5563,7 +5786,8 @@ impl Tool for TypeTextTool {
             })
             .await;
             if let Ok(Ok(())) = targeted {
-                return type_text_ax_result(pid, text_len, "via targeted AT-SPI");
+                return type_text_ax_result_verified(pid, xid_opt, idx, &text, "via targeted AT-SPI")
+                    .await;
             }
         }
         // The private nested compositor can target the owning Wayland client
@@ -5676,7 +5900,14 @@ impl Tool for TypeTextTool {
             .await;
             match targeted {
                 Ok(Ok(())) => {
-                    return type_text_ax_result(pid, text_len, "via targeted AT-SPI");
+                    return type_text_ax_result_verified(
+                        pid,
+                        xid_opt,
+                        idx,
+                        &text,
+                        "via targeted AT-SPI",
+                    )
+                    .await;
                 }
                 Ok(Err(_)) | Err(_)
                     if !delivery.is_foreground() && crate::wayland::wayland_input_enabled() =>

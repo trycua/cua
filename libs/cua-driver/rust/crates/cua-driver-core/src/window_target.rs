@@ -65,6 +65,9 @@ pub type DesktopPointWindowResolver =
 /// multi-window app (GIMP + docks) otherwise refused every one of them.
 pub type PidFallbackWindowResolver = Arc<dyn Fn(i64) -> Option<u64> + Send + Sync + 'static>;
 
+/// `(pid, snapshot handle)` -> the window that snapshot was taken of.
+pub type SnapshotWindowResolver = Arc<dyn Fn(i64, &str) -> Option<u64> + Send + Sync + 'static>;
+
 /// Desktop-frame `x`/`y` of an action, when the call carries them.
 fn desktop_frame_point(args: &Value) -> Option<(f64, f64)> {
     let frame_is_desktop = args.get("coordinate_frame").and_then(Value::as_str) == Some("desktop")
@@ -85,6 +88,7 @@ pub struct PidOnlyWindowTargetGuard {
     candidates: WindowTargetCandidates,
     point_resolver: Option<DesktopPointWindowResolver>,
     fallback_resolver: Option<PidFallbackWindowResolver>,
+    snapshot_resolver: Option<SnapshotWindowResolver>,
 }
 
 impl PidOnlyWindowTargetGuard {
@@ -94,6 +98,7 @@ impl PidOnlyWindowTargetGuard {
             candidates,
             point_resolver: None,
             fallback_resolver: None,
+            snapshot_resolver: None,
         }
     }
 
@@ -106,6 +111,11 @@ impl PidOnlyWindowTargetGuard {
 
     /// Resolve an otherwise ambiguous pid by the desktop-frame point the
     /// action targets (only for calls that carry desktop-frame `x`/`y`).
+    pub fn with_snapshot_resolver(mut self, resolver: SnapshotWindowResolver) -> Self {
+        self.snapshot_resolver = Some(resolver);
+        self
+    }
+
     pub fn with_point_resolver(mut self, resolver: DesktopPointWindowResolver) -> Self {
         self.point_resolver = Some(resolver);
         self
@@ -168,6 +178,21 @@ impl Tool for PidOnlyWindowTargetGuard {
         let Some(pid) = args.get("pid").and_then(Value::as_i64) else {
             return self.inner.invoke(args).await;
         };
+        // An element addressed through a snapshot belongs to the window that
+        // snapshot was taken of (a popup menu, a dialog): route there rather
+        // than to the pid's default window, which would only refuse with
+        // "snapshot belongs to window_id X".
+        if let (Some(resolver), Some(handle)) = (
+            self.snapshot_resolver.clone(),
+            args.get("snapshot_id").and_then(Value::as_str).map(str::to_owned),
+        ) {
+            if let Some(window_id) = resolver(pid, &handle) {
+                if let Some(object) = args.as_object_mut() {
+                    object.insert("window_id".to_owned(), window_id.into());
+                }
+                return self.inner.invoke(args).await;
+            }
+        }
         let candidates = self.candidates.clone();
         let candidates = match tokio::task::spawn_blocking(move || candidates(pid)).await {
             Ok(candidates) => candidates,
@@ -584,6 +609,34 @@ mod visibility_tests {
         let json = serde_json::to_value(&candidates()[1]).unwrap();
         assert_eq!(json["transient_for"], 3);
         assert!(serde_json::to_value(&candidates()[0]).unwrap().get("transient_for").is_none());
+    }
+
+    #[tokio::test]
+    async fn a_snapshot_id_routes_the_pid_only_action_to_the_snapshot_window() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        struct Echo(Arc<AtomicU64>);
+        #[async_trait]
+        impl Tool for Echo {
+            fn def(&self) -> &ToolDef {
+                unreachable!()
+            }
+            async fn invoke(&self, args: Value) -> ToolResult {
+                self.0.store(args["window_id"].as_u64().unwrap_or(0), Ordering::SeqCst);
+                ToolResult::text("ok")
+            }
+        }
+        let seen = Arc::new(AtomicU64::new(0));
+        let candidates: WindowTargetCandidates = Arc::new(|_| vec![]);
+        let resolver: SnapshotWindowResolver = Arc::new(|pid, handle| {
+            (pid == 5 && handle == "s00000004").then_some(8395475)
+        });
+        let guard = PidOnlyWindowTargetGuard::new(Box::new(Echo(seen.clone())), candidates)
+            .with_snapshot_resolver(resolver);
+        let result = guard
+            .invoke(serde_json::json!({"pid": 5, "element_index": 12, "snapshot_id": "s00000004"}))
+            .await;
+        assert_ne!(result.is_error, Some(true));
+        assert_eq!(seen.load(Ordering::SeqCst), 8395475);
     }
 
     #[test]

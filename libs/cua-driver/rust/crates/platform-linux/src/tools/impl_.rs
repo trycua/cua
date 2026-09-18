@@ -178,17 +178,32 @@ type PidWindowGuardParts = (
     WindowTargetCandidates,
     cua_driver_core::window_target::DesktopPointWindowResolver,
     cua_driver_core::window_target::PidFallbackWindowResolver,
+    cua_driver_core::window_target::SnapshotWindowResolver,
 );
 
 fn pid_window_guarded<T: Tool + 'static>(
     tool: T,
-    (candidates, point_resolver, fallback_resolver): &PidWindowGuardParts,
+    (candidates, point_resolver, fallback_resolver, snapshot_resolver): &PidWindowGuardParts,
 ) -> Box<dyn Tool> {
     Box::new(
         PidOnlyWindowTargetGuard::new(Box::new(tool), candidates.clone())
             .with_point_resolver(point_resolver.clone())
-            .with_fallback_resolver(fallback_resolver.clone()),
+            .with_fallback_resolver(fallback_resolver.clone())
+            .with_snapshot_resolver(snapshot_resolver.clone()),
     )
+}
+
+/// The window a `snapshot_id` was published for (the element cache lane of
+/// that pid), so pid-only element actions follow the snapshot to its popup
+/// or dialog.
+fn snapshot_window_resolver(
+    state: Arc<ToolState>,
+) -> cua_driver_core::window_target::SnapshotWindowResolver {
+    Arc::new(move |pid, handle| {
+        let pid = i32::try_from(pid).ok()?;
+        let id = cua_driver_core::element_token::parse_snapshot_handle(handle)?;
+        state.element_cache.window_for_snapshot(pid, id)
+    })
 }
 
 // ── DriverConfig + ResizeRegistry + ZoomRegistry ─────────────────────────────
@@ -12820,6 +12835,7 @@ pub fn build_registry_with_provider(
         Arc::new(pid_window_target_candidates),
         desktop_point_window_resolver(state.clone()),
         pid_fallback_window_resolver(),
+        snapshot_window_resolver(state.clone()),
     );
     r.register(pid_window_guarded(BringToFrontTool, &pid_window_candidates));
     r.register(Box::new(SetWindowFrameTool));

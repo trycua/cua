@@ -201,6 +201,27 @@
             ],
             "type": "string"
           },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "escalation": {
             "additionalProperties": false,
             "properties": {
@@ -237,6 +258,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -265,6 +292,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -604,6 +637,27 @@
             ],
             "type": "string"
           },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "escalation": {
             "additionalProperties": false,
             "properties": {
@@ -640,6 +694,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -668,6 +728,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -1523,6 +1589,12 @@
           "session": {
             "type": "string"
           },
+          "timeout_ms": {
+            "description": "Wall-clock budget for the accessibility walk in milliseconds\n(default 1000). A walk that runs out returns a partial tree flagged\n`truncated` rather than failing.",
+            "maximum": 120000,
+            "minimum": 100,
+            "type": "integer"
+          },
           "window_id": {
             "minimum": 1,
             "type": "integer"
@@ -1985,6 +2057,27 @@
             ],
             "type": "string"
           },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "escalation": {
             "additionalProperties": false,
             "properties": {
@@ -2021,6 +2114,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -2049,6 +2148,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -2156,6 +2261,27 @@
             ],
             "type": "string"
           },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "escalation": {
             "additionalProperties": false,
             "properties": {
@@ -2192,6 +2318,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -2220,6 +2352,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -2759,6 +2897,27 @@
             ],
             "type": "string"
           },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "escalation": {
             "additionalProperties": false,
             "properties": {
@@ -2795,6 +2954,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -2823,6 +2988,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -2976,6 +3147,27 @@
             ],
             "type": "string"
           },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "escalation": {
             "additionalProperties": false,
             "properties": {
@@ -3012,6 +3204,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -3040,6 +3238,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -3213,6 +3417,27 @@
             ],
             "type": "string"
           },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "escalation": {
             "additionalProperties": false,
             "properties": {
@@ -3249,6 +3474,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -3277,6 +3508,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -3697,6 +3934,27 @@
             ],
             "type": "string"
           },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "escalation": {
             "additionalProperties": false,
             "properties": {
@@ -3733,6 +3991,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -3761,6 +4025,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -4050,6 +4320,27 @@
             ],
             "type": "string"
           },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "escalation": {
             "additionalProperties": false,
             "properties": {
@@ -4086,6 +4377,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -4114,6 +4411,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [

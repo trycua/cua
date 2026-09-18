@@ -510,6 +510,19 @@ pub enum ActionEvidenceKind {
 #[serde(deny_unknown_fields)]
 pub struct ActionEvidence {
     pub kind: ActionEvidenceKind,
+    /// Human-readable readback the evidence rests on (what changed, which
+    /// popup or window appeared and how to target it). Never request data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+/// Why a `refused` action sent no input, and what to do instead.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ActionError {
+    pub code: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
@@ -549,6 +562,15 @@ pub struct ActionResult {
     pub evidence: Option<Vec<ActionEvidence>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub escalation: Option<ActionEscalation>,
+    /// The producer's human summary of what happened (resolved points, the
+    /// element hit, popups that opened, focus outcome, follow-up calls).
+    /// Clients that read only `structuredContent` still get everything the
+    /// text content says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    /// Present only with `effect: refused`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<ActionError>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -557,6 +579,7 @@ pub enum ActionResultValidationError {
     PartialRequiresDeliveredCount,
     RefusedCannotHaveDelivery,
     RefusedCannotHaveEvidence,
+    ErrorRequiresRefused,
 }
 
 impl std::fmt::Display for ActionResultValidationError {
@@ -566,6 +589,7 @@ impl std::fmt::Display for ActionResultValidationError {
             Self::PartialRequiresDeliveredCount => "partial effect requires delivered_count",
             Self::RefusedCannotHaveDelivery => "refused effect cannot include delivery",
             Self::RefusedCannotHaveEvidence => "refused effect cannot include evidence",
+            Self::ErrorRequiresRefused => "error is only reported with a refused effect",
         })
     }
 }
@@ -597,6 +621,9 @@ impl ActionResult {
             }
             ActionEffect::Refused if self.evidence.is_some() => {
                 Err(ActionResultValidationError::RefusedCannotHaveEvidence)
+            }
+            effect if effect != ActionEffect::Refused && self.error.is_some() => {
+                Err(ActionResultValidationError::ErrorRequiresRefused)
             }
             _ => Ok(()),
         }
@@ -686,8 +713,11 @@ mod tests {
             }),
             evidence: Some(vec![ActionEvidence {
                 kind: ActionEvidenceKind::ValueReadback,
+                detail: None,
             }]),
             escalation: None,
+            summary: None,
+            error: None,
         }
     }
 
@@ -700,7 +730,15 @@ mod tests {
         let properties = schema["properties"].as_object().expect("properties");
         assert_eq!(
             properties.keys().map(String::as_str).collect::<Vec<_>>(),
-            ["delivery", "effect", "escalation", "evidence", "route"]
+            [
+                "delivery",
+                "effect",
+                "error",
+                "escalation",
+                "evidence",
+                "route",
+                "summary"
+            ]
         );
         assert_eq!(
             properties["effect"]["enum"],
@@ -814,9 +852,36 @@ mod tests {
         delivery_extension["delivery"]["requested"] = json!("background");
         assert!(serde_json::from_value::<ActionResult>(delivery_extension).is_err());
 
+        // Evidence carries its human detail so a client that reads only
+        // structuredContent still sees what the readback said; other
+        // evidence extensions stay closed.
+        let mut evidence_detail = serde_json::to_value(&result).expect("serialize");
+        evidence_detail["evidence"][0]["detail"] = json!("value read back as 42");
+        assert_eq!(
+            serde_json::from_value::<ActionResult>(evidence_detail)
+                .expect("detail")
+                .evidence
+                .expect("evidence")[0]
+                .detail
+                .as_deref(),
+            Some("value read back as 42")
+        );
         let mut evidence_extension = serde_json::to_value(&result).expect("serialize");
-        evidence_extension["evidence"][0]["detail"] = json!("private readback");
+        evidence_extension["evidence"][0]["raw"] = json!("private readback");
         assert!(serde_json::from_value::<ActionResult>(evidence_extension).is_err());
+
+        let refusal = json!({
+            "effect": "refused",
+            "route": "synthetic_events",
+            "summary": "no input was sent",
+            "error": {"code": "point_outside_window", "hint": "use window-local pixels"}
+        });
+        let refusal = serde_json::from_value::<ActionResult>(refusal).expect("refusal");
+        assert_eq!(refusal.validate_invariants(), Ok(()));
+        assert_eq!(refusal.error.as_ref().map(|error| error.code.as_str()), Some("point_outside_window"));
+        let mut error_extension = serde_json::to_value(&refusal).expect("serialize");
+        error_extension["error"]["detail"] = json!({"x": 1});
+        assert!(serde_json::from_value::<ActionResult>(error_extension).is_err());
 
         let escalation_extension = json!({
             "effect": "unverifiable",
@@ -863,6 +928,7 @@ mod tests {
         result.delivery = None;
         result.evidence = Some(vec![ActionEvidence {
             kind: ActionEvidenceKind::WindowChange,
+            detail: None,
         }]);
         assert_eq!(
             result.validate_invariants(),
@@ -870,6 +936,17 @@ mod tests {
         );
         result.evidence = None;
         assert_eq!(result.validate_invariants(), Ok(()));
+
+        result.error = Some(ActionError {
+            code: "window_target_not_found".into(),
+            hint: None,
+        });
+        assert_eq!(result.validate_invariants(), Ok(()));
+        result.effect = ActionEffect::Unverifiable;
+        assert_eq!(
+            result.validate_invariants(),
+            Err(ActionResultValidationError::ErrorRequiresRefused)
+        );
     }
 }
 

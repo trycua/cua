@@ -242,6 +242,13 @@ pub enum EscalationKind {
     RetryWithForegroundDelivery,
 }
 
+/// Why a refused action sent no input, in the words the caller can act on.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ActionRefusal {
+    pub code: String,
+    pub hint: Option<String>,
+}
+
 /// Complete internal accounting for one action execution.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ActionExecutionRecord {
@@ -255,6 +262,7 @@ pub struct ActionExecutionRecord {
     pub escalation: Option<ActionEscalation>,
     pub delivered_count: Option<u32>,
     pub detail: Option<String>,
+    pub refusal: Option<ActionRefusal>,
 }
 
 impl ActionExecutionRecord {
@@ -274,6 +282,7 @@ impl ActionExecutionRecord {
             escalation: None,
             delivered_count: None,
             detail: None,
+            refusal: None,
         }
     }
 
@@ -366,6 +375,7 @@ impl ActionExecutionRecord {
                 evidence
                     .into_iter()
                     .map(|evidence| cua_driver_contract::ActionEvidence {
+                        detail: (!evidence.detail.is_empty()).then(|| evidence.detail.clone()),
                         kind: match evidence.kind {
                             ProjectedEvidenceKind::AccessibilityReadback
                             | ProjectedEvidenceKind::BrowserReadback
@@ -426,6 +436,21 @@ impl ActionExecutionRecord {
                     },
                 }
             }),
+            // The dispatch seam attaches the producer's text as the summary;
+            // the record itself never carries prose that could echo request
+            // data.
+            summary: None,
+            error: match projection.effect {
+                ActionEffect::Refused => {
+                    self.refusal
+                        .as_ref()
+                        .map(|refusal| cua_driver_contract::ActionError {
+                            code: refusal.code.clone(),
+                            hint: refusal.hint.clone(),
+                        })
+                }
+                _ => None,
+            },
         })
     }
 
@@ -477,7 +502,7 @@ impl ActionExecutionRecord {
                 detail: structured
                     .get("verify")
                     .and_then(serde_json::Value::as_str)
-                    .unwrap_or("confirmed")
+                    .unwrap_or_default()
                     .to_owned(),
             });
         }
@@ -533,6 +558,9 @@ impl ActionExecutionRecord {
                 }
             }
         }
+        if effect == ActionEffect::Refused {
+            record.refusal = legacy_refusal(structured);
+        }
         if effect == ActionEffect::Partial && record.delivered_count.is_none() {
             return None;
         }
@@ -575,6 +603,10 @@ impl ActionExecutionRecord {
                 "detail": escalation.detail,
             })),
             "detail": self.detail,
+            "refusal": self.refusal.as_ref().map(|refusal| serde_json::json!({
+                "code": refusal.code,
+                "hint": refusal.hint,
+            })),
         })
     }
 }
@@ -602,6 +634,23 @@ fn requested_delivery(tool_name: &str, args: &serde_json::Value) -> RequestedDel
         }
         _ => RequestedDelivery::Background,
     }
+}
+
+/// The refusal code and hint a legacy payload carries, in either envelope
+/// (`{"refusal":{code,message}}` or `{"code":…, "hint"|"message":…}`).
+fn legacy_refusal(structured: &serde_json::Value) -> Option<ActionRefusal> {
+    let code = structured
+        .pointer("/refusal/code")
+        .or_else(|| structured.get("code"))
+        .and_then(serde_json::Value::as_str)?;
+    let hint = ["/refusal/hint", "/refusal/message", "/hint", "/message"]
+        .iter()
+        .find_map(|pointer| structured.pointer(pointer).and_then(serde_json::Value::as_str))
+        .map(str::to_owned);
+    Some(ActionRefusal {
+        code: code.to_owned(),
+        hint,
+    })
 }
 
 fn legacy_effect(structured: &serde_json::Value) -> ActionEffect {
@@ -1123,6 +1172,14 @@ impl ActionExecutionRecordBuilder {
         self
     }
 
+    pub fn refusal(mut self, code: impl Into<String>, hint: Option<String>) -> Self {
+        self.0.refusal = Some(ActionRefusal {
+            code: code.into(),
+            hint,
+        });
+        self
+    }
+
     pub fn detail(mut self, detail: impl Into<String>) -> Self {
         self.0.detail = Some(detail.into());
         self
@@ -1465,7 +1522,7 @@ mod tests {
         .actual_delivery(ActualDelivery::Background)
         .evidence(ActionEvidence {
             kind: EvidenceKind::AccessibilityReadback,
-            detail: "secret request-adjacent diagnostic".to_owned(),
+            detail: "value read back as 42".to_owned(),
         })
         .detail("pid=42 window_id=7 x=10 y=20")
         .build()
@@ -1480,12 +1537,11 @@ mod tests {
                 "effect": "confirmed",
                 "route": "accessibility",
                 "delivery": {"mode": "background"},
-                "evidence": [{"kind": "value_readback"}]
+                "evidence": [{"kind": "value_readback", "detail": "value read back as 42"}]
             })
         );
         let rendered = value.to_string();
         for forbidden in [
-            "secret",
             "pid",
             "window_id",
             "\"x\"",
@@ -1523,7 +1579,7 @@ mod tests {
                 "effect": "confirmed",
                 "route": "system_api",
                 "delivery": {"mode": "not_applicable"},
-                "evidence": [{"kind": "value_readback"}]
+                "evidence": [{"kind": "value_readback", "detail": "GetWindowRect matched exact HWND geometry"}]
             })
         );
     }
@@ -1764,6 +1820,13 @@ mod tests {
         let refused = refused.public_result().expect("refusal should project");
         assert_eq!(refused.effect, cua_driver_contract::ActionEffect::Refused);
         assert!(refused.delivery.is_none());
+        assert_eq!(
+            refused.error,
+            Some(cua_driver_contract::ActionError {
+                code: "browser_ref_stale".into(),
+                hint: Some("refresh browser state".into()),
+            })
+        );
         assert_eq!(
             refused.escalation,
             Some(cua_driver_contract::ActionEscalation {

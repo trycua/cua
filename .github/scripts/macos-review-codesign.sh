@@ -26,8 +26,10 @@ keychain_password="$(openssl rand -hex 32)"
 identity_password="$(openssl rand -hex 32)"
 keychain_created=false
 search_list_snapshotted=false
+default_keychain_snapshotted=false
 previous_keychains=()
 previous_keychain_count=0
+previous_default_keychain=""
 log_dir="$work_root/logs"
 signing_probe="$work_root/signing-probe"
 
@@ -52,6 +54,10 @@ run_step() {
 cleanup() {
   local status=$?
   trap - EXIT INT TERM
+  if [[ "$default_keychain_snapshotted" == true && -n "$previous_default_keychain" ]]; then
+    security default-keychain -d user -s "$previous_default_keychain" \
+      >/dev/null 2>&1 || true
+  fi
   if [[ "$search_list_snapshotted" == true ]]; then
     if (( previous_keychain_count > 0 )); then
       security list-keychains -d user -s "${previous_keychains[@]}" >/dev/null 2>&1 || true
@@ -78,6 +84,14 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 mkdir -p "$log_dir"
+
+previous_default_keychain="$(security default-keychain -d user |
+  sed -E 's/^[[:space:]]*"//; s/"[[:space:]]*$//')"
+[[ -n "$previous_default_keychain" ]] || {
+  echo "cannot determine the current user default keychain" >&2
+  exit 1
+}
+default_keychain_snapshotted=true
 
 previous_keychains_output="$(security list-keychains -d user)"
 while IFS= read -r listed_keychain; do
@@ -111,6 +125,7 @@ if (( previous_keychain_count > 0 )); then
 else
   security list-keychains -d user -s "$keychain_path"
 fi
+security default-keychain -d user -s "$keychain_path"
 
 # This allow-all ACL is confined to a generated key in an ephemeral keychain on
 # a single-tenant runner. The EXIT trap deletes both the key and its keychain.

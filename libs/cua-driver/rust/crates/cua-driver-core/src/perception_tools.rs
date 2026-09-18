@@ -661,9 +661,15 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         #[cfg(target_os = "macos")]
-        const SHEBANG: &str = "#!/Applications/Xcode.app/Contents/Developer/usr/bin/python3";
+        let interpreter =
+            std::path::PathBuf::from("/Applications/Xcode.app/Contents/Developer/usr/bin/python3");
         #[cfg(not(target_os = "macos"))]
-        const SHEBANG: &str = "#!/usr/bin/env python3";
+        let interpreter = std::env::var_os("PATH")
+            .into_iter()
+            .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+            .map(|directory| directory.join("python3"))
+            .find(|candidate| candidate.is_file())
+            .unwrap_or_else(|| std::path::PathBuf::from("/usr/bin/python3"));
 
         let service = Arc::new(CaptureService::default());
         let (capture_id, binding) = capture(&service);
@@ -676,7 +682,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let worker = directory.path().join("worker.py");
         let script = format!(
-            r#"{SHEBANG}
+            r#"#!{interpreter}
 import base64, hashlib, json, struct, sys
 def read():
  p=sys.stdin.buffer.read(4); n=struct.unpack('>I',p)[0]; return json.loads(sys.stdin.buffer.read(n))
@@ -694,40 +700,53 @@ if hashlib.sha256(raw).hexdigest() != '{expected}':
  write({{'protocol':'cua-perception/1','request_id':r['request_id'],'status':'error','error':{{'code':'invalid_image','message':'wrong capture bytes'}}}})
 else:
  write({{'protocol':'cua-perception/1','request_id':r['request_id'],'status':'ok','result':{{'runtime':'fixture_only','identity':{{'extension':{{'id':'cua-perception','version':'{extension_version}'}},'backend':'deterministic_fixture','fixture_sha256':'{expected}'}},'regions':[{{'id':'one','kind':'icon','bounds':{{'x':0,'y':0,'width':1,'height':1}},'label':'icon-class-4','confidence':0.9}}]}}}})
-"#
+"#,
+            interpreter = interpreter.display(),
         );
         std::fs::write(&worker, script).unwrap();
         let mut permissions = std::fs::metadata(&worker).unwrap().permissions();
         permissions.set_mode(0o700);
         std::fs::set_permissions(&worker, permissions).unwrap();
+        let mut additional_readable_paths: Vec<std::path::PathBuf> = [
+            "/usr",
+            "/bin",
+            "/lib",
+            "/lib64",
+            "/etc",
+            "/opt",
+            "/System",
+            "/Library",
+            "/private/var/db",
+            "/private/var/select",
+            "/Applications/Xcode.app",
+        ]
+        .into_iter()
+        .map(std::path::PathBuf::from)
+        .filter(|path| path.is_dir())
+        .collect();
+        if interpreter.starts_with("/nix/store") {
+            additional_readable_paths.push(std::path::PathBuf::from("/nix/store"));
+        }
         let containment = crate::perception_client::containment::ContainmentLimits {
-            additional_readable_paths: [
-                "/usr",
-                "/bin",
-                "/lib",
-                "/lib64",
-                "/etc",
-                "/opt",
-                "/System",
-                "/Library",
-                "/private/var/db",
-                "/private/var/select",
-                "/Applications/Xcode.app",
-            ]
-            .into_iter()
-            .map(std::path::PathBuf::from)
-            .filter(|path| path.is_dir())
-            .collect(),
+            additional_readable_paths,
             additional_executable_paths: [
-                "/usr/bin/env",
-                "/usr/bin/python3",
-                "/Applications/Xcode.app/Contents/Developer/usr/bin/python3",
-                "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9",
-                "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Python3",
-                "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python",
+                std::path::PathBuf::from("/usr/bin/env"),
+                std::path::PathBuf::from("/usr/bin/python3"),
+                std::path::PathBuf::from(
+                    "/Applications/Xcode.app/Contents/Developer/usr/bin/python3",
+                ),
+                std::path::PathBuf::from(
+                    "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9",
+                ),
+                std::path::PathBuf::from(
+                    "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Python3",
+                ),
+                std::path::PathBuf::from(
+                    "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python",
+                ),
+                interpreter,
             ]
             .into_iter()
-            .map(std::path::PathBuf::from)
             .filter(|path| path.is_file())
             .collect(),
             ..Default::default()

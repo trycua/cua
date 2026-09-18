@@ -830,10 +830,25 @@ mod tests {
 
     fn with_fixture_interpreter(script: &str) -> String {
         #[cfg(target_os = "macos")]
-        const SHEBANG: &str = "#!/Applications/Xcode.app/Contents/Developer/usr/bin/python3";
+        let interpreter =
+            PathBuf::from("/Applications/Xcode.app/Contents/Developer/usr/bin/python3");
         #[cfg(not(target_os = "macos"))]
-        const SHEBANG: &str = "#!/usr/bin/env python3";
-        script.replacen("#!/usr/bin/env python3", SHEBANG, 1)
+        let interpreter = fixture_python_interpreter();
+        script.replacen(
+            "#!/usr/bin/env python3",
+            &format!("#!{}", interpreter.display()),
+            1,
+        )
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn fixture_python_interpreter() -> PathBuf {
+        std::env::var_os("PATH")
+            .into_iter()
+            .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+            .map(|directory| directory.join("python3"))
+            .find(|candidate| candidate.is_file())
+            .unwrap_or_else(|| PathBuf::from("/usr/bin/python3"))
     }
 
     fn fixture_worker(
@@ -975,7 +990,8 @@ else:
     /// directories are opted in explicitly rather than by widening the derived
     /// allowlist for everyone.
     fn interpreter_read_paths() -> Vec<PathBuf> {
-        [
+        #[allow(unused_mut)]
+        let mut paths: Vec<PathBuf> = [
             "/usr",
             "/bin",
             "/lib",
@@ -991,7 +1007,12 @@ else:
         .into_iter()
         .map(PathBuf::from)
         .filter(|path| path.is_dir())
-        .collect()
+        .collect();
+        #[cfg(not(target_os = "macos"))]
+        if fixture_python_interpreter().starts_with("/nix/store") {
+            paths.push(PathBuf::from("/nix/store"));
+        }
+        paths
     }
 
     #[cfg(target_os = "macos")]
@@ -1012,11 +1033,14 @@ else:
 
     #[cfg(not(target_os = "macos"))]
     fn interpreter_executable_paths() -> Vec<PathBuf> {
-        ["/usr/bin/env", "/usr/bin/python3"]
-            .into_iter()
-            .map(PathBuf::from)
-            .filter(|path| path.is_file())
-            .collect()
+        [
+            PathBuf::from("/usr/bin/env"),
+            PathBuf::from("/usr/bin/python3"),
+            fixture_python_interpreter(),
+        ]
+        .into_iter()
+        .filter(|path| path.is_file())
+        .collect()
     }
 
     fn warm_fixture_worker(

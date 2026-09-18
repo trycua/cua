@@ -38,6 +38,7 @@ pkgs.rustPlatform.buildRustPackage {
     pkg-config
     rustPlatform.bindgenHook
     clang
+    python3
   ];
   buildInputs = with pkgs; [
     libx11

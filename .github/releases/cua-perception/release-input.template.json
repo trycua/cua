@@ -25,11 +25,19 @@
       "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
       "size": 1,
       "license": { "spdx": "Apache-2.0", "source": "https://github.com/trycua/cua" }
+    },
+    {
+      "kind": "model-manifest",
+      "name": "model-manifest.json",
+      "path": "payload/model-manifest.json",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size": 1,
+      "license": { "spdx": "Apache-2.0", "source": "https://github.com/trycua/cua", "notice": "payload/NOTICE" }
     }
   ],
   "modelLedger": "model-ledger.json",
   "sourceLedger": "source-ledger.json",
-  "verification": {
+  "suppliedVerification": {
     "health": "verification/health.json",
     "selfTest": "verification/self-test.json",
     "realParse": "verification/real-parse.json"

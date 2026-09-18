@@ -4,7 +4,7 @@
   "title": "Cua Perception runtime binding contract",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "target", "protocolVersion", "worker", "runtime", "models", "dictionary", "rejectMismatch"],
+  "required": ["schemaVersion", "target", "protocolVersion", "worker", "runtime", "modelManifest", "models", "dictionary", "rejectMismatch"],
   "properties": {
     "$schema": { "type": "string" },
     "schemaVersion": { "const": 1 },
@@ -12,6 +12,7 @@
     "protocolVersion": { "type": "integer", "minimum": 1 },
     "worker": { "$ref": "#/$defs/binding" },
     "runtime": { "$ref": "#/$defs/binding" },
+    "modelManifest": { "$ref": "#/$defs/binding" },
     "models": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "$ref": "#/$defs/binding" } },
     "dictionary": { "$ref": "#/$defs/binding" },
     "rejectMismatch": { "const": true }

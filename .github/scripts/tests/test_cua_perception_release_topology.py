@@ -4,6 +4,7 @@ from hashlib import sha256
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
 import tarfile
 
 import pytest
@@ -35,9 +36,22 @@ def fixture(tmp_path: Path) -> tuple[Path, Path]:
         "payload/ocr-det.onnx": b"ocr-det\n",
         "payload/ocr-rec.onnx": b"ocr-rec\n",
         "payload/ocr-dictionary.txt": b"a\nb\n",
-        "payload/source.tar": b"source\n",
+        "payload/source.tar.gz": b"source\n",
         "payload/review.mp4": b"review-recording\n",
     }
+    model_manifest = {
+        "schema_version": 1,
+        "identity": {"name": "fixture", "version": "1", "source_url": "fixture", "source_revision": "fixture", "license": "Apache-2.0"},
+        "onnx_runtime": {"version": "1", "library_sha256": digest(values["payload/libonnxruntime.so"]), "intra_threads": 1},
+        "detector": {"model": {"path": "models/fixture-model.onnx", "sha256": digest(values["payload/model.onnx"])}, "input_name": "images", "output_name": "output0", "input_width": 32, "input_height": 32, "confidence_threshold": 0.3, "iou_threshold": 0.1, "output_layout": "yolo_v8_cxcywh_class_scores"},
+        "ocr": {
+            "detector": {"model": {"path": "models/ocr-det.onnx", "sha256": digest(values["payload/ocr-det.onnx"])}, "input_name": "x", "output_name": "out", "input_width": 32, "input_height": 32, "pixel_threshold": 0.3, "box_threshold": 0.6, "unclip_ratio": 1.5, "minimum_area": 1, "max_candidates": 10},
+            "recognizer": {"model": {"path": "models/ocr-rec.onnx", "sha256": digest(values["payload/ocr-rec.onnx"])}, "input_name": "x", "output_name": "out", "input_width": 32, "input_height": 16, "blank_index": 0},
+            "dictionary": {"path": "models/ocr-dictionary.txt", "sha256": digest(values["payload/ocr-dictionary.txt"])},
+            "dictionary_format": "plain_lines",
+        },
+    }
+    values["payload/model-manifest.json"] = (json.dumps(model_manifest) + "\n").encode()
     for relative, content in values.items():
         path = payload / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -52,7 +66,8 @@ def fixture(tmp_path: Path) -> tuple[Path, Path]:
         ("model", "ocr-det.onnx", "payload/ocr-det.onnx"),
         ("model", "ocr-rec.onnx", "payload/ocr-rec.onnx"),
         ("dictionary", "ocr-dictionary.txt", "payload/ocr-dictionary.txt"),
-        ("source", "cua-perception-source.tar", "payload/source.tar"),
+        ("model-manifest", "model-manifest.json", "payload/model-manifest.json"),
+        ("source", "cua-perception-source.tar.gz", "payload/source.tar.gz"),
         ("review-recording", "linux-review.mp4", "payload/review.mp4"),
     ):
         content = values[relative]
@@ -87,6 +102,7 @@ def fixture(tmp_path: Path) -> tuple[Path, Path]:
         report = {
             "$schema": "verification-report.schema.json",
             "schemaVersion": 1,
+            "evidenceKind": "supplied",
             "gate": gate,
             "status": "passed",
             "target": target["triple"],
@@ -103,7 +119,7 @@ def fixture(tmp_path: Path) -> tuple[Path, Path]:
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_bytes(report_bytes)
         artifacts.append({
-            "kind": "verification-report",
+            "kind": "supplied-verification-report",
             "role": gate,
             "name": f"{gate}.json",
             "path": relative,
@@ -139,9 +155,9 @@ def fixture(tmp_path: Path) -> tuple[Path, Path]:
             "$schema": "source-ledger.schema.json",
             "schemaVersion": 1,
             "sources": [{
-                "artifact": "cua-perception-source.tar",
-                "artifactSha256": digest(values["payload/source.tar"]),
-                "artifactSize": len(values["payload/source.tar"]),
+                "artifact": "cua-perception-source.tar.gz",
+                "artifactSha256": digest(values["payload/source.tar.gz"]),
+                "artifactSize": len(values["payload/source.tar.gz"]),
                 "repository": "https://github.com/trycua/cua",
                 "revision": "a" * 40,
                 "license": "Apache-2.0",
@@ -164,7 +180,7 @@ def fixture(tmp_path: Path) -> tuple[Path, Path]:
         "artifacts": artifacts,
         "modelLedger": "model-ledger.json",
         "sourceLedger": "source-ledger.json",
-        "verification": verification,
+        "suppliedVerification": verification,
     }
     manifest_path = payload / "release-input.json"
     manifest_path.write_text(json.dumps(manifest))
@@ -194,16 +210,27 @@ def test_templates_and_schemas_are_valid_and_pin_known_models() -> None:
         assert expected in serialized
     assert models[0]["license"] == "AGPL-3.0-only"
     assert models[0]["verificationStatus"] == "license-review-required"
+    platforms = json.loads((CONTROL / "platform-inputs.json").read_text())
+    Draft202012Validator(json.loads((CONTROL / "platform-inputs.schema.json").read_text())).validate(platforms)
+    assert [item["triple"] for item in platforms["platforms"]] == [
+        "x86_64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-pc-windows-msvc"
+    ]
+    assert all(item["modelManifest"] == "model-manifest.json" for item in platforms["platforms"])
 
 
 def test_packages_deterministically_with_catalog_sbom_and_redacted_provenance(tmp_path: Path) -> None:
     payload, manifest = fixture(tmp_path)
     first, second = tmp_path / "first", tmp_path / "second"
-    archive = release.package_candidate(manifest, payload, first)
-    repeated = release.package_candidate(manifest, payload, second)
+    evidence = tmp_path / "executed.json"
+    release.run_candidate_gates(manifest, payload, evidence)
+    archive = release.package_candidate(manifest, payload, first, executed_evidence_path=evidence)
+    repeated = release.package_candidate(manifest, payload, second, executed_evidence_path=evidence)
     assert archive.read_bytes() == repeated.read_bytes()
     assert (first / "checksums.txt").read_text().startswith(release.file_digest(archive))
     catalog = json.loads((first / "catalog-payload.json").read_text())
+    assert (first / "catalog-payload.json").read_bytes() == json.dumps(
+        catalog, separators=(",", ":"), ensure_ascii=False
+    ).encode()
     provenance = json.loads((first / "provenance.redacted.json").read_text())
     assert catalog["publisher_id"] == "cua"
     assert catalog["key_id"] == "cua-extension-ed25519-2026-01"
@@ -226,6 +253,9 @@ def test_packages_deterministically_with_catalog_sbom_and_redacted_provenance(tm
         "review-recordings/linux-review.mp4",
         "metadata/sbom.spdx.json",
         "metadata/runtime-contract.json",
+        "metadata/executed-verification.json",
+        "model-manifest.json",
+        "source/cua-perception-source.tar.gz",
         "extension.json",
     } <= set(names)
     with tarfile.open(archive) as candidate:
@@ -241,6 +271,11 @@ def test_packages_deterministically_with_catalog_sbom_and_redacted_provenance(tm
     runtime_contract = json.loads((first / "runtime-contract.json").read_text())
     assert runtime_contract["rejectMismatch"] is True
     assert len(runtime_contract["models"]) == 3
+    assert runtime_contract["modelManifest"]["name"] == "model-manifest.json"
+    assert provenance["evidence"]["supplied"] == [
+        "verification/health.json", "verification/self-test.json", "verification/real-parse.json"
+    ]
+    assert provenance["evidence"]["executed"] == "metadata/executed-verification.json"
     release.verify_checksums(first / "checksums.txt")
     (first / "runtime-contract.json").write_text("tampered\n")
     with pytest.raises(release.CandidateError, match="checksum verification failed"):
@@ -292,12 +327,80 @@ def test_source_ledger_must_bind_hash_size_revision_and_bundled_offer(tmp_path: 
         ledger_path.write_text(json.dumps(original))
 
 
+def test_bind_source_builds_nonempty_archive_from_exact_checked_out_sha(tmp_path: Path) -> None:
+    payload, manifest_path = fixture(tmp_path)
+    source_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=ROOT, check=True, text=True, stdout=subprocess.PIPE
+    ).stdout.strip()
+    manifest = json.loads(manifest_path.read_text())
+    manifest["sourceSha"] = source_sha
+    manifest_path.write_text(json.dumps(manifest))
+    ledger = json.loads((payload / "source-ledger.json").read_text())
+    ledger["sources"][0]["revision"] = source_sha
+    (payload / "source-ledger.json").write_text(json.dumps(ledger))
+    archive = release.bind_corresponding_source(manifest_path, payload, ROOT)
+    assert archive.stat().st_size > 0
+    first_bytes = archive.read_bytes()
+    assert release.bind_corresponding_source(manifest_path, payload, ROOT).read_bytes() == first_bytes
+    with tarfile.open(archive) as source:
+        assert source.getnames()[0].rstrip("/") == f"cua-source-{source_sha}"
+    rebound = json.loads(manifest_path.read_text())
+    source_artifact = next(item for item in rebound["artifacts"] if item["kind"] == "source")
+    assert source_artifact["sha256"] == release.file_digest(archive)
+    assert source_artifact["size"] == archive.stat().st_size
+
+
 def test_release_gates_execute_worker_instead_of_trusting_reports(tmp_path: Path) -> None:
     payload, manifest_path = fixture(tmp_path)
-    release.run_candidate_gates(manifest_path, payload)
+    evidence_path = tmp_path / "executed.json"
+    evidence = release.run_candidate_gates(manifest_path, payload, evidence_path)
+    assert evidence["evidenceKind"] == "executed"
+    assert [gate["gate"] for gate in evidence["gates"]] == [
+        "health", "self-test", "real-parse", "mismatch-rejection"
+    ]
+    assert json.loads(evidence_path.read_text()) == evidence
     (payload / "fail-gates").write_text("fail\n")
     with pytest.raises(release.CandidateError, match="executed health gate failed"):
         release.run_candidate_gates(manifest_path, payload)
+
+
+def test_packaging_rejects_executed_evidence_for_another_candidate(tmp_path: Path) -> None:
+    payload, manifest_path = fixture(tmp_path)
+    evidence_path = tmp_path / "executed.json"
+    release.run_candidate_gates(manifest_path, payload, evidence_path)
+    evidence = json.loads(evidence_path.read_text())
+    evidence["sourceSha"] = "b" * 40
+    evidence_path.write_text(json.dumps(evidence))
+    with pytest.raises(release.CandidateError, match="sourceSha differs"):
+        release.package_candidate(
+            manifest_path, payload, tmp_path / "candidate", executed_evidence_path=evidence_path
+        )
+
+
+def test_requires_one_exact_model_manifest_bound_to_runtime_and_models(tmp_path: Path) -> None:
+    payload, manifest_path = fixture(tmp_path)
+    manifest = json.loads(manifest_path.read_text())
+    model_manifest = next(item for item in manifest["artifacts"] if item["kind"] == "model-manifest")
+    manifest["artifacts"].remove(model_manifest)
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(release.CandidateError, match="exactly one model-manifest.json"):
+        release.load_and_validate_manifest(manifest_path, payload)
+
+    manifest["artifacts"].extend([model_manifest, {**model_manifest, "name": "other.json", "path": "payload/model-manifest-copy.json"}])
+    (payload / "payload/model-manifest-copy.json").write_bytes((payload / model_manifest["path"]).read_bytes())
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(release.CandidateError, match="exactly one model-manifest.json"):
+        release.load_and_validate_manifest(manifest_path, payload)
+
+    manifest["artifacts"] = [item for item in manifest["artifacts"] if item["path"] != "payload/model-manifest-copy.json"]
+    document = json.loads((payload / model_manifest["path"]).read_text())
+    document["onnx_runtime"]["library_sha256"] = "0" * 64
+    changed = (json.dumps(document) + "\n").encode()
+    (payload / model_manifest["path"]).write_bytes(changed)
+    model_manifest.update({"sha256": digest(changed), "size": len(changed)})
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(release.CandidateError, match="different ONNX Runtime"):
+        release.load_and_validate_manifest(manifest_path, payload)
 
 
 def test_driver_archive_exclusion_is_enforced(tmp_path: Path) -> None:
@@ -327,8 +430,9 @@ def test_release_stream_is_candidate_only_and_driver_remains_excluded() -> None:
 
 def test_workflows_are_valid_and_candidate_workflow_cannot_publish() -> None:
     candidate_path = ROOT / ".github/workflows/cd-cua-perception-candidate.yml"
+    manual_path = ROOT / ".github/workflows/cd-cua-perception-candidate-manual.yml"
     ci_path = ROOT / ".github/workflows/ci-cua-perception-release.yml"
-    for path in (candidate_path, ci_path):
+    for path in (candidate_path, manual_path, ci_path):
         assert isinstance(yaml.safe_load(path.read_text()), dict)
     candidate = candidate_path.read_text()
     assert "actions/upload-artifact" in candidate and "actions/download-artifact" in candidate
@@ -339,6 +443,15 @@ def test_workflows_are_valid_and_candidate_workflow_cannot_publish() -> None:
     assert "PERCEPTION_ED25519_PRIVATE_KEY_BASE64" in candidate
     assert "openssl genpkey" not in candidate
     assert "verify-checksums" in candidate
+    assert "bind-source" in candidate and "--executed-evidence" in candidate
+    assert "refs/cua-reviewed/source" in candidate
+    assert "refs/pull/3943/head" in manual_path.read_text()
+    parsed = yaml.safe_load(candidate)
+    assert "PRIVATE_KEY_BASE64" not in json.dumps(parsed["jobs"]["package"])
+    assert "PRIVATE_KEY_BASE64" in json.dumps(parsed["jobs"]["sign"])
+    manual = manual_path.read_text()
+    for value in ("x86_64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-pc-windows-msvc"):
+        assert value in manual
 
 
 def test_trust_root_and_rfc8032_vector_match_extension_manager_contract() -> None:
@@ -352,6 +465,17 @@ def test_trust_root_and_rfc8032_vector_match_extension_manager_contract() -> Non
     assert trust["keys"][0]["validUntilUnix"] == 2082758400
     assert vector["publicKeyHex"] == "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
     assert len(vector["signatureBase64"]) == 88
+    subprocess.run(
+        [
+            "node", "-e",
+            "const c=require('node:crypto');"
+            "const key=Buffer.from('302a300506032b6570032100'+process.argv[1],'hex');"
+            "if(!c.verify(null,Buffer.from(process.argv[2],'hex'),"
+            "{key,format:'der',type:'spki'},Buffer.from(process.argv[3],'base64')))process.exit(1)",
+            vector["publicKeyHex"], vector["messageHex"], vector["signatureBase64"],
+        ],
+        check=True,
+    )
 
 
 def test_driver_workflow_never_packages_perception() -> None:

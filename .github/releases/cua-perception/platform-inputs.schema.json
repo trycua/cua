@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/trycua/cua/.github/releases/cua-perception/platform-inputs.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "platforms"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "platforms": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["os", "arch", "triple", "runner", "bundleArtifact", "worker", "runtime", "modelManifest"],
+        "properties": {
+          "os": { "enum": ["linux", "macos", "windows"] },
+          "arch": { "const": "x86_64" },
+          "triple": { "type": "string", "minLength": 1 },
+          "runner": { "type": "string", "minLength": 1 },
+          "bundleArtifact": { "type": "string", "pattern": "^cua-perception-input-[A-Za-z0-9_-]+$" },
+          "worker": { "type": "string", "minLength": 1 },
+          "runtime": { "type": "string", "pattern": "^(libonnxruntime\\.(so|dylib)|onnxruntime\\.dll)$" },
+          "modelManifest": { "const": "model-manifest.json" }
+        }
+      }
+    }
+  }
+}

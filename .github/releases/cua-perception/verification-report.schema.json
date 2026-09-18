@@ -4,10 +4,11 @@
   "title": "Cua Perception target verification report",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "gate", "status", "target", "protocolVersion", "workerSha256", "runtimeSha256"],
+  "required": ["schemaVersion", "evidenceKind", "gate", "status", "target", "protocolVersion", "workerSha256", "runtimeSha256"],
   "properties": {
     "$schema": { "type": "string" },
     "schemaVersion": { "const": 1 },
+    "evidenceKind": { "const": "supplied" },
     "gate": { "enum": ["health", "self-test", "real-parse"] },
     "status": { "const": "passed" },
     "target": { "type": "string", "minLength": 1 },

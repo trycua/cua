@@ -35,9 +35,10 @@ KIND_DIRECTORIES = {
     "runtime": "runtime",
     "model": "models",
     "dictionary": "models",
+    "model-manifest": "",
     "notice": "notices",
     "source": "source",
-    "verification-report": "verification",
+    "supplied-verification-report": "verification/supplied",
     "review-recording": "review-recordings",
 }
 
@@ -70,12 +71,15 @@ def confined_file(root: Path, relative: str) -> Path:
     pure = PurePosixPath(relative)
     if pure.is_absolute() or ".." in pure.parts:
         raise CandidateError(f"input path must be relative and confined: {relative!r}")
-    resolved = (root / pure).resolve()
+    candidate = root / pure
+    if candidate.is_symlink():
+        raise CandidateError(f"input must not be a symlink: {relative!r}")
+    resolved = candidate.resolve()
     try:
         resolved.relative_to(root.resolve())
     except ValueError as error:
         raise CandidateError(f"input path escapes payload root: {relative!r}") from error
-    if not resolved.is_file() or resolved.is_symlink():
+    if not resolved.is_file():
         raise CandidateError(f"input must be a regular non-symlink file: {relative!r}")
     return resolved
 
@@ -93,7 +97,8 @@ def load_and_validate_manifest(manifest_path: Path, payload_root: Path) -> dict[
     validate_schema(manifest, CONTROL / "artifact-manifest.schema.json")
     required = {
         "schemaVersion", "component", "version", "driverVersion", "sourceSha",
-        "target", "protocol", "artifacts", "modelLedger", "sourceLedger", "verification",
+        "target", "protocol", "artifacts", "modelLedger", "sourceLedger",
+        "suppliedVerification",
     }
     missing = required - set(manifest) if isinstance(manifest, dict) else required
     if missing:
@@ -152,6 +157,9 @@ def load_and_validate_manifest(manifest_path: Path, payload_root: Path) -> dict[
     dictionaries = kinds.get("dictionary", [])
     if len(dictionaries) != 1 or dictionaries[0].get("role") != "ocr-dictionary":
         raise CandidateError("candidate must contain exactly one OCR dictionary")
+    model_manifests = kinds.get("model-manifest", [])
+    if len(model_manifests) != 1 or model_manifests[0]["name"] != "model-manifest.json":
+        raise CandidateError("candidate must contain exactly one model-manifest.json artifact")
     runtime = kinds["runtime"][0]
     expected_runtime_suffix = {"linux": ".so", "macos": ".dylib", "windows": ".dll"}[
         target["os"]
@@ -172,23 +180,60 @@ def load_and_validate_manifest(manifest_path: Path, payload_root: Path) -> dict[
 
     _validate_ledger(manifest, payload_root, "modelLedger", "model", "model-ledger.schema.json")
     _validate_ledger(manifest, payload_root, "sourceLedger", "source", "source-ledger.schema.json")
+    _validate_model_manifest(manifest, payload_root, kinds)
     _validate_verification_reports(manifest, payload_root, kinds)
     return manifest
+
+
+def _validate_model_manifest(
+    manifest: Mapping[str, Any], payload_root: Path, kinds: Mapping[str, list[Mapping[str, Any]]]
+) -> None:
+    artifact = kinds["model-manifest"][0]
+    document = read_json(confined_file(payload_root, artifact["path"]))
+    if not isinstance(document, dict) or document.get("schema_version") != 1:
+        raise CandidateError("model-manifest.json has an invalid schema version")
+    runtime = kinds["runtime"][0]
+    if document.get("onnx_runtime", {}).get("library_sha256") != runtime["sha256"]:
+        raise CandidateError("model-manifest.json binds a different ONNX Runtime")
+    expected = {
+        "detector.model": next(item for item in kinds["model"] if item.get("role") == "icon-detect"),
+        "ocr.detector.model": next(item for item in kinds["model"] if item.get("role") == "ocr-detect"),
+        "ocr.recognizer.model": next(item for item in kinds["model"] if item.get("role") == "ocr-recognize"),
+        "ocr.dictionary": kinds["dictionary"][0],
+    }
+    actual = {
+        "detector.model": document.get("detector", {}).get("model"),
+        "ocr.detector.model": document.get("ocr", {}).get("detector", {}).get("model"),
+        "ocr.recognizer.model": document.get("ocr", {}).get("recognizer", {}).get("model"),
+        "ocr.dictionary": document.get("ocr", {}).get("dictionary"),
+    }
+    for field, release_artifact in expected.items():
+        binding = actual[field]
+        wanted = {
+            "path": f"models/{release_artifact['name']}",
+            "sha256": release_artifact["sha256"],
+        }
+        if binding != wanted:
+            raise CandidateError(f"model-manifest.json {field} differs from release artifacts")
 
 
 def _validate_verification_reports(
     manifest: Mapping[str, Any], payload_root: Path, kinds: Mapping[str, list[Mapping[str, Any]]]
 ) -> None:
-    declared = {item["path"]: item for item in kinds.get("verification-report", [])}
+    declared = {
+        item["path"]: item for item in kinds.get("supplied-verification-report", [])
+    }
     worker = kinds["worker"][0]
     runtime = kinds["runtime"][0]
     for field, gate in (("health", "health"), ("selfTest", "self-test"), ("realParse", "real-parse")):
-        relative = manifest["verification"][field]
+        relative = manifest["suppliedVerification"][field]
         artifact = declared.get(relative)
         if not artifact or artifact.get("role") != gate:
             raise CandidateError(f"verification gate {gate} is not a declared report artifact")
         report = read_json(confined_file(payload_root, relative))
         validate_schema(report, CONTROL / "verification-report.schema.json")
+        if report.get("evidenceKind") != "supplied":
+            raise CandidateError(f"verification gate {gate} is not marked as supplied evidence")
         if report["gate"] != gate or report["target"] != manifest["target"]["triple"]:
             raise CandidateError(f"verification gate {gate} targets a different platform")
         if report["protocolVersion"] != manifest["protocol"]["version"]:
@@ -255,11 +300,110 @@ def canonical_json(path: Path, value: Mapping[str, Any]) -> None:
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def bind_corresponding_source(
+    manifest_path: Path, payload_root: Path, repository_root: Path
+) -> Path:
+    manifest = read_json(manifest_path)
+    if not isinstance(manifest, dict) or not re.fullmatch(
+        r"[0-9a-f]{40}", str(manifest.get("sourceSha", ""))
+    ):
+        raise CandidateError("candidate sourceSha must be an exact lowercase commit SHA")
+    source_sha = manifest["sourceSha"]
+    head = subprocess.run(
+        ["git", "-C", str(repository_root), "rev-parse", "HEAD"],
+        check=True,
+        stdout=subprocess.PIPE,
+        text=True,
+    ).stdout.strip()
+    if head != source_sha:
+        raise CandidateError(f"checked-out source {head} differs from manifest {source_sha}")
+    source_artifacts = [item for item in manifest.get("artifacts", []) if item.get("kind") == "source"]
+    if len(source_artifacts) != 1:
+        raise CandidateError("candidate must declare exactly one corresponding-source artifact")
+    source = source_artifacts[0]
+    pure = PurePosixPath(str(source.get("path", "")))
+    if pure.is_absolute() or ".." in pure.parts or not pure.parts:
+        raise CandidateError("corresponding-source path must be relative and confined")
+    destination = (payload_root / pure).resolve()
+    try:
+        destination.relative_to(payload_root.resolve())
+    except ValueError as error:
+        raise CandidateError("corresponding-source path escapes payload root") from error
+    if destination.suffixes[-2:] != [".tar", ".gz"]:
+        raise CandidateError("corresponding-source artifact must use .tar.gz")
+    if (payload_root / pure).is_symlink():
+        raise CandidateError("corresponding-source artifact must not be a symlink")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="cua-perception-source-") as temporary:
+        raw_tar = Path(temporary) / "source.tar"
+        subprocess.run(
+            [
+                "git", "-C", str(repository_root), "archive", "--format=tar",
+                f"--prefix=cua-source-{source_sha}/", "-o", str(raw_tar), source_sha,
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        with raw_tar.open("rb") as source_stream, destination.open("wb") as output_stream:
+            with gzip.GzipFile(filename="", mode="wb", fileobj=output_stream, mtime=0) as compressed:
+                shutil.copyfileobj(source_stream, compressed)
+    if destination.stat().st_size == 0:
+        raise CandidateError("generated corresponding-source artifact is empty")
+    source["sha256"] = file_digest(destination)
+    source["size"] = destination.stat().st_size
+    ledger_path = confined_file(payload_root, str(manifest.get("sourceLedger", "")))
+    ledger = read_json(ledger_path)
+    entries = ledger.get("sources", []) if isinstance(ledger, dict) else []
+    matching = [entry for entry in entries if entry.get("artifact") == source.get("name")]
+    if len(matching) != 1 or len(entries) != 1:
+        raise CandidateError("source ledger must contain exactly the declared source artifact")
+    matching[0].update({
+        "artifactSha256": source["sha256"],
+        "artifactSize": source["size"],
+        "revision": source_sha,
+        "sourceOfferStatus": "bundled",
+    })
+    canonical_json(ledger_path, ledger)
+    canonical_json(manifest_path, manifest)
+    load_and_validate_manifest(manifest_path, payload_root)
+    return destination
+
+
+def load_executed_evidence(
+    evidence_path: Path, manifest: Mapping[str, Any]
+) -> dict[str, Any]:
+    evidence = read_json(evidence_path)
+    validate_schema(evidence, CONTROL / "executed-verification.schema.json")
+    worker = next(item for item in manifest["artifacts"] if item["kind"] == "worker")
+    runtime = next(item for item in manifest["artifacts"] if item["kind"] == "runtime")
+    expected = {
+        "schemaVersion": 1,
+        "evidenceKind": "executed",
+        "sourceSha": manifest["sourceSha"],
+        "target": manifest["target"]["triple"],
+        "protocolVersion": manifest["protocol"]["version"],
+        "workerSha256": worker["sha256"],
+        "runtimeSha256": runtime["sha256"],
+    }
+    for field, value in expected.items():
+        if evidence.get(field) != value:
+            raise CandidateError(f"executed evidence {field} differs from candidate")
+    gates = evidence.get("gates", [])
+    if [item.get("gate") for item in gates] != [
+        "health", "self-test", "real-parse", "mismatch-rejection"
+    ] or any(item.get("status") != "passed" or item.get("exitCode") != 0 for item in gates):
+        raise CandidateError("executed evidence does not contain all passing release gates")
+    return evidence
+
+
 def spdx_id(value: str) -> str:
     return "SPDXRef-" + re.sub(r"[^A-Za-z0-9.-]", "-", value)
 
 
-def generated_documents(manifest: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+def generated_documents(
+    manifest: Mapping[str, Any], executed_evidence: Mapping[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
     artifacts = sorted(manifest["artifacts"], key=lambda item: (item["kind"], item["name"]))
     namespace_seed = sha256(
         f"{manifest['sourceSha']}:{manifest['target']['triple']}:{manifest['version']}".encode()
@@ -317,6 +461,13 @@ def generated_documents(manifest: Mapping[str, Any]) -> tuple[dict[str, Any], di
             "workflow": os.environ.get("GITHUB_WORKFLOW_REF", "local-candidate"),
             "runId": os.environ.get("GITHUB_RUN_ID", "local"),
             "target": manifest["target"]["triple"],
+        },
+        "evidence": {
+            "supplied": [manifest["suppliedVerification"][field] for field in ("health", "selfTest", "realParse")],
+            "executed": "metadata/executed-verification.json",
+            "executedSha256": sha256(
+                (json.dumps(executed_evidence, indent=2, sort_keys=True) + "\n").encode()
+            ).hexdigest(),
         },
         "subjects": [
             {"name": item["name"], "digest": {"sha256": item["sha256"]}}
@@ -429,6 +580,9 @@ def runtime_contract(manifest: Mapping[str, Any]) -> dict[str, Any]:
         "protocolVersion": manifest["protocol"]["version"],
         "worker": binding(next(item for item in artifacts if item["kind"] == "worker")),
         "runtime": binding(next(item for item in artifacts if item["kind"] == "runtime")),
+        "modelManifest": binding(
+            next(item for item in artifacts if item["kind"] == "model-manifest")
+        ),
         "models": [binding(item) for item in artifacts if item["kind"] == "model"],
         "dictionary": binding(next(item for item in artifacts if item["kind"] == "dictionary")),
         "rejectMismatch": True,
@@ -454,6 +608,7 @@ def create_archive(stage: Path, destination: Path) -> None:
 
 def package_candidate(
     manifest_path: Path, payload_root: Path, output: Path, *,
+    executed_evidence_path: Path,
     key_id: str = "cua-extension-ed25519-2026-01",
     catalog_version: int = 1,
     expires_unix: int = 2000000000,
@@ -495,6 +650,9 @@ def package_candidate(
             "valid_until_unix": pending_key["validUntilUnix"],
         }
     manifest = load_and_validate_manifest(manifest_path, payload_root)
+    executed_evidence = load_executed_evidence(executed_evidence_path, manifest)
+    if output.exists() and any(output.iterdir()):
+        raise CandidateError(f"candidate output directory must be empty: {output}")
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="cua-perception-candidate-") as temporary:
         stage = Path(temporary) / "candidate"
@@ -508,12 +666,13 @@ def package_candidate(
             if field in manifest:
                 shutil.copyfile(confined_file(payload_root, manifest[field]), stage / f"{field}.json")
 
-        sbom, provenance = generated_documents(manifest)
+        sbom, provenance = generated_documents(manifest, executed_evidence)
         runtime = runtime_contract(manifest)
         canonical_json(stage / "metadata/artifact-manifest.json", manifest)
         canonical_json(stage / "metadata/sbom.spdx.json", sbom)
         canonical_json(stage / "metadata/provenance.redacted.json", provenance)
         canonical_json(stage / "metadata/runtime-contract.json", runtime)
+        canonical_json(stage / "metadata/executed-verification.json", executed_evidence)
         validate_schema(sbom, CONTROL / "sbom.schema.json")
         validate_schema(provenance, CONTROL / "provenance.schema.json")
         validate_schema(runtime, CONTROL / "runtime-contract.schema.json")
@@ -572,7 +731,9 @@ def verify_driver_exclusion(paths: Sequence[Path]) -> None:
                 raise CandidateError(f"Driver archive {path.name} contains Perception payload: {name}")
 
 
-def run_candidate_gates(manifest_path: Path, payload_root: Path) -> None:
+def run_candidate_gates(
+    manifest_path: Path, payload_root: Path, evidence_path: Path | None = None
+) -> dict[str, Any]:
     manifest = load_and_validate_manifest(manifest_path, payload_root)
     worker_item = next(item for item in manifest["artifacts"] if item["kind"] == "worker")
     runtime_item = next(item for item in manifest["artifacts"] if item["kind"] == "runtime")
@@ -585,6 +746,7 @@ def run_candidate_gates(manifest_path: Path, payload_root: Path) -> None:
         "CUA_PERCEPTION_RUNTIME_SHA256": runtime_item["sha256"],
         "CUA_PERCEPTION_TARGET": manifest["target"]["triple"],
     }
+    executed = []
     for gate, arguments in (
         ("health", ["--health"]),
         ("self-test", ["--self-test"]),
@@ -605,6 +767,29 @@ def run_candidate_gates(manifest_path: Path, payload_root: Path) -> None:
                 f"executed {gate} gate failed with exit {result.returncode}: "
                 f"{result.stderr.decode(errors='replace')[:500]}"
             )
+        executed.append({
+            "gate": gate,
+            "arguments": arguments,
+            "status": "passed",
+            "exitCode": result.returncode,
+            "stdoutSha256": sha256(result.stdout).hexdigest(),
+            "stderrSha256": sha256(result.stderr).hexdigest(),
+        })
+    evidence = {
+        "$schema": "executed-verification.schema.json",
+        "schemaVersion": 1,
+        "evidenceKind": "executed",
+        "sourceSha": manifest["sourceSha"],
+        "target": manifest["target"]["triple"],
+        "protocolVersion": manifest["protocol"]["version"],
+        "workerSha256": worker_item["sha256"],
+        "runtimeSha256": runtime_item["sha256"],
+        "gates": executed,
+    }
+    validate_schema(evidence, CONTROL / "executed-verification.schema.json")
+    if evidence_path is not None:
+        canonical_json(evidence_path, evidence)
+    return evidence
 
 
 def verify_checksums(checksum_path: Path) -> None:
@@ -634,6 +819,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     package.add_argument("--manifest", type=Path, required=True)
     package.add_argument("--payload-root", type=Path, required=True)
     package.add_argument("--output", type=Path, required=True)
+    package.add_argument("--executed-evidence", type=Path, required=True)
     package.add_argument("--key-id", required=True)
     package.add_argument("--catalog-version", type=int, required=True)
     package.add_argument("--expires-unix", type=int, required=True)
@@ -642,6 +828,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     gates = subparsers.add_parser("run-gates")
     gates.add_argument("--manifest", type=Path, required=True)
     gates.add_argument("--payload-root", type=Path, required=True)
+    gates.add_argument("--evidence", type=Path, required=True)
+    source = subparsers.add_parser("bind-source")
+    source.add_argument("--manifest", type=Path, required=True)
+    source.add_argument("--payload-root", type=Path, required=True)
+    source.add_argument("--repository-root", type=Path, required=True)
     checksums = subparsers.add_parser("verify-checksums")
     checksums.add_argument("checksum_path", type=Path)
     args = parser.parse_args(argv)
@@ -654,6 +845,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.manifest,
                 args.payload_root,
                 args.output,
+                executed_evidence_path=args.executed_evidence,
                 key_id=args.key_id,
                 catalog_version=args.catalog_version,
                 expires_unix=args.expires_unix,
@@ -663,8 +855,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             verify_driver_exclusion(args.archives)
             print("Driver archives exclude Cua Perception payloads")
         elif args.command == "run-gates":
-            run_candidate_gates(args.manifest, args.payload_root)
+            run_candidate_gates(args.manifest, args.payload_root, args.evidence)
             print("Executed health, self-test, real-parse, and mismatch-rejection gates")
+        elif args.command == "bind-source":
+            archive = bind_corresponding_source(
+                args.manifest, args.payload_root, args.repository_root
+            )
+            print(archive)
         else:
             verify_checksums(args.checksum_path)
             print("Candidate checksums are valid")

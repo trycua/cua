@@ -4,7 +4,7 @@
   "title": "Cua Perception candidate input manifest",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "component", "version", "driverVersion", "sourceSha", "target", "protocol", "artifacts", "modelLedger", "sourceLedger", "verification"],
+  "required": ["schemaVersion", "component", "version", "driverVersion", "sourceSha", "target", "protocol", "artifacts", "modelLedger", "sourceLedger", "suppliedVerification"],
   "properties": {
     "$schema": { "type": "string" },
     "schemaVersion": { "const": 1 },
@@ -21,7 +21,7 @@
     },
     "modelLedger": { "$ref": "#/$defs/relativePath" },
     "sourceLedger": { "$ref": "#/$defs/relativePath" },
-    "verification": {
+    "suppliedVerification": {
       "type": "object",
       "additionalProperties": false,
       "required": ["health", "selfTest", "realParse"],
@@ -69,7 +69,7 @@
       "additionalProperties": false,
       "required": ["kind", "name", "path", "sha256", "size", "license"],
       "properties": {
-        "kind": { "enum": ["worker", "runtime", "model", "dictionary", "notice", "source", "verification-report", "review-recording"] },
+        "kind": { "enum": ["worker", "runtime", "model", "dictionary", "model-manifest", "notice", "source", "supplied-verification-report", "review-recording"] },
         "role": {
           "enum": ["icon-detect", "ocr-detect", "ocr-recognize", "ocr-dictionary", "health", "self-test", "real-parse"]
         },

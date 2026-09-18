@@ -45,6 +45,29 @@ func TestRewriteLocation(t *testing.T) {
 	}
 }
 
+func TestNormalizeProxyUpstreamPath(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "empty", in: "", want: "/"},
+		{name: "root slash", in: "/", want: "/"},
+		{name: "relative", in: "tools", want: "/tools"},
+		{name: "absolute", in: "/tools", want: "/tools"},
+		{name: "double slash", in: "//tools", want: "/tools"},
+		{name: "slash backslash", in: "/\\tools", want: "/tools"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := normalizeProxyUpstreamPath(tc.in); got != tc.want {
+				t.Fatalf("normalizeProxyUpstreamPath(%q)=%q want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestSvc_Unauthenticated(t *testing.T) {
 	h := Handlers{
 		GatewayCfg: config.GatewayConfiguration{

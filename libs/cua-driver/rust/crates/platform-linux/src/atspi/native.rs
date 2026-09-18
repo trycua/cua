@@ -1176,6 +1176,22 @@ async fn collect_visited_bounded<'a>(
         let has_component = ifaces.contains(Interface::Component);
         let has_text = ifaces.contains(Interface::Text);
 
+        // A toplevel transient of role `tool tip` is never read or entered:
+        // gail (GTK2, e.g. GIMP 2.10) answers `name` on a tooltip-role popup
+        // whose child is not a plain label with a `g_message` ("ATK_ROLE_TOOLTIP
+        // object found, but doesn't look like a tooltip"), which GIMP shows as
+        // a "GIMP Message" dialog. Such a popup exists only after the real
+        // pointer hovered a widget (foreground delivery); it carries no
+        // actionable element, so skipping it changes nothing else. One extra
+        // round-trip per toplevel, not per node.
+        if depth == 0 {
+            if let Some(Ok(role)) = call(acc.get_role_name()).await {
+                if is_tooltip_role(&role) {
+                    dlog!("skipping tooltip toplevel {}", oref.path);
+                    continue;
+                }
+            }
+        }
         // These four are independent — issue them concurrently to cut the
         // per-node round-trip cost (large trees like Chromium's have hundreds
         // of nodes, so sequential reads dominate the walk time).
@@ -1229,7 +1245,7 @@ async fn collect_visited_bounded<'a>(
         let showing = state_r
             .as_ref()
             .and_then(|state| state.as_ref().ok())
-            .is_none_or(|state| is_showing_state(state));
+            .is_none_or(|state| counts_as_showing(&role_lower, state));
         let expanded = state_r
             .as_ref()
             .and_then(|state| state.as_ref().ok())
@@ -1571,6 +1587,24 @@ fn passive_marker(role: &str, has_action: bool, has_component: bool, enabled: Op
 /// that carries neither is a hidden widget, not an old bridge.
 fn is_showing_state(state: &StateSet) -> bool {
     state.contains(State::Showing)
+}
+
+/// Menu entries are the exception to the `Showing` gate: gail (GTK2, e.g.
+/// GIMP 2.10) never publishes `Showing` on a menu item, open menu or not,
+/// and an item in a closed menu is still reachable through its AT-SPI
+/// `click` action (that is how a background click opens a GIMP dialog). A
+/// `Visible` menu entry therefore stays indexed; a foreground click on one
+/// that is not actually on screen takes the action route instead of the
+/// pointer (see the click tool), so listing it is safe.
+fn is_menu_entry_role(role_lower: &str) -> bool {
+    matches!(
+        role_lower,
+        "menu" | "menu item" | "check menu item" | "radio menu item" | "tear off menu item"
+    )
+}
+
+fn counts_as_showing(role_lower: &str, state: &StateSet) -> bool {
+    is_showing_state(state) || (is_menu_entry_role(role_lower) && state.contains(State::Visible))
 }
 
 /// Format an AT-SPI numeric value like the historical `str(currentValue)`
@@ -2930,6 +2964,26 @@ pub fn element_bounds_ref(
     )
 }
 
+/// Whether a snapshot-cached element is currently on screen: its own AT-SPI
+/// state set carries `Showing` (a GTK menu item whose menu is closed, or a
+/// widget on an unmapped notebook page, lacks it even though the object
+/// still exists). `Ok(true)` when the toolkit exposes no state set.
+pub fn element_showing_ref(object_ref: &ObjectRef) -> Result<bool> {
+    bounded_for(
+        REF_ACTION_BUDGET,
+        async {
+            let conn = shared_connection().await?;
+            let (acc, _) = live_accessible(conn, object_ref).await?;
+            match call(acc.get_state()).await {
+                Some(Ok(state)) => Ok(is_showing_state(&state)),
+                Some(Err(_)) => Ok(true),
+                None => Err(anyhow!("cached element did not answer in time")),
+            }
+        },
+        || Err(anyhow!("element_showing (cached element) timed out")),
+    )
+}
+
 /// [`focus_element`] on a snapshot-cached element identity.
 pub fn focus_element_ref(object_ref: &ObjectRef) -> Result<bool> {
     bounded_for(
@@ -3098,23 +3152,116 @@ pub fn perform_action_at_point_in(
             } else {
                 resolve_window_frame(conn, pid, xid, &seeds).await
             };
+            // The toolkit's `Window` coordinate frame is not always the X11
+            // client window the caller's pixels are relative to: VCL
+            // (LibreOffice) measures from the WM frame, title bar included,
+            // so a client-local point hit-tests one or two rows too high.
+            // Re-base the point on the frame's own screen origin.
+            let (hit_x, hit_y) = match scoped {
+                Some(ordinal) => {
+                    let frame_origin = frame_screen_origin(conn, &seeds[ordinal]).await;
+                    let client_origin = x11_window_origin(xid);
+                    at_point_toolkit_coords((win_x, win_y), client_origin, frame_origin)
+                }
+                None => (win_x, win_y),
+            };
+            if (hit_x, hit_y) != (win_x, win_y) {
+                dlog!(
+                    "at-point ({win_x},{win_y}) re-based to toolkit window coords ({hit_x},{hit_y})"
+                );
+            }
             let ordered: Vec<RawObjectRef> = match scoped {
                 Some(ordinal) => seeds.get(ordinal).cloned().into_iter().collect(),
                 None => seeds,
             };
             for seed in ordered {
-                let chain = descend_at_point(conn, seed, win_x, win_y).await;
+                let chain = descend_at_point(conn, seed, hit_x, hit_y).await;
                 if chain.len() <= 1 {
                     // The frame itself, or nothing: this top-level does not
                     // cover the point (or cannot hit-test). Try the next one.
                     continue;
                 }
-                return actuate_chain(&chain, win_x, win_y, skip_focus_roles).await;
+                return actuate_chain(&chain, hit_x, hit_y, skip_focus_roles).await;
             }
             Ok(None)
         },
         || Ok(None),
     )
+}
+
+/// Screen origin of an application top-level as the toolkit reports it
+/// (`Component.GetExtents(Screen)`), when that answer is trustworthy.
+async fn frame_screen_origin(
+    conn: &AccessibilityConnection,
+    seed: &RawObjectRef,
+) -> Option<(i32, i32)> {
+    let acc = call(accessible_for(conn, seed)).await?.ok()?;
+    let proxies = call(acc.proxies()).await?.ok()?;
+    let component = call(proxies.component()).await?.ok()?;
+    let raw = call(component.get_extents(CoordType::Screen)).await?.ok()?;
+    let display = (!crate::wayland::is_wayland())
+        .then(x11_display_size)
+        .flatten();
+    screen_extents_trusted(raw, display).then_some((raw.0, raw.1))
+}
+
+/// Largest offset between an X11 client origin and the toolkit's own frame
+/// origin that still reads as decorations (a title bar, a border). Anything
+/// larger is a mis-correlated frame, and the point is left alone.
+const FRAME_DELTA_MAX_PX: i32 = 128;
+
+/// Translate a client-window-local point into the toolkit's `Window`
+/// coordinate frame for `GetAccessibleAtPoint`. The toolkit frame origin is
+/// where the top-level accessible says it is on screen; the client origin is
+/// the X11 window the caller's pixels are relative to. Their difference is
+/// the decoration inset the toolkit folds into its frame (0 for GTK, the
+/// title bar height for VCL). Unknown origins or an implausible delta leave
+/// the point untouched.
+pub(crate) fn at_point_toolkit_coords(
+    (x, y): (i32, i32),
+    client_origin: Option<(i32, i32)>,
+    frame_origin: Option<(i32, i32)>,
+) -> (i32, i32) {
+    let (Some((cx, cy)), Some((fx, fy))) = (client_origin, frame_origin) else {
+        return (x, y);
+    };
+    let (dx, dy) = (cx - fx, cy - fy);
+    if dx.abs() > FRAME_DELTA_MAX_PX || dy.abs() > FRAME_DELTA_MAX_PX {
+        return (x, y);
+    }
+    (x + dx, y + dy)
+}
+
+#[cfg(test)]
+mod at_point_coords_tests {
+    use super::at_point_toolkit_coords;
+
+    #[test]
+    fn vcl_title_bar_inset_is_added() {
+        // Calc: X11 client at (70,64), VCL frame origin (70,27): +37 px.
+        assert_eq!(
+            at_point_toolkit_coords((315, 218), Some((70, 64)), Some((70, 27))),
+            (315, 255)
+        );
+    }
+
+    #[test]
+    fn gtk_frame_equals_client_so_nothing_changes() {
+        assert_eq!(
+            at_point_toolkit_coords((315, 218), Some((70, 64)), Some((70, 64))),
+            (315, 218)
+        );
+    }
+
+    #[test]
+    fn unknown_or_implausible_origins_leave_the_point() {
+        assert_eq!(at_point_toolkit_coords((10, 20), None, Some((1, 2))), (10, 20));
+        assert_eq!(at_point_toolkit_coords((10, 20), Some((1, 2)), None), (10, 20));
+        assert_eq!(
+            at_point_toolkit_coords((10, 20), Some((900, 64)), Some((70, 64))),
+            (10, 20)
+        );
+    }
 }
 
 /// Fire the right thing on a `GetAccessibleAtPoint` chain (frame first,
@@ -4147,6 +4294,12 @@ pub fn is_focus_taking_role(role: &str) -> bool {
     )
 }
 
+/// AT-SPI role names a toolkit gives a tooltip popup (`tool tip` is the
+/// canonical spelling; `tooltip` appears in some bridges).
+pub(crate) fn is_tooltip_role(role: &str) -> bool {
+    matches!(role.trim().to_ascii_lowercase().as_str(), "tool tip" | "tooltip")
+}
+
 pub(crate) fn is_passive_role(role: &str) -> bool {
     matches!(
         role,
@@ -4349,10 +4502,34 @@ pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> 
 /// therefore the same index space) `get_window_state` used for the snapshot
 /// the index came from; an application-wide pre-order would number a
 /// multi-window app (GIMP's docks, LibreOffice dialogs) differently.
+/// Screen bounds a walk resolved are usable for a pointer action only when
+/// they have a real size and intersect the display. `display` is `None` when
+/// the display size is unknown (Wayland); the size check still applies.
+pub(crate) fn walk_bounds_usable(
+    bounds: Option<(i32, i32, u32, u32)>,
+    display: Option<(u32, u32)>,
+) -> Option<(i32, i32, u32, u32)> {
+    let (x, y, w, h) = bounds?;
+    if w == 0 || h == 0 {
+        return None;
+    }
+    if let Some((dw, dh)) = display {
+        let right = i64::from(x) + i64::from(w);
+        let bottom = i64::from(y) + i64::from(h);
+        if x >= dw as i32 || y >= dh as i32 || right <= 0 || bottom <= 0 {
+            return None;
+        }
+    }
+    Some((x, y, w, h))
+}
+
 fn element_bounds_by_walk(pid: u32, xid: u64, idx: usize) -> Result<(i32, i32, u32, u32)> {
     // Synchronous X11 lookups stay on the caller's blocking thread, outside
     // the AT-SPI runtime.
     let offset = window_to_screen_offset(pid, xid, None);
+    let display = (!crate::wayland::is_wayland())
+        .then(x11_display_size)
+        .flatten();
     bounded_for(
         INDEX_RESOLVE_BUDGET,
         async {
@@ -4384,28 +4561,39 @@ fn element_bounds_by_walk(pid: u32, xid: u64, idx: usize) -> Result<(i32, i32, u
             // Screen on Wayland / when no X11 window resolves (offset is None).
             match offset {
                 Some((ox, oy)) => {
-                    let (x, y, w, h) = comp
+                    let raw = comp
                         .get_extents(CoordType::Window)
                         .await
                         .map_err(|e| anyhow!("getExtents failed: {e}"))?;
-                    let (document_x, document_y) = if target.in_web_doc {
-                        web_document_origin
-                    } else {
-                        (0, 0)
-                    };
-                    Ok((
-                        x + ox + document_x,
-                        y + oy + document_y,
-                        w.max(0) as u32,
-                        h.max(0) as u32,
-                    ))
+                    let document_origin = target.in_web_doc.then_some(web_document_origin);
+                    // An unrealized widget (a menu item whose menu is closed)
+                    // answers (0,0,0,0) in Window coordinates; projected onto
+                    // the window origin that would be a "valid" centre at the
+                    // window's top-left corner. Refuse it like the cached
+                    // path does.
+                    walk_bounds_usable(
+                        project_screen_extents(raw, (ox, oy), document_origin),
+                        display,
+                    )
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "element {idx} ({}) reports no usable on-screen extents                              (raw window extents {raw:?}); it may be inside a closed menu                              or an unmapped page",
+                            target.role
+                        )
+                    })
                 }
                 None => {
-                    let (x, y, w, h) = comp
+                    let raw = comp
                         .get_extents(CoordType::Screen)
                         .await
                         .map_err(|e| anyhow!("getExtents failed: {e}"))?;
-                    Ok((x, y, w.max(0) as u32, h.max(0) as u32))
+                    walk_bounds_usable(project_screen_extents(raw, (0, 0), None), display)
+                        .ok_or_else(|| {
+                            anyhow!(
+                                "element {idx} ({}) reports no usable on-screen extents                                  (raw screen extents {raw:?})",
+                                target.role
+                            )
+                        })
                 }
             }
         },
@@ -5050,6 +5238,33 @@ async fn element_bounds_for_visited(
 }
 
 #[cfg(test)]
+mod walk_bounds_tests {
+    use super::walk_bounds_usable;
+
+    #[test]
+    fn degenerate_window_origin_is_rejected() {
+        // A closed menu item projects (0,0,0,0) onto the window origin.
+        assert_eq!(walk_bounds_usable(Some((40, 60, 0, 0)), Some((1920, 1080))), None);
+        assert_eq!(walk_bounds_usable(None, Some((1920, 1080))), None);
+    }
+
+    #[test]
+    fn off_screen_bounds_are_rejected() {
+        assert_eq!(walk_bounds_usable(Some((2000, 10, 50, 20)), Some((1920, 1080))), None);
+        assert_eq!(walk_bounds_usable(Some((-80, 10, 50, 20)), Some((1920, 1080))), None);
+    }
+
+    #[test]
+    fn real_bounds_pass_through() {
+        assert_eq!(
+            walk_bounds_usable(Some((100, 200, 80, 24)), Some((1920, 1080))),
+            Some((100, 200, 80, 24))
+        );
+        assert_eq!(walk_bounds_usable(Some((100, 200, 80, 24)), None), Some((100, 200, 80, 24)));
+    }
+}
+
+#[cfg(test)]
 mod screen_extents_tests {
     use super::screen_extents_trusted;
 
@@ -5221,7 +5436,8 @@ mod coord_tests {
     use super::{
         activation_index, before_snapshot_deadline, combine_wayland_content_offsets,
         hyprland_document_top_inset, is_activation_action, is_enabled_state,
-        is_indexable_capabilities, is_passive_role, is_showing_state, is_web_process_bus,
+        counts_as_showing, is_indexable_capabilities, is_passive_role, is_showing_state,
+        is_web_process_bus,
         passive_marker, prefer_authoritative_wayland_origin, project_screen_extents, rebase_renderer_window_offset,
         scoped_component_nodes, screen_extent_rebase, select_click_target, select_web_document,
         ApplicationSelection,
@@ -5375,6 +5591,11 @@ mod coord_tests {
         assert!(is_showing_state(&StateSet::new(
             State::Enabled | State::Visible | State::Showing
         )));
+        // ...but a GTK2 menu item is never `Showing`, and stays indexed while `Visible`.
+        assert!(!counts_as_showing("push button", &StateSet::new(State::Enabled | State::Visible)));
+        assert!(counts_as_showing("menu item", &StateSet::new(State::Enabled | State::Visible)));
+        assert!(counts_as_showing("check menu item", &StateSet::new(State::Visible)));
+        assert!(!counts_as_showing("menu item", &StateSet::new(State::Enabled)));
         // A visible but insensitive button keeps a marker in the markdown.
         assert_eq!(passive_marker("push button", true, true, Some(false)), " (disabled)");
         assert_eq!(passive_marker("push button", false, true, Some(false)), " (disabled)");

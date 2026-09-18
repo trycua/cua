@@ -95,7 +95,7 @@ impl FocusAfter {
 }
 
 /// What the transaction observed; surfaced in tool structured content.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct ForegroundReport {
     /// The target was already active and focused; no activation was sent.
     pub already_active: bool,
@@ -103,20 +103,91 @@ pub struct ForegroundReport {
     pub retried_activation: bool,
     /// Milliseconds from start until activation + focus were confirmed.
     pub confirm_ms: u64,
-    /// Focus location after the body (only probed for keyboard actions).
+    /// Focus location after the body.
     pub focus_after: FocusAfter,
+    /// Toplevels of the target's process (managed windows and popup menus)
+    /// that appeared or vanished between the activation and the post-check:
+    /// a menu opened, a dialog mapped or closed. `None` when nothing changed
+    /// or the observation was unavailable.
+    pub window_change: Option<String>,
 }
 
 impl ForegroundReport {
-    pub fn to_json(self) -> serde_json::Value {
-        serde_json::json!({
+    pub fn to_json(&self) -> serde_json::Value {
+        let mut v = serde_json::json!({
             "activated": !self.already_active,
             "retried_activation": self.retried_activation,
             "confirm_ms": self.confirm_ms,
             "focus_after": self.focus_after.as_str(),
-        })
+        });
+        if let Some(change) = &self.window_change {
+            v["window_change"] = serde_json::json!(change);
+        }
+        v
+    }
+
+    /// Focus is proven to have stayed inside the target process after the
+    /// body ran (the target toplevel itself, or a dialog/popup it owns).
+    pub fn focus_kept(&self) -> bool {
+        matches!(self.focus_after, FocusAfter::Target | FocusAfter::SamePid)
     }
 }
+
+/// The on-screen toplevels of `pid` (managed windows plus override-redirect
+/// popups), as `(window, description)` pairs, for a before/after diff.
+fn pid_window_set(pid: Option<u32>) -> Vec<(u64, String)> {
+    let mut set: Vec<(u64, String)> = crate::x11::list_windows(pid)
+        .into_iter()
+        .filter(|w| w.is_on_screen)
+        .map(|w| {
+            let title = if w.title.is_empty() {
+                String::new()
+            } else {
+                format!(" \"{}\"", w.title)
+            };
+            (w.xid, format!("window {}{title}", w.xid))
+        })
+        .collect();
+    set.extend(
+        super::mapped_popup_windows()
+            .into_iter()
+            .filter(|p| pid.is_none() || p.pid.is_none() || p.pid == pid)
+            .map(|p| (p.window, p.describe())),
+    );
+    set
+}
+
+/// Describe what changed between two window sets, or `None` when nothing did.
+pub(crate) fn describe_window_change(
+    before: &[(u64, String)],
+    after: &[(u64, String)],
+) -> Option<String> {
+    let appeared: Vec<&str> = after
+        .iter()
+        .filter(|(id, _)| !before.iter().any(|(b, _)| b == id))
+        .map(|(_, d)| d.as_str())
+        .collect();
+    let vanished: Vec<&str> = before
+        .iter()
+        .filter(|(id, _)| !after.iter().any(|(a, _)| a == id))
+        .map(|(_, d)| d.as_str())
+        .collect();
+    if appeared.is_empty() && vanished.is_empty() {
+        return None;
+    }
+    let mut parts = Vec::new();
+    if !appeared.is_empty() {
+        parts.push(format!("appeared: {}", appeared.join(", ")));
+    }
+    if !vanished.is_empty() {
+        parts.push(format!("closed: {}", vanished.join(", ")));
+    }
+    Some(parts.join("; "))
+}
+
+/// How long the toolkit gets to map a menu / dialog after the body before
+/// the window set is compared.
+const WINDOW_CHANGE_SETTLE: Duration = Duration::from_millis(150);
 
 /// Extract the structured code prefix from a foreground error message.
 pub fn error_code(error: &anyhow::Error) -> Option<&'static str> {
@@ -407,7 +478,7 @@ fn confirm_phase(target: Window, settle: Duration) -> Result<ConfirmOutcome> {
     }
 }
 
-fn post_check(target: Window) -> FocusAfter {
+fn post_check(target: Window, target_pid: Option<u32>) -> FocusAfter {
     let Ok(x) = X11::open() else {
         return FocusAfter::Unknown;
     };
@@ -417,7 +488,10 @@ fn post_check(target: Window) -> FocusAfter {
     if x.is_within(focused, target) {
         return FocusAfter::Target;
     }
-    match (x.owning_pid(target), x.owning_pid(focused)) {
+    // The body may have closed the target itself (Escape on a dialog, alt+F4):
+    // its pid was read before the body, so the comparison still works once
+    // the window is gone.
+    match (target_pid.or_else(|| x.owning_pid(target)), x.owning_pid(focused)) {
         (Some(a), Some(b)) if a == b => FocusAfter::SamePid,
         _ => FocusAfter::Elsewhere,
     }
@@ -452,13 +526,22 @@ pub fn with_x11_foreground_opts<T>(
             outcome.focus_within
         ));
     }
+    let target_pid = crate::x11::window_pid(xid);
+    let windows_before = pid_window_set(target_pid);
     let value = body()?;
-    let focus_after = if opts.keyboard {
-        run_with_deadline(Duration::from_millis(1500), move || post_check(target))
-            .unwrap_or(FocusAfter::Unknown)
-    } else {
-        FocusAfter::Unknown
-    };
+    // The post-check is what the tool reports as evidence for both keyboard
+    // and pointer bodies: a real click that opened a menu or a dialog moves
+    // the window set / focus within the target's process, and one that
+    // landed elsewhere moves focus out of it.
+    std::thread::sleep(WINDOW_CHANGE_SETTLE);
+    let focus_after = run_with_deadline(Duration::from_millis(1500), move || {
+        post_check(target, target_pid)
+    })
+    .unwrap_or(FocusAfter::Unknown);
+    let window_change = run_with_deadline(Duration::from_millis(1500), move || {
+        pid_window_set(target_pid)
+    })
+    .and_then(|after| describe_window_change(&windows_before, &after));
     Ok((
         value,
         ForegroundReport {
@@ -466,6 +549,7 @@ pub fn with_x11_foreground_opts<T>(
             retried_activation: outcome.retried,
             confirm_ms: outcome.elapsed.as_millis() as u64,
             focus_after,
+            window_change,
         },
     ))
 }
@@ -520,11 +604,25 @@ mod tests {
             retried_activation: false,
             confirm_ms: 3,
             focus_after: FocusAfter::SamePid,
+            window_change: Some("appeared: popup window 7 (200x300 at 1,2)".into()),
         };
         let json = report.to_json();
         assert_eq!(json["activated"], false);
         assert_eq!(json["focus_after"], "same_pid");
         assert_eq!(json["confirm_ms"], 3);
+        assert_eq!(json["window_change"], "appeared: popup window 7 (200x300 at 1,2)");
+        assert!(report.focus_kept());
+    }
+
+    #[test]
+    fn window_change_diff_names_appeared_and_closed() {
+        let before = vec![(1u64, "window 1 \"GIMP\"".to_string()), (2, "window 2".to_string())];
+        let after = vec![(1u64, "window 1 \"GIMP\"".to_string()), (9, "popup window 9".to_string())];
+        assert_eq!(
+            describe_window_change(&before, &after).as_deref(),
+            Some("appeared: popup window 9; closed: window 2")
+        );
+        assert_eq!(describe_window_change(&before, &before), None);
     }
 
     #[test]

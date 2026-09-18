@@ -2566,19 +2566,152 @@ fn foreground_structured(
         "verified": false,
         "delivery_mode": "foreground",
         "effect": "unverifiable",
-        "foreground": report.to_json(),
     });
-    if report.focus_after == crate::input::FocusAfter::Elsewhere {
-        v["effect"] = json!("suspected_noop");
-        v["warning"] = json!(
-            "input focus left the target process before the post-check; the keystrokes \
-             may have reached another window. Verify with a screenshot."
-        );
-    }
+    apply_foreground_report(&mut v, &report);
     for (k, val) in extra {
         v[k] = val;
     }
     v
+}
+
+/// Fold a foreground transaction's post-check into a result: the report
+/// itself, `focus_after` at the top level, and an `evidence` item so the
+/// observation survives the public-record reduction. Focus that stayed in
+/// the target process AND a window that appeared / closed in it is
+/// `window_change` evidence and an `effect: confirmed`; focus that left the
+/// process is a suspected no-op; anything else stays unverifiable with a
+/// `native_api_result` item.
+fn apply_foreground_report(v: &mut Value, report: &crate::input::ForegroundReport) {
+    v["foreground"] = report.to_json();
+    v["focus_after"] = json!(report.focus_after.as_str());
+    if report.focus_after == crate::input::FocusAfter::Elsewhere {
+        v["effect"] = json!("suspected_noop");
+        v["warning"] = json!(
+            "input focus left the target process before the post-check; the input \
+             may have reached another window. Verify with a screenshot."
+        );
+        return;
+    }
+    let evidence = match (&report.window_change, report.focus_kept()) {
+        (Some(change), true) => {
+            v["effect"] = json!("confirmed");
+            v["verified"] = json!(true);
+            json!({
+                "kind": "window_change",
+                "detail": format!("focus_after={}; {change}", report.focus_after.as_str()),
+            })
+        }
+        _ => json!({
+            "kind": "native_api_result",
+            "detail": format!(
+                "real input delivered to the activated window (focus_after={}); no window \
+                 change observed",
+                report.focus_after.as_str()
+            ),
+        }),
+    };
+    let mut items = v
+        .get("evidence")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    items.push(evidence);
+    v["evidence"] = json!(items);
+}
+
+/// Typed refusal for a pointer tool whose arguments name neither an element
+/// nor a complete point. Before this check a call with only a pid was
+/// executed at window-local (0, 0) — the top-left corner, i.e. the File menu.
+fn invalid_pointer_arguments(tool: &str, detail: &str) -> ToolResult {
+    let accepted = [
+        "pid + element_index (or element_token) from get_window_state",
+        "pid/window_id + x + y (window-local pixels of window_id; coordinate_frame:\"desktop\" for screen pixels)",
+        "x + y + scope:\"desktop\" (screen pixels, no pid)",
+    ];
+    ToolResult::error(format!(
+        "{tool}: invalid arguments: {detail}. Accepted forms: {}. No input was sent.",
+        accepted.join("; ")
+    ))
+    .with_structured(json!({
+        "code": "invalid_arguments",
+        "tool": tool,
+        "effect": "refused",
+        "detail": detail,
+        "accepted_forms": accepted,
+    }))
+}
+
+/// `Some(refusal)` when a pointer tool reached its coordinate path without
+/// both `x` and `y` (and, by construction, without an element).
+fn require_point_args(tool: &str, args: &Value) -> Option<ToolResult> {
+    let present = |name: &str| args.get(name).is_some_and(|v| v.is_number());
+    match (present("x"), present("y")) {
+        (true, true) => None,
+        (false, false) => Some(invalid_pointer_arguments(
+            tool,
+            "no element_index/element_token and no x/y were given (a `target_id` is not an \
+             element handle)",
+        )),
+        (true, false) => Some(invalid_pointer_arguments(tool, "x was given without y")),
+        (false, true) => Some(invalid_pointer_arguments(tool, "y was given without x")),
+    }
+}
+
+#[cfg(test)]
+mod pointer_argument_tests {
+    use super::*;
+
+    #[test]
+    fn pid_only_pointer_call_is_refused_not_clicked_at_origin() {
+        let refusal = require_point_args("click", &json!({"target_id": "s1:147", "pid": 1867}))
+            .expect("refused");
+        assert_eq!(refusal.is_error, Some(true));
+        let structured = refusal.structured_content.expect("structured");
+        assert_eq!(structured["code"], "invalid_arguments");
+        assert_eq!(structured["effect"], "refused");
+        assert!(structured["accepted_forms"].as_array().unwrap().len() == 3);
+    }
+
+    #[test]
+    fn complete_point_passes() {
+        assert!(require_point_args("click", &json!({"pid": 1, "window_id": 2, "x": 3, "y": 4.5})).is_none());
+        assert!(require_point_args("click", &json!({"x": 1, "y": null})).is_some());
+        assert!(require_point_args("click", &json!({"y": 1})).is_some());
+    }
+
+    #[test]
+    fn foreground_report_becomes_evidence() {
+        let report = crate::input::ForegroundReport {
+            already_active: false,
+            retried_activation: false,
+            confirm_ms: 12,
+            focus_after: crate::input::FocusAfter::SamePid,
+            window_change: Some("appeared: window 9 \"Brightness-Contrast\"".into()),
+        };
+        let v = foreground_structured("x11_xtest_fg", report, serde_json::Map::new());
+        assert_eq!(v["effect"], "confirmed");
+        assert_eq!(v["focus_after"], "same_pid");
+        assert_eq!(v["evidence"][0]["kind"], "window_change");
+        let quiet = crate::input::ForegroundReport {
+            already_active: true,
+            retried_activation: false,
+            confirm_ms: 0,
+            focus_after: crate::input::FocusAfter::Target,
+            window_change: None,
+        };
+        let v = foreground_structured("x11_xtest_fg", quiet, serde_json::Map::new());
+        assert_eq!(v["effect"], "unverifiable");
+        assert_eq!(v["evidence"][0]["kind"], "native_api_result");
+        let lost = crate::input::ForegroundReport {
+            already_active: true,
+            retried_activation: false,
+            confirm_ms: 0,
+            focus_after: crate::input::FocusAfter::Elsewhere,
+            window_change: Some("closed: window 3".into()),
+        };
+        let v = foreground_structured("x11_xtest_fg", lost, serde_json::Map::new());
+        assert_eq!(v["effect"], "suspected_noop");
+    }
 }
 
 fn parse_mouse_button(name: &str) -> u8 {
@@ -5147,6 +5280,284 @@ pub struct ClickTool {
 }
 static CLICK_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
+/// Where a foreground element click may put the real pointer.
+enum ForegroundElementPlacement {
+    /// The element centre lies inside the target window (or a popup of the
+    /// same process): XTest-click it there.
+    Point { xid: u64, sx: f64, sy: f64 },
+    /// The element has no usable on-screen bounds (its menu is closed, its
+    /// page is unmapped, its centre is outside every window of the process):
+    /// only the AT-SPI action can reach it.
+    NoPoint { reason: String },
+}
+
+impl ClickTool {
+    /// X11 foreground element click. Behave like a user when the element is
+    /// really on screen: activate the window and XTest-click the element's
+    /// centre. A degenerate centre — the walk answering (0,0) for a menu item
+    /// whose menu is closed used to glide the real pointer into the GNOME hot
+    /// corner — is never clicked; the observed object's AT-SPI action is fired
+    /// instead (`path: "ax_fg"`, a label the core's action record maps to
+    /// the AT-SPI transport), with the foreground activation kept, and when
+    /// that is not possible either the call is refused
+    /// (`element_bounds_unavailable`).
+    #[allow(clippy::too_many_arguments)]
+    async fn foreground_element_click(
+        &self,
+        cursor_id: &str,
+        pid: u32,
+        idx: usize,
+        observed: &crate::atspi::cache::CachedElement,
+        xid_hint: Option<u64>,
+        placement: Option<(u64, f64, f64)>,
+        button: u8,
+        count: usize,
+        modifiers: &[String],
+    ) -> ToolResult {
+        let observed_for_state = observed.clone();
+        let decided = tokio::task::spawn_blocking(move || {
+            decide_foreground_element_placement(pid, &observed_for_state, xid_hint, placement)
+        })
+        .await;
+        let (xid, decision) = match decided {
+            Ok(v) => v,
+            Err(e) => return ToolResult::error(format!("Task error: {e}")),
+        };
+        match decision {
+            ForegroundElementPlacement::Point { xid, sx, sy } => {
+                crate::overlay::send_command_for(
+                    cursor_id.to_owned(),
+                    cursor_overlay::OverlayCommand::PinAbove(xid),
+                );
+                reveal_pointer_action_for(&self.state, cursor_id, sx, sy, true).await;
+                let modifier_owned = modifiers.to_vec();
+                let result = spawn_blocking_bounded(
+                    "foreground element click",
+                    foreground_budget(0),
+                    move || {
+                        let modifier_refs: Vec<&str> =
+                            modifier_owned.iter().map(String::as_str).collect();
+                        crate::input::with_x11_foreground_opts(
+                            xid,
+                            crate::input::ForegroundOptions::pointer(),
+                            || {
+                                crate::input::send_click_xtest_desktop_with_modifiers(
+                                    sx.round() as i32,
+                                    sy.round() as i32,
+                                    button,
+                                    count,
+                                    &modifier_refs,
+                                )
+                            },
+                        )
+                    },
+                )
+                .await;
+                let window_point = crate::x11::window_info(xid)
+                    .map(|w| (sx.round() as i32 - w.x, sy.round() as i32 - w.y))
+                    .unwrap_or((sx.round() as i32, sy.round() as i32));
+                match result {
+                    Ok(Ok(((), report))) => {
+                        let confirmed = report.focus_kept() && report.window_change.is_some();
+                        let result = ToolResult::text(format!(
+                            "Clicked element [{idx}] (pid {pid}) with a real pointer click \
+                             (delivery_mode=foreground, focus_after={}){}",
+                            report.focus_after.as_str(),
+                            if confirmed {
+                                format!("; {}.", report.window_change.as_deref().unwrap_or(""))
+                            } else {
+                                "; not verified — confirm with a screenshot.".to_owned()
+                            }
+                        ))
+                        .with_structured(foreground_structured(
+                            "x11_xtest_fg",
+                            report,
+                            serde_json::Map::new(),
+                        ));
+                        with_pixel_points(
+                            result,
+                            Some((sx.round() as i32, sy.round() as i32)),
+                            window_point,
+                        )
+                    }
+                    Ok(Err(e)) => input_error_result(e),
+                    Err(e) => ToolResult::error(format!("Task error: {e}")),
+                }
+            }
+            ForegroundElementPlacement::NoPoint { reason } => {
+                let Some(xid) = xid else {
+                    return ToolResult::error(format!(
+                        "click: element [{idx}] (pid {pid}) has no usable on-screen bounds \
+                         ({reason}) and pid {pid} has no window to activate; no input was sent."
+                    ))
+                    .with_structured(json!({
+                        "code": "element_bounds_unavailable",
+                        "effect": "none",
+                        "element_index": idx,
+                        "reason": reason,
+                    }));
+                };
+                if observed.object_ref.is_none() || button != 1 || count != 1 || !modifiers.is_empty() {
+                    return ToolResult::error(format!(
+                        "click: element [{idx}] (pid {pid}) has no usable on-screen bounds \
+                         ({reason}); a real pointer click cannot reach it and this click \
+                         shape (button {button} × {count}{}) has no AT-SPI action form. No \
+                         input was sent. Open the containing menu first, re-snapshot with \
+                         get_window_state, or click by pixel from a screenshot.",
+                        if modifiers.is_empty() { String::new() } else { format!(", modifiers {modifiers:?}") }
+                    ))
+                    .with_structured(json!({
+                        "code": "element_bounds_unavailable",
+                        "effect": "none",
+                        "element_index": idx,
+                        "reason": reason,
+                        "suggestion": "open the containing menu first, or re-snapshot with get_window_state and click by x/y",
+                    }));
+                }
+                crate::overlay::send_command_for(
+                    cursor_id.to_owned(),
+                    cursor_overlay::OverlayCommand::PinAbove(xid),
+                );
+                let observed_for_ax = observed.clone();
+                let result = spawn_blocking_bounded(
+                    "foreground element action",
+                    foreground_budget(0),
+                    move || {
+                        crate::input::with_x11_foreground_opts(
+                            xid,
+                            crate::input::ForegroundOptions::pointer(),
+                            || crate::atspi::perform_action_observed(&observed_for_ax),
+                        )
+                    },
+                )
+                .await;
+                match result {
+                    Ok(Ok(((action, suspected_noop), report))) => {
+                        let mut extra = serde_json::Map::new();
+                        extra.insert("ax_action".into(), json!(action));
+                        extra.insert("bounds_reason".into(), json!(reason));
+                        if suspected_noop {
+                            extra.insert("effect".into(), json!("suspected_noop"));
+                            extra.insert("escalation".into(), non_ax_escalation());
+                        }
+                        ToolResult::text(format!(
+                            "Clicked element [{idx}] (pid {pid}) through its AT-SPI action \
+                             \"{action}\" with the window activated (delivery_mode=foreground, \
+                             path=ax_fg, focus_after={}): the element had no usable \
+                             on-screen bounds ({reason}), so no pointer was moved.{}",
+                            report.focus_after.as_str(),
+                            match &report.window_change {
+                                Some(change) => format!(" {change}."),
+                                None => " Not verified — confirm with a screenshot.".to_owned(),
+                            }
+                        ))
+                        .with_structured(foreground_structured("ax_fg", report, extra))
+                    }
+                    Ok(Err(error)) => {
+                        if error.is::<crate::atspi::native::CachedElementGone>() {
+                            return ToolResult::error(format!(
+                                "click: stale_element_token: observed AT-SPI object [{idx}] is no \
+                                 longer present ({error}); re-snapshot with get_window_state"
+                            ))
+                            .with_structured(json!({
+                                "code": "stale_element_token",
+                                "effect": "none",
+                            }));
+                        }
+                        if crate::input::foreground::error_code(&error).is_some() {
+                            return input_error_result(error);
+                        }
+                        ToolResult::error(format!(
+                            "click: element [{idx}] (pid {pid}) has no usable on-screen bounds \
+                             ({reason}) and its AT-SPI action failed ({error:#}); no input was \
+                             sent. Open the containing menu first, re-snapshot with \
+                             get_window_state, or click by pixel from a screenshot."
+                        ))
+                        .with_structured(json!({
+                            "code": "element_bounds_unavailable",
+                            "effect": "none",
+                            "element_index": idx,
+                            "reason": reason,
+                            "ax_error": format!("{error:#}"),
+                        }))
+                    }
+                    Err(e) => ToolResult::error(format!("Task error: {e}")),
+                }
+            }
+        }
+    }
+}
+
+/// Decide whether a foreground element click has a real point to press.
+/// Returns the window to activate (when the process has one) and the
+/// placement decision. Runs blocking X11 / AT-SPI queries.
+fn decide_foreground_element_placement(
+    pid: u32,
+    observed: &crate::atspi::cache::CachedElement,
+    xid_hint: Option<u64>,
+    placement: Option<(u64, f64, f64)>,
+) -> (Option<u64>, ForegroundElementPlacement) {
+    let xid = xid_hint
+        .or_else(|| placement.map(|(xid, ..)| xid).filter(|xid| *xid != 0))
+        .or_else(|| {
+            crate::x11::list_windows(Some(pid))
+                .into_iter()
+                .next()
+                .map(|w| w.xid)
+        });
+    // The object's own state decides whether it is on screen at all: a menu
+    // item in a closed menu still answers a (stale or zero) extent.
+    let showing = match crate::atspi::element_showing_observed(observed) {
+        Ok(showing) => Some(showing),
+        Err(error) => {
+            tracing::debug!("foreground element [{}] showing-state unavailable: {error:#}", observed.key);
+            None
+        }
+    };
+    if showing == Some(false) {
+        return (
+            xid,
+            ForegroundElementPlacement::NoPoint {
+                reason: format!(
+                    "the {} is not showing (its menu or page is closed)",
+                    observed.role
+                ),
+            },
+        );
+    }
+    let Some((placed_xid, sx, sy)) = placement.filter(|(xid, ..)| *xid != 0) else {
+        return (
+            xid,
+            ForegroundElementPlacement::NoPoint {
+                reason: "no usable on-screen bounds were resolved for it".to_owned(),
+            },
+        );
+    };
+    let (px, py) = (sx.round() as i32, sy.round() as i32);
+    let inside = |w: &crate::x11::WindowInfo| {
+        px >= w.x && py >= w.y && px < w.x + w.width as i32 && py < w.y + w.height as i32
+    };
+    if crate::x11::window_info(placed_xid).is_some_and(|w| inside(&w)) {
+        return (xid, ForegroundElementPlacement::Point { xid: placed_xid, sx, sy });
+    }
+    // The centre is outside the named window: a popup menu of the same
+    // process (an open menu's item) is the one legitimate case.
+    if let Some(popup) = crate::input::popup_under_screen_point(px, py) {
+        if popup.pid.is_none_or(|p| p == pid) {
+            return (xid, ForegroundElementPlacement::Point { xid: placed_xid, sx, sy });
+        }
+    }
+    (
+        xid,
+        ForegroundElementPlacement::NoPoint {
+            reason: format!(
+                "its centre ({px}, {py}) lies outside window {placed_xid} and every popup of \
+                 pid {pid}"
+            ),
+        },
+    )
+}
+
 #[async_trait]
 impl Tool for ClickTool {
     fn def(&self) -> &ToolDef {
@@ -5388,60 +5799,19 @@ impl Tool for ClickTool {
                 && !crate::wayland::wayland_input_enabled()
                 && !hyprland_foreground(delivery)
             {
-                let Some((xid, sx, sy)) = placement.filter(|(xid, ..)| *xid != 0) else {
-                    return ToolResult::error(format!(
-                        "click: element [{idx}] bounds could not be resolved within \
-                         {ELEMENT_AX_BUDGET:?} (AT-SPI walk stalled or element vanished); \
-                         no input was sent. Re-snapshot with get_window_state or click by \
-                         pixel from a screenshot."
-                    ))
-                    .with_structured(json!({
-                        "code": "element_bounds_unavailable",
-                        "effect": "none",
-                        "suggestion": "re-snapshot with get_window_state, or click by x/y from get_desktop_state with scope:\"desktop\"",
-                    }));
-                };
-                crate::overlay::send_command_for(
-                    cursor_id.clone(),
-                    cursor_overlay::OverlayCommand::PinAbove(xid),
-                );
-                reveal_pointer_action_for(&self.state, &cursor_id, sx, sy, true).await;
-                let modifier_owned = modifiers.clone();
-                let result = spawn_blocking_bounded(
-                    "foreground element click",
-                    foreground_budget(0),
-                    move || {
-                        let modifier_refs: Vec<&str> =
-                            modifier_owned.iter().map(String::as_str).collect();
-                        crate::input::with_x11_foreground_opts(
-                            xid,
-                            crate::input::ForegroundOptions::pointer(),
-                            || {
-                                crate::input::send_click_xtest_desktop_with_modifiers(
-                                    sx.round() as i32,
-                                    sy.round() as i32,
-                                    button,
-                                    count,
-                                    &modifier_refs,
-                                )
-                            },
-                        )
-                    },
-                )
-                .await;
-                return match result {
-                    Ok(Ok(((), report))) => ToolResult::text(format!(
-                        "Clicked element [{idx}] (pid {pid}) with a real pointer click \
-                         (delivery_mode=foreground); not verified — confirm with a screenshot."
-                    ))
-                    .with_structured(foreground_structured(
-                        "x11_xtest_fg",
-                        report,
-                        serde_json::Map::new(),
-                    )),
-                    Ok(Err(e)) => input_error_result(e),
-                    Err(e) => ToolResult::error(format!("Task error: {e}")),
-                };
+                return self
+                    .foreground_element_click(
+                        &cursor_id,
+                        pid,
+                        idx,
+                        &observed,
+                        xid_hint,
+                        placement,
+                        button,
+                        count,
+                        &modifiers,
+                    )
+                    .await;
             }
             if let Some((xid, sx, sy)) = placement {
                 if xid != 0 {
@@ -5717,6 +6087,9 @@ impl Tool for ClickTool {
         }
 
         // Coordinate-based path.
+        if let Some(refusal) = require_point_args("click", &args) {
+            return refusal;
+        }
         let xid = match args.opt_u64("window_id") {
             Some(v) => v,
             None => return ToolResult::error("Provide either element_index or window_id + x/y."),
@@ -6030,7 +6403,7 @@ impl Tool for ClickTool {
                     }),
                 };
                 if let Some(report) = report {
-                    structured["foreground"] = report.to_json();
+                    apply_foreground_report(&mut structured, &report);
                 }
                 let suffix = match &route {
                     Some(route) => route.text_suffix(mode_label),
@@ -6331,7 +6704,10 @@ impl Tool for TypeTextTool {
         let px = args.get("x").and_then(|value| value.as_f64());
         let py = args.get("y").and_then(|value| value.as_f64());
         if px.is_some() != py.is_some() {
-            return ToolResult::error("Pass both x and y to type_text, or neither.");
+            return invalid_pointer_arguments(
+                "type_text",
+                "x and y must be passed together (a pixel focus point), or neither",
+            );
         }
         if px.is_some() && resolved_elem_idx.is_some() {
             return ToolResult::error(
@@ -7243,7 +7619,10 @@ impl Tool for PressKeyTool {
         let px = args.get("x").and_then(|value| value.as_f64());
         let py = args.get("y").and_then(|value| value.as_f64());
         if px.is_some() != py.is_some() {
-            return ToolResult::error("Pass both x and y to press_key, or neither.");
+            return invalid_pointer_arguments(
+                "press_key",
+                "x and y must be passed together (a pixel focus point), or neither",
+            );
         }
         if px.is_some() && resolved_element_index.is_some() {
             return ToolResult::error(
@@ -7695,7 +8074,10 @@ impl Tool for HotkeyTool {
         let px = args.get("x").and_then(|value| value.as_f64());
         let py = args.get("y").and_then(|value| value.as_f64());
         if px.is_some() != py.is_some() {
-            return ToolResult::error("Pass both x and y to hotkey, or neither.");
+            return invalid_pointer_arguments(
+                "hotkey",
+                "x and y must be passed together (a pixel focus point), or neither",
+            );
         }
         if px.is_some() && resolved_element_index.is_some() {
             return ToolResult::error(
@@ -8437,7 +8819,12 @@ impl Tool for ScrollTool {
                 Some((x * ratio, y * ratio))
             }
             (None, None) => None,
-            _ => return ToolResult::error("Pass both x and y to pixel-target scroll."),
+            (Some(_), None) => {
+                return invalid_pointer_arguments("scroll", "x was given without y")
+            }
+            (None, Some(_)) => {
+                return invalid_pointer_arguments("scroll", "y was given without x")
+            }
         };
         let resolved_element_index = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } => {
@@ -8954,6 +9341,9 @@ impl Tool for DoubleClickTool {
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
         }
+        if let Some(refusal) = require_point_args("double_click", &args) {
+            return refusal;
+        }
         let xid = match window_id_resolved {
             Some(v) => v,
             None => return ToolResult::error("Provide either element_index or window_id + x/y."),
@@ -9244,6 +9634,9 @@ impl Tool for RightClickTool {
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
         }
+        if let Some(refusal) = require_point_args("right_click", &args) {
+            return refusal;
+        }
         let xid = match window_id_resolved {
             Some(v) => v,
             None => return ToolResult::error("Provide either element_index or window_id + x/y."),
@@ -9513,11 +9906,11 @@ impl Tool for DragTool {
         };
         let mut from_x = match coerce("from_x") {
             Some(v) => v,
-            None => return ToolResult::error("Missing: from_x"),
+            None => return invalid_pointer_arguments("drag", "from_x is missing (from_x/from_y/to_x/to_y are all required)"),
         };
         let mut from_y = match coerce("from_y") {
             Some(v) => v,
-            None => return ToolResult::error("Missing: from_y"),
+            None => return invalid_pointer_arguments("drag", "from_y is missing (from_x/from_y/to_x/to_y are all required)"),
         };
         let mut to_x = match coerce("to_x") {
             Some(v) => v,
@@ -10284,6 +10677,9 @@ impl Tool for MouseDragTool {
             return err;
         }
 
+        if let Some(refusal) = require_point_args("mouse_drag", &args) {
+            return refusal;
+        }
         let mut to_x = args.f64_or("x", 0.0);
         let mut to_y = args.f64_or("y", 0.0);
         if args.bool_or("from_zoom", false) {

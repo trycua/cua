@@ -3,8 +3,8 @@ title: Optional Cua Perception extension and jev-use boundary
 authors:
   - f-trycua
 created: 2026-09-17
-last_updated: 2026-09-17
-status: review
+last_updated: 2026-09-18
+status: accepted
 discussion: https://github.com/trycua/cua/issues/3931
 rfc_pr: https://github.com/trycua/cua/pull/3934
 implementation:
@@ -18,6 +18,7 @@ implementation:
   - https://github.com/trycua/cua/pull/3940
   - https://github.com/trycua/cua/pull/3941
   - https://github.com/trycua/cua/pull/3942
+  - https://github.com/trycua/cua/pull/3943
 supersedes:
 superseded_by:
 ---
@@ -588,8 +589,8 @@ arguments derived from private content.
 
 Implementation will use isolated, independently reviewable pull requests. Work
 may proceed in parallel where contracts or fixtures provide a stable seam, but
-release and integration pull requests remain draft while this RFC is under
-review.
+release and integration pull requests remain subject to their implementation,
+evidence, legal, and publication gates after this RFC is accepted.
 
 1. Establish a distinct `cua-perception` component release stream before any
    `feat` or release-producing pull request. Review its version source, tag
@@ -648,7 +649,7 @@ Worker packaging waits for the sandbox result and release-stream decision.
 Driver perception integration waits for the capture registry, lifecycle, and
 public contract. Publication, default-install changes, and external
 `cua-agent[omni]` / `cua-som` deprecation are separate delivery decisions and
-are not authorized by this RFC draft.
+are not authorized by accepting this RFC.
 
 ## Test and acceptance plan
 
@@ -736,7 +737,11 @@ requires separate authorization.
 - Exact-candidate macOS, Windows, and Linux X11 live-video evidence is an
   implementation exit gate, not a substitute for automated or harness tests.
 
-## Unresolved release and legal verification
+## Post-acceptance release and legal gates
+
+Accepting this RFC approves the architecture, not publication of the extension
+or model artifacts. Publication remains blocked until the following gates are
+complete:
 
 - Verify the exact OmniParser icon revision, conversion, hashes, notices, and
   corresponding-source bundle from a clean recipient installation.
@@ -782,7 +787,19 @@ for implementation work during RFC review:
 - Existing `cua-agent[omni]` / `cua-som` users keep their current external path
   until a separately reviewed migration decision.
 
-This records a scope decision, not final RFC acceptance. The RFC remains in
-`review`. No extension publication, default-installer change, external
-`cua-som` deprecation, pull-request merge, release, or deployment is authorized
-by this document.
+On 2026-09-18, the maintainer accepted this RFC with the provider-agnostic scope
+and delivery boundaries above unchanged. The accelerated review is appropriate
+because implementation PR #3943 remains draft, exact-candidate SHA evidence is
+still required across the supported platforms, and extension and model
+publication remains blocked pending legal and license review.
+
+- [x] The provider-agnostic architecture is accepted for implementation.
+- [ ] Complete the release and license verification above before approving
+      extension or model publication.
+- [ ] Complete implementation PR #3943, including ordinary pull-request CI and
+      the required exact-candidate SHA evidence, before it may be made ready or
+      merged.
+
+Disposition: accepted. This decision does not authorize extension publication,
+a default-installer change, external `cua-som` deprecation, implementation pull-
+request merge, release, or deployment.

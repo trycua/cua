@@ -2,7 +2,7 @@ name: "Review: Cua Perception supplied-input candidates"
 
 on:
   workflow_dispatch:
-    inputs: &review_inputs
+    inputs:
       source_sha:
         description: "Exact current head SHA of pull request #3943"
         required: true
@@ -21,11 +21,31 @@ on:
         required: true
         type: string
   workflow_call:
-    inputs: *review_inputs
+    inputs:
+      source_sha:
+        description: "Exact current head SHA of pull request #3943"
+        required: true
+        type: string
+      reviewed_model_asset_id:
+        description: "Optional asset ID for the reviewed ONNX; otherwise discover one matching draft asset"
+        required: false
+        default: ""
+        type: string
+      catalog_version:
+        description: "Positive review catalog version"
+        required: true
+        type: string
+      expires_unix:
+        description: "Review catalog expiry as Unix seconds"
+        required: true
+        type: string
     outputs:
       signed_candidate_artifact_id:
-        description: "Artifact ID containing both signed review candidates"
+        description: "Artifact ID containing all signed review candidates"
         value: ${{ jobs.aggregate.outputs.signed_candidate_artifact_id }}
+      producer_run_id:
+        description: "Actions run ID that produced the signed review candidates"
+        value: ${{ jobs.aggregate.outputs.producer_run_id }}
 
 permissions:
   actions: read
@@ -55,6 +75,12 @@ jobs:
             input_artifact: cua-perception-input-windows-x86_64
             worker: cua-perception.exe
             driver: cua-driver.exe
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            platform: macos
+            input_artifact: cua-perception-input-macos-aarch64
+            worker: cua-perception
+            driver: cua-driver
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     steps:
@@ -84,12 +110,24 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REQUESTED_SHA: ${{ inputs.source_sha }}
+          EVENT_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_LABEL: ${{ github.event.label.name }}
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
           test "$GITHUB_REPOSITORY" = "trycua/cua"
           [[ "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]]
-          test "$GITHUB_SHA" = "$REQUESTED_SHA"
           test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            test "$EVENT_PR_NUMBER" = 3943
+            test "$EVENT_HEAD_REPOSITORY" = "$GITHUB_REPOSITORY"
+            test "$EVENT_HEAD_SHA" = "$REQUESTED_SHA"
+            test "$EVENT_LABEL" = cua-perception-live-review
+          else
+            test "$GITHUB_EVENT_NAME" = workflow_dispatch
+            test "$GITHUB_SHA" = "$REQUESTED_SHA"
+          fi
           IFS=$'\t' read -r state head_sha head_repo < <(
             gh api "repos/$GITHUB_REPOSITORY/pulls/3943" \
               --jq '[.state, .head.sha, .head.repo.full_name] | @tsv'
@@ -301,6 +339,22 @@ jobs:
           mkdir -p "review-staging/$PLATFORM"
           cp perception-candidate/* "review-staging/$PLATFORM/"
           cp "libs/cua-driver/rust/target/debug/$DRIVER" "review-staging/$PLATFORM/review-$DRIVER"
+          if [[ "$PLATFORM" == macos ]]; then
+            bash .github/scripts/macos-review-codesign.sh \
+              "review-staging/$PLATFORM/review-$DRIVER" \
+              "review-staging/$PLATFORM/code-signing.json"
+          else
+            python3 - "review-staging/$PLATFORM/code-signing.json" <<'PY'
+          import json, pathlib, sys
+          pathlib.Path(sys.argv[1]).write_text(json.dumps({
+              "status": "not-applicable",
+              "format": "none",
+              "identity": "none",
+              "certificate_sha256": None,
+              "designated_requirement": None,
+          }, indent=2, sort_keys=True) + "\n")
+          PY
+          fi
           node <<'JS'
           const crypto = require("node:crypto");
           const fs = require("node:fs");
@@ -340,6 +394,7 @@ jobs:
           const modelLock = JSON.parse(fs.readFileSync(
             "libs/cua-driver/rust/crates/cua-perception/scripts/artifacts.lock.json"));
           const model = modelLock.artifacts.find(item => item.role === "icon-detect");
+          const codeSigning = JSON.parse(fs.readFileSync(path.join(root, "code-signing.json")));
           const measurements = {
             review_only: true,
             source_sha: process.env.SOURCE_SHA,
@@ -357,10 +412,11 @@ jobs:
             review_driver_relative_path: driverName,
             review_driver_build_profile: "debug-review-trust-root",
             review_driver_sha256: digest(driverName),
+            code_signing: codeSigning,
           };
           fs.writeFileSync(path.join(root, "review-measurements.json"),
             JSON.stringify(measurements, null, 2) + "\n");
-          const signedFiles = [archiveName, "catalog-payload.json", "catalog.signature",
+          const signedFiles = [archiveName, "catalog-payload.json", "catalog.signature", "code-signing.json",
             "signed-catalog.json", "sbom.spdx.json", "provenance.redacted.json",
             "runtime-contract.json", driverName, "review-measurements.json"];
           fs.writeFileSync(path.join(root, "signed-candidate-checksums.txt"),
@@ -480,7 +536,7 @@ jobs:
           measurements_path.write_text(json.dumps(measurements, indent=2, sort_keys=True) + "\n")
 
           signed_files = [
-              archive.name, "catalog-payload.json", "catalog.signature", "signed-catalog.json",
+              archive.name, "catalog-payload.json", "catalog.signature", "code-signing.json", "signed-catalog.json",
               "sbom.spdx.json", "provenance.redacted.json", "runtime-contract.json",
               measurements["review_driver_relative_path"], "review-measurements.json",
           ]
@@ -517,9 +573,14 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       signed_candidate_artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      producer_run_id: ${{ steps.producer.outputs.run_id }}
     steps:
-      - name: Download both signed target layouts
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+      - id: producer
+        name: Bind the aggregate to this producer run
+        shell: bash
+        run: echo "run_id=$GITHUB_RUN_ID" >> "$GITHUB_OUTPUT"
+      - name: Download all signed target layouts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: review-cua-perception-*-${{ inputs.source_sha }}
           path: staged
@@ -534,7 +595,8 @@ jobs:
           import hashlib, json, os, pathlib
           root = pathlib.Path("staged")
           for platform, target in (("windows", "x86_64-pc-windows-msvc"),
-                                   ("linux-x11", "x86_64-unknown-linux-gnu")):
+                                   ("linux-x11", "x86_64-unknown-linux-gnu"),
+                                   ("macos", "aarch64-apple-darwin")):
               directory = root / platform
               catalog_path = directory / "signed-catalog.json"
               measurements_path = directory / "review-measurements.json"
@@ -565,11 +627,21 @@ jobs:
               assert driver.is_file()
               assert measurements["review_driver_build_profile"] == "debug-review-trust-root"
               assert hashlib.sha256(driver.read_bytes()).hexdigest() == measurements["review_driver_sha256"]
+              signing = measurements["code_signing"]
+              assert set(signing) == {"status", "format", "identity", "certificate_sha256", "designated_requirement"}
+              if platform == "macos":
+                  assert signing["status"] == "verified"
+                  assert signing["format"] == "apple-codesign"
+                  assert signing["identity"] == "ephemeral-self-signed-review-only"
+                  assert len(signing["certificate_sha256"]) == 64
+                  assert any(marker in signing["designated_requirement"] for marker in ("certificate leaf", "certificate root"))
+              else:
+                  assert signing == {"status": "not-applicable", "format": "none", "identity": "none", "certificate_sha256": None, "designated_requirement": None}
           PY
           node <<'JS'
           const crypto = require("node:crypto");
           const fs = require("node:fs");
-          for (const platform of ["windows", "linux-x11"]) {
+          for (const platform of ["windows", "linux-x11", "macos"]) {
             const root = `staged/${platform}`;
             const catalog = JSON.parse(fs.readFileSync(`${root}/signed-catalog.json`));
             const metadata = JSON.parse(fs.readFileSync(`${root}/review-measurements.json`));

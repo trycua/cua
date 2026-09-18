@@ -11047,10 +11047,10 @@ mod desktop_scope_tests {
 
     #[test]
     fn get_desktop_state_schema_shape() {
-        let d = GetDesktopStateTool {
+        let tool = GetDesktopStateTool {
             state: super::ToolState::new(None),
-        }
-        .def();
+        };
+        let d = tool.def();
         assert!(d.read_only, "get_desktop_state must be read_only");
         let props = d.input_schema["properties"].as_object().unwrap();
         assert!(!props.contains_key("pid"), "must not accept pid");

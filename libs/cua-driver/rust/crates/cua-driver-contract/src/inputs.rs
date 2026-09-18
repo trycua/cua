@@ -62,6 +62,10 @@ fn string_schema(generator: &mut SchemaGenerator) -> Schema {
     String::json_schema(generator)
 }
 
+fn nonempty_string_schema(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({ "type": "string", "minLength": 1 })
+}
+
 pub const MULTI_CALL_SESSION_DESCRIPTION: &str =
     "For multi-call work, prefer a short public session label and repeat it on every call that \
      accepts it. Omit it to use the authenticated transport's implicit lifecycle session.";
@@ -641,7 +645,7 @@ struct ClickWireInput {
     #[schemars(schema_with = "string_schema")]
     element_token: Option<String>,
     #[serde(default, deserialize_with = "present_click_field")]
-    #[schemars(schema_with = "string_schema")]
+    #[schemars(schema_with = "nonempty_string_schema")]
     capture_id: Option<String>,
     /// For multi-call work, prefer a short public session label and repeat it on every call that
     /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
@@ -944,6 +948,7 @@ mod tests {
         assert!(schema["oneOf"].is_array());
         assert!(schema["properties"].get("position").is_none());
         assert!(schema["properties"].get("capture_id").is_some());
+        assert_eq!(schema["properties"]["capture_id"]["minLength"], 1);
     }
 
     #[test]

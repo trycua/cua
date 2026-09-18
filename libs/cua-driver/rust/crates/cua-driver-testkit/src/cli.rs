@@ -29,11 +29,23 @@ impl CliDriver {
         Self::with_daemon_env(&[])
     }
 
+    /// Drive an explicitly selected binary.
+    ///
+    /// Integration tests that use Cargo's `CARGO_BIN_EXE_*` value should use
+    /// this constructor so a restored `target/` artifact cannot be mistaken
+    /// for the binary Cargo built for the test.
+    pub fn with_binary(bin: impl Into<std::path::PathBuf>) -> Self {
+        Self::with_binary_and_daemon_env(bin.into(), &[])
+    }
+
     /// Start a test-owned daemon with explicit immutable startup settings.
     /// This is used for permission-mode and policy tests; tool-call child
     /// processes remain ordinary clients and do not receive these values.
     pub fn with_daemon_env(env: &[(&str, &str)]) -> Self {
-        let bin = driver_binary();
+        Self::with_binary_and_daemon_env(driver_binary(), env)
+    }
+
+    fn with_binary_and_daemon_env(bin: std::path::PathBuf, env: &[(&str, &str)]) -> Self {
         if !bin.exists() {
             return CliDriver {
                 bin,

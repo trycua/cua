@@ -86,6 +86,13 @@ class EvidenceSanitizerTests(unittest.TestCase):
             "review_driver_relative_path": "review-cua-driver",
             "review_driver_build_profile": "debug-review-trust-root",
             "review_driver_sha256": sanitizer.sha256_file(driver_binary),
+            "code_signing": {
+                "status": "not-applicable",
+                "format": "none",
+                "identity": "none",
+                "certificate_sha256": None,
+                "designated_requirement": None,
+            },
             "review_driver_version": "0.28.2",
             "extension_version": "0.1.0",
             "protocol_version": 1,
@@ -109,7 +116,12 @@ class EvidenceSanitizerTests(unittest.TestCase):
             "selected": "send",
             "action_count": 1,
         }))
+        recording.write_bytes(b"measured-video-bytes")
         raw_evidence.write_text(json.dumps({
+            "schema": "cua-visual-perception-demo-raw/v2",
+            "source_sha": "a" * 40,
+            "jev_source_sha": "e" * 40,
+            "platform": "linux-x11",
             "capture_ids": {"acted": "private-capture", "fresh": "fresh-capture"},
             "observation": {"input_scope": "window", "capture_kind": "get_window_state",
                             "capture_source": "driver-screenshot", "width": 760, "height": 460,
@@ -119,10 +131,31 @@ class EvidenceSanitizerTests(unittest.TestCase):
                 {"id": "region:send", "description": "Activate Send."},
                 {"id": "reobserve", "description": "Capture again."},
                 {"id": "abstain", "description": "Stop safely."},
-            ]}},
-            "coordinates": [394.0, 270.0],
+            ]}, "mode": "mock", "response": {
+                "schema": "cua.jev_choice_v1",
+                "selected_id": "region:send",
+                "model": "mock",
+                "confidence": 1.0,
+                "probabilities": {"region:send": 1.0, "reobserve": 0.0, "abstain": 0.0},
+            }},
+            "fixture_oracle": {
+                "fixture": "visual-only-canvas/v1", "ready": True,
+                "selected": "send", "action_count": 1,
+            },
+            "extension_status": json.loads(extension_status.read_text()),
+            "parser": {"model_id": "cua-perception/demo-v1"},
+            "resolved_action": {"candidate_id": "region:send", "x": 394.0, "y": 270.0},
+            "verification": {"oracle": "passed", "stale_capture_refused": True},
+            "timeline": {"duration_ms": 1250, "events": [
+                "observed", "parsed", "chosen", "clicked", "oracle_verified",
+                "stale_capture_refused", "reobserved",
+            ]},
+            "recording": {"local_path": "/private/recording.mp4",
+                          "sha256": sanitizer.sha256_file(recording),
+                          "metadata": {"width": 1920, "height": 1080,
+                                       "frame_rate": {"numerator": 30, "denominator": 1},
+                                       "duration_ms": 1250}},
         }))
-        recording.write_bytes(b"measured-video-bytes")
         return {
             "source_sha": "a" * 40,
             "platform": "linux-x11",
@@ -214,6 +247,9 @@ class EvidenceSanitizerTests(unittest.TestCase):
         choice = json.loads(inputs["chooser_result"].read_text())
         choice["probabilities"] = {"region:send": 0.4}
         inputs["chooser_result"].write_text(json.dumps(choice))
+        raw = json.loads(inputs["raw_evidence"].read_text())
+        raw["chooser"]["response"] = choice
+        inputs["raw_evidence"].write_text(json.dumps(raw))
         manifest = sanitizer.build_manifest(**inputs)
         self.assertEqual(manifest["result"]["selected_candidate"], "region:send")
 
@@ -230,6 +266,10 @@ class EvidenceSanitizerTests(unittest.TestCase):
         choice["model"] = "provider-returned-model"
         inputs["chooser_result"].write_text(json.dumps(choice))
         inputs["chooser_mode"] = "live"
+        raw = json.loads(inputs["raw_evidence"].read_text())
+        raw["chooser"]["mode"] = "live"
+        raw["chooser"]["response"] = choice
+        inputs["raw_evidence"].write_text(json.dumps(raw))
         manifest = sanitizer.build_manifest(**inputs)
         self.assertEqual(manifest["runtime"]["chooser"], {
             "mode": "live",
@@ -256,6 +296,31 @@ class EvidenceSanitizerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "all three ordered model identities"):
             sanitizer.build_manifest(**inputs)
 
+    def test_requires_truthful_platform_code_signing_measurement(self):
+        inputs = self.inputs()
+        measurements = json.loads(inputs["candidate_measurements"].read_text())
+        measurements["code_signing"]["status"] = "verified"
+        inputs["candidate_measurements"].write_text(json.dumps(measurements))
+        with self.assertRaisesRegex(ValueError, "misleading code-signing evidence"):
+            sanitizer.build_manifest(**inputs)
+
+        inputs = self.inputs()
+        measurements = json.loads(inputs["candidate_measurements"].read_text())
+        measurements["target"] = "aarch64-apple-darwin"
+        measurements["code_signing"] = {
+            "status": "verified",
+            "format": "apple-codesign",
+            "identity": "ephemeral-self-signed-review-only",
+            "certificate_sha256": "9" * 64,
+            "designated_requirement": 'identifier "cua-driver" and certificate leaf = H"00"',
+        }
+        inputs["candidate_measurements"].write_text(json.dumps(measurements))
+        inputs["platform"] = "macos"
+        raw = json.loads(inputs["raw_evidence"].read_text())
+        raw["platform"] = "macos"
+        inputs["raw_evidence"].write_text(json.dumps(raw))
+        sanitizer.build_manifest(**inputs)
+
     def test_raw_evidence_digest_changes_without_exposing_raw_fields(self):
         inputs = self.inputs()
         first = sanitizer.build_manifest(**inputs)
@@ -265,6 +330,29 @@ class EvidenceSanitizerTests(unittest.TestCase):
         second = sanitizer.build_manifest(**inputs)
         self.assertNotEqual(first["raw_evidence_sha256"], second["raw_evidence_sha256"])
         self.assertNotIn("different", json.dumps(second))
+
+    def test_rejects_unproven_stale_capture_refusal(self):
+        inputs = self.inputs()
+        raw = json.loads(inputs["raw_evidence"].read_text())
+        raw["verification"]["stale_capture_refused"] = False
+        inputs["raw_evidence"].write_text(json.dumps(raw))
+        with self.assertRaisesRegex(ValueError, "stale-capture refusal"):
+            sanitizer.build_manifest(**inputs)
+
+    def test_rejects_raw_source_or_measured_result_mismatch(self):
+        inputs = self.inputs()
+        raw = json.loads(inputs["raw_evidence"].read_text())
+        raw["source_sha"] = "f" * 40
+        inputs["raw_evidence"].write_text(json.dumps(raw))
+        with self.assertRaisesRegex(ValueError, "approved sources"):
+            sanitizer.build_manifest(**inputs)
+
+        inputs = self.inputs()
+        raw = json.loads(inputs["raw_evidence"].read_text())
+        raw["chooser"]["response"]["selected_id"] = "abstain"
+        inputs["raw_evidence"].write_text(json.dumps(raw))
+        with self.assertRaisesRegex(ValueError, "measured chooser result"):
+            sanitizer.build_manifest(**inputs)
 
     def test_source_and_platform_are_runtime_measured(self):
         repo_root = HERE.parents[3]

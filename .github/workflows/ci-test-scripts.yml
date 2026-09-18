@@ -37,6 +37,10 @@ on:
       - ".github/workflows/periodic-cua-sandbox-live.yml"
       - ".github/workflows/ci-contributor-attribution.yml"
       - ".github/workflows/e2e-rust-macos.yml"
+      - ".github/workflows/cd-cua-perception-review-supplied-inputs.yml"
+      - ".github/workflows/authorized-live-jev-macos-evidence.yml"
+      - ".github/workflows/authorized-live-jev-use-demo.yml"
+      - ".github/workflows/review-cua-perception-pr3943.yml"
       - "docs/release-backfill-runbook.md"
       - "libs/cua-driver/scripts/**"
       - "libs/cua-driver/tests/fixtures/apps/cross-platform/electron/build.sh"
@@ -44,6 +48,7 @@ on:
       - "libs/cua-driver/tests/fixtures/apps/cross-platform/tauri/build.sh"
       - "libs/cua-driver/tests/runners/macos-lume/**"
       - "scripts/ci/macos/**"
+      - "libs/cua-driver/tests/perception-demo/**"
 
 jobs:
   windows-uninstall:

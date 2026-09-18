@@ -5,9 +5,17 @@
 
 use cua_driver_testkit::{CliDriver, Driver, McpDriver, RawDriver};
 
+fn cargo_built_driver() -> std::path::PathBuf {
+    // Referencing Cargo's binary variable creates a build dependency on the
+    // executable. `--all-targets` alone only guarantees the binary test
+    // harness, so a restored target directory could otherwise supply an old
+    // standalone `target/debug/cua-driver`.
+    std::path::PathBuf::from(env!("CARGO_BIN_EXE_cua-driver"))
+}
+
 #[test]
 fn visual_tool_inventory_advertises_the_versioned_contract() {
-    let Some(mut driver) = RawDriver::spawn() else {
+    let Some(mut driver) = RawDriver::spawn_with_binary(cargo_built_driver()) else {
         return;
     };
     driver.send(&serde_json::json!({
@@ -30,7 +38,7 @@ fn visual_tool_inventory_advertises_the_versioned_contract() {
         serde_json::json!(["capture_id"])
     );
     assert_eq!(
-        tool["outputSchema"]["properties"]["schema"]["const"],
+        tool["outputSchema"]["anyOf"][0]["properties"]["schema"]["const"],
         "cua.visual_regions_v1"
     );
     assert_eq!(tool["annotations"]["readOnlyHint"], true);
@@ -53,12 +61,13 @@ fn visual_tool_inventory_advertises_the_versioned_contract() {
 #[test]
 fn cli_and_mcp_preserve_the_same_visual_error_dto() {
     let arguments = serde_json::json!({"capture_id": "capture-does-not-exist"});
-    let mut cli = CliDriver::new();
+    let binary = cargo_built_driver();
+    let mut cli = CliDriver::with_binary(binary.clone());
     if !cli.available() {
         return;
     }
     let cli_response = cli.call("parse_visual_regions", arguments.clone());
-    let Some(mut mcp) = McpDriver::spawn() else {
+    let Some(mut mcp) = McpDriver::spawn_with_binary(binary) else {
         return;
     };
     let mcp_response = mcp.call("parse_visual_regions", arguments);

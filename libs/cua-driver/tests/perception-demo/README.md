@@ -8,13 +8,23 @@ the measured review Driver, and makes the API key available only to the bounded
 Jev chooser process. Evidence upload is limited to the redacted manifest and
 decoded MP4 described below.
 
-The candidate aggregate has `windows` and `linux-x11` directories. Each
+The private candidate producer runs without an environment or production
+secrets on Linux, Windows, and `macos-15`, then returns both its Actions run ID
+and the immutable aggregate artifact ID. Consumers require both identifiers so
+the artifact download is bound to the reviewed exact-SHA producer run. The
+candidate aggregate has `windows`, `linux-x11`, and `macos` directories. Each
 directory contains `signed-catalog.json`, the catalog-selected extension
 archive, `review-measurements.json`, `signed-candidate-checksums.txt`, and a
 `review-cua-driver` binary (`review-cua-driver.exe` on Windows). The measurement
 file binds the review-only source, Driver version and debug review-trust-root
 build profile, Ed25519 public key, signed catalog, extension archive, worker,
-all three model artifacts, ONNX Runtime, executed self-test, and Driver binary.
+all three model artifacts, ONNX Runtime, executed self-test, Driver binary, and
+an explicit platform code-signing measurement. Linux and Windows record Apple
+code signing as not applicable. The macOS arm64 Driver is signed before it is
+measured with a temporary self-signed review certificate in a temporary
+keychain; the keychain and private key are destroyed before artifact upload.
+Its measurement records the certificate hash and designated requirement and
+does not claim a production identity.
 Those extension measurements are extracted from the sealed archive and checked
 against its artifact manifest, model ledger, runtime contract, and bytes rather
 than copied from workflow constants. The test requires these environment variables:
@@ -57,14 +67,22 @@ measured resolution, frame rate, uncut 1x edit record, source time range, cursor
 configuration, and final hash. Its output is limited to `manifest.json` and
 `recording.mp4`.
 
-macOS is intentionally separate from this Windows/Linux workflow. Native macOS
-proof uses the logged-in, TCC-authorized Lume runner and the canonical
+Native macOS live evidence remains separate from the Windows/Linux workflow.
+This proof uses the logged-in, TCC-authorized Lume runner and the canonical
 `libs/cua-driver/tests/runners/macos-lume/run-all.sh --standalone-browser`
-harness with a separately assembled and signed arm64 candidate. The manual
-`authorized-live-jev-macos-evidence.yml` path requires a protected,
+harness with the `macos` member of the same private review aggregate. The
+labeled PR workflow produces the candidate and runs only on GitHub-hosted
+Linux, Windows, and macOS machines; the pull-request event never schedules the
+self-hosted Lume runner. After that producer run completes successfully, a
+maintainer manually dispatches `authorized-live-jev-macos-evidence.yml` with
+its immutable producer run and artifact IDs. This keeps public pull-request
+events from directly scheduling work on the self-hosted Lume runner. The manual
+path requires a protected,
 console-logged-in self-hosted Lume runner. It verifies the exact current source
-and Jev heads, the candidate Driver's certificate-backed arm64 signature and
-hash, the signed extension identity, and the same redacted manifest contract;
+and Jev heads, producer run ID, aggregate artifact ID, the candidate Driver's
+certificate-backed arm64 signature and hash, aggregate checksums, the Ed25519
+catalog signature and measured public key, the signed extension identity, and
+the same redacted manifest contract;
 it fully decodes the recording before uploading only `manifest.json` and
 `recording.mp4`.
 

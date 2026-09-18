@@ -830,12 +830,18 @@ mod e2e {
             || journal.snapshot()["ready"].as_bool() == Some(true),
             "fixture did not become ready",
         );
-        let extension_home = gate.extension_home.to_string_lossy().into_owned();
-        let mut driver = McpDriver::spawn_named_with_env(
-            &gate.session_label,
-            &[("CUA_DRIVER_RS_HOME", extension_home.as_str())],
-        )
-        .expect("start Driver with installed candidate extension");
+        #[cfg(target_os = "macos")]
+        let mut driver = McpDriver::spawn_macos_daemon_proxy_named(&gate.session_label)
+            .expect("connect to the exact TCC-authorized review Driver daemon");
+        #[cfg(not(target_os = "macos"))]
+        let mut driver = {
+            let extension_home = gate.extension_home.to_string_lossy().into_owned();
+            McpDriver::spawn_named_with_env(
+                &gate.session_label,
+                &[("CUA_DRIVER_RS_HOME", extension_home.as_str())],
+            )
+            .expect("start Driver with installed candidate extension")
+        };
         driver.reaper().push(fixture);
         let (window_id, _) = driver
             .find_window(pid, FIXTURE_TITLE)

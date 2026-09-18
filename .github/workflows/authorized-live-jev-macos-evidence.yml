@@ -15,7 +15,10 @@ on:
         description: "Immutable artifact ID containing the signed macOS arm64 review candidate"
         required: true
         type: string
-
+      signed_candidate_run_id:
+        description: "Producer Actions run ID containing the signed review candidate"
+        required: true
+        type: string
 permissions:
   actions: read
   contents: read
@@ -32,6 +35,7 @@ jobs:
     outputs:
       source_sha: ${{ steps.resolve.outputs.source_sha }}
       jev_source_sha: ${{ steps.resolve.outputs.jev_source_sha }}
+      candidate_run_id: ${{ steps.resolve.outputs.candidate_run_id }}
     steps:
       - id: resolve
         name: Require current same-repository PR heads and immutable artifact
@@ -41,12 +45,14 @@ jobs:
           REQUESTED_SHA: ${{ inputs.source_sha }}
           REQUESTED_JEV_SHA: ${{ inputs.jev_source_sha }}
           CANDIDATE_ARTIFACT_ID: ${{ inputs.signed_arm64_candidate_artifact_id }}
+          CANDIDATE_RUN_ID: ${{ inputs.signed_candidate_run_id }}
         run: |
           set -euo pipefail
           [[ "$GITHUB_REPOSITORY" == "trycua/cua" ]]
           [[ "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$REQUESTED_JEV_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$CANDIDATE_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$CANDIDATE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
           validate_pr_head() {
             local number="$1" requested="$2" state head_sha head_repo
             IFS=$'\t' read -r state head_sha head_repo < <(
@@ -58,15 +64,21 @@ jobs:
           validate_pr_head 3943 "$REQUESTED_SHA"
           validate_pr_head 3916 "$REQUESTED_JEV_SHA"
           artifact_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$CANDIDATE_ARTIFACT_ID")"
+          [[ "$(jq -r .name <<<"$artifact_json")" == "STAGING-cua-perception-review-candidates-$REQUESTED_SHA" ]]
           [[ "$(jq -r .expired <<<"$artifact_json")" == false ]]
           [[ "$(jq -r .workflow_run.head_sha <<<"$artifact_json")" == "$REQUESTED_SHA" ]]
           run_id="$(jq -r .workflow_run.id <<<"$artifact_json")"
+          [[ "$run_id" == "$CANDIDATE_RUN_ID" ]]
           run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")"
+          [[ "$(jq -r .head_sha <<<"$run_json")" == "$REQUESTED_SHA" ]]
+          [[ "$(jq -r .path <<<"$run_json")" == ".github/workflows/review-cua-perception-pr3943.yml" ]]
+          [[ "$(jq -r .event <<<"$run_json")" == pull_request ]]
+          [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]
           [[ "$(jq -r .status <<<"$run_json")" == completed ]]
           [[ "$(jq -r .conclusion <<<"$run_json")" == success ]]
-          [[ "$(jq -r .head_sha <<<"$run_json")" == "$REQUESTED_SHA" ]]
           echo "source_sha=$REQUESTED_SHA" >> "$GITHUB_OUTPUT"
           echo "jev_source_sha=$REQUESTED_JEV_SHA" >> "$GITHUB_OUTPUT"
+          echo "candidate_run_id=$CANDIDATE_RUN_ID" >> "$GITHUB_OUTPUT"
 
   evidence:
     name: Canonical Lume and live signed-candidate proof
@@ -77,6 +89,8 @@ jobs:
     env:
       CUA_E2E_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
       CUA_JEV_SOURCE_SHA: ${{ needs.resolve.outputs.jev_source_sha }}
+      CUA_E2E_UNRESTRICTED_GUI: "1"
+      CUA_E2E_RECORDINGS_ROOT: ${{ github.workspace }}/.cua-perception-recordings
       CUA_SESSION_LABEL: authorized-jev-choice-demo-macos
       CUA_PERCEPTION_EXTENSION_HOME: ${{ github.workspace }}/.cua-perception-home
       CUA_PERCEPTION_EVIDENCE_DIR: ${{ github.workspace }}/.cua-perception-evidence/live
@@ -101,6 +115,31 @@ jobs:
           [[ "$(stat -f '%Su' /dev/console)" == "$(id -un)" ]]
           launchctl print "gui/$(id -u)" >/dev/null
 
+      - name: Preflight noninteractive Lume privileges, keychains, and browsers
+        shell: bash
+        run: |
+          set -euo pipefail
+          fail() { echo "Lume preflight failed: $*" >&2; exit 1; }
+          /usr/bin/sudo -n -v 2>/dev/null || fail "passwordless sudo is required to seed the disposable guest TCC database"
+          signing_keychain="$HOME/Library/Keychains/cua-driver-signing.keychain-db"
+          login_keychain="$HOME/Library/Keychains/login.keychain-db"
+          [[ -f "$signing_keychain" ]] || fail "dedicated signing keychain is missing: $signing_keychain"
+          [[ -f "$login_keychain" ]] || fail "console login keychain is missing: $login_keychain"
+          /usr/bin/security unlock-keychain "$signing_keychain" </dev/null 2>/dev/null || fail "dedicated signing keychain cannot be unlocked noninteractively"
+          /usr/bin/security unlock-keychain "$login_keychain" </dev/null 2>/dev/null || fail "login keychain cannot be unlocked noninteractively"
+          /usr/bin/security find-identity -v -p codesigning "$signing_keychain" | \
+            /usr/bin/grep -F "CuaDriver Local Signing (cua-driver-rs)" >/dev/null || \
+            fail "dedicated signing keychain lacks the required CuaDriver Local Signing identity"
+          browser_count=0
+          for browser in \
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"; do
+            if [[ -x "$browser" ]]; then
+              browser_count=$((browser_count + 1))
+            fi
+          done
+          ((browser_count > 0)) || fail "no supported standalone Chrome or Edge executable is installed in /Applications"
+
       - name: Run the canonical logged-in Lume matrix at the exact SHA
         shell: bash
         run: libs/cua-driver/tests/runners/macos-lume/run-all.sh --standalone-browser
@@ -122,9 +161,10 @@ jobs:
           version: "0.8.15"
 
       - name: Download immutable signed macOS arm64 candidate
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           artifact-ids: ${{ inputs.signed_arm64_candidate_artifact_id }}
+          run-id: ${{ needs.resolve.outputs.candidate_run_id }}
           path: ${{ runner.temp }}/perception-candidate
           github-token: ${{ github.token }}
           merge-multiple: true
@@ -136,7 +176,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 - "$CANDIDATE_ROOT" "$CUA_E2E_SOURCE_SHA" "$GITHUB_ENV" <<'PY'
-          import hashlib, json, pathlib, subprocess, sys
+          import base64, hashlib, json, pathlib, subprocess, sys, tempfile
           root, expected_sha, env_path = pathlib.Path(sys.argv[1]), sys.argv[2], pathlib.Path(sys.argv[3])
           measured = json.loads((root / "review-measurements.json").read_text())
           assert measured["review_only"] is True
@@ -146,21 +186,81 @@ jobs:
           assert measured["signature_algorithm"] == "ed25519"
           assert measured["publisher_id"] == "cua-review-only"
           assert measured["key_id"] == "review-only-build-override"
+          signing = measured["code_signing"]
+          assert set(signing) == {"status", "format", "identity", "certificate_sha256", "designated_requirement"}
+          assert signing["status"] == "verified"
+          assert signing["format"] == "apple-codesign"
+          assert signing["identity"] == "ephemeral-self-signed-review-only"
           driver = (root / "review-cua-driver").resolve(); driver.relative_to(root.resolve())
           assert driver.is_file() and hashlib.sha256(driver.read_bytes()).hexdigest() == measured["review_driver_sha256"]
+          driver.chmod(driver.stat().st_mode | 0o111)
           subprocess.run(["codesign", "--verify", "--strict", "--verbose=2", str(driver)], check=True)
-          requirement = subprocess.run(["codesign", "-d", "-r-", str(driver)], check=True, capture_output=True, text=True).stderr
-          assert "certificate leaf" in requirement, "candidate Driver must use a certificate-backed signing identity"
+          requirement_result = subprocess.run(["codesign", "-d", "-r-", str(driver)], check=True, capture_output=True, text=True)
+          requirement_lines = (requirement_result.stdout + requirement_result.stderr).splitlines()
+          requirements = [line.removeprefix("designated => ") for line in requirement_lines if line.startswith("designated => ")]
+          assert len(requirements) == 1
+          requirement = requirements[0]
+          assert any(marker in requirement for marker in ("certificate leaf", "certificate root")), "candidate Driver must use a certificate-backed signing identity"
+          assert requirement == signing["designated_requirement"]
+          with tempfile.TemporaryDirectory() as temporary:
+              prefix = pathlib.Path(temporary) / "certificate"
+              subprocess.run(["codesign", "-d", f"--extract-certificates={prefix}", str(driver)], check=True, capture_output=True)
+              certificate = pathlib.Path(f"{prefix}0")
+              assert certificate.is_file()
+              assert hashlib.sha256(certificate.read_bytes()).hexdigest() == signing["certificate_sha256"]
           arches = subprocess.run(["lipo", "-archs", str(driver)], check=True, capture_output=True, text=True).stdout.split()
           assert arches == ["arm64"], arches
           catalog = root / "signed-catalog.json"; assert catalog.is_file()
           assert hashlib.sha256(catalog.read_bytes()).hexdigest() == measured["catalog_sha256"]
-          payload = json.loads(catalog.read_text())["payload"]
+          catalog_value = json.loads(catalog.read_text()); payload = catalog_value["payload"]
+          public_key = base64.b64decode(measured["public_key_base64"], validate=True)
+          assert len(public_key) == 32 and hashlib.sha256(public_key).hexdigest() == measured["public_key_sha256"]
           archive = (root / payload["archive"]).resolve(); archive.relative_to(root.resolve())
           assert archive.is_file() and hashlib.sha256(archive.read_bytes()).hexdigest() == measured["archive_sha256"] == payload["archive_sha256"]
+          checksums = {}
+          for line in (root / "signed-candidate-checksums.txt").read_text().splitlines():
+              digest, relative_text = line.split(None, 1)
+              relative = pathlib.PurePosixPath(relative_text.strip())
+              assert len(digest) == 64 and not relative.is_absolute() and ".." not in relative.parts
+              path = root.joinpath(*relative.parts).resolve(); path.relative_to(root.resolve())
+              assert relative.as_posix() not in checksums and path.is_file()
+              assert hashlib.sha256(path.read_bytes()).hexdigest() == digest
+              checksums[relative.as_posix()] = digest
+          assert {"review-cua-driver", "review-measurements.json", "code-signing.json", "signed-catalog.json", "catalog-payload.json", "catalog.signature", payload["archive"]} <= set(checksums)
           with env_path.open("a") as output:
               output.write(f"CUA_TEST_DRIVER_BIN={driver}\nCUA_CANDIDATE_MEASUREMENTS={root / 'review-measurements.json'}\nCUA_PERCEPTION_CATALOG={catalog}\n")
           PY
+          node - "$CANDIDATE_ROOT" <<'JS'
+          const crypto = require("node:crypto");
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const root = process.argv[2];
+          const catalog = JSON.parse(fs.readFileSync(path.join(root, "signed-catalog.json")));
+          const measured = JSON.parse(fs.readFileSync(path.join(root, "review-measurements.json")));
+          const payloadBytes = fs.readFileSync(path.join(root, "catalog-payload.json"));
+          if (catalog.signature_algorithm !== "ed25519") throw new Error("unexpected catalog signature algorithm");
+          if (catalog.payload.publisher_id !== "cua-review-only" || catalog.payload.key_id !== "review-only-build-override") throw new Error("unexpected review catalog identity");
+          if (JSON.stringify(catalog.payload) !== payloadBytes.toString()) throw new Error("catalog payload bytes differ");
+          const raw = Buffer.from(measured.public_key_base64, "base64");
+          const spki = Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), raw]);
+          const key = crypto.createPublicKey({key: spki, format: "der", type: "spki"});
+          if (!crypto.verify(null, payloadBytes, key, Buffer.from(catalog.signature, "base64"))) {
+            throw new Error("review catalog Ed25519 signature is invalid");
+          }
+          if (!crypto.timingSafeEqual(fs.readFileSync(path.join(root, "catalog.signature")), Buffer.from(catalog.signature, "base64"))) {
+            throw new Error("detached review catalog signature differs");
+          }
+          JS
+
+      - name: Grant the exact review Driver path in this disposable Lume guest
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$CUA_TEST_DRIVER_BIN")"
+          [[ "$candidate" == "$CUA_TEST_DRIVER_BIN" ]]
+          CUA_TCC_APP_PATH="$candidate" \
+          CUA_TCC_EXPECTED_CLIENT="$candidate" \
+            bash libs/cua-driver/tests/runners/macos-lume/seed-tcc-guest.sh
 
       - name: Install and measure the signed perception extension
         shell: bash
@@ -188,6 +288,85 @@ jobs:
           with pathlib.Path(sys.argv[4]).open("a") as output:
               output.write(f"CUA_PERCEPTION_MODEL={model}\nCUA_RUNNER_OS_NAME=macos\nCUA_RUNNER_OS_VERSION={version}\nCUA_RUNNER_OS_ARCH=arm64\n")
           PY
+
+      - name: Start the exact review Driver and prove direct desktop capture
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$CUA_TEST_DRIVER_BIN")"
+          socket="$RUNNER_TEMP/cua-review-driver.sock"
+          daemon_log="$RUNNER_TEMP/cua-review-driver.log"
+          capture="$RUNNER_TEMP/cua-review-driver-direct-capture.png"
+          permissions="$RUNNER_TEMP/review-driver-permissions.json"
+          [[ "$candidate" == "$CUA_TEST_DRIVER_BIN" && ! -e "$socket" ]]
+          CUA_DRIVER_RS_HOME="$CUA_PERCEPTION_EXTENSION_HOME" \
+          CUA_DRIVER_RS_TELEMETRY_ENABLED=false \
+            nohup "$candidate" serve --socket "$socket" \
+              --permission-mode unrestricted \
+              --dangerously-bypass-approvals \
+              --no-permissions-gate \
+              --no-overlay >"$daemon_log" 2>&1 </dev/null &
+          daemon_pid=$!
+          cleanup_failed_start() {
+            status=$?
+            trap - EXIT INT TERM
+            if [[ "$status" != 0 ]]; then
+              "$candidate" --socket "$socket" --expected-pid "$daemon_pid" stop >/dev/null 2>&1 || true
+              kill "$daemon_pid" >/dev/null 2>&1 || true
+              wait "$daemon_pid" 2>/dev/null || true
+            fi
+            exit "$status"
+          }
+          trap cleanup_failed_start EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          echo "$daemon_pid" > "$RUNNER_TEMP/cua-review-driver.pid"
+          {
+            echo "CUA_E2E_MACOS_DAEMON_SOCKET=$socket"
+            echo "CUA_REVIEW_DAEMON_PID=$daemon_pid"
+          } >> "$GITHUB_ENV"
+          ready=0
+          for _ in {1..100}; do
+            if daemon_status="$("$candidate" status --socket "$socket" 2>&1)" \
+                && [[ "$daemon_status" == *"permission mode: unrestricted"* ]] \
+                && [[ -S "$socket" ]] \
+                && [[ "$(stat -f '%Lp' "$socket")" == 600 ]]; then
+              ready=1
+              break
+            fi
+            kill -0 "$daemon_pid" 2>/dev/null || break
+            sleep 0.1
+          done
+          if [[ "$ready" != 1 ]]; then
+            cat "$daemon_log" >&2 || true
+            exit 1
+          fi
+          "$candidate" call check_permissions '{"prompt":false}' --socket "$socket" > "$permissions"
+          CANDIDATE_PATH="$candidate" python3 - "$permissions" <<'PY'
+          import json, os, pathlib, sys
+          permissions = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          assert permissions.get("accessibility") is True, "exact review Driver path lacks Accessibility"
+          assert permissions.get("screen_recording") is True, "exact review Driver path lacks Screen Recording"
+          assert permissions.get("screen_recording_capturable") is None
+          assert permissions.get("direct_capture_status") == "not_checked"
+          assert pathlib.Path(permissions["source"]["executable"]).resolve() == pathlib.Path(os.environ["CANDIDATE_PATH"])
+          PY
+          capture_args="$(jq -cn --arg path "$capture" '{screenshot_out_file:$path}')"
+          "$candidate" call get_desktop_state "$capture_args" --socket "$socket" \
+            > "$RUNNER_TEMP/review-driver-direct-capture.json"
+          jq -e '
+            .platform == "macos"
+            and .display == "primary"
+            and .screenshot_width > 0
+            and .screenshot_height > 0
+            and (.capture_id | type == "string" and length > 0)
+          ' "$RUNNER_TEMP/review-driver-direct-capture.json" >/dev/null
+          python3 - "$capture" <<'PY'
+          import pathlib, sys
+          content = pathlib.Path(sys.argv[1]).read_bytes()
+          assert len(content) > 8 and content.startswith(b"\x89PNG\r\n\x1a\n")
+          PY
+          trap - EXIT INT TERM
 
       - name: Install locked chooser and compile exact live test
         shell: bash
@@ -227,51 +406,155 @@ jobs:
         shell: bash
         timeout-minutes: 15
         env:
+          GH_TOKEN: ${{ github.token }}
           LIVE_TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
         run: |
           set -euo pipefail
-          [[ -n "$LIVE_TYPESAFE_API_KEY" ]]
+          typesafe_key="$LIVE_TYPESAFE_API_KEY"
+          unset LIVE_TYPESAFE_API_KEY
+          [[ -n "$typesafe_key" ]]
+          clear_typesafe_key() {
+            unset TYPESAFE_API_KEY
+            typesafe_key=""
+          }
+          trap clear_typesafe_key EXIT
+          pr_json="$(gh api "repos/$GITHUB_REPOSITORY/pulls/3943")"
+          [[ "$(jq -r .state <<<"$pr_json")" == open ]]
+          [[ "$(jq -r .draft <<<"$pr_json")" == true ]]
+          [[ "$(jq -r .head.repo.full_name <<<"$pr_json")" == "$GITHUB_REPOSITORY" ]]
+          [[ "$(jq -r .head.sha <<<"$pr_json")" == "$CUA_E2E_SOURCE_SHA" ]]
+          jq -e '.labels | any(.name == "cua-perception-live-review")' <<<"$pr_json" >/dev/null
+          jev_pr_json="$(gh api "repos/$GITHUB_REPOSITORY/pulls/3916")"
+          [[ "$(jq -r .state <<<"$jev_pr_json")" == open ]]
+          [[ "$(jq -r .head.repo.full_name <<<"$jev_pr_json")" == "$GITHUB_REPOSITORY" ]]
+          [[ "$(jq -r .head.sha <<<"$jev_pr_json")" == "$CUA_JEV_SOURCE_SHA" ]]
+          unset GH_TOKEN
           [[ "$(git rev-parse HEAD)" == "$CUA_E2E_SOURCE_SHA" ]]
           [[ "$(git -C jev-use-source rev-parse HEAD)" == "$CUA_JEV_SOURCE_SHA" ]]
           [[ "$(shasum -a 256 "$CUA_LIVE_TEST_BINARY" | awk '{print $1}')" == "$CUA_LIVE_TEST_BINARY_SHA256" ]]
+          export TYPESAFE_API_KEY="$typesafe_key"
           CUA_JEV_LIVE=1 \
           CUA_JEV_CHOOSER_PROGRAM="$CUA_FIXED_CHOOSER_PROGRAM" \
           CUA_JEV_CHOOSER_SCRIPT="$CUA_FIXED_CHOOSER_SCRIPT" \
-          TYPESAFE_API_KEY="$LIVE_TYPESAFE_API_KEY" \
             "$CUA_LIVE_TEST_BINARY" --ignored --exact authorized_visual_only_demo --nocapture
+          clear_typesafe_key
+          trap - EXIT
 
-      - name: Fully decode and validate the same privacy and identity binding
+      - name: Sanitize, fully decode, and validate published evidence
         shell: bash
         run: |
           set -euo pipefail
           evidence="$CUA_PERCEPTION_EVIDENCE_DIR"
+          raw="$evidence/raw-manifest.json"
+          [[ -f "$raw" && -f "$evidence/timeline.json" && -f "$evidence/recording.mp4" ]] || {
+            echo "complete private live evidence was not produced" >&2
+            exit 1
+          }
+          chmod 700 "$evidence"
+          chmod 600 "$raw" "$evidence/timeline.json" "$evidence/recording.mp4"
           ffmpeg -v error -xerror -i "$evidence/recording.mp4" -map 0:v:0 -f null -
-          uv pip install --no-config --system --require-hashes \
+          validation_venv="$RUNNER_TEMP/perception-validation-venv"
+          python3 -m venv "$validation_venv"
+          uv pip install --no-config --python "$validation_venv/bin/python" --require-hashes \
             -r .github/releases/cua-perception/test-requirements.lock
-          python3 - "$evidence" "$CUA_CANDIDATE_MEASUREMENTS" <<'PY'
-          import hashlib, json, os, pathlib, sys
+          sanitizer_inputs="$RUNNER_TEMP/private-macos-sanitizer-inputs"
+          mkdir -m 700 "$sanitizer_inputs"
+          "$validation_venv/bin/python" - "$raw" "$sanitizer_inputs" <<'PY'
+          import json, pathlib, sys
+          raw_path, output = map(pathlib.Path, sys.argv[1:])
+          value = json.loads(raw_path.read_text())
+          documents = {
+              "parser-result.json": {"schema": "cua.visual_regions_v1", "parser": value["parser"], "regions": []},
+              "chooser-result.json": value["chooser"]["response"],
+              "oracle.json": value["fixture_oracle"],
+          }
+          for name, document in documents.items():
+              path = output / name
+              path.write_text(json.dumps(document))
+              path.chmod(0o600)
+          PY
+          "$validation_venv/bin/python" libs/cua-driver/tests/perception-demo/sanitize_evidence.py \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --expected-source-sha "$CUA_E2E_SOURCE_SHA" \
+            --chooser-mode live \
+            --jev-source-sha "$CUA_JEV_SOURCE_SHA" \
+            --session-label "$CUA_SESSION_LABEL" \
+            --os-name "$CUA_RUNNER_OS_NAME" \
+            --os-version "$CUA_RUNNER_OS_VERSION" \
+            --os-arch "$CUA_RUNNER_OS_ARCH" \
+            --candidate-measurements "$CUA_CANDIDATE_MEASUREMENTS" \
+            --driver-binary "$CUA_TEST_DRIVER_BIN" \
+            --extension-status "$RUNNER_TEMP/perception-status.json" \
+            --parser-result "$sanitizer_inputs/parser-result.json" \
+            --chooser-result "$sanitizer_inputs/chooser-result.json" \
+            --model "$CUA_PERCEPTION_MODEL" \
+            --oracle "$sanitizer_inputs/oracle.json" \
+            --raw-evidence "$raw" \
+            --recording "$evidence/recording.mp4" \
+            --output-dir "$RUNNER_TEMP/publish-macos-evidence"
+          [[ -f "$raw" && -f "$evidence/timeline.json" ]] || {
+            echo "sanitization removed private evidence instead of retaining it locally" >&2
+            exit 1
+          }
+          "$validation_venv/bin/python" - "$RUNNER_TEMP/publish-macos-evidence" "$CUA_CANDIDATE_MEASUREMENTS" "$raw" <<'PY'
+          import hashlib, json, os, pathlib, subprocess, sys
           from jsonschema import Draft202012Validator
-          evidence, measurements_path = map(pathlib.Path, sys.argv[1:])
+          evidence, measurements_path, raw_path = map(pathlib.Path, sys.argv[1:])
           manifest_path, recording = evidence / "manifest.json", evidence / "recording.mp4"
           manifest = json.loads(manifest_path.read_text())
           schema = json.loads(pathlib.Path("libs/cua-driver/tests/perception-demo/evidence-manifest.schema.json").read_text())
           Draft202012Validator.check_schema(schema); Draft202012Validator(schema).validate(manifest)
           measured = json.loads(measurements_path.read_text()); content = recording.read_bytes(); digest = hashlib.sha256(content).hexdigest()
           assert manifest["platform"] == "macos"
-          assert manifest["runtime"]["driver"]["source_sha"] == measured["source_sha"] == os.environ["CUA_E2E_SOURCE_SHA"]
-          assert manifest["runtime"]["driver"]["binary_sha256"] == measured["review_driver_sha256"]
-          chooser = manifest["runtime"]["chooser"]
+          assert manifest["raw_evidence_sha256"] == hashlib.sha256(raw_path.read_bytes()).hexdigest()
+          assert manifest["fixture"] == {"id": "visual-only-canvas/v1", "oracle": {"source": "fixture-journal", "initial_ready": True, "selected": "send", "action_count": 1, "result": "passed"}}
+          runtime = manifest["runtime"]; driver = runtime["driver"]; perception = runtime["perception"]; chooser = runtime["chooser"]
+          assert driver["source_sha"] == measured["source_sha"] == os.environ["CUA_E2E_SOURCE_SHA"]
+          assert driver["version"] == measured["review_driver_version"] and driver["binary_sha256"] == measured["review_driver_sha256"]
+          assert driver["build"] == {"profile": measured["review_driver_build_profile"], "target": measured["target"], "sealed_artifact_manifest_sha256": measured["sealed_artifact_manifest_sha256"], "sealed_extension_manifest_sha256": measured["sealed_extension_manifest_sha256"]}
+          assert measured["code_signing"]["status"] == "verified" and measured["code_signing"]["format"] == "apple-codesign" and measured["code_signing"]["identity"] == "ephemeral-self-signed-review-only"
+          assert perception["extension_id"] == "cua-perception" and perception["extension_version"] == measured["extension_version"]
+          assert perception["trust"] == "review-only-publisher-verified" and perception["publisher_id"] == measured["publisher_id"] and perception["publisher_key_id"] == measured["key_id"]
+          assert type(perception["catalog_version"]) is int and perception["catalog_version"] > 0 and perception["parser_model_id"]
+          assert perception["signature_algorithm"] == measured["signature_algorithm"] == "ed25519"
+          assert perception["signed_extension_archive_sha256"] == measured["archive_sha256"] and perception["signing_key_sha256"] == measured["public_key_sha256"] and perception["signed_catalog_sha256"] == measured["catalog_sha256"]
+          assert perception["protocol_version"] == measured["protocol_version"] and perception["worker_sha256"] == measured["worker_sha256"] and perception["self_test"] == measured["self_test"] and perception["models"] == measured["models"] and perception["onnx_runtime"] == measured["onnx_runtime"]
           assert chooser["mode"] == "live" and chooser["provider"] == "typesafe" and chooser["model_id"]
           assert chooser["adapter_source_sha"] == os.environ["CUA_E2E_SOURCE_SHA"] and chooser["source_sha"] == os.environ["CUA_JEV_SOURCE_SHA"]
-          assert manifest["runtime"]["perception"]["signed_extension_archive_sha256"] == measured["archive_sha256"]
+          result = manifest["result"]; observation = manifest["observation"]
+          assert result["status"] == "passed" and result["stale_capture_refused"] is True
+          assert observation["session_label"] == os.environ["CUA_SESSION_LABEL"] and observation["input_scope"] == "window" and observation["capture_kind"] == "get_window_state" and observation["capture_source"] == "driver-screenshot"
+          assert observation["dimensions"]["width"] > 0 and observation["dimensions"]["height"] > 0 and 2 <= len(observation["candidates"]) <= 18 and result["selected_candidate"] in {item["id"] for item in observation["candidates"]}
+          assert len(observation["acted_capture_id_sha256"]) == len(observation["fresh_capture_id_sha256"]) == len(observation["capture_trace_sha256"]) == 64
           assert manifest["environment"] == {"os": {"name": "macos", "version": os.environ["CUA_RUNNER_OS_VERSION"], "arch": "arm64"}, "desktop_session": "macos-aqua", "runner_identity_class": "self-hosted-lume", "delivery_mode": "background"}
           assert manifest["artifacts"] == [{"kind": "video", "path": "recording.mp4", "sha256": digest, "size_bytes": len(content)}]
-          publish = pathlib.Path(os.environ["RUNNER_TEMP"]) / "publish-macos-evidence"
-          publish.mkdir(mode=0o700, exist_ok=False)
-          (publish / "recording.mp4").write_bytes(content)
-          (publish / "manifest.json").write_bytes(manifest_path.read_bytes())
-          assert sorted(path.name for path in publish.iterdir()) == ["manifest.json", "recording.mp4"]
+          probe = json.loads(subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height,avg_frame_rate:format=duration", "-of", "json", recording], check=True, capture_output=True, text=True).stdout)
+          stream = probe["streams"][0]; numerator, denominator = map(int, stream["avg_frame_rate"].split("/")); duration_ms = round(float(probe["format"]["duration"]) * 1000)
+          recording_value = manifest["recording"]; dimensions = {"width": stream["width"], "height": stream["height"]}
+          assert recording_value["original_dimensions"] == recording_value["delivered_dimensions"] == dimensions and recording_value["frame_rate"] == {"numerator": numerator, "denominator": denominator}
+          assert recording_value["cursor"] == {"agent_overlay": False, "system_cursor": "recorder-default"} and recording_value["edit_operations"] == [{"operation": "none", "speed": "1x"}]
+          assert recording_value["shots"] == [{"source_sha256": digest, "start_ms": 0, "end_ms": duration_ms}] and recording_value["final_sha256"] == digest and recording_value["size_bytes"] == len(content)
+          assert sorted(path.name for path in evidence.iterdir()) == ["manifest.json", "recording.mp4"]
           PY
+
+      - name: Stop the exact review Driver daemon
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "${CUA_REVIEW_DAEMON_PID:-}" && -n "${CUA_E2E_MACOS_DAEMON_SOCKET:-}" ]] || exit 0
+          candidate="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$CUA_TEST_DRIVER_BIN")"
+          "$candidate" --socket "$CUA_E2E_MACOS_DAEMON_SOCKET" \
+            --expected-pid "$CUA_REVIEW_DAEMON_PID" stop
+          for _ in {1..100}; do
+            kill -0 "$CUA_REVIEW_DAEMON_PID" 2>/dev/null || break
+            sleep 0.1
+          done
+          if kill -0 "$CUA_REVIEW_DAEMON_PID" 2>/dev/null; then
+            echo "review Driver daemon did not stop after its PID-bound shutdown" >&2
+            exit 1
+          fi
+          [[ ! -e "$CUA_E2E_MACOS_DAEMON_SOCKET" ]]
 
       - name: Upload only decoded video and schema-validated redacted manifest
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2

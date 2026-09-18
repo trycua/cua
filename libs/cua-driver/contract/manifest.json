@@ -82,6 +82,7 @@
           },
           "capture_id": {
             "default": null,
+            "minLength": 1,
             "type": "string"
           },
           "count": {

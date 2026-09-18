@@ -16,7 +16,7 @@ This reference describes the **Linux** native tool registry.
 Other platforms: [macOS MCP tools](/reference/cua-driver/mcp-tools), [Windows MCP tools](/reference/cua-driver/mcp-tools-windows).
 See [MCP tool notes](/reference/cua-driver/mcp-tool-notes) for shared guidance.
 
-`cua-driver` exposes 60 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
+`cua-driver` exposes 62 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
 
 Tool names are `snake_case`. Responses are MCP `CallTool.Result` envelopes: a text content block prefixed with a `✅` summary (or the error reason on failure), plus optional image or structured-content blocks on tools that produce them. See the [CLI reference](/reference/cua-driver/cli-reference) for CLI-specific options like `--socket` and `--screenshot-out-file`.
 
@@ -1063,3 +1063,29 @@ Deprecated compatibility alias that reads a live legacy session's capture policy
 
 - `session` (string, optional): Optional public label. When omitted, inspect the caller's attached
 implicit session.
+
+### `install_extension`
+
+Preview or install one Driver-managed optional extension. The first call without confirm returns the exact signed artifact, destination, license, source, and trust plan without mutation. Re-call with confirm=true to perform that exact verified installation.
+
+**Arguments:**
+
+- `confirm` (boolean, optional): Install the previewed extension. Omit or false for a read-only plan.
+- `name` (string, required)
+
+```json
+{"name":"perception"}
+```
+
+### `parse_visual_regions`
+
+Parse one immutable registered capture into model-neutral text and icon regions.
+
+**Arguments:**
+
+- `capture_id` (string, required)
+- `options` (object, optional): Optional, model-neutral controls for one bounded parse. default: `{}`
+
+```json
+{"capture_id":"example"}
+```

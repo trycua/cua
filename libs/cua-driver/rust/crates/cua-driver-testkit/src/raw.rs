@@ -9,6 +9,7 @@
 //! don't each re-implement `send_request`/`read_response`.
 
 use std::io::{BufRead, BufReader, Write};
+use std::path::PathBuf;
 use std::process::{ChildStdin, ChildStdout, Command, Stdio};
 
 use serde_json::Value;
@@ -38,7 +39,12 @@ impl RawDriver {
     /// if the binary isn't built — callers early-return so an un-built binary
     /// skips rather than fails.
     pub fn spawn() -> Option<Self> {
-        Self::spawn_daemon_backed(false, &[])
+        Self::spawn_daemon_backed(driver_binary(), false, &[])
+    }
+
+    /// Spawn through the exact binary selected by the caller.
+    pub fn spawn_with_binary(bin: impl Into<PathBuf>) -> Option<Self> {
+        Self::spawn_daemon_backed(bin.into(), false, &[])
     }
 
     /// Spawn the daemon-backed driver with an explicit test environment.
@@ -46,23 +52,26 @@ impl RawDriver {
     /// Permission-mode tests use this to model a trusted host's launch-time
     /// configuration without mutating the test process environment.
     pub fn spawn_with_env(env: &[(&str, &str)]) -> Option<Self> {
-        Self::spawn_daemon_backed(false, env)
+        Self::spawn_daemon_backed(driver_binary(), false, env)
     }
 
     /// Spawn a daemon-backed raw driver with the certified platform overlay
     /// host enabled. Cursor protocol tests use this deliberately; ordinary
     /// protocol tests keep the no-overlay daemon so they remain headless.
     pub fn spawn_with_overlay() -> Option<Self> {
-        Self::spawn_daemon_backed(true, &[])
+        Self::spawn_daemon_backed(driver_binary(), true, &[])
     }
 
     /// Spawn an overlay-enabled daemon with explicit trusted launch settings.
     pub fn spawn_with_overlay_and_env(env: &[(&str, &str)]) -> Option<Self> {
-        Self::spawn_daemon_backed(true, env)
+        Self::spawn_daemon_backed(driver_binary(), true, env)
     }
 
-    fn spawn_daemon_backed(overlay_enabled: bool, env: &[(&str, &str)]) -> Option<Self> {
-        let bin = driver_binary();
+    fn spawn_daemon_backed(
+        bin: PathBuf,
+        overlay_enabled: bool,
+        env: &[(&str, &str)],
+    ) -> Option<Self> {
         if !bin.exists() {
             eprintln!("[testkit] driver binary not built at {bin:?} — skipping");
             return None;

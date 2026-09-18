@@ -187,6 +187,7 @@ def load_candidate_measurements(path: Path) -> dict:
         "review_driver_relative_path",
         "review_driver_build_profile",
         "review_driver_sha256",
+        "code_signing",
         "review_driver_version",
         "extension_version",
         "protocol_version",
@@ -228,6 +229,34 @@ def load_candidate_measurements(path: Path) -> dict:
             raise ValueError(f"candidate measurements contain an invalid {field}")
     if type(value["protocol_version"]) is not int or value["protocol_version"] <= 0:
         raise ValueError("candidate measurements contain an invalid protocol_version")
+    code_signing = value["code_signing"]
+    if not isinstance(code_signing, dict) or set(code_signing) != {
+        "status", "format", "identity", "certificate_sha256", "designated_requirement"
+    }:
+        raise ValueError("candidate measurements contain invalid code-signing evidence")
+    if value["target"] == "aarch64-apple-darwin":
+        if (
+            code_signing.get("status") != "verified"
+            or code_signing.get("format") != "apple-codesign"
+            or code_signing.get("identity") != "ephemeral-self-signed-review-only"
+            or not isinstance(code_signing.get("certificate_sha256"), str)
+            or not SHA64.fullmatch(code_signing["certificate_sha256"])
+            or not isinstance(code_signing.get("designated_requirement"), str)
+            or not 1 <= len(code_signing["designated_requirement"]) <= 4096
+            or not any(marker in code_signing["designated_requirement"] for marker in ("certificate leaf", "certificate root"))
+        ):
+            raise ValueError("macOS candidate lacks verified certificate-backed review signing")
+    elif value["target"] in {"x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"}:
+        if code_signing != {
+            "status": "not-applicable",
+            "format": "none",
+            "identity": "none",
+            "certificate_sha256": None,
+            "designated_requirement": None,
+        }:
+            raise ValueError("non-macOS candidate has misleading code-signing evidence")
+    else:
+        raise ValueError("candidate measurements contain an unsupported target")
     self_test = value["self_test"]
     if (
         not isinstance(self_test, dict)
@@ -311,6 +340,13 @@ def build_manifest(
     measurements = load_candidate_measurements(candidate_measurements)
     if measurements["source_sha"] != source_sha:
         raise ValueError("candidate measurements do not match source_sha")
+    expected_target = {
+        "windows": "x86_64-pc-windows-msvc",
+        "linux-x11": "x86_64-unknown-linux-gnu",
+        "macos": "aarch64-apple-darwin",
+    }[platform]
+    if measurements["target"] != expected_target:
+        raise ValueError("candidate measurements do not match the measured platform")
     if (
         status["publisher_id"] != measurements["publisher_id"]
         or status["publisher_key_id"] != measurements["key_id"]
@@ -321,6 +357,47 @@ def build_manifest(
     if chooser_mode == "live" and chooser["model"] is None:
         raise ValueError("live chooser did not return its model identity")
     raw = load_json(raw_evidence, "raw evidence", 8 * 1024 * 1024)
+    expected_raw_keys = {
+        "schema", "source_sha", "jev_source_sha", "platform", "capture_ids",
+        "observation", "fixture_oracle", "extension_status", "parser", "chooser",
+        "resolved_action", "verification", "timeline", "recording",
+    }
+    if set(raw) != expected_raw_keys or raw.get("schema") != "cua-visual-perception-demo-raw/v2":
+        raise ValueError("raw evidence does not match the closed live demo contract")
+    if (
+        raw["source_sha"] != source_sha
+        or raw["jev_source_sha"] != jev_source_sha
+        or raw["platform"] != platform
+    ):
+        raise ValueError("raw evidence does not match the approved sources and measured platform")
+    if raw["fixture_oracle"] != oracle_value:
+        raise ValueError("raw evidence fixture oracle differs from the measured fixture result")
+    if raw["extension_status"] != status:
+        raise ValueError("raw evidence extension status differs from Driver measured state")
+    if raw["parser"] != parser["parser"]:
+        raise ValueError("raw evidence parser identity differs from the measured parser result")
+    chooser_record = raw.get("chooser")
+    if (
+        not isinstance(chooser_record, dict)
+        or set(chooser_record) != {"mode", "request", "response"}
+        or chooser_record["mode"] != chooser_mode
+        or chooser_record["response"] != chooser
+    ):
+        raise ValueError("raw evidence chooser result differs from the measured chooser result")
+    if raw.get("verification") != {"oracle": "passed", "stale_capture_refused": True}:
+        raise ValueError("raw evidence does not prove the fixture result and stale-capture refusal")
+    timeline = raw.get("timeline")
+    if (
+        not isinstance(timeline, dict)
+        or set(timeline) != {"duration_ms", "events"}
+        or type(timeline["duration_ms"]) is not int
+        or timeline["duration_ms"] <= 0
+        or timeline["events"] != [
+            "observed", "parsed", "chosen", "clicked", "oracle_verified",
+            "stale_capture_refused", "reobserved",
+        ]
+    ):
+        raise ValueError("raw evidence timeline does not prove the complete live demo sequence")
     captures = raw.get("capture_ids")
     if (
         not isinstance(captures, dict)
@@ -354,7 +431,7 @@ def build_manifest(
         raise ValueError("raw evidence observation context differs from the executed demo")
     if any(type(observation[field]) is not int or observation[field] <= 0 for field in ("width", "height")):
         raise ValueError("raw evidence contains invalid capture dimensions")
-    request = raw.get("chooser", {}).get("request", {})
+    request = chooser_record["request"]
     candidate_values = request.get("candidates")
     if not isinstance(candidate_values, list) or not 2 <= len(candidate_values) <= 18:
         raise ValueError("raw evidence must contain the bounded chooser candidates")
@@ -372,7 +449,24 @@ def build_manifest(
         raise ValueError("raw evidence contains duplicate candidate IDs")
     if chooser["selected_id"] not in {candidate["id"] for candidate in candidates}:
         raise ValueError("selected candidate was not in the bounded candidate set")
+    resolved_action = raw.get("resolved_action")
+    if (
+        not isinstance(resolved_action, dict)
+        or set(resolved_action) != {"candidate_id", "x", "y"}
+        or resolved_action["candidate_id"] != chooser["selected_id"]
+        or any(type(resolved_action[field]) not in (int, float) for field in ("x", "y"))
+    ):
+        raise ValueError("raw evidence resolved action differs from the selected candidate")
     recording_sha256 = sha256_file(recording)
+    raw_recording = raw.get("recording")
+    if (
+        not isinstance(raw_recording, dict)
+        or set(raw_recording) != {"local_path", "sha256", "metadata"}
+        or not isinstance(raw_recording["local_path"], str)
+        or raw_recording["sha256"] != recording_sha256
+        or raw_recording["metadata"] != recording_probe
+    ):
+        raise ValueError("raw evidence recording differs from the decoded recording")
     capture_trace_sha256 = hashlib.sha256(
         f"{captures['acted']}\0{captures['fresh']}".encode()
     ).hexdigest()
@@ -511,7 +605,7 @@ def main() -> int:
     )
     if args.output_dir.exists() and any(args.output_dir.iterdir()):
         raise ValueError("output directory must be empty before evidence publication")
-    args.output_dir.mkdir(parents=True, exist_ok=True)
+    args.output_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     shutil.copyfile(args.recording, args.output_dir / "recording.mp4")
     (args.output_dir / "manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"

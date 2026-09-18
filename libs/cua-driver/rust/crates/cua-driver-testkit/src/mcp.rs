@@ -48,6 +48,11 @@ impl McpDriver {
         Self::spawn_internal(&[], &[], None, false, true)
     }
 
+    /// Spawn through the exact binary selected by the caller.
+    pub fn spawn_with_binary(bin: impl Into<PathBuf>) -> Option<Self> {
+        Self::spawn_internal_with_binary(bin.into(), &[], &[], None, false, true)
+    }
+
     /// Spawn the driver with a stable recording label for artifact naming.
     pub fn spawn_named(recording_label: &str) -> Option<Self> {
         Self::spawn_internal(&[], &[], Some(recording_label), false, true)
@@ -114,6 +119,24 @@ impl McpDriver {
         overlay_enabled: bool,
         prepare_recording: bool,
     ) -> Option<Self> {
+        Self::spawn_internal_with_binary(
+            driver_binary(),
+            env,
+            args,
+            recording_label,
+            overlay_enabled,
+            prepare_recording,
+        )
+    }
+
+    fn spawn_internal_with_binary(
+        bin: PathBuf,
+        env: &[(&str, &str)],
+        args: &[&str],
+        recording_label: Option<&str>,
+        overlay_enabled: bool,
+        prepare_recording: bool,
+    ) -> Option<Self> {
         let mut daemon_env = env.to_vec();
         let e2e_unrestricted = std::env::var_os("CUA_E2E_UNRESTRICTED_GUI").is_some();
         let caller_selected_mode = daemon_env
@@ -129,7 +152,6 @@ impl McpDriver {
                 ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
             ]);
         }
-        let bin = driver_binary();
         if !bin.exists() {
             eprintln!("[testkit] driver binary not built at {bin:?} — skipping");
             return None;

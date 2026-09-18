@@ -28,10 +28,14 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
 
     def test_is_manual_or_callable_with_two_exact_current_pr_heads(self):
         self.assertEqual(set(self.triggers), {"workflow_dispatch", "workflow_call"})
+        dispatch_inputs = self.triggers["workflow_dispatch"]["inputs"]
+        callable_inputs = self.triggers["workflow_call"]["inputs"]
+        self.assertEqual(dispatch_inputs, callable_inputs)
+        self.assertNotRegex(self.text, r"(?m)^\s*inputs:\s*[&*]")
         for trigger in self.triggers.values():
             self.assertEqual(
                 set(trigger["inputs"]),
-                {"source_sha", "jev_source_sha", "signed_candidate_artifact_id"},
+                {"source_sha", "jev_source_sha", "signed_candidate_artifact_id", "signed_candidate_run_id"},
             )
             self.assertTrue(all(value["required"] for value in trigger["inputs"].values()))
         source = self.jobs["source"]["steps"][0]["run"]
@@ -41,6 +45,21 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         self.assertIn('"$head_repo" == "$GITHUB_REPOSITORY"', source)
         self.assertNotIn("merge-base --is-ancestor", source)
         self.assertNotIn("pull_request_target", self.text)
+        self.assertIn('[[ "$run_id" == "$CANDIDATE_RUN_ID" ]]', source)
+        self.assertIn('STAGING-cua-perception-review-candidates-$REQUESTED_SHA', source)
+        self.assertIn('.github/workflows/review-cua-perception-pr3943.yml', source)
+        self.assertIn('.event <<<"$run_json")" == pull_request', source)
+        self.assertIn('[[ "$EVENT_ACTION" == labeled', source)
+        self.assertIn('"$EVENT_PR_NUMBER" == 3943', source)
+        self.assertIn('"$EVENT_HEAD_SHA" == "$REQUESTED_SHA"', source)
+        self.assertIn('"$EVENT_LABEL" == cua-perception-live-review', source)
+        self.assertIn('"$run_id" == "$GITHUB_RUN_ID"', source)
+        self.assertIn('"$GITHUB_EVENT_NAME" == workflow_dispatch', source)
+        self.assertIn('.status <<<"$run_json")" == in_progress', source)
+        self.assertIn('.status <<<"$run_json")" == completed', source)
+        download = next(step for step in self.jobs["live"]["steps"] if "download-artifact" in step.get("uses", ""))
+        self.assertEqual(download["with"]["run-id"], "${{ needs.source.outputs.candidate_run_id }}")
+        self.assertIn("d3f86a106a0bac45b974a628896c90dbdf5c8093", download["uses"])
 
     def test_artifact_is_source_bound_and_verified_by_actual_driver_trust(self):
         source = self.jobs["source"]["steps"][0]["run"]
@@ -73,6 +92,7 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         self.assertNotIn("environment", preflights)
         self.assertNotIn("TYPESAFE_API_KEY", preflights)
         self.assertEqual(self.jobs["live"]["environment"], "authorized-live-jev-use-demo")
+        self.assertEqual(self.jobs["live"]["env"]["CUA_E2E_UNRESTRICTED_GUI"], "1")
         self.assertEqual(
             set(self.jobs["live"]["needs"]),
             {"source", "mock-preflight", "windows-preflight", "linux-x11-preflight"},
@@ -130,6 +150,7 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         self.assertIn('measured["review_driver_build_profile"] == "debug-review-trust-root"', live_text)
         self.assertIn("CUA_TEST_DRIVER_BIN", live_text)
         self.assertIn("signed-candidate-checksums.txt", live_text)
+        self.assertIn('measured["code_signing"] == {"status": "not-applicable"', live_text)
         self.assertNotIn("cargo build --manifest-path", live_text)
         self.assertNotIn("target/release/cua-driver", live_text)
         self.assertNotIn("RSA-SHA256", self.evidence_readme)
@@ -141,13 +162,18 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         self.assertEqual(len(secret_steps), 1)
         secret = secret_steps[0]
         self.assertEqual(secret["timeout-minutes"], 15)
-        self.assertEqual(
-            secret["env"], {"LIVE_TYPESAFE_API_KEY": "${{ secrets.TYPESAFE_API_KEY }}"}
-        )
+        self.assertEqual(secret["env"], {
+            "GH_TOKEN": "${{ github.token }}",
+            "LIVE_TYPESAFE_API_KEY": "${{ secrets.TYPESAFE_API_KEY }}",
+        })
         self.assertNotIn("cargo ", secret["run"])
         self.assertIn("CUA_LIVE_TEST_BINARY_SHA256", secret["run"])
         self.assertIn("Remove-Item Env:LIVE_TYPESAFE_API_KEY", secret["run"])
         self.assertIn("Remove-Item Env:TYPESAFE_API_KEY", secret["run"])
+        self.assertIn("pulls/3943", secret["run"])
+        self.assertIn("pulls/3916", secret["run"])
+        self.assertIn("cua-perception-live-review", secret["run"])
+        self.assertIn("Remove-Item Env:GH_TOKEN", secret["run"])
         self.assertIn(
             "& $env:CUA_LIVE_TEST_BINARY --ignored --exact authorized_visual_only_demo",
             secret["run"],

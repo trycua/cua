@@ -2392,6 +2392,10 @@ pub fn run_call(
             Ok(resp) => {
                 if resp.ok {
                     if let Some(result) = resp.result {
+                        let is_error = result
+                            .get("isError")
+                            .and_then(serde_json::Value::as_bool)
+                            .unwrap_or(false);
                         // Walk the content array once: pick up any Image
                         // payloads (either to write to --screenshot-out-file
                         // or to merge into structuredContent below).
@@ -2470,6 +2474,9 @@ pub fn run_call(
                                     }
                                 }
                             }
+                        }
+                        if is_error {
+                            process::exit(1);
                         }
                     }
                 } else {

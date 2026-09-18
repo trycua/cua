@@ -2,7 +2,7 @@ name: "Authorized: live Jev visual demo"
 
 on:
   workflow_dispatch:
-    inputs: &live_inputs
+    inputs:
       source_sha:
         description: "Exact reviewed head SHA of pull request #3943"
         required: true
@@ -15,8 +15,28 @@ on:
         description: "Immutable Actions artifact ID containing signed Windows and Linux review candidates"
         required: true
         type: string
+      signed_candidate_run_id:
+        description: "Producer Actions run ID containing the signed review candidates"
+        required: true
+        type: string
   workflow_call:
-    inputs: *live_inputs
+    inputs:
+      source_sha:
+        description: "Exact reviewed head SHA of pull request #3943"
+        required: true
+        type: string
+      jev_source_sha:
+        description: "Exact reviewed head SHA of pull request #3916"
+        required: true
+        type: string
+      signed_candidate_artifact_id:
+        description: "Immutable Actions artifact ID containing signed Windows and Linux review candidates"
+        required: true
+        type: string
+      signed_candidate_run_id:
+        description: "Producer Actions run ID containing the signed review candidates"
+        required: true
+        type: string
 
 permissions:
   actions: read
@@ -34,6 +54,7 @@ jobs:
     outputs:
       sha: ${{ steps.validate.outputs.sha }}
       jev_sha: ${{ steps.validate.outputs.jev_sha }}
+      candidate_run_id: ${{ steps.validate.outputs.candidate_run_id }}
     steps:
       - id: validate
         name: Require exact current PR heads and candidate artifact
@@ -43,12 +64,19 @@ jobs:
           REQUESTED_SHA: ${{ inputs.source_sha }}
           REQUESTED_JEV_SHA: ${{ inputs.jev_source_sha }}
           CANDIDATE_ARTIFACT_ID: ${{ inputs.signed_candidate_artifact_id }}
+          CANDIDATE_RUN_ID: ${{ inputs.signed_candidate_run_id }}
+          EVENT_ACTION: ${{ github.event.action }}
+          EVENT_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_LABEL: ${{ github.event.label.name }}
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
           [[ "$GITHUB_REPOSITORY" == "trycua/cua" ]] || { echo "live demo runs only in trycua/cua" >&2; exit 2; }
           [[ "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "source_sha must be exactly 40 lowercase hexadecimal characters" >&2; exit 2; }
           [[ "$REQUESTED_JEV_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "jev_source_sha must be exactly 40 lowercase hexadecimal characters" >&2; exit 2; }
           [[ "$CANDIDATE_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]] || { echo "signed_candidate_artifact_id must be numeric" >&2; exit 2; }
+          [[ "$CANDIDATE_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo "signed_candidate_run_id must be numeric" >&2; exit 2; }
           validate_pr_head() {
             local number="$1" requested="$2" label="$3" state head_sha head_repo
             IFS=$'\t' read -r state head_sha head_repo < <(
@@ -65,20 +93,31 @@ jobs:
           validate_pr_head 3943 "$REQUESTED_SHA" source_sha
           validate_pr_head 3916 "$REQUESTED_JEV_SHA" jev_source_sha
           artifact_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$CANDIDATE_ARTIFACT_ID")"
+          [[ "$(jq -r .name <<<"$artifact_json")" == "STAGING-cua-perception-review-candidates-$REQUESTED_SHA" ]] || { echo "candidate artifact has the wrong aggregate name" >&2; exit 2; }
           [[ "$(jq -r .expired <<<"$artifact_json")" == false ]] || { echo "candidate artifact is expired" >&2; exit 2; }
           [[ "$(jq -r .workflow_run.head_sha <<<"$artifact_json")" == "$REQUESTED_SHA" ]] || {
             echo "candidate artifact was not produced from source_sha" >&2; exit 2;
           }
           run_id="$(jq -r .workflow_run.id <<<"$artifact_json")"
+          [[ "$run_id" == "$CANDIDATE_RUN_ID" ]] || { echo "candidate artifact does not belong to signed_candidate_run_id" >&2; exit 2; }
           run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")"
-          [[ "$(jq -r .status <<<"$run_json")" == completed && "$(jq -r .conclusion <<<"$run_json")" == success ]] || {
-            echo "candidate artifact workflow run did not complete successfully" >&2; exit 2;
-          }
           [[ "$(jq -r .head_sha <<<"$run_json")" == "$REQUESTED_SHA" ]] || {
             echo "candidate artifact workflow run is not bound to source_sha" >&2; exit 2;
           }
+          [[ "$(jq -r .path <<<"$run_json")" == ".github/workflows/review-cua-perception-pr3943.yml" ]] || { echo "candidate artifact was not produced by the PR review workflow" >&2; exit 2; }
+          [[ "$(jq -r .event <<<"$run_json")" == pull_request ]] || { echo "candidate artifact producer was not a pull-request review run" >&2; exit 2; }
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            [[ "$EVENT_ACTION" == labeled && "$EVENT_PR_NUMBER" == 3943 ]] || { echo "same-run use requires the labeled PR #3943 caller" >&2; exit 2; }
+            [[ "$EVENT_HEAD_REPOSITORY" == "$GITHUB_REPOSITORY" && "$EVENT_HEAD_SHA" == "$REQUESTED_SHA" ]] || { echo "same-run caller is not the exact same-repository source head" >&2; exit 2; }
+            [[ "$EVENT_LABEL" == cua-perception-live-review && "$run_id" == "$GITHUB_RUN_ID" ]] || { echo "same-run caller lacks the exact review label or run ID" >&2; exit 2; }
+            [[ "$(jq -r .status <<<"$run_json")" == in_progress && "$(jq -r .conclusion <<<"$run_json")" == null ]] || { echo "same-run candidate artifact is not from the active review run" >&2; exit 2; }
+          else
+            [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]] || { echo "unsupported live demo invocation" >&2; exit 2; }
+            [[ "$(jq -r .status <<<"$run_json")" == completed && "$(jq -r .conclusion <<<"$run_json")" == success ]] || { echo "candidate artifact workflow run did not complete successfully" >&2; exit 2; }
+          fi
           echo "sha=$REQUESTED_SHA" >> "$GITHUB_OUTPUT"
           echo "jev_sha=$REQUESTED_JEV_SHA" >> "$GITHUB_OUTPUT"
+          echo "candidate_run_id=$CANDIDATE_RUN_ID" >> "$GITHUB_OUTPUT"
 
   mock-preflight:
     name: Secret-free mock and static contracts
@@ -169,6 +208,7 @@ jobs:
     env:
       CUA_E2E_SOURCE_SHA: ${{ needs.source.outputs.sha }}
       CUA_JEV_SOURCE_SHA: ${{ needs.source.outputs.jev_sha }}
+      CUA_E2E_UNRESTRICTED_GUI: "1"
       CUA_SESSION_LABEL: authorized-jev-choice-demo-${{ matrix.platform }}
       CUA_PERCEPTION_EXTENSION_HOME: ${{ github.workspace }}/.cua-perception-home
       CUA_PERCEPTION_EVIDENCE_DIR: ${{ github.workspace }}/.cua-perception-evidence/live
@@ -194,9 +234,10 @@ jobs:
         with:
           version: "0.8.15"
       - name: Download immutable signed candidate
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           artifact-ids: ${{ inputs.signed_candidate_artifact_id }}
+          run-id: ${{ needs.source.outputs.candidate_run_id }}
           path: ${{ runner.temp }}/perception-candidate
           github-token: ${{ github.token }}
           merge-multiple: true
@@ -242,6 +283,7 @@ jobs:
           assert [item["role"] for item in measured["models"]] == ["icon-detect", "ocr-detect", "ocr-recognize"]
           assert measured["onnx_runtime"]["revision"] and len(measured["onnx_runtime"]["sha256"]) == 64
           assert measured["key_id"] == "review-only-build-override" and measured["publisher_id"] == "cua-review-only" and measured["signature_algorithm"] == "ed25519"
+          assert measured["code_signing"] == {"status": "not-applicable", "format": "none", "identity": "none", "certificate_sha256": None, "designated_requirement": None}
           public_key = base64.b64decode(measured["public_key_base64"], validate=True); assert len(public_key) == 32 and hashlib.sha256(public_key).hexdigest() == measured["public_key_sha256"]
           driver = (root / expected_driver).resolve(); driver.relative_to(root.resolve()); assert driver.is_file() and hashlib.sha256(driver.read_bytes()).hexdigest() == measured["review_driver_sha256"]
           catalog = (root / "signed-catalog.json").resolve(); assert catalog.is_file() and hashlib.sha256(catalog.read_bytes()).hexdigest() == measured["catalog_sha256"]
@@ -345,11 +387,17 @@ jobs:
         shell: pwsh
         timeout-minutes: 15
         env:
+          GH_TOKEN: ${{ github.token }}
           LIVE_TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
         run: |
           $ErrorActionPreference = 'Stop'
           $key = $env:LIVE_TYPESAFE_API_KEY; Remove-Item Env:LIVE_TYPESAFE_API_KEY
           if ([string]::IsNullOrWhiteSpace($key)) { throw 'TYPESAFE_API_KEY environment secret is required' }
+          $review = gh api "repos/$env:GITHUB_REPOSITORY/pulls/3943" | ConvertFrom-Json
+          if ($review.state -ne 'open' -or $review.draft -ne $true -or $review.head.repo.full_name -ne $env:GITHUB_REPOSITORY -or $review.head.sha -ne '${{ needs.source.outputs.sha }}' -or 'cua-perception-live-review' -notin $review.labels.name) { throw 'PR #3943 is no longer the exact labeled draft under review' }
+          $jevReview = gh api "repos/$env:GITHUB_REPOSITORY/pulls/3916" | ConvertFrom-Json
+          if ($jevReview.state -ne 'open' -or $jevReview.head.repo.full_name -ne $env:GITHUB_REPOSITORY -or $jevReview.head.sha -ne '${{ needs.source.outputs.jev_sha }}') { throw 'PR #3916 is no longer the exact open Jev recipe under review' }
+          Remove-Item Env:GH_TOKEN
           if ((git rev-parse HEAD).Trim() -ne '${{ needs.source.outputs.sha }}') { throw 'source changed after build' }
           if ((git -C (Join-Path $env:GITHUB_WORKSPACE 'jev-use-source') rev-parse HEAD).Trim() -ne '${{ needs.source.outputs.jev_sha }}') { throw 'chooser source changed after setup' }
           if ((Get-FileHash $env:CUA_LIVE_TEST_BINARY -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:CUA_LIVE_TEST_BINARY_SHA256) { throw 'live test binary changed after measurement' }

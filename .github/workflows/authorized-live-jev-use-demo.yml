@@ -3,6 +3,10 @@ name: "Authorized: live Jev visual demo"
 on:
   workflow_dispatch:
     inputs:
+      run_live:
+        description: "Explicit acknowledgement that this invocation may use protected live credentials"
+        required: true
+        type: boolean
       source_sha:
         description: "Exact reviewed head SHA of pull request #3943"
         required: true
@@ -21,6 +25,10 @@ on:
         type: string
   workflow_call:
     inputs:
+      run_live:
+        description: "Explicit acknowledgement that this invocation may use protected live credentials"
+        required: true
+        type: boolean
       source_sha:
         description: "Exact reviewed head SHA of pull request #3943"
         required: true
@@ -61,6 +69,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          RUN_LIVE_ACKNOWLEDGED: ${{ inputs.run_live }}
           REQUESTED_SHA: ${{ inputs.source_sha }}
           REQUESTED_JEV_SHA: ${{ inputs.jev_source_sha }}
           CANDIDATE_ARTIFACT_ID: ${{ inputs.signed_candidate_artifact_id }}
@@ -73,6 +82,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$GITHUB_REPOSITORY" == "trycua/cua" ]] || { echo "live demo runs only in trycua/cua" >&2; exit 2; }
+          [[ "$RUN_LIVE_ACKNOWLEDGED" == true ]] || { echo "run_live must be explicitly acknowledged" >&2; exit 2; }
           [[ "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "source_sha must be exactly 40 lowercase hexadecimal characters" >&2; exit 2; }
           [[ "$REQUESTED_JEV_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "jev_source_sha must be exactly 40 lowercase hexadecimal characters" >&2; exit 2; }
           [[ "$CANDIDATE_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]] || { echo "signed_candidate_artifact_id must be numeric" >&2; exit 2; }
@@ -138,8 +148,10 @@ jobs:
         env:
           CUA_JEV_MOCK_DEMO: "1"
         run: |
+          python -m pip install --require-hashes -r .github/releases/cua-perception/test-requirements.lock
           python libs/cua-driver/tests/fixtures/apps/cross-platform/visual-only-canvas/test_fixture.py -v
           python libs/cua-driver/tests/perception-demo/test_sanitize_evidence.py -v
+          python libs/cua-driver/tests/perception-demo/test_evidence_envelope.py -v
           python .github/scripts/tests/test_authorized_live_jev_use_demo.py -v
           cargo test --manifest-path libs/cua-driver/rust/Cargo.toml -p cua-driver --test authorized_live_jev_use_demo_test --locked
           cargo test --manifest-path libs/cua-driver/rust/Cargo.toml -p cua-perception --locked
@@ -211,7 +223,6 @@ jobs:
       CUA_E2E_UNRESTRICTED_GUI: "1"
       CUA_SESSION_LABEL: authorized-jev-choice-demo-${{ matrix.platform }}
       CUA_PERCEPTION_EXTENSION_HOME: ${{ github.workspace }}/.cua-perception-home
-      CUA_PERCEPTION_EVIDENCE_DIR: ${{ github.workspace }}/.cua-perception-evidence/live
       CUA_DESKTOP_SESSION_TYPE: ${{ matrix.desktop_session }}
       CUA_RUNNER_IDENTITY_CLASS: github-hosted
     steps:
@@ -219,6 +230,11 @@ jobs:
         with:
           ref: ${{ needs.source.outputs.sha }}
           persist-credentials: false
+      - name: Configure temporary evidence paths
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          "CUA_PERCEPTION_EVIDENCE_DIR=$(Join-Path $env:RUNNER_TEMP 'cua-perception-evidence/live')" >> $env:GITHUB_ENV
       - name: Check out the exact reviewed Jev chooser
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -371,7 +387,11 @@ jobs:
               if value.get("reason") == "compiler-artifact" and value.get("target", {}).get("name") == "authorized_live_jev_use_demo_test" and value.get("executable"): records.append(pathlib.Path(value["executable"]).resolve())
           assert len(records) == 1 and records[0].is_file(), records
           binary = records[0]; listing = subprocess.run([str(binary), "--list"], check=True, capture_output=True, text=True).stdout.splitlines()
-          assert "authorized_visual_only_demo: test" in listing, "fixed live orchestrator test is unavailable"
+          required = {
+              "authorized_visual_only_window_demo: test",
+              "authorized_visual_only_primary_desktop_demo: test",
+          }
+          assert required.issubset(listing), "fixed window and desktop orchestrator tests are unavailable"
           with pathlib.Path(os.environ["GITHUB_ENV"]).open("a") as stream: stream.write(f"CUA_LIVE_TEST_BINARY={binary}\nCUA_LIVE_TEST_BINARY_SHA256={hashlib.sha256(binary.read_bytes()).hexdigest()}\n")
           '@ | python - $messages
           if ($LASTEXITCODE -ne 0) { throw 'live test binary measurement failed' }
@@ -381,8 +401,10 @@ jobs:
           CUA_JEV_MOCK_DEMO: "1"
           CUA_PERCEPTION_EVIDENCE_DIR: ${{ runner.temp }}/perception-evidence/mock
         run: |
-          & $env:CUA_LIVE_TEST_BINARY --ignored --exact authorized_visual_only_demo --nocapture
-          if ($LASTEXITCODE -ne 0) { throw 'artifact-gated mock demo failed' }
+          & $env:CUA_LIVE_TEST_BINARY --ignored --exact authorized_visual_only_window_demo --nocapture
+          if ($LASTEXITCODE -ne 0) { throw 'artifact-gated mock window demo failed' }
+          & $env:CUA_LIVE_TEST_BINARY --ignored --exact authorized_visual_only_primary_desktop_demo --nocapture
+          if ($LASTEXITCODE -ne 0) { throw 'artifact-gated mock primary-desktop demo failed' }
       - name: Run bounded live Jev chooser against the measured binary
         shell: pwsh
         timeout-minutes: 15
@@ -404,8 +426,10 @@ jobs:
           if (-not (Test-Path $env:CUA_FIXED_CHOOSER_SCRIPT -PathType Leaf)) { throw 'chooser script disappeared after setup' }
           $env:CUA_JEV_LIVE = '1'; $env:CUA_JEV_CHOOSER_PROGRAM = $env:CUA_FIXED_CHOOSER_PROGRAM; $env:CUA_JEV_CHOOSER_SCRIPT = $env:CUA_FIXED_CHOOSER_SCRIPT; $env:TYPESAFE_API_KEY = $key
           try {
-            & $env:CUA_LIVE_TEST_BINARY --ignored --exact authorized_visual_only_demo --nocapture
-            if ($LASTEXITCODE -ne 0) { throw 'live Jev demo failed' }
+            & $env:CUA_LIVE_TEST_BINARY --ignored --exact authorized_visual_only_window_demo --nocapture
+            if ($LASTEXITCODE -ne 0) { throw 'live Jev window demo failed' }
+            & $env:CUA_LIVE_TEST_BINARY --ignored --exact authorized_visual_only_primary_desktop_demo --nocapture
+            if ($LASTEXITCODE -ne 0) { throw 'live Jev primary-desktop demo failed' }
           } finally {
             Remove-Item Env:TYPESAFE_API_KEY -ErrorAction SilentlyContinue; Remove-Item Env:CUA_JEV_LIVE -ErrorAction SilentlyContinue; Remove-Item Env:CUA_JEV_CHOOSER_PROGRAM -ErrorAction SilentlyContinue; Remove-Item Env:CUA_JEV_CHOOSER_SCRIPT -ErrorAction SilentlyContinue; $key = $null
           }
@@ -416,40 +440,101 @@ jobs:
           EXPECTED_PLATFORM: ${{ matrix.platform }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $evidence = $env:CUA_PERCEPTION_EVIDENCE_DIR; $recording = Join-Path $evidence 'recording.mp4'; $manifest = Join-Path $evidence 'manifest.json'
-          if (-not (Test-Path $recording -PathType Leaf) -or -not (Test-Path $manifest -PathType Leaf)) { throw 'complete live evidence was not produced' }
-          ffmpeg -v error -xerror -i $recording -map 0:v:0 -f null -
-          if ($LASTEXITCODE -ne 0) { throw 'recording.mp4 did not fully decode' }
+          $evidence = $env:CUA_PERCEPTION_EVIDENCE_DIR
+          foreach ($scope in @('window', 'primary-desktop')) {
+            $scopeEvidence = if ($scope -eq 'window') { $evidence } else { Join-Path $evidence $scope }
+            $recording = Join-Path $scopeEvidence 'recording.mp4'
+            $manifest = Join-Path $scopeEvidence 'manifest.json'
+            if (-not (Test-Path $recording -PathType Leaf) -or -not (Test-Path $manifest -PathType Leaf)) { throw "complete $scope live evidence was not produced" }
+            ffmpeg -v error -xerror -i $recording -map 0:v:0 -f null -
+            if ($LASTEXITCODE -ne 0) { throw "$scope recording.mp4 did not fully decode" }
+          }
           uv pip install --no-config --system --require-hashes -r .github/releases/cua-perception/test-requirements.lock
           @'
           import hashlib, json, os, pathlib, shutil, subprocess, sys
           from jsonschema import Draft202012Validator
-          evidence, output, schema_path, measurements_path = map(pathlib.Path, sys.argv[1:]); manifest_path, recording = evidence / "manifest.json", evidence / "recording.mp4"
-          manifest = json.loads(manifest_path.read_text()); schema = json.loads(schema_path.read_text()); Draft202012Validator.check_schema(schema); Draft202012Validator(schema).validate(manifest); measured = json.loads(measurements_path.read_text())
-          assert manifest["platform"] == os.environ["EXPECTED_PLATFORM"]
-          assert manifest["fixture"] == {"id": "visual-only-canvas/v1", "oracle": {"source": "fixture-journal", "initial_ready": True, "selected": "send", "action_count": 1, "result": "passed"}}
-          runtime = manifest["runtime"]; driver = runtime["driver"]; perception = runtime["perception"]; chooser = runtime["chooser"]
-          assert driver["source_sha"] == measured["source_sha"] == os.environ["EXPECTED_SHA"] and driver["version"] == measured["review_driver_version"] and driver["binary_sha256"] == measured["review_driver_sha256"]
-          assert driver["build"] == {"profile": measured["review_driver_build_profile"], "target": measured["target"], "sealed_artifact_manifest_sha256": measured["sealed_artifact_manifest_sha256"], "sealed_extension_manifest_sha256": measured["sealed_extension_manifest_sha256"]}
-          assert perception["signature_algorithm"] == measured["signature_algorithm"] == "ed25519"; assert perception["signed_extension_archive_sha256"] == measured["archive_sha256"]; assert perception["signing_key_sha256"] == measured["public_key_sha256"]; assert perception["signed_catalog_sha256"] == measured["catalog_sha256"]
-          assert perception["protocol_version"] == measured["protocol_version"] and perception["worker_sha256"] == measured["worker_sha256"] and perception["self_test"] == measured["self_test"] and perception["models"] == measured["models"] and perception["onnx_runtime"] == measured["onnx_runtime"]
-          assert chooser["mode"] == "live" and chooser["provider"] == "typesafe" and chooser["model_id"]
-          assert chooser["adapter_source_sha"] == os.environ["EXPECTED_SHA"] and chooser["source_sha"] == os.environ["CUA_JEV_SOURCE_SHA"]
-          result = manifest["result"]
-          observation = manifest["observation"]; assert observation["session_label"] == os.environ["CUA_SESSION_LABEL"]; assert len(observation["acted_capture_id_sha256"]) == len(observation["fresh_capture_id_sha256"]) == len(observation["capture_trace_sha256"]) == 64
-          assert 2 <= len(observation["candidates"]) <= 18 and result["selected_candidate"] in {item["id"] for item in observation["candidates"]}
-          assert manifest["environment"] == {"os": {"name": os.environ["CUA_RUNNER_OS_NAME"], "version": os.environ["CUA_RUNNER_OS_VERSION"], "arch": os.environ["CUA_RUNNER_OS_ARCH"]}, "desktop_session": os.environ["CUA_DESKTOP_SESSION_TYPE"], "runner_identity_class": os.environ["CUA_RUNNER_IDENTITY_CLASS"], "delivery_mode": "background"}
-          assert result["status"] == "passed" and result["stale_capture_refused"] is True
-          content = recording.read_bytes(); video_sha = hashlib.sha256(content).hexdigest(); assert manifest["artifacts"] == [{"kind": "video", "path": "recording.mp4", "sha256": video_sha, "size_bytes": len(content)}]
-          probe = json.loads(subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height,avg_frame_rate:format=duration", "-of", "json", recording], check=True, capture_output=True, text=True).stdout); stream = probe["streams"][0]; numerator, denominator = map(int, stream["avg_frame_rate"].split("/")); duration_ms = round(float(probe["format"]["duration"]) * 1000)
-          recording_value = manifest["recording"]; dimensions = {"width": stream["width"], "height": stream["height"]}; assert recording_value["original_dimensions"] == recording_value["delivered_dimensions"] == dimensions; assert recording_value["frame_rate"] == {"numerator": numerator, "denominator": denominator}; assert recording_value["cursor"] == {"agent_overlay": False, "system_cursor": "recorder-default"}; assert recording_value["edit_operations"] == [{"operation": "none", "speed": "1x"}]; assert recording_value["shots"] == [{"source_sha256": video_sha, "start_ms": 0, "end_ms": duration_ms}]; assert recording_value["final_sha256"] == video_sha and recording_value["size_bytes"] == len(content)
-          output.mkdir(mode=0o700, parents=True, exist_ok=False); shutil.copyfile(recording, output / "recording.mp4"); shutil.copyfile(manifest_path, output / "manifest.json"); assert sorted(path.name for path in output.iterdir()) == ["manifest.json", "recording.mp4"]
+          evidence, output, schema_path, measurements_path = map(pathlib.Path, sys.argv[1:])
+          schema = json.loads(schema_path.read_text()); Draft202012Validator.check_schema(schema); measured = json.loads(measurements_path.read_text())
+          routes = {
+              "window": (evidence, "window", "get_window_state", "background"),
+              "primary-desktop": (evidence / "primary-desktop", "desktop", "get_desktop_state", "foreground"),
+          }
+          output.mkdir(mode=0o700, parents=True, exist_ok=False)
+          for scope, (source, input_scope, capture_kind, delivery_mode) in routes.items():
+              manifest_path, recording = source / "manifest.json", source / "recording.mp4"
+              manifest = json.loads(manifest_path.read_text()); Draft202012Validator(schema).validate(manifest)
+              assert manifest["platform"] == os.environ["EXPECTED_PLATFORM"]
+              assert manifest["fixture"] == {"id": "visual-only-canvas/v1", "oracle": {"source": "fixture-journal", "initial_ready": True, "selected": "send", "action_count": 1, "result": "passed"}}
+              runtime = manifest["runtime"]; driver = runtime["driver"]; perception = runtime["perception"]; chooser = runtime["chooser"]
+              assert driver["source_sha"] == measured["source_sha"] == os.environ["EXPECTED_SHA"] and driver["version"] == measured["review_driver_version"] and driver["binary_sha256"] == measured["review_driver_sha256"]
+              assert driver["build"] == {"profile": measured["review_driver_build_profile"], "target": measured["target"], "sealed_artifact_manifest_sha256": measured["sealed_artifact_manifest_sha256"], "sealed_extension_manifest_sha256": measured["sealed_extension_manifest_sha256"]}
+              assert perception["signature_algorithm"] == measured["signature_algorithm"] == "ed25519"; assert perception["signed_extension_archive_sha256"] == measured["archive_sha256"]; assert perception["signing_key_sha256"] == measured["public_key_sha256"]; assert perception["signed_catalog_sha256"] == measured["catalog_sha256"]
+              assert perception["protocol_version"] == measured["protocol_version"] and perception["worker_sha256"] == measured["worker_sha256"] and perception["self_test"] == measured["self_test"] and perception["models"] == measured["models"] and perception["onnx_runtime"] == measured["onnx_runtime"]
+              assert chooser["mode"] == "live" and chooser["provider"] == "typesafe" and chooser["model_id"]
+              assert chooser["adapter_source_sha"] == os.environ["EXPECTED_SHA"] and chooser["source_sha"] == os.environ["CUA_JEV_SOURCE_SHA"]
+              result = manifest["result"]; observation = manifest["observation"]
+              assert observation["session_label"] == f'{os.environ["CUA_SESSION_LABEL"]}-{scope}'
+              assert (observation["input_scope"], observation["capture_kind"], manifest["environment"]["delivery_mode"]) == (input_scope, capture_kind, delivery_mode)
+              assert observation["capture_source"] == "driver-screenshot" and len(observation["acted_capture_id_sha256"]) == len(observation["fresh_capture_id_sha256"]) == len(observation["capture_trace_sha256"]) == 64
+              assert 2 <= len(observation["candidates"]) <= 18 and result["selected_candidate"] in {item["id"] for item in observation["candidates"]}
+              assert manifest["environment"] == {"os": {"name": os.environ["CUA_RUNNER_OS_NAME"], "version": os.environ["CUA_RUNNER_OS_VERSION"], "arch": os.environ["CUA_RUNNER_OS_ARCH"]}, "desktop_session": os.environ["CUA_DESKTOP_SESSION_TYPE"], "runner_identity_class": os.environ["CUA_RUNNER_IDENTITY_CLASS"], "delivery_mode": delivery_mode}
+              assert result["status"] == "passed" and result["stale_capture_refused"] is True
+              content = recording.read_bytes(); video_sha = hashlib.sha256(content).hexdigest(); assert manifest["artifacts"] == [{"kind": "video", "path": "recording.mp4", "sha256": video_sha, "size_bytes": len(content)}]
+              probe = json.loads(subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height,avg_frame_rate:format=duration", "-of", "json", recording], check=True, capture_output=True, text=True).stdout); stream = probe["streams"][0]; numerator, denominator = map(int, stream["avg_frame_rate"].split("/")); duration_ms = round(float(probe["format"]["duration"]) * 1000)
+              recording_value = manifest["recording"]; dimensions = {"width": stream["width"], "height": stream["height"]}; assert recording_value["original_dimensions"] == recording_value["delivered_dimensions"] == dimensions; assert recording_value["frame_rate"] == {"numerator": numerator, "denominator": denominator}; assert recording_value["cursor"] == {"agent_overlay": False, "system_cursor": "recorder-default"}; assert recording_value["edit_operations"] == [{"operation": "none", "speed": "1x"}]; assert recording_value["shots"] == [{"source_sha256": video_sha, "start_ms": 0, "end_ms": duration_ms}]; assert recording_value["final_sha256"] == video_sha and recording_value["size_bytes"] == len(content)
+              destination = output / scope; destination.mkdir(mode=0o700); shutil.copyfile(recording, destination / "recording.mp4"); shutil.copyfile(manifest_path, destination / "manifest.json"); assert sorted(path.name for path in destination.iterdir()) == ["manifest.json", "recording.mp4"]
+          assert sorted(path.name for path in output.iterdir()) == ["primary-desktop", "window"]
           '@ | python - $evidence (Join-Path $env:RUNNER_TEMP 'publish-evidence') 'libs/cua-driver/tests/perception-demo/evidence-manifest.schema.json' $env:CUA_CANDIDATE_MEASUREMENTS
           if ($LASTEXITCODE -ne 0) { throw 'redacted evidence validation failed' }
-      - name: Upload only decoded video and schema-validated redacted manifest
+      - name: Encrypt the validated evidence bundles
+        shell: pwsh
+        env:
+          CUA_PERCEPTION_EVIDENCE_RECIPIENT: ${{ vars.EVIDENCE_ARCHIVE_RECIPIENT_PUBLIC_KEY }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $plaintext = Join-Path $env:RUNNER_TEMP 'publish-evidence'
+          $ciphertext = Join-Path $env:RUNNER_TEMP 'encrypted-evidence'
+          try {
+            if ([string]::IsNullOrWhiteSpace($env:CUA_PERCEPTION_EVIDENCE_RECIPIENT)) { throw 'EVIDENCE_ARCHIVE_RECIPIENT_PUBLIC_KEY environment variable is required' }
+            if (Test-Path -LiteralPath $ciphertext) { throw 'encrypted evidence output must be fresh' }
+            New-Item -ItemType Directory -Path $ciphertext | Out-Null
+            foreach ($scope in @('window', 'primary-desktop')) {
+              $fingerprint = python libs/cua-driver/tests/perception-demo/evidence_envelope.py encrypt --input (Join-Path $plaintext $scope) --output (Join-Path $ciphertext "$scope.cuae") --recipient-env CUA_PERCEPTION_EVIDENCE_RECIPIENT
+              if ($LASTEXITCODE -ne 0) { throw "$scope evidence encryption failed" }
+              if ($fingerprint -notmatch '^recipient_public_key_sha256=[0-9a-f]{64}$') { throw "$scope evidence encryption did not report a valid recipient fingerprint" }
+              Write-Host "$scope $fingerprint"
+            }
+            @'
+          import pathlib, sys
+          root = pathlib.Path(sys.argv[1])
+          assert sorted(path.name for path in root.iterdir()) == ["primary-desktop.cuae", "window.cuae"]
+          assert all(path.is_file() and not path.is_symlink() for path in root.iterdir())
+          '@ | python - $ciphertext
+            if ($LASTEXITCODE -ne 0) { throw 'encrypted evidence directory contract failed' }
+          } finally {
+            Remove-Item Env:CUA_PERCEPTION_EVIDENCE_RECIPIENT -ErrorAction SilentlyContinue
+          }
+      - name: Upload only encrypted evidence envelopes
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
         with:
           name: live-jev-visual-${{ matrix.platform }}-${{ needs.source.outputs.sha }}
-          path: ${{ runner.temp }}/publish-evidence/
+          path: ${{ runner.temp }}/encrypted-evidence/
           if-no-files-found: error
           retention-days: 14
+      - name: Remove plaintext evidence from the runner
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          @'
+          import pathlib, shutil, sys
+          root = pathlib.Path(sys.argv[1]).resolve()
+          for name in ("cua-perception-evidence", "perception-evidence", "publish-evidence"):
+              target = root / name
+              assert target.parent == root
+              if target.is_symlink():
+                  target.unlink()
+              elif target.exists():
+                  shutil.rmtree(target)
+          '@ | python - $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) { throw 'plaintext evidence cleanup failed' }

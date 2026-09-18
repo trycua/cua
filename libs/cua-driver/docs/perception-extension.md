@@ -11,6 +11,61 @@ download model weights. A missing extension returns `not_installed`, allowing
 the caller to continue with accessibility, typed browser state, or its own
 visual reasoning.
 
+## Local image CLI
+
+The read-only CLI convenience mode parses an existing local PNG through the
+same installed worker and canonical visual-region validation:
+
+```bash
+cua-driver perception parse \
+  --image /tmp/window.png \
+  --capture /tmp/capture.json \
+  --json
+```
+
+The capture metadata file has this strict shape:
+
+```json
+{
+  "source": { "kind": "window", "pid": 844, "window_id": 10725 },
+  "snapshot_id": "s0000002a",
+  "captured_at": "2026-09-18T12:00:00Z"
+}
+```
+
+For the primary desktop, use
+`{"source":{"kind":"primary_desktop","display_id":"primary"}}`.
+`snapshot_id` and `captured_at` are optional. The command validates and hashes
+the PNG header and declared image bounds, but it does not decode pixels in the
+privileged CLI, create or retain a Driver capture, or include the local input
+paths in its output. The JSON result has schema `cua.visual_regions_v1` plus a
+`local_input` provenance block that sets `action_eligible` to `false` and
+`action_authority` to `none`. Its `local_png_<digest>` label uses a separate
+namespace from Driver `capture_<namespace>_<sequence>` IDs and cannot authorize
+a Driver action.
+
+Because `--json` is required, every failure is written to stdout as one stable
+envelope and the process exits nonzero:
+
+```json
+{
+  "ok": false,
+  "error": {
+    "code": "invalid_capture_metadata",
+    "message": "captured_at must be an RFC3339 timestamp",
+    "retryable": false
+  }
+}
+```
+
+CLI admission codes are `invalid_arguments`, `input_open_failed`,
+`input_not_regular_file`, `input_too_large`, `input_read_failed`,
+`invalid_capture_metadata`, `invalid_png`, and `internal_error`. Worker and
+extension failures preserve the visual parsing codes, including
+`not_installed`, `artifact_invalid`, `incompatible_protocol`, timeout, worker,
+resource-limit, and inference failures. An optional `detail` string provides
+diagnostic context and must not be parsed as a stable field.
+
 ## Explicit lifecycle
 
 Use the signed catalog distributed with the reviewed candidate and inspect the

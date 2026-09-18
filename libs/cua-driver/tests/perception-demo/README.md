@@ -5,8 +5,11 @@ demo. The GitHub workflow runs mock and static checks, then runs the canonical
 Windows and Linux X11 Driver harnesses without secrets. A protected job consumes
 an immutable review-candidate aggregate, runs the ignored visual-only test with
 the measured review Driver, and makes the API key available only to the bounded
-Jev chooser process. Evidence upload is limited to the redacted manifest and
-decoded MP4 described below.
+Jev chooser process. After decode and schema validation, each review bundle is
+encrypted separately and the artifact upload contains only the resulting
+authenticated ciphertext envelopes. Manual and reusable workflow invocations
+must also set the required boolean `run_live` acknowledgement to `true` before
+the source gate permits protected work.
 
 The private candidate producer runs without an environment or production
 secrets on Linux, Windows, and `macos-15`, then returns both its Actions run ID
@@ -53,19 +56,53 @@ workflow also checks the aggregate checksum file and every measured artifact
 hash before executing the review Driver. The test writes measured
 `raw-manifest.json` and `timeline.json` files beneath the evidence directory.
 It also copies the decoded testkit clip to `recording.mp4` and writes the
-schema-checked, redacted `manifest.json`. The workflow uploads only
-`recording.mp4` and `manifest.json`; capture IDs, coordinates, local paths, and
-the raw timeline remain runner-local.
+schema-checked, redacted `manifest.json`. Capture IDs, coordinates, local paths,
+the raw timeline, and the plaintext review bundle remain runner-local.
 
 `sanitize_evidence.py` measures the checked-out source SHA and host platform,
 reads the fixture's loopback oracle and provider-returned adapter result, hashes
 the Driver, private capture trace, and recording bytes, and binds the sealed
 worker, model, runtime, protocol, and self-test measurements. The redacted
 manifest records safe bounded candidate IDs and descriptions, capture source
-and dimensions, session and runner class, background delivery, and FFprobe
+and dimensions, session and runner class, delivery mode, and FFprobe
 measured resolution, frame rate, uncut 1x edit record, source time range, cursor
 configuration, and final hash. Its output is limited to `manifest.json` and
 `recording.mp4`.
+
+The live acceptance test keeps two distinct rows: native-resolution window
+capture with background delivery, and primary-desktop capture with foreground
+delivery. Primary-desktop actions are screen-absolute on all three supported
+desktop families, so background delivery is not supported for that row. The
+desktop row writes private evidence beneath `primary-desktop/`; the existing
+window evidence remains at the evidence root. Validation stages independently
+sanitize and fully decode both rows into review-safe `window/` and
+`primary-desktop/` leaves, each containing only `manifest.json` and
+`recording.mp4`. `evidence_envelope.py` then validates each exact two-file
+directory again and encrypts it for an X25519 recipient. Every unreleased v3
+envelope creates a fresh ephemeral X25519 key and derives a one-time
+AES-256-GCM key with HKDF-SHA256. The intended recipient public key's SHA-256
+fingerprint is included in both the KDF context and authenticated versioned
+header. The header also contains the ephemeral public key, nonce, algorithm,
+flags, and ciphertext length. Local
+decryption derives the public key from the supplied private key and rejects a
+recipient fingerprint mismatch before attempting decryption. Encryption logs
+only the safe recipient fingerprint, and the same fingerprint remains in each
+envelope so protected-run logs and downloaded artifacts identify the key used.
+The protected GitHub
+environment supplies only the canonical-base64 recipient public key through the
+`EVIDENCE_ARCHIVE_RECIPIENT_PUBLIC_KEY` environment variable; this is a GitHub
+environment variable, not a secret, and the recipient private key must never be
+stored in GitHub or provided to a runner. The uploaded directory contains
+exactly `window.cuae` and `primary-desktop.cuae`; it never contains plaintext
+manifests, recordings, raw evidence, or timelines. Reviewers decrypt locally
+with the canonical-base64
+private X25519 key, for example `evidence_envelope.py decrypt --input SCOPE.cuae
+--output OUTPUT --private-key-file PRIVATE_KEY_FILE`; `--private-key-env` is
+also supported for a local environment variable. Encryption accepts the public
+recipient through `--recipient-env` or `--recipient-file`. Windows and Linux
+keep raw, mock, and validated plaintext evidence beneath the runner's temporary
+directory and remove those exact directories in an `always()` step after the
+upload step.
 
 Native macOS live evidence remains separate from the Windows/Linux workflow.
 This proof uses the logged-in, TCC-authorized Lume runner and the canonical
@@ -83,8 +120,10 @@ and Jev heads, producer run ID, aggregate artifact ID, the candidate Driver's
 certificate-backed arm64 signature and hash, aggregate checksums, the Ed25519
 catalog signature and measured public key, the signed extension identity, and
 the same redacted manifest contract;
-it fully decodes the recording before uploading only `manifest.json` and
-`recording.mp4`.
+it fully decodes the recording before encrypting the two scope bundles and
+uploading only their `.cuae` envelopes. Recording, raw evidence, sanitizer
+inputs, and validated plaintext directories live beneath the runner's temporary
+directory and are removed by an `always()` cleanup step after the upload step.
 
 ## Derived reels
 

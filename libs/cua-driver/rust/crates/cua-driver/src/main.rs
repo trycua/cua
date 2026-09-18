@@ -27,6 +27,7 @@ mod extension_manager;
 mod history_runtime;
 mod mcp_envelope;
 mod mcp_http;
+mod perception_cli;
 mod private_worker;
 mod proxy;
 mod release_channel;
@@ -821,6 +822,9 @@ fn main() {
         cli::Command::Extension { args } => {
             extension_manager::run(&args);
         }
+        cli::Command::Perception { args } => {
+            perception_cli::run(&args);
+        }
         cli::Command::CursorTheme { args } => {
             run_cursor_theme_command(&args);
         }
@@ -1113,6 +1117,10 @@ fn main() -> anyhow::Result<()> {
         }
         cli::Command::Extension { args } => {
             extension_manager::run(&args);
+            return Ok(());
+        }
+        cli::Command::Perception { args } => {
+            perception_cli::run(&args);
             return Ok(());
         }
         cli::Command::CursorTheme { args } => {

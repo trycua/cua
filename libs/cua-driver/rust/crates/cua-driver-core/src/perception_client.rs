@@ -824,15 +824,171 @@ pub(crate) fn error(
 }
 
 #[cfg(all(test, unix))]
+#[derive(Clone, Debug)]
+pub(crate) struct FixturePythonConfig {
+    pub(crate) interpreter: PathBuf,
+    pub(crate) readable_roots: Vec<PathBuf>,
+    pub(crate) executable_paths: Vec<PathBuf>,
+}
+
+#[cfg(all(test, unix))]
+pub(crate) fn fixture_python_config() -> Result<FixturePythonConfig, String> {
+    fixture_python_config_from(
+        std::env::var_os("CUA_TEST_PYTHON"),
+        std::env::var_os("CUA_TEST_PYTHON_READ_ROOTS"),
+        std::path::Path::new("/nix/store"),
+    )
+}
+
+#[cfg(all(test, unix))]
+fn fixture_python_config_from(
+    configured_interpreter: Option<std::ffi::OsString>,
+    configured_read_roots: Option<std::ffi::OsString>,
+    trusted_store_root: &std::path::Path,
+) -> Result<FixturePythonConfig, String> {
+    if let Some(interpreter) = configured_interpreter {
+        let interpreter = PathBuf::from(interpreter);
+        let resolved_interpreter = validate_fixture_path(&interpreter, true)?;
+        let resolved_store_root = std::fs::canonicalize(trusted_store_root).ok();
+        let is_nix_interpreter = interpreter.starts_with(trusted_store_root)
+            || resolved_store_root
+                .as_ref()
+                .is_some_and(|root| resolved_interpreter.starts_with(root));
+
+        if is_nix_interpreter {
+            let configured_store_root = trusted_store_root;
+            let trusted_store_root = resolved_store_root
+                .ok_or_else(|| "trusted test store root is unavailable".to_owned())?;
+            if !interpreter.starts_with(configured_store_root) {
+                return Err("CUA_TEST_PYTHON must be inside the trusted Nix store".into());
+            }
+            if !resolved_interpreter.starts_with(&trusted_store_root) {
+                return Err("CUA_TEST_PYTHON must resolve inside the trusted Nix store".into());
+            }
+            let configured_read_roots = configured_read_roots.ok_or_else(|| {
+                "CUA_TEST_PYTHON_READ_ROOTS is required for a Nix store interpreter".to_owned()
+            })?;
+            let mut readable_roots = Vec::new();
+            for root in std::env::split_paths(&configured_read_roots) {
+                if root == configured_store_root || !root.starts_with(configured_store_root) {
+                    return Err(
+                        "CUA_TEST_PYTHON_READ_ROOTS may contain only trusted Nix store paths"
+                            .into(),
+                    );
+                }
+                let resolved = validate_fixture_path(&root, false)?;
+                if resolved == trusted_store_root || !resolved.starts_with(&trusted_store_root) {
+                    return Err(
+                        "CUA_TEST_PYTHON_READ_ROOTS may contain only trusted Nix store paths"
+                            .into(),
+                    );
+                }
+                readable_roots.push(resolved);
+            }
+            if readable_roots.is_empty() {
+                return Err("CUA_TEST_PYTHON_READ_ROOTS must not be empty".into());
+            }
+            readable_roots.sort();
+            readable_roots.dedup();
+            return Ok(FixturePythonConfig {
+                interpreter: interpreter.clone(),
+                readable_roots,
+                executable_paths: vec![interpreter],
+            });
+        }
+
+        if configured_read_roots.is_some() {
+            return Err(
+                "CUA_TEST_PYTHON_READ_ROOTS is supported only for a Nix store interpreter".into(),
+            );
+        }
+        return Ok(FixturePythonConfig {
+            interpreter: interpreter.clone(),
+            readable_roots: host_python_readable_roots(),
+            executable_paths: vec![interpreter],
+        });
+    }
+    if configured_read_roots.is_some() {
+        return Err("CUA_TEST_PYTHON_READ_ROOTS requires CUA_TEST_PYTHON".into());
+    }
+
+    #[cfg(target_os = "macos")]
+    let candidates = [
+        "/Applications/Xcode.app/Contents/Developer/usr/bin/python3",
+        "/usr/bin/python3",
+        "/usr/local/bin/python3",
+    ];
+    #[cfg(not(target_os = "macos"))]
+    let candidates = ["/usr/bin/python3", "/usr/local/bin/python3"];
+    let interpreter = candidates
+        .into_iter()
+        .map(PathBuf::from)
+        .find(|candidate| validate_fixture_path(candidate, true).is_ok())
+        .ok_or_else(|| "no trusted fixture python interpreter is installed".to_owned())?;
+    let readable_roots = host_python_readable_roots();
+    #[cfg(target_os = "macos")]
+    let executable_paths = [
+        interpreter.clone(),
+        PathBuf::from("/usr/bin/env"),
+        PathBuf::from("/usr/bin/python3"),
+        PathBuf::from("/usr/local/bin/python3"),
+        PathBuf::from("/Applications/Xcode.app/Contents/Developer/usr/bin/python3"),
+        PathBuf::from("/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9"),
+        PathBuf::from("/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Python3"),
+        PathBuf::from("/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python"),
+    ]
+    .into_iter()
+    .filter(|path| path.is_file())
+    .collect();
+    #[cfg(not(target_os = "macos"))]
+    let executable_paths = vec![interpreter.clone()];
+    Ok(FixturePythonConfig {
+        interpreter,
+        readable_roots,
+        executable_paths,
+    })
+}
+
+#[cfg(all(test, unix))]
+fn host_python_readable_roots() -> Vec<PathBuf> {
+    [
+        "/usr",
+        "/bin",
+        "/lib",
+        "/lib64",
+        "/etc",
+        "/opt",
+        "/System",
+        "/Library",
+        "/private/var/db",
+        "/private/var/select",
+        "/Applications/Xcode.app",
+    ]
+    .into_iter()
+    .map(PathBuf::from)
+    .filter(|path| path.is_dir())
+    .collect()
+}
+
+#[cfg(all(test, unix))]
+fn validate_fixture_path(path: &std::path::Path, file: bool) -> Result<PathBuf, String> {
+    if !path.is_absolute() {
+        return Err("test fixture paths must be absolute".into());
+    }
+    let resolved = std::fs::canonicalize(path)
+        .map_err(|error| format!("test fixture path could not be resolved: {error}"))?;
+    if (file && !resolved.is_file()) || (!file && !resolved.is_dir()) {
+        return Err("test fixture path has the wrong file type".into());
+    }
+    Ok(resolved)
+}
+
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 
     fn with_fixture_interpreter(script: &str) -> String {
-        #[cfg(target_os = "macos")]
-        let interpreter =
-            PathBuf::from("/Applications/Xcode.app/Contents/Developer/usr/bin/python3");
-        #[cfg(not(target_os = "macos"))]
         let interpreter = fixture_python_interpreter();
         script.replacen(
             "#!/usr/bin/env python3",
@@ -841,14 +997,8 @@ mod tests {
         )
     }
 
-    #[cfg(not(target_os = "macos"))]
     fn fixture_python_interpreter() -> PathBuf {
-        std::env::var_os("PATH")
-            .into_iter()
-            .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
-            .map(|directory| directory.join("python3"))
-            .find(|candidate| candidate.is_file())
-            .unwrap_or_else(|| PathBuf::from("/usr/bin/python3"))
+        fixture_python_config().unwrap().interpreter
     }
 
     fn fixture_worker(
@@ -990,57 +1140,109 @@ else:
     /// directories are opted in explicitly rather than by widening the derived
     /// allowlist for everyone.
     fn interpreter_read_paths() -> Vec<PathBuf> {
-        #[allow(unused_mut)]
-        let mut paths: Vec<PathBuf> = [
-            "/usr",
-            "/bin",
-            "/lib",
-            "/lib64",
-            "/etc",
-            "/opt",
-            "/System",
-            "/Library",
-            "/private/var/db",
-            "/private/var/select",
-            "/Applications/Xcode.app",
-        ]
-        .into_iter()
-        .map(PathBuf::from)
-        .filter(|path| path.is_dir())
-        .collect();
-        #[cfg(not(target_os = "macos"))]
-        if fixture_python_interpreter().starts_with("/nix/store") {
-            paths.push(PathBuf::from("/nix/store"));
-        }
-        paths
+        fixture_python_config().unwrap().readable_roots
     }
 
-    #[cfg(target_os = "macos")]
     fn interpreter_executable_paths() -> Vec<PathBuf> {
-        [
-            "/usr/bin/env",
-            "/usr/bin/python3",
-            "/Applications/Xcode.app/Contents/Developer/usr/bin/python3",
-            "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9",
-            "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Python3",
-            "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python",
-        ]
-        .into_iter()
-        .map(PathBuf::from)
-        .filter(|path| path.is_file())
-        .collect()
+        fixture_python_config().unwrap().executable_paths
     }
 
-    #[cfg(not(target_os = "macos"))]
-    fn interpreter_executable_paths() -> Vec<PathBuf> {
-        [
-            PathBuf::from("/usr/bin/env"),
-            PathBuf::from("/usr/bin/python3"),
-            fixture_python_interpreter(),
-        ]
-        .into_iter()
-        .filter(|path| path.is_file())
-        .collect()
+    #[test]
+    fn fixture_interpreter_uses_an_absolute_containment_grant() {
+        let interpreter = fixture_python_interpreter();
+        assert!(interpreter.is_absolute());
+        assert!(interpreter_executable_paths().contains(&interpreter));
+    }
+
+    #[test]
+    fn fixture_python_config_accepts_validated_non_nix_override() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = temp.path().join("store");
+        let outside = temp.path().join("outside");
+        std::fs::create_dir(&store).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        let outside_interpreter = outside.join("python3");
+        std::fs::write(&outside_interpreter, b"fixture").unwrap();
+
+        assert!(fixture_python_config_from(Some("python3".into()), None, &store).is_err());
+        let config = fixture_python_config_from(
+            Some(outside_interpreter.clone().into_os_string()),
+            None,
+            &store,
+        )
+        .unwrap();
+        assert_eq!(config.interpreter, outside_interpreter);
+        assert_eq!(config.executable_paths, vec![config.interpreter.clone()]);
+        assert!(fixture_python_config_from(
+            Some(config.interpreter.into_os_string()),
+            Some(outside.clone().into_os_string()),
+            &store,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn fixture_python_config_rejects_untrusted_nix_closure_roots() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = temp.path().join("store");
+        let package = store.join("python");
+        let bin = package.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let interpreter = bin.join("python3");
+        std::fs::write(&interpreter, b"fixture").unwrap();
+        let outside = temp.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+
+        assert!(fixture_python_config_from(
+            Some(interpreter.clone().into_os_string()),
+            None,
+            &store,
+        )
+        .is_err());
+        assert!(fixture_python_config_from(
+            Some(interpreter.into_os_string()),
+            Some(outside.into_os_string()),
+            &store,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn fixture_python_config_grants_only_exact_closure_roots() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = temp.path().join("store");
+        let python = store.join("python");
+        let dependency = store.join("dependency");
+        std::fs::create_dir_all(python.join("bin")).unwrap();
+        std::fs::create_dir_all(&dependency).unwrap();
+        let interpreter = python.join("bin/python3");
+        std::fs::write(&interpreter, b"fixture").unwrap();
+        let roots = std::env::join_paths([python.clone(), dependency.clone()]).unwrap();
+
+        let config = fixture_python_config_from(
+            Some(interpreter.clone().into_os_string()),
+            Some(roots),
+            &store,
+        )
+        .unwrap();
+        assert_eq!(config.interpreter, interpreter);
+        assert_eq!(config.executable_paths, vec![interpreter]);
+        assert_eq!(
+            config.readable_roots,
+            vec![
+                std::fs::canonicalize(dependency).unwrap(),
+                std::fs::canonicalize(python).unwrap(),
+            ]
+        );
+        assert!(!config
+            .readable_roots
+            .contains(&std::fs::canonicalize(&store).unwrap()));
+        assert!(fixture_python_config_from(
+            Some(config.interpreter.into_os_string()),
+            Some(store.clone().into_os_string()),
+            &store,
+        )
+        .is_err());
     }
 
     fn warm_fixture_worker(

@@ -18,6 +18,18 @@ installation, failure, capture, and action boundaries. Review the [third-party
 notices](docs/perception-third-party-notices.md) before distributing the
 separate worker, model, or ONNX Runtime artifacts.
 
+For offline inspection of an existing PNG, the CLI also provides a local-only
+mode:
+
+```bash
+cua-driver perception parse --image /tmp/window.png --capture /tmp/capture.json --json
+```
+
+This mode never registers the file as a Driver capture and its output cannot
+authorize a Driver action. Its required JSON mode returns failures as
+`{"ok":false,"error":{"code":"...","message":"...","retryable":false}}`;
+see the extension contract for the stable codes.
+
 **[Documentation](https://cua.ai/docs/cua-driver)** - Installation, guides, and API reference.
 
 ## Integration surfaces

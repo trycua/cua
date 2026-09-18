@@ -12,6 +12,9 @@
 
 let
   rustSrc = if sourceSubdir == null then src else "${src}/${sourceSubdir}";
+  pythonClosure = pkgs.closureInfo {
+    rootPaths = [ pkgs.python3 ];
+  };
 in
 pkgs.rustPlatform.buildRustPackage {
   pname = "cua-driver-rust-unit-tests";
@@ -40,6 +43,10 @@ pkgs.rustPlatform.buildRustPackage {
     clang
     python3
   ];
+  CUA_TEST_PYTHON = "${pkgs.python3}/bin/python3";
+  preCheck = ''
+    export CUA_TEST_PYTHON_READ_ROOTS="$(paste -sd: ${pythonClosure}/store-paths)"
+  '';
   buildInputs = with pkgs; [
     libx11
     libxi

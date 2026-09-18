@@ -74,13 +74,16 @@ jobs:
       - name: Validate registry and focused release tests
         run: |
           python3 .github/scripts/release_channels.py validate
+          python3 libs/cua-driver/rust/crates/cua-perception/tests/quality-corpus/generate.py --check
           python3 -m pytest \
             .github/scripts/tests/test_cua_driver_default_distribution.py \
             .github/scripts/tests/test_cua_perception_release_topology.py \
             .github/scripts/tests/test_verify_cua_driver_release_archives.py \
             .github/scripts/tests/test_release_channels.py \
             .github/scripts/tests/test_resolve_release_please_request.py \
-            .github/scripts/tests/test_merge_release_please_manifests.py
+            .github/scripts/tests/test_merge_release_please_manifests.py \
+            libs/cua-driver/rust/crates/cua-perception/scripts/tests/test_measure_quality.py \
+            libs/cua-driver/rust/crates/cua-perception/scripts/tests/test_quality_runner.py
       - name: Prove Driver dependency graph excludes Perception
         working-directory: libs/cua-driver/rust
         run: |

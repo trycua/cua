@@ -8,6 +8,7 @@
 //!   cua-driver describe <tool>              → print tool schema
 //!   cua-driver call <tool> [json-args]      → invoke tool, print result
 //!   cua-driver <tool> [json-args]           → shorthand for call (snake_case names)
+//!   cua-driver perception parse ...         → parse a local PNG without action authority
 //!
 //! Cursor-overlay flags (--cursor-theme, --no-overlay, etc.) are consumed by
 //! `CursorConfig::from_args()` and are ignored here.
@@ -194,6 +195,10 @@ pub enum Command {
     Extension {
         args: Vec<String>,
     },
+    /// Local-file-only visual parsing through the installed extension.
+    Perception {
+        args: Vec<String>,
+    },
     /// Trusted local cursor-theme authoring and installation workflow. The
     /// actual parser/compiler is a separate short-lived executable so Lottie,
     /// ZIP, and JSON are not linked into the privileged daemon.
@@ -237,6 +242,8 @@ const VALUE_FLAGS: &[&str] = &[
     "--profile-mode",
     "--profile-name",
     "--archive",
+    "--image",
+    "--capture",
     // Experimental PiP preview — value flag for the optional geometry
     // override (--experimental-pip itself is a bare flag and doesn't
     // need to be listed here).
@@ -325,6 +332,7 @@ fn finite_command_name_from_args(args: &[String]) -> Option<&'static str> {
         Some("autostart") => Some("autostart"),
         Some("skills") => Some("skills"),
         Some("extension") => Some("extension"),
+        Some("perception") => Some("perception"),
         Some("cursor-theme") => Some("cursor_theme"),
         Some("config") => Some("config"),
         Some(_) => Some("call"),
@@ -432,6 +440,10 @@ fn finite_operation_from_args(args: &[String]) -> &'static str {
             "path" => "path",
             _ => "other",
         },
+        Some("perception") => match subcommand.unwrap_or("") {
+            "parse" => "parse",
+            _ => "other",
+        },
         Some("update") if args.iter().any(|arg| arg == "--apply") => "apply",
         Some("update") => "check_only",
         Some("channel") => match subcommand.unwrap_or("status") {
@@ -508,7 +520,7 @@ pub fn parse_command() -> Command {
             env!("CARGO_PKG_VERSION")
         );
         println!("Usage: cua-driver [SUBCOMMAND] [OPTIONS]");
-        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, revoke, status, config, telemetry, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, manifest, extension, channel, cursor-theme, sessions, history");
+        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, revoke, status, config, telemetry, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, manifest, extension, perception, channel, cursor-theme, sessions, history");
         println!();
         println!("permissions options (macOS):");
         println!("  cua-driver permissions status   Report Accessibility + Screen Recording status. Read-only (no prompt).");
@@ -571,6 +583,10 @@ pub fn parse_command() -> Command {
             "  Developer only: replace --catalog with --archive <tar.gz> --allow-unsigned-local"
         );
         println!("  Compatibility aliases: extension info <name>; extension path <name>");
+        println!();
+        println!("local perception (read-only, no Driver action authority):");
+        println!("  cua-driver perception parse --image <png> --capture <capture.json> --json");
+        println!("  The capture file supplies source metadata only; the image is never registered as a reusable capture.");
         println!();
         println!("agent authorization (serve only):");
         println!("  --permission-mode <mode>        standard (default), bounded, or unrestricted.");
@@ -1019,6 +1035,15 @@ pub fn parse_command() -> Command {
                 .position(|value| value == "extension")
                 .expect("extension positional is present");
             Command::Extension {
+                args: args[index + 1..].to_vec(),
+            }
+        }
+        Some("perception") => {
+            let index = args
+                .iter()
+                .position(|value| value == "perception")
+                .expect("perception positional is present");
+            Command::Perception {
                 args: args[index + 1..].to_vec(),
             }
         }
@@ -2014,6 +2039,14 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "--allow-unsigned-local", "type": "flag", "description": "Explicitly opt into an unverified developer install." },
                   { "name": "--self-test", "type": "flag", "description": "Run the installed extension self-test during status." },
                   { "name": "--json", "type": "flag", "description": "Emit machine-readable inspection output." }
+              ] },
+            { "name": "perception",
+              "description": "Parse a local PNG through the installed optional perception extension without creating Driver capture or action authority.",
+              "args": [
+                  { "name": "subcommand", "type": "positional-string", "description": "Only: parse." },
+                  { "name": "--image", "type": "string", "description": "Local PNG path." },
+                  { "name": "--capture", "type": "string", "description": "Local capture source metadata JSON path." },
+                  { "name": "--json", "type": "flag", "description": "Required; emit canonical visual-regions JSON with local-input provenance." }
               ] }
         ]
     })
@@ -4227,6 +4260,17 @@ fn cli_docs_json() -> serde_json::Value {
                     {"name":"update","abstract":"Verify and atomically activate a newer extension version.","discussion":"Supported on macOS, Linux, and Windows with platform ownership and link/reparse-point checks.","arguments":[{"name":"name","help":"Registry extension name.","type":"String","is_optional":false}],"options":[{"name":"catalog","short_name":null,"help":"Signed local catalog.","type":"String","default_value":null,"is_optional":true},{"name":"archive","short_name":null,"help":"Developer-only unsigned local archive.","type":"String","default_value":null,"is_optional":true}],"flags":[{"name":"allow-unsigned-local","short_name":null,"help":"Explicitly select developer-only unverified mode.","default_value":false}],"subcommands":[]},
                     {"name":"remove","abstract":"Remove only a fully validated, manager-owned extension tree.","discussion":"Supported on macOS, Linux, and Windows with platform ownership and link/reparse-point checks.","arguments":[{"name":"name","help":"Registry extension name.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
                     {"name":"path","abstract":"Compatibility command that prints the exact active version directory.","discussion":"","arguments":[{"name":"name","help":"Registry extension name.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]}
+                ]
+            },
+            {
+                "name": "perception",
+                "abstract": "Parse a local PNG with the installed optional perception extension.",
+                "discussion": "This read-only local-input mode does not create a Driver capture. Its visual-regions JSON marks the result ineligible for Driver action authority.",
+                "arguments": no_args,
+                "options": no_options,
+                "flags": no_flags,
+                "subcommands": [
+                    {"name":"parse","abstract":"Parse one local PNG into canonical visual regions.","discussion":"Requires --json. The capture file supplies source metadata only.","arguments":[],"options":[{"name":"image","short_name":null,"help":"Local PNG path.","type":"String","default_value":null,"is_optional":false},{"name":"capture","short_name":null,"help":"Local capture source metadata JSON path.","type":"String","default_value":null,"is_optional":false}],"flags":[{"name":"json","short_name":null,"help":"Emit canonical visual-regions JSON with local-input provenance.","default_value":false}],"subcommands":[]}
                 ]
             },
             {

@@ -1008,6 +1008,15 @@ pub(crate) fn perception_client() -> PerceptionClient {
     }
 }
 
+pub(crate) fn perception_client_for_cli() -> Result<PerceptionClient> {
+    match perception_worker_config()? {
+        Some(config) => PerceptionClient::new(config).map_err(|error| {
+            anyhow!(serde_json::to_string(&error).unwrap_or_else(|_| error.message.clone()))
+        }),
+        None => Ok(PerceptionClient::unavailable()),
+    }
+}
+
 fn perception_worker_config() -> Result<Option<PerceptionWorkerConfig>> {
     perception_worker_config_in(&ExtensionStore::new(extension_root()?))
 }

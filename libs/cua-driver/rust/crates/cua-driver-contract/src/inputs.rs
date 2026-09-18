@@ -628,6 +628,11 @@ pub struct ClickInput {
     pub count: Option<u32>,
 }
 
+impl ClickInput {
+    pub const DESKTOP_BACKGROUND_MESSAGE: &'static str =
+        "desktop clicks require delivery_mode:\"foreground\"; background delivery is unavailable for desktop targets";
+}
+
 // Parse the flat wire shape before constructing the sum type: an untagged
 // serde enum alone would silently accept mixed coordinate and element fields.
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -728,7 +733,7 @@ impl ToolInput for ClickInput {
                 return Err("portable desktop target must be primary".into());
             }
             if self.delivery_mode != InputDeliveryMode::Foreground {
-                return Err("desktop clicks require foreground delivery".into());
+                return Err(Self::DESKTOP_BACKGROUND_MESSAGE.into());
             }
             if matches!(self.position, ClickPosition::Element { .. }) {
                 return Err("element clicks require an exact window target".into());
@@ -997,7 +1002,10 @@ mod tests {
         assert!(input.validate().is_err());
         input.position = ClickPosition::Coordinates { x: 1.0, y: 2.0 };
         input.delivery_mode = InputDeliveryMode::Background;
-        assert!(input.validate().is_err());
+        assert_eq!(
+            input.validate().unwrap_err(),
+            ClickInput::DESKTOP_BACKGROUND_MESSAGE
+        );
     }
 
     #[test]

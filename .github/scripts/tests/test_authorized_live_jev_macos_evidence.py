@@ -56,12 +56,11 @@ def test_macos_live_evidence_uses_canonical_lume_and_signed_arm64_candidate() ->
         "CUA_PERCEPTION_EXTENSION_HOME: ${{ github.workspace }}/.cua-perception-home"
         in workflow
     )
-    assert (
-        "CUA_PERCEPTION_EVIDENCE_DIR: ${{ github.workspace }}/.cua-perception-evidence/live"
-        in workflow
-    )
+    assert 'echo "CUA_PERCEPTION_EVIDENCE_DIR=$RUNNER_TEMP/cua-perception-evidence/live"' in workflow
     assert 'CUA_E2E_UNRESTRICTED_GUI: "1"' in workflow
-    assert "CUA_E2E_RECORDINGS_ROOT: ${{ github.workspace }}/.cua-perception-recordings" in workflow
+    assert 'echo "CUA_E2E_RECORDINGS_ROOT=$RUNNER_TEMP/cua-perception-recordings"' in workflow
+    assert "CUA_PERCEPTION_EVIDENCE_DIR: ${{ github.workspace }}" not in workflow
+    assert "CUA_E2E_RECORDINGS_ROOT: ${{ github.workspace }}" not in workflow
     assert "libs/cua-driver/tests/runners/macos-lume/run-all.sh --standalone-browser" in workflow
     assert 'measured["target"] == "aarch64-apple-darwin"' in workflow
     assert 'codesign", "--verify", "--strict"' in workflow
@@ -112,16 +111,18 @@ def test_macos_live_evidence_uses_canonical_lume_and_signed_arm64_candidate() ->
         'echo "$daemon_pid" >'
     )
     assert workflow.index("Stop the exact review Driver daemon") < workflow.index(
-        "Upload only decoded video"
+        "Upload only encrypted evidence envelopes"
     )
 
 
 def test_macos_publication_fully_decodes_and_keeps_private_inputs_local() -> None:
     workflow = (ROOT / ".github/workflows/authorized-live-jev-macos-evidence.yml").read_text()
+    assert 'for scope in window primary-desktop; do' in workflow
     assert 'ffmpeg -v error -xerror -i "$evidence/recording.mp4"' in workflow
     assert "libs/cua-driver/tests/perception-demo/sanitize_evidence.py" in workflow
     assert "--raw-evidence \"$raw\"" in workflow
-    assert "--output-dir \"$RUNNER_TEMP/publish-macos-evidence\"" in workflow
+    assert '--output-dir "$publish_root/$scope"' in workflow
+    assert '--session-label "$CUA_SESSION_LABEL-$scope"' in workflow
     assert "python3 -m venv \"$validation_venv\"" in workflow
     assert 'uv pip install --no-config --python "$validation_venv/bin/python"' in workflow
     assert "uv pip install --no-config --system" not in workflow
@@ -137,9 +138,60 @@ def test_macos_publication_fully_decodes_and_keeps_private_inputs_local() -> Non
     assert 'chooser["source_sha"] == os.environ["CUA_JEV_SOURCE_SHA"]' in workflow
     assert '"runner_identity_class": "self-hosted-lume"' in workflow
     assert '== ["manifest.json", "recording.mp4"]' in workflow
-    assert "path: ${{ runner.temp }}/publish-macos-evidence/" in workflow
+    assert '"window": (evidence_root / "raw-manifest.json", "window", "get_window_state", "background")' in workflow
+    assert '"primary-desktop": (evidence_root / "primary-desktop" / "raw-manifest.json", "desktop", "get_desktop_state", "foreground")' in workflow
+    assert '== ["primary-desktop", "window"]' in workflow
     assert '[[ -f "$raw" && -f "$evidence/timeline.json" ]]' in workflow
-    assert "path: ${{ runner.temp }}/publish-macos-evidence/" in workflow
+
+
+def test_macos_encrypts_each_validated_bundle_and_cleans_plaintext_after_upload() -> None:
+    path = ROOT / ".github/workflows/authorized-live-jev-macos-evidence.yml"
+    text = path.read_text()
+    workflow = yaml.safe_load(text)
+    steps = workflow["jobs"]["evidence"]["steps"]
+    validate = next(step for step in steps if step.get("name", "").startswith("Sanitize"))
+    encrypt = next(
+        step for step in steps if step.get("name") == "Encrypt the validated evidence bundles"
+    )
+    upload = next(step for step in steps if "upload-artifact" in step.get("uses", ""))
+    cleanup = next(
+        step for step in steps if step.get("name") == "Remove plaintext evidence from the runner"
+    )
+
+    assert encrypt["env"] == {
+        "CUA_PERCEPTION_EVIDENCE_RECIPIENT": (
+            "${{ vars.EVIDENCE_ARCHIVE_RECIPIENT_PUBLIC_KEY }}"
+        )
+    }
+    assert sum("vars.EVIDENCE_ARCHIVE_RECIPIENT_PUBLIC_KEY" in str(step) for step in steps) == 1
+    assert "EVIDENCE_ARCHIVE_KEY" not in text
+    assert "private-key" not in text
+    assert "evidence_envelope.py encrypt" in encrypt["run"]
+    assert 'envelope_python="$RUNNER_TEMP/perception-validation-venv/bin/python"' in encrypt["run"]
+    assert '--input "$plaintext_root/$scope"' in encrypt["run"]
+    assert '--output "$encrypted_root/$scope.cuae"' in encrypt["run"]
+    assert "--recipient-env CUA_PERCEPTION_EVIDENCE_RECIPIENT" in encrypt["run"]
+    assert "^recipient_public_key_sha256=[0-9a-f]{64}$" in encrypt["run"]
+    assert 'echo "$scope $fingerprint_line"' in encrypt["run"]
+    assert "trap clear_evidence_recipient EXIT" in encrypt["run"]
+    assert "unset CUA_PERCEPTION_EVIDENCE_RECIPIENT" in encrypt["run"]
+    assert "clear_evidence_key" not in encrypt["run"]
+    assert encrypt["run"].rindex("clear_evidence_recipient") < encrypt["run"].rindex("trap - EXIT")
+    assert '== ["primary-desktop.cuae", "window.cuae"]' in encrypt["run"]
+    assert upload["with"]["path"] == "${{ runner.temp }}/encrypted-macos-evidence/"
+    assert "publish-macos-evidence" not in str(upload)
+    assert "manifest.json" not in str(upload) and "recording.mp4" not in str(upload)
+    assert cleanup["if"] == "always()"
+    for directory in (
+        "cua-perception-recordings",
+        "cua-perception-evidence",
+        "perception-evidence",
+        "publish-macos-evidence",
+        "private-macos-sanitizer-inputs-window",
+        "private-macos-sanitizer-inputs-primary-desktop",
+    ):
+        assert f'"{directory}"' in cleanup["run"]
+    assert steps.index(validate) < steps.index(encrypt) < steps.index(upload) < steps.index(cleanup)
 
 
 def test_live_secret_is_cleared_even_when_the_command_fails() -> None:
@@ -156,6 +208,8 @@ def test_live_secret_is_cleared_even_when_the_command_fails() -> None:
     command_with_secret = live_step.index('            "$CUA_LIVE_TEST_BINARY"')
     assert live_step.index("export TYPESAFE_API_KEY") < command_with_secret
     assert command_with_secret < live_step.rindex("clear_typesafe_key")
+    assert "authorized_visual_only_window_demo" in live_step
+    assert "authorized_visual_only_primary_desktop_demo" in live_step
 
 
 def test_actions_are_commit_pinned() -> None:

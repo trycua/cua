@@ -504,6 +504,44 @@ mod e2e {
     const FIXTURE_TITLE: &str = "Cua Visual-Only Canvas Fixture";
     const CHOOSER_TIMEOUT: Duration = Duration::from_secs(30);
     const MAX_CHOOSER_OUTPUT: u64 = 64 * 1024;
+    const PAINTED_LABELS: [&str; 4] = ["Save", "Send", "Cancel", "CHOOSE A SIGNAL"];
+
+    #[derive(Clone, Copy)]
+    enum DemoScope {
+        Window,
+        PrimaryDesktop,
+    }
+
+    impl DemoScope {
+        fn slug(self) -> &'static str {
+            match self {
+                Self::Window => "window",
+                Self::PrimaryDesktop => "primary-desktop",
+            }
+        }
+
+        fn capture_scope(self) -> &'static str {
+            match self {
+                Self::Window => "window",
+                Self::PrimaryDesktop => "desktop",
+            }
+        }
+
+        fn capture_kind(self) -> &'static str {
+            match self {
+                Self::Window => "get_window_state",
+                Self::PrimaryDesktop => "get_desktop_state",
+            }
+        }
+
+        fn delivery_mode(self) -> &'static str {
+            match self {
+                Self::Window => "background",
+                // Primary-desktop input is screen-absolute and therefore foreground-only.
+                Self::PrimaryDesktop => "foreground",
+            }
+        }
+    }
 
     struct Gate {
         source_sha: String,
@@ -724,6 +762,47 @@ mod e2e {
         }
     }
 
+    fn assert_painted_labels_absent_from_window_ax(observation: &cua_driver_testkit::ToolResponse) {
+        for label in PAINTED_LABELS {
+            assert!(
+                !observation.tree_text().contains(label),
+                "painted label leaked into window AX tree: {label}"
+            );
+        }
+    }
+
+    fn assert_painted_labels_are_visual_only(
+        scope: DemoScope,
+        observation: &cua_driver_testkit::ToolResponse,
+    ) {
+        match scope {
+            DemoScope::Window => assert_painted_labels_absent_from_window_ax(observation),
+            DemoScope::PrimaryDesktop => {
+                assert!(
+                    observation.structured().get("tree_markdown").is_none()
+                        && observation.structured().get("elements").is_none(),
+                    "get_desktop_state unexpectedly exposed an accessibility tree: {}",
+                    observation.structured()
+                );
+                let response_text = observation
+                    .raw
+                    .pointer("/result/content")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|part| part.get("text").and_then(Value::as_str))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                for label in PAINTED_LABELS {
+                    assert!(
+                        !response_text.contains(label),
+                        "painted label leaked into desktop response text: {label}"
+                    );
+                }
+            }
+        }
+    }
+
     fn external_choice(program: &Path, script: &Path, request: &ChoiceRequest) -> ChoiceResponse {
         let mut command = Command::new(program);
         command
@@ -785,9 +864,7 @@ mod e2e {
             .unwrap_or_else(|error| panic!("chooser response refused: {error}"))
     }
 
-    #[test]
-    #[ignore = "requires an installed review-only publisher-verified perception extension and desktop session"]
-    fn authorized_visual_only_demo() {
+    fn run_authorized_visual_only_demo(scope: DemoScope) {
         let gate = load_gate();
         let measured = Command::new("git")
             .args(["rev-parse", "HEAD"])
@@ -847,22 +924,74 @@ mod e2e {
             .find_window(pid, FIXTURE_TITLE)
             .expect("find canvas fixture");
 
-        let started = Instant::now();
-        let first = driver.call(
-            "get_window_state",
-            json!({"pid": pid, "window_id": window_id, "capture_mode": "ax"}),
+        let window_session = format!("{}-window-target", gate.session_label);
+        let action_session = format!("{}-{}", gate.session_label, scope.slug());
+        for (session, capture_scope) in [
+            (window_session.as_str(), "window"),
+            (action_session.as_str(), scope.capture_scope()),
+        ] {
+            let started = driver.call(
+                "start_session",
+                json!({"session": session, "capture_scope": capture_scope}),
+            );
+            assert!(
+                !started.is_error(),
+                "start_session capture_scope={capture_scope} failed: {}",
+                started.text()
+            );
+        }
+        let framed = driver.call(
+            "set_window_frame",
+            json!({
+                "session": window_session, "pid": pid, "window_id": window_id,
+                "x": 96, "y": 96, "width": 780, "height": 500
+            }),
         );
+        assert!(
+            !framed.is_error(),
+            "could not set deterministic fixture frame: {}",
+            framed.text()
+        );
+        let foregrounded = driver.call(
+            "bring_to_front",
+            json!({"session": window_session, "pid": pid, "window_id": window_id}),
+        );
+        assert!(
+            !foregrounded.is_error(),
+            "could not foreground canvas fixture: {}",
+            foregrounded.text()
+        );
+        thread::sleep(Duration::from_millis(300));
+
+        let started = Instant::now();
+        if matches!(scope, DemoScope::PrimaryDesktop) {
+            let window_ax = driver.call(
+                "get_window_state",
+                json!({
+                    "session": window_session, "pid": pid, "window_id": window_id,
+                    "capture_mode": "ax"
+                }),
+            );
+            assert!(
+                !window_ax.is_error(),
+                "fixture AX proof failed before desktop capture: {}",
+                window_ax.text()
+            );
+            assert_painted_labels_absent_from_window_ax(&window_ax);
+        }
+        let observation_args = match scope {
+            DemoScope::Window => {
+                json!({"session": action_session, "pid": pid, "window_id": window_id, "capture_mode": "ax"})
+            }
+            DemoScope::PrimaryDesktop => json!({"session": action_session}),
+        };
+        let first = driver.call(scope.capture_kind(), observation_args.clone());
         assert!(
             !first.is_error(),
             "initial observation failed: {}",
             first.text()
         );
-        for label in ["Save", "Send", "Cancel", "CHOOSE A SIGNAL"] {
-            assert!(
-                !first.tree_text().contains(label),
-                "painted label leaked into AX: {label}"
-            );
-        }
+        assert_painted_labels_are_visual_only(scope, &first);
         let capture_id = first.structured()["capture_id"]
             .as_str()
             .expect("capture_id")
@@ -892,13 +1021,54 @@ mod e2e {
             .clone()
             .expect("demo chooser must select an action");
 
-        let click_args = json!({
-            "pid": pid, "window_id": window_id, "x": choice.x, "y": choice.y,
-            "capture_id": choice.capture_id, "delivery_mode": "background"
-        });
+        let click_args = match scope {
+            DemoScope::Window => json!({
+                "session": action_session, "pid": pid, "window_id": window_id,
+                "x": choice.x, "y": choice.y, "capture_id": choice.capture_id,
+                "delivery_mode": scope.delivery_mode()
+            }),
+            DemoScope::PrimaryDesktop => json!({
+                "session": action_session, "scope": "desktop", "x": choice.x, "y": choice.y,
+                "capture_id": choice.capture_id, "delivery_mode": scope.delivery_mode()
+            }),
+        };
+        let (background_desktop_refused, refused_capture_id) =
+            if matches!(scope, DemoScope::PrimaryDesktop) {
+                let mut refused_args = click_args.clone();
+                refused_args["delivery_mode"] = Value::String("background".to_owned());
+                let refused_capture_id = refused_args["capture_id"]
+                    .as_str()
+                    .expect("background refusal capture_id")
+                    .to_owned();
+                let refused = driver.call("click", refused_args);
+                assert!(
+                    refused.is_error(),
+                    "desktop/background click was not refused: {}",
+                    refused.text()
+                );
+                assert_eq!(
+                    refused.structured()["code"],
+                    "background_unavailable",
+                    "desktop/background refusal used an unexpected code"
+                );
+                assert_eq!(refused.structured()["effect"], "refused");
+                assert_eq!(
+                    refused.structured()["escalation"]["recommended"],
+                    "foreground"
+                );
+                assert_eq!(
+                    journal.snapshot()["action_count"],
+                    0,
+                    "refused desktop/background click reached the fixture"
+                );
+                (Some(true), Some(refused_capture_id))
+            } else {
+                (None, None)
+            };
         let click = driver.call("click", click_args.clone());
+        let click_succeeded = !click.is_error();
         assert!(
-            !click.is_error(),
+            click_succeeded,
             "capture-bound click failed: {}",
             click.text()
         );
@@ -909,15 +1079,18 @@ mod e2e {
             },
             "journal did not record exactly one Send transition",
         );
+        let capture_preserved_after_refusal = refused_capture_id
+            .map(|refused_capture_id| click_succeeded && refused_capture_id == choice.capture_id);
+        assert_eq!(
+            capture_preserved_after_refusal, background_desktop_refused,
+            "foreground retry did not successfully reuse the refused desktop capture"
+        );
         assert!(
             driver.call("click", click_args).is_error(),
             "capture reuse was not refused"
         );
 
-        let second = driver.call(
-            "get_window_state",
-            json!({"pid": pid, "window_id": window_id, "capture_mode": "ax"}),
-        );
+        let second = driver.call(scope.capture_kind(), observation_args);
         assert!(
             !second.is_error(),
             "fresh observation failed: {}",
@@ -928,6 +1101,31 @@ mod e2e {
             .expect("fresh capture_id")
             .to_owned();
         assert_ne!(capture_id, second_capture_id);
+        let reparsed = driver.call("parse_visual_regions", json!({
+            "capture_id": second_capture_id,
+            "options": {"kinds": ["text", "icon"], "min_confidence": MIN_CONFIDENCE, "max_regions": MAX_REGIONS}
+        }));
+        assert!(
+            !reparsed.is_error(),
+            "fresh perception pass failed: {}",
+            reparsed.text()
+        );
+        let (fresh_candidates, _) = bounded_candidates(reparsed.structured(), &second_capture_id)
+            .expect("fresh bounded candidates");
+        assert!(fresh_candidates
+            .iter()
+            .any(|candidate| candidate.id == "reobserve"));
+        assert!(fresh_candidates
+            .iter()
+            .any(|candidate| candidate.id == "abstain"));
+        assert!(
+            fresh_candidates
+                .iter()
+                .filter_map(|candidate| candidate.action.as_ref())
+                .all(|action| action.capture_id == second_capture_id
+                    && action.capture_id != capture_id),
+            "reobserve reused an action from the consumed capture"
+        );
 
         let oracle = journal.snapshot();
         let recording_dir = driver
@@ -939,8 +1137,12 @@ mod e2e {
         drop(driver);
         let recording = recording_dir.join("recording.mp4");
         assert!(recording.is_file(), "testkit recording did not finalize");
-        fs::create_dir_all(&gate.evidence_dir).expect("create evidence directory");
-        let published_recording = gate.evidence_dir.join("recording.mp4");
+        let evidence_dir = match scope {
+            DemoScope::Window => gate.evidence_dir.clone(),
+            DemoScope::PrimaryDesktop => gate.evidence_dir.join("primary-desktop"),
+        };
+        fs::create_dir_all(&evidence_dir).expect("create evidence directory");
+        let published_recording = evidence_dir.join("recording.mp4");
         fs::copy(&recording, &published_recording).expect("copy decoded recording evidence");
         let recording_sha256 = hash_file(&published_recording);
         let recording_size = fs::metadata(&published_recording)
@@ -971,30 +1173,36 @@ mod e2e {
             "platform": platform,
             "capture_ids": {"acted": capture_id, "fresh": second_capture_id},
             "observation": {
-                "input_scope": "window", "capture_kind": "get_window_state",
+                "input_scope": scope.capture_scope(), "capture_kind": scope.capture_kind(),
                 "capture_source": "driver-screenshot", "width": capture_width,
                 "height": capture_height, "desktop_session": gate.desktop_session,
                 "runner_identity_class": gate.runner_identity_class,
-                "delivery_mode": "background"
+                "delivery_mode": scope.delivery_mode()
             },
             "fixture_oracle": oracle,
             "extension_status": extension_status,
             "parser": parser,
             "chooser": {"mode": mode, "request": request, "response": choice_response},
             "resolved_action": {"candidate_id": selected_candidate.id, "x": choice.x, "y": choice.y},
-            "verification": {"oracle": "passed", "stale_capture_refused": true},
+            "verification": {
+                "oracle": "passed",
+                "background_desktop_refused": background_desktop_refused,
+                "capture_preserved_after_refusal": capture_preserved_after_refusal,
+                "stale_capture_refused": true
+            },
             "timeline": {"duration_ms": duration_ms, "events": [
-                "observed", "parsed", "chosen", "clicked", "oracle_verified", "stale_capture_refused", "reobserved"
+                "observed", "parsed", "chosen",
+                if background_desktop_refused == Some(true) { "background_desktop_refused" } else { "background_refusal_not_applicable" },
+                "clicked", "oracle_verified", "stale_capture_refused", "reobserved"
             ]},
             "recording": {"local_path": recording.to_string_lossy(), "sha256": recording_sha256,
                 "metadata": recording_metadata}
         });
         let raw_bytes = serde_json::to_vec_pretty(&raw).expect("serialize raw evidence");
         let raw_sha256 = hash_bytes(&raw_bytes);
-        fs::write(gate.evidence_dir.join("raw-manifest.json"), &raw_bytes)
-            .expect("write raw evidence");
+        fs::write(evidence_dir.join("raw-manifest.json"), &raw_bytes).expect("write raw evidence");
         fs::write(
-            gate.evidence_dir.join("timeline.json"),
+            evidence_dir.join("timeline.json"),
             serde_json::to_vec_pretty(&raw["timeline"]).expect("serialize private timeline"),
         )
         .expect("write private timeline evidence");
@@ -1047,8 +1255,8 @@ mod e2e {
                 }
             },
             "observation": {
-                "session_label": gate.session_label,
-                "input_scope": "window", "capture_kind": "get_window_state",
+                "session_label": action_session,
+                "input_scope": scope.capture_scope(), "capture_kind": scope.capture_kind(),
                 "capture_source": "driver-screenshot",
                 "dimensions": {"width": capture_width, "height": capture_height},
                 "acted_capture_id_sha256": hash_bytes(capture_id.as_bytes()),
@@ -1060,9 +1268,15 @@ mod e2e {
                 "os": {"name": gate.os_name, "version": gate.os_version, "arch": gate.os_arch},
                 "desktop_session": gate.desktop_session,
                 "runner_identity_class": gate.runner_identity_class,
-                "delivery_mode": "background"
+                "delivery_mode": scope.delivery_mode()
             },
-            "result": {"status": "passed", "selected_candidate": selected_candidate.id, "stale_capture_refused": true},
+            "result": {
+                "status": "passed",
+                "selected_candidate": selected_candidate.id,
+                "background_desktop_refused": background_desktop_refused,
+                "capture_preserved_after_refusal": capture_preserved_after_refusal,
+                "stale_capture_refused": true
+            },
             "recording": {
                 "original_dimensions": {"width": recording_metadata["width"], "height": recording_metadata["height"]},
                 "delivered_dimensions": {"width": recording_metadata["width"], "height": recording_metadata["height"]},
@@ -1084,9 +1298,21 @@ mod e2e {
             "redacted manifest must satisfy schema"
         );
         fs::write(
-            gate.evidence_dir.join("manifest.json"),
+            evidence_dir.join("manifest.json"),
             serde_json::to_vec_pretty(&manifest).unwrap(),
         )
         .expect("write redacted manifest");
+    }
+
+    #[test]
+    #[ignore = "requires an installed review-only publisher-verified perception extension and desktop session"]
+    fn authorized_visual_only_window_demo() {
+        run_authorized_visual_only_demo(DemoScope::Window);
+    }
+
+    #[test]
+    #[ignore = "requires an installed review-only publisher-verified perception extension and desktop session"]
+    fn authorized_visual_only_primary_desktop_demo() {
+        run_authorized_visual_only_demo(DemoScope::PrimaryDesktop);
     }
 }

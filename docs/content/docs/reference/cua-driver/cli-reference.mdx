@@ -607,6 +607,31 @@ Compatibility command that prints the exact active version directory.
 | ---- | ---- | -------- | ----------- |
 | `<name>` | String | Yes | Registry extension name. |
 
+### `cua-driver perception`
+
+Parse a local PNG with the installed optional perception extension.
+
+This read-only local-input mode does not create a Driver capture. Its visual-regions JSON marks the result ineligible for Driver action authority.
+
+#### `cua-driver perception parse`
+
+Parse one local PNG into canonical visual regions.
+
+Requires --json. The capture file supplies source metadata only.
+
+**Options:**
+
+| Name | Type | Default | Description |
+| ---- | ---- | ------- | ----------- |
+| `--image` | String | — | Local PNG path. |
+| `--capture` | String | — | Local capture source metadata JSON path. |
+
+**Flags:**
+
+| Name | Description |
+| ---- | ----------- |
+| `--json` | Emit canonical visual-regions JSON with local-input provenance. |
+
 ### `cua-driver manifest`
 
 Emit a stable JSON description of the CLI surface.

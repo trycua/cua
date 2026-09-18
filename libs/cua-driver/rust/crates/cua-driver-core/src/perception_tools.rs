@@ -219,11 +219,33 @@ fn build_output(
     worker: Value,
     elapsed_ms: u128,
 ) -> Result<ParseVisualRegionsOutput, VisualParseError> {
-    validate_worker_echo(input, capture, &worker)?;
+    let provenance = capture_provenance(capture)?;
+    build_output_with_provenance(input, provenance, worker, elapsed_ms)
+}
+
+/// Normalize one local-image worker result through the same canonical output
+/// validation as the capture-bound tool, without registering action authority.
+pub fn build_local_output(
+    input: &ParseVisualRegionsInput,
+    provenance: VisualCaptureProvenance,
+    worker: Value,
+    elapsed_ms: u128,
+) -> Result<ParseVisualRegionsOutput, VisualParseError> {
+    input.validate().map_err(invalid_worker_artifact)?;
+    build_output_with_provenance(input, provenance, worker, elapsed_ms)
+}
+
+fn build_output_with_provenance(
+    input: &ParseVisualRegionsInput,
+    provenance: VisualCaptureProvenance,
+    worker: Value,
+    elapsed_ms: u128,
+) -> Result<ParseVisualRegionsOutput, VisualParseError> {
+    validate_worker_echo(input, &provenance, &worker)?;
     let parser = worker_parser_metadata(&worker)?;
     if let Ok(mut output) = serde_json::from_value::<ParseVisualRegionsOutput>(worker.clone()) {
         // The Driver, rather than the extension, is authoritative for capture provenance.
-        output.capture = capture_provenance(capture)?;
+        output.capture = provenance;
         output.parser = parser;
         apply_options(&mut output.regions, input);
         output.validate().map_err(invalid_worker_artifact)?;
@@ -265,7 +287,7 @@ fn build_output(
     apply_options(&mut regions, input);
     let output = ParseVisualRegionsOutput {
         schema: VISUAL_REGIONS_SCHEMA.into(),
-        capture: capture_provenance(capture)?,
+        capture: provenance,
         parser,
         regions,
         warnings: Vec::new(),
@@ -463,7 +485,7 @@ fn apply_options(regions: &mut Vec<VisualRegion>, input: &ParseVisualRegionsInpu
 
 fn validate_worker_echo(
     input: &ParseVisualRegionsInput,
-    capture: &PerceptionCapture,
+    provenance: &VisualCaptureProvenance,
     worker: &Value,
 ) -> Result<(), VisualParseError> {
     if let Some(capture_id) = worker.get("capture_id").and_then(Value::as_str) {
@@ -476,14 +498,14 @@ fn validate_worker_echo(
     let Some(image) = worker.get("image") else {
         return Ok(());
     };
-    let dimensions = capture.encoded_dimensions();
+    let screenshot = &provenance.screenshot;
     let digest_matches = image
         .get("sha256")
         .and_then(Value::as_str)
-        .is_some_and(|digest| digest == capture.digest().hex());
+        .is_some_and(|digest| screenshot.sha256.as_deref() == Some(digest));
     let dimensions_match = image.get("width").and_then(Value::as_u64)
-        == Some(u64::from(dimensions.width()))
-        && image.get("height").and_then(Value::as_u64) == Some(u64::from(dimensions.height()));
+        == Some(u64::from(screenshot.width))
+        && image.get("height").and_then(Value::as_u64) == Some(u64::from(screenshot.height));
     if !digest_matches || !dimensions_match {
         return Err(invalid_worker_artifact(
             "worker image identity does not match the retained capture",
@@ -563,6 +585,58 @@ mod tests {
             })
             .unwrap();
         (id.to_string(), service.binding("session-a", 1).unwrap())
+    }
+
+    #[test]
+    fn local_output_uses_canonical_validation_without_capture_registration() {
+        let digest = "11".repeat(32);
+        let input = ParseVisualRegionsInput {
+            capture_id: "local_png_fixture".into(),
+            options: Default::default(),
+        };
+        let provenance = VisualCaptureProvenance {
+            capture_id: input.capture_id.clone(),
+            source: VisualCaptureSource::Window {
+                pid: 10,
+                window_id: 20,
+            },
+            screenshot: VisualScreenshotReference {
+                reference: format!("local-png-sha256:{digest}"),
+                width: 2,
+                height: 1,
+                mime_type: "image/png".into(),
+                sha256: Some(digest.clone()),
+            },
+            action_coordinate_space: VisualActionCoordinateSpace::ScreenshotPixels,
+            captured_at: None,
+        };
+        let output = build_local_output(
+            &input,
+            provenance,
+            json!({
+                "capture_id": input.capture_id,
+                "image": {"width": 2, "height": 1, "sha256": digest},
+                "coordinate_space": "image_pixels",
+                "runtime": "fixture_only",
+                "identity": {
+                    "extension": {"id": "cua-perception", "version": "0.1.0"},
+                    "backend": "deterministic_fixture",
+                    "fixture_sha256": "22".repeat(32)
+                },
+                "regions": [{
+                    "id": "region-1",
+                    "kind": "icon",
+                    "bounds": {"x": 0, "y": 0, "width": 1, "height": 1},
+                    "label": "fixture",
+                    "confidence": 0.9
+                }]
+            }),
+            4,
+        )
+        .unwrap();
+        assert_eq!(output.schema, VISUAL_REGIONS_SCHEMA);
+        assert_eq!(output.capture.capture_id, "local_png_fixture");
+        assert_eq!(output.regions.len(), 1);
     }
 
     #[tokio::test]
@@ -660,16 +734,8 @@ mod tests {
     async fn tool_maps_worker_icon_output_into_the_driver_contract() {
         use std::os::unix::fs::PermissionsExt;
 
-        #[cfg(target_os = "macos")]
-        let interpreter =
-            std::path::PathBuf::from("/Applications/Xcode.app/Contents/Developer/usr/bin/python3");
-        #[cfg(not(target_os = "macos"))]
-        let interpreter = std::env::var_os("PATH")
-            .into_iter()
-            .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
-            .map(|directory| directory.join("python3"))
-            .find(|candidate| candidate.is_file())
-            .unwrap_or_else(|| std::path::PathBuf::from("/usr/bin/python3"));
+        let python = crate::perception_client::fixture_python_config().unwrap();
+        let interpreter = python.interpreter;
 
         let service = Arc::new(CaptureService::default());
         let (capture_id, binding) = capture(&service);
@@ -707,48 +773,9 @@ else:
         let mut permissions = std::fs::metadata(&worker).unwrap().permissions();
         permissions.set_mode(0o700);
         std::fs::set_permissions(&worker, permissions).unwrap();
-        let mut additional_readable_paths: Vec<std::path::PathBuf> = [
-            "/usr",
-            "/bin",
-            "/lib",
-            "/lib64",
-            "/etc",
-            "/opt",
-            "/System",
-            "/Library",
-            "/private/var/db",
-            "/private/var/select",
-            "/Applications/Xcode.app",
-        ]
-        .into_iter()
-        .map(std::path::PathBuf::from)
-        .filter(|path| path.is_dir())
-        .collect();
-        if interpreter.starts_with("/nix/store") {
-            additional_readable_paths.push(std::path::PathBuf::from("/nix/store"));
-        }
         let containment = crate::perception_client::containment::ContainmentLimits {
-            additional_readable_paths,
-            additional_executable_paths: [
-                std::path::PathBuf::from("/usr/bin/env"),
-                std::path::PathBuf::from("/usr/bin/python3"),
-                std::path::PathBuf::from(
-                    "/Applications/Xcode.app/Contents/Developer/usr/bin/python3",
-                ),
-                std::path::PathBuf::from(
-                    "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9",
-                ),
-                std::path::PathBuf::from(
-                    "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Python3",
-                ),
-                std::path::PathBuf::from(
-                    "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python",
-                ),
-                interpreter,
-            ]
-            .into_iter()
-            .filter(|path| path.is_file())
-            .collect(),
+            additional_readable_paths: python.readable_roots,
+            additional_executable_paths: python.executable_paths,
             ..Default::default()
         };
         let client = PerceptionClient::new(

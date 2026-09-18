@@ -102,8 +102,8 @@
       "type": "object", "additionalProperties": false,
       "required": ["session_label", "input_scope", "capture_kind", "capture_source", "dimensions", "acted_capture_id_sha256", "fresh_capture_id_sha256", "capture_trace_sha256", "candidates"],
       "properties": {
-        "session_label": {"$ref": "#/$defs/safeId"}, "input_scope": {"const": "window"},
-        "capture_kind": {"const": "get_window_state"}, "capture_source": {"const": "driver-screenshot"},
+        "session_label": {"$ref": "#/$defs/safeId"}, "input_scope": {"enum": ["window", "desktop"]},
+        "capture_kind": {"enum": ["get_window_state", "get_desktop_state"]}, "capture_source": {"const": "driver-screenshot"},
         "dimensions": {"$ref": "#/$defs/dimensions"},
         "acted_capture_id_sha256": {"$ref": "#/$defs/sha256"}, "fresh_capture_id_sha256": {"$ref": "#/$defs/sha256"},
         "capture_trace_sha256": {"$ref": "#/$defs/sha256"},
@@ -131,9 +131,11 @@
       }
     },
     "result": {
-      "type": "object", "additionalProperties": false, "required": ["status", "selected_candidate", "stale_capture_refused"],
+      "type": "object", "additionalProperties": false, "required": ["status", "selected_candidate", "background_desktop_refused", "capture_preserved_after_refusal", "stale_capture_refused"],
       "properties": {
         "status": {"const": "passed"}, "selected_candidate": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$"},
+        "background_desktop_refused": {"type": ["boolean", "null"]},
+        "capture_preserved_after_refusal": {"type": ["boolean", "null"]},
         "stale_capture_refused": {"const": true}
       }
     },
@@ -171,5 +173,25 @@
         "properties": {"kind": {"const": "video"}, "path": {"const": "recording.mp4"}, "sha256": {"$ref": "#/$defs/sha256"}, "size_bytes": {"type": "integer", "minimum": 1, "maximum": 104857600}}
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "oneOf": [
+        {
+          "properties": {
+            "observation": {"properties": {"input_scope": {"const": "window"}, "capture_kind": {"const": "get_window_state"}}},
+            "environment": {"properties": {"delivery_mode": {"const": "background"}}},
+            "result": {"properties": {"background_desktop_refused": {"const": null}, "capture_preserved_after_refusal": {"const": null}}}
+          }
+        },
+        {
+          "properties": {
+            "observation": {"properties": {"input_scope": {"const": "desktop"}, "capture_kind": {"const": "get_desktop_state"}}},
+            "environment": {"properties": {"delivery_mode": {"const": "foreground"}}},
+            "result": {"properties": {"background_desktop_refused": {"const": true}, "capture_preserved_after_refusal": {"const": true}}}
+          }
+        }
+      ]
+    }
+  ]
 }

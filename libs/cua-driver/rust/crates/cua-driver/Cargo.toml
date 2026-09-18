@@ -17,6 +17,7 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 cua-driver-core = { path = "../cua-driver-core" }
+cua-driver-contract = { path = "../cua-driver-contract" }
 cua-driver-sdk = { path = "../cua-driver-sdk" }
 cursor-overlay = { path = "../cursor-overlay" }
 pip-preview = { path = "../pip-preview" }
@@ -47,6 +48,7 @@ fs2 = { workspace = true }
 cap-std = "4.0.3"
 cap-fs-ext = "4.0.3"
 rustix = { version = "1.1", features = ["fs", "process"] }
+image = { workspace = true }
 
 # Used by crate::bundle::parent_is_not_launchd() for the TCC
 # auto-relaunch detection path on Unix (only the macOS heuristic
@@ -90,10 +92,8 @@ embed-resource = "2"
 # Shared integration-test harness (MCP/CLI transports, child reaping, paths,
 # response accessors). Dev-only — never linked into the shipped driver.
 cua-driver-testkit = { path = "../cua-driver-testkit" }
-cua-driver-contract = { path = "../cua-driver-contract" }
 jsonschema = { version = "0.46", default-features = false }
 tokio = { workspace = true, features = ["full"] }
-image = { workspace = true }
 base64 = { workspace = true }
 # Isolated HOME / cache directories for `version_check` unit tests so they
 # never touch the developer's real `~/.cua-driver/version_check.json`.

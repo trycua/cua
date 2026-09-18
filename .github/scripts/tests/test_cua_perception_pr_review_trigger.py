@@ -125,6 +125,7 @@ def test_chain_passes_exact_outputs_to_existing_protected_live_workflow() -> Non
     assert "secrets" not in candidate
     assert live["uses"] == "./.github/workflows/authorized-live-jev-use-demo.yml"
     assert live["with"] == {
+        "run_live": True,
         "source_sha": "${{ needs.resolve.outputs.source_sha }}",
         "jev_source_sha": "${{ needs.resolve.outputs.jev_source_sha }}",
         "signed_candidate_artifact_id": "${{ needs.candidate.outputs.signed_candidate_artifact_id }}",
@@ -140,10 +141,21 @@ def test_chain_passes_exact_outputs_to_existing_protected_live_workflow() -> Non
     assert live_job["environment"] == "authorized-live-jev-use-demo"
     secret_steps = [step for step in live_job["steps"] if "${{ secrets." in str(step)]
     assert len(secret_steps) == 1
-    assert secret_steps[0]["env"] == {
+    typesafe_step = next(step for step in secret_steps if "LIVE_TYPESAFE_API_KEY" in step.get("env", {}))
+    assert typesafe_step["env"] == {
         "GH_TOKEN": "${{ github.token }}",
         "LIVE_TYPESAFE_API_KEY": "${{ secrets.TYPESAFE_API_KEY }}",
     }
+    evidence_step = next(
+        step for step in live_job["steps"]
+        if "CUA_PERCEPTION_EVIDENCE_RECIPIENT" in step.get("env", {})
+    )
+    assert evidence_step["env"] == {
+        "CUA_PERCEPTION_EVIDENCE_RECIPIENT": (
+            "${{ vars.EVIDENCE_ARCHIVE_RECIPIENT_PUBLIC_KEY }}"
+        ),
+    }
+    assert "EVIDENCE_ARCHIVE_KEY" not in live_text
     assert "TYPESAFE_API_KEY" not in "\n".join(
         str(job) for name, job in live_workflow["jobs"].items() if name != "live"
     )

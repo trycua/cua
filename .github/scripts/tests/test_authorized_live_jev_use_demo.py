@@ -35,10 +35,22 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         for trigger in self.triggers.values():
             self.assertEqual(
                 set(trigger["inputs"]),
-                {"source_sha", "jev_source_sha", "signed_candidate_artifact_id", "signed_candidate_run_id"},
+                {
+                    "run_live",
+                    "source_sha",
+                    "jev_source_sha",
+                    "signed_candidate_artifact_id",
+                    "signed_candidate_run_id",
+                },
             )
             self.assertTrue(all(value["required"] for value in trigger["inputs"].values()))
+            self.assertEqual(trigger["inputs"]["run_live"]["type"], "boolean")
         source = self.jobs["source"]["steps"][0]["run"]
+        self.assertIn('[[ "$RUN_LIVE_ACKNOWLEDGED" == true ]]', source)
+        self.assertEqual(
+            self.jobs["source"]["steps"][0]["env"]["RUN_LIVE_ACKNOWLEDGED"],
+            "${{ inputs.run_live }}",
+        )
         self.assertIn("validate_pr_head 3943", source)
         self.assertIn("validate_pr_head 3916", source)
         self.assertIn('[[ "$requested" == "$head_sha" ]]', source)
@@ -128,9 +140,15 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
             live_env["CUA_PERCEPTION_EXTENSION_HOME"],
             "${{ github.workspace }}/.cua-perception-home",
         )
-        self.assertEqual(
-            live_env["CUA_PERCEPTION_EVIDENCE_DIR"],
-            "${{ github.workspace }}/.cua-perception-evidence/live",
+        self.assertNotIn("CUA_PERCEPTION_EVIDENCE_DIR", live_env)
+        configure = next(
+            step
+            for step in self.jobs["live"]["steps"]
+            if step.get("name") == "Configure temporary evidence paths"
+        )
+        self.assertIn(
+            "CUA_PERCEPTION_EVIDENCE_DIR=$(Join-Path $env:RUNNER_TEMP 'cua-perception-evidence/live')",
+            configure["run"],
         )
         self.assertFalse(any("${{ runner." in value for value in live_env.values()))
 
@@ -157,10 +175,16 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         self.assertIn("Ed25519", self.evidence_readme)
         self.assertIn("debug review-trust-root", self.evidence_readme)
 
-    def test_only_measured_binary_receives_secret_in_one_bounded_step(self):
-        secret_steps = [step for step in self.jobs["live"]["steps"] if "${{ secrets." in str(step)]
-        self.assertEqual(len(secret_steps), 1)
-        secret = secret_steps[0]
+    def test_only_measured_binary_receives_typesafe_secret_in_one_bounded_step(self):
+        secret = next(
+            step
+            for step in self.jobs["live"]["steps"]
+            if "secrets.TYPESAFE_API_KEY" in str(step)
+        )
+        self.assertEqual(
+            sum("secrets.TYPESAFE_API_KEY" in str(step) for step in self.jobs["live"]["steps"]),
+            1,
+        )
         self.assertEqual(secret["timeout-minutes"], 15)
         self.assertEqual(secret["env"], {
             "GH_TOKEN": "${{ github.token }}",
@@ -175,7 +199,11 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         self.assertIn("cua-perception-live-review", secret["run"])
         self.assertIn("Remove-Item Env:GH_TOKEN", secret["run"])
         self.assertIn(
-            "& $env:CUA_LIVE_TEST_BINARY --ignored --exact authorized_visual_only_demo",
+            "& $env:CUA_LIVE_TEST_BINARY --ignored --exact authorized_visual_only_window_demo",
+            secret["run"],
+        )
+        self.assertIn(
+            "& $env:CUA_LIVE_TEST_BINARY --ignored --exact authorized_visual_only_primary_desktop_demo",
             secret["run"],
         )
         compile_step = next(
@@ -184,7 +212,8 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
             if step.get("name", "").startswith("Compile and measure")
         )
         self.assertIn("--no-run --message-format=json", compile_step["run"])
-        self.assertIn('"authorized_visual_only_demo: test"', compile_step["run"])
+        self.assertIn('"authorized_visual_only_window_demo: test"', compile_step["run"])
+        self.assertIn('"authorized_visual_only_primary_desktop_demo: test"', compile_step["run"])
 
     def test_chooser_is_exact_fixed_and_fails_closed_when_absent(self):
         live = self.jobs["live"]
@@ -202,7 +231,7 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         self.assertIn("python/choose_action.py", setup["run"])
         self.assertIn("uv sync --frozen --project", setup["run"])
         self.assertIn("reviewed live chooser contract is unavailable", setup["run"])
-        secret = next(step for step in live["steps"] if "${{ secrets." in str(step))
+        secret = next(step for step in live["steps"] if "secrets.TYPESAFE_API_KEY" in str(step))
         self.assertIn("CUA_JEV_CHOOSER_PROGRAM", secret["run"])
         self.assertIn("CUA_JEV_CHOOSER_SCRIPT", secret["run"])
         self.assertNotIn("Invoke-Expression", self.text)
@@ -223,22 +252,36 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         )
         self.assertNotIn("CHOOSER", str(mock))
         self.assertNotIn("TYPESAFE", str(mock))
+        self.assertIn("authorized_visual_only_window_demo", mock["run"])
+        self.assertIn("authorized_visual_only_primary_desktop_demo", mock["run"])
 
-    def test_only_decoded_schema_validated_redacted_evidence_is_uploaded(self):
+    def test_only_encrypted_schema_validated_evidence_is_uploaded(self):
         uploads = [
             step for step in self.jobs["live"]["steps"] if "upload-artifact" in step.get("uses", "")
         ]
         self.assertEqual(len(uploads), 1)
-        self.assertEqual(uploads[0]["with"]["path"], "${{ runner.temp }}/publish-evidence/")
-        validate = next(
+        upload = uploads[0]
+        self.assertEqual(upload["with"]["path"], "${{ runner.temp }}/encrypted-evidence/")
+        validate_step = next(
             step
             for step in self.jobs["live"]["steps"]
             if step.get("name", "").startswith("Fully decode")
-        )["run"]
+        )
+        validate = validate_step["run"]
         self.assertIn("ffmpeg -v error -xerror", validate)
         self.assertIn("Draft202012Validator(schema).validate(manifest)", validate)
         self.assertIn(
-            'assert sorted(path.name for path in output.iterdir()) == ["manifest.json", "recording.mp4"]',
+            'assert sorted(path.name for path in destination.iterdir()) == ["manifest.json", "recording.mp4"]',
+            validate,
+        )
+        self.assertIn('"window": (evidence, "window", "get_window_state", "background")', validate)
+        self.assertIn(
+            '"primary-desktop": (evidence / "primary-desktop", "desktop", "get_desktop_state", "foreground")',
+            validate,
+        )
+        self.assertIn('destination = output / scope', validate)
+        self.assertIn(
+            'assert sorted(path.name for path in output.iterdir()) == ["primary-desktop", "window"]',
             validate,
         )
         self.assertIn('perception["signed_extension_archive_sha256"] == measured["archive_sha256"]', validate)
@@ -251,8 +294,60 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         self.assertIn('chooser["provider"] == "typesafe"', validate)
         self.assertIn('recording_value["frame_rate"]', validate)
         self.assertIn('recording_value["edit_operations"]', validate)
-        self.assertNotIn("raw-manifest.json", str(uploads[0]))
-        self.assertNotIn("timeline.json", str(uploads[0]))
+        encrypt_step = next(
+            step
+            for step in self.jobs["live"]["steps"]
+            if step.get("name") == "Encrypt the validated evidence bundles"
+        )
+        self.assertEqual(
+            encrypt_step["env"],
+            {
+                "CUA_PERCEPTION_EVIDENCE_RECIPIENT": (
+                    "${{ vars.EVIDENCE_ARCHIVE_RECIPIENT_PUBLIC_KEY }}"
+                )
+            },
+        )
+        self.assertEqual(
+            sum(
+                "vars.EVIDENCE_ARCHIVE_RECIPIENT_PUBLIC_KEY" in str(step)
+                for step in self.jobs["live"]["steps"]
+            ),
+            1,
+        )
+        self.assertNotIn("EVIDENCE_ARCHIVE_KEY", self.text)
+        self.assertNotIn("private-key", self.text)
+        self.assertIn("evidence_envelope.py encrypt", encrypt_step["run"])
+        self.assertIn(
+            "--recipient-env CUA_PERCEPTION_EVIDENCE_RECIPIENT", encrypt_step["run"]
+        )
+        self.assertIn(
+            "^recipient_public_key_sha256=[0-9a-f]{64}$", encrypt_step["run"]
+        )
+        self.assertIn('Write-Host "$scope $fingerprint"', encrypt_step["run"])
+        self.assertIn(
+            "Remove-Item Env:CUA_PERCEPTION_EVIDENCE_RECIPIENT", encrypt_step["run"]
+        )
+        self.assertIn(
+            '== ["primary-desktop.cuae", "window.cuae"]', encrypt_step["run"]
+        )
+        self.assertNotIn("CUA_PERCEPTION_EVIDENCE_RECIPIENT", validate)
+        steps = self.jobs["live"]["steps"]
+        cleanup = next(
+            step
+            for step in steps
+            if step.get("name") == "Remove plaintext evidence from the runner"
+        )
+        self.assertLess(steps.index(validate_step), steps.index(encrypt_step))
+        self.assertLess(steps.index(encrypt_step), steps.index(upload))
+        self.assertLess(steps.index(upload), steps.index(cleanup))
+        self.assertEqual(cleanup["if"], "always()")
+        for directory in ("cua-perception-evidence", "perception-evidence", "publish-evidence"):
+            self.assertIn(f'"{directory}"', cleanup["run"])
+        self.assertNotIn("publish-evidence", str(upload))
+        self.assertNotIn("manifest.json", str(upload))
+        self.assertNotIn("recording.mp4", str(upload))
+        self.assertNotIn("raw-manifest.json", str(upload))
+        self.assertNotIn("timeline.json", str(upload))
 
     def test_all_actions_are_full_sha_pinned(self):
         uses = re.findall(r"^\s*-?\s*uses:\s*([^\s#]+)", self.text, re.MULTILINE)

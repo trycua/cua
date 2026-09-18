@@ -384,8 +384,22 @@ def build_manifest(
         or chooser_record["response"] != chooser
     ):
         raise ValueError("raw evidence chooser result differs from the measured chooser result")
-    if raw.get("verification") != {"oracle": "passed", "stale_capture_refused": True}:
-        raise ValueError("raw evidence does not prove the fixture result and stale-capture refusal")
+    is_desktop = raw.get("observation", {}).get("input_scope") == "desktop"
+    expected_route_proof = True if is_desktop else None
+    expected_verification = {
+        "oracle": "passed",
+        "background_desktop_refused": expected_route_proof,
+        "capture_preserved_after_refusal": expected_route_proof,
+        "stale_capture_refused": True,
+    }
+    if raw.get("verification") != expected_verification:
+        raise ValueError(
+            "raw evidence does not prove the fixture result, desktop/background refusal, "
+            "capture preservation, and stale-capture refusal"
+        )
+    background_event = (
+        "background_desktop_refused" if is_desktop else "background_refusal_not_applicable"
+    )
     timeline = raw.get("timeline")
     if (
         not isinstance(timeline, dict)
@@ -393,7 +407,7 @@ def build_manifest(
         or type(timeline["duration_ms"]) is not int
         or timeline["duration_ms"] <= 0
         or timeline["events"] != [
-            "observed", "parsed", "chosen", "clicked", "oracle_verified",
+            "observed", "parsed", "chosen", background_event, "clicked", "oracle_verified",
             "stale_capture_refused", "reobserved",
         ]
     ):
@@ -427,7 +441,16 @@ def build_manifest(
     for field in ("input_scope", "capture_kind", "capture_source", "desktop_session", "runner_identity_class", "delivery_mode"):
         if not isinstance(observation[field], str) or not SAFE_ID.fullmatch(observation[field]):
             raise ValueError(f"raw evidence contains invalid observation {field}")
-    if observation["input_scope"] != "window" or observation["capture_kind"] != "get_window_state" or observation["capture_source"] != "driver-screenshot" or observation["delivery_mode"] != "background":
+    accepted_routes = {
+        ("window", "get_window_state", "background"),
+        ("desktop", "get_desktop_state", "foreground"),
+    }
+    route = (
+        observation["input_scope"],
+        observation["capture_kind"],
+        observation["delivery_mode"],
+    )
+    if route not in accepted_routes or observation["capture_source"] != "driver-screenshot":
         raise ValueError("raw evidence observation context differs from the executed demo")
     if any(type(observation[field]) is not int or observation[field] <= 0 for field in ("width", "height")):
         raise ValueError("raw evidence contains invalid capture dimensions")
@@ -542,6 +565,8 @@ def build_manifest(
         "result": {
             "status": "passed",
             "selected_candidate": chooser["selected_id"],
+            "background_desktop_refused": raw["verification"]["background_desktop_refused"],
+            "capture_preserved_after_refusal": raw["verification"]["capture_preserved_after_refusal"],
             "stale_capture_refused": True,
         },
         "recording": {

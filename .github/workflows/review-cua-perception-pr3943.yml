@@ -82,6 +82,7 @@ jobs:
     needs: [resolve, candidate]
     uses: ./.github/workflows/authorized-live-jev-use-demo.yml
     with:
+      run_live: true
       source_sha: ${{ needs.resolve.outputs.source_sha }}
       jev_source_sha: ${{ needs.resolve.outputs.jev_source_sha }}
       signed_candidate_artifact_id: ${{ needs.candidate.outputs.signed_candidate_artifact_id }}

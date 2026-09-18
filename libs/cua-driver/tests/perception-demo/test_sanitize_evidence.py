@@ -145,9 +145,15 @@ class EvidenceSanitizerTests(unittest.TestCase):
             "extension_status": json.loads(extension_status.read_text()),
             "parser": {"model_id": "cua-perception/demo-v1"},
             "resolved_action": {"candidate_id": "region:send", "x": 394.0, "y": 270.0},
-            "verification": {"oracle": "passed", "stale_capture_refused": True},
+            "verification": {
+                "oracle": "passed",
+                "background_desktop_refused": None,
+                "capture_preserved_after_refusal": None,
+                "stale_capture_refused": True,
+            },
             "timeline": {"duration_ms": 1250, "events": [
-                "observed", "parsed", "chosen", "clicked", "oracle_verified",
+                "observed", "parsed", "chosen", "background_refusal_not_applicable",
+                "clicked", "oracle_verified",
                 "stale_capture_refused", "reobserved",
             ]},
             "recording": {"local_path": "/private/recording.mp4",
@@ -217,8 +223,36 @@ class EvidenceSanitizerTests(unittest.TestCase):
         self.assertEqual(manifest["recording"]["original_dimensions"], {"width": 1920, "height": 1080})
         self.assertEqual(manifest["recording"]["frame_rate"], {"numerator": 30, "denominator": 1})
         self.assertEqual(manifest["result"]["selected_candidate"], "region:send")
+        self.assertIsNone(manifest["result"]["background_desktop_refused"])
+        self.assertIsNone(manifest["result"]["capture_preserved_after_refusal"])
         self.assertNotIn("capture_ids", json.dumps(manifest))
         self.assertNotIn("coordinates", json.dumps(manifest))
+
+    def test_primary_desktop_observation_is_a_closed_foreground_route(self):
+        inputs = self.inputs()
+        raw = json.loads(inputs["raw_evidence"].read_text())
+        raw["observation"].update({
+            "input_scope": "desktop",
+            "capture_kind": "get_desktop_state",
+            "delivery_mode": "foreground",
+        })
+        raw["verification"].update({
+            "background_desktop_refused": True,
+            "capture_preserved_after_refusal": True,
+        })
+        raw["timeline"]["events"][3] = "background_desktop_refused"
+        inputs["raw_evidence"].write_text(json.dumps(raw))
+        manifest = sanitizer.build_manifest(**inputs)
+        self.assertEqual(manifest["observation"]["input_scope"], "desktop")
+        self.assertEqual(manifest["observation"]["capture_kind"], "get_desktop_state")
+        self.assertEqual(manifest["environment"]["delivery_mode"], "foreground")
+        self.assertTrue(manifest["result"]["background_desktop_refused"])
+        self.assertTrue(manifest["result"]["capture_preserved_after_refusal"])
+
+        raw["observation"]["delivery_mode"] = "background"
+        inputs["raw_evidence"].write_text(json.dumps(raw))
+        with self.assertRaisesRegex(ValueError, "observation context"):
+            sanitizer.build_manifest(**inputs)
 
     def test_rejects_unverified_or_unhealthy_installed_state(self):
         inputs = self.inputs()
@@ -339,6 +373,62 @@ class EvidenceSanitizerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "stale-capture refusal"):
             sanitizer.build_manifest(**inputs)
 
+    def test_rejects_desktop_evidence_without_background_refusal_and_capture_preservation(self):
+        inputs = self.inputs()
+        raw = json.loads(inputs["raw_evidence"].read_text())
+        raw["observation"].update({
+            "input_scope": "desktop",
+            "capture_kind": "get_desktop_state",
+            "delivery_mode": "foreground",
+        })
+        raw["timeline"]["events"][3] = "background_desktop_refused"
+        inputs["raw_evidence"].write_text(json.dumps(raw))
+        with self.assertRaisesRegex(ValueError, "desktop/background refusal"):
+            sanitizer.build_manifest(**inputs)
+
+        inputs = self.inputs()
+        raw = json.loads(inputs["raw_evidence"].read_text())
+        raw["observation"].update({
+            "input_scope": "desktop",
+            "capture_kind": "get_desktop_state",
+            "delivery_mode": "foreground",
+        })
+        raw["verification"].update({
+            "background_desktop_refused": True,
+            "capture_preserved_after_refusal": False,
+        })
+        raw["timeline"]["events"][3] = "background_desktop_refused"
+        inputs["raw_evidence"].write_text(json.dumps(raw))
+        with self.assertRaisesRegex(ValueError, "capture preservation"):
+            sanitizer.build_manifest(**inputs)
+
+        inputs = self.inputs()
+        raw = json.loads(inputs["raw_evidence"].read_text())
+        raw["observation"].update({
+            "input_scope": "desktop",
+            "capture_kind": "get_desktop_state",
+            "delivery_mode": "foreground",
+        })
+        raw["verification"].update({
+            "background_desktop_refused": False,
+            "capture_preserved_after_refusal": True,
+        })
+        raw["timeline"]["events"][3] = "background_desktop_refused"
+        inputs["raw_evidence"].write_text(json.dumps(raw))
+        with self.assertRaisesRegex(ValueError, "desktop/background refusal"):
+            sanitizer.build_manifest(**inputs)
+
+    def test_rejects_boolean_proof_for_window_route(self):
+        inputs = self.inputs()
+        raw = json.loads(inputs["raw_evidence"].read_text())
+        raw["verification"].update({
+            "background_desktop_refused": False,
+            "capture_preserved_after_refusal": False,
+        })
+        inputs["raw_evidence"].write_text(json.dumps(raw))
+        with self.assertRaisesRegex(ValueError, "desktop/background refusal"):
+            sanitizer.build_manifest(**inputs)
+
     def test_rejects_raw_source_or_measured_result_mismatch(self):
         inputs = self.inputs()
         raw = json.loads(inputs["raw_evidence"].read_text())
@@ -373,6 +463,7 @@ class EvidenceSanitizerTests(unittest.TestCase):
         schema = json.loads((HERE / "evidence-manifest.schema.json").read_text())
         perception = schema["properties"]["runtime"]["properties"]["perception"]
         chooser = schema["properties"]["runtime"]["properties"]["chooser"]
+        result = schema["properties"]["result"]
         self.assertFalse(schema["additionalProperties"])
         self.assertFalse(perception["additionalProperties"])
         self.assertEqual(perception["properties"]["signature_algorithm"]["const"], "ed25519")
@@ -382,6 +473,7 @@ class EvidenceSanitizerTests(unittest.TestCase):
         self.assertIn("signed_catalog_sha256", perception["required"])
         self.assertIn("driver", schema["properties"]["runtime"]["required"])
         self.assertFalse(chooser["additionalProperties"])
+        self.assertFalse(result["additionalProperties"])
         self.assertEqual(chooser["properties"]["provider"]["enum"], ["fixture", "typesafe"])
         self.assertIn("null", chooser["properties"]["model_id"]["type"])
         self.assertIn("worker_sha256", perception["required"])
@@ -396,6 +488,12 @@ class EvidenceSanitizerTests(unittest.TestCase):
         self.assertIn("observation", schema["required"])
         self.assertIn("environment", schema["required"])
         self.assertIn("recording", schema["required"])
+        self.assertEqual(len(schema["allOf"][0]["oneOf"]), 2)
+        window_route, desktop_route = schema["allOf"][0]["oneOf"]
+        self.assertIsNone(window_route["properties"]["result"]["properties"]["background_desktop_refused"]["const"])
+        self.assertIsNone(window_route["properties"]["result"]["properties"]["capture_preserved_after_refusal"]["const"])
+        self.assertTrue(desktop_route["properties"]["result"]["properties"]["background_desktop_refused"]["const"])
+        self.assertTrue(desktop_route["properties"]["result"]["properties"]["capture_preserved_after_refusal"]["const"])
 
 
 if __name__ == "__main__":

@@ -119,6 +119,21 @@ Modality is chosen at **action time**, by how you address the target:
 - **element px action** — `x,y` → pixel rung, read straight off the screenshot
   already in the `get_window_state` response. Best-effort; caller-confirmed.
 
+**What is open over the window.** `get_window_state` lists the pid's transient
+dialogs (`dialogs: [{window_id, title, transient_for, modal, bounds}]`) and
+override-redirect popups (`popups: [...]`) that are mapped, with a `follow_up`
+sentence naming the call that targets each one
+(`get_window_state(pid, window_id=<that id>)`). When one overlaps the window
+the screenshot is taken from the screen (`screenshot_composited:true`) so the
+menu or dialog is visible; the window's own drawable never shows them. The
+payload states its frame (`coordinate_frame:"window"`, `frame_note`): `x`/`y`
+of the pointer tools are pixels of THIS screenshot. Closed menus are listed
+with a `description` ("closed menu with N items…") and are not walked —
+click the menu (a real press) and read the popup by its window_id.
+`press_key` / `hotkey` that map a new top-level report it as `window_opened`
+with `window_change` evidence. Action results carry the same text as
+`summary` inside `structuredContent`, for clients that only show that.
+
 `get_window_state` returning `degraded:true` (empty AT-SPI walk) is the cue to
 do an **element px action** off that same screenshot (X11) or escalate to
 `delivery_mode:"foreground"` when authorized (standard Wayland has no general

@@ -204,7 +204,7 @@ jobs:
           WORKER: ${{ matrix.worker }}
         run: |
           set -euo pipefail
-          version="$(tr -d '[:space:]' < .github/releases/cua-perception/VERSION)"
+          version="$(tr -d '[:space:]' < libs/cua-driver/rust/crates/cua-perception/VERSION)"
           python3 libs/cua-driver/rust/crates/cua-perception/scripts/assemble_bundle.py \
             --target "$TARGET" \
             --worker "libs/cua-driver/rust/target/release/$WORKER" \

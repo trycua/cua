@@ -71,6 +71,7 @@ NOREPLY_RE = re.compile(
 )
 RELEASING_TYPES = {"feat", "fix", "perf", "revert"}
 PERCEPTION_OWNED_PATHS = (
+    ".github/releases/cua-perception",
     "libs/cua-driver/rust/crates/cua-perception",
     "libs/cua-driver/experiments/cua-perception-inference",
 )

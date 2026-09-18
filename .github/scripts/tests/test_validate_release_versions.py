@@ -45,6 +45,58 @@ def test_sandbox_product_cli_accepts_current_versions():
     assert main(["--repo-root", str(REPO_ROOT), "--product", "sandbox"]) == 0
 
 
+def test_perception_product_cli_accepts_current_versions():
+    assert main(["--repo-root", str(REPO_ROOT), "--product", "perception"]) == 0
+
+
+@pytest.mark.parametrize("product", ["perception", "all"])
+def test_perception_versions_use_independent_authority(tmp_path: Path, product: str):
+    copy_release_sources(tmp_path)
+    base = tmp_path / "libs/cua-driver/rust/crates/cua-perception"
+    (base / "VERSION").write_text("0.1.0\n")
+
+    validate(tmp_path, product)
+
+
+@pytest.mark.parametrize("product", ["perception", "all"])
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("VERSION", "Cua Perception expects 9.9.9"),
+        ("Cargo.toml", "Cargo.toml=9.9.9"),
+        ("Cargo.lock", "Cargo.lock:cua-perception=9.9.9"),
+        (".release-please-manifest.json", ".release-please-manifest.json=9.9.9"),
+    ],
+)
+def test_perception_version_drift_fails(
+    tmp_path: Path, product: str, source: str, expected: str
+):
+    copy_release_sources(tmp_path)
+    base = tmp_path / "libs/cua-driver/rust/crates/cua-perception"
+    (base / "VERSION").write_text("0.1.0\n")
+    if source == ".release-please-manifest.json":
+        path = tmp_path / source
+        manifest = json.loads(path.read_text())
+        manifest["libs/cua-driver/rust/crates/cua-perception"] = "9.9.9"
+        path.write_text(json.dumps(manifest))
+    elif source == "Cargo.lock":
+        path = tmp_path / "libs/cua-driver/rust/Cargo.lock"
+        path.write_text(
+            re.sub(
+                r'(\[\[package\]\]\nname = "cua-perception"\nversion = ")0\.1\.0("\n)',
+                r"\g<1>9.9.9\2",
+                path.read_text(),
+                count=1,
+            )
+        )
+    else:
+        path = base / source
+        path.write_text(path.read_text().replace("0.1.0", "9.9.9", 1))
+
+    with pytest.raises(VersionError, match=re.escape(expected)):
+        validate(tmp_path, product)
+
+
 @pytest.mark.parametrize("product", ["sandbox", "all"])
 @pytest.mark.parametrize(
     "source",

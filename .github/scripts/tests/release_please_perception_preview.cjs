@@ -5,39 +5,55 @@ const path = require('node:path');
 const { buildStrategy } = require('release-please/build/src/factory');
 const { parseConventionalCommits } = require('release-please/build/src/commit');
 const { CommitExclude } = require('release-please/build/src/util/commit-exclude');
+const { CommitSplit } = require('release-please/build/src/util/commit-split');
 const { TagName } = require('release-please/build/src/util/tag-name');
 
 const root = path.resolve(__dirname, '../../..');
 const config = JSON.parse(fs.readFileSync(path.join(root, 'release-please-config.json')));
 const manifest = JSON.parse(fs.readFileSync(path.join(root, '.release-please-manifest.json')));
-const perceptionPath = '.github/releases/cua-perception';
+const perceptionPath = 'libs/cua-driver/rust/crates/cua-perception';
 const driverPath = 'libs/cua-driver';
 const perceptionConfig = config.packages[perceptionPath];
-const driverConfig = config.packages[driverPath];
-const commitExclude = new CommitExclude({
-  [perceptionPath]: { includePaths: perceptionConfig['include-paths'] },
-  [driverPath]: { excludePaths: driverConfig['exclude-paths'] },
-});
+const releaseConfigs = Object.fromEntries(Object.entries(config.packages).map(
+  ([packagePath, packageConfig]) => [packagePath, {
+    excludePaths: packageConfig['exclude-paths'],
+  }],
+));
+const commitSplit = new CommitSplit({packagePaths: Object.keys(config.packages)});
+const commitExclude = new CommitExclude(releaseConfigs);
 
-function commit(message, files) {
-  return { sha: 'a'.repeat(40), message, files };
+function commit(message, files, shaByte) {
+  return { sha: shaByte.repeat(40), message, files };
 }
 
 async function main() {
   const workerCommit = commit('feat(cua-perception): add offline visual parsing', [
     'libs/cua-driver/rust/crates/cua-perception/src/main.rs',
-  ]);
-  const filtered = commitExclude.excludeCommits({
-    [perceptionPath]: [workerCommit],
-    [driverPath]: [workerCommit],
-  });
-  assert.equal(filtered[perceptionPath].length, 1);
-  assert.deepEqual(filtered[driverPath], []);
+  ], 'a');
+  const lumeCommit = commit('feat(lume): add guest support', [
+    'libs/lume/Sources/LumeCLI/main.swift',
+  ], 'b');
+  const driverCommit = commit('feat(cua-driver): add input support', [
+    'libs/cua-driver/rust/crates/cua-driver/src/main.rs',
+  ], 'c');
+  const topLevelCommit = commit('docs: refresh repository readme', ['README.md'], 'd');
+  const filtered = commitExclude.excludeCommits(commitSplit.split([
+    workerCommit,
+    lumeCommit,
+    driverCommit,
+    topLevelCommit,
+  ]));
+  assert.deepEqual(filtered[perceptionPath], [workerCommit]);
+  assert.deepEqual(filtered[driverPath], [driverCommit]);
+  assert.equal(filtered[perceptionPath].includes(lumeCommit), false);
+  assert.equal(filtered[perceptionPath].includes(driverCommit), false);
+  assert.equal(filtered[perceptionPath].includes(topLevelCommit), false);
+
   const exampleOnly = commit('docs(cua-driver): update example', [
     'libs/cua-driver/examples/agent-sdks/README.md',
-  ]);
+  ], 'e');
   assert.deepEqual(
-    commitExclude.excludeCommits({ [driverPath]: [exampleOnly] })[driverPath],
+    commitExclude.excludeCommits(commitSplit.split([exampleOnly]))[driverPath],
     [],
   );
 
@@ -55,24 +71,36 @@ async function main() {
     parseConventionalCommits(filtered[perceptionPath]),
     {
       tag: TagName.parse(`cua-perception-v${manifest[perceptionPath]}`),
-      sha: 'b'.repeat(40),
+      sha: 'f'.repeat(40),
       notes: '',
     },
   );
   assert.notEqual(release, undefined);
   assert.equal(release.version.toString(), '0.2.0');
   assert.equal(perceptionConfig['skip-github-release'], true);
+  assert.equal(perceptionConfig.component, 'cua-perception');
+  assert.equal(perceptionConfig['version-file'], 'VERSION');
+  assert.equal(perceptionConfig['changelog-path'], 'CHANGELOG.md');
+  assert.deepEqual(
+    release.updates.map(update => update.path).sort(),
+    [
+      'libs/cua-driver/rust/crates/cua-perception/CHANGELOG.md',
+      'libs/cua-driver/rust/crates/cua-perception/Cargo.toml',
+      'libs/cua-driver/rust/crates/cua-perception/VERSION',
+    ].sort(),
+  );
+  assert.equal(release.updates.some(update => update.path.includes('..')), false);
 
-  const protocolFiles = [
+  const sharedCargoCommit = commit('feat(cua-perception): update protocol', [
     'libs/cua-driver/rust/crates/cua-perception/src/main.rs',
     'libs/cua-driver/rust/Cargo.toml',
     'libs/cua-driver/rust/Cargo.lock',
-  ];
-  const sharedCargoCommit = commit('feat(cua-perception): update protocol', protocolFiles);
-  const driverShared = commitExclude.excludeCommits({ [driverPath]: [sharedCargoCommit] });
-  assert.equal(driverShared[driverPath].length, 1);
+  ], '1');
+  const shared = commitExclude.excludeCommits(commitSplit.split([sharedCargoCommit]));
+  assert.equal(shared[driverPath].length, 1);
+  assert.equal(shared[perceptionPath].length, 1);
 
-  console.log('release-please 17.3.0 opens Perception version PRs without publishing releases');
+  console.log('release-please 17.3.0 scopes Perception and stages only crate-local updates');
 }
 
 main().catch(error => { console.error(error); process.exitCode = 1; });

@@ -27,6 +27,7 @@ except ImportError:  # Release packaging intentionally has no network-installed 
 
 ROOT = Path(__file__).resolve().parents[2]
 CONTROL = ROOT / ".github/releases/cua-perception"
+VERSION_AUTHORITY = ROOT / "libs/cua-driver/rust/crates/cua-perception/VERSION"
 SEMVER_RE = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 TARGET_RE = re.compile(r"^[a-z0-9_+.]+(?:-[a-z0-9_+.]+)+$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -107,7 +108,7 @@ def load_and_validate_manifest(manifest_path: Path, payload_root: Path) -> dict[
         raise CandidateError("candidate manifest identity or schema version is invalid")
     if not re.fullmatch(r"[0-9a-f]{40}", str(manifest["sourceSha"])):
         raise CandidateError("candidate sourceSha must be an exact lowercase commit SHA")
-    authority = (CONTROL / "VERSION").read_text(encoding="utf-8").strip()
+    authority = VERSION_AUTHORITY.read_text(encoding="utf-8").strip()
     if manifest["version"] != authority:
         raise CandidateError(
             f"candidate version {manifest['version']} differs from release authority {authority}"

@@ -104,10 +104,7 @@ jobs:
           python3 .github/scripts/release_attribution.py "${ARGS[@]}"
 
       - name: Validate checked-in release versions
-        run: |
-          python3 .github/scripts/validate_release_versions.py --product all
-          test "$(tr -d '[:space:]' < .github/releases/cua-perception/VERSION)" = \
-            "$(jq -r '.[\".github/releases/cua-perception\"]' .release-please-manifest.json)"
+        run: python3 .github/scripts/validate_release_versions.py --product all
 
       - name: Preflight trusted Release Please attribution
         if: >-
@@ -121,8 +118,8 @@ jobs:
         run: |
           set -euo pipefail
           CHANGED=$(git diff --name-only "$BASE_SHA...$HEAD_SHA")
-          if grep -qx '.github/releases/cua-perception/VERSION' <<<"$CHANGED"; then
-            VERSION=$(tr -d '[:space:]' < .github/releases/cua-perception/VERSION)
+          if grep -qx 'libs/cua-driver/rust/crates/cua-perception/VERSION' <<<"$CHANGED"; then
+            VERSION=$(tr -d '[:space:]' < libs/cua-driver/rust/crates/cua-perception/VERSION)
             python3 .github/scripts/release_attribution.py collect \
               --repository "${{ github.repository }}" \
               --product cua-perception \
@@ -133,8 +130,7 @@ jobs:
               --ref "$HEAD_SHA" \
               --sha "$HEAD_SHA" \
               --path libs/cua-driver/rust/crates/cua-perception \
-              --path .github/releases/cua-perception \
-              --changelog .github/releases/cua-perception/CHANGELOG.md \
+              --changelog libs/cua-driver/rust/crates/cua-perception/CHANGELOG.md \
               --output /tmp/cua-perception-release-manifest.json
           fi
           if grep -qx 'libs/cua-driver/rust/VERSION' <<<"$CHANGED"; then

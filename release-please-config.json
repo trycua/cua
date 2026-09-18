@@ -6,7 +6,7 @@
   "draft": true,
   "force-tag-creation": true,
   "packages": {
-    ".github/releases/cua-perception": {
+    "libs/cua-driver/rust/crates/cua-perception": {
       "release-type": "simple",
       "component": "cua-perception",
       "package-name": "cua-perception",
@@ -17,13 +17,9 @@
       "extra-files": [
         {
           "type": "toml",
-          "path": "../../../libs/cua-driver/rust/crates/cua-perception/Cargo.toml",
+          "path": "Cargo.toml",
           "jsonpath": "$.package.version"
         }
-      ],
-      "include-paths": [
-        "libs/cua-driver/rust/crates/cua-perception",
-        ".github/releases/cua-perception"
       ]
     },
     "libs/cua-driver": {

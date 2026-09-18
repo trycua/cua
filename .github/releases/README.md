@@ -8,11 +8,15 @@ those remain owned by each component workflow.
 
 ## cua-perception candidates
 
-`cua-perception` has an independent release-control version and changelog in
-`.github/releases/cua-perception`. Release Please may open version PRs for that
-component, but `skip-github-release` keeps the stream candidate-only: it does not
-create tags or GitHub releases. The reserved stable tag grammar remains
-`cua-perception-v<semver>` for a separately reviewed publication route.
+`cua-perception` has an independent version and changelog beside its Rust crate
+in `libs/cua-driver/rust/crates/cua-perception`. Keeping the Release Please root
+at that crate scopes its commits without unsupported path traversal. The
+`.github/releases/cua-perception` directory remains the authority for schemas,
+trust, and candidate controls. Release Please may open version PRs for the
+component, while `skip-github-release` keeps the stream candidate-only and does
+not create GitHub releases. The workflow creates an idempotent lightweight
+`cua-perception-v<semver>` git tag on the exact main commit carrying each version
+so later candidate changelogs have an immutable range anchor.
 
 The candidate workflow accepts prebuilt payloads. It does not download model
 weights or compile product code. Every supplied worker, runtime, model, notice,

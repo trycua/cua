@@ -15,6 +15,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
 CONTROL = ROOT / ".github/releases/cua-perception"
+VERSION_AUTHORITY = ROOT / "libs/cua-driver/rust/crates/cua-perception/VERSION"
 SPEC = importlib.util.spec_from_file_location(
     "perception_release", ROOT / ".github/scripts/perception_release.py"
 )
@@ -126,7 +127,7 @@ esac
             "target": target["triple"],
             "protocolVersion": 1,
             "extensionId": "cua-perception",
-            "extensionVersion": (CONTROL / "VERSION").read_text().strip(),
+            "extensionVersion": VERSION_AUTHORITY.read_text().strip(),
             "workerSha256": worker_hash,
             "runtimeSha256": runtime_hash,
         }
@@ -195,7 +196,7 @@ esac
         "$schema": "artifact-manifest.schema.json",
         "schemaVersion": 1,
         "component": "cua-perception",
-        "version": (CONTROL / "VERSION").read_text().strip(),
+        "version": VERSION_AUTHORITY.read_text().strip(),
         "driverVersion": ">=0.28.2",
         "sourceSha": "a" * 40,
         "target": target,
@@ -549,11 +550,29 @@ def test_release_stream_is_candidate_only_and_driver_remains_excluded() -> None:
     config = json.loads((ROOT / "release-please-config.json").read_text())
     manifest = json.loads((ROOT / ".release-please-manifest.json").read_text())
     registry = json.loads((ROOT / ".github/releases/components.json").read_text())
-    path = ".github/releases/cua-perception"
+    path = "libs/cua-driver/rust/crates/cua-perception"
     assert config["packages"][path]["skip-github-release"] is True
-    assert manifest[path] == (CONTROL / "VERSION").read_text().strip()
+    assert config["packages"][path]["component"] == "cua-perception"
+    assert config["packages"][path]["version-file"] == "VERSION"
+    assert config["packages"][path]["changelog-path"] == "CHANGELOG.md"
+    assert config["packages"][path]["extra-files"] == [{
+        "type": "toml",
+        "path": "Cargo.toml",
+        "jsonpath": "$.package.version",
+    }]
+    assert "include-paths" not in config["packages"][path]
+    assert manifest[path] == (ROOT / path / "VERSION").read_text().strip()
+    assert registry["components"]["cua-perception"]["releasePleasePath"] == path
     assert registry["components"]["cua-perception"]["candidateOnly"] is True
     assert "libs/cua-driver/rust/crates/cua-perception" in registry["components"]["cua-driver-rs"]["changeDetectionExcludePaths"]
+    assert registry["components"]["cua-perception"]["versionAuthorityFile"] == (
+        "libs/cua-driver/rust/crates/cua-perception/VERSION"
+    )
+    assert registry["components"]["cua-perception"]["changelog"] == (
+        "libs/cua-driver/rust/crates/cua-perception/CHANGELOG.md"
+    )
+    assert not (CONTROL / "VERSION").exists()
+    assert not (CONTROL / "CHANGELOG.md").exists()
 
 
 def test_workflows_are_valid_and_candidate_workflow_cannot_publish() -> None:

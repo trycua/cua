@@ -10,12 +10,12 @@
   ],
   "components": {
     "cua-perception": {
-      "releasePleasePath": ".github/releases/cua-perception",
+      "releasePleasePath": "libs/cua-driver/rust/crates/cua-perception",
       "displayName": "Cua Perception",
       "stableTagPrefix": "cua-perception-v",
       "nightlyTagPrefix": "nightly-cua-perception-v",
-      "versionAuthorityFile": ".github/releases/cua-perception/VERSION",
-      "changelog": ".github/releases/cua-perception/CHANGELOG.md",
+      "versionAuthorityFile": "libs/cua-driver/rust/crates/cua-perception/VERSION",
+      "changelog": "libs/cua-driver/rust/crates/cua-perception/CHANGELOG.md",
       "builderWorkflow": ".github/workflows/cd-cua-perception-candidate.yml",
       "changeDetectionPaths": [
         "libs/cua-driver/rust/crates/cua-perception",
@@ -26,7 +26,7 @@
       "buildVersionSites": [
         {
           "kind": "plain",
-          "path": ".github/releases/cua-perception/VERSION"
+          "path": "libs/cua-driver/rust/crates/cua-perception/VERSION"
         }
       ],
       "candidateOnly": true,

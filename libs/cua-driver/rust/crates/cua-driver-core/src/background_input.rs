@@ -249,7 +249,21 @@ pub fn decide_background_input(
                 Some("get_window_state"),
             );
         }
-        ElementAncestry::Unproven | ElementAncestry::ProvenAppMenu => {
+        ElementAncestry::ProvenAppMenu => {
+            return refuse(
+                refusal_codes::ELEMENT_OUTSIDE_TARGET_WINDOW,
+                format!(
+                    "this element belongs to pid {}'s own menu bar, which is \
+                     process-scoped and has no window ancestry by construction; a \
+                     window-stamped pointer event or a process-scoped keystroke would \
+                     land somewhere other than the menu row that was addressed. A \
+                     semantic action on the row itself is exactly addressed",
+                    target.pid
+                ),
+                Some("accessibility"),
+            );
+        }
+        ElementAncestry::Unproven => {
             return refuse(
                 refusal_codes::ELEMENT_OUTSIDE_TARGET_WINDOW,
                 format!(
@@ -714,11 +728,23 @@ mod tests {
             BackgroundAction::InsertText,
             BackgroundAction::GenericKey,
         ] {
-            assert_eq!(
-                code_of(decide_background_input(TARGET, &facts, action)),
-                refusal_codes::ELEMENT_OUTSIDE_TARGET_WINDOW,
-                "{action:?} on an application menu row"
+            let BackgroundInputDecision::Refuse(refusal) =
+                decide_background_input(TARGET, &facts, action)
+            else {
+                panic!("{action:?} on an application menu row must refuse");
+            };
+            assert_eq!(refusal.code, refusal_codes::ELEMENT_OUTSIDE_TARGET_WINDOW);
+            assert!(
+                refusal.reason.contains("pid 42's own menu bar"),
+                "{}",
+                refusal.reason
             );
+            assert!(
+                !refusal.reason.contains("could not be proven"),
+                "a proven menu row was told it was unproven: {}",
+                refusal.reason
+            );
+            assert_eq!(refusal.advice, Some("accessibility"));
         }
     }
 

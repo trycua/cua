@@ -371,6 +371,10 @@ struct Visited<'a> {
     enabled: Option<bool>,
     selected: Option<bool>,
     selectable: bool,
+    /// False when the toolkit's state set is known and lacks `Showing`: the
+    /// widget exists in the tree but is not on screen (a hidden button, a
+    /// widget on an unmapped page). Unknown state sets count as showing.
+    showing: bool,
     actions: Vec<String>,
     has_editable: bool,
     has_value: bool,
@@ -1202,6 +1206,10 @@ async fn collect_visited_bounded<'a>(
             .as_ref()
             .and_then(|state| state.as_ref().ok())
             .is_some_and(|state| state.contains(State::Selectable));
+        let showing = state_r
+            .as_ref()
+            .and_then(|state| state.as_ref().ok())
+            .is_none_or(|state| is_showing_state(state));
         let selected = if role_lower.contains("check") {
             checked
         } else if role_lower.contains("radio")
@@ -1303,6 +1311,7 @@ async fn collect_visited_bounded<'a>(
             enabled,
             selected,
             selectable,
+            showing,
             actions,
             has_editable,
             has_value,
@@ -1446,16 +1455,42 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
                 parent_at_depth[deeper] = None;
             }
             idx += 1;
-        } else if emit && !v.name.is_empty() {
+        } else if emit && !v.name.is_empty() && v.showing {
             md.push_str(&format!(
-                "{indent}- {role} = \"{name}\"\n",
+                "{indent}- {role} = \"{name}\"{marker}\n",
                 role = v.role,
                 name = v.name,
+                marker = passive_marker(&v.role, !v.actions.is_empty(), v.has_component, v.enabled),
             ));
         }
     }
 
     (md, nodes)
+}
+
+/// Why a visible, named control is listed without an index. A disabled
+/// button is rendered as `- push button = "Restore" (disabled)` so a caller
+/// learns it must enable it (select something) rather than assume the tree
+/// dropped it.
+fn passive_marker(role: &str, has_action: bool, has_component: bool, enabled: Option<bool>) -> &'static str {
+    let control = has_action
+        || (has_component
+            && matches!(
+                role.trim().to_ascii_lowercase().as_str(),
+                "button" | "push button" | "toggle button" | "menu item" | "check box" | "radio button"
+            ));
+    if control && enabled == Some(false) {
+        " (disabled)"
+    } else {
+        ""
+    }
+}
+
+/// GTK, Qt, VCL and the browser bridges publish `Showing` for a widget that
+/// is mapped on screen; a hidden widget keeps `Visible` at most. A state set
+/// that carries neither is a hidden widget, not an old bridge.
+fn is_showing_state(state: &StateSet) -> bool {
+    state.contains(State::Showing)
 }
 
 /// Format an AT-SPI numeric value like the historical `str(currentValue)`
@@ -1491,7 +1526,8 @@ fn is_enabled_state(state: &StateSet) -> bool {
 /// (`perform_action`, `set_value`, `get_element_bounds`, snapshot bounds);
 /// any divergence would desync indices between the snapshot and the operations.
 fn is_indexable(v: &Visited) -> bool {
-    is_indexable_capabilities(
+    v.showing
+        && is_indexable_capabilities(
         &v.role,
         !v.actions.is_empty(),
         v.has_editable,
@@ -5006,8 +5042,8 @@ mod coord_tests {
     use super::{
         activation_index, before_snapshot_deadline, combine_wayland_content_offsets,
         hyprland_document_top_inset, is_activation_action, is_enabled_state,
-        is_indexable_capabilities, is_passive_role, is_web_process_bus,
-        prefer_authoritative_wayland_origin, project_screen_extents, rebase_renderer_window_offset,
+        is_indexable_capabilities, is_passive_role, is_showing_state, is_web_process_bus,
+        passive_marker, prefer_authoritative_wayland_origin, project_screen_extents, rebase_renderer_window_offset,
         scoped_component_nodes, screen_extent_rebase, select_click_target, select_web_document,
         ApplicationSelection,
     };
@@ -5150,6 +5186,21 @@ mod coord_tests {
             true,
             Some(true)
         ));
+    }
+
+    #[test]
+    fn hidden_and_disabled_controls_are_not_indexed_but_are_named() {
+        // A hidden (not Showing) eject button in a sidebar row must not be
+        // indexed: a click on it changes nothing.
+        assert!(!is_showing_state(&StateSet::new(State::Enabled | State::Visible)));
+        assert!(is_showing_state(&StateSet::new(
+            State::Enabled | State::Visible | State::Showing
+        )));
+        // A visible but insensitive button keeps a marker in the markdown.
+        assert_eq!(passive_marker("push button", true, true, Some(false)), " (disabled)");
+        assert_eq!(passive_marker("push button", false, true, Some(false)), " (disabled)");
+        assert_eq!(passive_marker("push button", true, true, Some(true)), "");
+        assert_eq!(passive_marker("label", false, true, Some(false)), "");
     }
 
     #[test]

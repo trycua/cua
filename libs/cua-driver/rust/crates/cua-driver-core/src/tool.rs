@@ -5187,6 +5187,7 @@ mod capability_tests {
         "screen.capture",
         "screen.capture.window",
         "screen.capture.region",
+        "screen.capture.registry.read",
         "screen.dimensions",
         "screen.cursor.position",
         "screen.perception.visual_regions",
@@ -5234,6 +5235,7 @@ mod capability_tests {
         "recording.replay",
         "recording.install_dependency",
         "extension.install",
+        "visual.regions.parse",
         // page
         "page.action",
         // browser-tool v1

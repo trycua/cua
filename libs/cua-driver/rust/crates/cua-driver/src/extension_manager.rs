@@ -2018,7 +2018,21 @@ impl ExtensionStore {
 
     #[cfg(test)]
     fn install_archive(&self, entry: &RegistryEntry, archive: &Path) -> Result<InstalledVersion> {
-        let is_update = self.active_path(entry.id)?.is_some();
+        // Test fixtures own their store exclusively. Inspect the pointer entry
+        // directly so the helper does not acquire and immediately reacquire
+        // the mutation lock before every install. Some sandbox filesystems can
+        // transiently retain that just-released advisory lock and return
+        // EAGAIN to the second acquisition.
+        let active = self.extension_dir(entry.id).join(ACTIVE_NAME);
+        let is_update = match fs::symlink_metadata(&active) {
+            Ok(_) => true,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("inspect test activation pointer {}", active.display())
+                })
+            }
+        };
         self.install_source(
             entry,
             &InstallSource {

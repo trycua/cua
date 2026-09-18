@@ -279,11 +279,13 @@ jobs:
               path = root.joinpath(*relative.parts).resolve(); path.relative_to(root); digest = hashlib.sha256(path.read_bytes()).hexdigest()
               assert digest == files[model["path"]] == model["conversion_sha256"]
               model_paths.append(str(path)); model_hashes.append(digest)
-          assert hashlib.sha256(catalog_path.read_bytes()).hexdigest() == measured["catalog_sha256"] and model_hashes == [measured["supplied_model_sha256"]]
+          assert hashlib.sha256(catalog_path.read_bytes()).hexdigest() == measured["catalog_sha256"]
+          assert len(model_hashes) == 3 and measured["supplied_model_sha256"] in model_hashes
+          supplied_model_path = model_paths[model_hashes.index(measured["supplied_model_sha256"])]
           runner_identity = {"name": os.environ.get("ImageOS", ""), "version": os.environ.get("ImageVersion", ""), "arch": os.environ.get("RUNNER_ARCH", "")}
           assert all(runner_identity.values()), runner_identity
           with env_path.open("a") as stream:
-              stream.write(f"CUA_PERCEPTION_MODEL={model_paths[0]}\nCUA_RUNNER_OS_NAME={runner_identity['name']}\nCUA_RUNNER_OS_VERSION={runner_identity['version']}\nCUA_RUNNER_OS_ARCH={runner_identity['arch']}\n")
+              stream.write(f"CUA_PERCEPTION_MODEL={supplied_model_path}\nCUA_RUNNER_OS_NAME={runner_identity['name']}\nCUA_RUNNER_OS_VERSION={runner_identity['version']}\nCUA_RUNNER_OS_ARCH={runner_identity['arch']}\n")
           '@ | python - $inspect $status $catalog $installed $env:GITHUB_ENV $driver $measurements
           if ($LASTEXITCODE -ne 0) { throw 'candidate measurement failed' }
       - name: Install the locked reviewed chooser and resolve its interpreter
@@ -362,7 +364,7 @@ jobs:
           if (-not (Test-Path $recording -PathType Leaf) -or -not (Test-Path $manifest -PathType Leaf)) { throw 'complete live evidence was not produced' }
           ffmpeg -v error -xerror -i $recording -map 0:v:0 -f null -
           if ($LASTEXITCODE -ne 0) { throw 'recording.mp4 did not fully decode' }
-          uv pip install --system --require-hashes -r .github/releases/cua-perception/test-requirements.lock
+          uv pip install --no-config --system --require-hashes -r .github/releases/cua-perception/test-requirements.lock
           @'
           import hashlib, json, os, pathlib, shutil, sys
           from jsonschema import Draft202012Validator

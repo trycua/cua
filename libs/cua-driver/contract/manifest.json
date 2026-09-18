@@ -1575,6 +1575,27 @@
                     "null"
                   ]
                 },
+                "custom_actions": {
+                  "items": {
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "raw": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "raw"
+                    ],
+                    "type": "object"
+                  },
+                  "type": [
+                    "array",
+                    "null"
+                  ]
+                },
                 "depth": {
                   "format": "uint32",
                   "minimum": 0,

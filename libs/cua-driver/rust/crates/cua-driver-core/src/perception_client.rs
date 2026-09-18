@@ -960,10 +960,32 @@ fn fixture_python_config_from(
         .map(PathBuf::from)
         .find(|candidate| validate_fixture_path(candidate, true).is_ok())
         .ok_or_else(|| "no trusted fixture python interpreter is installed".to_owned())?;
+    let resolved_interpreter = validate_fixture_path(&interpreter, true)?;
     let readable_roots = host_python_readable_roots();
     #[cfg(target_os = "macos")]
-    let executable_paths = [
-        interpreter.clone(),
+    let executable_paths = {
+        let mut paths: Vec<_> = macos_fixture_executable_candidates(&interpreter)
+            .into_iter()
+            .filter_map(|path| validate_fixture_path(&path, true).ok())
+            .collect();
+        paths.push(resolved_interpreter);
+        paths.sort();
+        paths.dedup();
+        paths
+    };
+    #[cfg(not(target_os = "macos"))]
+    let executable_paths = vec![resolved_interpreter];
+    Ok(FixturePythonConfig {
+        interpreter,
+        readable_roots,
+        executable_paths,
+    })
+}
+
+#[cfg(all(test, unix, target_os = "macos"))]
+fn macos_fixture_executable_candidates(interpreter: &std::path::Path) -> Vec<PathBuf> {
+    vec![
+        interpreter.to_path_buf(),
         PathBuf::from("/usr/bin/env"),
         PathBuf::from("/usr/bin/python3"),
         PathBuf::from("/usr/local/bin/python3"),
@@ -972,16 +994,6 @@ fn fixture_python_config_from(
         PathBuf::from("/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Python3"),
         PathBuf::from("/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python"),
     ]
-    .into_iter()
-    .filter(|path| path.is_file())
-    .collect();
-    #[cfg(not(target_os = "macos"))]
-    let executable_paths = vec![interpreter.clone()];
-    Ok(FixturePythonConfig {
-        interpreter,
-        readable_roots,
-        executable_paths,
-    })
 }
 
 #[cfg(all(test, unix))]
@@ -1189,6 +1201,27 @@ else:
         assert!(
             interpreter_executable_paths().contains(&std::fs::canonicalize(interpreter).unwrap())
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn fallback_fixture_grants_are_canonical_sorted_and_unique() {
+        let config =
+            fixture_python_config_from(None, None, None, std::path::Path::new("/nix/store"))
+                .unwrap();
+        let mut expected: Vec<_> = macos_fixture_executable_candidates(&config.interpreter)
+            .into_iter()
+            .filter_map(|path| validate_fixture_path(&path, true).ok())
+            .collect();
+        expected.push(validate_fixture_path(&config.interpreter, true).unwrap());
+        expected.sort();
+        expected.dedup();
+
+        assert_eq!(config.executable_paths, expected);
+        assert!(config
+            .executable_paths
+            .windows(2)
+            .all(|pair| pair[0] < pair[1]));
     }
 
     #[test]

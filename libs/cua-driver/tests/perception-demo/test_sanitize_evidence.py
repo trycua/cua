@@ -51,7 +51,7 @@ class EvidenceSanitizerTests(unittest.TestCase):
         chooser_result.write_text(json.dumps({
             "schema": "cua.jev_choice_v1",
             "selected_id": "region:send",
-            "model": {"provider": "fixture", "id": "deterministic-v1"},
+            "model": "mock",
             "confidence": 1.0,
             "probabilities": {"region:send": 1.0, "reobserve": 0.0, "abstain": 0.0},
         }))
@@ -90,7 +90,8 @@ class EvidenceSanitizerTests(unittest.TestCase):
         self.assertEqual(perception["signature_algorithm"], "ed25519")
         self.assertEqual(perception["publisher_key_id"], "cua-extension-ed25519-2026-01")
         self.assertEqual(perception["catalog_version"], 7)
-        self.assertEqual(manifest["runtime"]["chooser"]["model_id"], "deterministic-v1")
+        self.assertEqual(manifest["runtime"]["chooser"]["provider"], "fixture")
+        self.assertEqual(manifest["runtime"]["chooser"]["model_id"], "mock")
         self.assertEqual(manifest["result"]["selected_candidate"], "region:send")
         self.assertNotIn("capture_ids", json.dumps(manifest))
         self.assertNotIn("coordinates", json.dumps(manifest))
@@ -120,10 +121,30 @@ class EvidenceSanitizerTests(unittest.TestCase):
 
         inputs = self.inputs()
         choice = json.loads(inputs["chooser_result"].read_text())
-        choice["probabilities"]["region:send"] = 0.4
+        choice["probabilities"] = {"region:send": 0.4}
         inputs["chooser_result"].write_text(json.dumps(choice))
-        with self.assertRaisesRegex(ValueError, "sum to one"):
+        manifest = sanitizer.build_manifest(**inputs)
+        self.assertEqual(manifest["result"]["selected_candidate"], "region:send")
+
+        inputs = self.inputs()
+        choice = json.loads(inputs["chooser_result"].read_text())
+        choice["probabilities"] = {"region:send": 1.1}
+        inputs["chooser_result"].write_text(json.dumps(choice))
+        with self.assertRaisesRegex(ValueError, "invalid probability"):
             sanitizer.build_manifest(**inputs)
+
+    def test_nullable_model_and_live_provider_are_preserved(self):
+        inputs = self.inputs()
+        choice = json.loads(inputs["chooser_result"].read_text())
+        choice["model"] = None
+        inputs["chooser_result"].write_text(json.dumps(choice))
+        inputs["chooser_mode"] = "live"
+        manifest = sanitizer.build_manifest(**inputs)
+        self.assertEqual(manifest["runtime"]["chooser"], {
+            "mode": "live",
+            "provider": "typesafe",
+            "model_id": None,
+        })
 
     def test_raw_evidence_digest_changes_without_exposing_raw_fields(self):
         inputs = self.inputs()
@@ -157,6 +178,8 @@ class EvidenceSanitizerTests(unittest.TestCase):
         self.assertEqual(perception["properties"]["trust"]["const"], "publisher_verified")
         self.assertIn("catalog_version", perception["required"])
         self.assertFalse(chooser["additionalProperties"])
+        self.assertEqual(chooser["properties"]["provider"]["enum"], ["fixture", "typesafe"])
+        self.assertIn("null", chooser["properties"]["model_id"]["type"])
         self.assertIn("raw_evidence_sha256", schema["required"])
 
 

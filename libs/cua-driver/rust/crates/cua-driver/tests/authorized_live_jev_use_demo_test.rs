@@ -1,8 +1,9 @@
 //! Artifact-gated perception demo for a custom-painted surface.
 //!
-//! The provider-neutral chooser sees bounded descriptions, never Driver tool
-//! arguments, coordinates, environment variables, or credentials. The host
-//! validates one selected ID and resolves it to the capture-bound action.
+//! The provider-neutral chooser sees bounded observation regions and action
+//! descriptions, never Driver tool arguments, environment variables, or
+//! credentials. The host validates one selected ID and resolves it to the
+//! capture-bound action.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -12,6 +13,7 @@ use std::path::PathBuf;
 const MAX_REGIONS: usize = 64;
 const MAX_ACTION_CANDIDATES: usize = 16;
 const MAX_SAFE_ID_BYTES: usize = 96;
+const MAX_CHOOSER_ID_BYTES: usize = 64;
 const MIN_CONFIDENCE: f64 = 0.80;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -30,10 +32,23 @@ struct Candidate {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(deny_unknown_fields)]
+struct RegionBounds {
+    x: u64,
+    y: u64,
+    width: u64,
+    height: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(deny_unknown_fields)]
 struct CompactRegion {
     id: String,
     kind: String,
-    content: String,
+    bounds: RegionBounds,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
     confidence: f64,
     interactive: bool,
 }
@@ -65,17 +80,10 @@ struct ChoiceRequest {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
-struct ChooserModel {
-    provider: String,
-    id: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(deny_unknown_fields)]
 struct ChoiceResponse {
     schema: String,
     selected_id: String,
-    model: ChooserModel,
+    model: Option<String>,
     confidence: f64,
     probabilities: BTreeMap<String, f64>,
 }
@@ -95,7 +103,15 @@ fn safe_id(value: &str) -> bool {
 }
 
 fn safe_region_id(value: &str) -> bool {
-    safe_id(value) && value.len() <= MAX_SAFE_ID_BYTES - "region:".len()
+    safe_chooser_id(value) && value.len() <= MAX_CHOOSER_ID_BYTES - "region:".len()
+}
+
+fn safe_chooser_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= MAX_CHOOSER_ID_BYTES
+        && value.bytes().enumerate().all(|(index, byte)| {
+            byte.is_ascii_alphanumeric() || (index > 0 && b"._:-".contains(&byte))
+        })
 }
 
 fn safe_text(value: &str, maximum: usize) -> bool {
@@ -150,22 +166,15 @@ fn bounded_candidates(
         let interactive = region["interactive"]
             .as_bool()
             .ok_or("invalid interactivity")?;
-        let content = region
-            .get("text")
-            .or_else(|| region.get("label"))
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim();
-        if !content.is_empty() && !safe_text(content, 128) {
-            return Err("region content is unsafe".into());
+        let text = region.get("text").and_then(Value::as_str).map(str::trim);
+        let label = region.get("label").and_then(Value::as_str).map(str::trim);
+        if text.is_some_and(|value| !safe_text(value, 128))
+            || label.is_some_and(|value| !safe_text(value, 128))
+            || (kind == "text" && text.is_none())
+            || (kind == "icon" && label.is_none())
+        {
+            return Err("region content is unsafe or missing for its kind".into());
         }
-        compact.push(CompactRegion {
-            id: id.into(),
-            kind: kind.into(),
-            content: content.into(),
-            confidence,
-            interactive,
-        });
 
         let bounds = &region["bounds"];
         let x = bounds["x"].as_u64().ok_or("invalid x")?;
@@ -185,6 +194,25 @@ fn bounded_candidates(
         {
             return Err("region lies outside its source screenshot".into());
         }
+        compact.push(CompactRegion {
+            id: id.into(),
+            kind: kind.into(),
+            bounds: RegionBounds {
+                x,
+                y,
+                width,
+                height,
+            },
+            text: text.map(str::to_owned),
+            label: label.map(str::to_owned),
+            confidence,
+            interactive,
+        });
+        let content = if kind == "text" {
+            text.expect("validated text region")
+        } else {
+            label.expect("validated icon region")
+        };
         if interactive && confidence >= MIN_CONFIDENCE && !content.is_empty() {
             if candidates.len() >= MAX_ACTION_CANDIDATES {
                 return Err("visual result exceeded the action candidate bound".into());
@@ -241,9 +269,11 @@ fn validate_choice(
     candidates: &[Candidate],
 ) -> Result<(ChoiceResponse, Candidate), String> {
     if response.schema != "cua.jev_choice_v1"
-        || !safe_id(&response.selected_id)
-        || !safe_id(&response.model.provider)
-        || !safe_id(&response.model.id)
+        || !safe_chooser_id(&response.selected_id)
+        || response
+            .model
+            .as_deref()
+            .is_some_and(|value| !safe_id(value))
         || !response.confidence.is_finite()
         || !(0.0..=1.0).contains(&response.confidence)
     {
@@ -253,26 +283,13 @@ fn validate_choice(
         .iter()
         .map(|candidate| candidate.id.as_str())
         .collect::<BTreeSet<_>>();
-    let probability_ids = response
-        .probabilities
-        .keys()
-        .map(String::as_str)
-        .collect::<BTreeSet<_>>();
-    if ids != probability_ids {
-        return Err("chooser probabilities do not match the supplied candidate IDs".into());
-    }
-    let sum = response
-        .probabilities
-        .values()
-        .try_fold(0.0, |sum, value| {
-            if value.is_finite() && (0.0..=1.0).contains(value) {
-                Ok(sum + value)
-            } else {
-                Err("chooser returned an invalid probability")
-            }
-        })?;
-    if (sum - 1.0_f64).abs() > 0.001 {
-        return Err("chooser probabilities must sum to one".into());
+    for (id, probability) in &response.probabilities {
+        if !ids.contains(id.as_str())
+            || !probability.is_finite()
+            || !(0.0..=1.0).contains(probability)
+        {
+            return Err("chooser returned an unknown or invalid probability".into());
+        }
     }
     let candidate = candidates
         .iter()
@@ -305,10 +322,7 @@ fn mock_choice(candidates: &[Candidate]) -> ChoiceResponse {
     ChoiceResponse {
         schema: "cua.jev_choice_v1".into(),
         selected_id,
-        model: ChooserModel {
-            provider: "fixture".into(),
-            id: "deterministic-v1".into(),
-        },
+        model: Some("mock".into()),
         confidence: 1.0,
         probabilities,
     }
@@ -347,29 +361,63 @@ fn choice_config_from(
 }
 
 #[test]
-fn chooser_request_is_bounded_and_contains_no_action_arguments() {
+fn chooser_request_matches_fixture_contract_and_contains_no_action_arguments() {
     let mut payload = json!({
         "schema": "cua.visual_regions_v1",
         "capture": {"capture_id": "capture-1", "screenshot": {"width": 760, "height": 460}},
         "regions": [
-            {"id": "save", "kind": "text", "bounds": {"x": 72, "y": 250, "width": 204, "height": 40}, "text": "Save", "confidence": 0.99, "interactive": true},
+            {"id": "save", "kind": "icon", "bounds": {"x": 72, "y": 250, "width": 204, "height": 40}, "label": "Save", "confidence": 0.99, "interactive": true},
             {"id": "send", "kind": "text", "bounds": {"x": 292, "y": 250, "width": 204, "height": 40}, "text": "Send", "confidence": 0.98, "interactive": true}
         ]
     });
     let (candidates, regions) = bounded_candidates(&payload, "capture-1").unwrap();
     let request = serde_json::to_value(choice_request("capture-1", regions, &candidates)).unwrap();
     assert_eq!(request["schema"], "cua.jev_choice_request_v1");
+    assert_eq!(
+        request
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([
+            "candidates",
+            "capture_id",
+            "goal",
+            "history",
+            "regions",
+            "schema",
+        ])
+    );
     assert_eq!(request["candidates"].as_array().unwrap().len(), 4);
+    assert_eq!(
+        request["regions"][0]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(["bounds", "confidence", "id", "interactive", "kind", "label",])
+    );
+    assert_eq!(
+        request["regions"][0]["bounds"],
+        json!({"x": 72, "y": 250, "width": 204, "height": 40})
+    );
+    assert!(request["regions"][0].get("content").is_none());
+    assert!(request["regions"][0].get("text").is_none());
+    assert!(request["regions"][1].get("label").is_none());
+    assert_eq!(
+        request["candidates"][0]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(["description", "id"])
+    );
     assert!(request.to_string().contains("reobserve"));
     assert!(request.to_string().contains("abstain"));
-    for forbidden in [
-        "\"x\"",
-        "\"y\"",
-        "tool",
-        "arguments",
-        "delivery_mode",
-        "secret",
-    ] {
+    for forbidden in ["tool", "arguments", "delivery_mode", "secret"] {
         assert!(
             !request.to_string().contains(forbidden),
             "leaked {forbidden}"
@@ -414,12 +462,16 @@ fn chooser_response_and_live_mode_fail_closed() {
     let mut response = mock_choice(&candidates);
     response.probabilities.insert("invented".into(), 0.1);
     assert!(validate_choice(response, &candidates).is_err());
+    let mut response = mock_choice(&candidates);
+    response.model = None;
+    response.probabilities = BTreeMap::from([("region:send".into(), 0.4)]);
+    assert!(validate_choice(response, &candidates).is_ok());
     assert!(choice_config_from(Some("1"), Some("1"), None, None)
         .unwrap_err()
         .contains("forbids"));
     assert!(choice_config_from(None, None, None, None).is_err());
 
-    let oversized_region_id = "a".repeat(MAX_SAFE_ID_BYTES - "region:".len() + 1);
+    let oversized_region_id = "a".repeat(MAX_CHOOSER_ID_BYTES - "region:".len() + 1);
     let payload = json!({
         "schema": "cua.visual_regions_v1",
         "capture": {"capture_id": "capture-1", "screenshot": {"width": 10, "height": 10}},
@@ -763,9 +815,9 @@ mod e2e {
         } else {
             "linux-x11"
         };
-        let mode = match gate.choice {
-            ChoiceConfig::Mock => "mock",
-            ChoiceConfig::Live { .. } => "live",
+        let (mode, chooser_provider) = match &gate.choice {
+            ChoiceConfig::Mock => ("mock", "fixture"),
+            ChoiceConfig::Live { .. } => ("live", "typesafe"),
         };
         let raw = json!({
             "schema": "cua-visual-perception-demo-raw/v2",
@@ -815,8 +867,8 @@ mod e2e {
                 },
                 "chooser": {
                     "mode": mode,
-                    "provider": choice_response.model.provider,
-                    "model_id": choice_response.model.id
+                    "provider": chooser_provider,
+                    "model_id": choice_response.model
                 }
             },
             "result": {"status": "passed", "selected_candidate": selected_candidate.id, "stale_capture_refused": true},

@@ -17,6 +17,7 @@ import sys
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
 SHA64 = re.compile(r"^[0-9a-f]{64}$")
 SAFE_ID = re.compile(r"^[A-Za-z0-9._:/-]{1,96}$")
+CHOOSER_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
 
 
 def sha256_file(path: Path) -> str:
@@ -112,25 +113,20 @@ def load_chooser_result(path: Path) -> dict:
     if set(value) != expected or value["schema"] != "cua.jev_choice_v1":
         raise ValueError("chooser result does not match cua.jev_choice_v1")
     model = value.get("model")
-    if not isinstance(model, dict) or set(model) != {"provider", "id"}:
+    if model is not None and (not isinstance(model, str) or not SAFE_ID.fullmatch(model)):
         raise ValueError("chooser result contains invalid model metadata")
-    for field in ("provider", "id"):
-        if not isinstance(model[field], str) or not SAFE_ID.fullmatch(model[field]):
-            raise ValueError("chooser result contains unsafe model metadata")
-    if not isinstance(value["selected_id"], str) or not SAFE_ID.fullmatch(value["selected_id"]):
+    if not isinstance(value["selected_id"], str) or not CHOOSER_ID.fullmatch(value["selected_id"]):
         raise ValueError("chooser result contains an unsafe selected_id")
     confidence = value["confidence"]
     probabilities = value["probabilities"]
     if type(confidence) not in (int, float) or not 0 <= confidence <= 1:
         raise ValueError("chooser result contains an invalid confidence")
-    if not isinstance(probabilities, dict) or value["selected_id"] not in probabilities:
-        raise ValueError("chooser probabilities omit the selected candidate")
-    if any(not isinstance(key, str) or not SAFE_ID.fullmatch(key) for key in probabilities):
+    if not isinstance(probabilities, dict):
+        raise ValueError("chooser probabilities must be an object")
+    if any(not isinstance(key, str) or not CHOOSER_ID.fullmatch(key) for key in probabilities):
         raise ValueError("chooser probabilities contain an unsafe candidate ID")
     if any(type(item) not in (int, float) or not 0 <= item <= 1 for item in probabilities.values()):
         raise ValueError("chooser result contains an invalid probability")
-    if abs(sum(probabilities.values()) - 1) > 0.001:
-        raise ValueError("chooser probabilities must sum to one")
     return value
 
 
@@ -186,8 +182,8 @@ def build_manifest(
             },
             "chooser": {
                 "mode": chooser_mode,
-                "provider": chooser["model"]["provider"],
-                "model_id": chooser["model"]["id"],
+                "provider": "typesafe" if chooser_mode == "live" else "fixture",
+                "model_id": chooser["model"],
             },
         },
         "result": {

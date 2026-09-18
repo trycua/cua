@@ -54,8 +54,11 @@
           "required": ["mode", "provider", "model_id"],
           "properties": {
             "mode": { "enum": ["mock", "live"] },
-            "provider": { "type": "string", "pattern": "^[A-Za-z0-9._:/-]{1,96}$" },
-            "model_id": { "type": "string", "pattern": "^[A-Za-z0-9._:/-]{1,96}$" }
+            "provider": { "enum": ["fixture", "typesafe"] },
+            "model_id": {
+              "type": ["string", "null"],
+              "pattern": "^[A-Za-z0-9._:/-]{1,96}$"
+            }
           }
         }
       }

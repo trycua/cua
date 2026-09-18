@@ -12,6 +12,14 @@ advertises the capture-bound `click.capture_id` contract. They capture the
 browser window with `get_window_state`, then keep that exact `capture_id` in the
 click arguments. Otherwise they continue through the semantic path.
 
+The TypeSafe-specific code lives in `python/jev_adapter.py` and
+`typescript/jev_adapter.ts`, outside Driver. Both adapters send Jev the bounded
+candidate IDs and descriptions plus a compact observation. When visual regions
+are present, that observation includes their typed bounds and the exact
+`capture_id`; it never includes screenshot bytes or extension internals. A live
+answer must be one of the supplied IDs before the runner resolves it to the
+original immutable action.
+
 You can run the complete deterministic proof without credentials or network
 access to Jev. If you have a TypeSafe API key, you can separately verify the
 same loop against the live Jev service.
@@ -112,8 +120,8 @@ The fixture prints its local URL. Leave it running while you run either demo.
 
 ## Run the deterministic mock proof
 
-The mock provider returns deterministic typed choices through the same provider
-boundary used by the live integration. It proves the Cua Driver MCP lifecycle,
+The mock adapter returns deterministic typed choices through the same provider
+boundary used by the live adapter. It proves the Cua Driver MCP lifecycle,
 browser observation and action loop, snapshot-bound references, and independent
 postcondition check. It does not prove that the TypeSafe service accepted the
 request or made the same choices.
@@ -154,7 +162,9 @@ uv run python/run.py --provider live
 npm run demo:live
 ```
 
-The live provider sends the task state and typed choice question to TypeSafe.
+The live adapter sends the task state, any typed visual-region summary, and one
+bounded choice question to TypeSafe. It rejects an answer outside the supplied
+candidate table.
 The runner still owns the control loop: Jev selects one bounded next action,
 Cua Driver performs it, and the fixture's `/state` endpoint establishes the
 postcondition. Keep sensitive page content out of live runs unless sending it
@@ -193,7 +203,7 @@ for example `cua-driver doctor` and `cua-driver status`, rather than maintaining
 a third copy of the loop.
 
 This fixture exposes semantic browser refs, so the normal proof does not need
-screenshot perception. The optional adapter consumes only the public
+screenshot perception. The optional visual path consumes only the public
 `parse_visual_regions` structured result and never adds a model, extension, or
 Driver internals to this example. It validates capture identity, PNG geometry,
 coordinate mapping, region IDs, bounds, content, confidence, and ambiguity
@@ -202,7 +212,10 @@ Visual evidence never replaces the semantic editable ref required by
 `browser_type`.
 
 The credential-free tests load `fixtures/parse-visual-regions-*-v1.json` to
-exercise the same parser and candidate builder used by the runtime adapter.
+exercise the same parser, candidate builder, and mock Jev boundary used by the
+runtime adapter. Separate live-adapter contract tests use the official SDK with
+a local fake transport to prove that the request contains the capture ID and
+regions and that Jev can return only a supplied candidate ID.
 They do not claim that an optional perception extension is installed or assess
 its inference quality.
 

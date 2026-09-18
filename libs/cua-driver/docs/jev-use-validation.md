@@ -366,3 +366,28 @@ completed both languages in two actions each and independently read back
 not advertise the complete optional capture-bound visual contract, so this
 proof exercised the unchanged semantic fallback. No live Jev or live perception
 call was made.
+
+### External Jev adapter follow-up
+
+The TypeSafe request code is now isolated in equivalent Python and TypeScript
+Jev adapter modules. The runners supply the current semantic snapshot, optional
+validated `cua.visual_regions_v1` observation, immutable candidate table, and
+recent history. The adapters send only candidate IDs with descriptions and a
+compact observation; visual state includes typed region bounds and the exact
+`capture_id`, without screenshot bytes or extension implementation details.
+
+The mock path uses the same adapter boundary without a credential. Focused live
+adapter tests use the official TypeSafe SDK request shape with a local fake
+transport. They prove that a supplied visual candidate ID can round-trip, that
+the request includes the matching capture and region IDs, and that an answer
+outside the supplied table fails before Driver execution. The existing fixture
+`/state` oracle remains the only source of a verified outcome.
+
+Final focused verification passed 30 Python tests, 20 TypeScript tests,
+TypeScript typechecking, and `git diff --check`. The managed credential-free
+verifier completed the Python and TypeScript mock loops against installed Cua
+Driver 0.23.2 and independently read back
+`{"submitted":"jev-guide-mock"}` for both. That installed version did not
+advertise the visual contract, so the desktop proof exercised the semantic
+fallback; the typed visual/live Jev boundary is covered by the local SDK
+contract tests without a live credential or perception model.

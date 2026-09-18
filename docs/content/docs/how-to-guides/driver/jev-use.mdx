@@ -147,8 +147,12 @@ environment, it uses that instead. Do not put the key in a command argument,
 source file, or chat message.
 
 The command runs the connection check again, then lets Jev choose the actions.
-Live calls send the test page's state to TypeSafe and use your account's API
-billing. Your personal browser profile is not used.
+The external adapter sends the test page's state and one bounded choice question
+to TypeSafe. If a visual parse is available, the compact observation includes
+its typed regions and exact `capture_id`, without screenshot bytes or extension
+internals. The adapter rejects an answer outside the supplied candidate IDs.
+Live calls use your account's API billing. Your personal browser profile is not
+used.
 
 Success ends with:
 
@@ -233,7 +237,7 @@ To automate a different task, change three parts of the agent:
 | Part | Purpose | Python source |
 | --- | --- | --- |
 | Candidates | Define the actions Jev can choose and their arguments. | `python/core.py` |
-| Goal and observations | Tell Jev what to accomplish and what the page currently shows. | `python/run.py` |
+| Goal and observations | Tell Jev what to accomplish and what the page currently shows. | `python/jev_adapter.py` |
 | Completion check | Confirm that the application reached the intended result. | `python/run.py` |
 
 The form example offers only the next valid action plus reserved `reobserve`

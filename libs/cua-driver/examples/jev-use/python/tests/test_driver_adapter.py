@@ -45,7 +45,7 @@ class DriverAdapterTest(unittest.IsolatedAsyncioTestCase):
             [("browser_type", {"ref": "p2:0", "session": "jev-test"})],
         )
 
-    async def test_visual_tool_is_optional_and_uses_the_released_contract_when_advertised(self) -> None:
+    async def test_visual_tool_is_optional_and_uses_the_public_contract_when_advertised(self) -> None:
         payload = json.loads((FIXTURES / "parse-visual-regions-submit-v1.json").read_text())
         session = FakeSession(responses=[{"capture_id": "capture-submit"}, payload])
         driver = Driver(session, "jev-test")

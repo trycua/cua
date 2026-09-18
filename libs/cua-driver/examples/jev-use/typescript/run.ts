@@ -5,19 +5,16 @@ import { pathToFileURL } from 'node:url';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { choice, TypeSafeClient } from '@typesafe-ai/sdk';
-
 import {
   buildCandidates,
-  chooseMock,
   classify,
   parseVisualRegions,
   validateChoice,
   type BrowserSnapshot,
-  type Candidate,
   type Outcome,
   type VisualObservation,
 } from './core.js';
+import { chooseLive, chooseMockAdapter } from './jev_adapter.js';
 
 type Arguments = {
   provider: 'mock' | 'live';
@@ -162,44 +159,6 @@ async function waitForWindow(driver: Driver, pid: number) {
   throw new Error('isolated browser window did not become ready');
 }
 
-export async function chooseWithTypeSafe(
-  client: Pick<TypeSafeClient, 'systemOne'>,
-  candidates: Candidate[],
-  snapshot: BrowserSnapshot,
-  history: Record<string, unknown>[]
-) {
-  const criteria = Object.fromEntries(
-    candidates.map((candidate) => [candidate.id, candidate.description])
-  );
-  const response = await client.systemOne({
-    state: {
-      goal: 'Enter the verification token, then submit the form.',
-      observation: {
-        page: JSON.stringify(snapshot.page ?? null),
-        outline: snapshot.outline ?? '',
-      },
-      history: JSON.stringify(history),
-    },
-    questions: {
-      driver_action: choice(
-        'Which complete executable action should Cua Driver run next?',
-        criteria
-      ),
-    },
-  });
-  const answer = response.answers.driver_action;
-  if (answer.type !== 'choice') throw new Error('Jev returned the wrong answer type');
-  return answer;
-}
-
-async function chooseLive(
-  candidates: Candidate[],
-  snapshot: BrowserSnapshot,
-  history: Record<string, unknown>[]
-) {
-  return chooseWithTypeSafe(new TypeSafeClient(), candidates, snapshot, history);
-}
-
 async function writeEvent(path: string | undefined, event: Record<string, unknown>) {
   const line = JSON.stringify(event);
   console.log(line);
@@ -269,8 +228,8 @@ async function run(args: Arguments): Promise<Outcome> {
       }
       const answer =
         args.provider === 'mock'
-          ? chooseMock(candidates)
-          : await chooseLive(candidates, snapshot, history);
+          ? chooseMockAdapter(candidates, snapshot, visual, history)
+          : await chooseLive(candidates, snapshot, visual, history);
       if (!answer.choice) return 'abstained';
       const candidate = validateChoice(answer.choice, candidates, visual?.captureId);
       const decisionMs = Math.round((performance.now() - decisionStarted) * 100) / 100;

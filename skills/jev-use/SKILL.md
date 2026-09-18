@@ -11,6 +11,9 @@ returns one candidate ID. Never let Jev invent tool names, coordinates, refs,
 targets, delivery modes, or other arguments.
 
 Use the example at `libs/cua-driver/examples/jev-use/` as the runnable reference.
+Keep TypeSafe request construction in the external Jev adapter rather than in
+Driver or a Driver extension. The Python and TypeScript adapters must expose
+equivalent mock and live behavior.
 Prefer browser DOM and semantic evidence. The optional visual adapter consumes
 the public `cua.visual_regions_v1` result only when Driver advertises both
 `parse_visual_regions` and the capture-bound `click.capture_id` input.
@@ -31,7 +34,9 @@ extension artifact, or Driver implementation detail to the recipe.
    complete Driver tool and arguments. Include `reobserve` and `abstain` when
    evidence can be stale, incomplete, or ambiguous.
 5. Send Jev only the goal, compact observation, recent history, and candidate
-   IDs with descriptions.
+   IDs with descriptions. Include typed visual regions and their `capture_id`
+   when the current observation has validated visual evidence; do not send
+   extension internals or screenshot bytes.
 6. Resolve the returned ID against the original immutable table. Reject an
    unknown, duplicate, malformed, denied, stale, or capture-mismatched choice,
    or a result below the caller's stated confidence policy.

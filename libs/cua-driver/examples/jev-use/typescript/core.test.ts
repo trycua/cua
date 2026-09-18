@@ -12,13 +12,13 @@ import {
   type Candidate,
 } from './core.js';
 import {
-  chooseWithTypeSafe,
   Driver,
   optionalVisualObservation,
   selectTabId,
   supportsCaptureBoundClick,
   validateFixtureUrl,
 } from './run.js';
+import { chooseWithTypeSafe } from './jev_adapter.js';
 
 function snapshot(value: string | null = null) {
   return {
@@ -204,9 +204,9 @@ test('live adapter sends one Choice keyed by executable candidate id', async () 
           answers: {
             driver_action: {
               type: 'choice',
-              choice: 'type-verification-value',
+              choice: 'submit-form',
               confidence: 0.9,
-              probabilities: { 'type-verification-value': 0.9 },
+              probabilities: { 'submit-form': 0.9 },
             },
           },
         }),
@@ -214,14 +214,45 @@ test('live adapter sends one Choice keyed by executable candidate id', async () 
       );
     },
   });
-  const page = snapshot();
-  const candidates = buildCandidates(page, 'expected');
-  const answer = await chooseWithTypeSafe(client, candidates, page, []);
+  const page = snapshot('expected');
+  page.refs = page.refs.slice(0, 1);
+  const visual = parseVisualRegions(
+    fixture('parse-visual-regions-submit-v1.json'),
+    'capture-submit',
+    7,
+    9
+  );
+  const candidates = buildCandidates(page, 'expected', visual, true);
+  const answer = await chooseWithTypeSafe(client, candidates, page, visual, []);
 
-  assert.equal(answer.choice, 'type-verification-value');
+  assert.equal(answer.choice, 'submit-form');
   assert.deepEqual(
     new Set(Object.keys(requestBody?.questions.driver_action.criteria)),
-    new Set(['type-verification-value', 'reobserve', 'abstain'])
+    new Set(['submit-form', 'reobserve', 'abstain'])
+  );
+  const sentVisual = JSON.parse(requestBody?.state.observation.visual);
+  assert.equal(sentVisual.capture_id, 'capture-submit');
+  assert.equal(sentVisual.regions[0].id, 'submit-text');
+});
+
+test('live adapter rejects an id outside the supplied table', async () => {
+  const client = {
+    systemOne: async () => ({
+      answers: {
+        driver_action: {
+          type: 'choice' as const,
+          choice: 'invented',
+          confidence: 1,
+          probabilities: { invented: 1 },
+        },
+      },
+    }),
+  };
+  const page = snapshot();
+  const candidates = buildCandidates(page, 'expected');
+  await assert.rejects(
+    () => chooseWithTypeSafe(client as never, candidates, page, undefined, []),
+    /unknown candidate/
   );
 });
 
@@ -240,7 +271,7 @@ test('driver repeats the explicit session label', async () => {
   ]);
 });
 
-test('visual tool is optional and uses the released contract when advertised', async () => {
+test('visual tool is optional and uses the public contract when advertised', async () => {
   const calls: any[] = [];
   const responses = [
     { capture_id: 'capture-submit' },

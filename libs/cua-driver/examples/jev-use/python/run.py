@@ -15,15 +15,14 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from core import (
-    Candidate,
     VisualObservation,
     VisualObservationError,
     build_candidates,
-    choose_mock,
     classify,
     parse_visual_regions,
     validate_choice,
 )
+from jev_adapter import choose_live, choose_mock_adapter
 
 
 def fixture_state(fixture_url: str) -> dict[str, str | None]:
@@ -60,34 +59,6 @@ def reset_fixture(fixture_url: str) -> None:
     with urlopen(request, timeout=2) as response:
         if response.status != 204:
             raise RuntimeError(f"fixture reset failed: HTTP {response.status}")
-
-
-def choose_live(
-    candidates: list[Candidate], snapshot: dict[str, Any], history: list[dict[str, Any]]
-) -> tuple[str, float, dict[str, float]]:
-    from typesafe_sdk import Choice, TypeSafeClient
-
-    criteria = {candidate.id: candidate.description for candidate in candidates}
-    state = {
-        "goal": "Enter the verification token, then submit the form.",
-        "observation": {
-            "page": snapshot.get("page"),
-            "outline": snapshot.get("outline"),
-        },
-        "history": history,
-    }
-    with TypeSafeClient() as client:
-        response = client.system_one(
-            state=state,
-            questions={
-                "driver_action": Choice(
-                    instructions="Which complete executable action should Cua Driver run next?",
-                    criteria=criteria,
-                )
-            },
-        )
-    answer = response.choices["driver_action"]
-    return answer.choice, answer.confidence, answer.probabilities
 
 
 class Driver:
@@ -247,10 +218,12 @@ async def run(args: argparse.Namespace) -> str:
                     return "abstained"
 
                 if args.provider == "mock":
-                    choice, confidence, probabilities = choose_mock(candidates)
+                    choice, confidence, probabilities = choose_mock_adapter(
+                        candidates, snapshot, visual, history
+                    )
                 else:
                     choice, confidence, probabilities = await asyncio.to_thread(
-                        choose_live, candidates, snapshot, history
+                        choose_live, candidates, snapshot, visual, history
                     )
                 if choice is None:
                     return "abstained"

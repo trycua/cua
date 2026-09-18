@@ -243,9 +243,16 @@ impl Tool for PidOnlyWindowTargetGuard {
                         }
                     }
                 }
-                let carries_point = args.get("x").is_some_and(|v| v.is_number())
-                    && args.get("y").is_some_and(|v| v.is_number());
-                if let (Some(resolver), false) = (self.fallback_resolver.clone(), carries_point) {
+                // A desktop-frame point that the point resolver could not place
+                // stays ambiguous: it names a screen location, not a window.
+                // A window-local point (or no point at all) is relative to
+                // whichever window the call resolves to, and a pid-only call
+                // means the pid's focused toplevel — the open dialog when
+                // there is one, exactly as a pid-only key resolves.
+                let carries_desktop_point = desktop_frame_point(&args).is_some();
+                if let (Some(resolver), false) =
+                    (self.fallback_resolver.clone(), carries_desktop_point)
+                {
                     let hit = tokio::task::spawn_blocking(move || resolver(pid))
                         .await
                         .ok()
@@ -264,8 +271,8 @@ impl Tool for PidOnlyWindowTargetGuard {
                 }
                 ToolResult::error(format!(
                     "pid {pid} owns more than one eligible top-level window: {}. Provide \
-                     window_id (an open dialog receives the keys; pass its window_id to act \
-                     on it), or pass desktop-frame x/y over the window you mean.",
+                     window_id (an open dialog receives keys and window-local x/y; pass its \
+                     window_id to act on it), or pass desktop-frame x/y over the window you mean.",
                     describe_candidates(&candidates)
                 ))
                 .with_structured(serde_json::json!({
@@ -327,16 +334,20 @@ fn note_resolved_window(mut result: ToolResult, candidate: &WindowTargetCandidat
         Some(text) => text.push_str(&note),
         None => result.content.push(Content::text(note.trim().to_owned())),
     }
-    if let Some(structured) = result.structured_content.as_mut() {
-        if let Some(object) = structured.as_object_mut() {
-            object.insert(
-                "resolved_window".to_owned(),
-                serde_json::json!({
-                    "window_id": candidate.window_id,
-                    "title": candidate.title,
-                    "transient_for": candidate.transient_for,
-                }),
-            );
+    let resolved_window = serde_json::json!({
+        "window_id": candidate.window_id,
+        "title": candidate.title,
+        "transient_for": candidate.transient_for,
+    });
+    match result.structured_content.as_mut().and_then(Value::as_object_mut) {
+        Some(object) => {
+            object.insert("resolved_window".to_owned(), resolved_window);
+        }
+        // The inner tool did not attach structured content of its own: give
+        // the resolution note somewhere to live rather than dropping it.
+        None => {
+            result.structured_content =
+                Some(serde_json::json!({ "resolved_window": resolved_window }));
         }
     }
     result
@@ -566,12 +577,78 @@ mod tests {
             .await;
         assert_ne!(result.is_error, Some(true), "{result:?}");
         assert_eq!(calls.load(Ordering::SeqCst), 1);
-        // Window-frame pixels stay ambiguous (a point must not be guessed).
+        // Window-local pixels resolve the same way: they are relative to the
+        // window the call resolves to, and the pid's focused toplevel is it.
         let result = guard
             .invoke(serde_json::json!({"pid": 7, "x": 1, "y": 2}))
             .await;
+        assert_ne!(result.is_error, Some(true), "{result:?}");
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        // A desktop-frame point that no window claimed stays ambiguous: it
+        // names a screen location, and the fallback window may not be under it.
+        let result = guard
+            .invoke(serde_json::json!({"pid": 7, "x": 1, "y": 2, "coordinate_frame": "desktop"}))
+            .await;
         assert_eq!(result.is_error, Some(true));
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn pid_only_window_local_point_resolves_to_the_open_dialog_like_a_key() {
+        use crate::protocol::Content;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        struct Echo(Arc<AtomicU64>);
+        #[async_trait]
+        impl Tool for Echo {
+            fn def(&self) -> &ToolDef {
+                unreachable!()
+            }
+            async fn invoke(&self, args: Value) -> ToolResult {
+                self.0.store(args["window_id"].as_u64().unwrap_or(0), Ordering::SeqCst);
+                ToolResult::text("Typed 'hi'.")
+            }
+        }
+        let seen = Arc::new(AtomicU64::new(0));
+        let candidates: WindowTargetCandidates = Arc::new(|_| {
+            vec![
+                WindowTargetCandidate {
+                    window_id: 3,
+                    transient_for: None,
+                    title: "doc - LibreOffice Writer".into(),
+                    app_name: Some("soffice".into()),
+                    is_on_screen: true,
+                },
+                WindowTargetCandidate {
+                    window_id: 7,
+                    transient_for: Some(3),
+                    title: "Position and Size".into(),
+                    app_name: Some("soffice".into()),
+                    is_on_screen: true,
+                },
+            ]
+        });
+        // The dialog is the pid's focused toplevel.
+        let fallback: PidFallbackWindowResolver = Arc::new(|_pid| Some(7));
+        let guard = PidOnlyWindowTargetGuard::new(Box::new(Echo(seen.clone())), candidates)
+            .with_fallback_resolver(fallback);
+        for args in [
+            serde_json::json!({"pid": 5, "text": "hi", "x": 120, "y": 80}),
+            serde_json::json!({"pid": 5, "x": 120, "y": 80, "coordinate_frame": "window"}),
+        ] {
+            let result = guard.invoke(args).await;
+            assert_ne!(result.is_error, Some(true), "{result:?}");
+            assert_eq!(seen.load(Ordering::SeqCst), 7);
+            let text = match &result.content[0] {
+                Content::Text { text, .. } => text.clone(),
+                _ => panic!("text"),
+            };
+            assert!(
+                text.ends_with("[pid-only target resolved to window 7 \"Position and Size\" (an open dialog)]"),
+                "{text}"
+            );
+            let structured = result.structured_content.unwrap();
+            assert_eq!(structured["resolved_window"]["window_id"], 7);
+        }
     }
 }
 

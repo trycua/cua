@@ -5620,6 +5620,50 @@ impl ClickTool {
         };
         match decision {
             ForegroundElementPlacement::Point { xid, sx, sy } => {
+                // Ask the toolkit who actually owns this screen point before
+                // pressing it: a snapshot frame is where the toolkit *said*
+                // the element is, and a hidden sibling view (a QFileDialog's
+                // off-page QListView mirroring the visible QTreeView) can
+                // report a frame nothing is drawn at. See atspi::native::hit_test.
+                let (sx, sy, redirect_note) = if let Some(oref) = observed.object_ref.clone() {
+                    let (pid_c, oref_c, sx_i, sy_i) = (pid, oref, sx.round() as i32, sy.round() as i32);
+                    let ownership = tokio::task::spawn_blocking(move || {
+                        crate::atspi::native::hit_test::point_ownership(pid_c, xid, &oref_c, sx_i, sy_i)
+                    })
+                    .await
+                    .unwrap_or(crate::atspi::native::hit_test::PointOwnership::Unknown);
+                    match ownership {
+                        crate::atspi::native::hit_test::PointOwnership::Redirect {
+                            target,
+                            screen_point,
+                            ..
+                        } => (
+                            screen_point.0 as f64,
+                            screen_point.1 as f64,
+                            Some(format!("redirected the press to {}", target.describe())),
+                        ),
+                        crate::atspi::native::hit_test::PointOwnership::Mismatch { owner } => {
+                            return ToolResult::error(format!(
+                                "click: element [{idx}] (pid {pid}) has a snapshot frame at \
+                                 ({sx_i}, {sy_i}), but that screen point is owned by {} rather \
+                                 than the observed element; a real pointer click there would hit \
+                                 the wrong control. Re-snapshot with get_window_state, or click by \
+                                 pixel from a screenshot.",
+                                owner.describe()
+                            ))
+                            .with_structured(json!({
+                                "code": "element_bounds_unavailable",
+                                "effect": "none",
+                                "element_index": idx,
+                                "reason": "point_owned_by_another_element",
+                                "owner": owner.describe(),
+                            }));
+                        }
+                        _ => (sx, sy, None),
+                    }
+                } else {
+                    (sx, sy, None)
+                };
                 crate::overlay::send_command_for(
                     cursor_id.to_owned(),
                     cursor_overlay::OverlayCommand::PinAbove(xid),
@@ -5656,13 +5700,14 @@ impl ClickTool {
                         let confirmed = report.focus_kept() && report.window_change.is_some();
                         let result = ToolResult::text(format!(
                             "Clicked element [{idx}] (pid {pid}) with a real pointer click \
-                             (delivery_mode=foreground, focus_after={}){}",
+                             (delivery_mode=foreground, focus_after={}){}{}",
                             report.focus_after.as_str(),
                             if confirmed {
                                 format!("; {}.", report.window_change.as_deref().unwrap_or(""))
                             } else {
                                 "; not verified — confirm with a screenshot.".to_owned()
-                            }
+                            },
+                            redirect_note.as_deref().map(|n| format!(" ({n}).")).unwrap_or_default(),
                         ))
                         .with_structured(foreground_structured(
                             "x11_xtest_fg",
@@ -5906,7 +5951,7 @@ impl Tool for ClickTool {
                     // [left,right,middle]); kept inline to carry the Linux/Wayland
                     // back-compat prose the click button-schema test asserts on.
                     "button":{"type":"string","enum":["left","right","middle"],"description":"Mouse button. Default: \"left\" (legacy back-compat). X11: routed via ButtonPress/Release with the matching evdev code. Native Wayland: only left-button is supported via the virtual-pointer protocol; right/middle return an error."},
-                    "count":{"type":"integer","minimum":1,"description":"Number of clicks in one press train: 1 (default), 2 = double-click, 3 = triple-click (line/paragraph selection)."},
+                    "count":{"type":"integer","minimum":1,"description":"Number of clicks in one press train: 1 (default), 2 = double-click, 3 = triple-click (line/paragraph selection). There is no separate triple_click tool — pass count: 3 here."},
                     "modifier": cua_driver_core::tool_schema::modifier_schema(),
                     "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."},
                     "scope":{"type":"string","enum":["window","desktop"],"default":"window"},

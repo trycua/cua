@@ -5070,8 +5070,10 @@ impl ClickTool {
     /// centre. A degenerate centre — the walk answering (0,0) for a menu item
     /// whose menu is closed used to glide the real pointer into the GNOME hot
     /// corner — is never clicked; the observed object's AT-SPI action is fired
-    /// instead, with the foreground activation kept, and when that is not
-    /// possible either the call is refused (`element_bounds_unavailable`).
+    /// instead (`path: "ax_fg"`, a label the core's action record maps to
+    /// the AT-SPI transport), with the foreground activation kept, and when
+    /// that is not possible either the call is refused
+    /// (`element_bounds_unavailable`).
     #[allow(clippy::too_many_arguments)]
     async fn foreground_element_click(
         &self,
@@ -5214,7 +5216,7 @@ impl ClickTool {
                         ToolResult::text(format!(
                             "Clicked element [{idx}] (pid {pid}) through its AT-SPI action \
                              \"{action}\" with the window activated (delivery_mode=foreground, \
-                             path=x11_atspi_fg, focus_after={}): the element had no usable \
+                             path=ax_fg, focus_after={}): the element had no usable \
                              on-screen bounds ({reason}), so no pointer was moved.{}",
                             report.focus_after.as_str(),
                             match &report.window_change {
@@ -5222,7 +5224,7 @@ impl ClickTool {
                                 None => " Not verified — confirm with a screenshot.".to_owned(),
                             }
                         ))
-                        .with_structured(foreground_structured("x11_atspi_fg", report, extra))
+                        .with_structured(foreground_structured("ax_fg", report, extra))
                     }
                     Ok(Err(error)) => {
                         if error.is::<crate::atspi::native::CachedElementGone>() {

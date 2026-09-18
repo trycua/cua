@@ -478,7 +478,7 @@ fn confirm_phase(target: Window, settle: Duration) -> Result<ConfirmOutcome> {
     }
 }
 
-fn post_check(target: Window) -> FocusAfter {
+fn post_check(target: Window, target_pid: Option<u32>) -> FocusAfter {
     let Ok(x) = X11::open() else {
         return FocusAfter::Unknown;
     };
@@ -488,7 +488,10 @@ fn post_check(target: Window) -> FocusAfter {
     if x.is_within(focused, target) {
         return FocusAfter::Target;
     }
-    match (x.owning_pid(target), x.owning_pid(focused)) {
+    // The body may have closed the target itself (Escape on a dialog, alt+F4):
+    // its pid was read before the body, so the comparison still works once
+    // the window is gone.
+    match (target_pid.or_else(|| x.owning_pid(target)), x.owning_pid(focused)) {
         (Some(a), Some(b)) if a == b => FocusAfter::SamePid,
         _ => FocusAfter::Elsewhere,
     }
@@ -531,8 +534,10 @@ pub fn with_x11_foreground_opts<T>(
     // the window set / focus within the target's process, and one that
     // landed elsewhere moves focus out of it.
     std::thread::sleep(WINDOW_CHANGE_SETTLE);
-    let focus_after = run_with_deadline(Duration::from_millis(1500), move || post_check(target))
-        .unwrap_or(FocusAfter::Unknown);
+    let focus_after = run_with_deadline(Duration::from_millis(1500), move || {
+        post_check(target, target_pid)
+    })
+    .unwrap_or(FocusAfter::Unknown);
     let window_change = run_with_deadline(Duration::from_millis(1500), move || {
         pid_window_set(target_pid)
     })

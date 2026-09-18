@@ -44,6 +44,7 @@ const expectedFiles = [
   'README.md',
   'RECORDING.md',
   'SKILL.md',
+  'VISUAL.md',
   'WINDOWS.md',
 ];
 const sourcePack = resolve(HERE, '../../../libs/cua-driver/rust/Skills/cua-driver');

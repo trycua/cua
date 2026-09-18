@@ -166,8 +166,9 @@ def test_macos_review_candidate_uses_ephemeral_certificate_signing() -> None:
         "extendedKeyUsage=codeSigning",
         "openssl pkcs12 -export -legacy",
         '-P "$identity_password" -A -T /usr/bin/codesign',
-        'run_step probe-sign codesign --force --sign "$identity_hash"',
-        'run_step driver-sign codesign --force --sign "$identity_hash"',
+        'identity_selector="$identity_name"',
+        'codesign --force --sign "$identity_selector" "$signing_probe"',
+        'run_step driver-sign codesign --force --sign "$identity_selector"',
         'run_step driver-verify codesign --verify --strict',
         "security delete-keychain",
         'trap cleanup EXIT INT TERM',
@@ -204,7 +205,7 @@ def test_macos_review_candidate_uses_ephemeral_certificate_signing() -> None:
         "run_step valid-identity security find-identity -v"
     )
     partition_list = script.index("security set-key-partition-list")
-    probe_sign = script.index("run_step probe-sign codesign")
+    probe_sign = script.index('identity_selector="$identity_name"')
     driver_sign = script.index("run_step driver-sign codesign")
     assert (
         default_snapshot
@@ -240,6 +241,9 @@ def test_macos_review_candidate_uses_ephemeral_certificate_signing() -> None:
         "\\\n      >/dev/null 2>&1 || true"
     ) in script
     assert "set -x" not in script
+    assert '--keychain "$keychain_path"' not in script[probe_sign:]
+    assert '--keychain "$keychain_path" "$signing_probe"' not in script
+    assert '--keychain "$keychain_path" "$driver_path"' not in script
     assert script.count("openssl pkcs12 -export") == 2
     assert '"$log_dir/pkcs12-legacy.log" "$log_dir/pkcs12-fallback.log"' in script
     assert 'emit_log "$log_dir/pkcs12-legacy.log"' in script
@@ -259,6 +263,7 @@ def test_macos_review_candidate_uses_ephemeral_certificate_signing() -> None:
     trust_removal = script.index('security remove-trusted-cert -d "$certificate_path"')
     certificate_cleanup = script.index('rm -f "$private_key_path"')
     assert trust_removal < certificate_cleanup
+    assert 'grep -Eqi "certificate (leaf|root) = H\\\"$identity_hash\\\""' in script
     assert 'rmdir "$work_root"' in script
     assert 'rm -rf "$work_root"' not in script
 

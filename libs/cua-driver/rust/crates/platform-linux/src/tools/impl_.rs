@@ -8149,8 +8149,9 @@ impl Tool for DoubleClickTool {
             name: "double_click".into(),
             description: "Double-click at (x,y) or an element_index (AT-SPI bounds). Background \
                 delivery on X11 sends real button events from the session's virtual master pointer \
-                (path mpx_pointer); a point covered by another window is refused (target_occluded). \
-                No focus steal. Provide either (window_id + x/y) or (pid + element_index). \
+                (path mpx_pointer); a point covered by another application's window is refused \
+                (target_occluded), one covered by this app's own dialog is retargeted to it \
+                (retargeted_to). No focus steal. Provide either (window_id + x/y) or (pid + element_index). \
                 After a zoom call, pass from_zoom=true to auto-translate zoom-image coords.".into(),
             input_schema: json!({"type":"object","required":["pid"],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
@@ -8428,8 +8429,9 @@ impl Tool for RightClickTool {
             name: "right_click".into(),
             description: "Right-click at (x,y) or an element_index (AT-SPI bounds). Background \
                 delivery on X11 sends real button events from the session's virtual master pointer \
-                (path mpx_pointer); a point covered by another window is refused (target_occluded). \
-                No focus steal. Provide either (window_id + x/y) or (pid + element_index). \
+                (path mpx_pointer); a point covered by another application's window is refused \
+                (target_occluded), one covered by this app's own dialog is retargeted to it \
+                (retargeted_to). No focus steal. Provide either (window_id + x/y) or (pid + element_index). \
                 After a zoom call, pass from_zoom=true to auto-translate zoom-image coords.".into(),
             input_schema: json!({"type":"object","required":["pid"],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
@@ -8721,7 +8723,8 @@ impl Tool for DragTool {
                           window-local screenshot pixels. Background delivery on X11 is one real held \
                           gesture on the session's virtual master pointer (path mpx_pointer: press, \
                           interpolated motion, release) — it lands on GTK/VCL/Qt/Chromium; a point \
-                          covered by another window is refused (target_occluded). Headless servers fall \
+                          covered by another application's window is refused (target_occluded), one \
+                          covered by this app's own dialog is retargeted to it. Headless servers fall \
                           back to XSendEvent. duration_ms (default 500), steps (default 20). No focus steal.".into(),
             input_schema: json!({"type":"object","required":["from_x","from_y","to_x","to_y"],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),

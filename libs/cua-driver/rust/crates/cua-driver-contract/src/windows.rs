@@ -171,6 +171,8 @@ pub struct WindowInfo {
     pub on_current_space: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub space_ids: Option<Vec<u64>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]

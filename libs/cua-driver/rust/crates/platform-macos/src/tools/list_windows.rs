@@ -23,7 +23,14 @@ fn def() -> &'static ToolDef {
             WindowServer's main/global active Space and can differ from a record's \
             current_space_id when displays use independent Spaces. To select a frontmost candidate, take the \
             maximum integer z_index; if every value is null, use an explicit fallback instead of \
-            relying on array order.".into(),
+            relying on array order.\n\n\
+            A record may also carry kind, which is present only on windows that are not ordinary \
+            application windows. The only value today is \"system_overlay\": the small system \
+            window-sharing indicator macOS places inside an application while another process holds \
+            a screen-capture lease on it. That record stays in the list so callers can observe that \
+            the application is being captured, but it is not part of the application's own UI — \
+            callers enumerating real windows will usually want to filter out every record that \
+            carries a kind. Ordinary windows omit the key entirely.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
@@ -63,12 +70,21 @@ impl Tool for ListWindowsTool {
         };
         let current_space_id = enumeration.current_space_id;
         let mut windows = enumeration.windows;
+        let system_overlays = crate::window_kind::system_overlay_window_ids(&windows);
 
         if let Some(pid) = pid_filter {
             windows.retain(|w| w.pid == pid);
         }
 
-        let windows_json: Vec<Value> = windows.iter().map(window_record_json).collect();
+        let windows_json: Vec<Value> = windows
+            .iter()
+            .map(|w| {
+                let kind = system_overlays
+                    .contains(&w.window_id)
+                    .then_some(crate::window_kind::SYSTEM_OVERLAY_KIND);
+                window_record_json(w, kind)
+            })
+            .collect();
 
         ToolResult::text(format!("Found {} window(s).", windows_json.len())).with_structured(
             serde_json::json!({
@@ -79,8 +95,8 @@ impl Tool for ListWindowsTool {
     }
 }
 
-pub(super) fn window_record_json(w: &crate::windows::WindowInfo) -> Value {
-    serde_json::json!({
+pub(super) fn window_record_json(w: &crate::windows::WindowInfo, kind: Option<&str>) -> Value {
+    let mut record = serde_json::json!({
         "window_id": w.window_id,
         "pid": w.pid,
         "app_name": w.app_name,
@@ -97,16 +113,19 @@ pub(super) fn window_record_json(w: &crate::windows::WindowInfo) -> Value {
         "current_space_id": w.current_space_id,
         "on_current_space": w.on_current_space,
         "space_ids": w.space_ids,
-    })
+    });
+    if let Some(kind) = kind {
+        record["kind"] = Value::String(kind.to_owned());
+    }
+    record
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn window_record_includes_observed_z_index() {
-        let window = crate::windows::WindowInfo {
+    fn sample_window() -> crate::windows::WindowInfo {
+        crate::windows::WindowInfo {
             window_id: 42,
             pid: 123,
             app_name: "Example".into(),
@@ -123,16 +142,35 @@ mod tests {
             current_space_id: Some(1),
             on_current_space: Some(true),
             space_ids: Some(vec![1]),
-        };
+        }
+    }
 
-        assert_eq!(window_record_json(&window)["z_index"], serde_json::json!(7));
+    #[test]
+    fn window_record_includes_observed_z_index() {
+        let window = sample_window();
+
         assert_eq!(
-            window_record_json(&window)["current_space_id"],
+            window_record_json(&window, None)["z_index"],
+            serde_json::json!(7)
+        );
+        assert_eq!(
+            window_record_json(&window, None)["current_space_id"],
             serde_json::json!(1)
         );
         assert_eq!(
-            window_record_json(&window)["on_current_space"],
+            window_record_json(&window, None)["on_current_space"],
             serde_json::json!(true)
         );
+    }
+
+    #[test]
+    fn only_a_classified_window_carries_a_kind_key() {
+        let window = sample_window();
+
+        let classified = window_record_json(&window, Some(crate::window_kind::SYSTEM_OVERLAY_KIND));
+        assert_eq!(classified["kind"], serde_json::json!("system_overlay"));
+
+        let unclassified = window_record_json(&window, None);
+        assert_eq!(unclassified.get("kind"), None);
     }
 }

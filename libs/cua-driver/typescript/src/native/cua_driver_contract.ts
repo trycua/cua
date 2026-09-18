@@ -2970,7 +2970,8 @@ export type WindowInfo = {
     minimized?: boolean,
     currentSpaceId?: bigint,
     onCurrentSpace?: boolean,
-    spaceIds?: Array<bigint>
+    spaceIds?: Array<bigint>,
+    kind?: string
 }
 
 /**
@@ -3005,7 +3006,8 @@ const FfiConverterTypeWindowInfo = (() => {
                 minimized: FfiConverterOptionalBoolean.read(from),
                 currentSpaceId: FfiConverterOptionalUInt64.read(from),
                 onCurrentSpace: FfiConverterOptionalBoolean.read(from),
-                spaceIds: FfiConverterOptionalSequenceUInt64.read(from)
+                spaceIds: FfiConverterOptionalSequenceUInt64.read(from),
+                kind: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -3021,6 +3023,7 @@ const FfiConverterTypeWindowInfo = (() => {
             FfiConverterOptionalUInt64.write(value.currentSpaceId, into);
             FfiConverterOptionalBoolean.write(value.onCurrentSpace, into);
             FfiConverterOptionalSequenceUInt64.write(value.spaceIds, into);
+            FfiConverterOptionalString.write(value.kind, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterUInt64.allocationSize(value.windowId) +
@@ -3034,7 +3037,8 @@ const FfiConverterTypeWindowInfo = (() => {
              FfiConverterOptionalBoolean.allocationSize(value.minimized) +
              FfiConverterOptionalUInt64.allocationSize(value.currentSpaceId) +
              FfiConverterOptionalBoolean.allocationSize(value.onCurrentSpace) +
-             FfiConverterOptionalSequenceUInt64.allocationSize(value.spaceIds);
+             FfiConverterOptionalSequenceUInt64.allocationSize(value.spaceIds) +
+             FfiConverterOptionalString.allocationSize(value.kind);
 
         }
     };

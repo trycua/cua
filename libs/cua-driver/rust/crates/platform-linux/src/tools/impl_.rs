@@ -969,6 +969,13 @@ fn window_overlays(pid: u32, xid: u64) -> WindowOverlays {
         if popup.window == xid || popup.pid.is_some_and(|owner| owner != pid) {
             continue;
         }
+        // Desktop-wide override-redirect windows that are nobody's menu:
+        // mutter's guard window and the driver's own cursor overlay.
+        if popup.pid.is_none()
+            && (popup.title.contains("guard window") || popup.title.starts_with("Cua."))
+        {
+            continue;
+        }
         covers |= over((popup.x, popup.y, popup.width, popup.height));
         out.popups.push(popup.to_json());
     }

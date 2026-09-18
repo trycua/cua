@@ -340,16 +340,7 @@ fn append_platform_probes(report: &mut Report) {
     };
 
     // COM / UI Automation availability.
-    match diag::ui_automation_available() {
-        Ok(()) => report.push(Probe::ok(
-            "UI Automation",
-            "CoCreateInstance(CUIAutomation) succeeded",
-        )),
-        Err(e) => report.push(Probe::err(
-            "UI Automation",
-            format!("CoCreateInstance(CUIAutomation) failed: {e}"),
-        )),
-    }
+    report.push(ui_automation_probe());
 
     // EnumWindows count — cross-check the session probe. When Session 0
     // is in play, this almost always reports zero visible windows, which
@@ -367,6 +358,30 @@ fn append_platform_probes(report: &mut Report) {
         probe
     };
     report.push(probe);
+}
+
+#[cfg(target_os = "windows")]
+fn ui_automation_probe() -> Probe {
+    use platform_windows::diagnostics as diag;
+
+    match diag::ui_automation_available() {
+        Ok(()) => ui_automation_probe_from(Ok(()), false),
+        Err(e) => {
+            let degraded = diag::is_degraded_ui_automation_error(&e);
+            ui_automation_probe_from(Err(e), degraded)
+        }
+    }
+}
+
+fn ui_automation_probe_from(result: Result<(), String>, degraded: bool) -> Probe {
+    match result {
+        Ok(()) => Probe::ok("UI Automation", "CoCreateInstance(CUIAutomation) succeeded"),
+        Err(e) if degraded => Probe::warn("UI Automation", e),
+        Err(e) => Probe::err(
+            "UI Automation",
+            format!("CoCreateInstance(CUIAutomation) failed: {e}"),
+        ),
+    }
 }
 
 /// Run `gdbus introspect` against the AT-SPI accessibility bus and report
@@ -675,5 +690,33 @@ mod tests {
         let report = run();
         // 4 cross-platform + at least 1 platform-specific.
         assert!(report.probes.len() >= 5, "got {}", report.probes.len());
+    }
+
+    #[test]
+    fn degraded_ui_automation_does_not_fail_doctor() {
+        let mut report = Report::default();
+        for error in [
+            "UI Automation desktop enumeration exceeded 4000ms; a UIA provider may be hung.",
+            "UI Automation is busy with an earlier timed-out provider call; window tools are temporarily using Win32-only enumeration.",
+        ] {
+            let probe = ui_automation_probe_from(Err(error.to_owned()), true);
+            assert_eq!(probe.status, Status::Warn);
+            assert_eq!(probe.message, error);
+            report.push(probe);
+        }
+        assert!(!report.has_errors());
+        assert_eq!(report.to_json()["ok"], serde_json::Value::Bool(true));
+    }
+
+    #[test]
+    fn genuine_ui_automation_failures_still_fail_doctor() {
+        let probe = ui_automation_probe_from(
+            Err("CoCreateInstance(CUIAutomation) failed".to_owned()),
+            false,
+        );
+        assert_eq!(probe.status, Status::Err);
+        assert!(probe
+            .message
+            .contains("CoCreateInstance(CUIAutomation) failed"));
     }
 }

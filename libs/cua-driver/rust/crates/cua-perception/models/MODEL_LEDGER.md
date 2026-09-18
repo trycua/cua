@@ -10,6 +10,7 @@ access and refuses missing or mismatched files before creating a model session.
 
 - Source: `microsoft/OmniParser-v2.0` on Hugging Face
 - Revision: `6600256cb0f1b07651e3bc86166196307bad7e2d`
+- Immutable source URL: `https://huggingface.co/microsoft/OmniParser-v2.0/resolve/6600256cb0f1b07651e3bc86166196307bad7e2d/icon_detect/model.pt`
 - Source file: `icon_detect/model.pt`
 - Source SHA-256: `dab3d4351ad00b035db829909a4db98354d5a90f6990e4ac00222a9a95d4bf57`
 - License shipped with the detector: AGPL-3.0
@@ -23,12 +24,15 @@ The reviewed conversion used Python 3.12.13, PyTorch 2.8.0, torchvision
 0.23.0, ultralytics 8.3.199, ONNX 1.19.0, ONNX Runtime 1.22.1, opset 17,
 fixed 1280 input, graph simplification enabled, and model-side NMS disabled.
 This records conversion provenance; the Rust worker itself has no Python
-runtime dependency.
+runtime dependency. The converted file is an explicitly supplied release
+input because the reviewed byte-for-byte export is not published at the
+upstream source URL. The assembler rejects any substitute digest.
 
 ## PP-OCRv5 detector
 
-- Source: official PaddlePaddle `PP-OCRv5_mobile_det` Hugging Face repository
+- Source: official PaddlePaddle `PP-OCRv5_mobile_det_onnx` Hugging Face repository
 - Revision: `e6f4fa85f00e168c862bc462aebca69eef9b3d3d`
+- Immutable ONNX URL: `https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_det_onnx/resolve/e6f4fa85f00e168c862bc462aebca69eef9b3d3d/inference.onnx`
 - ONNX SHA-256: `a431985659dc921974177a95adcfbb90fd9e51989a5e04d70d0b75f597b6e61d`
 - `inference.yml` SHA-256: `98069072e1b6b37d727fd9d9f11725faa46d6ea0de012f2ed26caea011c37699`
 - License: Apache-2.0
@@ -38,8 +42,10 @@ runtime dependency.
 
 ## PP-OCRv5 English recognizer
 
-- Source: official PaddlePaddle `en_PP-OCRv5_mobile_rec` Hugging Face repository
+- Source: official PaddlePaddle `en_PP-OCRv5_mobile_rec_onnx` Hugging Face repository
 - Revision: `3fafbc3b5dcf93dd72add9f48368be8a3a2cd33b`
+- Immutable ONNX URL: `https://huggingface.co/PaddlePaddle/en_PP-OCRv5_mobile_rec_onnx/resolve/3fafbc3b5dcf93dd72add9f48368be8a3a2cd33b/inference.onnx`
+- Immutable dictionary URL: `https://huggingface.co/PaddlePaddle/en_PP-OCRv5_mobile_rec_onnx/resolve/3fafbc3b5dcf93dd72add9f48368be8a3a2cd33b/inference.yml`
 - ONNX SHA-256: `b5f833dfc5d0eb71da397b4efa06ebeee9b431b690a47d6af40d77d8eabc557f`
 - `inference.yml` SHA-256: `27e91d0582f40168aa218303c76e184bc78fa7a5d105aad0cfbad8458b441067`
 - License: Apache-2.0
@@ -63,3 +69,17 @@ runtime dependency.
 PP-OCR DB detections are returned as axis-aligned bounds. Rotated probability
 map regions are not perspective-corrected before recognition; health and parse
 identity expose this limitation so a caller can decide whether it is suitable.
+
+## ONNX Runtime CPU library
+
+All three targets use the official CPU-only archives at immutable tag
+`v1.26.0`. The assembler verifies each platform archive, extracts exactly one
+target member, and verifies its digest:
+
+- macOS arm64 archive `7a1280bbb1701ea514f71828765237e7896e0f2e1cd332f1f70dbd5c3e33aca3`; `libonnxruntime.dylib` `cb0462c3fd35ad722e8772313030a33c182f3d4c6b33f4e5e1fcb2ce3199b86c`
+- Windows x64 archive `6ebe99b5564bf4d029b6e93eac9ff423682b6212eade769e9ca3f685eaf500b4`; `onnxruntime.dll` `b2ba7ca16e0e4fe71ad5148744ab885a2f5809e52a0c3de4d9ba3853a03977f9`
+- Linux x64 archive `1254da24fb389cf39dc0ff3451ab48301740ffbfcbaf646849df92f80ee92c57`; `libonnxruntime.so` `5bd5bedf736fc501692435d0ec4f6e8b2bdf48cd30af8e6d00d61b3ddc9a7ab8`
+
+`scripts/artifacts.lock.json` is the machine-readable authority for URLs,
+archive members, sizes, target identities, and hashes. `SOURCE_OFFER.md` and
+`THIRD_PARTY_NOTICES.md` must accompany every assembled bundle.

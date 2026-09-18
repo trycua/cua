@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "onnx_runtime": {
+    "version": "1.26.0",
+    "license": "MIT",
+    "targets": {
+      "aarch64-apple-darwin": {
+        "os": "macos",
+        "arch": "aarch64",
+        "archive_url": "https://github.com/microsoft/onnxruntime/releases/download/v1.26.0/onnxruntime-osx-arm64-1.26.0.tgz",
+        "archive_sha256": "7a1280bbb1701ea514f71828765237e7896e0f2e1cd332f1f70dbd5c3e33aca3",
+        "archive_format": "tar.gz",
+        "archive_member": "./onnxruntime-osx-arm64-1.26.0/lib/libonnxruntime.dylib",
+        "filename": "libonnxruntime.dylib",
+        "sha256": "cb0462c3fd35ad722e8772313030a33c182f3d4c6b33f4e5e1fcb2ce3199b86c",
+        "size": 37310032,
+        "worker_filename": "cua-perception"
+      },
+      "x86_64-pc-windows-msvc": {
+        "os": "windows",
+        "arch": "x86_64",
+        "archive_url": "https://github.com/microsoft/onnxruntime/releases/download/v1.26.0/onnxruntime-win-x64-1.26.0.zip",
+        "archive_sha256": "6ebe99b5564bf4d029b6e93eac9ff423682b6212eade769e9ca3f685eaf500b4",
+        "archive_format": "zip",
+        "archive_member": "onnxruntime-win-x64-1.26.0/lib/onnxruntime.dll",
+        "filename": "onnxruntime.dll",
+        "sha256": "b2ba7ca16e0e4fe71ad5148744ab885a2f5809e52a0c3de4d9ba3853a03977f9",
+        "size": 14897976,
+        "worker_filename": "cua-perception.exe"
+      },
+      "x86_64-unknown-linux-gnu": {
+        "os": "linux",
+        "arch": "x86_64",
+        "archive_url": "https://github.com/microsoft/onnxruntime/releases/download/v1.26.0/onnxruntime-linux-x64-1.26.0.tgz",
+        "archive_sha256": "1254da24fb389cf39dc0ff3451ab48301740ffbfcbaf646849df92f80ee92c57",
+        "archive_format": "tar.gz",
+        "archive_member": "onnxruntime-linux-x64-1.26.0/lib/libonnxruntime.so.1.26.0",
+        "filename": "libonnxruntime.so",
+        "sha256": "5bd5bedf736fc501692435d0ec4f6e8b2bdf48cd30af8e6d00d61b3ddc9a7ab8",
+        "size": 23023576,
+        "worker_filename": "cua-perception"
+      }
+    }
+  },
+  "artifacts": [
+    {
+      "role": "icon-detect",
+      "filename": "omniparser-icon-detect-1280-opset17.onnx",
+      "sha256": "d8a876bf7f9fb73d7da9432904ade7fa78e092e9a91674e5a2806b45562a9ab2",
+      "size": 80933219,
+      "url": null,
+      "origin": "https://huggingface.co/microsoft/OmniParser-v2.0",
+      "revision": "6600256cb0f1b07651e3bc86166196307bad7e2d",
+      "source_path": "icon_detect/model.pt",
+      "source_sha256": "dab3d4351ad00b035db829909a4db98354d5a90f6990e4ac00222a9a95d4bf57",
+      "license": "AGPL-3.0-only",
+      "verification_status": "license-review-required"
+    },
+    {
+      "role": "ocr-detect",
+      "filename": "ppocrv5-mobile-det.onnx",
+      "sha256": "a431985659dc921974177a95adcfbb90fd9e51989a5e04d70d0b75f597b6e61d",
+      "size": 4826518,
+      "url": "https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_det_onnx/resolve/e6f4fa85f00e168c862bc462aebca69eef9b3d3d/inference.onnx",
+      "origin": "https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_det_onnx",
+      "revision": "e6f4fa85f00e168c862bc462aebca69eef9b3d3d",
+      "license": "Apache-2.0",
+      "verification_status": "release-verified"
+    },
+    {
+      "role": "ocr-recognize",
+      "filename": "ppocrv5-mobile-rec-en.onnx",
+      "sha256": "b5f833dfc5d0eb71da397b4efa06ebeee9b431b690a47d6af40d77d8eabc557f",
+      "size": 7848423,
+      "url": "https://huggingface.co/PaddlePaddle/en_PP-OCRv5_mobile_rec_onnx/resolve/3fafbc3b5dcf93dd72add9f48368be8a3a2cd33b/inference.onnx",
+      "origin": "https://huggingface.co/PaddlePaddle/en_PP-OCRv5_mobile_rec_onnx",
+      "revision": "3fafbc3b5dcf93dd72add9f48368be8a3a2cd33b",
+      "license": "Apache-2.0",
+      "verification_status": "release-verified"
+    },
+    {
+      "role": "ocr-dictionary",
+      "filename": "ppocrv5-mobile-rec-en-inference.yml",
+      "sha256": "27e91d0582f40168aa218303c76e184bc78fa7a5d105aad0cfbad8458b441067",
+      "size": 3964,
+      "url": "https://huggingface.co/PaddlePaddle/en_PP-OCRv5_mobile_rec_onnx/resolve/3fafbc3b5dcf93dd72add9f48368be8a3a2cd33b/inference.yml",
+      "origin": "https://huggingface.co/PaddlePaddle/en_PP-OCRv5_mobile_rec_onnx",
+      "revision": "3fafbc3b5dcf93dd72add9f48368be8a3a2cd33b",
+      "license": "Apache-2.0",
+      "verification_status": "release-verified"
+    }
+  ]
+}

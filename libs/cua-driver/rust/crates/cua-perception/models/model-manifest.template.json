@@ -8,7 +8,7 @@
     "license": "AGPL-3.0 (detector); Apache-2.0 (OCR)"
   },
   "onnx_runtime": {
-    "version": "REPLACE_WITH_PACKAGED_CPU_RUNTIME_VERSION",
+    "version": "1.26.0",
     "target": "REPLACE_WITH_RUST_TARGET_TRIPLE",
     "library_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
     "intra_threads": 2

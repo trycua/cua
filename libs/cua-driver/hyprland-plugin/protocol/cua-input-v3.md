@@ -173,9 +173,13 @@ Before taking over primary input, the plugin must refuse held physical keys or
 buttons, active grabs, pointer constraints, and drag-and-drop. It requires a
 single primary seat binding, excluding its own agent seats by resource identity,
 and refuses binding or input-resource changes during dispatch. Keyboard delivery
-requires the physical keymap to match canonical `evdev`/`pc105`/`us`, with
-neutral primary modifiers and layout group zero; remaps, latched or locked
-modifiers refuse before activation. Foreground pointer-only actions do not
+requires layout group zero and no held or latched modifiers, which refuse before
+activation. Lock modifiers do not refuse: agent keystrokes are delivered with
+Num Lock and Caps Lock cleared, and the primary keyboard's modifier state is
+restored when the action finishes. Each pressed key must produce the same keysym
+under the physical keymap as under canonical `evdev`/`pc105`/`us`; options that
+leave typed keys unchanged, such as `compose:caps`, qualify, and a key that
+differs refuses before it is delivered. Foreground pointer-only actions do not
 depend on the physical keyboard layout. Foreground drag
 cancellation on primary-input and focus transitions remains subject to review
 and native verification; do not infer background isolation from this route.

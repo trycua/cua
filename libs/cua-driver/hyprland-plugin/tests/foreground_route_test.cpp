@@ -22,6 +22,18 @@ int main() {
         check(ForegroundFailure{static_cast<ForegroundFailureReason>(i)}.detail() == labels[i]);
     check(ForegroundFailure::code(false) == "primary_target_busy");
     check(ForegroundFailure::code(true) == "foreground_partial_unknown");
+    // Omarchy defaults to Num Lock on; locks are neutralised rather than refused.
+    const std::array<std::uint32_t, 4> num_lock{0, 0, 0x10, 0};
+    check(foreground_key_modifier_failure(num_lock) == ForegroundFailureReason::keyboard_locked);
+    check(foreground_key_modifier_failure(foreground_key_modifiers_without_locks(num_lock)) ==
+        ForegroundFailureReason::none);
+    check(foreground_key_modifiers_without_locks({1, 2, 0x12, 3}) == std::array<std::uint32_t, 4>{1, 2, 0, 3});
+    check(foreground_key_modifier_failure(foreground_key_modifiers_without_locks({1, 0, 0x10, 0})) ==
+        ForegroundFailureReason::keyboard_depressed);
+    check(foreground_key_modifier_failure(foreground_key_modifiers_without_locks({0, 1, 0x10, 0})) ==
+        ForegroundFailureReason::keyboard_latched);
+    check(foreground_key_modifier_failure(foreground_key_modifiers_without_locks({0, 0, 0x10, 1})) ==
+        ForegroundFailureReason::keyboard_group);
 
     // Exhaust every guard combination against the original admission predicates.
     for (unsigned bits = 0; bits < 1024; ++bits) {

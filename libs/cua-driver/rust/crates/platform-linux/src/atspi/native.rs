@@ -2313,6 +2313,109 @@ fn activation_index(role: &str, actions: &[String]) -> Option<usize> {
     })
 }
 
+/// Container roles whose `activate` / `open` / `menu` action acts on the
+/// container's *current selection* (Nautilus' `layered pane "Icon View"`
+/// opens the selected file; a GTK `list` activates its selected row). A
+/// bubbling at-point walk must never fire these: the user clicked an item,
+/// not "open whatever is selected".
+pub(crate) fn is_container_role(role: &str) -> bool {
+    matches!(
+        role.trim().to_ascii_lowercase().as_str(),
+        "layered pane"
+            | "list"
+            | "list box"
+            | "table"
+            | "tree"
+            | "tree table"
+            | "icon view"
+            | "panel"
+            | "scroll pane"
+            | "viewport"
+    )
+}
+
+/// Item roles a click selects rather than activates when they expose no
+/// Action of their own (Nautilus file `canvas` items, GTK list rows / cells).
+fn is_selectable_item_role(role: &str) -> bool {
+    matches!(
+        role.trim().to_ascii_lowercase().as_str(),
+        "canvas"
+            | "list item"
+            | "table cell"
+            | "cell"
+            | "icon"
+            | "tree item"
+            | "table row"
+            | "row"
+    )
+}
+
+/// The at-point activation rule. The deepest node under the point may fire
+/// any activation it advertises unless it is a container (a click on a
+/// container's empty area must not open its current selection); an ancestor
+/// may only be fired when it is neither a container nor a `canvas` (a drawing
+/// surface whose `activate` means "open the selection" once it has children).
+fn at_point_activation_index(role: &str, actions: &[String], is_deepest_hit: bool) -> Option<usize> {
+    if is_container_role(role) {
+        return None;
+    }
+    if !is_deepest_hit && role.trim().eq_ignore_ascii_case("canvas") {
+        return None;
+    }
+    activation_index(role, actions)
+}
+
+/// What an at-point accessibility click did, for the tool result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AtPointHit {
+    /// AT-SPI action name fired (`activate`, `click`), or `select_child`
+    /// when the item was selected through its container's Selection
+    /// interface instead.
+    pub action: String,
+    pub role: String,
+    pub name: String,
+    /// D-Bus object path of the node acted on.
+    pub path: String,
+    /// Set on the Selection route: the item that is now selected.
+    pub selected: Option<String>,
+    /// Selection route only: `Selection.IsChildSelected` read back true.
+    pub selection_verified: bool,
+}
+
+impl AtPointHit {
+    pub fn fired(action: String, role: String, name: String, path: String) -> Self {
+        Self {
+            action,
+            role,
+            name,
+            path,
+            selected: None,
+            selection_verified: false,
+        }
+    }
+
+    /// `hit: push button "Restore" action=activate path=...` /
+    /// `selected: canvas "file.txt" ...`.
+    pub fn describe(&self) -> String {
+        match &self.selected {
+            Some(item) => format!(
+                "selected: {} \"{}\" (Selection.SelectChild on its container{})",
+                self.role,
+                item,
+                if self.selection_verified {
+                    ", read back as selected"
+                } else {
+                    ", selection not read back"
+                }
+            ),
+            None => format!(
+                "hit: {} \"{}\" action={} path={}",
+                self.role, self.name, self.action, self.path
+            ),
+        }
+    }
+}
+
 fn is_menu_role(role: &str) -> bool {
     role.trim().to_ascii_lowercase().contains("menu")
 }
@@ -2813,7 +2916,7 @@ pub fn perform_action_at_point_in(
     win_x: i32,
     win_y: i32,
     skip_focus_roles: bool,
-) -> Result<Option<String>> {
+) -> Result<Option<AtPointHit>> {
     bounded_for(
         INPUT_QUERY_BUDGET,
         async {
@@ -2844,78 +2947,202 @@ pub fn perform_action_at_point_in(
                     // cover the point (or cannot hit-test). Try the next one.
                     continue;
                 }
-                let mut passive_fallback: Option<(usize, String, Vec<String>)> = None;
-                for (depth, node) in chain.iter().enumerate().rev() {
-                    let Some(Ok(role)) = call(node.acc.get_role_name()).await else {
-                        continue;
-                    };
-                    let Some(Ok(ifaces)) = call(node.acc.get_interfaces()).await else {
-                        continue;
-                    };
-                    if !ifaces.contains(Interface::Action) {
-                        continue;
-                    }
-                    let Some(Ok(proxies)) = call(node.acc.proxies()).await else {
-                        continue;
-                    };
-                    let Some(Ok(ap)) = call(proxies.action()).await else {
-                        continue;
-                    };
-                    let actions = action_names(&ap).await;
-                    let Some(chosen) = activation_index(&role, &actions) else {
-                        continue;
-                    };
-                    if is_passive_role(&role) {
-                        if passive_fallback.is_none() {
-                            passive_fallback = Some((depth, role.clone(), actions.clone()));
-                        }
-                        continue;
-                    }
-                    if skip_focus_roles && is_focus_taking_role(&role) {
-                        // The caller has a real pointer: an entry / spin button /
-                        // cell gets the focus from a real press, not from
-                        // `doAction`. Fall through to that route.
-                        dlog!(
-                            "hit-test ({win_x},{win_y}) -> depth {depth} role={role:?}: focus-taking, leaving it to a real click"
-                        );
-                        return Ok(None);
-                    }
-                    dlog!(
-                        "hit-test ({win_x},{win_y}) -> depth {depth} role={role:?} path={} action={:?}",
-                        node.oref.path,
-                        actions.get(chosen)
-                    );
-                    match call(ap.do_action(chosen as i32)).await {
-                        Some(Ok(_)) => {
-                            tokio::time::sleep(Duration::from_millis(50)).await;
-                            return Ok(actions.get(chosen).cloned());
-                        }
-                        Some(Err(e)) => return Err(anyhow!("doAction failed: {e}")),
-                        // Dispatched; the reply waits on a nested main loop.
-                        None => return Ok(actions.get(chosen).cloned()),
-                    }
-                }
-                if let Some((depth, role, actions)) = passive_fallback {
-                    let node = &chain[depth];
-                    let Some(chosen) = activation_index(&role, &actions) else {
-                        return Ok(None);
-                    };
-                    let Some(Ok(proxies)) = call(node.acc.proxies()).await else {
-                        return Ok(None);
-                    };
-                    let Some(Ok(ap)) = call(proxies.action()).await else {
-                        return Ok(None);
-                    };
-                    if let Some(Ok(_)) = call(ap.do_action(chosen as i32)).await {
-                        return Ok(actions.get(chosen).cloned());
-                    }
-                }
-                return Ok(None);
+                return actuate_chain(&chain, win_x, win_y, skip_focus_roles).await;
             }
             Ok(None)
         },
         || Ok(None),
     )
+}
+
+/// Fire the right thing on a `GetAccessibleAtPoint` chain (frame first,
+/// deepest hit last). The deepest node with a safe activation wins; a
+/// container ancestor is never fired for a click on one of its items (see
+/// [`at_point_activation_index`]). An item that advertises no Action is
+/// selected through its container's `Selection` interface, the way a plain
+/// click selects a file in a file manager; when that is not possible either,
+/// `Ok(None)` leaves the point to the caller's real pointer press.
+async fn actuate_chain(
+    chain: &[HitNode<'_>],
+    win_x: i32,
+    win_y: i32,
+    skip_focus_roles: bool,
+) -> Result<Option<AtPointHit>> {
+    let deepest = chain.len() - 1;
+    let mut deepest_role = String::new();
+    let mut deepest_name = String::new();
+    let mut deepest_has_action = false;
+    let mut passive_fallback: Option<(usize, String, String, Vec<String>)> = None;
+    for (depth, node) in chain.iter().enumerate().rev() {
+        let Some(Ok(role)) = call(node.acc.get_role_name()).await else {
+            continue;
+        };
+        let Some(Ok(ifaces)) = call(node.acc.get_interfaces()).await else {
+            continue;
+        };
+        let has_action = ifaces.contains(Interface::Action);
+        if depth == deepest {
+            deepest_role = role.clone();
+            deepest_name = call(node.acc.name())
+                .await
+                .and_then(|r| r.ok())
+                .unwrap_or_default();
+            deepest_has_action = has_action;
+        }
+        if !has_action {
+            continue;
+        }
+        let Some(Ok(proxies)) = call(node.acc.proxies()).await else {
+            continue;
+        };
+        let Some(Ok(ap)) = call(proxies.action()).await else {
+            continue;
+        };
+        let actions = action_names(&ap).await;
+        let Some(chosen) = at_point_activation_index(&role, &actions, depth == deepest) else {
+            if depth != deepest
+                && !deepest_has_action
+                && activation_index(&role, &actions).is_some()
+            {
+                // The item under the point has no Action and this ancestor's
+                // activation is a container's "open the selection": select
+                // the item instead, else leave the point to a real pointer
+                // press, which is what selects it.
+                dlog!(
+                    "hit-test ({win_x},{win_y}) -> depth {depth} role={role:?} is a container over {deepest_role:?}: not firing {:?}",
+                    activation_index(&role, &actions).and_then(|i| actions.get(i))
+                );
+                return Ok(
+                    select_item_in_chain(chain, deepest, &deepest_role, &deepest_name).await,
+                );
+            }
+            continue;
+        };
+        let name = call(node.acc.name())
+            .await
+            .and_then(|r| r.ok())
+            .unwrap_or_default();
+        if is_passive_role(&role) {
+            if passive_fallback.is_none() {
+                passive_fallback = Some((depth, role.clone(), name, actions.clone()));
+            }
+            continue;
+        }
+        if skip_focus_roles && is_focus_taking_role(&role) {
+            // The caller has a real pointer: an entry / spin button /
+            // cell gets the focus from a real press, not from
+            // `doAction`. Fall through to that route.
+            dlog!(
+                "hit-test ({win_x},{win_y}) -> depth {depth} role={role:?}: focus-taking, leaving it to a real click"
+            );
+            return Ok(None);
+        }
+        dlog!(
+            "hit-test ({win_x},{win_y}) -> depth {depth} role={role:?} name={name:?} path={} action={:?}",
+            node.oref.path,
+            actions.get(chosen)
+        );
+        let hit = AtPointHit::fired(
+            actions.get(chosen).cloned().unwrap_or_default(),
+            role.clone(),
+            name,
+            node.oref.path.clone(),
+        );
+        match call(ap.do_action(chosen as i32)).await {
+            Some(Ok(_)) => {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                return Ok(Some(hit));
+            }
+            Some(Err(e)) => return Err(anyhow!("doAction failed: {e}")),
+            // Dispatched; the reply waits on a nested main loop.
+            None => return Ok(Some(hit)),
+        }
+    }
+    if !deepest_has_action && is_selectable_item_role(&deepest_role) {
+        if let Some(hit) =
+            select_item_in_chain(chain, deepest, &deepest_role, &deepest_name).await
+        {
+            return Ok(Some(hit));
+        }
+    }
+    if let Some((depth, role, name, actions)) = passive_fallback {
+        let node = &chain[depth];
+        let Some(chosen) = activation_index(&role, &actions) else {
+            return Ok(None);
+        };
+        let Some(Ok(proxies)) = call(node.acc.proxies()).await else {
+            return Ok(None);
+        };
+        let Some(Ok(ap)) = call(proxies.action()).await else {
+            return Ok(None);
+        };
+        if let Some(Ok(_)) = call(ap.do_action(chosen as i32)).await {
+            return Ok(Some(AtPointHit::fired(
+                actions.get(chosen).cloned().unwrap_or_default(),
+                role,
+                name,
+                node.oref.path.clone(),
+            )));
+        }
+    }
+    Ok(None)
+}
+
+/// Select the item at `item_depth` of a hit chain through its parent's
+/// `Selection` interface: clear the current selection (a plain click
+/// replaces it), `SelectChild(index_in_parent)`, then read the state back.
+/// `None` when the parent does not select, the item is not one of its
+/// children, or the toolkit refused — the caller then falls back to a real
+/// pointer press.
+async fn select_item_in_chain(
+    chain: &[HitNode<'_>],
+    item_depth: usize,
+    item_role: &str,
+    item_name: &str,
+) -> Option<AtPointHit> {
+    if !is_selectable_item_role(item_role) || item_depth == 0 {
+        return None;
+    }
+    let item = &chain[item_depth];
+    let parent = &chain[item_depth - 1];
+    let ifaces = call(parent.acc.get_interfaces()).await?.ok()?;
+    if !ifaces.contains(Interface::Selection) {
+        return None;
+    }
+    let index = call(item.acc.get_index_in_parent()).await?.ok()?;
+    if index < 0 {
+        return None;
+    }
+    let proxies = call(parent.acc.proxies()).await?.ok()?;
+    let selection = call(proxies.selection()).await?.ok()?;
+    // Best effort: some containers refuse ClearSelection while still
+    // honouring SelectChild (which then replaces a single selection).
+    let _ = call(selection.clear_selection()).await;
+    let accepted = call(selection.select_child(index)).await?.ok()?;
+    if !accepted {
+        dlog!(
+            "Selection.SelectChild({index}) refused by {}",
+            parent.oref.path
+        );
+        return None;
+    }
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let verified = matches!(
+        call(selection.is_child_selected(index)).await,
+        Some(Ok(true))
+    );
+    dlog!(
+        "selected child {index} ({item_role:?} {item_name:?}) of {} verified={verified}",
+        parent.oref.path
+    );
+    Some(AtPointHit {
+        action: "select_child".to_owned(),
+        role: item_role.to_owned(),
+        name: item_name.to_owned(),
+        path: item.oref.path.clone(),
+        selected: Some(item_name.to_owned()),
+        selection_verified: verified,
+    })
 }
 
 /// A mutation was attempted; callers must not replay through another route.
@@ -3515,7 +3742,7 @@ pub fn perform_action_at_point(
     win_x: i32,
     win_y: i32,
     skip_focus_roles: bool,
-) -> Result<Option<String>> {
+) -> Result<Option<AtPointHit>> {
     bounded_for(
         INPUT_QUERY_BUDGET,
         async {
@@ -3536,7 +3763,7 @@ pub fn perform_action_at_point(
             // children, but the area/role split is what actually disambiguates.
             let mut frames: Vec<(usize, i32, i32, u32, u32, bool)> = Vec::new();
             for (i, v) in visited.iter().enumerate() {
-                if v.actions.is_empty() || !v.has_component {
+                if v.actions.is_empty() || !v.has_component || is_container_role(&v.role) {
                     continue;
                 }
                 let Some(Ok(proxies)) = call(v.acc.proxies()).await else {
@@ -3589,7 +3816,12 @@ pub fn perform_action_at_point(
                 Some(Err(e)) => return Err(anyhow!("doAction failed: {e}")),
                 None => dlog!("doAction dispatched but not acknowledged in time"),
             }
-            Ok(target.actions.get(chosen).cloned())
+            Ok(Some(AtPointHit::fired(
+                target.actions.get(chosen).cloned().unwrap_or_default(),
+                target.role.clone(),
+                target.name.clone(),
+                target.object_ref.path.clone(),
+            )))
         },
         || Ok(None),
     )
@@ -5399,5 +5631,89 @@ mod budget_tests {
         assert_eq!(result.unwrap(), "partial");
         // deadline + 500 ms backstop, well under the old 25 s.
         assert!(started.elapsed() < Duration::from_secs(3));
+    }
+}
+
+#[cfg(test)]
+mod at_point_rules_tests {
+    use super::*;
+
+    fn acts(names: &[&str]) -> Vec<String> {
+        names.iter().map(|n| n.to_string()).collect()
+    }
+
+    #[test]
+    fn container_activation_never_bubbles() {
+        // Nautilus: canvas item (no Action) under `layered pane "Icon View"`
+        // [activate, menu]: the container is an ancestor -> not fired.
+        assert_eq!(
+            at_point_activation_index("layered pane", &acts(&["activate", "menu"]), false),
+            None
+        );
+        for role in ["list", "table", "tree", "tree table", "icon view", "panel", "list box"] {
+            assert_eq!(at_point_activation_index(role, &acts(&["activate"]), false), None);
+            // A click on the container's own empty area must not open its
+            // current selection either.
+            assert_eq!(at_point_activation_index(role, &acts(&["activate"]), true), None);
+        }
+        // A canvas is a surface: as an ancestor its activate is the
+        // container's; as the deepest hit it is the widget itself.
+        assert_eq!(at_point_activation_index("canvas", &acts(&["activate"]), false), None);
+        assert_eq!(at_point_activation_index("canvas", &acts(&["activate"]), true), Some(0));
+    }
+
+    #[test]
+    fn real_actuators_still_fire_from_any_depth() {
+        assert_eq!(
+            at_point_activation_index("push button", &acts(&["click"]), false),
+            Some(0)
+        );
+        assert_eq!(
+            at_point_activation_index("menu item", &acts(&["click"]), true),
+            Some(0)
+        );
+        assert_eq!(
+            at_point_activation_index("check box", &acts(&["check"]), true),
+            Some(0)
+        );
+        // Non-activation verbs never fire, container or not.
+        assert_eq!(
+            at_point_activation_index("push button", &acts(&["buffer.delete-line"]), true),
+            None
+        );
+    }
+
+    #[test]
+    fn selectable_item_roles() {
+        for role in ["canvas", "list item", "table cell", "tree item", "icon", "row"] {
+            assert!(is_selectable_item_role(role), "{role}");
+        }
+        for role in ["push button", "layered pane", "label", "menu item"] {
+            assert!(!is_selectable_item_role(role), "{role}");
+        }
+    }
+
+    #[test]
+    fn hit_description_names_what_was_fired() {
+        let hit = AtPointHit::fired(
+            "activate".into(),
+            "push button".into(),
+            "Restore".into(),
+            "/org/a11y/atspi/accessible/42".into(),
+        );
+        assert_eq!(
+            hit.describe(),
+            "hit: push button \"Restore\" action=activate path=/org/a11y/atspi/accessible/42"
+        );
+        let selected = AtPointHit {
+            action: "select_child".into(),
+            role: "canvas".into(),
+            name: "file.txt".into(),
+            path: "/x".into(),
+            selected: Some("file.txt".into()),
+            selection_verified: true,
+        };
+        assert!(selected.describe().starts_with("selected: canvas \"file.txt\""));
+        assert!(selected.describe().contains("read back as selected"));
     }
 }

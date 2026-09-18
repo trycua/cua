@@ -337,11 +337,12 @@ pub fn list_windows(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo> {
 /// click on toolkits (GTK) that drop synthetic X11 pointer events. Returns
 /// `Ok(Some(action))` when an element was actuated, `Ok(None)` when no
 /// actionable element covers the point (caller falls back to the X11 path).
-pub fn perform_action_at_point(pid: u32, win_x: i32, win_y: i32) -> Result<Option<String>> {
+pub fn perform_action_at_point(pid: u32, win_x: i32, win_y: i32) -> Result<Option<AtPointHit>> {
     perform_action_at_point_in(pid, 0, win_x, win_y, false)
 }
 
 pub use native::is_focus_taking_role;
+pub use native::AtPointHit;
 
 /// [`perform_action_at_point`] for a known window, in three rungs that never
 /// re-walk the tree first:
@@ -359,16 +360,32 @@ pub fn perform_action_at_point_in(
     win_x: i32,
     win_y: i32,
     skip_focus_roles: bool,
-) -> Result<Option<String>> {
+) -> Result<Option<AtPointHit>> {
     if xid != 0 {
         if let Some((ox, oy)) = native::x11_window_origin(xid) {
             if let Some((idx, element)) = cache::hit_test(pid, xid, win_x + ox, win_y + oy) {
                 if skip_focus_roles && is_focus_taking_role(&element.role) {
                     return Ok(None);
                 }
-                if let Some(object_ref) = element.object_ref {
+                if native::is_container_role(&element.role) {
+                    // The cached snapshot's smallest covering element is a
+                    // container (list / icon view / pane): its activation
+                    // opens the current selection, not the item under the
+                    // point. Let the live hit-test find the item.
+                    tracing::debug!(
+                        "cached hit-test element {idx} (pid {pid}) is a {} container; skipping",
+                        element.role
+                    );
+                } else if let Some(object_ref) = element.object_ref {
                     match native::perform_action_ref(&object_ref) {
-                        Ok((action, _)) => return Ok(Some(action)),
+                        Ok((action, _)) => {
+                            return Ok(Some(AtPointHit::fired(
+                                action,
+                                element.role.clone(),
+                                String::new(),
+                                object_ref.path.clone(),
+                            )))
+                        }
                         Err(error) => tracing::debug!(
                             "cached hit-test element {idx} (pid {pid}) failed: {error:#}"
                         ),
@@ -378,7 +395,7 @@ pub fn perform_action_at_point_in(
         }
     }
     match native::perform_action_at_point_in(pid, xid, win_x, win_y, skip_focus_roles) {
-        Ok(Some(action)) => return Ok(Some(action)),
+        Ok(Some(hit)) => return Ok(Some(hit)),
         Ok(None) => {}
         Err(error) => tracing::debug!("GetAccessibleAtPoint hit-test failed: {error:#}"),
     }

@@ -2997,6 +2997,9 @@ fn window_screen_center(xid: u64) -> anyhow::Result<(i32, i32)> {
 enum PointerRoute {
     /// Real button events from the session's MPX virtual master pointer.
     Mpx(crate::input::PointerEffect),
+    /// A background pixel click resolved to an accessible under the point and
+    /// fired its action (or selected it through its container).
+    Atspi(crate::atspi::AtPointHit),
     /// Target-addressed synthetic `XSendEvent` (core-only toolkits).
     Synthetic,
     /// Activated the window first and used XTest (delivery_mode=foreground).
@@ -3010,6 +3013,7 @@ impl PointerRoute {
     fn path(&self) -> Option<&'static str> {
         match self {
             Self::Mpx(_) => Some(crate::input::MPX_POINTER_PATH),
+            Self::Atspi(_) => Some("x11_atspi"),
             Self::Synthetic => Some("x11_xsendevent"),
             Self::Foreground => Some("x11_xtest_fg"),
             Self::Wayland => None,
@@ -3028,6 +3032,34 @@ impl PointerRoute {
         });
         if let Some(path) = self.path() {
             v["path"] = json!(path);
+        }
+        if let Self::Atspi(hit) = self {
+            v["hit"] = json!({
+                "role": hit.role,
+                "name": hit.name,
+                "action": hit.action,
+                "path": hit.path,
+            });
+            if let Some(selected) = &hit.selected {
+                v["selected"] = json!(selected);
+            }
+            // The read-back of the container's selection state is real
+            // accessibility evidence; a fired action is only a native call
+            // whose effect the caller still confirms.
+            let evidence = if hit.selection_verified {
+                v["verified"] = json!(true);
+                v["effect"] = json!("confirmed");
+                json!({
+                    "kind": "accessibility_readback",
+                    "detail": hit.describe(),
+                })
+            } else {
+                json!({
+                    "kind": "native_api_result",
+                    "detail": hit.describe(),
+                })
+            };
+            v["evidence"] = json!([evidence]);
         }
         if let Self::Mpx(effect) = self {
             v["focus_unchanged"] = json!(effect.focus_unchanged);
@@ -3109,6 +3141,20 @@ impl PointerRoute {
 
     fn text_suffix_inner(&self, mode_label: &str) -> String {
         match self {
+            Self::Atspi(hit) if hit.selected.is_some() => format!(
+                "(delivery_mode={mode_label}, path=x11_atspi); {}{}",
+                hit.describe(),
+                if hit.selection_verified {
+                    " — the item is selected."
+                } else {
+                    "; confirm with a screenshot."
+                }
+            ),
+            Self::Atspi(hit) => format!(
+                "(delivery_mode={mode_label}, path=x11_atspi); {}; the AT-SPI action was \
+                 dispatched, not verified — confirm with a screenshot.",
+                hit.describe()
+            ),
             Self::Mpx(effect) if effect.landed() => format!(
                 "(delivery_mode={mode_label}, path={}, focus {}); {}the screen around the \
                  point changed ({:.1}% of the region) — the action landed.",
@@ -5274,11 +5320,10 @@ impl Tool for ClickTool {
                             real_click_for_focus_roles,
                         )
                         .ok()
-                        .flatten()
-                        .is_some())
+                        .flatten())
                     })?;
-                    if hit {
-                        return Ok(("x11_atspi", None, guard));
+                    if let Some(hit) = hit {
+                        return Ok(("x11_atspi", Some(PointerRoute::Atspi(hit)), guard));
                     }
                 }
                 if !fg

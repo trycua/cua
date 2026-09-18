@@ -2336,14 +2336,35 @@ fn exact_menu_path_matches(visited: &[Visited<'_>], path: &[String]) -> Vec<usiz
 /// Every hop re-walks AT-SPI after the preceding menu has materialized; no
 /// snapshot index is retained across mutations.
 pub fn invoke_menu_path(pid: u32, path: &[String]) -> Result<()> {
+    invoke_menu_path_in(pid, 0, path)
+}
+
+/// [`invoke_menu_path`] scoped to the caller's native window: when the same
+/// menu path exists under several top-levels of the process (LibreOffice
+/// publishes every document window's menubar in one AT-SPI application),
+/// the hop under `xid`'s frame wins instead of the path being ambiguous.
+pub fn invoke_menu_path_in(pid: u32, xid: u64, path: &[String]) -> Result<()> {
     bounded(
         async {
             let conn = shared_connection().await?;
             for depth in 0..path.len() {
-                let visited = collect_visited(conn, pid)
+                let collected = collect_visited_bounded(conn, pid, xid, None, None)
                     .await?
                     .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
-                let matches = exact_menu_path_matches(&visited, &path[..=depth]);
+                let visited = collected.visited;
+                let mut matches = exact_menu_path_matches(&visited, &path[..=depth]);
+                if matches.len() > 1 {
+                    if let Some(scope) = collected.scoped_frame {
+                        let scoped: Vec<usize> = matches
+                            .iter()
+                            .copied()
+                            .filter(|index| visited[*index].frame_ordinal == scope)
+                            .collect();
+                        if !scoped.is_empty() {
+                            matches = scoped;
+                        }
+                    }
+                }
                 let target_index = match matches.as_slice() {
                     [index] => *index,
                     [] => anyhow::bail!("menu path segment {depth} was not found"),
@@ -3632,6 +3653,76 @@ pub(crate) fn select_click_target(
     best_active.or(best_passive).map(|(_, idx)| idx)
 }
 
+/// Error-message prefix when an element offers neither `EditableText` nor
+/// `Value`: the tool layer branches to the keyboard fallback on it.
+pub const NO_VALUE_ROUTE: &str = "no_value_route";
+
+pub fn is_no_value_route(error: &anyhow::Error) -> bool {
+    error.to_string().starts_with(NO_VALUE_ROUTE)
+}
+
+/// A spin button / spin scale only parses its entry text on activate (Return
+/// or focus-out); after an EditableText write, fire the element's `activate`
+/// action when it exposes one so the numeric value commits. Best effort.
+async fn commit_editable_write(proxies: &atspi::proxy::proxy_ext::Proxies<'_>) {
+    let Some(Ok(ap)) = call(proxies.action()).await else {
+        return;
+    };
+    let names = action_names(&ap).await;
+    if let Some(index) = names
+        .iter()
+        .position(|name| normalized_action_verb(name) == "activate")
+    {
+        let _ = call(ap.do_action(index as i32)).await;
+    }
+}
+
+/// The focus-free write shared by the index and cached-ref entry points.
+/// SetValue never calls Component.GrabFocus: GTK may activate and raise the
+/// toplevel in response, violating the background contract. Toolkits that
+/// expose EditableText only while focused get an honest `NO_VALUE_ROUTE`.
+async fn set_value_on(acc: &AccessibleProxy<'_>, has_value: bool, value: &str, label: &str) -> Result<()> {
+    let proxies = acc
+        .proxies()
+        .await
+        .map_err(|e| anyhow!("interface proxies unavailable: {e}"))?;
+    if let Ok(et) = proxies.editable_text().await {
+        // Replace whole contents (parity with the Windows/macOS set_value,
+        // which overwrite rather than insert at the caret).
+        if et.set_text_contents(value).await.unwrap_or(false) {
+            commit_editable_write(&proxies).await;
+            return Ok(());
+        }
+        // Some toolkits reject SetTextContents but accept an insert at the
+        // caret offset; clear-then-insert as a fallback.
+        let off = match proxies.text().await {
+            Ok(tp) => tp.caret_offset().await.unwrap_or(0),
+            Err(_) => 0,
+        };
+        let len = value.chars().count() as i32;
+        if et.insert_text(off, value, len).await.unwrap_or(false) {
+            commit_editable_write(&proxies).await;
+            return Ok(());
+        }
+    }
+    if has_value {
+        let v: f64 = value
+            .parse()
+            .map_err(|_| anyhow!("value '{value}' is not numeric for a Value element"))?;
+        proxies
+            .value()
+            .await
+            .map_err(|e| anyhow!("Value unavailable: {e}"))?
+            .set_current_value(v)
+            .await
+            .map_err(|e| anyhow!("setCurrentValue failed: {e}"))?;
+        return Ok(());
+    }
+    Err(anyhow!(
+        "{NO_VALUE_ROUTE}: {label} exposes neither EditableText nor Value"
+    ))
+}
+
 pub fn set_value(pid: u32, idx: usize, value: &str) -> Result<()> {
     bounded_for(
         INDEX_RESOLVE_BUDGET,
@@ -3644,57 +3735,72 @@ pub fn set_value(pid: u32, idx: usize, value: &str) -> Result<()> {
             let target = action_nodes.get(idx).ok_or_else(|| {
                 anyhow!("element {idx} not found (total: {})", action_nodes.len())
             })?;
-
-            let proxies = target
-                .acc
-                .proxies()
-                .await
-                .map_err(|e| anyhow!("interface proxies unavailable: {e}"))?;
-
-            // SetValue is a focus-free accessibility operation. Do not call
-            // Component.GrabFocus here: GTK may activate and raise the entire
-            // toplevel in response, violating the background contract. Toolkits
-            // that expose EditableText only while focused must return an honest
-            // unsupported error rather than changing desktop focus implicitly.
-            if let Ok(et) = proxies.editable_text().await {
-                // Replace whole contents (parity with the Windows/macOS set_value,
-                // which overwrite rather than insert at the caret).
-                if et.set_text_contents(value).await.unwrap_or(false) {
-                    return Ok(());
-                }
-                // Some toolkits reject SetTextContents but accept an insert at the
-                // caret offset; clear-then-insert as a fallback.
-                let off = match proxies.text().await {
-                    Ok(tp) => tp.caret_offset().await.unwrap_or(0),
-                    Err(_) => 0,
-                };
-                let len = value.chars().count() as i32;
-                if et.insert_text(off, value, len).await.unwrap_or(false) {
-                    return Ok(());
-                }
-            }
-            if target.has_value {
-                let v: f64 = value
-                    .parse()
-                    .map_err(|_| anyhow!("value '{value}' is not numeric for a Value element"))?;
-                proxies
-                    .value()
-                    .await
-                    .map_err(|e| anyhow!("Value unavailable: {e}"))?
-                    .set_current_value(v)
-                    .await
-                    .map_err(|e| anyhow!("setCurrentValue failed: {e}"))?;
-                return Ok(());
-            }
-            Err(anyhow!(
-                "element {idx} exposes neither EditableText nor Value"
-            ))
+            set_value_on(&target.acc, target.has_value, value, &format!("element {idx}")).await
         },
         || {
             Err(anyhow!(
                 "set_value timed out for pid {pid} (app unresponsive to AT-SPI)"
             ))
         },
+    )
+}
+
+/// [`set_value`] on a snapshot-cached element identity (the exact object the
+/// caller's `element_index` named, not the same ordinal in a fresh walk).
+pub fn set_value_ref(object_ref: &ObjectRef, value: &str) -> Result<()> {
+    bounded_for(
+        REF_ACTION_BUDGET,
+        async {
+            let conn = shared_connection().await?;
+            let (acc, _) = live_accessible(conn, object_ref).await?;
+            let ifaces = match call(acc.get_interfaces()).await {
+                Some(Ok(ifaces)) => ifaces,
+                _ => return Err(anyhow!("cached element interfaces unavailable")),
+            };
+            set_value_on(&acc, ifaces.contains(Interface::Value), value, "cached element").await
+        },
+        || Err(anyhow!("set_value (cached element) timed out")),
+    )
+}
+
+/// Current value of a cached element for read-back after a write: the
+/// `Value` interface's number, else the `Text` content. `None` when the
+/// element exposes neither (or does not answer in time).
+pub fn read_value_ref(object_ref: &ObjectRef) -> Result<Option<String>> {
+    bounded_for(
+        REF_ACTION_BUDGET,
+        async {
+            let conn = shared_connection().await?;
+            let (acc, _) = live_accessible(conn, object_ref).await?;
+            let ifaces = match call(acc.get_interfaces()).await {
+                Some(Ok(ifaces)) => ifaces,
+                _ => return Ok(None),
+            };
+            let proxies = match call(acc.proxies()).await {
+                Some(Ok(proxies)) => proxies,
+                _ => return Ok(None),
+            };
+            if ifaces.contains(Interface::Value) {
+                if let Some(Ok(vp)) = call(proxies.value()).await {
+                    if let Some(Ok(v)) = call(vp.current_value()).await {
+                        return Ok(Some(format_value(v)));
+                    }
+                }
+            }
+            if ifaces.contains(Interface::Text) {
+                if let Some(Ok(tp)) = call(proxies.text()).await {
+                    let count = call(tp.character_count())
+                        .await
+                        .and_then(|r| r.ok())
+                        .unwrap_or(0);
+                    if let Some(Ok(t)) = call(tp.get_text(0, count.min(4096))).await {
+                        return Ok(Some(t));
+                    }
+                }
+            }
+            Ok(None)
+        },
+        || Err(anyhow!("read_value (cached element) timed out")),
     )
 }
 

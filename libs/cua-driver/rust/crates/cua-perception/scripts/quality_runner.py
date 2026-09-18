@@ -138,7 +138,14 @@ def _load_config(path: Path, engine: str) -> dict[str, Any]:
         actual = _sha256(source)
         if expected != actual:
             raise RunnerError(f"{where}.sha256 does not match the bound file")
-        checked.append({"role": role, "id": artifact_id, "source": source, "sha256": actual})
+        checked.append({
+            "role": role,
+            "id": artifact_id,
+            "source": source,
+            "sha256": actual,
+            "root": root,
+            "relative_path": item["path"],
+        })
     installed = bindings["installed_artifact_ids"]
     if not isinstance(installed, list) or not installed or any(not isinstance(item, str) for item in installed):
         raise RunnerError("config.bindings.installed_artifact_ids must be a non-empty string array")
@@ -190,6 +197,18 @@ def _artifact_binding(
     if expected_role is not None and artifact["role"] != expected_role:
         raise RunnerError(f"{where} must identify a {expected_role} artifact")
     return artifact
+
+
+def _verify_bound_artifacts(artifacts: list[dict[str, Any]], where: str) -> None:
+    for artifact in artifacts:
+        artifact_where = f"{where} artifact {artifact['id']}"
+        try:
+            current = _regular_file(artifact["root"], artifact["relative_path"], artifact_where)
+            actual = _sha256(current)
+        except (OSError, RunnerError) as error:
+            raise RunnerError(f"{artifact_where} changed after configuration validation: {error}") from error
+        if current != artifact["source"] or actual != artifact["sha256"]:
+            raise RunnerError(f"{artifact_where} changed after configuration validation")
 
 
 def _manifest_artifact(manifest_root: Path, value: Any, where: str) -> tuple[Path, str]:
@@ -278,6 +297,15 @@ def _validate_execution(
         if conversion_id is not None:
             conversion = _artifact_binding(conversion_id, "config.execution.conversion_metadata_artifact_id", artifacts, "conversion_metadata")
             _validate_conversion_record(conversion["source"], source_artifact, detector_artifact)
+        executed_artifacts = [
+            _artifact_binding(item["worker_artifact_id"], "config.execution.worker_artifact_id", artifacts, "worker"),
+            manifest_artifact,
+            runtime_artifact,
+            detector_artifact,
+            ocr_detector_artifact,
+            ocr_recognizer_artifact,
+            dictionary_artifact,
+        ]
         return {
             "worker": worker,
             "manifest": manifest_artifact["source"],
@@ -286,6 +314,7 @@ def _validate_execution(
             "extension_id": _string(item["extension_id"], "config.execution.extension_id"),
             "extension_version": _string(item["extension_version"], "config.execution.extension_version"),
             "timeout": timeout,
+            "executed_artifacts": executed_artifacts,
         }
     item = _closed(value, ("python_interpreter_artifact_id", "python_home", "site_packages", "model_artifact_id", "ocr_model_artifact_ids", "cache_dir", "force_device", "box_threshold", "iou_threshold", "use_ocr", "timeout_seconds"), (), "config.execution")
     if not isinstance(item["use_ocr"], bool):
@@ -308,13 +337,20 @@ def _validate_execution(
     ]
     if any(path.parent.resolve() != model_cache.resolve() for path in ocr_models):
         raise RunnerError("configured OCR model artifacts must be direct files in cache_dir/model")
+    model_artifact = _artifact_binding(item["model_artifact_id"], "config.execution.model_artifact_id", artifacts, "source_model")
+    python_artifact = _artifact_binding(item["python_interpreter_artifact_id"], "config.execution.python_interpreter_artifact_id", artifacts, "worker")
+    package_artifact = artifacts[package_artifact_id]
+    ocr_artifacts = [
+        _artifact_binding(value, "config.execution.ocr_model_artifact_ids", artifacts, "ocr_model")
+        for value in ocr_ids
+    ]
     return {
         "python": python,
         "python_home": _directory(root, item["python_home"], "config.execution.python_home"),
         "site_packages": _directory(root, item["site_packages"], "config.execution.site_packages"),
-        "package": artifacts[package_artifact_id]["source"],
-        "package_sha256": artifacts[package_artifact_id]["sha256"],
-        "model": _artifact_reference(item["model_artifact_id"], "config.execution.model_artifact_id", artifacts, "source_model"),
+        "package": package_artifact["source"],
+        "package_sha256": package_artifact["sha256"],
+        "model": model_artifact["source"],
         "ocr_models": ocr_models,
         "cache_dir": cache_dir,
         "force_device": _string(item["force_device"], "config.execution.force_device"),
@@ -322,6 +358,7 @@ def _validate_execution(
         "iou_threshold": _number(item["iou_threshold"], "config.execution.iou_threshold", 0.0, 1.0),
         "use_ocr": item["use_ocr"],
         "timeout": _number(item["timeout_seconds"], "config.execution.timeout_seconds", 0.001),
+        "executed_artifacts": [python_artifact, package_artifact, model_artifact, *ocr_artifacts],
     }
 
 
@@ -588,6 +625,7 @@ def _normalize_rust_region(value: Any, index: int, image: dict[str, Any]) -> dic
 
 
 def _run_rust_image(execution: dict[str, Any], image: dict[str, Any], image_path: Path) -> dict[str, Any]:
+    _verify_bound_artifacts(execution["executed_artifacts"], "Rust execution")
     command = [str(execution["worker"]), "--manifest", str(execution["manifest"]), "--onnx-runtime-library", str(execution["runtime"]), "--extension-id", execution["extension_id"], "--extension-version", execution["extension_version"]]
     with tempfile.TemporaryFile() as stderr:
         start = time.perf_counter_ns()
@@ -679,27 +717,40 @@ def _extract_bound_wheel(wheel: Path, expected_sha256: str, destination: Path) -
         raise RunnerError(f"cannot extract bound Python wheel: {error}") from error
 
 
+def _python_child_invocation(execution: dict[str, Any], options: dict[str, Any]) -> tuple[list[str], dict[str, str]]:
+    environment = {key: value for key, value in os.environ.items() if not key.startswith("PYTHON")}
+    environment.update({
+        "PYTHONHOME": str(execution["python_home"]),
+        "PYTHONNOUSERSITE": "1",
+        "HF_HUB_OFFLINE": "1",
+        "TRANSFORMERS_OFFLINE": "1",
+        "EASYOCR_MODULE_PATH": str(execution["cache_dir"]),
+    })
+    command = [
+        str(execution["python"]),
+        "-S",
+        str(Path(__file__).resolve()),
+        "--python-child",
+        json.dumps(options, separators=(",", ":")),
+    ]
+    return command, environment
+
+
 def _run_python_image(execution: dict[str, Any], image: dict[str, Any], image_path: Path) -> dict[str, Any]:
+    _verify_bound_artifacts(execution["executed_artifacts"], "Python execution")
     with tempfile.TemporaryDirectory(prefix="cua-quality-wheel-") as temporary, tempfile.TemporaryFile() as stderr:
         import_root = Path(temporary).resolve()
         _extract_bound_wheel(execution["package"], execution["package_sha256"], import_root)
         options = {
-            "import_root": str(import_root), "model": str(execution["model"]), "cache_dir": str(execution["cache_dir"]),
+            "import_root": str(import_root), "site_packages": str(execution["site_packages"]),
+            "model": str(execution["model"]), "cache_dir": str(execution["cache_dir"]),
             "force_device": execution["force_device"], "box_threshold": execution["box_threshold"], "iou_threshold": execution["iou_threshold"],
             "use_ocr": execution["use_ocr"], "image": str(image_path),
         }
-        environment = os.environ.copy()
-        environment.update({
-            "PYTHONHOME": str(execution["python_home"]),
-            "PYTHONPATH": os.pathsep.join((str(execution["site_packages"]), str(import_root))),
-            "PYTHONNOUSERSITE": "1",
-            "HF_HUB_OFFLINE": "1",
-            "TRANSFORMERS_OFFLINE": "1",
-            "EASYOCR_MODULE_PATH": str(execution["cache_dir"]),
-        })
+        command, environment = _python_child_invocation(execution, options)
         cold_start = time.perf_counter_ns()
         process = subprocess.Popen(
-            [str(execution["python"]), str(Path(__file__).resolve()), "--python-child", json.dumps(options, separators=(",", ":"))],
+            command,
             stdout=subprocess.PIPE,
             stderr=stderr,
             env=environment,
@@ -854,6 +905,10 @@ def _python_child(encoded: str) -> int:
 
         socket.socket = OfflineSocket
         import_root = Path(options["import_root"]).resolve()
+        site_packages = Path(options["site_packages"]).resolve()
+        if not site_packages.is_dir() or site_packages.is_symlink():
+            raise RunnerError("configured site_packages is not a regular directory")
+        sys.path.append(str(site_packages))
         sys.path.insert(0, str(import_root))
         _clear_som_modules()
         som = importlib.import_module("som")

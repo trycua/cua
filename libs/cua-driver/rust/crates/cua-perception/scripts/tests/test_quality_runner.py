@@ -15,6 +15,7 @@ import unittest
 import zipfile
 import zlib
 from pathlib import Path
+from unittest import mock
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "quality_runner.py"
@@ -63,7 +64,30 @@ def wheel(path: Path, module_source: str) -> Path:
     return path
 
 
+def bound(root: Path, artifact_id: str, path: Path) -> dict[str, object]:
+    return {
+        "id": artifact_id,
+        "source": path.resolve(),
+        "sha256": sha256(path),
+        "root": root.resolve(),
+        "relative_path": path.relative_to(root).as_posix(),
+    }
+
+
 class QualityRunnerTests(unittest.TestCase):
+    def test_python_invocation_disables_site_startup_and_inherited_python_paths(self) -> None:
+        execution = {
+            "python": Path("/bound/python"),
+            "python_home": Path("/bound/python-home"),
+            "cache_dir": Path("/bound/cache"),
+        }
+        with mock.patch.dict(os.environ, {"PYTHONPATH": "/unbound", "PYTHONSTARTUP": "/unbound/startup.py"}):
+            command, environment = quality_runner._python_child_invocation(execution, {"import_root": "/bound/wheel"})
+        self.assertEqual(command[1:3], ["-S", str(SCRIPT)])
+        self.assertNotIn("PYTHONPATH", environment)
+        self.assertNotIn("PYTHONSTARTUP", environment)
+        self.assertEqual(environment["PYTHONHOME"], "/bound/python-home")
+
     def test_rust_worker_uses_real_framing_and_one_process_for_cold_and_warm(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -110,6 +134,11 @@ class QualityRunnerTests(unittest.TestCase):
                     "extension_id": "cua-perception",
                     "extension_version": "1.0.0",
                     "timeout": 5.0,
+                    "executed_artifacts": [
+                        bound(root, "worker", worker),
+                        bound(root, "manifest", manifest),
+                        bound(root, "runtime", runtime),
+                    ],
                 },
                 image,
                 image_path,
@@ -172,9 +201,11 @@ class QualityRunnerTests(unittest.TestCase):
             )
             model = write(root / "model.pt", b"model")
             (root / "cache/model").mkdir(parents=True)
+            (root / "site-packages").mkdir()
             image = png(root / "screen.png")
             options = {
                 "import_root": str(import_root),
+                "site_packages": str(root / "site-packages"),
                 "model": str(model),
                 "cache_dir": str(root / "cache"),
                 "force_device": "cpu",
@@ -197,7 +228,7 @@ class QualityRunnerTests(unittest.TestCase):
             self.assertEqual(cold["regions"], warm["regions"])
             self.assertEqual(cold["regions"][0]["bounds"], {"x": 10.0, "y": 16.0, "width": 30.000000000000004, "height": 24.0})
 
-    def test_python_child_rejects_preloaded_unbound_som_submodule(self) -> None:
+    def test_python_child_suppresses_sitecustomize_and_rejects_unbound_som_submodule(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             site_packages = root / "site-packages"
@@ -223,6 +254,7 @@ class QualityRunnerTests(unittest.TestCase):
             image = png(root / "screen.png")
             options = {
                 "import_root": str(import_root),
+                "site_packages": str(site_packages),
                 "model": str(model),
                 "cache_dir": str(root / "cache"),
                 "force_device": "cpu",
@@ -231,18 +263,15 @@ class QualityRunnerTests(unittest.TestCase):
                 "use_ocr": False,
                 "image": str(image),
             }
-            environment = os.environ.copy()
-            environment["PYTHONPATH"] = str(site_packages)
             process = subprocess.Popen(
-                [sys.executable, str(SCRIPT), "--python-child", json.dumps(options, separators=(",", ":"))],
+                [sys.executable, "-S", str(SCRIPT), "--python-child", json.dumps(options, separators=(",", ":"))],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                env=environment,
             )
             assert process.stdout is not None
             response = quality_runner._read_frame(process.stdout, 5.0)
             _, stderr = process.communicate(timeout=5)
-            self.assertTrue(marker.is_file(), stderr.decode())
+            self.assertFalse(marker.exists(), stderr.decode())
             self.assertEqual(process.returncode, 1)
             self.assertEqual(response["status"], "error")
             self.assertIn("poison", response["error"])
@@ -380,6 +409,11 @@ class QualityRunnerTests(unittest.TestCase):
             config_path.write_text(json.dumps(config), encoding="utf-8")
             loaded = quality_runner._load_config(config_path, "rust")
             self.assertEqual(loaded["execution"]["source_revision"], "revision")
+
+            runtime.write_bytes(b"tampered runtime")
+            with self.assertRaisesRegex(quality_runner.RunnerError, "runtime changed after configuration validation"):
+                quality_runner._verify_bound_artifacts(loaded["execution"]["executed_artifacts"], "Rust execution")
+            runtime.write_bytes(b"runtime")
 
             alternate = write(root / "alternate.onnx", b"alternate")
             config["bindings"]["artifacts"].append(artifact("converted_model", "alternate", alternate))

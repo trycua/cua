@@ -91,7 +91,19 @@ has role `source_model`; and each bound `ocr_model` file must be directly under
 the runner hash-verifies `package_artifact_id`, safely extracts that exact wheel
 into a fresh runner-owned temporary directory, and imports `som` only from the
 extracted wheel while retaining the configured offline `site_packages`
-dependencies. Arbitrary `source_root` configuration is rejected.
+dependencies. The child starts with inherited `PYTHON*` settings removed and
+Python site initialization disabled, so `sitecustomize`, `usercustomize`, and
+`.pth` startup hooks cannot run before the bound wheel is selected. Arbitrary
+`source_root` configuration is rejected.
+
+Immediately before each engine process starts, the runner resolves and hashes
+the bound executable, manifest, runtime, package, and model files again. This
+fails closed if a configured file or path changed after initial validation.
+The Python `dependency_lock` binds the declared dependency resolution, but the
+current result format has no installed-file manifest for `python_home` or
+`site_packages`; the runner therefore does not claim cryptographic proof of
+every installed dependency byte. Those directories must be prepared from the
+bound lock in the controlled quality environment.
 
 After generating both files, build the canonical comparison report with:
 

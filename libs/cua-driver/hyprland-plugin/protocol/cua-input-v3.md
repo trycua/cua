@@ -176,10 +176,13 @@ and refuses binding or input-resource changes during dispatch. Keyboard delivery
 requires layout group zero and no held or latched modifiers, which refuse before
 activation. Lock modifiers do not refuse: agent keystrokes are delivered with
 Num Lock and Caps Lock cleared, and the primary keyboard's modifier state is
-restored when the action finishes. Each pressed key must produce the same keysym
-under the physical keymap as under canonical `evdev`/`pc105`/`us`; options that
-leave typed keys unchanged, such as `compose:caps`, qualify, and a key that
-differs refuses before it is delivered. Foreground pointer-only actions do not
+restored when the action finishes. The physical keymap qualifies when every key
+the KEY command can press (evdev 1-247 except the lock keys) produces the same
+keysym as canonical `evdev`/`pc105`/`us`, at the base level and, for non-modifier
+keys, with Shift held. Options that only change Caps Lock or modifier chords,
+such as `compose:caps` and `shift:both_capslock_cancel`, qualify; a different
+layout or a remapped typing or modifier key refuses before activation. Each
+pressed key is checked again before delivery. Foreground pointer-only actions do not
 depend on the physical keyboard layout. Foreground drag
 cancellation on primary-input and focus transitions remains subject to review
 and native verification; do not infer background isolation from this route.

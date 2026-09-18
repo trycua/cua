@@ -9,6 +9,7 @@
 #include "seat_lifetime.hpp"
 #include "owned_socket_path.hpp"
 #include "foreground_route.hpp"
+#include "keymap_equivalence.hpp"
 
 #include <src/Compositor.hpp>
 #include <src/devices/IKeyboard.hpp>
@@ -218,7 +219,7 @@ struct InputExperiment::Impl {
     xkb_keymap* physical_keymap = nullptr;
     xkb_state* physical_keyboard_state = nullptr;
     int keymap_fd = -1;
-    bool retired = false, suspended = true, us_keymap = false, physical_keymap_present = false;
+    bool retired = false, suspended = true, us_keymap = false, typing_keymap = false, physical_keymap_present = false;
     WP<IKeyboard> physical_keyboard;
     CHyprSignalListener keymap_listener;
     unsigned lane;
@@ -317,7 +318,7 @@ struct InputExperiment::Impl {
     bool layout_qualified() const {
         if (!kProduction) return true;
         const auto keyboard = g_pSeatManager->m_keyboard.lock();
-        return physical_keymap_present && physical_keyboard_state && keyboard &&
+        return physical_keymap_present && typing_keymap && physical_keyboard_state && keyboard &&
             keyboard->m_xkbKeymapV1FD.get() >= 0 && keyboard->m_xkbKeymapV1String == physical_keymap_text;
     }
     void sync_keymap() {
@@ -357,6 +358,10 @@ struct InputExperiment::Impl {
         if (physical_xkb_context) xkb_context_unref(physical_xkb_context);
         physical_keyboard_state = state; physical_keymap = map; physical_xkb_context = context;
         us_keymap = !kProduction || canonical_us_keymap(context, map);
+        // Keyboard qualification: every key the KEY command can press must type the
+        // same keysym as the canonical agent keymap. Checked once per keymap, so a
+        // different layout refuses before activation rather than mid-string.
+        typing_keymap = !kProduction || typing_keymap_equivalent(map, keymap);
         physical_keymap_text = keyboard->m_xkbKeymapV1String;
     }
     void start() {
@@ -912,10 +917,9 @@ struct InputExperiment::Impl {
             const auto modifier_failure = foreground_key_modifier_failure(unlocked);
             if (modifier_failure != ForegroundFailureReason::none) throw ForegroundFailure{modifier_failure};
             xkb_state_update_mask(physical_keyboard_state, unlocked[0], unlocked[1], 0, 0, 0, unlocked[3]);
-            // Each pressed key must produce the same keysym under the physical
-            // keymap as under the canonical agent US keymap, so options that leave
-            // typed keys unchanged (compose:caps, shift:both_capslock_cancel)
-            // qualify while a key that differs refuses before delivery.
+            // Reference state in the canonical agent keymap. layout_qualified()
+            // already requires typing-key equivalence; foreground_key re-checks
+            // each pressed key against this state as a backstop.
             if (foreground_reference_state) xkb_state_unref(foreground_reference_state);
             foreground_reference_state = keymap ? xkb_state_new(keymap) : nullptr;
             if (!foreground_reference_state) throw ForegroundFailure{ForegroundFailureReason::keyboard_state};

@@ -3021,23 +3021,116 @@ pub fn perform_action_at_point_in(
             } else {
                 resolve_window_frame(conn, pid, xid, &seeds).await
             };
+            // The toolkit's `Window` coordinate frame is not always the X11
+            // client window the caller's pixels are relative to: VCL
+            // (LibreOffice) measures from the WM frame, title bar included,
+            // so a client-local point hit-tests one or two rows too high.
+            // Re-base the point on the frame's own screen origin.
+            let (hit_x, hit_y) = match scoped {
+                Some(ordinal) => {
+                    let frame_origin = frame_screen_origin(conn, &seeds[ordinal]).await;
+                    let client_origin = x11_window_origin(xid);
+                    at_point_toolkit_coords((win_x, win_y), client_origin, frame_origin)
+                }
+                None => (win_x, win_y),
+            };
+            if (hit_x, hit_y) != (win_x, win_y) {
+                dlog!(
+                    "at-point ({win_x},{win_y}) re-based to toolkit window coords ({hit_x},{hit_y})"
+                );
+            }
             let ordered: Vec<RawObjectRef> = match scoped {
                 Some(ordinal) => seeds.get(ordinal).cloned().into_iter().collect(),
                 None => seeds,
             };
             for seed in ordered {
-                let chain = descend_at_point(conn, seed, win_x, win_y).await;
+                let chain = descend_at_point(conn, seed, hit_x, hit_y).await;
                 if chain.len() <= 1 {
                     // The frame itself, or nothing: this top-level does not
                     // cover the point (or cannot hit-test). Try the next one.
                     continue;
                 }
-                return actuate_chain(&chain, win_x, win_y, skip_focus_roles).await;
+                return actuate_chain(&chain, hit_x, hit_y, skip_focus_roles).await;
             }
             Ok(None)
         },
         || Ok(None),
     )
+}
+
+/// Screen origin of an application top-level as the toolkit reports it
+/// (`Component.GetExtents(Screen)`), when that answer is trustworthy.
+async fn frame_screen_origin(
+    conn: &AccessibilityConnection,
+    seed: &RawObjectRef,
+) -> Option<(i32, i32)> {
+    let acc = call(accessible_for(conn, seed)).await?.ok()?;
+    let proxies = call(acc.proxies()).await?.ok()?;
+    let component = call(proxies.component()).await?.ok()?;
+    let raw = call(component.get_extents(CoordType::Screen)).await?.ok()?;
+    let display = (!crate::wayland::is_wayland())
+        .then(x11_display_size)
+        .flatten();
+    screen_extents_trusted(raw, display).then_some((raw.0, raw.1))
+}
+
+/// Largest offset between an X11 client origin and the toolkit's own frame
+/// origin that still reads as decorations (a title bar, a border). Anything
+/// larger is a mis-correlated frame, and the point is left alone.
+const FRAME_DELTA_MAX_PX: i32 = 128;
+
+/// Translate a client-window-local point into the toolkit's `Window`
+/// coordinate frame for `GetAccessibleAtPoint`. The toolkit frame origin is
+/// where the top-level accessible says it is on screen; the client origin is
+/// the X11 window the caller's pixels are relative to. Their difference is
+/// the decoration inset the toolkit folds into its frame (0 for GTK, the
+/// title bar height for VCL). Unknown origins or an implausible delta leave
+/// the point untouched.
+pub(crate) fn at_point_toolkit_coords(
+    (x, y): (i32, i32),
+    client_origin: Option<(i32, i32)>,
+    frame_origin: Option<(i32, i32)>,
+) -> (i32, i32) {
+    let (Some((cx, cy)), Some((fx, fy))) = (client_origin, frame_origin) else {
+        return (x, y);
+    };
+    let (dx, dy) = (cx - fx, cy - fy);
+    if dx.abs() > FRAME_DELTA_MAX_PX || dy.abs() > FRAME_DELTA_MAX_PX {
+        return (x, y);
+    }
+    (x + dx, y + dy)
+}
+
+#[cfg(test)]
+mod at_point_coords_tests {
+    use super::at_point_toolkit_coords;
+
+    #[test]
+    fn vcl_title_bar_inset_is_added() {
+        // Calc: X11 client at (70,64), VCL frame origin (70,27): +37 px.
+        assert_eq!(
+            at_point_toolkit_coords((315, 218), Some((70, 64)), Some((70, 27))),
+            (315, 255)
+        );
+    }
+
+    #[test]
+    fn gtk_frame_equals_client_so_nothing_changes() {
+        assert_eq!(
+            at_point_toolkit_coords((315, 218), Some((70, 64)), Some((70, 64))),
+            (315, 218)
+        );
+    }
+
+    #[test]
+    fn unknown_or_implausible_origins_leave_the_point() {
+        assert_eq!(at_point_toolkit_coords((10, 20), None, Some((1, 2))), (10, 20));
+        assert_eq!(at_point_toolkit_coords((10, 20), Some((1, 2)), None), (10, 20));
+        assert_eq!(
+            at_point_toolkit_coords((10, 20), Some((900, 64)), Some((70, 64))),
+            (10, 20)
+        );
+    }
 }
 
 /// Fire the right thing on a `GetAccessibleAtPoint` chain (frame first,

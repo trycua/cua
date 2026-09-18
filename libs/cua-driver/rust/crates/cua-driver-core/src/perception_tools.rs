@@ -660,6 +660,11 @@ mod tests {
     async fn tool_maps_worker_icon_output_into_the_driver_contract() {
         use std::os::unix::fs::PermissionsExt;
 
+        #[cfg(target_os = "macos")]
+        const SHEBANG: &str = "#!/Applications/Xcode.app/Contents/Developer/usr/bin/python3";
+        #[cfg(not(target_os = "macos"))]
+        const SHEBANG: &str = "#!/usr/bin/env python3";
+
         let service = Arc::new(CaptureService::default());
         let (capture_id, binding) = capture(&service);
         let expected = service
@@ -667,17 +672,23 @@ mod tests {
             .unwrap()
             .digest()
             .hex();
-        let extension_version = env!("CARGO_PKG_VERSION");
+        let extension_version = "0.1.0";
         let directory = tempfile::tempdir().unwrap();
         let worker = directory.path().join("worker.py");
         let script = format!(
-            r#"#!/usr/bin/env python3
+            r#"{SHEBANG}
 import base64, hashlib, json, struct, sys
 def read():
  p=sys.stdin.buffer.read(4); n=struct.unpack('>I',p)[0]; return json.loads(sys.stdin.buffer.read(n))
 def write(v):
  p=json.dumps(v,separators=(',',':')).encode(); sys.stdout.buffer.write(struct.pack('>I',len(p))+p); sys.stdout.buffer.flush()
-h=read(); write({{'protocol':'cua-perception/1','request_id':h['request_id'],'status':'ok','result':{{'ready':True,'protocol':'cua-perception/1'}}}})
+h=read()
+health={{'protocol':'cua-perception/1','request_id':h['request_id'],'status':'ok','result':{{
+ 'ready':True,
+ 'protocol':'cua-perception/1',
+ 'identity':{{'extension':{{'id':'cua-perception','version':'{extension_version}'}}}}
+}}}}
+write(health)
 r=read(); raw=base64.b64decode(r['params']['image']['data_base64'])
 if hashlib.sha256(raw).hexdigest() != '{expected}':
  write({{'protocol':'cua-perception/1','request_id':r['request_id'],'status':'error','error':{{'code':'invalid_image','message':'wrong capture bytes'}}}})
@@ -689,9 +700,46 @@ else:
         let mut permissions = std::fs::metadata(&worker).unwrap().permissions();
         permissions.set_mode(0o700);
         std::fs::set_permissions(&worker, permissions).unwrap();
-        let client = PerceptionClient::new(crate::perception_client::PerceptionWorkerConfig::new(
-            worker,
-        ))
+        let containment = crate::perception_client::containment::ContainmentLimits {
+            additional_readable_paths: [
+                "/usr",
+                "/bin",
+                "/lib",
+                "/lib64",
+                "/etc",
+                "/opt",
+                "/System",
+                "/Library",
+                "/private/var/db",
+                "/private/var/select",
+                "/Applications/Xcode.app",
+            ]
+            .into_iter()
+            .map(std::path::PathBuf::from)
+            .filter(|path| path.is_dir())
+            .collect(),
+            additional_executable_paths: [
+                "/usr/bin/env",
+                "/usr/bin/python3",
+                "/Applications/Xcode.app/Contents/Developer/usr/bin/python3",
+                "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9",
+                "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Python3",
+                "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python",
+            ]
+            .into_iter()
+            .map(std::path::PathBuf::from)
+            .filter(|path| path.is_file())
+            .collect(),
+            ..Default::default()
+        };
+        let client = PerceptionClient::new(
+            crate::perception_client::PerceptionWorkerConfig::installed_with_identity(
+                worker,
+                "cua-perception",
+                extension_version,
+            )
+            .with_test_containment(containment),
+        )
         .unwrap();
         let action_binding = binding.clone();
         let tool = ParseVisualRegionsTool::new(
@@ -700,7 +748,12 @@ else:
             Arc::new(move |_| Ok(binding.clone())),
         );
         let result = tool.invoke(json!({"capture_id": capture_id.clone()})).await;
-        assert_ne!(result.is_error, Some(true));
+        assert_ne!(
+            result.is_error,
+            Some(true),
+            "worker mapping failed: {:?}",
+            result.structured_content
+        );
         let output: ParseVisualRegionsOutput =
             serde_json::from_value(result.structured_content.unwrap()).unwrap();
         assert_eq!(output.regions.len(), 1);
@@ -758,7 +811,7 @@ else:
         json!({
             "extension": {
                 "id": "cua-perception",
-                "version": env!("CARGO_PKG_VERSION")
+                "version": "0.1.0"
             },
             "backend": "onnx_runtime_cpu",
             "model": {
@@ -810,7 +863,7 @@ else:
         assert_eq!(output.capture.capture_id, capture_id);
         assert_eq!(output.regions[0].label.as_deref(), Some("icon-class-4"));
         assert_eq!(output.parser.extension_id, "cua-perception");
-        assert_eq!(output.parser.extension_version, env!("CARGO_PKG_VERSION"));
+        assert_eq!(output.parser.extension_version, "0.1.0");
         assert_eq!(output.parser.model_id, "omniparser-v2-ppocrv5-en");
         assert_eq!(output.parser.model_version, "2026-09-17");
         assert_eq!(
@@ -903,7 +956,7 @@ else:
             json!({
                 "runtime": "fixture_only",
                 "identity": {
-                    "extension": {"id": "cua-perception", "version": env!("CARGO_PKG_VERSION")},
+                    "extension": {"id": "cua-perception", "version": "0.1.0"},
                     "backend": "deterministic_fixture",
                     "fixture_sha256": "a".repeat(64)
                 },

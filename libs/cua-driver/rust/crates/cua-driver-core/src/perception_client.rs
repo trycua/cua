@@ -114,6 +114,15 @@ impl PerceptionWorkerConfig {
             containment::ContainmentLimits::default()
         }
     }
+
+    #[cfg(test)]
+    pub(crate) fn with_test_containment(
+        mut self,
+        containment: containment::ContainmentLimits,
+    ) -> Self {
+        self.containment = containment;
+        self
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

@@ -42,8 +42,12 @@ pub enum ElementAncestry {
     /// The live element ascends to an AX window whose CGWindowID is the
     /// requested one.
     ProvenDescendant,
-    /// The live element ascends to a different window of the same process.
-    OutsideTargetWindow,
+    ProvenAppMenu,
+    OutsideTargetWindow {
+        owner_pid: i32,
+        window_id: u32,
+    },
+    OutsideUnacquirableSurface,
     /// Ancestry could not be resolved (dead element, SPI failure). An address
     /// the shell cannot re-prove is not an exact target.
     Unproven,
@@ -72,6 +76,7 @@ pub struct BackgroundTargetFacts {
     /// off-Space sibling that AX cannot see still counts; proven-minimized
     /// siblings are excluded because they cannot be the key window).
     pub competing_keyboard_destinations: usize,
+    pub focused_window_id: Option<u32>,
     /// Ancestry proof for an explicitly addressed element, when one exists.
     pub element: ElementAncestry,
 }
@@ -168,18 +173,6 @@ fn refuse(
 }
 
 /// Decide whether one background action may run against one exact target.
-///
-/// The rules encode the v1 state-policy matrix:
-/// - a stale or foreign CGWindowID refuses every mutation;
-/// - a target absent from fresh `AXWindows` (off-Space or AX-unresolved) is
-///   observation-only;
-/// - an addressed element must prove ancestry to the requested window for
-///   every route, including semantic AX;
-/// - semantic AX actions remain available for minimized/hidden targets;
-/// - the routed pointer requires a visible (possibly occluded) target; and
-/// - process-scoped keyboard additionally requires that the target is the
-///   only eligible same-pid keyboard destination, because the transport
-///   addresses a process, not a window.
 pub fn decide_background_input(
     target: ExactWindowTarget,
     facts: &BackgroundTargetFacts,
@@ -213,7 +206,50 @@ pub fn decide_background_input(
 
     match facts.element {
         ElementAncestry::NotAddressed | ElementAncestry::ProvenDescendant => {}
-        ElementAncestry::OutsideTargetWindow | ElementAncestry::Unproven => {
+        ElementAncestry::ProvenAppMenu if matches!(action, BackgroundAction::AxSemantic) => {
+            if !process_directs_input_at_target(target, facts) {
+                return refuse(
+                    refusal_codes::SAME_PID_KEYBOARD_AMBIGUITY,
+                    format!(
+                        "pid {} owns {} other eligible top-level window(s) and directs \
+                         application-menu commands at {}, not at requested window {}; \
+                         a menu command here would act on that window instead",
+                        target.pid,
+                        facts.competing_keyboard_destinations,
+                        focused_destination(facts),
+                        target.window_id
+                    ),
+                    Some("foreground"),
+                );
+            }
+        }
+        ElementAncestry::OutsideTargetWindow {
+            owner_pid,
+            window_id,
+        } => {
+            return refuse(
+                refusal_codes::ELEMENT_OUTSIDE_TARGET_WINDOW,
+                format!(
+                    "this element belongs to window {window_id} (pid {owner_pid}), not to \
+                     the requested window {} — acquire that window id and act there",
+                    target.window_id
+                ),
+                Some("get_window_state"),
+            );
+        }
+        ElementAncestry::OutsideUnacquirableSurface => {
+            return refuse(
+                refusal_codes::ELEMENT_OUTSIDE_TARGET_WINDOW,
+                format!(
+                    "this element belongs to an attached surface (a sheet or panel) that \
+                     list_windows cannot acquire as its own window, not to the requested \
+                     window {}; act through the window that presents it",
+                    target.window_id
+                ),
+                Some("get_window_state"),
+            );
+        }
+        ElementAncestry::Unproven | ElementAncestry::ProvenAppMenu => {
             return refuse(
                 refusal_codes::ELEMENT_OUTSIDE_TARGET_WINDOW,
                 format!(
@@ -286,15 +322,19 @@ pub fn decide_background_input(
                 );
             }
             debug_assert!(action.is_pid_keyboard());
-            if facts.competing_keyboard_destinations > 0 {
+            if !process_directs_input_at_target(target, facts) {
                 return refuse(
                     refusal_codes::SAME_PID_KEYBOARD_AMBIGUITY,
                     format!(
-                        "pid {} owns {} other eligible top-level window(s); process-scoped \
-                         key events cannot be proven to reach window {} and could mutate a \
-                         sibling window. Use an exact element action, the page tool for \
-                         browser content, or delivery_mode:\"foreground\"",
-                        target.pid, facts.competing_keyboard_destinations, target.window_id
+                        "pid {} owns {} other eligible top-level window(s) and directs its \
+                         input at {}; process-scoped key events cannot be proven to reach \
+                         window {} and could mutate a sibling window. Use an exact element \
+                         action, the page tool for browser content, or \
+                         delivery_mode:\"foreground\"",
+                        target.pid,
+                        facts.competing_keyboard_destinations,
+                        focused_destination(facts),
+                        target.window_id
                     ),
                     Some("accessibility"),
                 );
@@ -305,6 +345,20 @@ pub fn decide_background_input(
                 },
             }
         }
+    }
+}
+
+fn process_directs_input_at_target(
+    target: ExactWindowTarget,
+    facts: &BackgroundTargetFacts,
+) -> bool {
+    facts.competing_keyboard_destinations == 0 || facts.focused_window_id == Some(target.window_id)
+}
+
+fn focused_destination(facts: &BackgroundTargetFacts) -> String {
+    match facts.focused_window_id {
+        Some(window_id) => format!("its focused window {window_id}"),
+        None => "a focused window it does not expose".into(),
     }
 }
 
@@ -379,6 +433,7 @@ mod tests {
             target_minimized: Some(false),
             app_hidden: Some(false),
             competing_keyboard_destinations: 0,
+            focused_window_id: None,
             element: ElementAncestry::NotAddressed,
         }
     }
@@ -393,6 +448,13 @@ mod tests {
     fn code_of(decision: BackgroundInputDecision) -> &'static str {
         match decision {
             BackgroundInputDecision::Refuse(refusal) => refusal.code,
+            BackgroundInputDecision::Execute { .. } => panic!("expected a refusal"),
+        }
+    }
+
+    fn reason_of(decision: BackgroundInputDecision) -> String {
+        match decision {
+            BackgroundInputDecision::Refuse(refusal) => refusal.reason,
             BackgroundInputDecision::Execute { .. } => panic!("expected a refusal"),
         }
     }
@@ -569,7 +631,11 @@ mod tests {
     #[test]
     fn unproven_element_ancestry_refuses_all_routes() {
         for element in [
-            ElementAncestry::OutsideTargetWindow,
+            ElementAncestry::OutsideTargetWindow {
+                owner_pid: 42,
+                window_id: 701,
+            },
+            ElementAncestry::OutsideUnacquirableSurface,
             ElementAncestry::Unproven,
         ] {
             let facts = BackgroundTargetFacts {
@@ -587,6 +653,46 @@ mod tests {
     }
 
     #[test]
+    fn sibling_window_refusal_names_the_window_the_element_belongs_to() {
+        let facts = BackgroundTargetFacts {
+            element: ElementAncestry::OutsideTargetWindow {
+                owner_pid: 43,
+                window_id: 701,
+            },
+            ..matched_facts()
+        };
+        let reason = reason_of(decide_background_input(
+            TARGET,
+            &facts,
+            BackgroundAction::WindowPointer,
+        ));
+        assert!(reason.contains("window 701"), "{reason}");
+        assert!(reason.contains("pid 43"), "{reason}");
+        assert!(
+            !reason.contains("get_window_state snapshot"),
+            "must not advise re-snapshotting the requested window: {reason}"
+        );
+    }
+
+    #[test]
+    fn unacquirable_surface_refusal_names_no_window_id() {
+        let facts = BackgroundTargetFacts {
+            element: ElementAncestry::OutsideUnacquirableSurface,
+            ..matched_facts()
+        };
+        let reason = reason_of(decide_background_input(
+            TARGET,
+            &facts,
+            BackgroundAction::AxSemantic,
+        ));
+        assert!(reason.contains("sheet or panel"), "{reason}");
+        assert!(
+            !reason.contains("acquire that window id"),
+            "must not advise acquiring an id list_windows cannot return: {reason}"
+        );
+    }
+
+    #[test]
     fn proven_element_ancestry_executes_semantic_ax_even_when_minimized() {
         let facts = BackgroundTargetFacts {
             element: ElementAncestry::ProvenDescendant,
@@ -594,6 +700,90 @@ mod tests {
             ..matched_facts()
         };
         assert!(decide_background_input(TARGET, &facts, BackgroundAction::AxSemantic).is_execute());
+    }
+
+    #[test]
+    fn proven_app_menu_ancestry_admits_only_semantic_ax() {
+        let facts = BackgroundTargetFacts {
+            element: ElementAncestry::ProvenAppMenu,
+            ..matched_facts()
+        };
+        assert!(decide_background_input(TARGET, &facts, BackgroundAction::AxSemantic).is_execute());
+        for action in [
+            BackgroundAction::WindowPointer,
+            BackgroundAction::InsertText,
+            BackgroundAction::GenericKey,
+        ] {
+            assert_eq!(
+                code_of(decide_background_input(TARGET, &facts, action)),
+                refusal_codes::ELEMENT_OUTSIDE_TARGET_WINDOW,
+                "{action:?} on an application menu row"
+            );
+        }
+    }
+
+    #[test]
+    fn app_menu_action_requires_the_process_to_direct_input_at_the_addressed_window() {
+        let sole_window = BackgroundTargetFacts {
+            element: ElementAncestry::ProvenAppMenu,
+            ..matched_facts()
+        };
+        assert!(
+            decide_background_input(TARGET, &sole_window, BackgroundAction::AxSemantic)
+                .is_execute()
+        );
+
+        let sibling_focused = BackgroundTargetFacts {
+            element: ElementAncestry::ProvenAppMenu,
+            competing_keyboard_destinations: 1,
+            focused_window_id: Some(701),
+            ..matched_facts()
+        };
+        let refused =
+            decide_background_input(TARGET, &sibling_focused, BackgroundAction::AxSemantic);
+        assert_eq!(
+            code_of(refused.clone()),
+            refusal_codes::SAME_PID_KEYBOARD_AMBIGUITY
+        );
+        let reason = reason_of(refused);
+        assert!(reason.contains("focused window 701"), "{reason}");
+
+        let target_focused = BackgroundTargetFacts {
+            focused_window_id: Some(TARGET.window_id),
+            ..sibling_focused.clone()
+        };
+        assert!(
+            decide_background_input(TARGET, &target_focused, BackgroundAction::AxSemantic)
+                .is_execute()
+        );
+
+        let unreadable_focus = BackgroundTargetFacts {
+            focused_window_id: None,
+            ..sibling_focused
+        };
+        assert_eq!(
+            code_of(decide_background_input(
+                TARGET,
+                &unreadable_focus,
+                BackgroundAction::AxSemantic
+            )),
+            refusal_codes::SAME_PID_KEYBOARD_AMBIGUITY
+        );
+    }
+
+    #[test]
+    fn process_scoped_keyboard_admits_the_proven_focused_window() {
+        let facts = BackgroundTargetFacts {
+            competing_keyboard_destinations: 1,
+            focused_window_id: Some(TARGET.window_id),
+            ..matched_facts()
+        };
+        for action in [BackgroundAction::InsertText, BackgroundAction::GenericKey] {
+            assert!(
+                decide_background_input(TARGET, &facts, action).is_execute(),
+                "{action:?} reaches the process's proven focused window"
+            );
+        }
     }
 
     /// Refusal precedence: exactness failures are reported before state or
@@ -606,7 +796,11 @@ mod tests {
             target_minimized: Some(true),
             app_hidden: Some(true),
             competing_keyboard_destinations: 3,
-            element: ElementAncestry::OutsideTargetWindow,
+            focused_window_id: None,
+            element: ElementAncestry::OutsideTargetWindow {
+                owner_pid: 9,
+                window_id: 701,
+            },
         };
         assert_eq!(
             code_of(decide_background_input(

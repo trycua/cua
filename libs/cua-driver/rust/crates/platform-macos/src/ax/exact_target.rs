@@ -14,9 +14,10 @@ use cua_driver_core::background_input::{
 
 use super::bindings::{
     ax_get_window_id, copy_ax_windows, copy_bool_attr, copy_element_attr, copy_string_attr,
-    focused_element_of_pid, AXUIElementCreateApplication, AXUIElementRef,
+    element_pid, focused_element_of_pid, focused_window_id_of_pid, AXUIElementCreateApplication,
+    AXUIElementRef,
 };
-use crate::windows::{all_windows, resolve_window_owner, WindowOwner};
+use crate::windows::{all_windows, resolve_window_owner, WindowInfo, WindowOwner};
 
 /// Bounded `AXParent` ascent used when an element does not expose `AXWindow`.
 const MAX_ANCESTRY_DEPTH: usize = 40;
@@ -55,18 +56,83 @@ pub unsafe fn element_window_id(element: AXUIElementRef) -> Option<u32> {
         if owned {
             CFRelease(current as CFTypeRef);
         }
-        match parent {
-            Some(parent) => {
-                current = parent;
-                owned = true;
-            }
-            None => return None,
-        }
+        current = parent?;
+        owned = true;
     }
     if owned {
         CFRelease(current as CFTypeRef);
     }
     resolved
+}
+
+// SAFETY: `element` must be a live `AXUIElementRef` for the call.
+unsafe fn element_is_app_menu_descendant(element: AXUIElementRef, pid: i32) -> bool {
+    if element_pid(element) != Some(pid) {
+        return false;
+    }
+    let mut current: AXUIElementRef = element;
+    let mut owned = false;
+    let mut in_menu_bar = false;
+    for _ in 0..MAX_ANCESTRY_DEPTH {
+        match copy_string_attr(current, "AXRole").as_deref() {
+            Some("AXMenuBar") => {
+                in_menu_bar = true;
+                break;
+            }
+            Some("AXWindow" | "AXSheet" | "AXApplication") | None => break,
+            _ => {}
+        }
+        let parent = copy_element_attr(current, "AXParent");
+        if owned {
+            CFRelease(current as CFTypeRef);
+        }
+        match parent {
+            Some(parent) => {
+                current = parent;
+                owned = true;
+            }
+            None => return false,
+        }
+    }
+    if owned {
+        CFRelease(current as CFTypeRef);
+    }
+    in_menu_bar
+}
+
+fn foreign_window_ancestry(
+    resolved_window_id: u32,
+    listed_windows: impl IntoIterator<Item = (i32, u32)>,
+) -> ElementAncestry {
+    match listed_windows
+        .into_iter()
+        .find(|(_, window_id)| *window_id == resolved_window_id)
+    {
+        Some((owner_pid, window_id)) => ElementAncestry::OutsideTargetWindow {
+            owner_pid,
+            window_id,
+        },
+        None => ElementAncestry::OutsideUnacquirableSurface,
+    }
+}
+
+// SAFETY: `element` must be a live `AXUIElementRef` for the call.
+unsafe fn classify_foreign_ancestry(
+    element: AXUIElementRef,
+    pid: i32,
+    resolved: Option<u32>,
+    listed_windows: &[WindowInfo],
+) -> ElementAncestry {
+    match resolved {
+        Some(window_id) => foreign_window_ancestry(
+            window_id,
+            listed_windows
+                .iter()
+                .map(|window| (window.pid, window.window_id)),
+        ),
+        None if element_is_app_menu_descendant(element, pid) => ElementAncestry::ProvenAppMenu,
+        None => ElementAncestry::Unproven,
+    }
 }
 
 /// The process's focused AX element, but only when it provably belongs to the
@@ -157,6 +223,7 @@ pub fn gather_background_facts(
             WindowServerOwnership::ForeignPid { owner_pid }
         }
     };
+    let listed_windows = all_windows();
 
     // SAFETY: the application element is created and released here; window
     // elements are released inside ax_window_records; the caller guarantees
@@ -175,10 +242,12 @@ pub fn gather_background_facts(
             super::enablement::ensure_chromium_ax_enabled(pid, app);
             let records = ax_window_records(app);
             let app_hidden = copy_bool_attr(app, "AXHidden");
-            let element = element_ptr.map(|ptr| match element_window_id(ptr as AXUIElementRef) {
-                Some(id) if id == window_id => ElementAncestry::ProvenDescendant,
-                Some(_) => ElementAncestry::OutsideTargetWindow,
-                None => ElementAncestry::Unproven,
+            let element = element_ptr.map(|ptr| {
+                let element = ptr as AXUIElementRef;
+                match element_window_id(element) {
+                    Some(id) if id == window_id => ElementAncestry::ProvenDescendant,
+                    resolved => classify_foreign_ancestry(element, pid, resolved, &listed_windows),
+                }
             });
             CFRelease(app as CFTypeRef);
             (records, app_hidden, element)
@@ -189,7 +258,7 @@ pub fn gather_background_facts(
     let competing_keyboard_destinations = count_competing_keyboard_destinations(
         pid,
         window_id,
-        all_windows()
+        listed_windows
             .iter()
             .map(|window| (window.pid, window.window_id)),
         &records,
@@ -201,13 +270,34 @@ pub fn gather_background_facts(
         target_minimized: target.and_then(|record| record.minimized),
         app_hidden,
         competing_keyboard_destinations,
+        focused_window_id: focused_window_id_of_pid(pid),
         element: element.unwrap_or(ElementAncestry::NotAddressed),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{count_competing_keyboard_destinations, AxWindowRecord};
+    use super::{count_competing_keyboard_destinations, foreign_window_ancestry, AxWindowRecord};
+    use cua_driver_core::background_input::ElementAncestry;
+
+    #[test]
+    fn a_listed_sibling_window_is_named_with_its_owner() {
+        assert_eq!(
+            foreign_window_ancestry(701, [(42, 700), (43, 701)]),
+            ElementAncestry::OutsideTargetWindow {
+                owner_pid: 43,
+                window_id: 701,
+            }
+        );
+    }
+
+    #[test]
+    fn a_surface_missing_from_the_listing_is_never_named_by_id() {
+        assert_eq!(
+            foreign_window_ancestry(701, [(42, 700)]),
+            ElementAncestry::OutsideUnacquirableSurface
+        );
+    }
 
     fn ax_window(window_id: u32, minimized: Option<bool>) -> AxWindowRecord {
         AxWindowRecord {

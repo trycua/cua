@@ -761,7 +761,11 @@ mod tests {
             target_minimized: Some(false),
             app_hidden: Some(false),
             competing_keyboard_destinations: 0,
-            element: ElementAncestry::OutsideTargetWindow,
+            focused_window_id: None,
+            element: ElementAncestry::OutsideTargetWindow {
+                owner_pid: 42,
+                window_id: 8,
+            },
         };
         let refusal = match decide_background_input(target, &facts, BackgroundAction::AxSemantic) {
             BackgroundInputDecision::Refuse(refusal) => Err(

@@ -507,6 +507,32 @@ impl ActionExecutionRecord {
         {
             record.escalation = browser_refusal_escalation(code);
         }
+        // Producers may declare explicit evidence items (`{kind, detail}`);
+        // only the kinds the public contract publishes can carry a
+        // `confirmed` effect (screenshot comparisons stay internal).
+        if let Some(items) = structured.get("evidence").and_then(serde_json::Value::as_array) {
+            for item in items {
+                let kind = match item.get("kind").and_then(serde_json::Value::as_str) {
+                    Some("accessibility_readback") => EvidenceKind::AccessibilityReadback,
+                    Some("browser_readback") => EvidenceKind::BrowserReadback,
+                    Some("value_readback") => EvidenceKind::ValueReadback,
+                    Some("window_change") => EvidenceKind::WindowChange,
+                    Some("native_api_result") => EvidenceKind::NativeApiResult,
+                    Some("screenshot_comparison") => EvidenceKind::ScreenshotComparison,
+                    Some("event_receipt") => EvidenceKind::EventReceipt,
+                    Some("operator_observation") => EvidenceKind::OperatorObservation,
+                    _ => continue,
+                };
+                let detail = item
+                    .get("detail")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
+                if !record.evidence.iter().any(|existing| existing.kind == kind) {
+                    record.evidence.push(ActionEvidence { kind, detail });
+                }
+            }
+        }
         if effect == ActionEffect::Partial && record.delivered_count.is_none() {
             return None;
         }
@@ -692,7 +718,8 @@ fn transport_from_legacy(
         "SetCursorPos" => ActionTransport::WindowsSetCursorPos,
         "atspi" | "wayland_atspi" | "x11_atspi" => ActionTransport::LinuxAtSpiAction,
         "pty" => ActionTransport::LinuxPty,
-        "mpx_uinput" => ActionTransport::LinuxX11MpxUinput,
+        "mpx_uinput" | "mpx_pointer" => ActionTransport::LinuxX11MpxUinput,
+        "x11_xsendevent" => ActionTransport::LinuxXSendEvent,
         "x11_pixel" | "x11_pixel_fg" | "x11_xtest_fg" | "xtest" | "xtest_desktop" => {
             ActionTransport::LinuxXTest
         }
@@ -1580,6 +1607,60 @@ mod tests {
             );
             assert!(record.evidence.is_empty());
         }
+    }
+
+    #[test]
+    fn mpx_pointer_window_change_evidence_publishes_confirmed_effect() {
+        // Linux MPX real-pointer click that opened a context menu: the popup
+        // appearing is window-change evidence, so `confirmed` survives.
+        let record = ActionExecutionRecord::from_legacy(
+            "right_click",
+            &serde_json::json!({"delivery_mode": "background"}),
+            &serde_json::json!({
+                "path": "mpx_pointer",
+                "verified": true,
+                "effect": "confirmed",
+                "evidence": [
+                    {"kind": "window_change", "detail": "1 popup window(s) appeared"},
+                    {"kind": "screenshot_comparison", "detail": "4.4% of the region changed"}
+                ],
+            }),
+        )
+        .expect("mpx pointer click should normalize");
+        assert_eq!(record.transport, ActionTransport::LinuxX11MpxUinput);
+        assert_eq!(record.effect, ActionEffect::Confirmed);
+        assert_eq!(record.evidence.len(), 2);
+        let public = record.public_result().expect("public result");
+        assert_eq!(public.effect, cua_driver_contract::ActionEffect::Confirmed);
+        // Only the publishable kind is projected.
+        assert_eq!(public.evidence.as_ref().map(Vec::len), Some(1));
+    }
+
+    #[test]
+    fn mpx_pointer_screenshot_evidence_alone_stays_unverifiable() {
+        let record = ActionExecutionRecord::from_legacy(
+            "click",
+            &serde_json::json!({"delivery_mode": "background"}),
+            &serde_json::json!({
+                "path": "mpx_pointer",
+                "verified": true,
+                "effect": "confirmed",
+                "evidence": [{"kind": "screenshot_comparison", "detail": "2.8% changed"}],
+            }),
+        )
+        .expect("mpx pointer click should normalize");
+        assert_eq!(record.effect, ActionEffect::Unverifiable);
+        assert_eq!(record.evidence.len(), 1);
+        assert_eq!(
+            ActionExecutionRecord::from_legacy(
+                "drag",
+                &serde_json::json!({"delivery_mode": "background"}),
+                &serde_json::json!({"path": "x11_xsendevent", "verified": false, "effect": "unverifiable"}),
+            )
+            .expect("legacy xsendevent drag should normalize")
+            .transport,
+            ActionTransport::LinuxXSendEvent
+        );
     }
 
     #[test]

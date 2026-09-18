@@ -332,12 +332,32 @@ fi
         self.assertIn("labeled, unlabeled", workflow)
 
     def test_agent_and_human_guidance_explain_the_release_title_contract(self) -> None:
-        for path in ("AGENTS.md", "CONTRIBUTING.md"):
-            guide = self.read(path)
-            self.assertIn("fix(cua-driver):", guide, path)
-            self.assertIn("feat(lume):", guide, path)
-            self.assertIn("no-release", guide, path)
-            self.assertIn("squash", guide, path)
+        """The release-title contract must be documented, and reachable from AGENTS.md.
+
+        CONTRIBUTING.md is the canonical copy. This used to require both files to
+        restate the literals, which made #3927 ("deduplicate repository agent
+        guidance") turn every subsequent pull request red: that commit removed the
+        restatement from AGENTS.md on purpose and replaced it with a link, so the
+        assertion failed on `main` itself and, because CI tests the merge result,
+        on every branch merged into it.
+
+        Restoring the literals to AGENTS.md would undo the deduplication and bring
+        back the two-copies-that-drift problem it was written to fix. So assert what
+        actually matters: the contract exists in the canonical document, and an
+        agent reading AGENTS.md is pointed at it.
+        """
+        contributing = self.read("CONTRIBUTING.md")
+        for token in ("fix(cua-driver):", "feat(lume):", "no-release", "squash"):
+            self.assertIn(token, contributing, "CONTRIBUTING.md")
+
+        # Either AGENTS.md carries the contract itself or it links to the file
+        # that does -- both satisfy "an agent can find the rules from here".
+        agents = self.read("AGENTS.md")
+        self.assertIn(
+            "CONTRIBUTING.md",
+            agents,
+            "AGENTS.md must reach the release-title contract, by link or restatement",
+        )
 
     def test_legacy_release_routes_exclude_driver_and_lume(self) -> None:
         workflow = self.read(".github/workflows/release-bump-version.yml")

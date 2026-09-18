@@ -416,6 +416,32 @@ pub fn set_value(pid: u32, idx: usize, value: &str) -> Result<()> {
     native::set_value(pid, idx, value)
 }
 
+/// [`set_value`] on the exact object the caller's snapshot indexed, when the
+/// snapshot cache still knows it; a fresh walk (same index space as the
+/// snapshot of `xid`) otherwise. `Err` messages starting with
+/// [`native::NO_VALUE_ROUTE`] mean the element has no accessibility write
+/// route at all.
+pub fn set_value_in(pid: u32, xid: Option<u64>, idx: usize, value: &str) -> Result<()> {
+    if let Some(object_ref) = cache::cached_element(pid, xid, idx).and_then(|e| e.object_ref) {
+        match native::set_value_ref(&object_ref, value) {
+            Ok(()) => return Ok(()),
+            Err(error) if native::is_no_value_route(&error) => return Err(error),
+            Err(error) => tracing::debug!(
+                "cached element {idx} (pid {pid}) set_value failed, re-resolving: {error:#}"
+            ),
+        }
+    }
+    native::set_value(pid, idx, value)
+}
+
+/// Read the current value/text of a snapshot-cached element (for the
+/// read-back after `set_value`). `None` when the cache has no live object
+/// for it or the element exposes neither `Value` nor `Text`.
+pub fn read_value_in(pid: u32, xid: Option<u64>, idx: usize) -> Option<String> {
+    let object_ref = cache::cached_element(pid, xid, idx)?.object_ref?;
+    native::read_value_ref(&object_ref).ok().flatten()
+}
+
 /// Insert `text` into a GUI app's editable field via AT-SPI EditableText —
 /// focus-free and toolkit-agnostic, unlike X11 key injection which only reaches
 /// the *focused* toplevel's focused widget. Targets the focused editable element

@@ -1605,6 +1605,15 @@ impl Tool for LaunchAppTool {
             return ToolResult::error("Provide at least one of: launch_path, name, or urls.");
         }
 
+        // Snapshot the top-levels before spawning so a window created by an
+        // already-running service (D-Bus activation) can be told apart.
+        let windows_before: std::collections::HashSet<u64> =
+            tokio::task::spawn_blocking(|| crate::wayland::list_windows_dispatch(None))
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .map(|w| w.xid)
+                .collect();
         let result = tokio::task::spawn_blocking(
             move || -> anyhow::Result<(String, Option<u32>, String)> {
                 // Open URLs via xdg-open.
@@ -1699,28 +1708,43 @@ impl Tool for LaunchAppTool {
 
         match result {
             Ok(Ok((message, pid_opt, name))) => {
-                if let Some(pid) = pid_opt {
-                    let windows = tokio::task::spawn_blocking(move || {
-                        let deadline =
-                            std::time::Instant::now() + std::time::Duration::from_secs(3);
-                        loop {
-                            let windows = crate::wayland::list_windows_dispatch(Some(pid));
-                            if !windows.is_empty() || std::time::Instant::now() >= deadline {
-                                return windows.iter().map(window_record_json).collect::<Vec<_>>();
-                            }
-                            std::thread::sleep(std::time::Duration::from_millis(100));
-                        }
+                if let Some(launcher_pid) = pid_opt {
+                    let query = name.clone();
+                    let resolved = tokio::task::spawn_blocking(move || {
+                        resolve_launched_windows(launcher_pid, &query, &windows_before)
                     })
                     .await
-                    .unwrap_or_default();
-                    ToolResult::text(message).with_structured(json!({
-                        "pid": pid,
+                    .unwrap_or_else(|_| LaunchedWindows::default());
+                    let windows: Vec<Value> =
+                        resolved.windows.iter().map(window_record_json).collect();
+                    let mut text = message;
+                    let mut structured = json!({
+                        "pid": resolved.pid,
                         "bundle_id": Value::Null,
                         "name": name,
-                        "running": true,
+                        "running": resolved.pid.is_some(),
                         "active": false,
                         "windows": windows,
-                    }))
+                        "launcher_pid": launcher_pid,
+                    });
+                    if resolved.handed_off {
+                        structured["handoff"] = json!("dbus_activation");
+                        match resolved.pid {
+                            Some(pid) => text.push_str(&format!(
+                                " The launcher handed the request to the running service \
+                                 (D-Bus activation) and exited; the window belongs to pid {pid}."
+                            )),
+                            None => {
+                                structured["running"] = Value::Null;
+                                text.push_str(
+                                    " The launcher exited (D-Bus activation or a failed start) and \
+                                     no new window of this app appeared within 8 s; call \
+                                     list_windows to find it, or retry.",
+                                );
+                            }
+                        }
+                    }
+                    ToolResult::text(text).with_structured(structured)
                 } else {
                     ToolResult::text(message).with_structured(json!({
                         "pid": Value::Null,
@@ -1735,6 +1759,143 @@ impl Tool for LaunchAppTool {
             Ok(Err(e)) => ToolResult::error(format!("Failed to launch: {e}")),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
+    }
+}
+
+/// What `launch_app` could attribute to the launch after the spawn.
+#[derive(Default)]
+struct LaunchedWindows {
+    /// The process that owns the app's window: the launcher itself, or the
+    /// running service it handed off to.
+    pid: Option<u32>,
+    windows: Vec<crate::x11::WindowInfo>,
+    /// The launcher exited early without owning a window (D-Bus activation).
+    handed_off: bool,
+}
+
+/// Whether the launched process is gone or a zombie (already reaped or being
+/// reaped by the launch thread).
+fn process_exited(pid: u32) -> bool {
+    match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Ok(stat) => stat
+            .rsplit_once(')')
+            .and_then(|(_, rest)| rest.split_whitespace().next())
+            .is_some_and(|state| state == "Z" || state == "X"),
+        Err(_) => true,
+    }
+}
+
+/// Case-insensitive identity match between a launch query
+/// (`nautilus`, `org.gnome.Nautilus`, `gnome-control-center`, a display
+/// name) and a window's WM_CLASS / app id.
+fn window_matches_launch(window: &crate::x11::WindowInfo, query: &str) -> bool {
+    let class = window.app_name.to_ascii_lowercase();
+    if class.is_empty() {
+        return false;
+    }
+    let query = query.to_ascii_lowercase();
+    let stem = query
+        .rsplit('/')
+        .next()
+        .unwrap_or(&query)
+        .trim_end_matches(".desktop")
+        .to_owned();
+    let last = stem.rsplit('.').next().unwrap_or(&stem).to_owned();
+    let class_last = class.rsplit('.').next().unwrap_or(&class).to_owned();
+    class == stem
+        || class_last == last
+        || class.contains(&last)
+        || last.contains(&class_last)
+        || stem.split_whitespace().next().is_some_and(|word| class.contains(word))
+}
+
+/// Resolve the window(s) of a launch. Waits for the launcher's own window
+/// first; when the launcher exits without one (GNOME apps hand the request
+/// to their running D-Bus service), watches the client list for a newly
+/// mapped top-level whose WM_CLASS matches the launch and adopts its pid.
+fn resolve_launched_windows(
+    launcher_pid: u32,
+    query: &str,
+    before: &std::collections::HashSet<u64>,
+) -> LaunchedWindows {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    let mut handed_off = false;
+    loop {
+        let all = crate::wayland::list_windows_dispatch(None);
+        let own: Vec<_> = all
+            .iter()
+            .filter(|w| w.pid == Some(launcher_pid))
+            .cloned()
+            .collect();
+        if !own.is_empty() {
+            return LaunchedWindows {
+                pid: Some(launcher_pid),
+                windows: own,
+                handed_off: false,
+            };
+        }
+        if handed_off || process_exited(launcher_pid) {
+            handed_off = true;
+            let fresh: Vec<_> = all
+                .iter()
+                .filter(|w| !before.contains(&w.xid) && w.pid.is_some())
+                .filter(|w| window_matches_launch(w, query))
+                .cloned()
+                .collect();
+            if let Some(pid) = fresh.first().and_then(|w| w.pid) {
+                let windows = fresh.into_iter().filter(|w| w.pid == Some(pid)).collect();
+                return LaunchedWindows {
+                    pid: Some(pid),
+                    windows,
+                    handed_off: true,
+                };
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            return LaunchedWindows {
+                pid: (!handed_off).then_some(launcher_pid),
+                windows: Vec::new(),
+                handed_off,
+            };
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+#[cfg(test)]
+mod launch_resolution_tests {
+    use super::*;
+
+    fn window(class: &str) -> crate::x11::WindowInfo {
+        crate::x11::WindowInfo {
+            xid: 1,
+            pid: Some(7),
+            app_name: class.into(),
+            title: "t".into(),
+            is_on_screen: true,
+            z_index: None,
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+        }
+    }
+
+    #[test]
+    fn launch_queries_match_window_classes() {
+        assert!(window_matches_launch(&window("org.gnome.Nautilus"), "nautilus"));
+        assert!(window_matches_launch(&window("org.gnome.Nautilus"), "org.gnome.Nautilus"));
+        assert!(window_matches_launch(&window("Gnome-terminal"), "gnome-terminal"));
+        assert!(window_matches_launch(&window("Gnome-control-center"), "gnome-control-center"));
+        assert!(window_matches_launch(&window("Org.gnome.Nautilus"), "org.gnome.Nautilus.desktop"));
+        assert!(!window_matches_launch(&window("Gedit"), "nautilus"));
+        assert!(!window_matches_launch(&window(""), "nautilus"));
+    }
+
+    #[test]
+    fn a_missing_process_counts_as_exited() {
+        assert!(process_exited(u32::MAX - 1));
+        assert!(!process_exited(std::process::id()));
     }
 }
 
@@ -2303,15 +2464,35 @@ fn background_key_route(
     px_target: Option<(i32, i32)>,
     key: &str,
     modifiers: &[&str],
+    element_index: Option<usize>,
 ) -> anyhow::Result<KeyRoute> {
     if crate::input::real_keyboard_input_available() {
-        match crate::input::send_virtual_keyboard_key(cursor_id, xid, key, modifiers) {
-            Ok(report) => return Ok(KeyRoute::Mpx(report)),
+        // The element GrabFocus and the delivery run under one focus guard:
+        // GTK can raise/activate the toplevel for either, and the guard
+        // restores the user's focus and reports it (see `focus_guard`).
+        let delivered = crate::input::focus_guard::guarded(Some(pid), || {
+            grab_focus_for_background(pid, element_index)?;
+            crate::input::send_virtual_keyboard_key(cursor_id, xid, key, modifiers)
+        });
+        match delivered {
+            Ok((mut report, guard)) => {
+                report.focus_guard = guard;
+                return Ok(KeyRoute::Mpx(report));
+            }
             Err(error) if crate::input::is_uinput_unavailable(&error) => return Err(error),
-            Err(error) if is_gtk_process(pid) || synthetic_pointer_is_dropped(pid) => {
+            Err(error)
+                if is_grab_focus_failure(&error)
+                    || is_gtk_process(pid)
+                    || synthetic_pointer_is_dropped(pid) =>
+            {
                 return Err(error.context("virtual master keyboard delivery failed"));
             }
             Err(error) => tracing::warn!("MPX keyboard fell back to XSendEvent: {error}"),
+        }
+    }
+    if let Some(index) = element_index {
+        if !crate::atspi::focus_element(pid, index)? {
+            anyhow::bail!("AT-SPI Component.GrabFocus returned false for element {index}");
         }
     }
     match px_target {
@@ -2319,6 +2500,54 @@ fn background_key_route(
         None => crate::input::send_key(xid, key, modifiers),
     }
     .map(|()| KeyRoute::Synthetic)
+}
+
+const GRAB_FOCUS_FAILURE_PREFIX: &str = "grab_focus_failed";
+
+/// AT-SPI `Component.GrabFocus` on the addressed element, for the background
+/// keyboard routes. Failures carry a prefix so the caller never mistakes them
+/// for a delivery failure worth a synthetic-event fallback.
+fn grab_focus_for_background(pid: u32, element_index: Option<usize>) -> anyhow::Result<()> {
+    let Some(index) = element_index else {
+        return Ok(());
+    };
+    match crate::atspi::focus_element(pid, index) {
+        Ok(true) => Ok(()),
+        Ok(false) => anyhow::bail!(
+            "{GRAB_FOCUS_FAILURE_PREFIX}: AT-SPI Component.GrabFocus returned false for element {index}"
+        ),
+        Err(error) => Err(error.context(format!(
+            "{GRAB_FOCUS_FAILURE_PREFIX}: AT-SPI Component.GrabFocus for element {index}"
+        ))),
+    }
+}
+
+fn is_grab_focus_failure(error: &anyhow::Error) -> bool {
+    error.to_string().starts_with(GRAB_FOCUS_FAILURE_PREFIX)
+}
+
+/// Merge a background focus-guard report into a finished tool result: the
+/// structured `focus_changed` / `focus_restored` / `grab_held_by` fields plus
+/// one sentence of text when anything moved.
+fn attach_focus_guard(
+    mut result: ToolResult,
+    report: Option<&crate::input::FocusGuardReport>,
+) -> ToolResult {
+    let Some(report) = report else {
+        return result;
+    };
+    let summary = report.summary();
+    if !summary.is_empty() {
+        result
+            .content
+            .push(cua_driver_core::protocol::Content::text(summary.trim().to_owned()));
+    }
+    let mut structured = result.structured_content.take().unwrap_or_else(|| json!({}));
+    for (key, value) in report.to_json().as_object().into_iter().flatten() {
+        structured[key] = value.clone();
+    }
+    result.structured_content = Some(structured);
+    result
 }
 
 /// Tool result for a completed keyboard route (`press_key` / `hotkey`).
@@ -2352,6 +2581,7 @@ fn key_route_result(action: &str, route: KeyRoute, mode_label: &str) -> ToolResu
                      did not confirm the last key; the keys may not have landed.",
                 );
             }
+            text.push_str(&report.focus_guard_summary());
             ToolResult::text(text).with_structured(structured)
         }
         KeyRoute::Synthetic | KeyRoute::Terminal => {
@@ -4075,10 +4305,20 @@ impl Tool for ClickTool {
                 && element_click_prefers_ax(foreground_hyprland, button, count, !modifiers.is_empty())
             {
                 let observed_for_ax = observed.clone();
+                let guard_pid = (!delivery.is_foreground()).then_some(pid);
                 let ax_result = match tokio::time::timeout(
                     ELEMENT_AX_BUDGET,
                     tokio::task::spawn_blocking(move || {
-                        crate::atspi::perform_action_observed(&observed_for_ax)
+                        // Background: an AT-SPI action can open a menu (GTK/VCL
+                        // grab the keyboard and activate the toplevel) or map a
+                        // dialog mutter then focuses. Snapshot, act, restore.
+                        match guard_pid {
+                            Some(pid) => crate::input::focus_guard::guarded(Some(pid), || {
+                                crate::atspi::perform_action_observed(&observed_for_ax)
+                            }),
+                            None => crate::atspi::perform_action_observed(&observed_for_ax)
+                                .map(|value| (value, None)),
+                        }
                     }),
                 )
                 .await
@@ -4095,7 +4335,7 @@ impl Tool for ClickTool {
                         }));
                     }
                 };
-                if let Ok(Ok((_action, suspected_noop))) = ax_result {
+                if let Ok(Ok(((_action, suspected_noop), guard))) = ax_result {
                     let mut structured = json!({
                         "path": "ax",
                         "verified": false,
@@ -4104,8 +4344,11 @@ impl Tool for ClickTool {
                     if suspected_noop {
                         structured["escalation"] = non_ax_escalation();
                     }
-                    return ToolResult::text(format!("Clicked element [{idx}] (pid {pid})."))
-                        .with_structured(structured);
+                    return attach_focus_guard(
+                        ToolResult::text(format!("Clicked element [{idx}] (pid {pid})."))
+                            .with_structured(structured),
+                        guard.as_ref(),
+                    );
                 }
                 // The observed object is gone: the snapshot is stale. Refuse
                 // rather than retarget whatever now lives at that index.
@@ -4417,7 +4660,7 @@ impl Tool for ClickTool {
         // foreground = activate the target window (EWMH) first, then inject,
         // then restore prior active. Mirrors macOS/Windows.
         let fg_budget = foreground_budget(0);
-        let result = spawn_blocking_bounded("foreground click", fg_budget, move || -> anyhow::Result<(&'static str, Option<crate::input::ForegroundReport>)> {
+        let result = spawn_blocking_bounded("foreground click", fg_budget, move || -> anyhow::Result<(&'static str, Option<crate::input::ForegroundReport>, Option<crate::input::FocusGuardReport>)> {
             if crate::wayland::wayland_input_enabled() {
                 if !modifiers_for_task.is_empty() {
                     anyhow::bail!(
@@ -4436,15 +4679,15 @@ impl Tool for ClickTool {
                     if let Ok(Some(_)) =
                         crate::atspi::perform_action_at_screen_point(pid, xid, output_x, output_y)
                     {
-                        return Ok(("wayland_atspi", None));
+                        return Ok(("wayland_atspi", None, None));
                     }
                 }
                 if crate::wayland::is_inject_mode() {
                     crate::wayland::inject_click(pid, xid, x, y, count as u32, button)?;
-                    return Ok(("wayland_cua_compositor", None));
+                    return Ok(("wayland_cua_compositor", None, None));
                 }
                 if !delivery.is_foreground() {
-                    return Ok(("background_unavailable", None));
+                    return Ok(("background_unavailable", None, None));
                 }
                 // Native Wayland: focus+raise the target toplevel
                 // (foreign-toplevel `activate`), then drive `count` virtual-pointer
@@ -4452,7 +4695,7 @@ impl Tool for ClickTool {
                 crate::wayland::with_target_foreground(pid, xid, || {
                     crate::wayland::click_focused(output_x, output_y, count as u32, button)
                 })?;
-                return Ok(("wayland_activate", None));
+                return Ok(("wayland_activate", None, None));
             }
             // X11 injection. Tiered no-focus-steal delivery (background):
             //   1. Plain left single-click → AT-SPI doAction at that point.
@@ -4461,12 +4704,18 @@ impl Tool for ClickTool {
             //   3. Fallback → synthetic XSendEvent.
             // Foreground skips the AT-SPI shortcut and does a real activated pixel
             // click (the agent's escalation when background didn't land).
-            let inject = |fg: bool| -> anyhow::Result<&'static str> {
+            let inject = |fg: bool| -> anyhow::Result<(&'static str, Option<crate::input::FocusGuardReport>)> {
                 if !fg && button == 1 && count == 1 && modifiers_for_task.is_empty() {
-                    if let Ok(Some(_)) =
-                        crate::atspi::perform_action_at_point_in(pid, xid, xi, yi)
-                    {
-                        return Ok("x11_atspi");
+                    // The accessible action under the point may open a menu or
+                    // a dialog that takes the focus: guard and restore.
+                    let (hit, guard) = crate::input::focus_guard::guarded(Some(pid), || {
+                        Ok(crate::atspi::perform_action_at_point_in(pid, xid, xi, yi)
+                            .ok()
+                            .flatten()
+                            .is_some())
+                    })?;
+                    if hit {
+                        return Ok(("x11_atspi", guard));
                     }
                 }
                 if !fg
@@ -4477,7 +4726,7 @@ impl Tool for ClickTool {
                     // route left is a synthetic XSendEvent that this toolkit
                     // (GTK3/4 XInput2, LibreOffice VCL) discards. Say so
                     // instead of reporting a click that changed nothing.
-                    return Ok("background_unavailable_pointer");
+                    return Ok(("background_unavailable_pointer", None));
                 }
                 if fg {
                     // Foreground: the window is already activated. Deliver a REAL
@@ -4497,7 +4746,7 @@ impl Tool for ClickTool {
                             count,
                             &modifier_refs,
                         )?;
-                        return Ok("x11_xtest_fg");
+                        return Ok(("x11_xtest_fg", None));
                     }
                 }
                 if modifiers_for_task.is_empty() {
@@ -4521,7 +4770,7 @@ impl Tool for ClickTool {
                         &modifier_refs,
                     )?;
                 }
-                Ok(if fg { "x11_pixel_fg" } else { "x11_pixel" })
+                Ok((if fg { "x11_pixel_fg" } else { "x11_pixel" }, None))
             };
             if delivery.is_foreground() {
                 crate::input::with_x11_foreground_opts(
@@ -4529,9 +4778,9 @@ impl Tool for ClickTool {
                     crate::input::ForegroundOptions::pointer(),
                     || inject(true),
                 )
-                .map(|(path, report)| (path, Some(report)))
+                .map(|((path, guard), report)| (path, Some(report), guard))
             } else {
-                inject(false).map(|path| (path, None))
+                inject(false).map(|(path, guard)| (path, None, guard))
             }
         })
         .await;
@@ -4541,12 +4790,12 @@ impl Tool for ClickTool {
             "background"
         };
         match result {
-            Ok(Ok(("background_unavailable", _))) => {
+            Ok(Ok(("background_unavailable", _, _))) => {
                 crate::input::delivery::background_unavailable_error(
                     crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
                 )
             }
-            Ok(Ok(("background_unavailable_pointer", _))) => {
+            Ok(Ok(("background_unavailable_pointer", _, _))) => {
                 let mut refusal = crate::input::delivery::background_unavailable_error(
                     crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
                 );
@@ -4565,7 +4814,7 @@ impl Tool for ClickTool {
             // verified:false, effect:"unverifiable"; the caller confirms via
             // screenshot. path reports the rung taken; a foreground click also
             // reports the activation/focus transaction it confirmed first.
-            Ok(Ok((path, report))) => {
+            Ok(Ok((path, report, guard))) => {
                 let mut structured = json!({
                     "path": path,
                     "verified": false,
@@ -4575,11 +4824,14 @@ impl Tool for ClickTool {
                 if let Some(report) = report {
                     structured["foreground"] = report.to_json();
                 }
-                ToolResult::text(format!(
-                    "Clicked at ({x:.1}, {y:.1}) × {count} (delivery_mode={mode_label}, \
-                     path={path}); not verified — confirm with a screenshot."
-                ))
-                .with_structured(structured)
+                attach_focus_guard(
+                    ToolResult::text(format!(
+                        "Clicked at ({x:.1}, {y:.1}) × {count} (delivery_mode={mode_label}, \
+                         path={path}); not verified — confirm with a screenshot."
+                    ))
+                    .with_structured(structured),
+                    guard.as_ref(),
+                )
             }
             Ok(Err(e)) => input_error_result(e),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
@@ -5469,8 +5721,13 @@ fn background_text_route(
     if !crate::input::real_keyboard_input_available() {
         return Ok(None);
     }
-    match crate::input::send_virtual_keyboard_text(cursor_id, xid, text) {
-        Ok(report) => Ok(Some(KeyRoute::Mpx(report))),
+    match crate::input::focus_guard::guarded(Some(pid), || {
+        crate::input::send_virtual_keyboard_text(cursor_id, xid, text)
+    }) {
+        Ok((mut report, guard)) => {
+            report.focus_guard = guard;
+            Ok(Some(KeyRoute::Mpx(report)))
+        }
         Err(error) if crate::input::is_uinput_unavailable(&error) => Err(error),
         Err(error) => {
             tracing::warn!(pid, "MPX keyboard text delivery failed: {error}");
@@ -5509,6 +5766,7 @@ fn type_text_mpx_result(
              not confirm the last key; the text may not have landed.",
         );
     }
+    text.push_str(&report.focus_guard_summary());
     ToolResult::text(text).with_structured(structured)
 }
 
@@ -5933,14 +6191,15 @@ impl Tool for PressKeyTool {
                 )
                 .map(|((), report)| KeyRoute::Foreground(report));
             }
-            if let Some(element_index) = resolved_element_index {
-                if !crate::atspi::focus_element(pid, element_index)? {
-                    anyhow::bail!(
-                        "AT-SPI Component.GrabFocus returned false for element {element_index}"
-                    );
-                }
-            }
-            background_key_route(&cursor_id, pid, xid, px_target, &key_for_task, &m)
+            background_key_route(
+                &cursor_id,
+                pid,
+                xid,
+                px_target,
+                &key_for_task,
+                &m,
+                resolved_element_index,
+            )
         })
         .await;
         let mode_label = if deliver_fg {
@@ -6305,7 +6564,9 @@ impl Tool for HotkeyTool {
             }
         }
 
-        if let Some(element_index) = resolved_element_index {
+        // Foreground: GrabFocus the addressed element up front. Background
+        // does it inside `background_key_route`, under the focus guard.
+        if let Some(element_index) = resolved_element_index.filter(|_| delivery.is_foreground()) {
             let focused = tokio::task::spawn_blocking(move || {
                 crate::atspi::focus_element(pid, element_index)
             })
@@ -6376,7 +6637,15 @@ impl Tool for HotkeyTool {
                 )
                 .map(|((), report)| KeyRoute::Foreground(report));
             }
-            background_key_route(&cursor_id, pid, xid, px_target, &key, &m)
+            background_key_route(
+                &cursor_id,
+                pid,
+                xid,
+                px_target,
+                &key,
+                &m,
+                resolved_element_index,
+            )
         })
         .await;
         let mode_label = if deliver_fg {
@@ -6417,7 +6686,8 @@ impl Tool for SetValueTool {
                     "element_index": cua_driver_core::tool_schema::element_index_schema(),
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
                     "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
-                    "value":{"type":"string"}
+                    "value":{"type":["string","number"],"description":"New value. Written through AT-SPI EditableText/Value when the element exposes them; otherwise (GTK2 spin scales, VCL spin buttons) the field is clicked with the session's real pointer, its text selected and replaced through the virtual keyboard and committed with Tab, then read back."},
+                    "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
             read_only: false, destructive: true, idempotent: false, open_world: true,
@@ -6430,9 +6700,13 @@ impl Tool for SetValueTool {
             Ok(v) => v,
             Err(e) => return e,
         };
-        let value = match args.require_str("value") {
-            Ok(v) => v,
-            Err(e) => return e,
+        let value = match args.get("value") {
+            Some(Value::String(text)) => text.clone(),
+            Some(Value::Number(number)) => number.to_string(),
+            _ => {
+                return ToolResult::error("set_value: 'value' must be a string or a number.")
+                    .with_structured(json!({ "code": "invalid_arguments" }))
+            }
         };
         // Surface 6: element_token / element_index precedence resolution.
         let resolved = match self.state.element_cache.resolve_element_args(
@@ -6457,20 +6731,196 @@ impl Tool for SetValueTool {
             ),
         };
         let value_for_task = value.clone();
-        let xid = args
-            .opt_u64("window_id")
-            .or(resolved_window_id)
-            .unwrap_or(0);
+        let xid_opt = args.opt_u64("window_id").or(resolved_window_id);
+        let xid = xid_opt.unwrap_or(0);
+        let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
+        let cursor_id = resolve_cursor_key(&args);
         position_named_session_keyboard_cursor(&self.state, &args, pid, xid, Some(idx), None, true)
             .await;
-        let result =
-            tokio::task::spawn_blocking(move || crate::atspi::set_value(pid, idx, &value_for_task))
-                .await;
-        match result {
-            Ok(Ok(())) => ToolResult::text(format!("Set value of element [{idx}] to '{value}'.")),
-            Ok(Err(e)) => ToolResult::error(e.to_string()),
-            Err(e) => ToolResult::error(format!("Task error: {e}")),
+        // 1. Focus-free accessibility write on the exact snapshot object.
+        let ax = spawn_blocking_bounded("set_value", foreground_budget(0), move || {
+            crate::atspi::set_value_in(pid, xid_opt, idx, &value_for_task)
+        })
+        .await;
+        let ax_error = match ax {
+            Ok(Ok(())) => {
+                let readback = tokio::task::spawn_blocking(move || {
+                    crate::atspi::read_value_in(pid, xid_opt, idx)
+                })
+                .await
+                .ok()
+                .flatten();
+                return set_value_result(idx, &value, "ax", readback, None);
+            }
+            Ok(Err(error)) if crate::atspi::native::is_no_value_route(&error) => error,
+            Ok(Err(error)) => return input_error_result(error),
+            Err(error) => return ToolResult::error(format!("Task error: {error}")),
+        };
+        // 2. No accessibility write route: type it like a user would. Click
+        //    the field (real pointer), select all, type, commit with Tab.
+        let wayland = crate::wayland::wayland_input_enabled();
+        let background_route = !delivery.is_foreground()
+            && !wayland
+            && crate::input::real_pointer_input_available()
+            && crate::input::real_keyboard_input_available();
+        let foreground_route = delivery.is_foreground() && !wayland;
+        if !background_route && !foreground_route {
+            let detail = format!(
+                "{ax_error}; the keyboard fallback needs {}",
+                if wayland {
+                    "an X11 session"
+                } else if delivery.is_foreground() {
+                    "an X11 session"
+                } else {
+                    "the focus-free real-input route (a writable /dev/uinput), or delivery_mode:\"foreground\""
+                }
+            );
+            return ToolResult::error(format!(
+                "set_value: element [{idx}] has no accessibility write route and no keyboard \
+                 fallback is available: {detail}."
+            ))
+            .with_structured(json!({
+                "code": "set_value_unavailable",
+                "detail": detail,
+                "effect": "none",
+                "escalation": { "recommended": "foreground", "reason": "click the field and type the value with delivery_mode:\"foreground\"" },
+            }));
         }
+        let value_for_keys = value.clone();
+        let typed = spawn_blocking_bounded(
+            "set_value keyboard fallback",
+            foreground_budget(value.len()),
+            move || -> anyhow::Result<Option<crate::input::FocusGuardReport>> {
+                let (win, lx, ly) = resolve_element_local_coords(pid, idx, xid_opt)?;
+                if foreground_route {
+                    let (sx, sy) = window_local_to_screen(win, lx, ly)?;
+                    crate::input::with_x11_foreground_opts(
+                        win,
+                        crate::input::ForegroundOptions::pointer(),
+                        || {
+                            crate::input::send_click_xtest_desktop(
+                                sx.round() as i32,
+                                sy.round() as i32,
+                                1,
+                                1,
+                            )?;
+                            std::thread::sleep(std::time::Duration::from_millis(80));
+                            crate::input::send_key_xtest("a", &["ctrl"])?;
+                            crate::input::send_type_text_xtest(&value_for_keys)?;
+                            crate::input::send_key_xtest("Tab", &[])
+                        },
+                    )?;
+                    return Ok(None);
+                }
+                let (_, guard) = crate::input::focus_guard::guarded(Some(pid), || {
+                    x11_pixel_click_no_focus_steal(&cursor_id, win, lx as i32, ly as i32, 1, 1)?;
+                    std::thread::sleep(std::time::Duration::from_millis(80));
+                    crate::input::send_virtual_keyboard_key(&cursor_id, win, "a", &["ctrl"])?;
+                    crate::input::send_virtual_keyboard_text(&cursor_id, win, &value_for_keys)?;
+                    crate::input::send_virtual_keyboard_key(&cursor_id, win, "Tab", &[])?;
+                    Ok(())
+                })?;
+                Ok(guard)
+            },
+        )
+        .await;
+        match typed {
+            Ok(Ok(guard)) => {
+                // Let the toolkit commit on focus-out before reading back.
+                tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+                let readback = tokio::task::spawn_blocking(move || {
+                    crate::atspi::read_value_in(pid, xid_opt, idx)
+                })
+                .await
+                .ok()
+                .flatten();
+                set_value_result(
+                    idx,
+                    &value,
+                    if foreground_route { "click_type_fg" } else { "click_type_mpx" },
+                    readback,
+                    guard.as_ref(),
+                )
+            }
+            Ok(Err(error)) => input_error_result(error),
+            Err(error) => ToolResult::error(format!("Task error: {error}")),
+        }
+    }
+}
+
+/// Numeric-aware equality for the `set_value` read-back ("40" == "40.0").
+fn values_agree(wanted: &str, observed: &str) -> bool {
+    let wanted = wanted.trim();
+    let observed = observed.trim();
+    if wanted == observed {
+        return true;
+    }
+    match (wanted.parse::<f64>(), observed.parse::<f64>()) {
+        (Ok(a), Ok(b)) => (a - b).abs() <= 1e-6 * a.abs().max(1.0),
+        _ => false,
+    }
+}
+
+/// `set_value` result with an honest verification: `verified` only when the
+/// element read back the requested value.
+fn set_value_result(
+    idx: usize,
+    value: &str,
+    path: &str,
+    readback: Option<String>,
+    guard: Option<&crate::input::FocusGuardReport>,
+) -> ToolResult {
+    let verified = readback.as_deref().is_some_and(|seen| values_agree(value, seen));
+    let mut structured = json!({
+        "path": path,
+        "verified": verified,
+        "effect": if verified { "verified" } else if readback.is_some() { "suspected_noop" } else { "unverifiable" },
+    });
+    let mut text = format!("Set value of element [{idx}] to '{value}' (path={path})");
+    match readback {
+        Some(seen) if verified => text.push_str(&format!("; read back '{seen}'.")),
+        Some(seen) => {
+            structured["readback"] = json!(seen);
+            structured["escalation"] = non_ax_escalation();
+            text.push_str(&format!(
+                "; but the element reads back '{seen}' — the write may not have committed. \
+                 Confirm with get_window_state or a screenshot."
+            ));
+        }
+        None => {
+            structured["readback"] = Value::Null;
+            text.push_str("; not verified — confirm with get_window_state.");
+        }
+    }
+    attach_focus_guard(ToolResult::text(text).with_structured(structured), guard)
+}
+
+#[cfg(test)]
+mod set_value_tests {
+    use super::*;
+
+    #[test]
+    fn readback_agreement_is_numeric_aware() {
+        assert!(values_agree("40", "40.0"));
+        assert!(values_agree("40", " 40 "));
+        assert!(values_agree("abc", "abc"));
+        assert!(!values_agree("40", "41"));
+        assert!(!values_agree("40", "forty"));
+    }
+
+    #[test]
+    fn set_value_result_is_verified_only_on_matching_readback() {
+        let ok = set_value_result(3, "40", "click_type_mpx", Some("40.0".into()), None);
+        let s = ok.structured_content.unwrap();
+        assert_eq!(s["verified"], true);
+        assert_eq!(s["effect"], "verified");
+        let noop = set_value_result(3, "40", "ax", Some("10.0".into()), None);
+        let s = noop.structured_content.unwrap();
+        assert_eq!(s["verified"], false);
+        assert_eq!(s["effect"], "suspected_noop");
+        assert_eq!(s["readback"], "10.0");
+        let blind = set_value_result(3, "40", "ax", None, None);
+        assert_eq!(blind.structured_content.unwrap()["effect"], "unverifiable");
     }
 }
 
@@ -10492,6 +10942,11 @@ impl Tool for InvokeMenuTool {
             EvidenceKind, RequestedDelivery,
         };
 
+        // Menu paths are resolved and fired through AT-SPI, which needs no
+        // window activation on X11: the default is background (focus-free,
+        // under the focus guard). `delivery_mode:"foreground"` is the explicit
+        // escalation that activates the window first, as every other tool.
+        let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
         let input: InvokeMenuInput = match parse_typed_input("invoke_menu", args) {
             Ok(input) => input,
             Err(result) => return result,
@@ -10507,6 +10962,46 @@ impl Tool for InvokeMenuTool {
             .any(|window| window.xid == window_id && window.pid == Some(pid))
         {
             return menu_refusal("invoke_menu: window_id does not belong to pid".into());
+        }
+
+        if !crate::wayland::is_wayland() && !delivery.is_foreground() {
+            let outcome = tokio::task::spawn_blocking(move || {
+                crate::input::focus_guard::guarded(Some(pid), || {
+                    crate::atspi::native::invoke_menu_path(pid, &path)
+                })
+            })
+            .await;
+            return match outcome {
+                Ok(Ok(((), guard))) => attach_focus_guard(
+                    ToolResult::text(
+                        "Resolved the live native menu path and dispatched its final accessibility action (delivery_mode=background, focus untouched); verify the command's semantic effect from fresh state.",
+                    )
+                    .with_structured(json!({
+                        "path": "ax",
+                        "verified": false,
+                        "effect": "unverifiable",
+                        "delivery_mode": "background",
+                    }))
+                    .with_action_record(
+                        ActionExecutionRecord::builder(
+                            ActionEffect::Unverifiable,
+                            ActionTransport::LinuxAtSpiAction,
+                            RequestedDelivery::Background,
+                        )
+                        .actual_delivery(ActualDelivery::Background)
+                        .evidence(ActionEvidence {
+                            kind: EvidenceKind::NativeApiResult,
+                            detail: "Every menu hop resolved uniquely and AT-SPI accepted the final action"
+                                .into(),
+                        })
+                        .build()
+                        .expect("invoke_menu record is valid"),
+                    ),
+                    guard.as_ref(),
+                ),
+                Ok(Err(error)) => menu_refusal(format!("invoke_menu: {error}")),
+                Err(error) => menu_refusal(format!("invoke_menu: blocking task failed: {error}")),
+            };
         }
 
         let activation = if crate::wayland::is_wayland() {
@@ -10554,8 +11049,14 @@ impl Tool for InvokeMenuTool {
 
         match outcome {
             Ok(Ok(())) => ToolResult::text(
-                "Resolved the live native menu path and dispatched its final accessibility action; verify the command's semantic effect from fresh state.",
+                "Resolved the live native menu path and dispatched its final accessibility action (delivery_mode=foreground); verify the command's semantic effect from fresh state.",
             )
+            .with_structured(json!({
+                "path": "ax",
+                "verified": false,
+                "effect": "unverifiable",
+                "delivery_mode": "foreground",
+            }))
             .with_action_record(
                 ActionExecutionRecord::builder(
                     ActionEffect::Unverifiable,

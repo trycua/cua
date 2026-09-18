@@ -190,18 +190,35 @@ pub struct KeyboardDeliveryReport {
     /// Characters that have no keycode in the current keymap and could not be
     /// hosted on a spare keycode either.
     pub skipped_characters: Vec<char>,
+    /// What the background focus guard observed and restored around the
+    /// delivery (attached by the tool layer; `None` when it did not run).
+    pub focus_guard: Option<super::focus_guard::FocusGuardReport>,
 }
 
 impl KeyboardDeliveryReport {
     pub fn to_json(&self) -> serde_json::Value {
-        serde_json::json!({
+        let mut json = serde_json::json!({
             "path": MPX_UINPUT_PATH,
             "virtual_focus_held": self.virtual_focus_held,
             "core_focus_unchanged": self.core_focus_unchanged,
             "delivery_confirmed": self.delivery_confirmed,
             "key_events": self.key_events,
             "skipped_characters": self.skipped_characters.iter().collect::<String>(),
-        })
+        });
+        if let Some(guard) = &self.focus_guard {
+            for (key, value) in guard.to_json().as_object().into_iter().flatten() {
+                json[key] = value.clone();
+            }
+        }
+        json
+    }
+
+    /// Sentence describing any focus change the guard saw (empty when none).
+    pub fn focus_guard_summary(&self) -> String {
+        self.focus_guard
+            .as_ref()
+            .map(|guard| guard.summary())
+            .unwrap_or_default()
     }
 }
 
@@ -489,6 +506,7 @@ fn deliver(
             delivery_confirmed,
             key_events: steps.len(),
             skipped_characters,
+            focus_guard: None,
         })
     })();
     drop(remap_guards);
@@ -697,6 +715,7 @@ mod tests {
             delivery_confirmed: false,
             key_events: 4,
             skipped_characters: vec!['€'],
+            focus_guard: None,
         };
         let json = report.to_json();
         assert_eq!(json["path"], MPX_UINPUT_PATH);

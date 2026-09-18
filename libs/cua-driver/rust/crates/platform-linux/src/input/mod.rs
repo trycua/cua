@@ -14,10 +14,12 @@
 /// Shared `delivery_mode` contract (background|foreground) — mirrors macOS
 /// `tools::DeliveryMode` and Windows `input::delivery`.
 pub mod delivery;
+pub mod focus_guard;
 pub mod foreground;
 mod mpx_keyboard;
 mod mpx_owner;
 
+pub use focus_guard::{FocusGuardReport, FocusSnapshot};
 pub use foreground::{with_x11_foreground_opts, FocusAfter, ForegroundOptions, ForegroundReport};
 pub use mpx_keyboard::{
     real_keyboard_input_available, send_virtual_keyboard_key, send_virtual_keyboard_text,

@@ -40,6 +40,9 @@ use cua_driver_testkit::{Driver, McpDriver, ToolResponse};
 #[path = "support/appkit_snapshot_publication.rs"]
 mod snapshot_publication;
 
+#[path = "support/appkit_text_outcomes.rs"]
+mod text_outcomes;
+
 // ── paths ────────────────────────────────────────────────────────────────────
 
 fn harness_app() -> PathBuf {

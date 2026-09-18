@@ -77,7 +77,9 @@ fn validate_post_target(pid: i32) -> anyhow::Result<()> {
 }
 
 fn read_ax_key_state(pid: i32, window_id: Option<u32>, element_ptr: usize) -> Option<AxKeyState> {
-    if super::type_text::target_in_web_area(pid, Some((element_ptr, None)), window_id) {
+    if super::type_text::target_in_web_area(pid, Some((element_ptr, None)), window_id)
+        != Some(false)
+    {
         return None;
     }
     let element = element_ptr as AXUIElementRef;

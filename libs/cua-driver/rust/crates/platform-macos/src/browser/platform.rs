@@ -976,6 +976,20 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         Ok(Some(windows.len() == 1 && windows[0] == window_id))
     }
 
+    async fn sole_exact_native_window_id(&self, pid: i64) -> Result<Option<u64>, BrowserRefusal> {
+        let windows = tokio::task::spawn_blocking(move || {
+            exact_browser_surface_ids(crate::windows::all_windows(), pid)
+        })
+        .await
+        .map_err(|error| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("could not resolve the isolated macOS browser window: {error}"),
+            )
+        })?;
+        Ok((windows.len() == 1).then(|| windows[0]))
+    }
+
     async fn discover_owned_endpoint(
         &self,
         pid: i64,
@@ -1584,6 +1598,26 @@ mod tests {
             on_current_space: Some(true),
             space_ids: None,
         }
+    }
+
+    #[test]
+    fn exact_browser_surface_ids_preserve_ambiguity_instead_of_guessing() {
+        assert!(exact_browser_surface_ids([], 42).is_empty());
+        assert_eq!(
+            exact_browser_surface_ids([window(7, 42, "Isolated Chrome")], 42),
+            vec![7]
+        );
+        assert_eq!(
+            exact_browser_surface_ids(
+                [
+                    window(7, 42, "Isolated Chrome"),
+                    window(8, 42, "Second Chrome window"),
+                    window(9, 99, "Another process"),
+                ],
+                42,
+            ),
+            vec![7, 8]
+        );
     }
 
     #[tokio::test]

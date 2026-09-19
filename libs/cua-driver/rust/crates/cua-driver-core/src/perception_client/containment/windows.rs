@@ -2622,11 +2622,30 @@ fn last_error(message: &'static str) -> VisualParseError {
 mod tests {
     use super::*;
 
+    // Windows may map generic rights to their file-specific equivalents.
+    const FILE_READ_EXECUTE: u32 = 0x0012_00A9;
+    const FILE_ALL_ACCESS: u32 = 0x001F_01FF;
+
     fn test_profile_name() -> String {
         format!(
             "{APP_CONTAINER_NAME_PREFIX}.{}",
             uuid::Uuid::new_v4().simple()
         )
+    }
+
+    fn canonical_test_root(root: &tempfile::TempDir) -> PathBuf {
+        std::fs::canonicalize(root.path()).unwrap()
+    }
+
+    fn is_equivalent_file_grant(mask: u32, requested: u32) -> bool {
+        mask == requested
+            || match requested {
+                requested if requested == (GENERIC_READ | GENERIC_EXECUTE) => {
+                    mask == FILE_READ_EXECUTE
+                }
+                GENERIC_ALL => mask == FILE_ALL_ACCESS,
+                _ => false,
+            }
     }
 
     #[test]
@@ -3038,10 +3057,11 @@ mod tests {
 
         // Production boundaries are canonicalized before ACL admission. Match
         // that contract so Windows short-path aliases cannot affect this test.
-        let bundle = std::fs::canonicalize(bundle).unwrap();
+        let root = canonical_test_root(&root);
+        let bundle = root.join("bundle");
         let models = bundle.join("models");
         let model = models.join("detector.onnx");
-        let working = std::fs::canonicalize(working).unwrap();
+        let working = root.join("working");
         let scratch = working.join("capture.png");
 
         let user = current_user_sid().unwrap();
@@ -3059,26 +3079,26 @@ mod tests {
             let (protected, grants) = matching_grants(directory, container.sid()).unwrap();
             assert!(protected, "{} lost DACL protection", directory.display());
             assert!(grants.iter().any(|(mask, flags)| {
-                *mask == (GENERIC_READ | GENERIC_EXECUTE)
+                is_equivalent_file_grant(*mask, GENERIC_READ | GENERIC_EXECUTE)
                     && u32::from(*flags) & SUB_CONTAINERS_AND_OBJECTS_INHERIT == NO_INHERITANCE
             }));
         }
         let (protected, grants) = matching_grants(&model, container.sid()).unwrap();
         assert!(protected, "{} lost DACL protection", model.display());
         assert!(grants.iter().any(|(mask, flags)| {
-            *mask == (GENERIC_READ | GENERIC_EXECUTE)
+            is_equivalent_file_grant(*mask, GENERIC_READ | GENERIC_EXECUTE)
                 && u32::from(*flags) & SUB_CONTAINERS_AND_OBJECTS_INHERIT == NO_INHERITANCE
         }));
 
         let (_, grants) = matching_grants(&working, container.sid()).unwrap();
         assert!(grants.iter().any(|(mask, flags)| {
-            *mask == GENERIC_ALL
+            is_equivalent_file_grant(*mask, GENERIC_ALL)
                 && u32::from(*flags) & SUB_CONTAINERS_AND_OBJECTS_INHERIT
                     == SUB_CONTAINERS_AND_OBJECTS_INHERIT
         }));
         let (_, grants) = matching_grants(&scratch, container.sid()).unwrap();
         assert!(grants.iter().any(|(mask, flags)| {
-            *mask == GENERIC_ALL
+            is_equivalent_file_grant(*mask, GENERIC_ALL)
                 && u32::from(*flags) & SUB_CONTAINERS_AND_OBJECTS_INHERIT == NO_INHERITANCE
         }));
 
@@ -3106,6 +3126,11 @@ mod tests {
         std::fs::write(bundle.join("inside.bin"), b"inside").unwrap();
         std::fs::write(&outside, b"outside").unwrap();
 
+        let root = canonical_test_root(&root);
+        let bundle = root.join("bundle");
+        let working = root.join("working");
+        let outside = root.join("outside.bin");
+
         let user = current_user_sid().unwrap();
         let container = AppContainerSid::create_unique().unwrap();
         let boundary = FilesystemBoundary {
@@ -3127,11 +3152,16 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let bundle = root.path().join("bundle");
         let model = bundle.join("detector.onnx");
-        let missing = root.path().join("missing");
         let working = root.path().join("working");
         std::fs::create_dir(&bundle).unwrap();
         std::fs::create_dir(&working).unwrap();
         std::fs::write(&model, b"model").unwrap();
+
+        let root = canonical_test_root(&root);
+        let bundle = root.join("bundle");
+        let model = bundle.join("detector.onnx");
+        let missing = root.join("missing");
+        let working = root.join("working");
 
         let user = current_user_sid().unwrap();
         let container = AppContainerSid::create_unique().unwrap();
@@ -3163,6 +3193,12 @@ mod tests {
         std::fs::create_dir(&working).unwrap();
         std::fs::write(&artifact, b"cache").unwrap();
 
+        let root = canonical_test_root(&root);
+        let bundle = root.join("bundle");
+        let writable = bundle.join("cache");
+        let artifact = writable.join("compiled.bin");
+        let working = root.join("working");
+
         let user = current_user_sid().unwrap();
         let container = AppContainerSid::create_unique().unwrap();
         let boundary = FilesystemBoundary {
@@ -3180,7 +3216,7 @@ mod tests {
                 "{} received duplicate grants",
                 path.display()
             );
-            assert_eq!(grants[0].0, GENERIC_ALL);
+            assert!(is_equivalent_file_grant(grants[0].0, GENERIC_ALL));
         }
     }
 
@@ -3193,6 +3229,11 @@ mod tests {
         std::fs::create_dir(&readable).unwrap();
         std::fs::create_dir(&writable).unwrap();
         std::fs::create_dir(&working).unwrap();
+
+        let root = canonical_test_root(&root);
+        let readable = root.join("models");
+        let writable = root.join("cache");
+        let working = root.join("working");
 
         let user = current_user_sid().unwrap();
         let container = AppContainerSid::create_unique().unwrap();
@@ -3212,15 +3253,20 @@ mod tests {
             .1
             .is_empty());
         let (_, grants) = matching_grants(&new_cache, container.sid()).unwrap();
-        assert!(grants.iter().any(|(mask, _)| *mask == GENERIC_ALL));
+        assert!(grants
+            .iter()
+            .any(|(mask, _)| is_equivalent_file_grant(*mask, GENERIC_ALL)));
     }
 
     #[test]
     fn acl_targets_cannot_be_replaced_until_revocation_finishes() {
         let root = tempfile::tempdir().unwrap();
         let original = root.path().join("model.bin");
-        let moved = root.path().join("moved.bin");
         std::fs::write(&original, b"original").unwrap();
+
+        let root = canonical_test_root(&root);
+        let original = root.join("model.bin");
+        let moved = root.join("moved.bin");
 
         let container = AppContainerSid::create_unique().unwrap();
         let mut ledger = AclGrantLedger::default();
@@ -3240,6 +3286,9 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let target = root.path().join("model.bin");
         std::fs::write(&target, b"model").unwrap();
+
+        let root = canonical_test_root(&root);
+        let target = root.join("model.bin");
 
         let container = AppContainerSid::create_unique().unwrap();
         let mut ledger = AclGrantLedger::default();

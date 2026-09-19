@@ -797,13 +797,11 @@ mod e2e {
         match owned.as_slice() {
             [] => match titled.as_slice() {
                 [] => Ok(None),
-                [window] if window.get("pid").is_none_or(Value::is_null) => {
-                    Ok(Some((fixture_window_id(window, pid)?, title.to_owned())))
-                }
                 [window] if window["pid"].as_i64().is_some() => Err(format!(
                     "exact fixture title belongs to pid {}, not expected pid {pid}",
                     window["pid"]
                 )),
+                [window] if window.get("pid").is_none_or(Value::is_null) => Ok(None),
                 [window] => Err(format!(
                     "exact fixture window has invalid pid metadata: {window}"
                 )),
@@ -1447,14 +1445,17 @@ mod e2e {
     }
 
     #[test]
-    fn fixture_discovery_accepts_one_unique_title_with_missing_pid() {
+    fn fixture_discovery_retries_one_unique_title_with_missing_pid() {
         let windows = json!([
             {"window_id": 10, "pid": null, "title": FIXTURE_TEST_TITLE}
         ]);
         assert_eq!(
             exact_fixture_window(&windows, 42, FIXTURE_TEST_TITLE).unwrap(),
-            Some((10, FIXTURE_TEST_TITLE.to_owned()))
+            None
         );
+        let diagnostic = fixture_window_diagnostic(&windows, 42, FIXTURE_TEST_TITLE);
+        assert!(diagnostic.contains("expected pid 42"));
+        assert!(diagnostic.contains("pid=missing"));
     }
 
     #[test]
@@ -1470,7 +1471,7 @@ mod e2e {
     #[test]
     fn fixture_discovery_refuses_zero_window_id() {
         let windows = json!([
-            {"window_id": 0, "pid": null, "title": FIXTURE_TEST_TITLE}
+            {"window_id": 0, "pid": 42, "title": FIXTURE_TEST_TITLE}
         ]);
         assert!(exact_fixture_window(&windows, 42, FIXTURE_TEST_TITLE)
             .unwrap_err()
@@ -1489,7 +1490,7 @@ mod e2e {
     #[test]
     fn fixture_discovery_accepts_maximum_window_id() {
         let windows = json!([
-            {"window_id": u64::MAX, "pid": null, "title": FIXTURE_TEST_TITLE}
+            {"window_id": u64::MAX, "pid": 42, "title": FIXTURE_TEST_TITLE}
         ]);
         assert_eq!(
             exact_fixture_window(&windows, 42, FIXTURE_TEST_TITLE).unwrap(),

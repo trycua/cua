@@ -3523,8 +3523,17 @@ fn inspect_owned_tree(directory: &Dir) -> Result<()> {
 
 #[cfg(windows)]
 fn windows_harden_private_tree(directory: &Dir) -> Result<()> {
+    windows_harden_private_tree_with(directory, &mut |_| {})
+}
+
+#[cfg(windows)]
+fn windows_harden_private_tree_with(
+    directory: &Dir,
+    after_initial_directory_harden: &mut impl FnMut(&Dir),
+) -> Result<()> {
     windows_reject_reparse_directory(directory)?;
     windows_secure_handle(directory)?;
+    after_initial_directory_harden(directory);
     for child in directory.entries()? {
         let child = child?;
         let file_type = child.file_type()?;
@@ -3543,7 +3552,7 @@ fn windows_harden_private_tree(directory: &Dir) -> Result<()> {
         }
         if file_type.is_dir() {
             let opened = directory.open_dir_nofollow(child.file_name())?;
-            windows_harden_private_tree(&opened)?;
+            windows_harden_private_tree_with(&opened, after_initial_directory_harden)?;
         } else if file_type.is_file() {
             let mut options = CapOpenOptions::new();
             options.read(true).follow(FollowSymlinks::No);
@@ -3556,7 +3565,9 @@ fn windows_harden_private_tree(directory: &Dir) -> Result<()> {
             );
         }
     }
-    Ok(())
+    // Reassert the directory after its descendants so a privileged service
+    // cannot use the recursive walk as a window to restore an explicit ACE.
+    windows_secure_handle(directory)
 }
 
 #[cfg(any(windows, test))]
@@ -5639,7 +5650,43 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn staged_install_acl_converges_after_post_hardening_package_grant() {
+    fn recursive_acl_hardening_reasserts_root_after_descendant_walk() {
+        let temp = TempDir::new().unwrap();
+        let parent = open_directory_path_nofollow(temp.path()).unwrap();
+        create_private_subdirectory(&parent, std::ffi::OsStr::new("staged")).unwrap();
+        let staged = parent.open_dir_nofollow("staged").unwrap();
+        create_private_subdirectory(&staged, std::ffi::OsStr::new("nested")).unwrap();
+        let nested = staged.open_dir_nofollow("nested").unwrap();
+        write_new_file_at(&nested, "payload", b"content").unwrap();
+
+        let injected = Cell::new(false);
+        windows_harden_private_tree_with(&staged, &mut |directory| {
+            if injected.replace(true) {
+                return;
+            }
+            let output = std::process::Command::new("icacls")
+                .arg(temp.path().join("staged"))
+                .arg("/grant")
+                .arg("*S-1-15-2-1:(RX)")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "icacls failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(windows_verify_directory_handle(directory).is_err());
+        })
+        .unwrap();
+
+        assert!(injected.get());
+        windows_verify_directory_handle(&staged).unwrap();
+        inspect_owned_tree(&staged).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn staged_install_verification_survives_acl_drift_during_recursive_hardening() {
         let temp = TempDir::new().unwrap();
         let parent = open_directory_path_nofollow(temp.path()).unwrap();
         create_private_subdirectory(&parent, std::ffi::OsStr::new("staged")).unwrap();
@@ -5663,32 +5710,37 @@ mod tests {
         write_install_record_at(&staged, &inspected, &source).unwrap();
 
         let hardens = Cell::new(0);
+        let injected = Cell::new(false);
         let manifest = converge_windows_acl_with(
             3,
             std::time::Duration::from_secs(90),
             || std::time::Duration::ZERO,
             |_| {},
             || {
-                windows_harden_private_tree(&staged)?;
                 hardens.set(hardens.get() + 1);
-                if hardens.get() == 1 {
-                    let output = std::process::Command::new("icacls")
-                        .arg(temp.path().join("staged"))
-                        .arg("/grant")
-                        .arg("*S-1-15-2-1:(RX)")
-                        .output()?;
-                    if !output.status.success() {
-                        bail!("icacls failed: {}", String::from_utf8_lossy(&output.stderr));
+                windows_harden_private_tree_with(&staged, &mut |_| {
+                    if !injected.replace(true) {
+                        let output = std::process::Command::new("icacls")
+                            .arg(temp.path().join("staged"))
+                            .arg("/grant")
+                            .arg("*S-1-15-2-1:(RX)")
+                            .output()
+                            .unwrap();
+                        assert!(
+                            output.status.success(),
+                            "icacls failed: {}",
+                            String::from_utf8_lossy(&output.stderr)
+                        );
                     }
-                }
-                Ok(())
+                })
             },
             || verify_installed_version_at(&staged, entry, Some(&inspected.manifest_bytes)),
         )
         .unwrap();
 
         assert_eq!(manifest.version, "1.0.0");
-        assert_eq!(hardens.get(), 2);
+        assert!(injected.get());
+        assert_eq!(hardens.get(), 1);
         windows_verify_directory_handle(&staged).unwrap();
         inspect_owned_tree(&staged).unwrap();
     }

@@ -1,6 +1,7 @@
 import importlib.util
 from pathlib import Path
 import unittest
+from unittest import mock
 
 
 MODULE_PATH = Path(__file__).with_name("main.py")
@@ -32,6 +33,29 @@ class VisualOnlyCanvasTests(unittest.TestCase):
         fixture.validate_journal_url("http://127.0.0.1:4321/state")
         with self.assertRaisesRegex(ValueError, "loopback"):
             fixture.validate_journal_url("https://example.test/state")
+
+    @mock.patch.object(fixture.sys, "platform", "linux")
+    @mock.patch.object(fixture.subprocess, "run")
+    def test_linux_fixture_publishes_verified_x11_owner(self, run):
+        fixture.publish_x11_owner(0x20001E, 4242)
+
+        run.assert_called_once_with(
+            [
+                "xprop",
+                "-id",
+                str(0x20001E),
+                "-f",
+                "_NET_WM_PID",
+                "32c",
+                "-set",
+                "_NET_WM_PID",
+                "4242",
+            ],
+            check=True,
+            stdout=fixture.subprocess.DEVNULL,
+            stderr=fixture.subprocess.PIPE,
+            text=True,
+        )
 
 
 if __name__ == "__main__":

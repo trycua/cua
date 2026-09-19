@@ -257,14 +257,18 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           if ($IsWindows) {
-            if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) { throw 'LOCALAPPDATA is required for the Windows extension home' }
+            if ([string]::IsNullOrWhiteSpace($env:USERPROFILE)) { throw 'USERPROFILE is required for the Windows extension home' }
             if ($env:GITHUB_RUN_ID -notmatch '^[1-9][0-9]*$' -or $env:GITHUB_RUN_ATTEMPT -notmatch '^[1-9][0-9]*$') { throw 'GitHub run identity is invalid' }
             $extensionHomeName = "cua-perception-extension-home-$($env:GITHUB_RUN_ID)-$($env:GITHUB_RUN_ATTEMPT)"
-            $localAppData = [IO.Path]::GetFullPath($env:LOCALAPPDATA)
-            $extensionHome = [IO.Path]::GetFullPath((Join-Path $localAppData $extensionHomeName))
-            if ([IO.Path]::GetDirectoryName($extensionHome) -ne $localAppData -or [IO.Path]::GetFileName($extensionHome) -ne $extensionHomeName) { throw 'Windows extension home is not the expected LOCALAPPDATA child' }
+            $userProfile = [IO.Path]::GetFullPath($env:USERPROFILE)
+            $userProfileItem = Get-Item -LiteralPath $userProfile -Force
+            if (-not $userProfileItem.PSIsContainer -or $userProfileItem.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Windows user profile must be a real directory' }
+            $extensionHome = [IO.Path]::GetFullPath((Join-Path $userProfile $extensionHomeName))
+            if ([IO.Path]::GetDirectoryName($extensionHome) -ne $userProfile -or [IO.Path]::GetFileName($extensionHome) -ne $extensionHomeName) { throw 'Windows extension home is not the expected USERPROFILE child' }
             if (Test-Path -LiteralPath $extensionHome) { throw 'Windows extension home must be fresh' }
             New-Item -ItemType Directory -Path $extensionHome | Out-Null
+            $extensionHomeItem = Get-Item -LiteralPath $extensionHome -Force
+            if (-not $extensionHomeItem.PSIsContainer -or $extensionHomeItem.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Windows extension home must be a real directory' }
           } else {
             $extensionHome = Join-Path $env:RUNNER_TEMP 'cua-perception-extension-home/live'
           }
@@ -568,13 +572,15 @@ jobs:
           $ErrorActionPreference = 'Stop'
           try {
             if ($IsWindows -and -not [string]::IsNullOrWhiteSpace($env:CUA_PERCEPTION_EXTENSION_HOME)) {
-              if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) { throw 'LOCALAPPDATA is required for Windows extension cleanup' }
+              if ([string]::IsNullOrWhiteSpace($env:USERPROFILE)) { throw 'USERPROFILE is required for Windows extension cleanup' }
               if ($env:GITHUB_RUN_ID -notmatch '^[1-9][0-9]*$' -or $env:GITHUB_RUN_ATTEMPT -notmatch '^[1-9][0-9]*$') { throw 'GitHub run identity is invalid' }
               $extensionHomeName = "cua-perception-extension-home-$($env:GITHUB_RUN_ID)-$($env:GITHUB_RUN_ATTEMPT)"
-              $localAppData = [IO.Path]::GetFullPath($env:LOCALAPPDATA)
+              $userProfile = [IO.Path]::GetFullPath($env:USERPROFILE)
+              $userProfileItem = Get-Item -LiteralPath $userProfile -Force
+              if (-not $userProfileItem.PSIsContainer -or $userProfileItem.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Windows user profile must be a real directory' }
               $extensionHome = [IO.Path]::GetFullPath($env:CUA_PERCEPTION_EXTENSION_HOME)
-              $expectedExtensionHome = [IO.Path]::GetFullPath((Join-Path $localAppData $extensionHomeName))
-              if ($extensionHome -ne $expectedExtensionHome -or [IO.Path]::GetDirectoryName($extensionHome) -ne $localAppData -or [IO.Path]::GetFileName($extensionHome) -ne $extensionHomeName) { throw 'refusing to clean an unexpected Windows extension home' }
+              $expectedExtensionHome = [IO.Path]::GetFullPath((Join-Path $userProfile $extensionHomeName))
+              if ($extensionHome -ne $expectedExtensionHome -or [IO.Path]::GetDirectoryName($extensionHome) -ne $userProfile -or [IO.Path]::GetFileName($extensionHome) -ne $extensionHomeName) { throw 'refusing to clean an unexpected Windows extension home' }
               if (Test-Path -LiteralPath $expectedExtensionHome) {
                 $extensionHomeItem = Get-Item -LiteralPath $expectedExtensionHome -Force
                 if ($extensionHomeItem.Attributes -band [IO.FileAttributes]::ReparsePoint) {
@@ -585,16 +591,20 @@ jobs:
               }
             }
           } finally {
-            @'
-            import pathlib, shutil, sys
-            root = pathlib.Path(sys.argv[1]).resolve()
-            for name in ("cua-perception-evidence", "perception-evidence", "publish-evidence"):
-                target = root / name
-                assert target.parent == root
-                if target.is_symlink():
-                    target.unlink()
-                elif target.exists():
-                    shutil.rmtree(target)
-            '@ | python - $env:RUNNER_TEMP
-            if ($LASTEXITCODE -ne 0) { throw 'plaintext evidence cleanup failed' }
+            if ([string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)) { throw 'RUNNER_TEMP is required for plaintext evidence cleanup' }
+            $runnerTemp = [IO.Path]::GetFullPath($env:RUNNER_TEMP)
+            $runnerTempItem = Get-Item -LiteralPath $runnerTemp -Force
+            if (-not $runnerTempItem.PSIsContainer -or $runnerTempItem.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'RUNNER_TEMP must be a real directory' }
+            foreach ($name in @('cua-perception-evidence', 'perception-evidence', 'publish-evidence')) {
+              $target = [IO.Path]::GetFullPath((Join-Path $runnerTemp $name))
+              if ([IO.Path]::GetDirectoryName($target) -ne $runnerTemp -or [IO.Path]::GetFileName($target) -ne $name) { throw 'refusing to clean an unexpected plaintext evidence path' }
+              if (Test-Path -LiteralPath $target) {
+                $targetItem = Get-Item -LiteralPath $target -Force
+                if ($targetItem.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                  Remove-Item -LiteralPath $target -Force
+                } else {
+                  Remove-Item -LiteralPath $target -Recurse -Force
+                }
+              }
+            }
           }

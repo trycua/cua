@@ -5,6 +5,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import subprocess
+import sys
 import tkinter as tk
 from typing import Optional
 import urllib.parse
@@ -58,6 +61,28 @@ def post_oracle(url: str, state: dict[str, object]) -> None:
             raise RuntimeError(f"fixture journal returned HTTP {response.status}")
 
 
+def publish_x11_owner(window_id: int, pid: Optional[int] = None) -> None:
+    if not sys.platform.startswith("linux"):
+        return
+    subprocess.run(
+        [
+            "xprop",
+            "-id",
+            str(window_id),
+            "-f",
+            "_NET_WM_PID",
+            "32c",
+            "-set",
+            "_NET_WM_PID",
+            str(os.getpid() if pid is None else pid),
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+
 class VisualFixture:
     def __init__(self, journal_url: str, title: str = DEFAULT_TITLE) -> None:
         self.journal_url = journal_url
@@ -67,6 +92,8 @@ class VisualFixture:
         self.root.title(title)
         self.root.geometry(f"{WIDTH}x{HEIGHT}")
         self.root.resizable(False, False)
+        self.root.update_idletasks()
+        publish_x11_owner(self.root.winfo_id())
         self.canvas = tk.Canvas(
             self.root,
             width=WIDTH,

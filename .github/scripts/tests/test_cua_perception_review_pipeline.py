@@ -154,6 +154,10 @@ def test_review_pipeline_binds_current_pr_head_and_authenticated_supplied_model(
 def test_review_pipeline_builds_pending_trust_override_and_exact_artifact_contracts() -> None:
     text = workflow_text()
     parsed = yaml.safe_load(text)
+    supplied_input = parsed["jobs"]["supplied-input"]
+    assert supplied_input["env"] == {
+        "MSYS2_ENV_CONV_EXCL": "CUA_DRIVER_REVIEW_EXTENSION_PUBLIC_KEY_BASE64"
+    }
     for value in (
         "CUA_DRIVER_REVIEW_EXTENSION_PUBLIC_KEY_BASE64",
         "--features review-trust-root",

@@ -132,6 +132,8 @@ jobs:
   supplied-input:
     name: native review input (${{ matrix.target }})
     needs: reviewed-model
+    env:
+      MSYS2_ENV_CONV_EXCL: CUA_DRIVER_REVIEW_EXTENSION_PUBLIC_KEY_BASE64
     permissions:
       actions: read
       contents: read

@@ -50,9 +50,9 @@ fn pid_window_target_candidates(pid: i64) -> Vec<WindowTargetCandidate> {
 fn desktop_point_window_resolver(
     state: Arc<ToolState>,
 ) -> cua_driver_core::window_target::DesktopPointWindowResolver {
-    Arc::new(move |pid, x, y| {
+    Arc::new(move |pid, x, y, session_key| {
         let pid = u32::try_from(pid).ok()?;
-        let (sx, sy) = state.desktop_to_screen(x, y);
+        let (sx, sy) = state.desktop_to_screen(session_key, x, y);
         topmost_window_at(&crate::wayland::list_windows_dispatch(Some(pid)), pid, sx, sy)
     })
 }
@@ -310,10 +310,16 @@ pub struct ToolState {
     pub zoom_registry: Arc<ZoomRegistry>,
     pub mouse_hold: std::sync::Mutex<std::collections::HashMap<String, MouseHoldState>>,
     pub config: Arc<RwLock<DriverConfig>>,
-    /// `screen px / screenshot px` of the last `get_desktop_state` capture.
+    /// `screen px / screenshot px` of the last `get_desktop_state` capture,
+    /// per session key (see `resolve_cursor_key` / `resolve_session_key`).
     /// Desktop-frame coordinates are *screenshot* pixels by contract; when the
     /// capture was downsized for the model this maps them back to the screen.
-    pub desktop_scale: std::sync::Mutex<f64>,
+    ///
+    /// Keyed per session (not process-global) because two concurrent
+    /// sessions can observe different-sized captures at overlapping times;
+    /// a single shared scale would let one session's `get_desktop_state`
+    /// silently corrupt another session's in-flight pointer math.
+    pub desktop_scale: std::sync::Mutex<std::collections::HashMap<String, f64>>,
 }
 
 /// Widest `get_desktop_state` screenshot handed to the model. Vision models
@@ -323,10 +329,28 @@ pub struct ToolState {
 const DESKTOP_SCREENSHOT_MAX_DIM: u32 = 1280;
 
 impl ToolState {
-    /// Map desktop-frame (screenshot) pixels to real screen pixels.
-    pub fn desktop_to_screen(&self, x: f64, y: f64) -> (f64, f64) {
-        let scale = *self.desktop_scale.lock().unwrap();
+    /// Map desktop-frame (screenshot) pixels to real screen pixels, using the
+    /// scale recorded by `session_key`'s last `get_desktop_state` capture.
+    /// A session with no recorded capture yet (or the legacy anonymous
+    /// caller) falls back to 1.0 (no scaling), matching prior behavior.
+    pub fn desktop_to_screen(&self, session_key: &str, x: f64, y: f64) -> (f64, f64) {
+        let scale = self
+            .desktop_scale
+            .lock()
+            .unwrap()
+            .get(session_key)
+            .copied()
+            .unwrap_or(1.0);
         (x * scale, y * scale)
+    }
+
+    /// Record `session_key`'s desktop screenshot scale from a fresh
+    /// `get_desktop_state` capture.
+    pub fn set_desktop_scale(&self, session_key: &str, scale: f64) {
+        self.desktop_scale
+            .lock()
+            .unwrap()
+            .insert(session_key.to_owned(), scale);
     }
 }
 
@@ -349,7 +373,7 @@ impl ToolState {
             resize_registry: Arc::new(ResizeRegistry::new()),
             zoom_registry: Arc::new(ZoomRegistry::new()),
             mouse_hold: std::sync::Mutex::new(Default::default()),
-            desktop_scale: std::sync::Mutex::new(1.0),
+            desktop_scale: std::sync::Mutex::new(Default::default()),
             config: Arc::new(RwLock::new(load_driver_config())),
         })
     }
@@ -5082,14 +5106,7 @@ fn mouse_button_name(button: u8) -> &'static str {
 }
 
 fn resolve_cursor_key(args: &Value) -> String {
-    for key in ["session", "_session_id", "cursor_id"] {
-        if let Some(v) = args.get(key).and_then(|v| v.as_str()) {
-            if !v.is_empty() {
-                return v.to_owned();
-            }
-        }
-    }
-    "default".to_owned()
+    cua_driver_core::tool_args::resolve_session_key(args)
 }
 
 /// Return the cursor key only for a lifecycle-owned session. Cursor positioning
@@ -5992,7 +6009,8 @@ impl Tool for ClickTool {
                 Err(result) => return result,
             };
             let button = parse_mouse_button(input.button.unwrap_or(ClickButton::Left).as_str());
-            let (dx, dy) = self.state.desktop_to_screen(input.x, input.y);
+            let __dsk = resolve_cursor_key(&args);
+            let (dx, dy) = self.state.desktop_to_screen(&__dsk, input.x, input.y);
             let sx = dx.round() as i32;
             let sy = dy.round() as i32;
             let n = input.count.unwrap_or(1) as usize;
@@ -6490,7 +6508,8 @@ impl Tool for ClickTool {
             y *= ratio;
         }
         if desktop_frame {
-            let (dx, dy) = self.state.desktop_to_screen(x, y);
+            let __dsk = resolve_cursor_key(&args);
+            let (dx, dy) = self.state.desktop_to_screen(&__dsk, x, y);
             match tokio::task::spawn_blocking(move || desktop_to_window_local(xid, dx, dy)).await {
                 Ok(Ok((lx, ly))) => {
                     x = lx;
@@ -9198,7 +9217,8 @@ impl Tool for ScrollTool {
             (Some(x), Some(y)) if desktop_frame_requested(&args) => {
                 // Desktop-frame pixels (from get_desktop_state) against a named
                 // window: map into the window-local frame the pipeline expects.
-                let (x, y) = self.state.desktop_to_screen(x, y);
+                let __dsk = resolve_cursor_key(&args);
+                let (x, y) = self.state.desktop_to_screen(&__dsk, x, y);
                 match tokio::task::spawn_blocking(move || desktop_to_window_local(xid, x, y))
                     .await
                 {
@@ -9777,7 +9797,8 @@ impl Tool for DoubleClickTool {
             y *= ratio;
         }
         if desktop_frame {
-            let (dx, dy) = self.state.desktop_to_screen(x, y);
+            let __dsk = resolve_cursor_key(&args);
+            let (dx, dy) = self.state.desktop_to_screen(&__dsk, x, y);
             match tokio::task::spawn_blocking(move || desktop_to_window_local(xid, dx, dy)).await {
                 Ok(Ok((lx, ly))) => {
                     x = lx;
@@ -10070,7 +10091,8 @@ impl Tool for RightClickTool {
             y *= ratio;
         }
         if desktop_frame {
-            let (dx, dy) = self.state.desktop_to_screen(x, y);
+            let __dsk = resolve_cursor_key(&args);
+            let (dx, dy) = self.state.desktop_to_screen(&__dsk, x, y);
             match tokio::task::spawn_blocking(move || desktop_to_window_local(xid, dx, dy)).await {
                 Ok(Ok((lx, ly))) => {
                     x = lx;
@@ -10358,8 +10380,9 @@ impl Tool for DragTool {
             to_y *= ratio;
         }
         if desktop_frame {
-            let (dfx, dfy) = self.state.desktop_to_screen(from_x, from_y);
-            let (dtx, dty) = self.state.desktop_to_screen(to_x, to_y);
+            let __dsk = resolve_cursor_key(&args);
+            let (dfx, dfy) = self.state.desktop_to_screen(&__dsk, from_x, from_y);
+            let (dtx, dty) = self.state.desktop_to_screen(&__dsk, to_x, to_y);
             let mapped = tokio::task::spawn_blocking(move || {
                 Ok::<_, anyhow::Error>((
                     desktop_to_window_local(xid, dfx, dfy)?,
@@ -10938,7 +10961,8 @@ impl Tool for MouseButtonDownTool {
             y *= ratio;
         }
         if desktop_frame {
-            let (dx, dy) = self.state.desktop_to_screen(x, y);
+            let __dsk = resolve_cursor_key(&args);
+            let (dx, dy) = self.state.desktop_to_screen(&__dsk, x, y);
             match tokio::task::spawn_blocking(move || desktop_to_window_local(xid, dx, dy)).await {
                 Ok(Ok((lx, ly))) => {
                     x = lx;
@@ -11854,6 +11878,7 @@ impl Tool for GetDesktopStateTool {
             Err(result) => return result,
         };
         let out_file = input.screenshot_out_file;
+        let scale_key = input.session.filter(|s| !s.is_empty()).unwrap_or_else(|| "default".to_owned());
 
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
             // Capture the full display at native size first. When the
@@ -11925,7 +11950,7 @@ impl Tool for GetDesktopStateTool {
                 } else {
                     1.0
                 };
-                *self.state.desktop_scale.lock().unwrap() = frame_scale;
+                self.state.set_desktop_scale(&scale_key, frame_scale);
                 let mut content = Vec::new();
                 let mut structured = json!({
                     "platform": "linux",
@@ -12112,7 +12137,8 @@ impl Tool for MoveCursorTool {
                 Ok(input) => input,
                 Err(result) => return result,
             };
-            let (x, y) = self.state.desktop_to_screen(input.x, input.y);
+            let __dsk = resolve_cursor_key(&args);
+            let (x, y) = self.state.desktop_to_screen(&__dsk, input.x, input.y);
             let xi = x.round() as i32;
             let yi = y.round() as i32;
             let wayland = crate::wayland::wayland_input_enabled();
@@ -14060,8 +14086,33 @@ mod background_budget_tests {
         let scaled = desktop_window_lines(&windows, 1.5);
         assert!(scaled.contains("1280x702 at (0,18)"), "{scaled}");
         let state = ToolState::new();
-        *state.desktop_scale.lock().unwrap() = 1.5;
-        assert_eq!(state.desktop_to_screen(281.0, 57.0), (421.5, 85.5));
+        state.set_desktop_scale("default", 1.5);
+        assert_eq!(state.desktop_to_screen("default", 281.0, 57.0), (421.5, 85.5));
+    }
+
+    /// Two concurrent sessions observing different-sized desktops must not
+    /// cross-contaminate: `desktop_scale` is keyed per session, not a single
+    /// process-global value shared by every caller regardless of `session`.
+    #[test]
+    fn desktop_scale_is_isolated_per_session() {
+        let state = ToolState::new();
+        // Session "a" captured a 1280-wide screenshot of a 1920-wide screen
+        // (scale 1.5). Session "b" captured a 1280-wide screenshot of a
+        // 2560-wide screen (scale 2.0).
+        state.set_desktop_scale("session-a", 1.5);
+        state.set_desktop_scale("session-b", 2.0);
+
+        assert_eq!(state.desktop_to_screen("session-a", 100.0, 100.0), (150.0, 150.0));
+        assert_eq!(state.desktop_to_screen("session-b", 100.0, 100.0), (200.0, 200.0));
+
+        // Re-reading session "a" after session "b" observed and updated its
+        // own scale must still return session "a"'s own factor, not
+        // session "b"'s (the process-global bug this test guards against).
+        assert_eq!(state.desktop_to_screen("session-a", 100.0, 100.0), (150.0, 150.0));
+
+        // A session that has never called get_desktop_state falls back to
+        // 1.0 (no scaling) rather than inheriting another session's scale.
+        assert_eq!(state.desktop_to_screen("session-c", 100.0, 100.0), (100.0, 100.0));
     }
 }
 

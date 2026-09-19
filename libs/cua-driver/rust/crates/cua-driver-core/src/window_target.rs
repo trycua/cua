@@ -53,11 +53,14 @@ pub fn resolve_pid_window_target(
 pub type WindowTargetCandidates =
     Arc<dyn Fn(i64) -> Vec<WindowTargetCandidate> + Send + Sync + 'static>;
 
-/// `(pid, x, y)` in the desktop action frame (get_desktop_state screenshot
-/// pixels) -> the pid's topmost on-screen window covering that point. Lets a
-/// desktop-grounded pixel action name a multi-window app by pid alone.
+/// `(pid, x, y, session_key)` in the desktop action frame (get_desktop_state
+/// screenshot pixels) -> the pid's topmost on-screen window covering that
+/// point. Lets a desktop-grounded pixel action name a multi-window app by pid
+/// alone. `session_key` (see `tool_args::resolve_session_key`) selects whose
+/// recorded desktop screenshot scale to use, since that scale is per-session,
+/// not process-global.
 pub type DesktopPointWindowResolver =
-    Arc<dyn Fn(i64, f64, f64) -> Option<u64> + Send + Sync + 'static>;
+    Arc<dyn Fn(i64, f64, f64, &str) -> Option<u64> + Send + Sync + 'static>;
 
 /// `pid` -> the window a pid-only action without a point should mean: the
 /// pid's currently active (focused) window, else its topmost on-screen one.
@@ -227,10 +230,13 @@ impl Tool for PidOnlyWindowTargetGuard {
                 if let (Some(resolver), Some((x, y))) =
                     (self.point_resolver.clone(), desktop_frame_point(&args))
                 {
-                    let hit = tokio::task::spawn_blocking(move || resolver(pid, x, y))
-                        .await
-                        .ok()
-                        .flatten();
+                    let session_key = crate::tool_args::resolve_session_key(&args);
+                    let hit = tokio::task::spawn_blocking(move || {
+                        resolver(pid, x, y, &session_key)
+                    })
+                    .await
+                    .ok()
+                    .flatten();
                     if let Some(window_id) = hit {
                         if let Some(candidate) =
                             candidates.iter().find(|c| c.window_id == window_id)
@@ -520,7 +526,7 @@ mod tests {
             ]
         });
         let resolver: DesktopPointWindowResolver =
-            Arc::new(|_pid, x, _y| if x > 100.0 { Some(22) } else { Some(11) });
+            Arc::new(|_pid, x, _y, _session_key| if x > 100.0 { Some(22) } else { Some(11) });
         let guard = PidOnlyWindowTargetGuard::new(
             Box::new(EchoTool {
                 calls: calls.clone(),

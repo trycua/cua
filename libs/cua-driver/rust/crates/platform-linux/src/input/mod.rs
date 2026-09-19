@@ -3776,8 +3776,8 @@ fn key_name_to_keysym(key: &str) -> Result<u32> {
         "insert" | "ins" => 0xFF63,
         "home" => 0xFF50,
         "end" => 0xFF57,
-        "pageup" | "pgup" => 0xFF55,
-        "pagedown" | "pgdn" => 0xFF56,
+        "pageup" | "pgup" | "page_up" => 0xFF55,
+        "pagedown" | "pgdn" | "page_down" => 0xFF56,
         "up" => 0xFF52,
         "down" => 0xFF54,
         "left" => 0xFF51,
@@ -3797,7 +3797,7 @@ fn key_name_to_keysym(key: &str) -> Result<u32> {
         "shift" => 0xFFE1,
         "ctrl" | "control" => 0xFFE3,
         "alt" => 0xFFE9,
-        "super" | "meta" | "win" => 0xFFEB,
+        "super" | "meta" | "win" | "cmd" => 0xFFEB,
         "capslock" => 0xFFE5,
         "numlock" => 0xFF7F,
         // Common X keysym names for punctuation. The single-char branch below
@@ -3821,6 +3821,36 @@ fn key_name_to_keysym(key: &str) -> Result<u32> {
         _ => anyhow::bail!("Unknown key: {key}"),
     };
     Ok(keysym)
+}
+
+#[cfg(test)]
+mod key_name_alias_tests {
+    use super::key_name_to_keysym;
+
+    #[test]
+    fn common_key_name_aliases_resolve_to_the_expected_keysym() {
+        // Page_Up / Page_Down: the underscore form is the literal X11 keysym
+        // name and a common cross-platform prompt spelling; only the
+        // no-underscore "pageup"/"pgup" aliases existed before.
+        assert_eq!(key_name_to_keysym("Page_Up").unwrap(), 0xFF55);
+        assert_eq!(key_name_to_keysym("page_up").unwrap(), 0xFF55);
+        assert_eq!(
+            key_name_to_keysym("Page_Up").unwrap(),
+            key_name_to_keysym("pageup").unwrap()
+        );
+        assert_eq!(key_name_to_keysym("Page_Down").unwrap(), 0xFF56);
+        assert_eq!(
+            key_name_to_keysym("Page_Down").unwrap(),
+            key_name_to_keysym("pgdn").unwrap()
+        );
+        // "cmd": common cross-platform prompt name for the Super/Meta/Windows
+        // key; must alias to the same keysym as "super"/"meta"/"win".
+        assert_eq!(key_name_to_keysym("cmd").unwrap(), 0xFFEB);
+        assert_eq!(
+            key_name_to_keysym("cmd").unwrap(),
+            key_name_to_keysym("super").unwrap()
+        );
+    }
 }
 
 /// A keycode we have *temporarily* rebound to host a keysym that is absent from

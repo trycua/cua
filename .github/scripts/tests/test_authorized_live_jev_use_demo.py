@@ -183,15 +183,59 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         self.assertNotIn("github.workspace", configure["run"])
         self.assertFalse(any("${{ runner." in value for value in live_env.values()))
 
-    def test_live_linux_desktop_installs_xdpyinfo_before_readiness_probe(self):
+    def test_live_linux_desktop_persists_and_is_rechecked_before_demos(self):
+        steps = self.jobs["live"]["steps"]
         prepare = next(
             step
-            for step in self.jobs["live"]["steps"]
+            for step in steps
             if step.get("name") == "Prepare Linux X11 desktop"
         )
         self.assertEqual(prepare["if"], "runner.os == 'Linux'")
         self.assertRegex(prepare["run"], r"apt-get install[^\n]*\bx11-utils\b")
         self.assertLess(prepare["run"].index("x11-utils"), prepare["run"].index("xdpyinfo"))
+        for daemon in ("Xvfb", "dbus-daemon", "openbox", "picom"):
+            self.assertRegex(
+                prepare["run"],
+                rf"nohup env -u RUNNER_TRACKING_ID[^\n]*(?:\n[^\n]*)?\b{re.escape(daemon)}\b",
+            )
+        self.assertIn("cua-linux-desktop.pids", prepare["run"])
+        self.assertIn("xprop -root _NET_SUPPORTING_WM_CHECK _NET_CLIENT_LIST", prepare["run"])
+        self.assertIn("^_NET_SUPPORTING_WM_CHECK(WINDOW): window id # 0x", prepare["run"])
+        self.assertIn("^_NET_CLIENT_LIST(WINDOW):", prepare["run"])
+        self.assertIn("dbus-send --session", prepare["run"])
+        self.assertIn("dump_desktop_state", prepare["run"])
+        for name in ("xvfb", "dbus", "openbox", "picom"):
+            self.assertIn(f'$RUNNER_TEMP/{name}.log', prepare["run"])
+
+        verify = next(
+            step
+            for step in steps
+            if step.get("name") == "Verify Linux X11 desktop survived setup steps"
+        )
+        mock = next(
+            step
+            for step in steps
+            if "deterministic mock" in step.get("name", "")
+        )
+        self.assertEqual(verify["if"], "runner.os == 'Linux'")
+        self.assertLess(steps.index(verify), steps.index(mock))
+        self.assertIn("kill -0", verify["run"])
+        self.assertIn("xprop -root _NET_SUPPORTING_WM_CHECK _NET_CLIENT_LIST", verify["run"])
+        self.assertIn("^_NET_SUPPORTING_WM_CHECK(WINDOW): window id # 0x", verify["run"])
+        self.assertIn("^_NET_CLIENT_LIST(WINDOW):", verify["run"])
+        self.assertIn("dbus-send --session", verify["run"])
+        self.assertIn("dump_desktop_state", verify["run"])
+
+        stop = next(step for step in steps if step.get("name") == "Stop Linux X11 desktop")
+        cleanup = next(
+            step
+            for step in steps
+            if step.get("name") == "Remove plaintext evidence from the runner"
+        )
+        self.assertEqual(stop["if"], "always() && runner.os == 'Linux'")
+        self.assertLess(steps.index(stop), steps.index(cleanup))
+        self.assertIn("/proc/$pid/comm", stop["run"])
+        self.assertIn('kill "$pid"', stop["run"])
 
     def test_external_chooser_receives_only_the_key_and_windows_system_root(self):
         start = self.orchestrator.index("fn external_choice(")

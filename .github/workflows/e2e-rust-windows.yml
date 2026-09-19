@@ -285,10 +285,13 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ needs.source.outputs.sha }}
         run: |
           summary_path=matrix-summary.md
           {
             echo "# CUA Rust Windows E2E matrix"
+            echo
+            echo "Source commit: \`$SOURCE_SHA\`"
             echo
             echo "The lane jobs above are independent; a failure in one lane does not hide the others."
             echo
@@ -310,6 +313,59 @@ jobs:
             fi
             echo >> "$summary_path"
           done < <(find artifacts -type f -name summary.md -print | sort)
+
+          while IFS= read -r results; do
+            artifact_dir=$(dirname "$results")
+            if [[ -f "$artifact_dir/summary.md" ]]; then
+              continue
+            fi
+            found=1
+            artifact=$(basename "$artifact_dir")
+            artifact_id=$(jq -r --arg name "$artifact" \
+              '.artifacts[] | select(.name == $name) | .id' <<< "$artifacts_json" | head -n 1)
+            if [[ -n "$artifact_id" && "$artifact_id" != "null" ]]; then
+              artifact_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts/$artifact_id"
+              artifact_link="[Download $artifact]($artifact_url)"
+            else
+              artifact_url=""
+              artifact_link="Artifact link unavailable"
+            fi
+
+            echo "## $artifact" >> "$summary_path"
+            echo >> "$summary_path"
+            echo "The lane did not produce \`summary.md\`. Results recovered from \`results.jsonl\`: $artifact_link." >> "$summary_path"
+            echo >> "$summary_path"
+            result_count=$(jq -s 'length' "$results")
+            pass_count=$(jq -s '[.[] | select(.test_status == "pass")] | length' "$results")
+            fail_count=$(jq -s '[.[] | select(.test_status == "fail")] | length' "$results")
+            other_count=$((result_count - pass_count - fail_count))
+            echo "Records: $result_count; pass: $pass_count; fail: $fail_count; other: $other_count." >> "$summary_path"
+            if ((result_count == 0)); then
+              echo >> "$summary_path"
+              echo "No behavioral result records were written before the lane stopped." >> "$summary_path"
+            elif ((fail_count + other_count > 0)); then
+              {
+                echo
+                echo "| Non-passing cell | Status | Observed | Message | Evidence |"
+                echo "| --- | --- | --- | --- | --- |"
+              } >> "$summary_path"
+              while IFS=$'\t' read -r cell status observed message evidence; do
+                cell=${cell//|/\\|}
+                status=${status//|/\\|}
+                observed=${observed//|/\\|}
+                message=${message//|/\\|}
+                evidence=${evidence//|/\\|}
+                if [[ -n "$artifact_url" && "$evidence" != "-" ]]; then
+                  evidence="[$evidence]($artifact_url)"
+                fi
+                echo "| $cell | $status | $observed | $message | $evidence |" >> "$summary_path"
+              done < <(jq -r 'select(.test_status != "pass") | [.cell_id // "(missing cell_id)", .test_status // "unknown", .observed_behavior // "unknown", ((.message // "-") | if . == "" then "-" else . end), (.evidence.video // "-")] | @tsv' "$results")
+            else
+              echo >> "$summary_path"
+              echo "All recovered behavioral records passed; the lane failed before its Markdown report was produced." >> "$summary_path"
+            fi
+            echo >> "$summary_path"
+          done < <(find artifacts -type f -name results.jsonl -print | sort)
           if [[ "$found" == 0 ]]; then
             echo "No lane summary artifact was produced." >> "$summary_path"
           fi

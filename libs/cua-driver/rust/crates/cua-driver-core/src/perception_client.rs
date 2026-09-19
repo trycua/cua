@@ -41,6 +41,7 @@ pub struct PerceptionWorkerConfig {
     pub warm_worker: Option<WarmWorkerPolicy>,
     pub expected_extension_identity: Option<ExpectedExtensionIdentity>,
     installed: bool,
+    windows_acl_lease_path: Option<PathBuf>,
     #[cfg(test)]
     containment: ContainmentLimits,
 }
@@ -55,6 +56,7 @@ impl PerceptionWorkerConfig {
             warm_worker: None,
             expected_extension_identity: None,
             installed: false,
+            windows_acl_lease_path: None,
             #[cfg(test)]
             containment: ContainmentLimits::default(),
         }
@@ -62,6 +64,12 @@ impl PerceptionWorkerConfig {
 
     pub fn with_bounded_reuse(mut self, policy: WarmWorkerPolicy) -> Self {
         self.warm_worker = Some(policy);
+        self
+    }
+
+    /// Coordinate Windows worker ACL grants with extension lifecycle changes.
+    pub fn with_windows_acl_lease_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.windows_acl_lease_path = Some(path.into());
         self
     }
 
@@ -107,11 +115,16 @@ impl PerceptionWorkerConfig {
     fn containment_limits(&self) -> containment::ContainmentLimits {
         #[cfg(test)]
         {
-            self.containment.clone()
+            let mut limits = self.containment.clone();
+            limits.windows_acl_lease_path = self.windows_acl_lease_path.clone();
+            limits
         }
         #[cfg(not(test))]
         {
-            containment::ContainmentLimits::default()
+            containment::ContainmentLimits {
+                windows_acl_lease_path: self.windows_acl_lease_path.clone(),
+                ..containment::ContainmentLimits::default()
+            }
         }
     }
 
@@ -1133,6 +1146,7 @@ else:
             warm_worker: None,
             expected_extension_identity: None,
             installed: false,
+            windows_acl_lease_path: None,
         })
         .unwrap()
     }
@@ -1154,6 +1168,7 @@ else:
             warm_worker: Some(policy),
             expected_extension_identity: None,
             installed: false,
+            windows_acl_lease_path: None,
         })
         .unwrap()
     }
@@ -1686,6 +1701,7 @@ write_frame({'protocol':'cua-perception/1','request_id':request['request_id'],'s
             warm_worker: None,
             expected_extension_identity: None,
             installed: false,
+            windows_acl_lease_path: None,
         })
         .unwrap();
         let failure = client
@@ -1733,7 +1749,8 @@ write_frame({'protocol':'cua-perception/1','request_id':request['request_id'],'s
             "/opt/cua/worker",
             "cua-perception",
             "0.1.0",
-        );
+        )
+        .with_windows_acl_lease_path("/opt/cua/.locks/cua-perception.runtime-acl.lock");
         assert_eq!(
             config.args,
             [
@@ -1744,6 +1761,12 @@ write_frame({'protocol':'cua-perception/1','request_id':request['request_id'],'s
             ]
         );
         let expected = config.expected_extension_identity.as_ref();
+        assert_eq!(
+            config.containment_limits().windows_acl_lease_path,
+            Some(PathBuf::from(
+                "/opt/cua/.locks/cua-perception.runtime-acl.lock"
+            ))
+        );
         assert!(verify_expected_extension_identity(
             &json!({
                 "identity": {
@@ -1786,6 +1809,7 @@ write_frame({'protocol':'cua-perception/1','request_id':request['request_id'],'s
                 version: "0.1.0".into(),
             }),
             installed: true,
+            windows_acl_lease_path: None,
         })
         .unwrap();
         let failure = client

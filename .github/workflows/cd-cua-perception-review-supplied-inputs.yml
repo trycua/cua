@@ -633,6 +633,40 @@ jobs:
           assert source["uri"] == preview["corresponding_source_uri"] == payload["corresponding_source_uri"]
           assert source["revision"] == preview["corresponding_source_revision"] == payload["corresponding_source_revision"]
           PY
+      - name: Install and self-test the packaged candidate with the native review Driver
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          root="review-staging/$PLATFORM"
+          driver="$root/review-${{ matrix.driver }}"
+          catalog="$root/signed-catalog.json"
+          measurements="$root/review-measurements.json"
+          status="$RUNNER_TEMP/cua-perception-producer-status.json"
+          install_home="$RUNNER_TEMP/cua-perception-producer-install-home"
+          test ! -e "$install_home"
+          CUA_DRIVER_RS_HOME="$install_home" \
+            "$driver" extension install cua-perception --catalog "$catalog"
+          CUA_DRIVER_RS_HOME="$install_home" \
+            "$driver" extension status cua-perception --self-test --json > "$status"
+          python3 - "$status" "$measurements" <<'PY'
+          import json, pathlib, sys
+
+          status_path, measurements_path = map(pathlib.Path, sys.argv[1:])
+          installed = json.loads(status_path.read_text())
+          measurements = json.loads(measurements_path.read_text())
+
+          assert installed["id"] == "cua-perception"
+          assert installed["installed"] is True
+          assert installed["healthy"] is True
+          assert installed["trust"] == "review-only-publisher-verified"
+          assert installed["evidence_class"] == "review-only-not-release-evidence"
+          assert installed["publisher_id"] == measurements["publisher_id"] == "cua-review-only"
+          assert installed["publisher_key_id"] == measurements["key_id"] == "review-only-build-override"
+          assert installed["active_version"] == measurements["extension_version"]
+          assert installed["protocol_version"] == measurements["protocol_version"]
+          PY
       - name: Destroy any remaining ephemeral private key
         if: always()
         shell: bash

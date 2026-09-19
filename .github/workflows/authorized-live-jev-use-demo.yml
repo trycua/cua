@@ -307,14 +307,79 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends xvfb x11-utils dbus-x11 at-spi2-core openbox picom python3-gi gir1.2-gtk-3.0 libgtk-3-dev clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev libei-dev libx11-dev libxi-dev libxtst-dev libxext-dev libwebkit2gtk-4.1-dev libssl-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev ffmpeg jq
-          Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp >"$RUNNER_TEMP/xvfb.log" 2>&1 &
-          echo "DISPLAY=:99" >> "$GITHUB_ENV"
-          dbus_address="$(dbus-daemon --session --fork --print-address)"
-          echo "DBUS_SESSION_BUS_ADDRESS=$dbus_address" >> "$GITHUB_ENV"
-          DISPLAY=:99 DBUS_SESSION_BUS_ADDRESS="$dbus_address" openbox >"$RUNNER_TEMP/openbox.log" 2>&1 &
-          DISPLAY=:99 DBUS_SESSION_BUS_ADDRESS="$dbus_address" picom --backend xrender --config /dev/null >"$RUNNER_TEMP/picom.log" 2>&1 &
-          sleep 2
+          xvfb_pid="" dbus_pid="" openbox_pid="" picom_pid=""
+          dump_desktop_state() {
+            echo "Linux X11 desktop failed to become ready" >&2
+            for entry in "xvfb:$xvfb_pid" "dbus:$dbus_pid" "openbox:$openbox_pid" "picom:$picom_pid"; do
+              name="${entry%%:*}"; pid="${entry#*:}"
+              if [[ -n "$pid" ]]; then
+                echo "--- $name process ($pid) ---" >&2
+                ps -o pid=,ppid=,sid=,stat=,comm=,args= -p "$pid" >&2 || true
+              fi
+              echo "--- $name log ---" >&2
+              sed -n '1,200p' "$RUNNER_TEMP/$name.log" >&2 2>/dev/null || true
+            done
+            DISPLAY=:99 xprop -root _NET_SUPPORTED _NET_SUPPORTING_WM_CHECK _NET_CLIENT_LIST >&2 2>&1 || true
+          }
+          ewmh_ready() {
+            local state
+            state="$(DISPLAY=:99 xprop -root _NET_SUPPORTING_WM_CHECK _NET_CLIENT_LIST 2>/dev/null)" || return 1
+            grep -q '^_NET_SUPPORTING_WM_CHECK(WINDOW): window id # 0x' <<< "$state" &&
+              grep -q '^_NET_CLIENT_LIST(WINDOW):' <<< "$state"
+          }
+          handle_desktop_failure() {
+            local status=$?
+            dump_desktop_state
+            exit "$status"
+          }
+          trap handle_desktop_failure ERR
+
+          pid_file="$RUNNER_TEMP/cua-linux-desktop.pids"
+          : > "$pid_file"
+          nohup env -u RUNNER_TRACKING_ID setsid Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp \
+            >"$RUNNER_TEMP/xvfb.log" 2>&1 </dev/null &
+          xvfb_pid=$!
+          echo "xvfb=$xvfb_pid" >> "$pid_file"
+          for _ in {1..50}; do
+            kill -0 "$xvfb_pid" 2>/dev/null
+            if DISPLAY=:99 xdpyinfo >/dev/null 2>&1; then break; fi
+            sleep 0.2
+          done
           DISPLAY=:99 xdpyinfo >/dev/null
+
+          nohup env -u RUNNER_TRACKING_ID setsid dbus-daemon --session --nofork --print-address=1 \
+            >"$RUNNER_TEMP/dbus.log" 2>&1 </dev/null &
+          dbus_pid=$!
+          echo "dbus=$dbus_pid" >> "$pid_file"
+          dbus_address=""
+          for _ in {1..50}; do
+            kill -0 "$dbus_pid" 2>/dev/null
+            dbus_address="$(sed -n '1p' "$RUNNER_TEMP/dbus.log")"
+            if [[ "$dbus_address" == unix:* ]]; then break; fi
+            sleep 0.2
+          done
+          [[ "$dbus_address" == unix:* ]]
+
+          nohup env -u RUNNER_TRACKING_ID DISPLAY=:99 DBUS_SESSION_BUS_ADDRESS="$dbus_address" \
+            setsid openbox >"$RUNNER_TEMP/openbox.log" 2>&1 </dev/null &
+          openbox_pid=$!
+          echo "openbox=$openbox_pid" >> "$pid_file"
+          nohup env -u RUNNER_TRACKING_ID DISPLAY=:99 DBUS_SESSION_BUS_ADDRESS="$dbus_address" \
+            setsid picom --backend xrender --config /dev/null >"$RUNNER_TEMP/picom.log" 2>&1 </dev/null &
+          picom_pid=$!
+          echo "picom=$picom_pid" >> "$pid_file"
+          for _ in {1..50}; do
+            kill -0 "$openbox_pid" 2>/dev/null
+            kill -0 "$picom_pid" 2>/dev/null
+            if ewmh_ready; then break; fi
+            sleep 0.2
+          done
+          ewmh_ready
+          DBUS_SESSION_BUS_ADDRESS="$dbus_address" dbus-send --session --dest=org.freedesktop.DBus \
+            --type=method_call --print-reply / org.freedesktop.DBus.ListNames >/dev/null
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=$dbus_address" >> "$GITHUB_ENV"
+          trap - ERR
       - name: Resolve the measured review Driver and verify the signed candidate
         shell: pwsh
         env:
@@ -439,6 +504,42 @@ jobs:
               stream.write(f"CUA_LIVE_TEST_BINARY={binary}\nCUA_LIVE_TEST_BINARY_SHA256={hashlib.sha256(binary.read_bytes()).hexdigest()}\nCUA_LIVE_WINDOW_TEST={window_test}\nCUA_LIVE_DESKTOP_TEST={desktop_test}\n")
           '@ | python - $messages
           if ($LASTEXITCODE -ne 0) { throw 'live test binary measurement failed' }
+      - name: Verify Linux X11 desktop survived setup steps
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          dump_desktop_state() {
+            echo "Linux X11 desktop is unavailable before the live demos" >&2
+            pgrep -a -f 'Xvfb|dbus-daemon|openbox|picom' >&2 || true
+            DISPLAY="$DISPLAY" xprop -root _NET_SUPPORTED _NET_SUPPORTING_WM_CHECK _NET_CLIENT_LIST >&2 2>&1 || true
+            for name in xvfb dbus openbox picom; do
+              echo "--- $name log ---" >&2
+              sed -n '1,200p' "$RUNNER_TEMP/$name.log" >&2 2>/dev/null || true
+            done
+          }
+          handle_desktop_failure() {
+            local status=$?
+            dump_desktop_state
+            exit "$status"
+          }
+          trap handle_desktop_failure ERR
+          declare -A desktop_pids=()
+          while IFS='=' read -r name pid; do
+            [[ "$name" =~ ^(xvfb|dbus|openbox|picom)$ && "$pid" =~ ^[1-9][0-9]*$ ]]
+            desktop_pids["$name"]="$pid"
+          done < "$RUNNER_TEMP/cua-linux-desktop.pids"
+          for name in xvfb dbus openbox picom; do
+            [[ -n "${desktop_pids[$name]:-}" ]]
+            kill -0 "${desktop_pids[$name]}"
+          done
+          xdpyinfo >/dev/null
+          ewmh_state="$(xprop -root _NET_SUPPORTING_WM_CHECK _NET_CLIENT_LIST)"
+          grep -q '^_NET_SUPPORTING_WM_CHECK(WINDOW): window id # 0x' <<< "$ewmh_state"
+          grep -q '^_NET_CLIENT_LIST(WINDOW):' <<< "$ewmh_state"
+          dbus-send --session --dest=org.freedesktop.DBus --type=method_call --print-reply / \
+            org.freedesktop.DBus.ListNames >/dev/null
+          trap - ERR
       - name: Run installed candidate with deterministic mock chooser
         shell: pwsh
         env:
@@ -565,6 +666,25 @@ jobs:
           path: ${{ runner.temp }}/encrypted-evidence/
           if-no-files-found: error
           retention-days: 14
+      - name: Stop Linux X11 desktop
+        if: always() && runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          pid_file="$RUNNER_TEMP/cua-linux-desktop.pids"
+          [[ -f "$pid_file" ]] || exit 0
+          declare -A expected=(
+            [xvfb]=Xvfb
+            [dbus]=dbus-daemon
+            [openbox]=openbox
+            [picom]=picom
+          )
+          while IFS='=' read -r name pid; do
+            [[ -n "${expected[$name]:-}" && "$pid" =~ ^[1-9][0-9]*$ ]] || continue
+            if [[ -r "/proc/$pid/comm" && "$(<"/proc/$pid/comm")" == "${expected[$name]}" ]]; then
+              kill "$pid" 2>/dev/null || true
+            fi
+          done < "$pid_file"
       - name: Remove plaintext evidence from the runner
         if: always()
         shell: pwsh

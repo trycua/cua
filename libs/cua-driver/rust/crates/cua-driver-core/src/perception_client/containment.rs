@@ -254,6 +254,17 @@ pub struct ContainmentLimits {
     /// and model paths and the target's immutable system runtime directories.
     /// Every entry widens the sandbox, so callers opt in per path.
     pub additional_readable_paths: Vec<PathBuf>,
+    /// Windows-only file whose exclusive lock serializes temporary worker ACLs
+    /// with extension lifecycle hardening. Other platforms ignore this path.
+    pub windows_acl_lease_path: Option<PathBuf>,
+    /// Windows AppContainer recovery journal. Installed workers derive this
+    /// from the lease; extension hooks provide it while an outer owner holds
+    /// that same lease.
+    pub windows_acl_profile_journal_path: Option<PathBuf>,
+    /// Require Windows teardown to finish before the containing call returns.
+    /// Extension hooks use this while their caller already owns the lifecycle
+    /// ACL lease, avoiding a nested lock while forbidding deferred revocation.
+    pub windows_require_synchronous_cleanup: bool,
     /// Exact executable files needed only by scripted test fixtures. Shipped
     /// native workers execute only their configured worker binary.
     #[cfg(test)]
@@ -269,10 +280,23 @@ impl Default for ContainmentLimits {
             max_open_files: DEFAULT_MAX_OPEN_FILES,
             additional_writable_paths: Vec::new(),
             additional_readable_paths: Vec::new(),
+            windows_acl_lease_path: None,
+            windows_acl_profile_journal_path: None,
+            windows_require_synchronous_cleanup: false,
             #[cfg(test)]
             additional_executable_paths: Vec::new(),
         }
     }
+}
+
+#[cfg(windows)]
+pub fn windows_acl_profile_journal_path(lease_path: &Path) -> PathBuf {
+    platform::acl_profile_journal_path(lease_path)
+}
+
+#[cfg(windows)]
+pub fn recover_windows_acl_profile_journal(journal_path: &Path) -> Result<(), VisualParseError> {
+    platform::recover_acl_profile_journal(journal_path)
 }
 
 impl ContainmentLimits {
@@ -551,6 +575,9 @@ impl ContainedChild {
         // The process table entry is gone, so a later process-group signal
         // could reach a recycled group id. Platforms that cannot prove the
         // group is still occupied stop signalling it here.
+        #[cfg(windows)]
+        self.guard.note_reaped()?;
+        #[cfg(not(windows))]
         self.guard.note_reaped();
         Ok(if raw.success {
             WorkerExit::Success

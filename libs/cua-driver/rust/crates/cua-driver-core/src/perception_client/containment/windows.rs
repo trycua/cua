@@ -32,14 +32,18 @@
 //! terminates the suspended process and returns a fail-closed error.
 
 use std::ffi::{c_void, OsStr};
+use std::io::{Read as _, Write as _};
 use std::os::windows::ffi::{OsStrExt as _, OsStringExt as _};
-use std::path::Path;
+use std::os::windows::io::FromRawHandle as _;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
-use cua_driver_contract::VisualParseError;
+use cua_driver_contract::{VisualParseError, VisualParseErrorCode};
+use fs2::FileExt as _;
 use tokio::net::windows::named_pipe::{NamedPipeServer, PipeMode, ServerOptions};
 
 use super::{
-    containment_error, os_detail, spawn_error, ContainedChild, ContainmentLimits,
+    containment_error, error, os_detail, spawn_error, ContainedChild, ContainmentLimits,
     FilesystemBoundary, RawExit,
 };
 
@@ -52,6 +56,15 @@ type Bool = i32;
 const FALSE: Bool = 0;
 const TRUE: Bool = 1;
 const INFINITE: u32 = 0xFFFF_FFFF;
+const WAIT_OBJECT_0: u32 = 0;
+const WAIT_TIMEOUT: u32 = 258;
+const WAIT_FAILED: u32 = 0xFFFF_FFFF;
+const DUPLICATE_SAME_ACCESS: u32 = 0x0000_0002;
+const PROCESS_REAP_GRACE_MILLIS: u32 = 5_000;
+const CLEANUP_RETRY_INTERVAL: Duration = Duration::from_millis(100);
+const CLEANUP_MAX_RETRY_INTERVAL: Duration = Duration::from_secs(5);
+const CLEANUP_WAIT_FAILURE_ATTEMPTS: usize = 3;
+const CLEANUP_AUTHORITY_FAILURE_ATTEMPTS: usize = 3;
 
 const GENERIC_READ: u32 = 0x8000_0000;
 const GENERIC_WRITE: u32 = 0x4000_0000;
@@ -64,9 +77,11 @@ const FILE_SHARE_READ: u32 = 0x0000_0001;
 const FILE_SHARE_WRITE: u32 = 0x0000_0002;
 const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
 const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x0000_0010;
 const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
 const FILE_ATTRIBUTE_TAG_INFO_CLASS: u32 = 9;
 const FILE_NAME_NORMALIZED: u32 = 0;
+const MOVEFILE_WRITE_THROUGH: u32 = 0x0000_0008;
 
 const CREATE_SUSPENDED: u32 = 0x0000_0004;
 const CREATE_UNICODE_ENVIRONMENT: u32 = 0x0000_0400;
@@ -109,6 +124,7 @@ const JOB_OBJECT_UILIMIT_ALL: u32 = JOB_OBJECT_UILIMIT_HANDLES
 
 const SECURITY_DESCRIPTOR_REVISION: u32 = 1;
 const DACL_SECURITY_INFORMATION: u32 = 0x0000_0004;
+const UNPROTECTED_DACL_SECURITY_INFORMATION: u32 = 0x2000_0000;
 const PROTECTED_DACL_SECURITY_INFORMATION: u32 = 0x8000_0000;
 const SE_FILE_OBJECT: u32 = 1;
 const TOKEN_QUERY: u32 = 0x0008;
@@ -123,9 +139,6 @@ const SUB_CONTAINERS_AND_OBJECTS_INHERIT: u32 = 0x3;
 
 const ERROR_SUCCESS: u32 = 0;
 const ERROR_INSUFFICIENT_BUFFER: i32 = 122;
-/// `HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS)`.
-const HRESULT_ALREADY_EXISTS: i32 = -2_147_024_713;
-
 /// The rights a worker needs on its private desktop: it may create its own
 /// windows and read its own desktop, but never record or play back journal
 /// input, hook another thread, or switch the session to another desktop.
@@ -140,13 +153,7 @@ const RESOURCE_LIMIT_EXITS: &[u32] = &[
     0xC000_012D, // STATUS_COMMITMENT_LIMIT
 ];
 
-/// A stable AppContainer identity for the perception worker. Every process the
-/// local user deliberately launches with this identity receives the same ACL
-/// grants, so the SID is an isolation principal rather than authentication.
-/// Stability prevents one stale grant per Driver launch. Windows launch remains
-/// fail-closed in `capabilities` until those grants are applied through verified
-/// no-follow handles instead of mutable path names.
-const APP_CONTAINER_NAME: &str = "com.trycua.cua-driver.perception.worker";
+const APP_CONTAINER_NAME_PREFIX: &str = "com.trycua.cua-driver.perception.worker";
 const APP_CONTAINER_DISPLAY_NAME: &str = "Cua Driver perception worker";
 const APP_CONTAINER_DESCRIPTION: &str =
     "Contained inference worker for the optional Cua Driver perception extension.";
@@ -295,6 +302,28 @@ struct FileAttributeTagInfo {
     reparse_tag: u32,
 }
 
+#[allow(dead_code)]
+#[repr(C)]
+struct FileTime {
+    low_date_time: u32,
+    high_date_time: u32,
+}
+
+#[allow(dead_code)]
+#[repr(C)]
+struct ByHandleFileInformation {
+    file_attributes: u32,
+    creation_time: FileTime,
+    last_access_time: FileTime,
+    last_write_time: FileTime,
+    volume_serial_number: u32,
+    file_size_high: u32,
+    file_size_low: u32,
+    number_of_links: u32,
+    file_index_high: u32,
+    file_index_low: u32,
+}
+
 #[link(name = "kernel32")]
 extern "system" {
     fn CloseHandle(object: Handle) -> Bool;
@@ -324,6 +353,16 @@ extern "system" {
     fn WaitForSingleObject(object: Handle, milliseconds: u32) -> u32;
     fn GetExitCodeProcess(process: Handle, exit_code: *mut u32) -> Bool;
     fn GetCurrentProcess() -> Handle;
+    fn MoveFileExW(existing: *const u16, new: *const u16, flags: u32) -> Bool;
+    fn DuplicateHandle(
+        source_process: Handle,
+        source: Handle,
+        target_process: Handle,
+        target: *mut Handle,
+        desired_access: u32,
+        inherit_handle: Bool,
+        options: u32,
+    ) -> Bool;
     fn GetSystemWindowsDirectoryW(buffer: *mut u16, size: u32) -> u32;
     fn GetFinalPathNameByHandleW(file: Handle, path: *mut u16, path_size: u32, flags: u32) -> u32;
     fn GetFileInformationByHandleEx(
@@ -332,6 +371,7 @@ extern "system" {
         information: *mut c_void,
         size: u32,
     ) -> Bool;
+    fn GetFileInformationByHandle(file: Handle, information: *mut ByHandleFileInformation) -> Bool;
     fn CreateJobObjectW(attributes: *const SecurityAttributes, name: *const u16) -> Handle;
     fn SetInformationJobObject(
         job: Handle,
@@ -340,6 +380,7 @@ extern "system" {
         length: u32,
     ) -> Bool;
     fn AssignProcessToJobObject(job: Handle, process: Handle) -> Bool;
+    fn TerminateJobObject(job: Handle, exit_code: u32) -> Bool;
     fn InitializeProcThreadAttributeList(
         list: *mut c_void,
         attribute_count: u32,
@@ -375,6 +416,11 @@ extern "system" {
         dacl_present: Bool,
         dacl: *mut c_void,
         dacl_defaulted: Bool,
+    ) -> Bool;
+    fn GetSecurityDescriptorControl(
+        descriptor: *mut c_void,
+        control: *mut u16,
+        revision: *mut u32,
     ) -> Bool;
     fn SetEntriesInAclW(
         count: u32,
@@ -427,21 +473,35 @@ extern "system" {
         capability_count: u32,
         sid: *mut *mut c_void,
     ) -> i32;
-    fn DeriveAppContainerSidFromAppContainerName(name: *const u16, sid: *mut *mut c_void) -> i32;
+    fn DeleteAppContainerProfile(name: *const u16) -> i32;
 }
 
-/// Owns the job and the private desktop. Closing the job handle terminates
-/// every process still inside it, which is what makes cancellation, timeout,
-/// runtime shutdown, Driver exit, client drop and idle cleanup reach the
-/// worker. Both handles are stored as `isize` so the guard stays `Send` across
-/// the awaits that hold a warm worker.
+/// Owns the job, primary-process duplicate, private desktop and temporary
+/// filesystem grants. Drop terminates the job and either reaps the process
+/// within a bounded grace period or transfers cleanup to a background reaper.
+/// Kernel handles are stored as `isize` so the guard stays `Send` across the
+/// awaits that hold a warm worker.
 pub(super) struct Guard {
     job: isize,
     desktop: isize,
+    cleanup: Option<PendingCleanup>,
+    require_synchronous_cleanup: bool,
 }
 
 impl Guard {
-    pub(super) fn note_reaped(&mut self) {}
+    pub(super) fn note_reaped(&mut self) -> std::io::Result<()> {
+        // The one allowed job process has exited, so its temporary filesystem
+        // authority can be removed before the warm-worker state is released.
+        let Some(cleanup) = &mut self.cleanup else {
+            return Ok(());
+        };
+        cleanup.mark_process_reaped();
+        cleanup.cleanup_reaped_once()?;
+        if cleanup.is_clean() {
+            self.cleanup.take();
+        }
+        Ok(())
+    }
 
     /// The Job Object's memory ceiling is enforced by the kernel and surfaces
     /// as an exit status, so no supervisor state is folded in here.
@@ -452,12 +512,197 @@ impl Guard {
 
 impl Drop for Guard {
     fn drop(&mut self) {
-        unsafe {
-            // Kill the tree first, then release the desktop it was running on.
+        let wait = unsafe {
+            TerminateJobObject(self.job as Handle, 1);
+            let wait = self.cleanup.as_ref().and_then(|cleanup| {
+                (!cleanup.process_reaped).then(|| {
+                    WaitForSingleObject(cleanup.process as Handle, PROCESS_REAP_GRACE_MILLIS)
+                })
+            });
             CloseHandle(self.job as Handle);
             CloseDesktop(self.desktop as Handle);
+            wait
+        };
+        let Some(mut cleanup) = self.cleanup.take() else {
+            return;
+        };
+
+        if let Some(wait) = wait {
+            match classify_wait_status(wait, std::io::Error::last_os_error) {
+                Ok(()) => cleanup.mark_process_reaped(),
+                Err(cause) if wait != WAIT_TIMEOUT => {
+                    tracing::warn!(error = %cause, "failed to confirm perception worker exit during cleanup");
+                }
+                Err(_) => {}
+            }
+        }
+        if cleanup.process_reaped {
+            if let Err(cause) = cleanup.cleanup_reaped_once() {
+                tracing::warn!(error = %cause, "failed to clean up perception worker authority; retrying");
+            } else if cleanup.is_clean() {
+                return;
+            }
+        }
+        if self.require_synchronous_cleanup {
+            if !cleanup.run_until_clean() {
+                fatal_unproven_exit();
+            }
+            return;
+        }
+
+        // Termination is asynchronous. Keep the exact ACL handles, unique SID,
+        // profile and cross-process lease alive until the primary process
+        // actually signals, without blocking an executor thread indefinitely.
+        let shared = std::sync::Arc::new(std::sync::Mutex::new(Some(cleanup)));
+        let background = std::sync::Arc::clone(&shared);
+        let spawned = std::thread::Builder::new()
+            .name("cua-perception-acl-reaper".to_owned())
+            .spawn(move || {
+                let mut cleanup = background
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .take()
+                    .expect("perception ACL cleanup state is available");
+                if !cleanup.run_until_clean() {
+                    fatal_unproven_exit();
+                }
+            });
+        if spawned.is_err() {
+            fatal_unproven_exit();
         }
     }
+}
+
+struct PendingCleanup {
+    process: isize,
+    process_reaped: bool,
+    grants: Option<AclGrantLedger>,
+    container: Option<AppContainerSid>,
+    journal: Option<AppContainerJournal>,
+    lease: Option<AclLease>,
+}
+
+impl PendingCleanup {
+    fn mark_process_reaped(&mut self) {
+        self.process_reaped = true;
+        if self.process != 0 {
+            unsafe {
+                CloseHandle(self.process as Handle);
+            }
+            self.process = 0;
+        }
+    }
+
+    fn cleanup_reaped_once(&mut self) -> std::io::Result<()> {
+        debug_assert!(self.process_reaped);
+        if let Some(grants) = &mut self.grants {
+            grants.revoke().map_err(visual_error_to_io)?;
+            self.grants.take();
+        }
+        if let Some(container) = &mut self.container {
+            container.delete_profile().map_err(visual_error_to_io)?;
+            self.container.take();
+        }
+        if let Some(journal) = &mut self.journal {
+            journal.clear().map_err(visual_error_to_io)?;
+            self.journal.take();
+        }
+        self.lease.take();
+        Ok(())
+    }
+
+    fn is_clean(&self) -> bool {
+        self.process == 0
+            && self.grants.is_none()
+            && self.container.is_none()
+            && self.journal.is_none()
+            && self.lease.is_none()
+    }
+
+    fn run_until_clean(&mut self) -> bool {
+        let mut wait_reported = false;
+        let mut cleanup_reported = false;
+        let mut retry_interval = CLEANUP_RETRY_INTERVAL;
+        let mut wait_failures = 0;
+        while !self.process_reaped {
+            let status = unsafe { WaitForSingleObject(self.process as Handle, INFINITE) };
+            match classify_wait_status(status, std::io::Error::last_os_error) {
+                Ok(()) => self.mark_process_reaped(),
+                Err(cause) => {
+                    wait_failures += 1;
+                    if !wait_reported {
+                        tracing::warn!(error = %cause, "failed to wait for perception worker cleanup; retrying");
+                        wait_reported = true;
+                    }
+                    if cleanup_wait_is_fatal(wait_failures) {
+                        return false;
+                    }
+                    std::thread::sleep(retry_interval);
+                    retry_interval = (retry_interval * 2).min(CLEANUP_MAX_RETRY_INTERVAL);
+                }
+            }
+        }
+        retry_interval = CLEANUP_RETRY_INTERVAL;
+        let mut cleanup_failures = 0;
+        while !self.is_clean() {
+            match self.cleanup_reaped_once() {
+                Ok(()) => {}
+                Err(cause) => {
+                    cleanup_failures += 1;
+                    if !cleanup_reported {
+                        tracing::warn!(error = %cause, "failed to clean up perception worker authority; retrying");
+                        cleanup_reported = true;
+                    }
+                    if cleanup_authority_failure_is_fatal(cleanup_failures) {
+                        return false;
+                    }
+                    std::thread::sleep(retry_interval);
+                    retry_interval = (retry_interval * 2).min(CLEANUP_MAX_RETRY_INTERVAL);
+                }
+            }
+        }
+        true
+    }
+}
+
+fn cleanup_wait_is_fatal(failures: usize) -> bool {
+    failures >= CLEANUP_WAIT_FAILURE_ATTEMPTS
+}
+
+fn cleanup_authority_failure_is_fatal(failures: usize) -> bool {
+    failures >= CLEANUP_AUTHORITY_FAILURE_ATTEMPTS
+}
+
+fn fatal_unproven_exit() -> ! {
+    tracing::error!(
+        "cannot safely finish perception worker teardown; aborting so durable profile recovery runs before the next lifecycle operation"
+    );
+    // A crash can leave ACEs naming this unique SID. Recovery deletes the
+    // journaled profile before any later component operation, making those
+    // ACEs inert. Startup hardening repairs installed extension-tree drift;
+    // the private working directory is a task-owned TempDir.
+    std::process::abort()
+}
+
+fn classify_wait_status(
+    status: u32,
+    last_error: impl FnOnce() -> std::io::Error,
+) -> std::io::Result<()> {
+    match status {
+        WAIT_OBJECT_0 => Ok(()),
+        WAIT_FAILED => Err(last_error()),
+        other => Err(std::io::Error::other(format!(
+            "unexpected WaitForSingleObject status {other:#010x}"
+        ))),
+    }
+}
+
+fn visual_error_to_io(error: VisualParseError) -> std::io::Error {
+    let detail = error.detail.map_or_else(
+        || error.message.clone(),
+        |detail| format!("{}: {detail}", error.message),
+    );
+    std::io::Error::other(detail)
 }
 
 pub(super) struct Process {
@@ -466,11 +711,14 @@ pub(super) struct Process {
 
 impl Process {
     pub(super) async fn wait(&mut self) -> std::io::Result<RawExit> {
-        let process = self.process;
+        // The blocking waiter owns a duplicate so cancellation may drop and
+        // close `Process` without closing a handle under WaitForSingleObject.
+        let process = OwnedHandle::duplicate_io(self.process as Handle)?;
         let code = tokio::task::spawn_blocking(move || unsafe {
-            WaitForSingleObject(process as Handle, INFINITE);
+            let status = WaitForSingleObject(process.get(), INFINITE);
+            classify_wait_status(status, std::io::Error::last_os_error)?;
             let mut code = 0_u32;
-            if GetExitCodeProcess(process as Handle, &mut code) == FALSE {
+            if GetExitCodeProcess(process.get(), &mut code) == FALSE {
                 return Err(std::io::Error::last_os_error());
             }
             Ok(code)
@@ -504,8 +752,35 @@ pub(super) async fn spawn(
         return Err(spawn_error(std::io::Error::from_raw_os_error(2)));
     }
     let user = current_user_sid()?;
-    let container = AppContainerSid::resolve()?;
-    grant_worker_paths(working_directory, boundary, user.sid(), container.sid())?;
+    let acl_lease = match &limits.windows_acl_lease_path {
+        Some(path) => Some(AclLease::acquire(path).await?),
+        None => None,
+    };
+    let journal_path = limits.windows_acl_profile_journal_path.clone().or_else(|| {
+        limits
+            .windows_acl_lease_path
+            .as_deref()
+            .map(acl_profile_journal_path)
+    });
+    if limits.windows_acl_lease_path.is_none() {
+        if let Some(path) = &journal_path {
+            recover_acl_profile_journal(path)?;
+        }
+    }
+    let profile_name = format!(
+        "{APP_CONTAINER_NAME_PREFIX}.{}",
+        uuid::Uuid::new_v4().simple()
+    );
+    let (journal, container) = match journal_path {
+        Some(path) => {
+            let (journal, container) = journal_before_profile(path, &profile_name, || {
+                AppContainerSid::create(&profile_name)
+            })?;
+            (Some(journal), container)
+        }
+        None => (None, AppContainerSid::create(&profile_name)?),
+    };
+    let acl_grants = grant_worker_paths(working_directory, boundary, user.sid(), container.sid())?;
 
     let token = uuid::Uuid::new_v4().simple().to_string();
     let protocol_security =
@@ -551,6 +826,7 @@ pub(super) async fn spawn(
     let inbound = inbound.into_server();
     let outbound = outbound.into_server();
 
+    let guard_process = OwnedHandle::duplicate(information.process)?;
     if unsafe { ResumeThread(information.thread) } == u32::MAX {
         let failure = last_error("failed to resume the contained perception worker");
         information.terminate();
@@ -559,6 +835,15 @@ pub(super) async fn spawn(
     let guard = Guard {
         job: job.release() as isize,
         desktop: desktop.release() as isize,
+        cleanup: Some(PendingCleanup {
+            process: guard_process.release() as isize,
+            process_reaped: false,
+            grants: Some(acl_grants),
+            container: Some(container),
+            journal,
+            lease: acl_lease,
+        }),
+        require_synchronous_cleanup: limits.windows_require_synchronous_cleanup,
     };
     let process = Process {
         process: information.into_process() as isize,
@@ -589,6 +874,35 @@ impl OwnedHandle {
         self.0 = std::ptr::null_mut();
         std::mem::forget(self);
         handle
+    }
+
+    fn duplicate(handle: Handle) -> Result<Self, VisualParseError> {
+        Self::duplicate_io(handle).map_err(|cause| {
+            containment_error(
+                "failed to retain the perception worker process for ACL cleanup",
+                os_detail(&cause),
+            )
+        })
+    }
+
+    fn duplicate_io(handle: Handle) -> std::io::Result<Self> {
+        let process = unsafe { GetCurrentProcess() };
+        let mut duplicate = std::ptr::null_mut();
+        if unsafe {
+            DuplicateHandle(
+                process,
+                handle,
+                process,
+                &mut duplicate,
+                0,
+                FALSE,
+                DUPLICATE_SAME_ACCESS,
+            )
+        } == FALSE
+        {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(Self(duplicate))
     }
 
     /// Open the null device as the worker's stderr. Diagnostics travel over the
@@ -851,6 +1165,7 @@ impl SuspendedProcess {
     fn terminate(self) {
         unsafe {
             TerminateProcess(self.process, 1);
+            WaitForSingleObject(self.process, INFINITE);
             CloseHandle(self.thread);
             CloseHandle(self.process);
         }
@@ -871,6 +1186,7 @@ impl Drop for SuspendedProcess {
     fn drop(&mut self) {
         unsafe {
             TerminateProcess(self.process, 1);
+            WaitForSingleObject(self.process, INFINITE);
             CloseHandle(self.thread);
             CloseHandle(self.process);
         }
@@ -1025,15 +1341,364 @@ impl Drop for AttributeList {
 }
 
 /// The worker's AppContainer identity.
-struct AppContainerSid(*mut c_void);
+struct AppContainerSid {
+    sid: *mut c_void,
+    name: Vec<u16>,
+    profile_deleted: bool,
+}
+
+struct AppContainerJournal {
+    path: PathBuf,
+    cleared: bool,
+}
+
+impl AppContainerJournal {
+    fn persist(path: PathBuf, profile_name: &str) -> Result<Self, VisualParseError> {
+        validate_profile_name(profile_name)?;
+        let temporary = journal_pending_path(&path);
+        if path.symlink_metadata().is_ok()
+            || temporary.symlink_metadata().is_ok()
+            || journal_tombstone_path(&path).symlink_metadata().is_ok()
+        {
+            return Err(containment_error(
+                "the perception AppContainer recovery journal already exists",
+                None,
+            ));
+        }
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|cause| {
+                containment_error(
+                    "failed to create the perception AppContainer recovery journal",
+                    os_detail(&cause),
+                )
+            })?;
+        let persist = (|| {
+            file.write_all(profile_name.as_bytes())?;
+            file.write_all(b"\n")?;
+            file.sync_all()?;
+            let temporary = wide(temporary.as_os_str());
+            let destination = wide(path.as_os_str());
+            if unsafe {
+                MoveFileExW(
+                    temporary.as_ptr(),
+                    destination.as_ptr(),
+                    MOVEFILE_WRITE_THROUGH,
+                )
+            } == FALSE
+            {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        })();
+        if let Err(cause) = persist {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(containment_error(
+                "failed to persist the perception AppContainer recovery journal",
+                os_detail(&cause),
+            ));
+        }
+        Ok(Self {
+            path,
+            cleared: false,
+        })
+    }
+
+    fn clear(&mut self) -> Result<(), VisualParseError> {
+        if self.cleared {
+            return Ok(());
+        }
+        let journal_exists = self.path.symlink_metadata().is_ok();
+        let tombstone_exists = journal_tombstone_path(&self.path)
+            .symlink_metadata()
+            .is_ok();
+        if journal_exists && tombstone_exists {
+            return Err(containment_error(
+                "multiple perception AppContainer recovery journal states exist",
+                None,
+            ));
+        }
+        if journal_exists {
+            move_journal_to_tombstone(&self.path)?;
+        } else if !tombstone_exists {
+            return Err(containment_error(
+                "the perception AppContainer recovery journal disappeared before cleanup",
+                None,
+            ));
+        }
+        remove_journal_tombstone(&self.path)?;
+        self.cleared = true;
+        Ok(())
+    }
+}
+
+fn journal_before_profile<T>(
+    path: PathBuf,
+    profile_name: &str,
+    create: impl FnOnce() -> Result<T, VisualParseError>,
+) -> Result<(AppContainerJournal, T), VisualParseError> {
+    let journal = AppContainerJournal::persist(path, profile_name)?;
+    let profile = create()?;
+    Ok((journal, profile))
+}
+
+fn journal_tombstone_path(path: &Path) -> PathBuf {
+    let name = path
+        .file_name()
+        .map_or_else(|| "runtime-acl.profile".into(), |name| name.to_os_string());
+    let mut name = name;
+    name.push(".cleared");
+    path.with_file_name(name)
+}
+
+fn journal_pending_path(path: &Path) -> PathBuf {
+    let name = path
+        .file_name()
+        .map_or_else(|| "runtime-acl.profile".into(), |name| name.to_os_string());
+    let mut name = name;
+    name.push(".pending");
+    path.with_file_name(name)
+}
+
+fn move_journal_to_tombstone(path: &Path) -> Result<(), VisualParseError> {
+    move_journal_state_to_tombstone(path, path)
+}
+
+fn move_journal_state_to_tombstone(
+    state: &Path,
+    journal_path: &Path,
+) -> Result<(), VisualParseError> {
+    let tombstone = journal_tombstone_path(journal_path);
+    if tombstone.symlink_metadata().is_ok() {
+        return Err(containment_error(
+            "multiple perception AppContainer recovery journal states exist",
+            None,
+        ));
+    }
+    let path_wide = wide(state.as_os_str());
+    let tombstone_wide = wide(tombstone.as_os_str());
+    if unsafe {
+        MoveFileExW(
+            path_wide.as_ptr(),
+            tombstone_wide.as_ptr(),
+            MOVEFILE_WRITE_THROUGH,
+        )
+    } == FALSE
+    {
+        return Err(last_error(
+            "failed to commit perception AppContainer journal removal",
+        ));
+    }
+    Ok(())
+}
+
+fn remove_journal_tombstone(path: &Path) -> Result<(), VisualParseError> {
+    let tombstone = journal_tombstone_path(path);
+    match std::fs::remove_file(&tombstone) {
+        Ok(()) => Ok(()),
+        Err(cause) if cause.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(cause) => Err(containment_error(
+            "failed to remove the cleared perception AppContainer recovery journal",
+            os_detail(&cause),
+        )),
+    }
+}
+
+fn validate_profile_name(name: &str) -> Result<(), VisualParseError> {
+    let Some(suffix) = name.strip_prefix(APP_CONTAINER_NAME_PREFIX) else {
+        return Err(containment_error(
+            "the perception AppContainer recovery journal is malformed",
+            None,
+        ));
+    };
+    let Some(token) = suffix.strip_prefix('.') else {
+        return Err(containment_error(
+            "the perception AppContainer recovery journal is malformed",
+            None,
+        ));
+    };
+    if token.len() != 32 || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(containment_error(
+            "the perception AppContainer recovery journal is malformed",
+            None,
+        ));
+    }
+    Ok(())
+}
+
+fn read_journal_profile(path: &Path) -> Result<String, VisualParseError> {
+    let name = wide(path.as_os_str());
+    let handle = unsafe {
+        CreateFileW(
+            name.as_ptr(),
+            GENERIC_READ,
+            FILE_SHARE_READ,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            FILE_FLAG_OPEN_REPARSE_POINT,
+            std::ptr::null_mut(),
+        )
+    };
+    if handle as isize == -1 {
+        return Err(last_error(
+            "failed to open the perception AppContainer recovery journal",
+        ));
+    }
+    let mut tag = FileAttributeTagInfo {
+        file_attributes: 0,
+        reparse_tag: 0,
+    };
+    if unsafe {
+        GetFileInformationByHandleEx(
+            handle,
+            FILE_ATTRIBUTE_TAG_INFO_CLASS,
+            std::ptr::addr_of_mut!(tag).cast(),
+            std::mem::size_of::<FileAttributeTagInfo>() as u32,
+        )
+    } == FALSE
+        || tag.file_attributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT) != 0
+    {
+        unsafe { CloseHandle(handle) };
+        return Err(containment_error(
+            "the perception AppContainer recovery journal is not a regular file",
+            None,
+        ));
+    }
+    let mut file = unsafe { std::fs::File::from_raw_handle(handle.cast()) };
+    let mut bytes = Vec::new();
+    std::io::Read::by_ref(&mut file)
+        .take(256)
+        .read_to_end(&mut bytes)
+        .map_err(|cause| {
+            containment_error(
+                "failed to read the perception AppContainer recovery journal",
+                os_detail(&cause),
+            )
+        })?;
+    let content = std::str::from_utf8(&bytes).map_err(|_| {
+        containment_error(
+            "the perception AppContainer recovery journal is malformed",
+            None,
+        )
+    })?;
+    let profile = content.strip_suffix('\n').ok_or_else(|| {
+        containment_error(
+            "the perception AppContainer recovery journal is malformed",
+            None,
+        )
+    })?;
+    validate_profile_name(profile)?;
+    Ok(profile.to_owned())
+}
+
+fn remove_pending_journal(path: &Path) -> Result<(), VisualParseError> {
+    let name = wide(path.as_os_str());
+    let handle = unsafe {
+        CreateFileW(
+            name.as_ptr(),
+            GENERIC_READ,
+            FILE_SHARE_READ,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            FILE_FLAG_OPEN_REPARSE_POINT,
+            std::ptr::null_mut(),
+        )
+    };
+    if handle as isize == -1 {
+        return Err(last_error(
+            "failed to open the pending perception AppContainer journal",
+        ));
+    }
+    let handle = OwnedHandle(handle);
+    let mut tag = FileAttributeTagInfo {
+        file_attributes: 0,
+        reparse_tag: 0,
+    };
+    if unsafe {
+        GetFileInformationByHandleEx(
+            handle.get(),
+            FILE_ATTRIBUTE_TAG_INFO_CLASS,
+            std::ptr::addr_of_mut!(tag).cast(),
+            std::mem::size_of::<FileAttributeTagInfo>() as u32,
+        )
+    } == FALSE
+        || tag.file_attributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT) != 0
+    {
+        return Err(containment_error(
+            "the pending perception AppContainer journal is not a regular file",
+            None,
+        ));
+    }
+    drop(handle);
+    std::fs::remove_file(path).map_err(|cause| {
+        containment_error(
+            "failed to remove the pending perception AppContainer journal",
+            os_detail(&cause),
+        )
+    })
+}
+
+pub(super) fn acl_profile_journal_path(lease_path: &Path) -> PathBuf {
+    let name = lease_path
+        .file_name()
+        .map_or_else(|| "runtime-acl.lock".into(), |name| name.to_os_string());
+    let mut name = name;
+    name.push(".profile");
+    lease_path.with_file_name(name)
+}
+
+pub(super) fn recover_acl_profile_journal(path: &Path) -> Result<(), VisualParseError> {
+    recover_acl_profile_journal_with(path, delete_app_container_profile)
+}
+
+fn recover_acl_profile_journal_with(
+    path: &Path,
+    delete_profile: impl FnOnce(&str) -> Result<(), VisualParseError>,
+) -> Result<(), VisualParseError> {
+    let tombstone = journal_tombstone_path(path);
+    let pending = journal_pending_path(path);
+    let journal_exists = path.symlink_metadata().is_ok();
+    let pending_exists = pending.symlink_metadata().is_ok();
+    let tombstone_exists = tombstone.symlink_metadata().is_ok();
+    if usize::from(journal_exists) + usize::from(pending_exists) + usize::from(tombstone_exists) > 1
+    {
+        return Err(containment_error(
+            "multiple perception AppContainer recovery journal states exist",
+            None,
+        ));
+    }
+    if pending_exists {
+        // Profile creation starts only after the pending file is synced and
+        // atomically renamed to the committed journal. An exclusive pending
+        // file therefore cannot name a created profile, even if it is empty or
+        // truncated by a crash during the write.
+        return remove_pending_journal(&pending);
+    }
+    let state = if journal_exists {
+        path
+    } else if tombstone_exists {
+        tombstone.as_path()
+    } else {
+        return Ok(());
+    };
+    let profile = read_journal_profile(state)?;
+    delete_profile(&profile)?;
+    if !tombstone_exists {
+        move_journal_state_to_tombstone(state, path)?;
+    }
+    remove_journal_tombstone(path)
+}
 
 // The SID is an owned allocation released by `FreeSid`; no thread-local state
 // is associated with the pointer.
 unsafe impl Send for AppContainerSid {}
 
 impl AppContainerSid {
-    fn resolve() -> Result<Self, VisualParseError> {
-        let name = wide(APP_CONTAINER_NAME);
+    fn create(profile_name: &str) -> Result<Self, VisualParseError> {
+        validate_profile_name(profile_name)?;
+        let name = wide(profile_name);
         let display = wide(APP_CONTAINER_DISPLAY_NAME);
         let description = wide(APP_CONTAINER_DESCRIPTION);
         let mut sid: *mut c_void = std::ptr::null_mut();
@@ -1047,40 +1712,97 @@ impl AppContainerSid {
                 &mut sid,
             )
         };
-        if created == HRESULT_ALREADY_EXISTS {
-            let derived =
-                unsafe { DeriveAppContainerSidFromAppContainerName(name.as_ptr(), &mut sid) };
-            if derived < 0 {
-                return Err(containment_error(
-                    "failed to resolve the perception worker AppContainer identity",
-                    Some(format!("hresult {derived:#010x}")),
-                ));
-            }
-        } else if created < 0 {
+        if created < 0 {
             return Err(containment_error(
                 "failed to create the perception worker AppContainer identity",
                 Some(format!("hresult {created:#010x}")),
             ));
         }
         if sid.is_null() {
+            unsafe {
+                DeleteAppContainerProfile(name.as_ptr());
+            }
             return Err(containment_error(
                 "the perception worker AppContainer identity was empty",
                 None,
             ));
         }
-        Ok(Self(sid))
+        Ok(Self {
+            sid,
+            name,
+            profile_deleted: false,
+        })
     }
 
     fn sid(&self) -> *mut c_void {
-        self.0
+        self.sid
     }
+
+    #[cfg(test)]
+    fn create_unique() -> Result<Self, VisualParseError> {
+        Self::create(&format!(
+            "{APP_CONTAINER_NAME_PREFIX}.{}",
+            uuid::Uuid::new_v4().simple()
+        ))
+    }
+
+    fn delete_profile(&mut self) -> Result<(), VisualParseError> {
+        if self.profile_deleted {
+            return Ok(());
+        }
+        let status = unsafe { DeleteAppContainerProfile(self.name.as_ptr()) };
+        classify_app_container_delete(status).map_err(|status| {
+            containment_error(
+                "failed to delete the perception worker AppContainer profile",
+                Some(format!("hresult {status:#010x}")),
+            )
+        })?;
+        self.profile_deleted = true;
+        Ok(())
+    }
+}
+
+fn delete_app_container_profile(profile_name: &str) -> Result<(), VisualParseError> {
+    validate_profile_name(profile_name)?;
+    let name = wide(profile_name);
+    let status = unsafe { DeleteAppContainerProfile(name.as_ptr()) };
+    classify_app_container_delete(status).map_err(|status| {
+        containment_error(
+            "failed to delete the perception worker AppContainer profile",
+            Some(format!("hresult {status:#010x}")),
+        )
+    })
 }
 
 impl Drop for AppContainerSid {
     fn drop(&mut self) {
-        unsafe {
-            FreeSid(self.0);
+        let mut failure = None;
+        for _ in 0..3 {
+            match self.delete_profile() {
+                Ok(()) => break,
+                Err(cause) => {
+                    failure = Some(cause);
+                    std::thread::sleep(CLEANUP_RETRY_INTERVAL);
+                }
+            }
         }
+        if let Some(cause) = failure.filter(|_| !self.profile_deleted) {
+            tracing::warn!(error = %visual_error_to_io(cause), "failed to delete perception worker AppContainer profile during drop");
+        }
+        unsafe {
+            FreeSid(self.sid);
+        }
+    }
+}
+
+fn classify_app_container_delete(status: i32) -> Result<(), i32> {
+    const HRESULT_FILE_NOT_FOUND: i32 = -2_147_024_894;
+    const HRESULT_NOT_FOUND: i32 = -2_147_023_728;
+
+    if status >= 0 || matches!(status, HRESULT_FILE_NOT_FOUND | HRESULT_NOT_FOUND) {
+        Ok(())
+    } else {
+        Err(status)
     }
 }
 
@@ -1095,6 +1817,86 @@ impl UserSid {
         // points into this same buffer.
         let information = self.buffer.as_ptr().cast::<TokenUserInformation>();
         unsafe { (*information).user.sid }
+    }
+}
+
+/// Serializes temporary ACL grants with other Driver processes and with
+/// extension startup hardening. Windows releases the byte-range lock if the
+/// owning process crashes, while the bounded retry keeps startup cancellable.
+struct AclLease {
+    _file: std::fs::File,
+}
+
+impl AclLease {
+    async fn acquire(path: &Path) -> Result<Self, VisualParseError> {
+        let name = wide(path.as_os_str());
+        let handle = unsafe {
+            CreateFileW(
+                name.as_ptr(),
+                GENERIC_READ | GENERIC_WRITE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                std::ptr::null(),
+                OPEN_EXISTING,
+                FILE_FLAG_OPEN_REPARSE_POINT,
+                std::ptr::null_mut(),
+            )
+        };
+        if handle as isize == -1 {
+            return Err(last_error(
+                "failed to open the perception ACL coordination lease",
+            ));
+        }
+        let mut tag = FileAttributeTagInfo {
+            file_attributes: 0,
+            reparse_tag: 0,
+        };
+        if unsafe {
+            GetFileInformationByHandleEx(
+                handle,
+                FILE_ATTRIBUTE_TAG_INFO_CLASS,
+                std::ptr::addr_of_mut!(tag).cast(),
+                std::mem::size_of::<FileAttributeTagInfo>() as u32,
+            )
+        } == FALSE
+        {
+            unsafe {
+                CloseHandle(handle);
+            }
+            return Err(last_error(
+                "failed to inspect the perception ACL coordination lease",
+            ));
+        }
+        if tag.file_attributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT) != 0 {
+            unsafe {
+                CloseHandle(handle);
+            }
+            return Err(containment_error(
+                "the perception ACL coordination lease is not a regular file",
+                None,
+            ));
+        }
+        let file = unsafe { std::fs::File::from_raw_handle(handle.cast()) };
+        match file.try_lock_exclusive() {
+            Ok(()) => {
+                recover_acl_profile_journal(&acl_profile_journal_path(path))?;
+                Ok(Self { _file: file })
+            }
+            Err(cause)
+                if cause.kind() == std::io::ErrorKind::WouldBlock
+                    || cause.raw_os_error() == fs2::lock_contended_error().raw_os_error() =>
+            {
+                Err(error(
+                    VisualParseErrorCode::WorkerLaunchFailed,
+                    "another perception worker is using the Windows ACL boundary",
+                    true,
+                    None,
+                ))
+            }
+            Err(cause) => Err(containment_error(
+                "failed to acquire the perception ACL coordination lease",
+                os_detail(&cause),
+            )),
+        }
     }
 }
 
@@ -1233,8 +2035,9 @@ fn build_acl(
     Ok(LocalAcl(acl))
 }
 
-/// Give the worker's AppContainer identity exactly the access its bundle,
-/// runtime, model and working-directory paths require, and nothing else.
+/// Temporarily give the worker's AppContainer identity exactly the access its
+/// bundle, runtime, model and working-directory paths require, and nothing
+/// else. Every prior DACL is restored after the process exits.
 ///
 /// The working directory receives a protected list naming only the Driver's
 /// user and the worker, so no other account on the machine can read the
@@ -1246,80 +2049,249 @@ fn grant_worker_paths(
     boundary: &FilesystemBoundary,
     user: *mut c_void,
     container: *mut c_void,
-) -> Result<(), VisualParseError> {
+) -> Result<AclGrantLedger, VisualParseError> {
     let working = std::fs::canonicalize(working_directory).map_err(|cause| {
         containment_error(
             "failed to resolve the private perception worker directory",
             os_detail(&cause),
         )
     })?;
-    set_protected_dacl(&working, &[(user, GENERIC_ALL), (container, GENERIC_ALL)])?;
-    for root in &boundary.writable {
-        if *root == working {
-            continue;
+    let mut ledger = AclGrantLedger::default();
+    let result = (|| {
+        ledger
+            .set_protected_dacl_tree(&working, &[(user, GENERIC_ALL), (container, GENERIC_ALL)])?;
+        for root in &boundary.writable {
+            if *root == working {
+                continue;
+            }
+            ledger.merge_grant_tree(root, container, GENERIC_ALL, true)?;
         }
-        merge_grant(root, container, GENERIC_ALL)?;
+        for root in &boundary.readable {
+            if *root == working
+                || boundary
+                    .writable
+                    .iter()
+                    .any(|writable| root.starts_with(writable))
+            {
+                continue;
+            }
+            ledger.merge_grant_tree(root, container, GENERIC_READ | GENERIC_EXECUTE, false)?;
+        }
+        Ok(())
+    })();
+    match result {
+        Ok(()) => Ok(ledger),
+        Err(cause) => match ledger.revoke() {
+            Ok(()) => Err(cause),
+            Err(rollback) => Err(rollback),
+        },
     }
-    for root in &boundary.readable {
-        if *root == working {
-            continue;
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct FileIdentity {
+    volume_serial_number: u32,
+    file_index_high: u32,
+    file_index_low: u32,
+}
+
+struct SavedDacl {
+    target: AclTarget,
+    descriptor: LocalAcl,
+    dacl_offset: Option<usize>,
+    protected: bool,
+}
+
+impl SavedDacl {
+    fn capture(target: AclTarget) -> Result<Self, VisualParseError> {
+        let mut dacl: *mut c_void = std::ptr::null_mut();
+        let mut descriptor: *mut c_void = std::ptr::null_mut();
+        let status = unsafe {
+            GetSecurityInfo(
+                target.handle.get(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut dacl,
+                std::ptr::null_mut(),
+                &mut descriptor,
+            )
+        };
+        if status != ERROR_SUCCESS || descriptor.is_null() {
+            return Err(containment_error(
+                "failed to save the existing permissions of a perception worker path",
+                Some(format!("os error {status}")),
+            ));
         }
-        merge_grant(root, container, GENERIC_READ | GENERIC_EXECUTE)?;
+        let descriptor = LocalAcl(descriptor);
+        let mut control = 0_u16;
+        let mut revision = 0_u32;
+        if unsafe { GetSecurityDescriptorControl(descriptor.0, &mut control, &mut revision) }
+            == FALSE
+        {
+            return Err(last_error(
+                "failed to save perception worker ACL control flags",
+            ));
+        }
+        let dacl_offset = (!dacl.is_null()).then(|| dacl as usize - descriptor.0 as usize);
+        Ok(Self {
+            target,
+            descriptor,
+            dacl_offset,
+            protected: control & 0x1000 != 0,
+        })
+    }
+
+    fn restore(&self) -> Result<(), VisualParseError> {
+        if self.target.current_identity()? != self.target.identity {
+            return Err(containment_error(
+                "a perception worker ACL target was replaced before revocation",
+                None,
+            ));
+        }
+        let dacl = self.dacl_offset.map_or(std::ptr::null_mut(), |offset| {
+            (self.descriptor.0 as usize + offset) as *mut c_void
+        });
+        let protection = if self.protected {
+            PROTECTED_DACL_SECURITY_INFORMATION
+        } else {
+            UNPROTECTED_DACL_SECURITY_INFORMATION
+        };
+        apply_dacl(
+            self.target.handle.get(),
+            dacl,
+            DACL_SECURITY_INFORMATION | protection,
+            "failed to revoke temporary perception worker filesystem access",
+        )
+    }
+}
+
+#[derive(Default)]
+struct AclGrantLedger {
+    entries: Vec<SavedDacl>,
+}
+
+impl AclGrantLedger {
+    fn contains(&self, identity: FileIdentity) -> bool {
+        self.entries
+            .iter()
+            .any(|entry| entry.target.identity == identity)
+    }
+
+    fn set_protected_dacl_tree(
+        &mut self,
+        path: &Path,
+        grants: &[(*mut c_void, u32)],
+    ) -> Result<(), VisualParseError> {
+        walk_acl_tree(path, &mut |target| {
+            if self.contains(target.identity) {
+                return Ok(());
+            }
+            let saved = SavedDacl::capture(target)?;
+            let acl = build_acl(grants, saved.target.inheritance(true), std::ptr::null_mut())?;
+            apply_dacl(
+                saved.target.handle.get(),
+                acl.0,
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                "failed to apply the private access control list to the perception worker directory",
+            )?;
+            self.entries.push(saved);
+            Ok(())
+        })
+    }
+
+    fn merge_grant_tree(
+        &mut self,
+        path: &Path,
+        sid: *mut c_void,
+        access: u32,
+        inherit_children: bool,
+    ) -> Result<(), VisualParseError> {
+        walk_acl_tree(path, &mut |target| {
+            // Writable trees are processed first. Skipping an already-seen
+            // identity prevents a later overlapping read root from adding a
+            // duplicate ACE or replacing its stronger grant.
+            if self.contains(target.identity) {
+                return Ok(());
+            }
+            let saved = SavedDacl::capture(target)?;
+            let existing = saved.dacl_offset.map_or(std::ptr::null_mut(), |offset| {
+                (saved.descriptor.0 as usize + offset) as *mut c_void
+            });
+            let acl = build_acl(
+                &[(sid, access)],
+                saved.target.inheritance(inherit_children),
+                existing,
+            )?;
+            apply_dacl(
+                saved.target.handle.get(),
+                acl.0,
+                DACL_SECURITY_INFORMATION,
+                "failed to grant the perception worker access to its own bundle",
+            )?;
+            self.entries.push(saved);
+            Ok(())
+        })
+    }
+
+    fn revoke(&mut self) -> Result<(), VisualParseError> {
+        let mut first_failure = None;
+        let mut failed = Vec::new();
+        for entry in std::mem::take(&mut self.entries).into_iter().rev() {
+            if let Err(cause) = entry.restore() {
+                first_failure.get_or_insert(cause);
+                failed.push(entry);
+            }
+        }
+        // Preserve grant order so a later retry still restores descendants
+        // before their parents. Guard teardown retries failures after the
+        // normal-reap path, and Drop retries a failed pre-launch rollback.
+        failed.reverse();
+        self.entries = failed;
+        first_failure.map_or(Ok(()), Err)
+    }
+}
+
+impl Drop for AclGrantLedger {
+    fn drop(&mut self) {
+        let _ = self.revoke();
+    }
+}
+
+/// Visit an ACL root and every existing descendant. The ledger retains each
+/// verified no-follow handle without delete sharing through worker exit, so no
+/// visited object can be replaced before its exact DACL is restored. Protected
+/// child DACLs do not inherit a root grant, so each object receives its own ACE.
+/// Any failed open, validation, enumeration, or ACL update aborts the launch.
+fn walk_acl_tree(
+    path: &Path,
+    apply: &mut impl FnMut(AclTarget) -> Result<(), VisualParseError>,
+) -> Result<(), VisualParseError> {
+    let target = AclTarget::open(path)?;
+    let is_directory = target.is_directory();
+    let resolved = target.path.clone();
+    apply(target)?;
+    if !is_directory {
+        return Ok(());
+    }
+
+    let entries = std::fs::read_dir(&resolved).map_err(|cause| {
+        containment_error(
+            "failed to enumerate a perception worker ACL directory",
+            os_detail(&cause),
+        )
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|cause| {
+            containment_error(
+                "failed to enumerate a perception worker ACL directory",
+                os_detail(&cause),
+            )
+        })?;
+        walk_acl_tree(&resolved.join(entry.file_name()), apply)?;
     }
     Ok(())
-}
-
-fn set_protected_dacl(path: &Path, grants: &[(*mut c_void, u32)]) -> Result<(), VisualParseError> {
-    let target = AclTarget::open(path)?;
-    let acl = build_acl(
-        grants,
-        SUB_CONTAINERS_AND_OBJECTS_INHERIT,
-        std::ptr::null_mut(),
-    )?;
-    apply_dacl(
-        target.handle.get(),
-        acl.0,
-        DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
-        "failed to apply the private access control list to the perception worker directory",
-    )
-}
-
-fn merge_grant(path: &Path, sid: *mut c_void, access: u32) -> Result<(), VisualParseError> {
-    let target = AclTarget::open(path)?;
-    let mut existing: *mut c_void = std::ptr::null_mut();
-    let mut descriptor: *mut c_void = std::ptr::null_mut();
-    let status = unsafe {
-        GetSecurityInfo(
-            target.handle.get(),
-            SE_FILE_OBJECT,
-            DACL_SECURITY_INFORMATION,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            &mut existing,
-            std::ptr::null_mut(),
-            &mut descriptor,
-        )
-    };
-    if status != ERROR_SUCCESS {
-        return Err(containment_error(
-            "failed to read the existing permissions of a perception worker path",
-            Some(format!("os error {status}")),
-        ));
-    }
-    let descriptor = LocalAcl(descriptor);
-    let acl = build_acl(
-        &[(sid, access)],
-        SUB_CONTAINERS_AND_OBJECTS_INHERIT,
-        existing,
-    )?;
-    let result = apply_dacl(
-        target.handle.get(),
-        acl.0,
-        DACL_SECURITY_INFORMATION,
-        "failed to grant the perception worker access to its own bundle",
-    );
-    drop(descriptor);
-    result
 }
 
 fn apply_dacl(
@@ -1349,13 +2321,16 @@ fn apply_dacl(
 }
 
 /// An ACL target opened without following a final reparse point and held
-/// without delete sharing until the descriptor update finishes. The final
+/// without delete sharing through worker exit and DACL restoration. The final
 /// kernel-resolved name is compared with the already canonical policy path
 /// before any grant is applied. A concurrent ancestor swap that redirects the
 /// open resolves to a different name and is refused; after the open, withholding
-/// delete sharing leaves this exact directory pinned through the ACL update.
+/// delete sharing leaves this exact object pinned through revocation.
 struct AclTarget {
     handle: OwnedHandle,
+    path: PathBuf,
+    identity: FileIdentity,
+    file_attributes: u32,
 }
 
 impl AclTarget {
@@ -1413,7 +2388,52 @@ impl AclTarget {
                 None,
             ));
         }
-        Ok(Self { handle })
+        let mut information = std::mem::MaybeUninit::<ByHandleFileInformation>::uninit();
+        if unsafe { GetFileInformationByHandle(handle.get(), information.as_mut_ptr()) } == FALSE {
+            return Err(last_error(
+                "failed to identify a perception worker ACL target",
+            ));
+        }
+        let information = unsafe { information.assume_init() };
+        Ok(Self {
+            handle,
+            path: resolved,
+            identity: FileIdentity {
+                volume_serial_number: information.volume_serial_number,
+                file_index_high: information.file_index_high,
+                file_index_low: information.file_index_low,
+            },
+            file_attributes: tag.file_attributes,
+        })
+    }
+
+    fn is_directory(&self) -> bool {
+        self.file_attributes & FILE_ATTRIBUTE_DIRECTORY != 0
+    }
+
+    fn inheritance(&self, inherit_children: bool) -> u32 {
+        if inherit_children && self.is_directory() {
+            SUB_CONTAINERS_AND_OBJECTS_INHERIT
+        } else {
+            NO_INHERITANCE
+        }
+    }
+
+    fn current_identity(&self) -> Result<FileIdentity, VisualParseError> {
+        let mut information = std::mem::MaybeUninit::<ByHandleFileInformation>::uninit();
+        if unsafe { GetFileInformationByHandle(self.handle.get(), information.as_mut_ptr()) }
+            == FALSE
+        {
+            return Err(last_error(
+                "failed to revalidate a perception worker ACL target",
+            ));
+        }
+        let information = unsafe { information.assume_init() };
+        Ok(FileIdentity {
+            volume_serial_number: information.volume_serial_number,
+            file_index_high: information.file_index_high,
+            file_index_low: information.file_index_low,
+        })
     }
 }
 
@@ -1587,6 +2607,117 @@ fn last_error(message: &'static str) -> VisualParseError {
 mod tests {
     use super::*;
 
+    fn test_profile_name() -> String {
+        format!(
+            "{APP_CONTAINER_NAME_PREFIX}.{}",
+            uuid::Uuid::new_v4().simple()
+        )
+    }
+
+    #[repr(C)]
+    struct AceHeader {
+        ace_type: u8,
+        ace_flags: u8,
+        ace_size: u16,
+    }
+
+    #[repr(C)]
+    struct AccessAllowedAce {
+        header: AceHeader,
+        mask: u32,
+        sid_start: u32,
+    }
+
+    fn matching_grants(
+        path: &Path,
+        sid: *mut c_void,
+    ) -> Result<(bool, Vec<(u32, u8)>), VisualParseError> {
+        #[link(name = "advapi32")]
+        extern "system" {
+            fn EqualSid(left: *mut c_void, right: *mut c_void) -> Bool;
+            fn GetAce(acl: *const c_void, index: u32, ace: *mut *mut c_void) -> Bool;
+            fn GetSecurityDescriptorControl(
+                descriptor: *mut c_void,
+                control: *mut u16,
+                revision: *mut u32,
+            ) -> Bool;
+        }
+
+        let target = AclTarget::open(path)?;
+        let mut dacl: *mut c_void = std::ptr::null_mut();
+        let mut descriptor: *mut c_void = std::ptr::null_mut();
+        let status = unsafe {
+            GetSecurityInfo(
+                target.handle.get(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut dacl,
+                std::ptr::null_mut(),
+                &mut descriptor,
+            )
+        };
+        if status != ERROR_SUCCESS || dacl.is_null() || descriptor.is_null() {
+            return Err(containment_error(
+                "failed to inspect a perception worker ACL in a test",
+                Some(format!("os error {status}")),
+            ));
+        }
+        let descriptor = LocalAcl(descriptor);
+        let mut control = 0_u16;
+        let mut revision = 0_u32;
+        if unsafe { GetSecurityDescriptorControl(descriptor.0, &mut control, &mut revision) }
+            == FALSE
+        {
+            return Err(last_error(
+                "failed to inspect perception worker ACL control flags in a test",
+            ));
+        }
+
+        #[repr(C)]
+        struct AclHeader {
+            revision: u8,
+            sbz1: u8,
+            size: u16,
+            ace_count: u16,
+            sbz2: u16,
+        }
+
+        let ace_count = unsafe { (*(dacl.cast::<AclHeader>())).ace_count };
+        let mut grants = Vec::new();
+        for index in 0..u32::from(ace_count) {
+            let mut raw: *mut c_void = std::ptr::null_mut();
+            if unsafe { GetAce(dacl, index, &mut raw) } == FALSE || raw.is_null() {
+                return Err(last_error(
+                    "failed to inspect a perception worker ACL entry in a test",
+                ));
+            }
+            let ace = unsafe { &*raw.cast::<AccessAllowedAce>() };
+            if ace.header.ace_type != 0 {
+                continue;
+            }
+            let ace_sid = std::ptr::addr_of!(ace.sid_start).cast_mut().cast();
+            if unsafe { EqualSid(ace_sid, sid) } != FALSE {
+                grants.push((ace.mask, ace.header.ace_flags));
+            }
+        }
+        Ok((control & 0x1000 != 0, grants))
+    }
+
+    fn protect_tree(path: &Path, grants: &[(*mut c_void, u32)]) {
+        walk_acl_tree(path, &mut |target| {
+            let acl = build_acl(grants, target.inheritance(true), std::ptr::null_mut())?;
+            apply_dacl(
+                target.handle.get(),
+                acl.0,
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                "failed to protect a perception worker test path",
+            )
+        })
+        .unwrap();
+    }
+
     #[test]
     fn every_job_ui_restriction_is_applied() {
         for restriction in [
@@ -1601,6 +2732,155 @@ mod tests {
         ] {
             assert_eq!(JOB_OBJECT_UILIMIT_ALL & restriction, restriction);
         }
+    }
+
+    #[test]
+    fn wait_status_requires_a_signaled_process() {
+        assert!(classify_wait_status(WAIT_OBJECT_0, || {
+            panic!("a successful wait must not inspect the last error")
+        })
+        .is_ok());
+
+        let failed =
+            classify_wait_status(WAIT_FAILED, || std::io::Error::from_raw_os_error(6)).unwrap_err();
+        assert_eq!(failed.raw_os_error(), Some(6));
+
+        let timeout = classify_wait_status(WAIT_TIMEOUT, || {
+            panic!("an unexpected wait status must not inspect the last error")
+        })
+        .unwrap_err();
+        assert!(timeout
+            .to_string()
+            .contains("unexpected WaitForSingleObject status"));
+    }
+
+    #[test]
+    fn app_container_delete_classifies_idempotent_results() {
+        assert_eq!(classify_app_container_delete(0), Ok(()));
+        assert_eq!(classify_app_container_delete(1), Ok(()));
+        assert_eq!(classify_app_container_delete(-2_147_024_894), Ok(()));
+        assert_eq!(classify_app_container_delete(-2_147_023_728), Ok(()));
+        assert_eq!(classify_app_container_delete(-1), Err(-1));
+    }
+
+    #[test]
+    fn journal_is_durable_before_profile_creation_runs() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("runtime-acl.lock.profile");
+        let profile = test_profile_name();
+        let observed = std::cell::Cell::new(false);
+        let (mut journal, ()) = journal_before_profile(path.clone(), &profile, || {
+            observed.set(path.is_file());
+            Ok(())
+        })
+        .unwrap();
+
+        assert!(observed.get());
+        journal.clear().unwrap();
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn missing_profile_recovery_is_idempotent_and_removes_journal() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("runtime-acl.lock.profile");
+        let profile = test_profile_name();
+        AppContainerJournal::persist(path.clone(), &profile).unwrap();
+
+        recover_acl_profile_journal(&path).unwrap();
+        recover_acl_profile_journal(&path).unwrap();
+        assert!(!path.exists());
+        assert!(!journal_tombstone_path(&path).exists());
+    }
+
+    #[test]
+    fn empty_pending_journal_is_removed_without_profile_recovery() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("runtime-acl.lock.profile");
+        let pending = journal_pending_path(&path);
+        std::fs::write(&pending, b"").unwrap();
+
+        recover_acl_profile_journal_with(&path, |_| {
+            panic!("pending state cannot correspond to a created profile")
+        })
+        .unwrap();
+        assert!(!pending.exists());
+    }
+
+    #[test]
+    fn truncated_pending_journal_is_removed_without_profile_recovery() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("runtime-acl.lock.profile");
+        let pending = journal_pending_path(&path);
+        std::fs::write(&pending, b"com.trycua.cua-driver").unwrap();
+
+        recover_acl_profile_journal_with(&path, |_| {
+            panic!("pending state cannot correspond to a created profile")
+        })
+        .unwrap();
+        assert!(!pending.exists());
+    }
+
+    #[test]
+    fn pending_journal_directory_is_rejected() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("runtime-acl.lock.profile");
+        let pending = journal_pending_path(&path);
+        std::fs::create_dir(&pending).unwrap();
+
+        assert!(recover_acl_profile_journal_with(&path, |_| Ok(())).is_err());
+        assert!(pending.is_dir());
+    }
+
+    #[test]
+    fn failed_profile_recovery_retains_the_journal() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("runtime-acl.lock.profile");
+        let profile = test_profile_name();
+        AppContainerJournal::persist(path.clone(), &profile).unwrap();
+
+        let failure = recover_acl_profile_journal_with(&path, |_| {
+            Err(containment_error("injected profile deletion failure", None))
+        });
+        assert!(failure.is_err());
+        assert!(path.is_file());
+    }
+
+    #[test]
+    fn successful_cleanup_removes_the_profile_journal() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("runtime-acl.lock.profile");
+        let profile = test_profile_name();
+        let journal = AppContainerJournal::persist(path.clone(), &profile).unwrap();
+        let container = AppContainerSid::create(&profile).unwrap();
+        let mut cleanup = PendingCleanup {
+            process: 0,
+            process_reaped: true,
+            grants: None,
+            container: Some(container),
+            journal: Some(journal),
+            lease: None,
+        };
+
+        cleanup.cleanup_reaped_once().unwrap();
+        assert!(cleanup.is_clean());
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn repeated_wait_failures_reach_the_process_fatal_boundary() {
+        assert!(!cleanup_wait_is_fatal(CLEANUP_WAIT_FAILURE_ATTEMPTS - 1));
+        assert!(cleanup_wait_is_fatal(CLEANUP_WAIT_FAILURE_ATTEMPTS));
+    }
+
+    #[test]
+    fn repeated_authority_cleanup_failures_reach_the_process_fatal_boundary() {
+        assert!(!cleanup_authority_failure_is_fatal(
+            CLEANUP_AUTHORITY_FAILURE_ATTEMPTS - 1
+        ));
+        assert!(cleanup_authority_failure_is_fatal(
+            CLEANUP_AUTHORITY_FAILURE_ATTEMPTS
+        ));
     }
 
     #[test]
@@ -1693,5 +2973,281 @@ mod tests {
             normalize_windows_path(Path::new(r"\\?\UNC\server\share\worker")),
             normalize_windows_path(Path::new(r"\\server\share\worker"))
         );
+    }
+
+    #[test]
+    fn protected_descendants_receive_direct_least_privilege_grants() {
+        let root = tempfile::tempdir().unwrap();
+        let bundle = root.path().join("bundle");
+        let models = bundle.join("models");
+        let model = models.join("detector.onnx");
+        let working = root.path().join("working");
+        let scratch = working.join("capture.png");
+        std::fs::create_dir_all(&models).unwrap();
+        std::fs::create_dir(&working).unwrap();
+        std::fs::write(&model, b"model").unwrap();
+        std::fs::write(&scratch, b"capture").unwrap();
+
+        let user = current_user_sid().unwrap();
+        protect_tree(&bundle, &[(user.sid(), GENERIC_ALL)]);
+        let container = AppContainerSid::create_unique().unwrap();
+        let boundary = FilesystemBoundary {
+            readable: vec![bundle.clone(), working.clone()],
+            writable: vec![working.clone()],
+            executables: Vec::new(),
+        };
+        let mut ledger =
+            grant_worker_paths(&working, &boundary, user.sid(), container.sid()).unwrap();
+
+        for directory in [&bundle, &models] {
+            let (protected, grants) = matching_grants(directory, container.sid()).unwrap();
+            assert!(protected, "{} lost DACL protection", directory.display());
+            assert!(grants.iter().any(|(mask, flags)| {
+                *mask == (GENERIC_READ | GENERIC_EXECUTE)
+                    && u32::from(*flags) & SUB_CONTAINERS_AND_OBJECTS_INHERIT == NO_INHERITANCE
+            }));
+        }
+        let (protected, grants) = matching_grants(&model, container.sid()).unwrap();
+        assert!(protected, "{} lost DACL protection", model.display());
+        assert!(grants.iter().any(|(mask, flags)| {
+            *mask == (GENERIC_READ | GENERIC_EXECUTE)
+                && u32::from(*flags) & SUB_CONTAINERS_AND_OBJECTS_INHERIT == NO_INHERITANCE
+        }));
+
+        let (_, grants) = matching_grants(&working, container.sid()).unwrap();
+        assert!(grants.iter().any(|(mask, flags)| {
+            *mask == GENERIC_ALL
+                && u32::from(*flags) & SUB_CONTAINERS_AND_OBJECTS_INHERIT
+                    == SUB_CONTAINERS_AND_OBJECTS_INHERIT
+        }));
+        let (_, grants) = matching_grants(&scratch, container.sid()).unwrap();
+        assert!(grants.iter().any(|(mask, flags)| {
+            *mask == GENERIC_ALL
+                && u32::from(*flags) & SUB_CONTAINERS_AND_OBJECTS_INHERIT == NO_INHERITANCE
+        }));
+
+        ledger.revoke().unwrap();
+        for path in [&bundle, &models, &model, &working, &scratch] {
+            let (_, grants) = matching_grants(path, container.sid()).unwrap();
+            assert!(
+                grants.is_empty(),
+                "{} retained a temporary AppContainer grant",
+                path.display()
+            );
+        }
+        assert!(matching_grants(&bundle, container.sid()).unwrap().0);
+        assert!(!matching_grants(&working, container.sid()).unwrap().0);
+    }
+
+    #[test]
+    fn recursive_grants_do_not_escape_the_boundary_root() {
+        let root = tempfile::tempdir().unwrap();
+        let bundle = root.path().join("bundle");
+        let working = root.path().join("working");
+        let outside = root.path().join("outside.bin");
+        std::fs::create_dir(&bundle).unwrap();
+        std::fs::create_dir(&working).unwrap();
+        std::fs::write(bundle.join("inside.bin"), b"inside").unwrap();
+        std::fs::write(&outside, b"outside").unwrap();
+
+        let user = current_user_sid().unwrap();
+        let container = AppContainerSid::create_unique().unwrap();
+        let boundary = FilesystemBoundary {
+            readable: vec![bundle, working.clone()],
+            writable: vec![working.clone()],
+            executables: Vec::new(),
+        };
+        let _ledger = grant_worker_paths(&working, &boundary, user.sid(), container.sid()).unwrap();
+
+        let (_, grants) = matching_grants(&outside, container.sid()).unwrap();
+        assert!(
+            grants.is_empty(),
+            "a sibling outside the boundary was granted"
+        );
+    }
+
+    #[test]
+    fn a_partial_recursive_grant_is_rolled_back() {
+        let root = tempfile::tempdir().unwrap();
+        let bundle = root.path().join("bundle");
+        let model = bundle.join("detector.onnx");
+        let missing = root.path().join("missing");
+        let working = root.path().join("working");
+        std::fs::create_dir(&bundle).unwrap();
+        std::fs::create_dir(&working).unwrap();
+        std::fs::write(&model, b"model").unwrap();
+
+        let user = current_user_sid().unwrap();
+        let container = AppContainerSid::create_unique().unwrap();
+        let boundary = FilesystemBoundary {
+            readable: vec![bundle.clone(), missing],
+            writable: vec![working.clone()],
+            executables: Vec::new(),
+        };
+        assert!(grant_worker_paths(&working, &boundary, user.sid(), container.sid()).is_err());
+
+        for path in [&bundle, &model, &working] {
+            let (_, grants) = matching_grants(path, container.sid()).unwrap();
+            assert!(
+                grants.is_empty(),
+                "{} retained a grant after rollback",
+                path.display()
+            );
+        }
+    }
+
+    #[test]
+    fn overlapping_roots_keep_the_stronger_single_grant() {
+        let root = tempfile::tempdir().unwrap();
+        let bundle = root.path().join("bundle");
+        let writable = bundle.join("cache");
+        let artifact = writable.join("compiled.bin");
+        let working = root.path().join("working");
+        std::fs::create_dir_all(&writable).unwrap();
+        std::fs::create_dir(&working).unwrap();
+        std::fs::write(&artifact, b"cache").unwrap();
+
+        let user = current_user_sid().unwrap();
+        let container = AppContainerSid::create_unique().unwrap();
+        let boundary = FilesystemBoundary {
+            readable: vec![bundle],
+            writable: vec![working.clone(), writable.clone()],
+            executables: Vec::new(),
+        };
+        let _ledger = grant_worker_paths(&working, &boundary, user.sid(), container.sid()).unwrap();
+
+        for path in [&writable, &artifact] {
+            let (_, grants) = matching_grants(path, container.sid()).unwrap();
+            assert_eq!(
+                grants.len(),
+                1,
+                "{} received duplicate grants",
+                path.display()
+            );
+            assert_eq!(grants[0].0, GENERIC_ALL);
+        }
+    }
+
+    #[test]
+    fn only_writable_directories_grant_new_descendants() {
+        let root = tempfile::tempdir().unwrap();
+        let readable = root.path().join("models");
+        let writable = root.path().join("cache");
+        let working = root.path().join("working");
+        std::fs::create_dir(&readable).unwrap();
+        std::fs::create_dir(&writable).unwrap();
+        std::fs::create_dir(&working).unwrap();
+
+        let user = current_user_sid().unwrap();
+        let container = AppContainerSid::create_unique().unwrap();
+        let boundary = FilesystemBoundary {
+            readable: vec![readable.clone(), writable.clone(), working.clone()],
+            writable: vec![working.clone(), writable.clone()],
+            executables: Vec::new(),
+        };
+        let _ledger = grant_worker_paths(&working, &boundary, user.sid(), container.sid()).unwrap();
+
+        let new_model = readable.join("late-model.onnx");
+        let new_cache = writable.join("late-cache.bin");
+        std::fs::write(&new_model, b"model").unwrap();
+        std::fs::write(&new_cache, b"cache").unwrap();
+        assert!(matching_grants(&new_model, container.sid())
+            .unwrap()
+            .1
+            .is_empty());
+        let (_, grants) = matching_grants(&new_cache, container.sid()).unwrap();
+        assert!(grants.iter().any(|(mask, _)| *mask == GENERIC_ALL));
+    }
+
+    #[test]
+    fn acl_targets_cannot_be_replaced_until_revocation_finishes() {
+        let root = tempfile::tempdir().unwrap();
+        let original = root.path().join("model.bin");
+        let moved = root.path().join("moved.bin");
+        std::fs::write(&original, b"original").unwrap();
+
+        let container = AppContainerSid::create_unique().unwrap();
+        let mut ledger = AclGrantLedger::default();
+        ledger
+            .merge_grant_tree(&original, container.sid(), GENERIC_READ, false)
+            .unwrap();
+        assert!(std::fs::rename(&original, &moved).is_err());
+        ledger.revoke().unwrap();
+        drop(ledger);
+        std::fs::rename(&original, &moved).unwrap();
+        let (_, grants) = matching_grants(&moved, container.sid()).unwrap();
+        assert!(grants.is_empty());
+    }
+
+    #[test]
+    fn failed_revocation_is_retained_for_retry() {
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("model.bin");
+        std::fs::write(&target, b"model").unwrap();
+
+        let container = AppContainerSid::create_unique().unwrap();
+        let mut ledger = AclGrantLedger::default();
+        ledger
+            .merge_grant_tree(&target, container.sid(), GENERIC_READ, false)
+            .unwrap();
+        assert_eq!(ledger.entries.len(), 1);
+
+        let handle = ledger.entries[0].target.handle.get();
+        assert_ne!(unsafe { CloseHandle(handle) }, FALSE);
+        ledger.entries[0].target.handle.0 = std::ptr::null_mut();
+
+        let mut cleanup = PendingCleanup {
+            process: 0,
+            process_reaped: true,
+            grants: Some(ledger),
+            container: None,
+            journal: None,
+            lease: None,
+        };
+        assert!(cleanup.cleanup_reaped_once().is_err());
+        assert_eq!(cleanup.grants.as_ref().unwrap().entries.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn contended_acl_lease_returns_a_prompt_retryable_busy_error() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("runtime-acl.lock");
+        std::fs::write(&path, b"").unwrap();
+        let blocker = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        blocker.try_lock_exclusive().unwrap();
+
+        let failure =
+            match tokio::time::timeout(Duration::from_millis(100), AclLease::acquire(&path))
+                .await
+                .expect("ACL contention must return promptly")
+            {
+                Ok(_) => panic!("a contended ACL lease must not be acquired"),
+                Err(failure) => failure,
+            };
+        assert_eq!(failure.code, VisualParseErrorCode::WorkerLaunchFailed);
+        assert!(failure.retryable);
+        assert!(failure.message.contains("another perception worker"));
+        drop(blocker);
+
+        tokio::time::timeout(Duration::from_secs(1), AclLease::acquire(&path))
+            .await
+            .expect("cancelled waiter released its lease handle")
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn worker_lease_acquisition_recovers_the_profile_journal() {
+        let root = tempfile::tempdir().unwrap();
+        let lease_path = root.path().join("runtime-acl.lock");
+        std::fs::write(&lease_path, b"").unwrap();
+        let journal_path = acl_profile_journal_path(&lease_path);
+        AppContainerJournal::persist(journal_path.clone(), &test_profile_name()).unwrap();
+
+        let _lease = AclLease::acquire(&lease_path).await.unwrap();
+        assert!(!journal_path.exists());
     }
 }

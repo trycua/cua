@@ -402,3 +402,56 @@ def test_review_pipeline_native_driver_inspects_the_final_candidate_without_inst
     assert 'source = preview["corresponding_source"]' in inspection
     assert 'preview["mutation_performed"] is False' in inspection
     assert 'preview["installed"] is False' in inspection
+
+
+def test_review_pipeline_installs_and_self_tests_each_packaged_candidate() -> None:
+    parsed = yaml.safe_load(workflow_text())
+    steps = parsed["jobs"]["supplied-input"]["steps"]
+    inspect_index = next(
+        index
+        for index, step in enumerate(steps)
+        if step.get("name") == "Inspect the signed candidate with the native review Driver"
+    )
+    install_index = next(
+        index
+        for index, step in enumerate(steps)
+        if step.get("name")
+        == "Install and self-test the packaged candidate with the native review Driver"
+    )
+    cleanup_index = next(
+        index
+        for index, step in enumerate(steps)
+        if step.get("name") == "Destroy any remaining ephemeral private key"
+    )
+    upload_index = next(
+        index
+        for index, step in enumerate(steps)
+        if step.get("name") == "Preserve signed review-only target without publishing"
+    )
+    assert inspect_index < install_index < cleanup_index < upload_index
+
+    self_test = steps[install_index]
+    assert self_test["shell"] == "bash"
+    assert self_test["env"] == {"PLATFORM": "${{ matrix.platform }}"}
+    run = self_test["run"]
+    assert 'driver="$root/review-${{ matrix.driver }}"' in run
+    assert 'catalog="$root/signed-catalog.json"' in run
+    assert 'test ! -e "$install_home"' in run
+    absent_check = run.index('test ! -e "$install_home"')
+    first_driver_call = run.index('CUA_DRIVER_RS_HOME="$install_home"', absent_check)
+    assert run[absent_check:first_driver_call].strip() == 'test ! -e "$install_home"'
+    assert 'mkdir "$install_home"' not in run
+    assert run.count('CUA_DRIVER_RS_HOME="$install_home"') == 2
+    assert 'extension install cua-perception --catalog "$catalog"' in run
+    assert 'extension status cua-perception --self-test --json > "$status"' in run
+    for contract in (
+        'installed["installed"] is True',
+        'installed["healthy"] is True',
+        'installed["trust"] == "review-only-publisher-verified"',
+        'installed["evidence_class"] == "review-only-not-release-evidence"',
+        'installed["publisher_id"] == measurements["publisher_id"] == "cua-review-only"',
+        'installed["publisher_key_id"] == measurements["key_id"] == "review-only-build-override"',
+        'installed["active_version"] == measurements["extension_version"]',
+        'installed["protocol_version"] == measurements["protocol_version"]',
+    ):
+        assert contract in run

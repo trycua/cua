@@ -21,9 +21,15 @@ use std::io::{Read, Seek, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
+#[cfg(any(windows, test))]
+use std::time::Duration;
 #[cfg(windows)]
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
+#[cfg(windows)]
+use cua_driver_core::perception_client::containment::{
+    recover_windows_acl_profile_journal, windows_acl_profile_journal_path,
+};
 use cua_driver_core::perception_client::containment::{
     run_contained_hook, ContainmentLimits, HookOutcome,
 };
@@ -83,6 +89,8 @@ const REVIEW_PUBLIC_KEY_BASE64: &str = env!(
 const PERCEPTION_ID: &str = "cua-perception";
 const PERCEPTION_RUNTIME_CONTRACT: &str = "metadata/runtime-contract.json";
 const PERCEPTION_MODEL_MANIFEST_NAME: &str = "model-manifest.json";
+#[cfg(any(windows, test))]
+const WINDOWS_ACL_LEASE_RETRY_INTERVAL: Duration = Duration::from_millis(50);
 
 #[cfg(any(windows, test))]
 #[derive(Debug, Clone, Copy)]
@@ -444,6 +452,8 @@ struct ExtensionStore {
 
 struct InstallLock {
     _file: fs::File,
+    #[cfg(windows)]
+    _windows_acl_file: fs::File,
     root: Dir,
 }
 
@@ -1075,6 +1085,10 @@ fn perception_worker_config_in(store: &ExtensionStore) -> Result<Option<Percepti
         manifest.id.clone(),
         manifest.version.clone(),
     );
+    #[cfg(windows)]
+    {
+        config = config.with_windows_acl_lease_path(store.windows_acl_lease_path(PERCEPTION_ID));
+    }
     config.args = vec![
         "--manifest".to_owned(),
         model_manifest.to_owned(),
@@ -1962,8 +1976,9 @@ impl ExtensionStore {
                     pointer.version
                 )
             })?;
+        #[cfg(not(windows))]
         verify_cap_directory_permissions_portable(&version)?;
-        verify_installed_version_for_startup_at(&version, registry_entry(id)?)?;
+        verify_installed_version_for_startup(&version, registry_entry(id)?)?;
         Ok(())
     }
 
@@ -1974,7 +1989,50 @@ impl ExtensionStore {
         let file = open_lock_file_at(&lock_dir, &lock_name)?;
         file.try_lock_exclusive()
             .with_context(|| format!("extension {id} is already being modified"))?;
-        Ok(InstallLock { _file: file, root })
+        #[cfg(windows)]
+        let windows_acl_file = {
+            let acl_name = windows_acl_lease_name(id);
+            let acl_file = open_lock_file_at(&lock_dir, &acl_name)?;
+            acquire_windows_acl_lease_and_recover_with(
+                || {
+                    acquire_windows_acl_lease(&acl_file)
+                        .with_context(|| format!("wait for extension {id} Windows ACL lease"))
+                },
+                || {
+                    recover_windows_acl_profile_journal(&windows_acl_profile_journal_path(
+                        &self.windows_acl_lease_path(id),
+                    ))
+                    .map_err(|failure| anyhow!(failure.message))
+                    .with_context(|| format!("recover extension {id} Windows ACL authority"))
+                },
+            )?;
+            acl_file
+        };
+        Ok(InstallLock {
+            _file: file,
+            #[cfg(windows)]
+            _windows_acl_file: windows_acl_file,
+            root,
+        })
+    }
+
+    #[cfg(windows)]
+    fn windows_acl_lease_path(&self, id: &str) -> PathBuf {
+        self.root.join(".locks").join(windows_acl_lease_name(id))
+    }
+
+    fn acl_profile_journal_path(&self, id: &str) -> Option<PathBuf> {
+        #[cfg(windows)]
+        {
+            Some(windows_acl_profile_journal_path(
+                &self.windows_acl_lease_path(id),
+            ))
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = id;
+            None
+        }
     }
 
     fn install_source(
@@ -2077,6 +2135,7 @@ impl ExtensionStore {
                     entry,
                     Some(&inspected.manifest_bytes),
                     true,
+                    self.acl_profile_journal_path(entry.id),
                 )?;
                 cleanup?;
             }
@@ -2108,6 +2167,7 @@ impl ExtensionStore {
                         entry,
                         Some(&inspected.manifest_bytes),
                         true,
+                        self.acl_profile_journal_path(entry.id),
                     )?;
                     drop(staging_handle);
                     staging_parent_handle
@@ -2318,8 +2378,9 @@ impl ExtensionStore {
                     pointer.version
                 )
             })?;
+        #[cfg(not(windows))]
         verify_cap_directory_permissions_portable(&version)?;
-        let manifest = verify_installed_version_for_startup_at(&version, registry_entry(id)?)?;
+        let manifest = verify_installed_version_for_startup(&version, registry_entry(id)?)?;
         self.recover_publisher_trust_from_verified_active_locked(
             &lock.root, id, &version, &manifest,
         )?;
@@ -2410,6 +2471,7 @@ impl ExtensionStore {
                 entry,
                 None,
                 self_test,
+                self.acl_profile_journal_path(entry.id),
             )?;
             Ok(record)
         })();
@@ -3007,6 +3069,26 @@ fn verify_installed_version_for_startup_at(
     Ok(manifest)
 }
 
+fn verify_installed_version_for_startup(
+    root: &Dir,
+    entry: &RegistryEntry,
+) -> Result<ExtensionManifest> {
+    #[cfg(windows)]
+    {
+        let started = Instant::now();
+        return converge_windows_startup_verification_with(
+            WINDOWS_ACL_CONVERGENCE_ATTEMPTS,
+            WINDOWS_ACL_CONVERGENCE_RETRY_WINDOW,
+            || started.elapsed(),
+            std::thread::sleep,
+            || windows_harden_private_tree(root),
+            || verify_installed_version_for_startup_at(root, entry),
+        );
+    }
+    #[cfg(not(windows))]
+    verify_installed_version_for_startup_at(root, entry)
+}
+
 fn installed_regular_files_at(root: &Dir) -> Result<BTreeSet<String>> {
     fn visit(
         directory: &Dir,
@@ -3126,12 +3208,18 @@ fn verify_install_record_at(root: &Dir, id: &str, version: &str) -> Result<()> {
     read_install_record_at(root, id, version).map(drop)
 }
 
-fn run_extension_hook(root: &Path, manifest: &ExtensionManifest, self_test: bool) -> Result<()> {
+fn run_extension_hook(
+    root: &Path,
+    manifest: &ExtensionManifest,
+    self_test: bool,
+    journal_path: Option<PathBuf>,
+) -> Result<()> {
     run_extension_hook_with_timeout(
         root,
         manifest,
         self_test,
         std::time::Duration::from_secs(10),
+        journal_path,
     )
 }
 
@@ -3156,9 +3244,10 @@ fn run_verified_extension_hook(
     entry: &RegistryEntry,
     expected_manifest: Option<&[u8]>,
     self_test: bool,
+    journal_path: Option<PathBuf>,
 ) -> Result<InstallRecord> {
     run_verified_extension_hook_with(root, entry, expected_manifest, &manifest.version, || {
-        run_extension_hook(root_path, manifest, self_test)
+        run_extension_hook(root_path, manifest, self_test, journal_path)
     })
 }
 
@@ -3267,6 +3356,7 @@ fn run_extension_hook_with_timeout(
     manifest: &ExtensionManifest,
     self_test: bool,
     timeout: std::time::Duration,
+    journal_path: Option<PathBuf>,
 ) -> Result<()> {
     let args = if self_test {
         &manifest.self_test_args
@@ -3291,10 +3381,7 @@ fn run_extension_hook_with_timeout(
     }
     #[cfg(test)]
     hook_observer::note_launch(root);
-    let limits = ContainmentLimits {
-        additional_readable_paths: vec![root.to_path_buf()],
-        ..ContainmentLimits::default()
-    };
+    let limits = extension_hook_containment_limits(root, journal_path);
     let kind = if self_test { "self-test" } else { "health" };
     match run_contained_hook_blocking(&entrypoint, args, &limits, timeout)? {
         HookOutcome::Succeeded => Ok(()),
@@ -3303,6 +3390,21 @@ fn run_extension_hook_with_timeout(
             bail!("extension {kind} hook exceeded a containment limit: {detail}")
         }
         HookOutcome::TimedOut => bail!("extension hook exceeded its execution limit"),
+    }
+}
+
+fn extension_hook_containment_limits(
+    root: &Path,
+    journal_path: Option<PathBuf>,
+) -> ContainmentLimits {
+    ContainmentLimits {
+        additional_readable_paths: vec![root.to_path_buf()],
+        // The lifecycle caller already owns this extension's runtime ACL
+        // lease. Reacquiring it would deadlock, so hook teardown stays on the
+        // dedicated hook thread and must finish before the caller releases it.
+        windows_require_synchronous_cleanup: true,
+        windows_acl_profile_journal_path: journal_path,
+        ..ContainmentLimits::default()
     }
 }
 
@@ -3709,6 +3811,24 @@ fn converge_windows_acl_with<T>(
     unreachable!("the final convergence attempt always returns")
 }
 
+#[cfg(any(windows, test))]
+fn converge_windows_startup_verification_with<T>(
+    attempts: u32,
+    retry_window: std::time::Duration,
+    elapsed: impl FnMut() -> std::time::Duration,
+    sleep: impl FnMut(std::time::Duration),
+    harden: impl FnMut() -> Result<()>,
+    mut verify: impl FnMut() -> Result<T>,
+) -> Result<T> {
+    match verify() {
+        Ok(value) => Ok(value),
+        Err(error) if error.downcast_ref::<WindowsAclDrift>().is_some() => {
+            converge_windows_acl_with(attempts, retry_window, elapsed, sleep, harden, verify)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 #[cfg(windows)]
 fn converge_windows_acl<T>(
     attempts: u32,
@@ -3842,6 +3962,55 @@ fn open_lock_file_at(dir: &Dir, name: &str) -> Result<fs::File> {
         }
         Err(error) => Err(error).with_context(|| format!("create extension lock {name}")),
     }
+}
+
+#[cfg(any(windows, test))]
+fn windows_acl_lease_name(id: &str) -> String {
+    format!("{id}.runtime-acl.lock")
+}
+
+#[cfg(any(windows, test))]
+fn acquire_windows_acl_lease_with(
+    retry_window: Duration,
+    mut elapsed: impl FnMut() -> Duration,
+    mut sleep: impl FnMut(Duration),
+    mut try_lock: impl FnMut() -> std::io::Result<()>,
+) -> Result<()> {
+    loop {
+        match try_lock() {
+            Ok(()) => return Ok(()),
+            Err(cause)
+                if cause.kind() == std::io::ErrorKind::WouldBlock
+                    || cause.raw_os_error() == fs2::lock_contended_error().raw_os_error() =>
+            {
+                if elapsed() >= retry_window {
+                    bail!("timed out waiting for the Windows ACL lease");
+                }
+                sleep(WINDOWS_ACL_LEASE_RETRY_INTERVAL);
+            }
+            Err(cause) => return Err(cause).context("acquire Windows ACL lease"),
+        }
+    }
+}
+
+#[cfg(any(windows, test))]
+fn acquire_windows_acl_lease_and_recover_with(
+    acquire: impl FnOnce() -> Result<()>,
+    recover: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    acquire()?;
+    recover()
+}
+
+#[cfg(windows)]
+fn acquire_windows_acl_lease(file: &fs::File) -> Result<()> {
+    let started = Instant::now();
+    acquire_windows_acl_lease_with(
+        WINDOWS_ACL_CONVERGENCE_RETRY_WINDOW,
+        || started.elapsed(),
+        std::thread::sleep,
+        || file.try_lock_exclusive(),
+    )
 }
 
 #[cfg(unix)]
@@ -4596,6 +4765,93 @@ mod tests {
     }
 
     #[test]
+    fn windows_acl_lease_retries_contention_until_acquired() {
+        let attempts = Cell::new(0);
+        let elapsed = Cell::new(Duration::ZERO);
+        let sleeps = Cell::new(0);
+        acquire_windows_acl_lease_with(
+            Duration::from_secs(1),
+            || elapsed.get(),
+            |duration| {
+                sleeps.set(sleeps.get() + 1);
+                elapsed.set(elapsed.get() + duration);
+            },
+            || {
+                attempts.set(attempts.get() + 1);
+                if attempts.get() < 3 {
+                    Err(fs2::lock_contended_error())
+                } else {
+                    Ok(())
+                }
+            },
+        )
+        .unwrap();
+
+        assert_eq!(attempts.get(), 3);
+        assert_eq!(sleeps.get(), 2);
+    }
+
+    #[test]
+    fn windows_acl_lease_name_is_component_scoped() {
+        assert_eq!(
+            windows_acl_lease_name(PERCEPTION_ID),
+            "cua-perception.runtime-acl.lock"
+        );
+    }
+
+    #[test]
+    fn extension_hooks_forbid_deferred_windows_acl_cleanup() {
+        let root = Path::new("extension-root");
+        let journal = Some(PathBuf::from("runtime-acl.lock.profile"));
+        let limits = extension_hook_containment_limits(root, journal.clone());
+
+        assert_eq!(limits.additional_readable_paths, vec![root.to_path_buf()]);
+        assert!(limits.windows_require_synchronous_cleanup);
+        assert!(limits.windows_acl_lease_path.is_none());
+        assert_eq!(limits.windows_acl_profile_journal_path, journal);
+    }
+
+    #[test]
+    fn lifecycle_acl_lock_recovers_before_entering_the_critical_section() {
+        let acquired = Cell::new(false);
+        let recovered = Cell::new(false);
+        acquire_windows_acl_lease_and_recover_with(
+            || {
+                acquired.set(true);
+                Ok(())
+            },
+            || {
+                assert!(acquired.get());
+                recovered.set(true);
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert!(recovered.get());
+    }
+
+    #[test]
+    fn windows_acl_lease_timeout_never_enters_the_critical_section() {
+        let attempts = Cell::new(0);
+        let error = acquire_windows_acl_lease_with(
+            Duration::ZERO,
+            || Duration::ZERO,
+            |_| panic!("an expired ACL lease wait must not sleep"),
+            || {
+                attempts.set(attempts.get() + 1);
+                Err(fs2::lock_contended_error())
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(attempts.get(), 1);
+        assert!(error
+            .to_string()
+            .contains("timed out waiting for the Windows ACL lease"));
+    }
+
+    #[test]
     fn windows_acl_convergence_stops_after_persistent_drift() {
         let hardens = Cell::new(0);
         let verifies = Cell::new(0);
@@ -4695,6 +4951,88 @@ mod tests {
         assert!(error.downcast_ref::<WindowsAclDrift>().is_some());
         assert_eq!(hardens.get(), 1);
         assert_eq!(sleeps.get(), 0);
+    }
+
+    #[test]
+    fn windows_startup_verification_hardens_and_retries_typed_acl_drift() {
+        let hardens = Cell::new(0);
+        let verifies = Cell::new(0);
+        let sleeps = Cell::new(0);
+        let manifest = converge_windows_startup_verification_with(
+            3,
+            std::time::Duration::from_secs(90),
+            || std::time::Duration::ZERO,
+            |_| sleeps.set(sleeps.get() + 1),
+            || {
+                hardens.set(hardens.get() + 1);
+                Ok(())
+            },
+            || {
+                verifies.set(verifies.get() + 1);
+                if verifies.get() == 1 {
+                    Err(acl_drift_error())
+                } else {
+                    Ok("startup manifest")
+                }
+            },
+        )
+        .unwrap();
+
+        assert_eq!(manifest, "startup manifest");
+        assert_eq!(hardens.get(), 1);
+        assert_eq!(verifies.get(), 2);
+        assert_eq!(sleeps.get(), 0);
+    }
+
+    #[test]
+    fn windows_startup_verification_does_not_rewrite_a_healthy_tree() {
+        let hardens = Cell::new(0);
+        let verifies = Cell::new(0);
+        let manifest = converge_windows_startup_verification_with(
+            3,
+            std::time::Duration::from_secs(90),
+            || std::time::Duration::ZERO,
+            |_| panic!("healthy startup verification must not sleep"),
+            || {
+                hardens.set(hardens.get() + 1);
+                Ok(())
+            },
+            || {
+                verifies.set(verifies.get() + 1);
+                Ok("startup manifest")
+            },
+        )
+        .unwrap();
+
+        assert_eq!(manifest, "startup manifest");
+        assert_eq!(hardens.get(), 0);
+        assert_eq!(verifies.get(), 1);
+    }
+
+    #[test]
+    fn windows_startup_verification_preserves_non_acl_failure() {
+        let hardens = Cell::new(0);
+        let verifies = Cell::new(0);
+        let error = converge_windows_startup_verification_with::<()>(
+            3,
+            std::time::Duration::from_secs(90),
+            || std::time::Duration::ZERO,
+            |_| panic!("non-ACL startup verification failure must not sleep"),
+            || {
+                hardens.set(hardens.get() + 1);
+                Ok(())
+            },
+            || {
+                verifies.set(verifies.get() + 1);
+                bail!("SHA-256 mismatch for startup worker")
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(error.to_string(), "SHA-256 mismatch for startup worker");
+        assert!(error.downcast_ref::<WindowsAclDrift>().is_none());
+        assert_eq!(hardens.get(), 0);
+        assert_eq!(verifies.get(), 1);
     }
 
     fn fixture_archive(
@@ -6181,6 +6519,7 @@ mod tests {
             &manifest,
             false,
             std::time::Duration::from_secs(5),
+            None,
         )
         .is_err());
         std::thread::sleep(std::time::Duration::from_millis(1_100));
@@ -6205,6 +6544,7 @@ mod tests {
             &manifest,
             false,
             std::time::Duration::from_secs(5),
+            None,
         )
         .is_err());
     }

@@ -705,6 +705,16 @@ async fn app_for_pid<'a>(
     Ok(resolve_app_for_pid(conn, pid).await?.map(|r| r.app))
 }
 
+/// Best-effort executable/process name for `pid`, read from `/proc/<pid>/comm`
+/// (Linux only; falls back to `None` on any error, e.g. the process already
+/// exited or `/proc` is unavailable in a sandbox).
+fn process_name(pid: u32) -> Option<String> {
+    std::fs::read_to_string(format!("/proc/{pid}/comm"))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 async fn resolve_app_for_pid<'a>(
     conn: &'a AccessibilityConnection,
     pid: u32,
@@ -741,6 +751,13 @@ async fn resolve_app_for_pid<'a>(
         apps.len()
     );
     let mut selection = ApplicationSelection::new(pid);
+    // Retained for a name-based fallback pass below (#2706-adjacent gap): a
+    // blind prelaunched app whose AT-SPI application object registered under
+    // a *different* pid than the one the caller targets (e.g. a launcher
+    // shim re-execs into the real binary, or a toolkit forks once before
+    // registering with the a11y bus) is otherwise invisible even though its
+    // process name matches exactly.
+    let mut other_apps: Vec<(atspi::ObjectRefOwned, u32)> = Vec::new();
     for child in apps {
         // A modal-grabbed app can't answer the pid query; skip it after
         // CALL_TIMEOUT rather than blocking the whole walk on it.
@@ -756,6 +773,9 @@ async fn resolve_app_for_pid<'a>(
         };
         dlog!("  app bus={:?} pid={:?}", child.name_as_str(), cpid);
         if !selection.matches_pid(cpid) {
+            if let Some(cpid) = cpid {
+                other_apps.push((child, cpid));
+            }
             continue;
         }
         let child = match RawObjectRef::from_atspi(&child) {
@@ -791,8 +811,43 @@ async fn resolve_app_for_pid<'a>(
     match selection.into_selected() {
         Ok(Some(app)) => Ok(Some(app)),
         Ok(None) => {
-            dlog!("no application accessible matched pid {pid}");
-            Ok(None)
+            dlog!("no application accessible matched pid {pid} by exact pid; trying WM_CLASS/process-name fallback");
+            // Exact-pid match failed. Fall back to matching by process
+            // executable name across every OTHER AT-SPI-registered
+            // application; accept it only when exactly one candidate shares
+            // the target's process name, so an ambiguous match still
+            // refuses rather than guessing.
+            let Some(target_name) = process_name(pid) else {
+                return Ok(None);
+            };
+            let mut name_matches: Vec<(atspi::ObjectRefOwned, u32)> = Vec::new();
+            for (child, cpid) in other_apps {
+                if process_name(cpid).as_deref() == Some(target_name.as_str()) {
+                    name_matches.push((child, cpid));
+                }
+            }
+            if name_matches.len() != 1 {
+                dlog!(
+                    "process-name fallback for pid {pid} ({target_name}) found {} candidate(s); refusing",
+                    name_matches.len()
+                );
+                return Ok(None);
+            }
+            let (child, fallback_pid) = name_matches.into_iter().next().unwrap();
+            dlog!("process-name fallback matched pid {pid} ({target_name}) to AT-SPI app pid {fallback_pid}");
+            let child = match RawObjectRef::from_atspi(&child) {
+                Some(child) => child,
+                None => return Ok(None),
+            };
+            let app = match call(accessible_for(conn, &child)).await {
+                Some(Ok(app)) => app,
+                _ => return Ok(None),
+            };
+            let children = match call(app.get_children()).await {
+                Some(Ok(children)) => Some(children),
+                _ => None,
+            };
+            Ok(Some(ResolvedApp { app, children }))
         }
         Err(count) => Err(anyhow!(
             "ambiguous AT-SPI application selection for pid {pid}: \

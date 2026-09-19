@@ -1676,8 +1676,31 @@ mod tests {
         assert!(packed_helium_arguments(b"/opt/helium-browser-bin/helium\0").is_none());
     }
 
+    /// Serializes the `fork` inside `FakeHeliumProcess::spawn` against the
+    /// window in which a test holds a listening socket open and measures its
+    /// liveness.
+    ///
+    /// `Command::spawn` is fork plus exec, and the fork duplicates every
+    /// descriptor its thread can see. A sibling fork landing inside that
+    /// window lends this test's listener to a child for the moment between
+    /// `fork` and the child's `exec`, so the kernel keeps the socket alive for
+    /// several milliseconds past this test's own `drop`. That is a property of
+    /// running these tests concurrently in one process, not of the ownership
+    /// check under test, so the two are serialized rather than papered over
+    /// with a sleep.
+    static FORK_EXCLUSION: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn exclude_concurrent_forks() -> std::sync::MutexGuard<'static, ()> {
+        FORK_EXCLUSION
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     #[test]
     fn unix_socket_inode_resolves_only_a_live_kernel_listener() {
+        // Held for the listener's whole lifetime so no sibling test can fork
+        // this descriptor into a child that outlives `drop(listener)`.
+        let _fork_exclusion = exclude_concurrent_forks();
         let directory = tempfile::tempdir().expect("temporary socket directory");
         let sock_path = directory.path().join("probe.sock");
         let listener =
@@ -1755,6 +1778,9 @@ mod tests {
         ) -> Self {
             use std::os::unix::fs::PermissionsExt;
             use std::os::unix::process::CommandExt;
+            // No sibling test may be measuring socket liveness across this
+            // fork; see `FORK_EXCLUSION`.
+            let _fork_exclusion = exclude_concurrent_forks();
             let executable_directory =
                 tempfile::tempdir().expect("temporary fake-helium executable directory");
             let executable = executable_directory.path().join("helium");

@@ -2651,6 +2651,7 @@ mod tests {
         file.write_all(legacy.as_bytes()).unwrap();
         file.write_all(b"\n").unwrap();
         file.sync_all().unwrap();
+        drop(file);
 
         recover_acl_profile_journal_with(&path, |_| {
             panic!("an oversized legacy profile could not have been created")

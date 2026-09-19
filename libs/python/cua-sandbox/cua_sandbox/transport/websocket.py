@@ -6,12 +6,15 @@ and returns JSON responses. Screenshots are returned as base64-encoded PNG.
 
 from __future__ import annotations
 
-import base64
 import json
 from typing import Any, Dict, Optional
 
 import websockets
 from cua_sandbox.transport.base import Transport
+from cua_sandbox.transport.computer_server import (
+    decode_screenshot_response,
+    normalize_screen_size,
+)
 from websockets.asyncio.client import ClientConnection
 
 
@@ -43,28 +46,25 @@ class WebSocketTransport(Transport):
         assert self._ws is not None, "Transport not connected"
         await self._ws.send(json.dumps(payload))
         raw = await self._ws.recv()
-        return json.loads(raw)
-
-    async def send(self, action: str, **params: Any) -> Any:
-        resp = await self._request({"command": action, **params})
+        resp = json.loads(raw)
         if isinstance(resp, dict) and resp.get("error"):
             raise RuntimeError(f"Remote error: {resp['error']}")
-        return resp.get("result") if isinstance(resp, dict) else resp
+        return resp
+
+    async def send(self, action: str, **params: Any) -> Any:
+        resp = await self._request({"command": action, "params": params})
+        return resp.get("result", resp) if isinstance(resp, dict) else resp
 
     async def screenshot(self, format: str = "png", quality: int = 95) -> bytes:
         resp = await self._request({"command": "screenshot"})
-        b64 = resp.get("result", resp.get("screenshot", ""))
-        if isinstance(b64, dict):
-            b64 = b64.get("base64", "")
-        png = base64.b64decode(b64)
+        png = decode_screenshot_response(resp)
         from cua_sandbox.transport.base import convert_screenshot
 
         return convert_screenshot(png, format, quality)
 
     async def get_screen_size(self) -> Dict[str, int]:
         resp = await self._request({"command": "get_screen_size"})
-        result = resp.get("result", resp)
-        return {"width": result["width"], "height": result["height"]}
+        return normalize_screen_size(resp)
 
     async def get_environment(self) -> str:
         resp = await self._request({"command": "get_environment"})

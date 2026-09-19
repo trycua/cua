@@ -32,7 +32,7 @@ OSWorld subset (5 tasks: gimp x2, vlc, vs_code, libreoffice_calc; Haiku 4.5, 25 
 | Run | Score | Notes |
 | --- | --- | --- |
 | foreground, first merged binary | 0 / 5 | no stalls, coordinates still 20 % short |
-| foreground, after screenshot scaling | 3 / 5 | GIMP x2 and VLC pass; VS Code wrote the wrong setting, Calc wrong formulas; no driver errors, no call over 10 s on this 5-task subset (the larger 15-task run below found `get_window_state` on LibreOffice taking 13-43 s) |
+| foreground, after screenshot scaling | 3 / 5 | GIMP x2 and VLC pass; VS Code wrote the wrong setting, Calc wrong formulas; no driver errors, no call over 10 s on this 5-task probe subset (gimp x2, vlc, vs_code, libreoffice_calc x1) — the larger 15-task run below found `get_window_state` on LibreOffice taking 13-43 s, so this does not hold as a general property of the fix |
 | foreground, final binary (fg3) | 3 / 5 | same |
 | background, merged | 0 / 5 | no hangs; 42 of 50 errors are the by-design keyboard refusal |
 

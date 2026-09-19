@@ -253,8 +253,22 @@ pub fn error_code(error: &anyhow::Error) -> Option<&'static str> {
 }
 
 /// Run `f` on a detached thread and wait at most `deadline` for its result.
-/// The thread is intentionally leaked on timeout: a blocking X request cannot
-/// be cancelled, but the caller must not hang with it.
+///
+/// All current callers (`confirm_phase`, `wait_for_window_change`,
+/// `post_check`) already bound themselves cooperatively with their own
+/// internal deadline loop, so in the common case the worker returns well
+/// inside `deadline` and this wrapper's timeout never fires. The residual
+/// leak this guards against is a single blocking X11 socket call (connect,
+/// or a request/reply round trip inside `X11::open`/`activate`) hanging past
+/// `deadline` because the X server itself has stopped answering — a
+/// synchronous X11 read cannot be interrupted or polled from the outside
+/// without switching the whole call chain to non-blocking I/O, which is out
+/// of scope here. In that rare case the thread is intentionally leaked: it
+/// is bounded (it exits as soon as the stalled X call returns, or the
+/// process exits), and its completion is harmless because `tx.send` below
+/// ignores a disconnected receiver (`let _ =`) rather than panicking, so a
+/// late result from a leaked thread is silently dropped instead of crashing
+/// the caller that already moved on.
 fn run_with_deadline<T: Send + 'static>(
     deadline: Duration,
     f: impl FnOnce() -> T + Send + 'static,

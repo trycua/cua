@@ -122,6 +122,38 @@ pub fn element_token_schema() -> Value {
     })
 }
 
+/// Default / bounds for the per-call accessibility-walk budget (`timeout_ms`).
+pub const TIMEOUT_MS_DEFAULT: u64 = 1000;
+pub const TIMEOUT_MS_MIN: u64 = 100;
+pub const TIMEOUT_MS_MAX: u64 = 120_000;
+
+/// Shared `timeout_ms` parameter: wall-clock budget for the accessibility walk
+/// behind an observation tool. Declared on every platform so clients can pass
+/// it uniformly; a backend whose walk is not yet budgeted documents that.
+pub fn timeout_ms_schema() -> Value {
+    json!({
+        "type": "integer",
+        "minimum": TIMEOUT_MS_MIN,
+        "maximum": TIMEOUT_MS_MAX,
+        "default": TIMEOUT_MS_DEFAULT,
+        "description": "Wall-clock budget in milliseconds for the accessibility-tree walk \
+            (default 1000, min 100, max 120000). Bounds the WHOLE operation — retries and \
+            bounds resolution included (bounds may add up to 50% grace). When the budget runs \
+            out the tool returns the PARTIAL tree it has, flagged with `truncated: true`, \
+            `truncation_reason`, `nodes_visited`, `nodes_pending` and `elements_complete: false`; \
+            retry with a larger value (e.g. 5000) or narrow with `query` / `max_depth`."
+    })
+}
+
+/// Clamp a caller-supplied `timeout_ms` (or apply the default when absent /
+/// not an integer) to the documented bounds.
+pub fn resolve_timeout_ms(value: Option<&Value>) -> u64 {
+    value
+        .and_then(Value::as_u64)
+        .map(|v| v.clamp(TIMEOUT_MS_MIN, TIMEOUT_MS_MAX))
+        .unwrap_or(TIMEOUT_MS_DEFAULT)
+}
+
 // ── The gate ─────────────────────────────────────────────────────────────────
 
 /// The canonical *shape* of each shared param (description stripped). `None` for
@@ -139,6 +171,7 @@ fn shared_param_canonical(name: &str) -> Option<Value> {
         "element_token" => element_token_schema(),
         "snapshot_id" => snapshot_id_schema(),
         "capture_mode" => crate::capture_mode::capture_mode_schema(),
+        "timeout_ms" => timeout_ms_schema(),
         _ => return None,
     };
     Some(structural(&v))
@@ -263,6 +296,22 @@ pub fn shared_schema_violations(tool_name: &str, input_schema: &Value) -> Vec<St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn timeout_ms_resolves_default_and_clamps() {
+        assert_eq!(resolve_timeout_ms(None), TIMEOUT_MS_DEFAULT);
+        assert_eq!(resolve_timeout_ms(Some(&json!("fast"))), TIMEOUT_MS_DEFAULT);
+        assert_eq!(resolve_timeout_ms(Some(&json!(5))), TIMEOUT_MS_MIN);
+        assert_eq!(resolve_timeout_ms(Some(&json!(5_000))), 5_000);
+        assert_eq!(resolve_timeout_ms(Some(&json!(10_000_000))), TIMEOUT_MS_MAX);
+        let schema = timeout_ms_schema();
+        assert_eq!(schema["default"], TIMEOUT_MS_DEFAULT);
+        assert!(shared_schema_violations(
+            "get_window_state",
+            &json!({"type":"object","properties":{"timeout_ms": schema}})
+        )
+        .is_empty());
+    }
 
     #[test]
     fn structural_strips_description_keeps_type_and_enum() {

@@ -97,6 +97,73 @@ const FfiConverterTypeActionDelivery = (() => {
     return new FFIConverter();
 })();
 
+const stringConverter = (() => {
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+    return {
+        stringToBytes: (s: string) => encoder.encode(s),
+        bytesToString: (ab: UniffiByteArray) => decoder.decode(ab),
+        stringByteLength: (s: string) => encoder.encode(s).byteLength,
+        writeStringIntoBuffer: (s: string, buf: any, offset: number): number => {
+            const view = new Uint8Array(
+                buf.arrayBuffer,
+                offset,
+                buf.arrayBuffer.byteLength - offset,
+            );
+            return encoder.encodeInto(s, view).written;
+        },
+        readStringFromBuffer: (buf: any, offset: number, length: number): string =>
+            decoder.decode(new Uint8Array(buf.arrayBuffer, offset, length)),
+    };
+})();
+const FfiConverterString = uniffiCreateFfiConverterString(stringConverter);
+
+/**
+ * Why a `refused` action sent no input, and what to do instead.
+ */
+export type ActionError = {
+    code: string,
+    hint?: string
+}
+
+/**
+ * Generated factory for {@link ActionError} record objects.
+ */
+export const ActionError = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ActionError, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ActionError>,
+    });
+})();
+
+const FfiConverterTypeActionError = (() => {
+    type TypeName = ActionError;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                code: FfiConverterString.read(from),
+                hint: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.code, into);
+            FfiConverterOptionalString.write(value.hint, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.code) +
+             FfiConverterOptionalString.allocationSize(value.hint);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export enum ActionEscalationTarget {
     Pixel,
     Foreground,
@@ -243,7 +310,12 @@ const FfiConverterTypeActionEvidenceKind = (() => {
 })();
 
 export type ActionEvidence = {
-    kind: ActionEvidenceKind
+    kind: ActionEvidenceKind,
+    /**
+     * Human-readable readback the evidence rests on (what changed, which
+     * popup or window appeared and how to target it). Never request data.
+     */
+    detail?: string
 }
 
 /**
@@ -267,14 +339,17 @@ const FfiConverterTypeActionEvidence = (() => {
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         read(from: RustBuffer): TypeName {
             return {
-                kind: FfiConverterTypeActionEvidenceKind.read(from)
+                kind: FfiConverterTypeActionEvidenceKind.read(from),
+                detail: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterTypeActionEvidenceKind.write(value.kind, into);
+            FfiConverterOptionalString.write(value.detail, into);
         }
         allocationSize(value: TypeName): number {
-            return FfiConverterTypeActionEvidenceKind.allocationSize(value.kind);
+            return FfiConverterTypeActionEvidenceKind.allocationSize(value.kind) +
+             FfiConverterOptionalString.allocationSize(value.detail);
 
         }
     };
@@ -365,7 +440,18 @@ export type ActionResult = {
     route: ActionRoute,
     delivery?: ActionDelivery,
     evidence?: Array<ActionEvidence>,
-    escalation?: ActionEscalation
+    escalation?: ActionEscalation,
+    /**
+     * The producer's human summary of what happened (resolved points, the
+     * element hit, popups that opened, focus outcome, follow-up calls).
+     * Clients that read only `structuredContent` still get everything the
+     * text content says.
+     */
+    summary?: string,
+    /**
+     * Present only with `effect: refused`.
+     */
+    error?: ActionError
 }
 
 /**
@@ -393,7 +479,9 @@ const FfiConverterTypeActionResult = (() => {
                 route: FfiConverterTypeActionRoute.read(from),
                 delivery: FfiConverterOptionalTypeActionDelivery.read(from),
                 evidence: FfiConverterOptionalSequenceTypeActionEvidence.read(from),
-                escalation: FfiConverterOptionalTypeActionEscalation.read(from)
+                escalation: FfiConverterOptionalTypeActionEscalation.read(from),
+                summary: FfiConverterOptionalString.read(from),
+                error: FfiConverterOptionalTypeActionError.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -402,39 +490,22 @@ const FfiConverterTypeActionResult = (() => {
             FfiConverterOptionalTypeActionDelivery.write(value.delivery, into);
             FfiConverterOptionalSequenceTypeActionEvidence.write(value.evidence, into);
             FfiConverterOptionalTypeActionEscalation.write(value.escalation, into);
+            FfiConverterOptionalString.write(value.summary, into);
+            FfiConverterOptionalTypeActionError.write(value.error, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypeActionEffect.allocationSize(value.effect) +
              FfiConverterTypeActionRoute.allocationSize(value.route) +
              FfiConverterOptionalTypeActionDelivery.allocationSize(value.delivery) +
              FfiConverterOptionalSequenceTypeActionEvidence.allocationSize(value.evidence) +
-             FfiConverterOptionalTypeActionEscalation.allocationSize(value.escalation);
+             FfiConverterOptionalTypeActionEscalation.allocationSize(value.escalation) +
+             FfiConverterOptionalString.allocationSize(value.summary) +
+             FfiConverterOptionalTypeActionError.allocationSize(value.error);
 
         }
     };
     return new FFIConverter();
 })();
-
-const stringConverter = (() => {
-    const encoder = new TextEncoder();
-    const decoder = new TextDecoder();
-    return {
-        stringToBytes: (s: string) => encoder.encode(s),
-        bytesToString: (ab: UniffiByteArray) => decoder.decode(ab),
-        stringByteLength: (s: string) => encoder.encode(s).byteLength,
-        writeStringIntoBuffer: (s: string, buf: any, offset: number): number => {
-            const view = new Uint8Array(
-                buf.arrayBuffer,
-                offset,
-                buf.arrayBuffer.byteLength - offset,
-            );
-            return encoder.encodeInto(s, view).written;
-        },
-        readStringFromBuffer: (buf: any, offset: number, length: number): string =>
-            decoder.decode(new Uint8Array(buf.arrayBuffer, offset, length)),
-    };
-})();
-const FfiConverterString = uniffiCreateFfiConverterString(stringConverter);
 
 export type AppInfo = {
     pid: number,
@@ -2332,7 +2403,13 @@ export type GetWindowStateInput = {
     screenshotOutFile?: string,
     maxElements?: number,
     maxDepth?: number,
-    maxDimension?: number
+    maxDimension?: number,
+    /**
+     * Wall-clock budget for the accessibility walk in milliseconds
+     * (default 1000). A walk that runs out returns a partial tree flagged
+     * `truncated` rather than failing.
+     */
+    timeoutMs?: number
 }
 
 /**
@@ -2365,7 +2442,8 @@ const FfiConverterTypeGetWindowStateInput = (() => {
                 screenshotOutFile: FfiConverterOptionalString.read(from),
                 maxElements: FfiConverterOptionalUInt32.read(from),
                 maxDepth: FfiConverterOptionalUInt32.read(from),
-                maxDimension: FfiConverterOptionalUInt32.read(from)
+                maxDimension: FfiConverterOptionalUInt32.read(from),
+                timeoutMs: FfiConverterOptionalUInt32.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -2379,6 +2457,7 @@ const FfiConverterTypeGetWindowStateInput = (() => {
             FfiConverterOptionalUInt32.write(value.maxElements, into);
             FfiConverterOptionalUInt32.write(value.maxDepth, into);
             FfiConverterOptionalUInt32.write(value.maxDimension, into);
+            FfiConverterOptionalUInt32.write(value.timeoutMs, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterUInt32.allocationSize(value.pid) +
@@ -2390,7 +2469,8 @@ const FfiConverterTypeGetWindowStateInput = (() => {
              FfiConverterOptionalString.allocationSize(value.screenshotOutFile) +
              FfiConverterOptionalUInt32.allocationSize(value.maxElements) +
              FfiConverterOptionalUInt32.allocationSize(value.maxDepth) +
-             FfiConverterOptionalUInt32.allocationSize(value.maxDimension);
+             FfiConverterOptionalUInt32.allocationSize(value.maxDimension) +
+             FfiConverterOptionalUInt32.allocationSize(value.timeoutMs);
 
         }
     };
@@ -4678,6 +4758,9 @@ const FfiConverterTypePlatform = (() => {
 // FfiConverter for number | undefined
 const FfiConverterOptionalUInt32 = new FfiConverterOptional(FfiConverterUInt32);
 
+// FfiConverter for string | undefined
+const FfiConverterOptionalString = new FfiConverterOptional(FfiConverterString);
+
 // FfiConverter for ActionDelivery | undefined
 const FfiConverterOptionalTypeActionDelivery = new FfiConverterOptional(FfiConverterTypeActionDelivery);
 
@@ -4690,8 +4773,8 @@ const FfiConverterOptionalSequenceTypeActionEvidence = new FfiConverterOptional(
 // FfiConverter for ActionEscalation | undefined
 const FfiConverterOptionalTypeActionEscalation = new FfiConverterOptional(FfiConverterTypeActionEscalation);
 
-// FfiConverter for string | undefined
-const FfiConverterOptionalString = new FfiConverterOptional(FfiConverterString);
+// FfiConverter for ActionError | undefined
+const FfiConverterOptionalTypeActionError = new FfiConverterOptional(FfiConverterTypeActionError);
 
 // FfiConverter for number | undefined
 const FfiConverterOptionalFloat64 = new FfiConverterOptional(FfiConverterFloat64);
@@ -4814,6 +4897,7 @@ export default Object.freeze({
     FfiConverterTypeActionDelivery,
     FfiConverterTypeActionDeliveryMode,
     FfiConverterTypeActionEffect,
+    FfiConverterTypeActionError,
     FfiConverterTypeActionEscalation,
     FfiConverterTypeActionEscalationReason,
     FfiConverterTypeActionEscalationTarget,

@@ -14,7 +14,17 @@
 /// Shared `delivery_mode` contract (background|foreground) — mirrors macOS
 /// `tools::DeliveryMode` and Windows `input::delivery`.
 pub mod delivery;
+pub mod focus_guard;
+pub mod foreground;
+mod mpx_keyboard;
 mod mpx_owner;
+
+pub use focus_guard::{FocusGuardReport, FocusSnapshot, SameAppWindow};
+pub use foreground::{with_x11_foreground_opts, FocusAfter, ForegroundOptions, ForegroundReport};
+pub use mpx_keyboard::{
+    real_keyboard_input_available, send_virtual_keyboard_key, send_virtual_keyboard_text,
+    KeyboardDeliveryReport, MPX_UINPUT_PATH,
+};
 
 use anyhow::{anyhow, bail, Context, Result};
 use evdev::uinput::VirtualDevice;
@@ -116,32 +126,95 @@ fn point_on_path(path: &[(i32, i32)], cum: &[f64], total: f64, t: f64) -> (i32, 
     (x.round() as i32, y.round() as i32)
 }
 
+/// One session's XI2 master pair (XIAddMaster always creates a pointer AND a
+/// keyboard) plus the uinput slaves attached to it. The keyboard slave is
+/// created lazily by `mpx_keyboard::ensure_master_keyboard`, so a pointer-only
+/// click never pays for a second device hotplug.
 #[derive(Clone, Copy, Debug)]
 struct MasterPointerIds {
     pointer_id: i32,
-    _keyboard_id: i32,
+    keyboard_id: i32,
     _slave_pointer_id: i32,
+    slave_keyboard_id: Option<i32>,
 }
 
 static MPX_POINTERS: OnceLock<Mutex<HashMap<String, MasterPointerIds>>> = OnceLock::new();
 static UINPUT_POINTERS: OnceLock<Mutex<HashMap<String, Arc<Mutex<VirtualDevice>>>>> =
     OnceLock::new();
 static XLIB_THREADS_READY: OnceLock<Result<(), String>> = OnceLock::new();
+/// Serialises every MPX operation against the idle reaper (and each other),
+/// so a retained master pair is never torn down while a call is using it.
+static MPX_OP_LOCK: Mutex<()> = Mutex::new(());
+static MPX_LAST_USE: OnceLock<Mutex<HashMap<String, std::time::Instant>>> = OnceLock::new();
+static MPX_IDLE_REAPER: std::sync::Once = std::sync::Once::new();
+/// A session's retained master pair is removed after this much inactivity;
+/// `end_session` and the startup reaper cover the explicit and crash cases.
+const MPX_IDLE_TTL: Duration = Duration::from_secs(180);
+const MPX_IDLE_REAPER_PERIOD: Duration = Duration::from_secs(30);
 static MPX_NAME_COUNTER: AtomicU64 = AtomicU64::new(1);
 // evdev 0.12.2 asserts `name.len() + 1 < UINPUT_MAX_NAME_SIZE` while building
 // a device. Linux defines UINPUT_MAX_NAME_SIZE as 80, leaving 78 usable bytes.
 const EVDEV_UINPUT_NAME_MAX_BYTES: usize = 78;
 const UINPUT_POINTER_SUFFIX: &str = " uinput pointer";
 pub const UINPUT_UNAVAILABLE_CODE: &str = "uinput_unavailable";
+/// Result `path` for pointer actions delivered as real button events from the
+/// session's MPX virtual master pointer.
+pub const MPX_POINTER_PATH: &str = "mpx_pointer";
 
 #[derive(Debug, thiserror::Error)]
-#[error("Linux uinput pointer unavailable: {reason}")]
+#[error("Linux uinput device unavailable: {reason}")]
 struct UinputUnavailable {
     reason: String,
 }
 
 fn mpx_pointers() -> &'static Mutex<HashMap<String, MasterPointerIds>> {
     MPX_POINTERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn mpx_last_use() -> &'static Mutex<HashMap<String, std::time::Instant>> {
+    MPX_LAST_USE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Take the MPX operation lock for one call on `cursor_id`, stamp its last
+/// use, and make sure the idle reaper is running. Hold the guard for the
+/// whole operation.
+fn mpx_op_guard(cursor_id: &str) -> std::sync::MutexGuard<'static, ()> {
+    let guard = MPX_OP_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    mpx_last_use()
+        .lock()
+        .unwrap()
+        .insert(cursor_id.to_owned(), std::time::Instant::now());
+    MPX_IDLE_REAPER.call_once(|| {
+        std::thread::Builder::new()
+            .name("cua-mpx-idle-reaper".into())
+            .spawn(|| loop {
+                sleep(MPX_IDLE_REAPER_PERIOD);
+                let _op = MPX_OP_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                let stale = {
+                    let last_use = mpx_last_use().lock().unwrap();
+                    stale_cursor_ids(&last_use, std::time::Instant::now(), MPX_IDLE_TTL)
+                };
+                for cursor_id in stale {
+                    tracing::info!(cursor_id, "removing idle MPX master pair");
+                    forget_master_pointer(&cursor_id);
+                }
+            })
+            .ok();
+    });
+    guard
+}
+
+/// Sessions whose last MPX use is older than `ttl`.
+fn stale_cursor_ids(
+    last_use: &HashMap<String, std::time::Instant>,
+    now: std::time::Instant,
+    ttl: Duration,
+) -> Vec<String> {
+    last_use
+        .iter()
+        .filter(|(_, at)| now.saturating_duration_since(**at) >= ttl)
+        .map(|(id, _)| id.clone())
+        .collect()
 }
 
 fn uinput_pointers() -> &'static Mutex<HashMap<String, Arc<Mutex<VirtualDevice>>>> {
@@ -469,7 +542,7 @@ fn kde_x11_uinput_hotplug_is_unsafe_from_env() -> bool {
     )
 }
 
-fn uinput_accessible() -> bool {
+pub(crate) fn uinput_accessible() -> bool {
     fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -586,15 +659,31 @@ fn ensure_master_pointer_for_session(
     let keyboard_id = keyboard_id
         .ok_or_else(|| anyhow!("failed to locate created master keyboard for '{cursor_id}'"))?;
 
-    let slave_pointer_id = wait_for_slave_pointer_id(display, &device_name)?;
+    let slave_pointer_id = match wait_for_slave_id(
+        display,
+        &device_name,
+        x11::xinput2::XISlavePointer,
+        Duration::from_secs(5),
+    ) {
+        Ok(id) => id,
+        Err(error) => {
+            // Never leave the fresh master pair behind when the slave never
+            // hotplugs (no udev/libinput on this server): a stray master with
+            // nothing attached is exactly the leak the startup reaper exists for.
+            let _ = remove_master_pointer(display, pointer_id);
+            unsafe { x11::xlib::XCloseDisplay(display) };
+            return Err(error);
+        }
+    };
     attach_slave_to_master(display, slave_pointer_id, pointer_id)?;
     set_flat_pointer_accel(display, slave_pointer_id);
     unsafe { x11::xlib::XCloseDisplay(display) };
 
     let ids = MasterPointerIds {
         pointer_id,
-        _keyboard_id: keyboard_id,
+        keyboard_id,
         _slave_pointer_id: slave_pointer_id,
+        slave_keyboard_id: None,
     };
     mpx_pointers()
         .lock()
@@ -608,7 +697,12 @@ fn ensure_master_pointer_for_session(
 }
 
 pub fn forget_master_pointer(cursor_id: &str) {
+    mpx_last_use().lock().unwrap().remove(cursor_id);
+    // Drop the uinput slaves first: closing the fds unplugs them, so the master
+    // removal below never has to hand a live slave back to the user's core
+    // devices (XIAttachToMaster only re-homes slaves that still exist).
     uinput_pointers().lock().unwrap().remove(cursor_id);
+    mpx_keyboard::forget_uinput_keyboard(cursor_id);
     let Some(ids) = mpx_pointers().lock().unwrap().remove(cursor_id) else {
         return;
     };
@@ -674,7 +768,10 @@ pub(crate) fn reap_orphaned_master_pointers() {
     unsafe {
         x11::xlib::XGrabServer(display);
     }
-    let result = (|| -> Result<()> {
+    // A panic while the server is grabbed would freeze every other X client
+    // (the whole desktop) until this process dies. Catch it so the ungrab
+    // below always runs, and report it like any other incomplete recovery.
+    let result = catch_unwind(AssertUnwindSafe(|| -> Result<()> {
         for (id, use_, name) in xi2_query_devices(display)? {
             if use_ != x11::xinput2::XIMasterPointer {
                 continue;
@@ -688,14 +785,19 @@ pub(crate) fn reap_orphaned_master_pointers() {
             }
         }
         Ok(())
-    })();
+    }));
     unsafe {
         x11::xlib::XUngrabServer(display);
         x11::xlib::XSync(display, 0);
         x11::xlib::XCloseDisplay(display);
     }
-    if let Err(error) = result {
-        tracing::warn!("MPX orphan recovery incomplete: {error}");
+    match result {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => tracing::warn!("MPX orphan recovery incomplete: {error}"),
+        Err(payload) => tracing::warn!(
+            "MPX orphan recovery panicked (server grab released): {}",
+            panic_payload_message(payload.as_ref())
+        ),
     }
 }
 
@@ -724,16 +826,25 @@ fn create_uinput_pointer(name: &str) -> Result<VirtualDevice> {
     })
 }
 
-fn wait_for_slave_pointer_id(display: *mut x11::xlib::Display, device_name: &str) -> Result<i32> {
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+/// Poll `XIQueryDevice` until the X server has hot-added the uinput device
+/// named `device_name` as a slave of kind `use_` (`XISlavePointer` /
+/// `XISlaveKeyboard`). udev + xf86-input-libinput do the hotplug on a real
+/// Xorg; Xvfb/Xtigervnc never will, which is what the timeout covers.
+fn wait_for_slave_id(
+    display: *mut x11::xlib::Display,
+    device_name: &str,
+    use_: i32,
+    timeout: Duration,
+) -> Result<i32> {
+    let deadline = std::time::Instant::now() + timeout;
     loop {
-        for (device_id, use_, seen_name) in xi2_query_devices(display)? {
-            if use_ == x11::xinput2::XISlavePointer && seen_name == device_name {
+        for (device_id, seen_use, seen_name) in xi2_query_devices(display)? {
+            if seen_use == use_ && seen_name == device_name {
                 return Ok(device_id);
             }
         }
         if std::time::Instant::now() >= deadline {
-            bail!("timed out waiting for X input slave pointer '{device_name}'");
+            bail!("timed out waiting for X input slave device '{device_name}'");
         }
         sleep(Duration::from_millis(50));
     }
@@ -847,10 +958,79 @@ fn warp_master_pointer(
     Ok(())
 }
 
-/// XIAnyModifier (1u32 << 31). The x11 crate doesn't export it.
-const XI_ANY_MODIFIER: std::os::raw::c_int = 0x8000_0000u32 as std::os::raw::c_int;
+/// True when `window` is override-redirect — a menu, tooltip, or other popup
+/// the WM does not manage. Such a window takes its own active pointer grab, so
+/// the shield-grab-and-replay dance cannot deliver into it; a plain warp+press
+/// on the virtual master is what reaches it (and there is no WM focus to steal).
+fn is_override_redirect(display: *mut x11::xlib::Display, window: x11::xlib::Window) -> bool {
+    let mut attrs: x11::xlib::XWindowAttributes = unsafe { std::mem::zeroed() };
+    let previous_handler = unsafe { x11::xlib::XSetErrorHandler(Some(ignore_x_error)) };
+    let rc = unsafe { x11::xlib::XGetWindowAttributes(display, window, &mut attrs) };
+    unsafe { x11::xlib::XSetErrorHandler(previous_handler) };
+    rc != 0 && attrs.override_redirect != 0
+}
 
-fn xi_mask_len() -> usize {
+/// Direct child of the root window under screen point `(x, y)`: the WM frame
+/// of a managed toplevel, or an override-redirect popup (menu, tooltip).
+fn root_child_under_point(
+    display: *mut x11::xlib::Display,
+    x: i32,
+    y: i32,
+) -> Option<x11::xlib::Window> {
+    let root = unsafe { x11::xlib::XDefaultRootWindow(display) };
+    let mut child: x11::xlib::Window = 0;
+    let mut dx = 0;
+    let mut dy = 0;
+    let rc = unsafe {
+        x11::xlib::XTranslateCoordinates(display, root, root, x, y, &mut dx, &mut dy, &mut child)
+    };
+    (rc != 0 && child != 0).then_some(child)
+}
+
+/// The root child (WM frame or the window itself) that contains `window`.
+fn root_child_of(
+    display: *mut x11::xlib::Display,
+    window: x11::xlib::Window,
+) -> Option<x11::xlib::Window> {
+    let root = unsafe { x11::xlib::XDefaultRootWindow(display) };
+    let previous_handler = unsafe { x11::xlib::XSetErrorHandler(Some(ignore_x_error)) };
+    let mut current = window;
+    let mut result = None;
+    for _ in 0..64 {
+        let mut root_ret: x11::xlib::Window = 0;
+        let mut parent: x11::xlib::Window = 0;
+        let mut children: *mut x11::xlib::Window = ptr::null_mut();
+        let mut count: std::os::raw::c_uint = 0;
+        let rc = unsafe {
+            x11::xlib::XQueryTree(
+                display,
+                current,
+                &mut root_ret,
+                &mut parent,
+                &mut children,
+                &mut count,
+            )
+        };
+        if !children.is_null() {
+            unsafe { x11::xlib::XFree(children as *mut _) };
+        }
+        if rc == 0 || parent == 0 {
+            break;
+        }
+        if parent == root {
+            result = Some(current);
+            break;
+        }
+        current = parent;
+    }
+    unsafe {
+        x11::xlib::XSync(display, 0);
+        x11::xlib::XSetErrorHandler(previous_handler);
+    }
+    result
+}
+
+pub(super) fn xi_mask_len() -> usize {
     (x11::xinput2::XI_LASTEVENT as usize >> 3) + 1
 }
 
@@ -874,125 +1054,127 @@ fn xinput_opcode(display: *mut x11::xlib::Display) -> Option<std::os::raw::c_int
     }
 }
 
-/// Install a device-specific XI2 synchronous passive button grab on `window`
-/// for `device_id`. This shields the drag: the grab is newer than (and thus
-/// checked before) the window manager's click-to-focus grab on the same
-/// window, and being device-specific it does not conflict with the WM's
-/// core/all-master grabs. The matching press freezes the device and is
-/// delivered to us; replaying it (XIReplayDevice) re-checks grabs only
-/// *below* this window and then delivers the event normally to the app, so
-/// the WM never sees the press and never steals focus.
-fn install_shield_grab(
+/// Modifier evdev codes the virtual keyboard may hold mid-chord.
+const MODIFIER_EVDEV_CODES: [u16; 8] = [42, 54, 29, 97, 56, 100, 125, 126];
+
+/// Buttons (1..=3) currently held on the master pointer `pointer_id`, plus the
+/// paired master keyboard's modifier state, via `XIQueryPointer`.
+fn virtual_master_input_state(
     display: *mut x11::xlib::Display,
-    device_id: i32,
-    window: x11::xlib::Window,
-    button: u8,
-) -> Result<()> {
-    let mut mask_bits = vec![0u8; xi_mask_len()];
-    x11::xinput2::XISetMask(&mut mask_bits, x11::xinput2::XI_ButtonPress);
-    let mut evmask = x11::xinput2::XIEventMask {
-        deviceid: device_id,
-        mask_len: mask_bits.len() as std::os::raw::c_int,
-        mask: mask_bits.as_mut_ptr(),
-    };
-    let mut mods = x11::xinput2::XIGrabModifiers {
-        modifiers: XI_ANY_MODIFIER,
-        status: 0,
-    };
+    pointer_id: i32,
+) -> (Vec<u8>, x11::xinput2::XIModifierState) {
+    let root = unsafe { x11::xlib::XDefaultRootWindow(display) };
+    let mut root_ret = 0;
+    let mut child_ret = 0;
+    let (mut rx, mut ry, mut wx, mut wy) = (0f64, 0f64, 0f64, 0f64);
+    let mut buttons = x11::xinput2::XIButtonState::default();
+    let mut mods = x11::xinput2::XIModifierState::default();
+    let mut group = x11::xinput2::XIModifierState::default();
+    let prev = unsafe { x11::xlib::XSetErrorHandler(Some(ignore_x_error)) };
     let rc = unsafe {
-        x11::xinput2::XIGrabButton(
+        x11::xinput2::XIQueryPointer(
             display,
-            device_id,
-            button as std::os::raw::c_int,
-            window,
-            0,                             // cursor: None
-            x11::xinput2::XIGrabModeSync,  // freeze the pointer on press
-            x11::xinput2::XIGrabModeAsync, // leave the paired keyboard alone
-            x11::xlib::False,              // owner_events: deliver to us
-            &mut evmask,
-            1,
+            pointer_id,
+            root,
+            &mut root_ret,
+            &mut child_ret,
+            &mut rx,
+            &mut ry,
+            &mut wx,
+            &mut wy,
+            &mut buttons,
             &mut mods,
+            &mut group,
         )
     };
-    unsafe { x11::xlib::XSync(display, 0) };
-    if rc != 0 {
-        bail!("XIGrabButton(shield) failed with status {rc}");
+    unsafe { x11::xlib::XSetErrorHandler(prev) };
+    let mut held = Vec::new();
+    if rc != 0 && !buttons.mask.is_null() && buttons.mask_len > 0 {
+        let mask = unsafe { std::slice::from_raw_parts(buttons.mask, buttons.mask_len as usize) };
+        for button in 1u8..=3 {
+            let byte = (button / 8) as usize;
+            if mask.get(byte).is_some_and(|b| b & (1 << (button % 8)) != 0) {
+                held.push(button);
+            }
+        }
+        unsafe { x11::xlib::XFree(buttons.mask as *mut _) };
     }
-    Ok(())
+    (held, mods)
 }
 
-fn remove_shield_grab(
+/// Release anything the session's virtual master still holds from an earlier
+/// aborted action: pointer buttons (a shield replay that timed out returned
+/// before the release) and keyboard modifiers (a chord interrupted mid-way).
+///
+/// A held button is not cosmetic: every key event from the paired virtual
+/// keyboard then carries `Button1Mask` (bit 8) in its core `state`, which
+/// at-spi2 forwards verbatim and Orca reads as its `ORCA_MODIFIER_MASK`
+/// (`1 << 8`) — a plain space becomes "Orca+space" and opens the Screen
+/// Reader Preferences. Returns what was released, for the tool's report.
+fn release_stuck_virtual_input(
+    cursor_id: &str,
     display: *mut x11::xlib::Display,
-    device_id: i32,
-    window: x11::xlib::Window,
-    button: u8,
-) {
-    let mut mods = x11::xinput2::XIGrabModifiers {
-        modifiers: XI_ANY_MODIFIER,
-        status: 0,
-    };
-    unsafe {
-        let prev = x11::xlib::XSetErrorHandler(Some(ignore_x_error));
-        x11::xinput2::XIUngrabButton(
-            display,
-            device_id,
-            button as std::os::raw::c_int,
-            window,
-            1,
-            &mut mods,
-        );
-        x11::xlib::XSync(display, 0);
-        x11::xlib::XSetErrorHandler(prev);
-    }
-}
-
-/// Drain the frozen shield presses for `pending_devices` and replay each so
-/// it continues to the application. Returns the set of device ids we failed
-/// to see within the timeout (their drags still proceed; the focus-restore
-/// safety net covers any leak).
-fn replay_shielded_presses(
-    display: *mut x11::xlib::Display,
-    xi_opcode: std::os::raw::c_int,
-    pending_devices: &mut std::collections::HashSet<i32>,
-    timeout: Duration,
-) {
-    let deadline = std::time::Instant::now() + timeout;
-    while !pending_devices.is_empty() && std::time::Instant::now() < deadline {
-        // Only block on XNextEvent when something is queued, so a missing
-        // press can't hang us past the deadline.
-        if unsafe { x11::xlib::XPending(display) } == 0 {
-            sleep(Duration::from_millis(2));
-            continue;
-        }
-        let mut ev: x11::xlib::XEvent = unsafe { std::mem::zeroed() };
-        unsafe { x11::xlib::XNextEvent(display, &mut ev) };
-        if unsafe { ev.type_ } != x11::xlib::GenericEvent {
-            continue;
-        }
-        let mut cookie = unsafe { ev.generic_event_cookie };
-        if cookie.extension != xi_opcode || cookie.evtype != x11::xinput2::XI_ButtonPress {
-            continue;
-        }
-        if unsafe { x11::xlib::XGetEventData(display, &mut cookie) } == 0 {
-            continue;
-        }
-        let de = cookie.data as *const x11::xinput2::XIDeviceEvent;
-        if !de.is_null() {
-            let device_id = unsafe { (*de).deviceid };
-            let time = unsafe { (*de).time };
-            if pending_devices.remove(&device_id) {
-                unsafe {
-                    x11::xinput2::XIAllowEvents(
-                        display,
-                        device_id,
-                        x11::xinput2::XIReplayDevice,
-                        time,
-                    );
-                    x11::xlib::XSync(display, 0);
+    ids: MasterPointerIds,
+    keyboard: &Mutex<VirtualDevice>,
+) -> Vec<String> {
+    let mut released = Vec::new();
+    let (held, mods) = virtual_master_input_state(display, ids.pointer_id);
+    if !held.is_empty() {
+        if let Some(pointer) = uinput_pointers().lock().unwrap().get(cursor_id).cloned() {
+            let mut pointer = pointer.lock().unwrap();
+            for &button in &held {
+                if emit_button(&mut pointer, button, false).is_ok() {
+                    released.push(format!("button{button}"));
                 }
             }
         }
-        unsafe { x11::xlib::XFreeEventData(display, &mut cookie) };
+    }
+    if mods.base != 0 {
+        let mut keyboard = keyboard.lock().unwrap();
+        let mut any = false;
+        for code in MODIFIER_EVDEV_CODES {
+            any |= keyboard
+                .emit(&[InputEvent::new(EventType::KEY, code, 0)])
+                .is_ok();
+        }
+        if any {
+            released.push(format!("modifiers(base=0x{:x})", mods.base));
+        }
+    }
+    if mods.locked != 0 || mods.latched != 0 {
+        // A locked/latched modifier on the virtual master (CapsLock leaked
+        // from an interrupted chord) would shift every later character.
+        unsafe {
+            let prev = x11::xlib::XSetErrorHandler(Some(ignore_x_error));
+            x11::xlib::XkbLockModifiers(display, ids.keyboard_id as u32, 0xff, 0);
+            x11::xlib::XkbLatchModifiers(display, ids.keyboard_id as u32, 0xff, 0);
+            x11::xlib::XSetErrorHandler(prev);
+        }
+        released.push(format!(
+            "locked/latched modifiers (0x{:x}/0x{:x})",
+            mods.locked, mods.latched
+        ));
+    }
+    if !released.is_empty() {
+        unsafe { x11::xlib::XSync(display, 0) };
+        tracing::warn!(cursor_id, ?released, "released stuck virtual input state");
+        sleep(Duration::from_millis(20));
+    }
+    released
+}
+
+/// Release a device frozen by a synchronous grab; harmless when not frozen.
+fn thaw_device(display: *mut x11::xlib::Display, device_id: i32) {
+    unsafe {
+        let prev = x11::xlib::XSetErrorHandler(Some(ignore_x_error));
+        x11::xinput2::XIAllowEvents(
+            display,
+            device_id,
+            x11::xinput2::XIAsyncDevice,
+            x11::xlib::CurrentTime,
+        );
+        x11::xlib::XSync(display, 0);
+        x11::xlib::XSetErrorHandler(prev);
     }
 }
 
@@ -1101,144 +1283,19 @@ fn ewmh_activate_window(
     }
 }
 
-/// Foreground rung for X11 (`delivery_mode:"foreground"`): briefly activate
-/// `xid` via EWMH `_NET_ACTIVE_WINDOW`, run `body` (which injects the input
-/// while the window holds focus), then restore the prior active window. The
-/// Linux analogue of macOS `with_foreground_assist` / the Windows foreground
-/// swap, reusing the existing [`ewmh_active_window`] / [`ewmh_activate_window`]
-/// primitives (proper `x_server_time` stamping beats the WM's focus-stealing
-/// prevention).
-///
-/// The transition is confirmed from both EWMH active-window state and the X11
-/// core input-focus tree before `body` runs. A fixed delay or a successful
-/// `XSetInputFocus` return is not evidence that global XTest input is safe.
-/// `settle_ms` is retained as a compatibility hint and folded into the bounded
-/// confirmation timeout; it is no longer an unconditional sleep.
+/// Foreground rung for X11 (`delivery_mode:"foreground"`): activate `xid`
+/// (EWMH `_NET_ACTIVE_WINDOW` + core input focus), confirm the transition
+/// against both the WM's active window and the X input-focus tree, then run
+/// `body` (which injects the input while the window holds focus). The target
+/// is left active afterwards; see [`foreground`] for the rationale and the
+/// deadline/watchdog behaviour. `settle_ms` is a minimum confirmation budget.
 pub fn with_x11_foreground<T>(
     xid: u64,
     settle_ms: u64,
     body: impl FnOnce() -> Result<T>,
 ) -> Result<T> {
-    let display = unsafe { x11::xlib::XOpenDisplay(ptr::null()) };
-    if display.is_null() {
-        bail!("foreground_unavailable: cannot open DISPLAY to verify exact X11 input focus");
-    }
-    let prior = ewmh_active_window(display);
-    let mut prior_core_focus: x11::xlib::Window = 0;
-    let mut prior_revert = 0;
-    unsafe {
-        x11::xlib::XGetInputFocus(display, &mut prior_core_focus, &mut prior_revert);
-    }
-    ewmh_activate_window(display, xid as x11::xlib::Window, prior.unwrap_or(0));
-    unsafe {
-        x11::xlib::XSync(display, 0);
-    }
-    // EWMH `_NET_ACTIVE_WINDOW` is honored as *raise-only* by WMs with
-    // focus-stealing prevention (e.g. KWin): the window reaches the top of the
-    // stack — enough for a coordinate click, which lands by stacking — but the X
-    // *input focus* never transfers, so XTest key events (which the server routes
-    // to the focused window) go to whatever was focused before. Set the input
-    // focus explicitly too, exactly as `xdotool windowactivate` does, so the
-    // foreground key/hotkey rung actually reaches the target. Guarded against
-    // BadMatch on a not-yet-viewable window — Xlib's default handler would exit
-    // the process — reusing the scoped `ignore_x_error` pattern used elsewhere.
-    unsafe {
-        let prev_handler = x11::xlib::XSetErrorHandler(Some(ignore_x_error));
-        x11::xlib::XSetInputFocus(
-            display,
-            xid as x11::xlib::Window,
-            x11::xlib::RevertToParent,
-            x11::xlib::CurrentTime,
-        );
-        x11::xlib::XSync(display, 0);
-        x11::xlib::XSetErrorHandler(prev_handler);
-    }
-    let timeout = std::time::Duration::from_millis(settle_ms.max(400));
-    let deadline = std::time::Instant::now() + timeout;
-    let target = xid as x11::xlib::Window;
-    let focused = loop {
-        let active = ewmh_active_window(display) == Some(target);
-        if active && x11_focus_is_within(display, target) {
-            break true;
-        }
-        if std::time::Instant::now() >= deadline {
-            break false;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    };
-    let result = if focused {
-        body()
-    } else {
-        let active = ewmh_active_window(display).unwrap_or(0);
-        Err(anyhow::anyhow!(
-            "foreground_unavailable: X11 did not confirm active window and input focus within \
-             exact target 0x{xid:x} before the {:?} deadline (active=0x{active:x}); no input was sent",
-            timeout
-        ))
-    };
-
-    // Restore both the EWMH active toplevel and the exact prior core focus.
-    if let Some(p) = prior {
-        ewmh_activate_window(display, p, xid as x11::xlib::Window);
-    }
-    if prior_core_focus != 0 {
-        unsafe {
-            let previous_handler = x11::xlib::XSetErrorHandler(Some(ignore_x_error));
-            x11::xlib::XSetInputFocus(
-                display,
-                prior_core_focus,
-                prior_revert,
-                x11::xlib::CurrentTime,
-            );
-            x11::xlib::XSync(display, 0);
-            x11::xlib::XSetErrorHandler(previous_handler);
-        }
-    }
-    unsafe {
-        x11::xlib::XCloseDisplay(display);
-    }
-    result
-}
-
-fn x11_focus_is_within(display: *mut x11::xlib::Display, target: x11::xlib::Window) -> bool {
-    let mut focused: x11::xlib::Window = 0;
-    let mut revert_to = 0;
-    unsafe {
-        x11::xlib::XGetInputFocus(display, &mut focused, &mut revert_to);
-    }
-    if focused == target {
-        return true;
-    }
-    let root = unsafe { x11::xlib::XDefaultRootWindow(display) };
-    while focused != 0 && focused != root {
-        let mut query_root = 0;
-        let mut parent = 0;
-        let mut children: *mut x11::xlib::Window = ptr::null_mut();
-        let mut child_count = 0;
-        let status = unsafe {
-            x11::xlib::XQueryTree(
-                display,
-                focused,
-                &mut query_root,
-                &mut parent,
-                &mut children,
-                &mut child_count,
-            )
-        };
-        if !children.is_null() {
-            unsafe {
-                x11::xlib::XFree(children.cast());
-            }
-        }
-        if status == 0 || parent == 0 || parent == focused {
-            return false;
-        }
-        if parent == target {
-            return true;
-        }
-        focused = parent;
-    }
-    false
+    with_x11_foreground_opts(xid, ForegroundOptions::from_settle_hint(settle_ms), body)
+        .map(|(value, _report)| value)
 }
 
 /// Activate `xid` and LEAVE it active (no restore) — the persistent foreground
@@ -1246,6 +1303,16 @@ fn x11_focus_is_within(display: *mut x11::xlib::Display, target: x11::xlib::Wind
 /// the caller can report/inspect it. Best-effort; returns `None` prior on a
 /// headless display.
 pub fn x11_activate_window_persistent(xid: u64) -> Result<Option<u64>> {
+    // Called directly from the tool layer (bring_to_front / foreground
+    // activation), not through `send_virtual_pointer_*`/`deliver`, so without
+    // this guard its `XSetErrorHandler` swap below can race theirs: whichever
+    // thread restores its saved "previous" handler last can clobber the
+    // other's still-in-flight `ignore_x_error` installation, briefly leaving
+    // the process default handler active (which can abort the process on an
+    // unrelated async X11 error) — or vice versa. `MPX_OP_LOCK` is a leaf
+    // lock here (this function calls nothing that itself takes it), so no
+    // reentrancy risk.
+    let _op = mpx_op_guard("x11_activate_window_persistent");
     let display = unsafe { x11::xlib::XOpenDisplay(ptr::null()) };
     if display.is_null() {
         bail!(
@@ -1297,6 +1364,17 @@ fn emit_button(device: &mut VirtualDevice, button: u8, press: bool) -> Result<()
     Ok(())
 }
 
+/// Emit a release for `button` regardless of state; the kernel drops a
+/// release for a button that is not held, so this is safe to call on every
+/// exit path of a press train or gesture.
+fn release_button_best_effort(device: &Arc<Mutex<VirtualDevice>>, button: u8) {
+    if let Ok(mut device) = device.lock() {
+        if let Err(error) = emit_button(&mut device, button, false) {
+            tracing::warn!("virtual pointer button {button} release failed: {error:#}");
+        }
+    }
+}
+
 fn emit_relative_motion(device: &mut VirtualDevice, dx: i32, dy: i32) -> Result<()> {
     let mut events = Vec::with_capacity(2);
     if dx != 0 {
@@ -1334,9 +1412,15 @@ fn emit_scroll(device: &mut VirtualDevice, horizontal: bool, value: i32) -> Resu
 }
 
 pub fn send_parallel_virtual_pointer_drags(drags: &[(String, VirtualPointerDrag)]) -> Result<()> {
+    let _op = mpx_op_guard(drags.first().map(|(id, _)| id.as_str()).unwrap_or("default"));
+    {
+        let mut last_use = mpx_last_use().lock().unwrap();
+        for (cursor_id, _) in drags {
+            last_use.insert(cursor_id.clone(), std::time::Instant::now());
+        }
+    }
     let display = open_display()?;
     supports_parallel_pointer_injection(display)?;
-    let xi_opcode = xinput_opcode(display);
 
     struct ActiveDrag {
         cursor_id: String,
@@ -1356,10 +1440,10 @@ pub fn send_parallel_virtual_pointer_drags(drags: &[(String, VirtualPointerDrag)
     let start_at = std::time::Instant::now() + Duration::from_millis(120);
     let mut active = Vec::with_capacity(drags.len());
 
-    // Click-to-focus WMs grab buttons for XIAllMasterDevices, so the drag's
-    // press activates the target window exactly like a user click would.
-    // Remember the focus state and hand it back afterwards so parallel
-    // drags don't steal it.
+    // A click-to-focus WM that grabs buttons for every master device would
+    // activate the target on the press. Remember the focus state and hand it
+    // back afterwards so parallel drags don't steal it (mutter grabs for the
+    // Virtual Core Pointer only, so there the restore is a no-op).
     let saved_focus = save_focus_state(display);
 
     let result = (|| -> Result<()> {
@@ -1398,44 +1482,28 @@ pub fn send_parallel_virtual_pointer_drags(drags: &[(String, VirtualPointerDrag)
             std::thread::sleep(start_at - now);
         }
 
-        // Shield each drag from the WM's click-to-focus grab, then press.
-        // Per item: install a device-specific sync grab on the target window,
-        // warp, press, and immediately replay the frozen press so it reaches
-        // the app while the WM stays blind to it. We replay each press before
-        // emitting the next so only ONE device is ever frozen at a time — the
-        // X server drops replayed presses when several devices are frozen on
-        // the same window and replayed together. The few-ms stagger this adds
-        // to the presses is invisible; the concurrency that matters is motion.
-        // Shielding is mandatory: if install/replay fails, abort instead of
-        // continuing with a drag that could steal focus and rely on restore.
-        let mut shielded = std::collections::HashSet::new();
+        // Press each drag straight from its virtual master (see
+        // `send_virtual_pointer_click` for why there is no XI2 shield grab:
+        // on this server the grab-and-replay swallowed the press). The press
+        // point must not be covered by another toplevel.
         for item in &active {
-            let opcode = xi_opcode.ok_or_else(|| {
-                anyhow!("parallel_mouse_drag requires XInput/XI2 shield grabs for no-focus-steal operation")
-            })?;
-            install_shield_grab(
-                display,
-                item.ids.pointer_id,
-                item.drag.target_window as x11::xlib::Window,
-                item.drag.button,
-            )
-            .with_context(|| format!("shield grab failed for '{}'", item.cursor_id))?;
-            shielded.insert(item.ids.pointer_id);
             let start = *item.drag.path.first().unwrap_or(&(0, 0));
+            if let PointCover::Occluded(occluded) = occluding_window(
+                display,
+                item.drag.target_window as x11::xlib::Window,
+                start.0,
+                start.1,
+            )? {
+                return Err(occluded.into());
+            }
+            thaw_device(display, item.ids.pointer_id);
             warp_master_pointer(display, item.ids, start.0, start.1)?;
             {
                 let mut device = item.device.lock().unwrap();
                 emit_button(&mut device, item.drag.button, true)?;
             }
-            let mut pending = std::collections::HashSet::from([item.ids.pointer_id]);
-            replay_shielded_presses(display, opcode, &mut pending, Duration::from_millis(1000));
-            if !pending.is_empty() {
-                return Err(anyhow!(
-                    "shield replay timed out before XI_ButtonPress arrived for '{}'",
-                    item.cursor_id
-                ));
-            }
         }
+        sleep(Duration::from_millis(40));
 
         while active.iter().any(|item| item.current_step < item.steps) {
             let now = std::time::Instant::now();
@@ -1493,28 +1561,22 @@ pub fn send_parallel_virtual_pointer_drags(drags: &[(String, VirtualPointerDrag)
             let mut device = item.device.lock().unwrap();
             emit_button(&mut device, item.drag.button, false)?;
         }
-
-        // Remove the shields now that the drag is done. The button is only
-        // grabbed for ButtonPress, so the shield is dormant during motion and
-        // release; this just stops it matching the next gesture's press.
-        for item in &active {
-            if shielded.contains(&item.ids.pointer_id) {
-                remove_shield_grab(
-                    display,
-                    item.ids.pointer_id,
-                    item.drag.target_window as x11::xlib::Window,
-                    item.drag.button,
-                );
-            }
-        }
         Ok(())
     })();
-    // Remove the per-session masters before handing focus back: non-MPX-aware
-    // WMs (xfwm4, openbox) desync their focus bookkeeping while foreign
-    // master keyboards linger, and the next call recreates masters cheaply.
-    for (cursor_id, _) in drags {
-        forget_master_pointer(cursor_id);
+    // Whatever happened above, no virtual master may keep a button held
+    // (a stuck Button1 poisons the core modifier state for later chords).
+    for (cursor_id, drag) in drags {
+        if let Some(device) = uinput_pointers().lock().unwrap().get(cursor_id).cloned() {
+            release_button_best_effort(&device, drag.button);
+        }
     }
+    // The per-session master pair is retained for reuse (torn down on
+    // end_session / idle / startup reap). Creating and destroying an XI2 master
+    // plus hot-plugging a uinput slave on every call churns the XInput
+    // hierarchy hard enough to crash fragile toolkits (LibreOffice VCL); one
+    // long-lived pair per session avoids that and is cheaper. The focus is
+    // still saved and restored around each gesture.
+    let _ = drags;
     restore_focus_state(display, &saved_focus);
     unsafe {
         x11::xlib::XCloseDisplay(display);
@@ -1524,16 +1586,22 @@ pub fn send_parallel_virtual_pointer_drags(drags: &[(String, VirtualPointerDrag)
 
 /// A discrete no-focus-steal pointer click driven through the same real-input
 /// pipeline as [`send_parallel_virtual_pointer_drags`] — MPX master pointer +
-/// uinput slave + XI2 shield grab — reduced to a press/release (or a short
-/// press/release train for `count` > 1) at one screen point.
+/// uinput slave — reduced to a press/release (or a short press/release train
+/// for `count` > 1) at one screen point.
 ///
 /// This is what lands **right / middle / double** clicks (and any left click
-/// the AT-SPI path can't actuate) on XInput2 toolkits: GTK3/4 silently drop
-/// synthetic `XSendEvent` pointer events and never see XTEST core events, so
-/// those clicks are otherwise no-ops. Coordinates are screen-absolute;
-/// `target_window` is the X11 window the shield grab is installed on so the WM
-/// never sees the press and never steals focus. `button` is an X button number
-/// (1=left, 2=middle, 3=right); `count` >= 1 (2 = double-click).
+/// the AT-SPI path can't actuate) on XInput2 toolkits: GTK3/4, VCL, Qt and
+/// Chromium silently drop synthetic `XSendEvent` pointer events, so those
+/// clicks are otherwise no-ops. Coordinates are screen-absolute;
+/// `target_window` is the X11 toplevel the caller means to hit. The press is
+/// delivered straight from the virtual master: no XI2 shield grab. On GNOME
+/// (mutter) the click-to-focus passive grab is installed for the Virtual Core
+/// Pointer only, so a second master's press never activates the window; the
+/// grab-and-replay "shield" that was meant to hide the press from the WM
+/// instead swallowed it on this server (the replayed press never reached the
+/// application) and left the device frozen. Focus is still saved and restored
+/// around the click for WMs that do grab every master device. `button` is an
+/// X button number (1=left, 2=middle, 3=right); `count` >= 1 (2 = double-click).
 #[derive(Clone, Debug)]
 pub struct VirtualPointerClick {
     pub target_window: u64,
@@ -1543,20 +1611,922 @@ pub struct VirtualPointerClick {
     pub count: usize,
 }
 
+/// The screen point the caller aimed at is covered by another toplevel, so a
+/// real pointer press there would land on the covering window, not the
+/// target. Refused before any input is sent.
+#[derive(Debug, Clone)]
+pub struct TargetOccluded {
+    pub target_window: u64,
+    pub covering_window: u64,
+    pub covering_title: String,
+    pub covering_pid: Option<u32>,
+    pub x: i32,
+    pub y: i32,
+}
+
+impl std::fmt::Display for TargetOccluded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "screen point ({}, {}) over window {} is covered by window {}{}{}; a real pointer \
+             press there would land on the covering window",
+            self.x,
+            self.y,
+            self.target_window,
+            self.covering_window,
+            if self.covering_title.is_empty() {
+                String::new()
+            } else {
+                format!(" \"{}\"", self.covering_title)
+            },
+            self.covering_pid
+                .map(|pid| format!(" (pid {pid})"))
+                .unwrap_or_default(),
+        )
+    }
+}
+impl std::error::Error for TargetOccluded {}
+
+/// A mapped override-redirect toplevel: a popup menu, popover, combo list
+/// or tooltip. The WM does not manage it, so it is absent from
+/// `list_windows`; the pointer tools name it so a caller can walk it with
+/// `get_window_state(pid, window_id=<window>)`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PopupWindow {
+    pub window: u64,
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+    pub title: String,
+    pub pid: Option<u32>,
+}
+
+impl PopupWindow {
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "window_id": self.window,
+            "bounds": { "x": self.x, "y": self.y, "width": self.width, "height": self.height },
+            "title": self.title,
+            "pid": self.pid,
+        })
+    }
+
+    /// `popup window 12345678 "Edit" (220x340 at 410,220)`.
+    pub fn describe(&self) -> String {
+        format!(
+            "popup window {}{} ({}x{} at {},{})",
+            self.window,
+            if self.title.is_empty() {
+                String::new()
+            } else {
+                format!(" \"{}\"", self.title)
+            },
+            self.width,
+            self.height,
+            self.x,
+            self.y
+        )
+    }
+}
+
+/// The caller's window-local point does not lie inside the window: a
+/// coordinate-frame mistake (screen pixels passed as window pixels, or the
+/// wrong window_id), refused before any input is sent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PointOutsideWindow {
+    pub target_window: u64,
+    pub screen_x: i32,
+    pub screen_y: i32,
+    pub window_x: i32,
+    pub window_y: i32,
+    /// Screen-space `(x, y, width, height)` of the window.
+    pub bounds: (i32, i32, u32, u32),
+}
+
+impl std::fmt::Display for PointOutsideWindow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (bx, by, bw, bh) = self.bounds;
+        write!(
+            f,
+            "window-local point ({}, {}) of window {} resolves to screen ({}, {}), outside \
+             the window's bounds (x={bx}, y={by}, {bw}x{bh}); no input was sent",
+            self.window_x, self.window_y, self.target_window, self.screen_x, self.screen_y
+        )
+    }
+}
+impl std::error::Error for PointOutsideWindow {}
+
+/// Screen-space `(x, y, width, height)` of `window`, or `None` when it is
+/// gone.
+fn window_screen_bounds(
+    display: *mut x11::xlib::Display,
+    window: x11::xlib::Window,
+) -> Option<(i32, i32, u32, u32)> {
+    let previous_handler = unsafe { x11::xlib::XSetErrorHandler(Some(ignore_x_error)) };
+    let mut root: x11::xlib::Window = 0;
+    let (mut gx, mut gy) = (0i32, 0i32);
+    let (mut width, mut height, mut border, mut depth) = (0u32, 0u32, 0u32, 0u32);
+    let rc = unsafe {
+        x11::xlib::XGetGeometry(
+            display, window, &mut root, &mut gx, &mut gy, &mut width, &mut height, &mut border,
+            &mut depth,
+        )
+    };
+    let mut result = None;
+    if rc != 0 && root != 0 {
+        let (mut dx, mut dy) = (0i32, 0i32);
+        let mut child: x11::xlib::Window = 0;
+        let ok = unsafe {
+            x11::xlib::XTranslateCoordinates(display, window, root, 0, 0, &mut dx, &mut dy, &mut child)
+        };
+        if ok != 0 {
+            result = Some((dx, dy, width, height));
+        }
+    }
+    unsafe {
+        x11::xlib::XSync(display, 0);
+        x11::xlib::XSetErrorHandler(previous_handler);
+    }
+    result
+}
+
+fn bounds_contain(bounds: (i32, i32, u32, u32), x: i32, y: i32) -> bool {
+    let (bx, by, bw, bh) = bounds;
+    x >= bx && y >= by && x < bx.saturating_add(bw as i32) && y < by.saturating_add(bh as i32)
+}
+
+/// Describe a mapped override-redirect root child as a [`PopupWindow`].
+fn popup_info(display: *mut x11::xlib::Display, child: x11::xlib::Window) -> Option<PopupWindow> {
+    let mut attrs: x11::xlib::XWindowAttributes = unsafe { std::mem::zeroed() };
+    let previous_handler = unsafe { x11::xlib::XSetErrorHandler(Some(ignore_x_error)) };
+    let rc = unsafe { x11::xlib::XGetWindowAttributes(display, child, &mut attrs) };
+    unsafe {
+        x11::xlib::XSync(display, 0);
+        x11::xlib::XSetErrorHandler(previous_handler);
+    }
+    if rc == 0 || attrs.override_redirect == 0 || attrs.map_state != x11::xlib::IsViewable {
+        return None;
+    }
+    if attrs.width <= 1 || attrs.height <= 1 {
+        return None;
+    }
+    let pid = crate::x11::window_pid(child as u64).or_else(|| {
+        window_children(display, child)
+            .into_iter()
+            .find_map(|kid| crate::x11::window_pid(kid as u64))
+    });
+    Some(PopupWindow {
+        window: child as u64,
+        x: attrs.x,
+        y: attrs.y,
+        width: attrs.width as u32,
+        height: attrs.height as u32,
+        title: window_title_for_report(display, child),
+        pid,
+    })
+}
+
+/// Every mapped override-redirect child of the root, bottom to top.
+fn mapped_popups(display: *mut x11::xlib::Display) -> Vec<PopupWindow> {
+    let root = unsafe { x11::xlib::XDefaultRootWindow(display) };
+    window_children(display, root)
+        .into_iter()
+        .filter_map(|child| popup_info(display, child))
+        .collect()
+}
+
+/// The mapped override-redirect popup (menu, popover, combo list) under the
+/// screen point, if any.
+pub fn popup_under_screen_point(x: i32, y: i32) -> Option<PopupWindow> {
+    let display = open_display().ok()?;
+    let popup = root_child_under_point(display, x, y).and_then(|child| popup_info(display, child));
+    unsafe {
+        x11::xlib::XCloseDisplay(display);
+    }
+    popup
+}
+
+/// `xid` described as a popup when it is a mapped override-redirect window.
+pub fn popup_window_info(xid: u64) -> Option<PopupWindow> {
+    let display = open_display().ok()?;
+    let popup = popup_info(display, xid as x11::xlib::Window);
+    unsafe {
+        x11::xlib::XCloseDisplay(display);
+    }
+    popup
+}
+
+/// Mapped popups on the screen right now (bottom to top), for a caller that
+/// wants "the menu that is open" without a window id.
+pub fn mapped_popup_windows() -> Vec<PopupWindow> {
+    let Ok(display) = open_display() else {
+        return Vec::new();
+    };
+    let popups = mapped_popups(display);
+    unsafe {
+        x11::xlib::XCloseDisplay(display);
+    }
+    popups
+}
+
+/// `_NET_WM_WINDOW_TYPE` says the popup is a tooltip / notification / DND
+/// icon: mapped and override-redirect, but nobody's grab.
+fn popup_is_passive(display: *mut x11::xlib::Display, window: x11::xlib::Window) -> bool {
+    let type_atom = intern_atom(display, "_NET_WM_WINDOW_TYPE");
+    let passive: Vec<x11::xlib::Atom> = [
+        "_NET_WM_WINDOW_TYPE_TOOLTIP",
+        "_NET_WM_WINDOW_TYPE_NOTIFICATION",
+        "_NET_WM_WINDOW_TYPE_DND",
+    ]
+    .iter()
+    .map(|name| intern_atom(display, name))
+    .collect();
+    let mut actual_type: x11::xlib::Atom = 0;
+    let mut actual_format: std::os::raw::c_int = 0;
+    let mut nitems: std::os::raw::c_ulong = 0;
+    let mut bytes_after: std::os::raw::c_ulong = 0;
+    let mut prop: *mut std::os::raw::c_uchar = ptr::null_mut();
+    let previous_handler = unsafe { x11::xlib::XSetErrorHandler(Some(ignore_x_error)) };
+    let rc = unsafe {
+        x11::xlib::XGetWindowProperty(
+            display,
+            window,
+            type_atom,
+            0,
+            8,
+            0,
+            x11::xlib::XA_ATOM,
+            &mut actual_type,
+            &mut actual_format,
+            &mut nitems,
+            &mut bytes_after,
+            &mut prop,
+        )
+    };
+    unsafe {
+        x11::xlib::XSync(display, 0);
+        x11::xlib::XSetErrorHandler(previous_handler);
+    }
+    let mut result = false;
+    if rc == 0 && !prop.is_null() {
+        if actual_format == 32 && nitems > 0 {
+            let atoms = unsafe {
+                std::slice::from_raw_parts(prop as *const std::os::raw::c_ulong, nitems as usize)
+            };
+            result = atoms
+                .iter()
+                .any(|atom| passive.contains(&(*atom as x11::xlib::Atom)));
+        }
+        unsafe { x11::xlib::XFree(prop as *mut _) };
+    }
+    result
+}
+
+fn intern_atom(display: *mut x11::xlib::Display, name: &str) -> x11::xlib::Atom {
+    let cname = CString::new(name).unwrap_or_default();
+    unsafe { x11::xlib::XInternAtom(display, cname.as_ptr(), 0) }
+}
+
+/// The topmost mapped override-redirect popup that `pid` owns (a Qt combo
+/// list or completer, a GTK/VCL menu) — the toolkit behind it holds an
+/// active keyboard grab that makes the X server drop core key events from
+/// any *other* master keyboard aimed at that client (`IsInterferingGrab`),
+/// so the virtual master keyboard route is silently lost while it is up.
+/// Tooltips / notifications are not grabs and do not count.
+pub fn popup_of_pid(pid: u32) -> Option<PopupWindow> {
+    let display = open_display().ok()?;
+    let popup = mapped_popups(display)
+        .into_iter()
+        .rev()
+        .filter(|popup| popup.pid == Some(pid))
+        .find(|popup| !popup_is_passive(display, popup.window as x11::xlib::Window));
+    unsafe {
+        x11::xlib::XCloseDisplay(display);
+    }
+    popup
+}
+
+/// `_NET_WM_PID` of the window holding the core keyboard focus, walking up
+/// its X parents (the focus often sits on a child of the client toplevel).
+pub fn core_focus_owner_pid() -> Option<u32> {
+    let display = open_display().ok()?;
+    let mut focus: x11::xlib::Window = 0;
+    let mut revert: std::os::raw::c_int = 0;
+    unsafe { x11::xlib::XGetInputFocus(display, &mut focus, &mut revert) };
+    let root = unsafe { x11::xlib::XDefaultRootWindow(display) };
+    let mut owner = None;
+    let mut current = focus;
+    for _ in 0..8 {
+        if current == 0 || current == root || current == x11::xlib::PointerRoot as x11::xlib::Window {
+            break;
+        }
+        if let Some(pid) = crate::x11::window_pid(current as u64) {
+            owner = Some(pid);
+            break;
+        }
+        let mut parent: x11::xlib::Window = 0;
+        let mut qroot: x11::xlib::Window = 0;
+        let mut children: *mut x11::xlib::Window = ptr::null_mut();
+        let mut n: std::os::raw::c_uint = 0;
+        let previous_handler = unsafe { x11::xlib::XSetErrorHandler(Some(ignore_x_error)) };
+        let rc = unsafe {
+            x11::xlib::XQueryTree(display, current, &mut qroot, &mut parent, &mut children, &mut n)
+        };
+        unsafe {
+            x11::xlib::XSync(display, 0);
+            x11::xlib::XSetErrorHandler(previous_handler);
+        }
+        if !children.is_null() {
+            unsafe { x11::xlib::XFree(children as *mut _) };
+        }
+        if rc == 0 || parent == current {
+            break;
+        }
+        current = parent;
+    }
+    unsafe {
+        x11::xlib::XCloseDisplay(display);
+    }
+    owner
+}
+
+/// Delivery path name for keys sent on the core keyboard while the target's
+/// own popup holds the keyboard grab.
+pub const XTEST_CORE_GRAB_PATH: &str = "xtest_core_grab";
+
+/// A popup of the target pid holds the keyboard grab and the core focus is
+/// not the target's, so no route reaches the target without stealing input
+/// from the focused application; refused before any key was sent.
+#[derive(Debug, Clone)]
+pub struct PopupKeyboardGrab {
+    pub pid: u32,
+    pub popup: PopupWindow,
+    pub focus_owner: Option<u32>,
+}
+
+impl std::fmt::Display for PopupKeyboardGrab {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "pid {} has {} open, which holds a keyboard grab that drops keys from the virtual \
+             keyboard, and the core focus belongs to {}; no key was sent",
+            self.pid,
+            self.popup.describe(),
+            match self.focus_owner {
+                Some(pid) => format!("pid {pid}"),
+                None => "no window".to_owned(),
+            }
+        )
+    }
+}
+impl std::error::Error for PopupKeyboardGrab {}
+
+/// Keys for a target whose own popup (`popup`) holds the keyboard grab: the
+/// X server routes the *core* keyboard to the grab holder, which is the
+/// target itself, so XTest on the core keyboard reaches it without any
+/// focus change — verified afterwards on the core focus and the active
+/// window. Refused (`PopupKeyboardGrab`) when the core focus belongs to
+/// another pid: then a missing grab would send the keys elsewhere.
+pub fn send_keys_under_popup_grab(
+    pid: u32,
+    popup: PopupWindow,
+    send: impl FnOnce() -> Result<()>,
+) -> Result<KeyboardDeliveryReport> {
+    let focus_owner = core_focus_owner_pid();
+    if focus_owner != Some(pid) {
+        return Err(PopupKeyboardGrab {
+            pid,
+            popup,
+            focus_owner,
+        }
+        .into());
+    }
+    let display = open_display()?;
+    let saved = save_focus_state(display);
+    let sent = send();
+    unsafe { x11::xlib::XSync(display, 0) };
+    let unchanged = focus_state_unchanged(display, &saved);
+    unsafe {
+        x11::xlib::XCloseDisplay(display);
+    }
+    sent?;
+    Ok(KeyboardDeliveryReport {
+        virtual_focus_held: true,
+        core_focus_unchanged: unchanged,
+        delivery_confirmed: true,
+        key_events: 0,
+        skipped_characters: Vec::new(),
+        focus_guard: None,
+        released_stuck: Vec::new(),
+        path: XTEST_CORE_GRAB_PATH,
+        grab_popup: Some(popup),
+    })
+}
+
+/// Cheap post-checks a real-pointer action can make without touching the
+/// application: whether the WM's active window / core focus stayed put, and
+/// whether the screen region around the action point changed.
+#[derive(Clone, Debug, Default)]
+pub struct PointerEffect {
+    /// `_NET_ACTIVE_WINDOW` and the core input focus were the same after the
+    /// action as before it (sampled before the safety-net restore).
+    pub focus_unchanged: bool,
+    /// Percentage of pixels (0..100) that changed in a bounded region around
+    /// the action point, comparing right before the press with ~250 ms after
+    /// the release; `None` when the capture failed.
+    pub region_diff_pct: Option<f64>,
+    /// Real screen point the pointer acted at.
+    pub x: i32,
+    pub y: i32,
+    /// Mapped override-redirect toplevels (menus, popovers, combo lists,
+    /// tooltips) that appeared between the press and the post-check. A
+    /// context menu opening is a window change the contract accepts as
+    /// evidence of a landed click.
+    pub popups_appeared: usize,
+    /// Background focus-guard outcome when the tool ran the action under
+    /// [`focus_guard`]: whether the application moved the desktop focus after
+    /// the press (a menu grab, a dialog) and whether it was restored.
+    pub focus_guard: Option<FocusGuardReport>,
+    /// The point was under another window of the target's own pid (its
+    /// dialog over its main window) and the press went to that window.
+    pub retargeted_to: Option<SameAppCover>,
+    /// The popups behind `popups_appeared`, so the tool can name them.
+    pub popups: Vec<PopupWindow>,
+    /// The window-local point the caller asked for, when it had one.
+    pub window_point: Option<(i32, i32)>,
+    /// A toplevel of ANOTHER pid under the action point (a drop target, the
+    /// window a drag ended on): what it did during the action.
+    pub foreign_window: Option<ForeignWindowEffect>,
+}
+
+/// What a toplevel of another pid under the action point did during the
+/// action: its title before/after and the windows its pid mapped meanwhile.
+/// The focus guard only watches the target pid, so a file dropped onto VLC
+/// (auto-played, title changed) would otherwise be invisible.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ForeignWindowEffect {
+    pub window: u64,
+    pub pid: u32,
+    pub title_before: String,
+    pub title_after: String,
+    pub new_windows: Vec<(u64, String)>,
+}
+
+impl ForeignWindowEffect {
+    pub fn changed(&self) -> bool {
+        self.title_before != self.title_after || !self.new_windows.is_empty()
+    }
+
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "window_id": self.window,
+            "pid": self.pid,
+            "title_before": self.title_before,
+            "title_after": self.title_after,
+            "new_windows": self.new_windows.iter().map(|(id, title)| serde_json::json!({"window_id": id, "title": title})).collect::<Vec<_>>(),
+        })
+    }
+
+    /// One sentence for the tool text.
+    pub fn describe(&self) -> String {
+        let mut parts = Vec::new();
+        if self.title_before != self.title_after {
+            parts.push(format!(
+                "its title changed from \"{}\" to \"{}\"",
+                self.title_before, self.title_after
+            ));
+        }
+        if !self.new_windows.is_empty() {
+            parts.push(format!(
+                "it opened {}",
+                self.new_windows
+                    .iter()
+                    .map(|(id, title)| format!("window {id} \"{title}\""))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        format!(
+            "The point was over window {} of another application (pid {}); {}.",
+            self.window,
+            self.pid,
+            if parts.is_empty() {
+                "it did not visibly react (title unchanged, no new window)".to_owned()
+            } else {
+                parts.join(" and ")
+            }
+        )
+    }
+}
+
+/// The topmost managed toplevel under the screen point that belongs to a
+/// pid other than `target_pid`, with that pid's toplevels at this moment.
+fn foreign_toplevel_under(target_pid: Option<u32>, x: i32, y: i32) -> Option<(crate::x11::WindowInfo, Vec<u64>)> {
+    let windows = crate::x11::list_windows(None);
+    let hit = windows
+        .iter()
+        .rev()
+        .find(|w| {
+            w.is_on_screen
+                && w.width > 0
+                && w.height > 0
+                && x >= w.x
+                && y >= w.y
+                && x < w.x + w.width as i32
+                && y < w.y + w.height as i32
+        })?
+        .clone();
+    let pid = hit.pid?;
+    if target_pid == Some(pid) {
+        return None;
+    }
+    let owned = windows
+        .iter()
+        .filter(|w| w.pid == Some(pid))
+        .map(|w| w.xid)
+        .collect();
+    Some((hit, owned))
+}
+
+/// Re-read the foreign toplevel after the action.
+fn foreign_window_effect(before: Option<(crate::x11::WindowInfo, Vec<u64>)>) -> Option<ForeignWindowEffect> {
+    let (hit, owned) = before?;
+    let pid = hit.pid?;
+    let title_after = crate::x11::window_info(hit.xid)
+        .map(|w| w.title)
+        .unwrap_or_default();
+    let new_windows = crate::x11::list_windows(Some(pid))
+        .into_iter()
+        .filter(|w| !owned.contains(&w.xid) && w.is_on_screen)
+        .map(|w| (w.xid, w.title))
+        .collect();
+    Some(ForeignWindowEffect {
+        window: hit.xid,
+        pid,
+        title_before: hit.title,
+        title_after,
+        new_windows,
+    })
+}
+
+impl PointerEffect {
+    /// A region that changed more than this has plainly reacted to the click
+    /// (a menu, a caret, a selection, a pressed button). Below it the click
+    /// may still have landed without a visible reaction.
+    pub const LANDED_THRESHOLD_PCT: f64 = 0.4;
+
+    pub fn landed(&self) -> bool {
+        self.popups_appeared > 0
+            || self
+                .region_diff_pct
+                .is_some_and(|pct| pct >= Self::LANDED_THRESHOLD_PCT)
+    }
+}
+
+/// Mapped override-redirect children of the root window: popup menus and
+/// popovers, but also tooltips and the agent-cursor overlay, so only the
+/// *new* ones across an action are meaningful (see [`mapped_popups`]).
+fn new_popups(before: &[PopupWindow], after: Vec<PopupWindow>) -> Vec<PopupWindow> {
+    after
+        .into_iter()
+        .filter(|popup| !before.iter().any(|old| old.window == popup.window))
+        .collect()
+}
+
+/// Debug overrides for the multi-click cadence (milliseconds), read once.
+fn click_cadence() -> (u64, u64) {
+    fn env_ms(name: &str, default: u64) -> u64 {
+        std::env::var(name)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(default)
+    }
+    (
+        env_ms("CUA_MPX_PRESS_MS", 12),
+        env_ms("CUA_MPX_CLICK_GAP_MS", CLICK_DELAY_MS),
+    )
+}
+
+/// Half-size of the square screen region compared around the action point.
+const EFFECT_REGION_HALF: i32 = 120;
+/// Half-size of the central square masked out of the comparison: the agent
+/// cursor overlay pulses there and would count as a change.
+const EFFECT_MASK_HALF: i32 = 32;
+/// Wait for the application to react before comparing the region.
+const EFFECT_SETTLE: Duration = Duration::from_millis(250);
+
+/// Raw ZPixmap bytes of a root-window region (clamped to the screen).
+fn root_region_pixels(cx: i32, cy: i32) -> Option<(Vec<u8>, usize, usize)> {
+    let (conn, screen_num) = RustConnection::connect(None).ok()?;
+    let screen = &conn.setup().roots[screen_num];
+    let sw = i32::from(screen.width_in_pixels);
+    let sh = i32::from(screen.height_in_pixels);
+    let x0 = (cx - EFFECT_REGION_HALF).clamp(0, sw.max(1) - 1);
+    let y0 = (cy - EFFECT_REGION_HALF).clamp(0, sh.max(1) - 1);
+    let x1 = (cx + EFFECT_REGION_HALF).clamp(x0 + 1, sw);
+    let y1 = (cy + EFFECT_REGION_HALF).clamp(y0 + 1, sh);
+    let (w, h) = ((x1 - x0) as usize, (y1 - y0) as usize);
+    let reply = conn
+        .get_image(
+            ImageFormat::Z_PIXMAP,
+            screen.root,
+            x0 as i16,
+            y0 as i16,
+            w as u16,
+            h as u16,
+            u32::MAX,
+        )
+        .ok()?
+        .reply()
+        .ok()?;
+    if reply.depth < 24 || reply.data.len() < w * h * 4 {
+        return None;
+    }
+    Some((reply.data, w, h))
+}
+
+/// Percentage of pixels outside the central mask whose 8-bit channels differ
+/// by more than a small tolerance between two captures of the same region.
+pub(crate) fn region_diff_pct(
+    before: &(Vec<u8>, usize, usize),
+    after: &(Vec<u8>, usize, usize),
+) -> Option<f64> {
+    let (a, w, h) = before;
+    let (b, w2, h2) = after;
+    if w != w2 || h != h2 || a.len() != b.len() || *w == 0 || *h == 0 {
+        return None;
+    }
+    let (cx, cy) = (*w as i32 / 2, *h as i32 / 2);
+    let mut changed = 0usize;
+    let mut counted = 0usize;
+    for y in 0..*h {
+        for x in 0..*w {
+            if (x as i32 - cx).abs() <= EFFECT_MASK_HALF
+                && (y as i32 - cy).abs() <= EFFECT_MASK_HALF
+            {
+                continue;
+            }
+            counted += 1;
+            let i = (y * w + x) * 4;
+            let differs = (0..3).any(|c| {
+                let pa = i32::from(a[i + c]);
+                let pb = i32::from(b[i + c]);
+                (pa - pb).abs() > 24
+            });
+            if differs {
+                changed += 1;
+            }
+        }
+    }
+    (counted > 0).then(|| 100.0 * changed as f64 / counted as f64)
+}
+
+/// Best-effort `_NET_WM_NAME` / `WM_NAME` of a window (or of a child, for a
+/// WM frame), for naming a covering window in a refusal.
+fn window_title_for_report(display: *mut x11::xlib::Display, window: x11::xlib::Window) -> String {
+    fn name_of(display: *mut x11::xlib::Display, window: x11::xlib::Window) -> Option<String> {
+        unsafe {
+            let net_name =
+                x11::xlib::XInternAtom(display, c"_NET_WM_NAME".as_ptr(), x11::xlib::True);
+            for prop in [net_name, x11::xlib::XA_WM_NAME] {
+                if prop == 0 {
+                    continue;
+                }
+                let mut type_ret: x11::xlib::Atom = 0;
+                let mut format_ret = 0;
+                let mut nitems: std::os::raw::c_ulong = 0;
+                let mut bytes_after: std::os::raw::c_ulong = 0;
+                let mut data: *mut std::os::raw::c_uchar = std::ptr::null_mut();
+                let rc = x11::xlib::XGetWindowProperty(
+                    display,
+                    window,
+                    prop,
+                    0,
+                    256,
+                    x11::xlib::False,
+                    x11::xlib::AnyPropertyType as x11::xlib::Atom,
+                    &mut type_ret,
+                    &mut format_ret,
+                    &mut nitems,
+                    &mut bytes_after,
+                    &mut data,
+                );
+                if rc == x11::xlib::Success as i32 && !data.is_null() {
+                    let text = if format_ret == 8 && nitems > 0 {
+                        Some(
+                            String::from_utf8_lossy(std::slice::from_raw_parts(
+                                data,
+                                nitems as usize,
+                            ))
+                            .into_owned(),
+                        )
+                    } else {
+                        None
+                    };
+                    x11::xlib::XFree(data as *mut _);
+                    if let Some(text) = text.filter(|t| !t.trim().is_empty()) {
+                        return Some(text);
+                    }
+                }
+            }
+        }
+        None
+    }
+    let previous_handler = unsafe { x11::xlib::XSetErrorHandler(Some(ignore_x_error)) };
+    let mut title = name_of(display, window);
+    if title.is_none() {
+        title = window_children(display, window)
+            .into_iter()
+            .rev()
+            .find_map(|kid| name_of(display, kid));
+    }
+    unsafe {
+        x11::xlib::XSync(display, 0);
+        x11::xlib::XSetErrorHandler(previous_handler);
+    }
+    title.unwrap_or_default()
+}
+
+/// Direct children of `window` (empty on error). Caller installs the error
+/// handler.
+fn window_children(
+    display: *mut x11::xlib::Display,
+    window: x11::xlib::Window,
+) -> Vec<x11::xlib::Window> {
+    let mut root_ret: x11::xlib::Window = 0;
+    let mut parent: x11::xlib::Window = 0;
+    let mut children: *mut x11::xlib::Window = ptr::null_mut();
+    let mut count: std::os::raw::c_uint = 0;
+    let rc = unsafe {
+        x11::xlib::XQueryTree(
+            display,
+            window,
+            &mut root_ret,
+            &mut parent,
+            &mut children,
+            &mut count,
+        )
+    };
+    if rc == 0 || children.is_null() {
+        return Vec::new();
+    }
+    let kids = unsafe { std::slice::from_raw_parts(children, count as usize) }.to_vec();
+    unsafe { x11::xlib::XFree(children as *mut _) };
+    kids
+}
+
+/// The toplevel (root child) the virtual pointer would press on at `(x, y)`
+/// when the caller means `window`. `Ok(None)` when the point is over the
+/// target itself (its WM frame) or over an override-redirect popup (a menu or
+/// combo list the click is meant to reach, or the agent-cursor overlay);
+/// `Ok(Some(_))` names the window that covers the point instead.
+fn occluding_window(
+    display: *mut x11::xlib::Display,
+    window: x11::xlib::Window,
+    x: i32,
+    y: i32,
+) -> Result<PointCover> {
+    if let Some(bounds) = window_screen_bounds(display, window) {
+        if !bounds_contain(bounds, x, y) {
+            return Ok(PointCover::Outside(PointOutsideWindow {
+                target_window: window as u64,
+                screen_x: x,
+                screen_y: y,
+                window_x: x - bounds.0,
+                window_y: y - bounds.1,
+                bounds,
+            }));
+        }
+    }
+    let under = root_child_under_point(display, x, y);
+    let frame = root_child_of(display, window);
+    match (under, frame) {
+        (Some(under), Some(frame)) if under != frame && !is_override_redirect(display, under) => {
+            let previous_handler = unsafe { x11::xlib::XSetErrorHandler(Some(ignore_x_error)) };
+            let covering_client = window_children(display, under)
+                .into_iter()
+                .find(|kid| crate::x11::window_pid(*kid as u64).is_some());
+            let covering_pid = crate::x11::window_pid(under as u64)
+                .or_else(|| covering_client.and_then(|kid| crate::x11::window_pid(kid as u64)));
+            unsafe {
+                x11::xlib::XSync(display, 0);
+                x11::xlib::XSetErrorHandler(previous_handler);
+            }
+            let target_pid = crate::x11::window_pid(window as u64);
+            let title = window_title_for_report(display, under);
+            // The app's own window (a dialog, a file chooser) sits over the
+            // point: the press goes where the caller can see it, on that
+            // window, and the effect reports the retarget.
+            if target_pid.is_some() && covering_pid == target_pid {
+                return Ok(PointCover::SameApp(SameAppCover {
+                    window: covering_client.map(u64::from).unwrap_or(under as u64),
+                    title,
+                }));
+            }
+            Ok(PointCover::Occluded(TargetOccluded {
+                target_window: window as u64,
+                covering_window: under as u64,
+                covering_title: title,
+                covering_pid,
+                x,
+                y,
+            }))
+        }
+        (Some(_), Some(_)) | (None, _) => Ok(PointCover::Clear),
+        (Some(_), None) => bail!("target window {window} is not mapped on this screen"),
+    }
+}
+
+/// What sits over the screen point a background pointer action aims at.
+#[derive(Debug, Clone)]
+enum PointCover {
+    /// The target (or a popup meant to receive the press).
+    Clear,
+    /// A window of the target's own pid; the press is retargeted to it.
+    SameApp(SameAppCover),
+    /// Another application's window; refused.
+    Occluded(TargetOccluded),
+    /// The point is not inside the target window at all; refused.
+    Outside(PointOutsideWindow),
+}
+
+/// The target application's own window that received a press aimed at a
+/// point of another of its windows (its dialog over its main window).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SameAppCover {
+    /// Client window id (the `list_windows` id, not the WM frame).
+    pub window: u64,
+    pub title: String,
+}
+
+/// True when neither the EWMH active window nor the core focus moved since
+/// `saved` was taken.
+fn focus_state_unchanged(display: *mut x11::xlib::Display, saved: &SavedFocus) -> bool {
+    unsafe { x11::xlib::XSync(display, 0) };
+    let mut core_focus: x11::xlib::Window = 0;
+    let mut revert_to: std::os::raw::c_int = 0;
+    unsafe {
+        x11::xlib::XGetInputFocus(display, &mut core_focus, &mut revert_to);
+    }
+    ewmh_active_window(display) == saved.ewmh_active && core_focus == saved.core_focus
+}
+
+fn pointer_effect(
+    display: *mut x11::xlib::Display,
+    saved: &SavedFocus,
+    before: Option<(Vec<u8>, usize, usize)>,
+    popups_before: &[PopupWindow],
+    foreign_before: Option<(crate::x11::WindowInfo, Vec<u64>)>,
+    x: i32,
+    y: i32,
+) -> PointerEffect {
+    unsafe { x11::xlib::XSync(display, 0) };
+    sleep(EFFECT_SETTLE);
+    let after = root_region_pixels(x, y);
+    let popups = new_popups(popups_before, mapped_popups(display));
+    let foreign_window = foreign_window_effect(foreign_before);
+    PointerEffect {
+        focus_unchanged: focus_state_unchanged(display, saved),
+        region_diff_pct: match (before, after) {
+            (Some(b), Some(a)) => region_diff_pct(&b, &a),
+            _ => None,
+        },
+        x,
+        y,
+        popups_appeared: popups.len(),
+        focus_guard: None,
+        retargeted_to: None,
+        popups,
+        window_point: None,
+        foreign_window,
+    }
+}
+
 /// Land a discrete click via the MPX real-input pipeline (see
-/// [`VirtualPointerClick`]). Mirrors the per-item press/replay logic of
-/// `send_parallel_virtual_pointer_drags`: install a device-specific synchronous
-/// XI2 shield grab on the target window, warp the master pointer, then for each
-/// press freeze→replay it so the application receives a real button event while
-/// the WM stays blind to it. The master is torn down and focus restored on exit
-/// (matching the drag) to keep non-MPX WMs' focus bookkeeping consistent.
-pub fn send_virtual_pointer_click(cursor_id: &str, click: &VirtualPointerClick) -> Result<()> {
+/// [`VirtualPointerClick`]). Refuses with [`TargetOccluded`] when another
+/// toplevel covers the point. Returns the post-checks the tool reports.
+pub fn send_virtual_pointer_click(
+    cursor_id: &str,
+    click: &VirtualPointerClick,
+) -> Result<PointerEffect> {
+    let _op = mpx_op_guard(cursor_id);
+    mpx_last_use()
+        .lock()
+        .unwrap()
+        .insert(cursor_id.to_owned(), std::time::Instant::now());
     let display = open_display()?;
     supports_parallel_pointer_injection(display)?;
-    let xi_opcode = xinput_opcode(display);
     let saved_focus = save_focus_state(display);
 
-    let result = (|| -> Result<()> {
+    let result = (|| -> Result<PointerEffect> {
+        let window = click.target_window as x11::xlib::Window;
+        let retargeted_to = match occluding_window(display, window, click.x, click.y)? {
+            PointCover::Clear => None,
+            PointCover::SameApp(cover) => Some(cover),
+            PointCover::Occluded(occluded) => return Err(occluded.into()),
+            PointCover::Outside(outside) => return Err(outside.into()),
+        };
         let ids = ensure_master_pointer(cursor_id)?;
         let device = uinput_pointers()
             .lock()
@@ -1564,50 +2534,144 @@ pub fn send_virtual_pointer_click(cursor_id: &str, click: &VirtualPointerClick) 
             .get(cursor_id)
             .cloned()
             .ok_or_else(|| anyhow!("missing uinput pointer for '{cursor_id}'"))?;
-        let opcode = xi_opcode
-            .ok_or_else(|| anyhow!("no-focus-steal click requires XInput/XI2 shield grabs"))?;
-
-        let window = click.target_window as x11::xlib::Window;
-        install_shield_grab(display, ids.pointer_id, window, click.button)
-            .with_context(|| format!("shield grab failed for '{cursor_id}'"))?;
-        // Run the press train under a guard so the shield is always removed,
-        // even on an early error mid-train.
-        let click_result = (|| -> Result<()> {
-            warp_master_pointer(display, ids, click.x, click.y)?;
-            let count = click.count.max(1);
+        let count = click.count.max(1);
+        // A device left frozen by an earlier synchronous grab (a WM that never
+        // replayed) would queue this press forever.
+        thaw_device(display, ids.pointer_id);
+        warp_master_pointer(display, ids, click.x, click.y)?;
+        let popups_before = mapped_popups(display);
+        let foreign_before =
+            foreign_toplevel_under(crate::x11::window_pid(click.target_window), click.x, click.y);
+        let before = root_region_pixels(click.x, click.y);
+        let (press_ms, gap_ms) = click_cadence();
+        let train = (|| -> Result<()> {
             for i in 0..count {
                 {
                     let mut device = device.lock().unwrap();
                     emit_button(&mut device, click.button, true)?;
-                }
-                // The shield grab freezes the device on every press; drain and
-                // replay this one so it reaches the app (and re-arms for the
-                // next press in a multi-click train).
-                let mut pending = std::collections::HashSet::from([ids.pointer_id]);
-                replay_shielded_presses(display, opcode, &mut pending, Duration::from_millis(1000));
-                if !pending.is_empty() {
-                    return Err(anyhow!(
-                        "shield replay timed out before XI_ButtonPress arrived for '{cursor_id}'"
-                    ));
-                }
-                {
-                    let mut device = device.lock().unwrap();
+                    // A real press and release are separate evdev frames; give
+                    // the toolkit a press it can see before the release lands.
+                    sleep(Duration::from_millis(press_ms));
                     emit_button(&mut device, click.button, false)?;
                 }
                 // Multi-click cadence: keep press→press well under the toolkit
                 // double-click threshold (GTK default 250 ms) so count=2 lands
                 // as a real double-click, not two singles.
                 if count > 1 && i + 1 < count {
-                    sleep(Duration::from_millis(CLICK_DELAY_MS));
+                    sleep(Duration::from_millis(gap_ms));
                 }
             }
             Ok(())
         })();
-        remove_shield_grab(display, ids.pointer_id, window, click.button);
-        click_result
+        // Never leave the button held: a stuck Button1 on the virtual master
+        // sets bit 8 of the core modifier state (Orca's modifier), so every
+        // later virtual-keyboard chord would open Orca's preferences.
+        release_button_best_effort(&device, click.button);
+        train?;
+        let mut effect =
+            pointer_effect(display, &saved_focus, before, &popups_before, foreign_before, click.x, click.y);
+        effect.retargeted_to = retargeted_to;
+        Ok(effect)
     })();
 
-    forget_master_pointer(cursor_id);
+    restore_focus_state(display, &saved_focus);
+    unsafe {
+        x11::xlib::XCloseDisplay(display);
+    }
+    result
+}
+
+/// One held drag on the session's virtual master pointer: press at
+/// `path[0]`, glide through the waypoints, release at the end. Same delivery
+/// rules as [`send_virtual_pointer_click`] (no shield grab, occlusion refusal
+/// at the press point, focus saved and restored).
+pub fn send_virtual_pointer_drag(
+    cursor_id: &str,
+    drag: &VirtualPointerDrag,
+) -> Result<PointerEffect> {
+    let _op = mpx_op_guard(cursor_id);
+    mpx_last_use()
+        .lock()
+        .unwrap()
+        .insert(cursor_id.to_owned(), std::time::Instant::now());
+    let display = open_display()?;
+    supports_parallel_pointer_injection(display)?;
+    let saved_focus = save_focus_state(display);
+
+    let result = (|| -> Result<PointerEffect> {
+        if drag.path.len() < 2 {
+            bail!("drag path needs at least 2 points");
+        }
+        let window = drag.target_window as x11::xlib::Window;
+        let start = drag.path[0];
+        let end = drag.path[drag.path.len() - 1];
+        let retargeted_to = match occluding_window(display, window, start.0, start.1)? {
+            PointCover::Clear => None,
+            PointCover::SameApp(cover) => Some(cover),
+            PointCover::Occluded(occluded) => return Err(occluded.into()),
+            PointCover::Outside(outside) => return Err(outside.into()),
+        };
+        let ids = ensure_master_pointer(cursor_id)?;
+        let device = uinput_pointers()
+            .lock()
+            .unwrap()
+            .get(cursor_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("missing uinput pointer for '{cursor_id}'"))?;
+        let (cum, total) = path_cumulative(&drag.path);
+        let steps = drag.steps.max(1);
+        let step_delay = Duration::from_millis(drag.duration_ms / steps as u64);
+        thaw_device(display, ids.pointer_id);
+        warp_master_pointer(display, ids, start.0, start.1)?;
+        let popups_before = mapped_popups(display);
+        let foreign_before =
+            foreign_toplevel_under(crate::x11::window_pid(drag.target_window), end.0, end.1);
+        let before = root_region_pixels(end.0, end.1);
+        let gesture = (|| -> Result<()> {
+            {
+                let mut device = device.lock().unwrap();
+                emit_button(&mut device, drag.button, true)?;
+            }
+            // Let the toolkit register the press (and arm its drag threshold)
+            // before the first motion.
+            sleep(Duration::from_millis(40));
+            let (mut last_x, mut last_y) = start;
+            for step in 1..=steps {
+                let t = step as f64 / steps as f64;
+                let (ix, iy) = point_on_path(&drag.path, &cum, total, t);
+                let (dx, dy) = (ix - last_x, iy - last_y);
+                if dx != 0 || dy != 0 {
+                    let mut device = device.lock().unwrap();
+                    emit_relative_motion(&mut device, dx, dy)?;
+                    crate::overlay::send_command_for(
+                        cursor_id.to_owned(),
+                        cursor_overlay::OverlayCommand::SnapTo {
+                            x: ix as f64,
+                            y: iy as f64,
+                            heading_radians: Some((dy as f64).atan2(dx as f64)),
+                        },
+                    );
+                }
+                last_x = ix;
+                last_y = iy;
+                sleep(step_delay);
+            }
+            // Relative motion accumulates libinput rounding; pin the release
+            // to the exact end point before letting go.
+            warp_master_pointer(display, ids, end.0, end.1)?;
+            sleep(Duration::from_millis(20));
+            let mut device = device.lock().unwrap();
+            emit_button(&mut device, drag.button, false)?;
+            Ok(())
+        })();
+        // Release on every exit path (see `send_virtual_pointer_click`).
+        release_button_best_effort(&device, drag.button);
+        gesture?;
+        let mut effect = pointer_effect(display, &saved_focus, before, &popups_before, foreign_before, end.0, end.1);
+        effect.retargeted_to = retargeted_to;
+        Ok(effect)
+    })();
+
     restore_focus_state(display, &saved_focus);
     unsafe {
         x11::xlib::XCloseDisplay(display);
@@ -1636,6 +2700,7 @@ pub struct VirtualPointerScroll {
 /// point, then emits `|ticks|` wheel detents on the uinput slave. The master is
 /// torn down and focus restored on exit, matching the click/drag paths.
 pub fn send_virtual_pointer_scroll(cursor_id: &str, scroll: &VirtualPointerScroll) -> Result<()> {
+    let _op = mpx_op_guard(cursor_id);
     let display = open_display()?;
     supports_parallel_pointer_injection(display)?;
     let saved_focus = save_focus_state(display);
@@ -1665,7 +2730,7 @@ pub fn send_virtual_pointer_scroll(cursor_id: &str, scroll: &VirtualPointerScrol
         Ok(())
     })();
 
-    forget_master_pointer(cursor_id);
+    let _ = cursor_id; // master pair retained for reuse (see the drag path).
     restore_focus_state(display, &saved_focus);
     unsafe {
         x11::xlib::XCloseDisplay(display);
@@ -1707,6 +2772,24 @@ fn restore_focus_state(display: *mut x11::xlib::Display, saved: &SavedFocus) {
     unsafe { x11::xlib::XSync(display, 0) };
 
     if let Some(prev) = saved.ewmh_active {
+        // Fast path: on WMs whose click-to-focus grab ignores the virtual
+        // master (mutter grabs for the Virtual Core Pointer only) nothing
+        // moved, and a 300 ms settle per click would be pure latency.
+        if ewmh_active_window(display) == Some(prev) {
+            let mut stable = 0;
+            for _ in 0..4 {
+                sleep(Duration::from_millis(25));
+                if ewmh_active_window(display) == Some(prev) {
+                    stable += 1;
+                } else {
+                    stable = 0;
+                    break;
+                }
+            }
+            if stable >= 3 {
+                return;
+            }
+        }
         // EWMH path: ask the WM to re-activate, so its active-window
         // bookkeeping (decorations, stacking) stays consistent. The WM
         // processes its own click-to-focus for the drag asynchronously and
@@ -2703,8 +3786,8 @@ fn key_name_to_keysym(key: &str) -> Result<u32> {
         "insert" | "ins" => 0xFF63,
         "home" => 0xFF50,
         "end" => 0xFF57,
-        "pageup" | "pgup" => 0xFF55,
-        "pagedown" | "pgdn" => 0xFF56,
+        "pageup" | "pgup" | "page_up" => 0xFF55,
+        "pagedown" | "pgdn" | "page_down" => 0xFF56,
         "up" => 0xFF52,
         "down" => 0xFF54,
         "left" => 0xFF51,
@@ -2724,7 +3807,7 @@ fn key_name_to_keysym(key: &str) -> Result<u32> {
         "shift" => 0xFFE1,
         "ctrl" | "control" => 0xFFE3,
         "alt" => 0xFFE9,
-        "super" | "meta" | "win" => 0xFFEB,
+        "super" | "meta" | "win" | "cmd" => 0xFFEB,
         "capslock" => 0xFFE5,
         "numlock" => 0xFF7F,
         // Common X keysym names for punctuation. The single-char branch below
@@ -2748,6 +3831,36 @@ fn key_name_to_keysym(key: &str) -> Result<u32> {
         _ => anyhow::bail!("Unknown key: {key}"),
     };
     Ok(keysym)
+}
+
+#[cfg(test)]
+mod key_name_alias_tests {
+    use super::key_name_to_keysym;
+
+    #[test]
+    fn common_key_name_aliases_resolve_to_the_expected_keysym() {
+        // Page_Up / Page_Down: the underscore form is the literal X11 keysym
+        // name and a common cross-platform prompt spelling; only the
+        // no-underscore "pageup"/"pgup" aliases existed before.
+        assert_eq!(key_name_to_keysym("Page_Up").unwrap(), 0xFF55);
+        assert_eq!(key_name_to_keysym("page_up").unwrap(), 0xFF55);
+        assert_eq!(
+            key_name_to_keysym("Page_Up").unwrap(),
+            key_name_to_keysym("pageup").unwrap()
+        );
+        assert_eq!(key_name_to_keysym("Page_Down").unwrap(), 0xFF56);
+        assert_eq!(
+            key_name_to_keysym("Page_Down").unwrap(),
+            key_name_to_keysym("pgdn").unwrap()
+        );
+        // "cmd": common cross-platform prompt name for the Super/Meta/Windows
+        // key; must alias to the same keysym as "super"/"meta"/"win".
+        assert_eq!(key_name_to_keysym("cmd").unwrap(), 0xFFEB);
+        assert_eq!(
+            key_name_to_keysym("cmd").unwrap(),
+            key_name_to_keysym("super").unwrap()
+        );
+    }
 }
 
 /// A keycode we have *temporarily* rebound to host a keysym that is absent from
@@ -2969,10 +4082,39 @@ mod path_tests {
     use super::{
         create_uinput_pointer, ensure_master_pointer_for_session, guarded_uinput_creation,
         is_uinput_unavailable, kde_x11_uinput_hotplug_is_unsafe, master_pointer_name,
-        modifiers_to_state, normalize_uinput_device_name, path_cumulative, point_on_path,
-        real_pointer_capabilities_available, sample_function, slave_pointer_name,
+        mpx_op_guard, modifiers_to_state, normalize_uinput_device_name, path_cumulative,
+        point_on_path, real_pointer_capabilities_available, sample_function, slave_pointer_name,
         EVDEV_UINPUT_NAME_MAX_BYTES, UINPUT_POINTER_SUFFIX,
     };
+
+    /// Regression for the `XSetErrorHandler` swap race: every caller that
+    /// could swap the process-global X11 error handler while an MPX
+    /// operation is mid-swap (`send_virtual_pointer_*`, `deliver`, and now
+    /// `x11_activate_window_persistent`) must take `MPX_OP_LOCK` first. This
+    /// doesn't touch X11 (no display in CI), but proves the lock itself is
+    /// exclusive and not reentrant-by-accident: a second `mpx_op_guard` call
+    /// blocks until the first is dropped, exactly the property the handler
+    /// swap needs to be race-free.
+    #[test]
+    fn mpx_op_guard_is_mutually_exclusive() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        let entered_second = Arc::new(AtomicBool::new(false));
+        let first = mpx_op_guard("test-a");
+        let entered_second_clone = entered_second.clone();
+        let handle = std::thread::spawn(move || {
+            let _second = mpx_op_guard("test-b");
+            entered_second_clone.store(true, Ordering::SeqCst);
+        });
+        // The second guard cannot have been acquired yet — it is blocked on
+        // the lock we are still holding.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert!(!entered_second.load(Ordering::SeqCst), "second guard acquired while the first was still held");
+        drop(first);
+        handle.join().unwrap();
+        assert!(entered_second.load(Ordering::SeqCst));
+    }
     use x11rb::protocol::xproto::KeyButMask;
 
     #[test]
@@ -2987,6 +4129,20 @@ mod path_tests {
             modifiers_to_state(&["control", "alt"]),
             KeyButMask::from(u16::from(KeyButMask::CONTROL) | u16::from(KeyButMask::MOD1))
         );
+    }
+
+    #[test]
+    fn idle_reaper_selects_only_sessions_past_the_ttl() {
+        use super::{stale_cursor_ids, MPX_IDLE_TTL};
+        let now = std::time::Instant::now();
+        let mut last_use = std::collections::HashMap::new();
+        last_use.insert("fresh".to_owned(), now);
+        last_use.insert("old".to_owned(), now - std::time::Duration::from_secs(400));
+        last_use.insert("edge".to_owned(), now - MPX_IDLE_TTL);
+        let mut stale = stale_cursor_ids(&last_use, now, MPX_IDLE_TTL);
+        stale.sort();
+        assert_eq!(stale, vec!["edge".to_owned(), "old".to_owned()]);
+        assert!(stale_cursor_ids(&std::collections::HashMap::new(), now, MPX_IDLE_TTL).is_empty());
     }
 
     #[test]
@@ -3065,7 +4221,7 @@ mod path_tests {
         assert!(is_uinput_unavailable(&error));
         assert_eq!(
             error.to_string(),
-            "Linux uinput pointer unavailable: permission denied"
+            "Linux uinput device unavailable: permission denied"
         );
     }
 

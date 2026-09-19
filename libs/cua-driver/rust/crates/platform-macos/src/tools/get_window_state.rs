@@ -112,6 +112,7 @@ fn def() -> &'static ToolDef {
                     "minimum": 1,
                     "description": "Cap on the AX-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower this for deep menu/Electron trees."
                 },
+                "timeout_ms": cua_driver_core::tool_schema::timeout_ms_schema(),
                 "max_dimension": {
                     "type": "integer",
                     "minimum": 1,

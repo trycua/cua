@@ -23,6 +23,29 @@ pub struct WindowInfo {
     pub height: u32,
 }
 
+/// The window the window manager reports as active (`_NET_ACTIVE_WINDOW`
+/// on the root), if any.
+pub fn active_window() -> Option<u64> {
+    let (conn, screen_num) = RustConnection::connect(None).ok()?;
+    let root = conn.setup().roots[screen_num].root;
+    let atom = conn
+        .intern_atom(true, b"_NET_ACTIVE_WINDOW")
+        .ok()?
+        .reply()
+        .ok()?
+        .atom;
+    if atom == 0 {
+        return None;
+    }
+    let reply = conn
+        .get_property(false, root, atom, AtomEnum::WINDOW, 0, 1)
+        .ok()?
+        .reply()
+        .ok()?;
+    let id = reply.value32()?.next()?;
+    (id != 0).then_some(u64::from(id))
+}
+
 /// List top-level windows, optionally filtered by pid.
 pub fn list_windows(filter_pid: Option<u32>) -> Vec<WindowInfo> {
     match list_windows_inner(filter_pid) {
@@ -239,6 +262,168 @@ fn moveresize_window_flags() -> u32 {
     const WIDTH_PRESENT: u32 = 1 << 10;
     const HEIGHT_PRESENT: u32 = 1 << 11;
     STATIC_GRAVITY | X_PRESENT | Y_PRESENT | WIDTH_PRESENT | HEIGHT_PRESENT
+}
+
+/// The listed toplevel that holds the core keyboard focus (`XGetInputFocus`),
+/// if any: the focus usually sits on a child of the client window, so the
+/// ancestors are walked until one of `candidates` is met.
+pub fn focused_window_among(candidates: &[u64]) -> Option<u64> {
+    let (conn, screen_num) = RustConnection::connect(None).ok()?;
+    let root = conn.setup().roots[screen_num].root;
+    let focus = conn.get_input_focus().ok()?.reply().ok()?.focus;
+    if focus <= 1 {
+        return None;
+    }
+    let mut current = focus;
+    for _ in 0..32 {
+        if candidates.contains(&u64::from(current)) {
+            return Some(u64::from(current));
+        }
+        let tree = conn.query_tree(current).ok()?.reply().ok()?;
+        if tree.parent == 0 || tree.parent == root {
+            return None;
+        }
+        current = tree.parent;
+    }
+    None
+}
+
+/// `WM_TRANSIENT_FOR` of a toplevel: the window it is a dialog of. `None`
+/// when unset or pointing at the root (group-transient utility windows).
+pub fn transient_for(xid: u64) -> Option<u64> {
+    let xid = u32::try_from(xid).ok()?;
+    let (conn, screen_num) = RustConnection::connect(None).ok()?;
+    let root = conn.setup().roots[screen_num].root;
+    let reply = conn
+        .get_property(false, xid, AtomEnum::WM_TRANSIENT_FOR, AtomEnum::WINDOW, 0, 1)
+        .ok()?
+        .reply()
+        .ok()?;
+    let owner = reply.value32()?.next()?;
+    (owner != 0 && owner != root).then_some(u64::from(owner))
+}
+
+/// The window a pid-only keyboard action means in a multi-window app, in
+/// order: the pid's window holding the core focus; its topmost on-screen
+/// transient dialog (a file chooser, a filter dialog); the WM's active
+/// window when it is the pid's; the largest mapped toplevel. `transient_for`
+/// answers `WM_TRANSIENT_FOR` for a window id.
+pub fn pick_pid_window(
+    windows: &[WindowInfo],
+    focused: Option<u64>,
+    transient_for: impl Fn(u64) -> Option<u64>,
+    active: Option<u64>,
+) -> Option<u64> {
+    if let Some(focused) = focused.filter(|f| windows.iter().any(|w| w.xid == *f)) {
+        return Some(focused);
+    }
+    let on_screen: Vec<&WindowInfo> = windows.iter().filter(|w| w.is_on_screen).collect();
+    if let Some(dialog) = on_screen
+        .iter()
+        .filter(|w| w.width > 0 && w.height > 0 && transient_for(w.xid).is_some())
+        .max_by_key(|w| w.z_index.unwrap_or(0))
+    {
+        return Some(dialog.xid);
+    }
+    if let Some(active) = active.filter(|a| windows.iter().any(|w| w.xid == *a)) {
+        return Some(active);
+    }
+    on_screen
+        .iter()
+        .max_by_key(|w| (u64::from(w.width) * u64::from(w.height), w.z_index.unwrap_or(0)))
+        .map(|w| w.xid)
+}
+
+/// Geometry, title and owner of ANY mapped X window (an override-redirect
+/// popup menu included), unlike [`list_windows`], which only enumerates the
+/// WM's client list. `None` when the window does not exist.
+pub fn window_info(xid: u64) -> Option<WindowInfo> {
+    let window = u32::try_from(xid).ok()?;
+    let (conn, screen_num) = RustConnection::connect(None).ok()?;
+    let root = conn.setup().roots[screen_num].root;
+    let attributes = conn.get_window_attributes(window).ok()?.reply().ok()?;
+    let geom = conn.get_geometry(window).ok()?.reply().ok()?;
+    let trans = conn.translate_coordinates(window, root, 0, 0).ok()?.reply().ok()?;
+    let pid = get_window_pid(&conn, window).ok().flatten();
+    let title = get_window_title(&conn, window).unwrap_or_default();
+    let app_name = get_window_class(&conn, window)
+        .map(|(instance, class)| if class.is_empty() { instance } else { class })
+        .unwrap_or_default();
+    Some(WindowInfo {
+        xid,
+        pid,
+        app_name,
+        title,
+        is_on_screen: attributes.map_state == MapState::VIEWABLE,
+        z_index: None,
+        x: i32::from(trans.dst_x),
+        y: i32::from(trans.dst_y),
+        width: u32::from(geom.width),
+        height: u32::from(geom.height),
+    })
+}
+
+/// Ask the window manager to close `xid` (EWMH `_NET_CLOSE_WINDOW`, which
+/// the WM turns into `WM_DELETE_WINDOW` for a cooperating client): what
+/// Alt+F4 does through mutter's passive grab, which a virtual keyboard cannot
+/// reach. Only a window of `pid` is accepted.
+pub fn close_window(xid: u64, pid: u32) -> Result<()> {
+    let window = u32::try_from(xid).map_err(|_| anyhow::anyhow!("window_id is out of X11 range"))?;
+    let (conn, screen_num) = RustConnection::connect(None)?;
+    let root = conn.setup().roots[screen_num].root;
+    match get_window_pid(&conn, window)? {
+        Some(owner) if owner == pid => {}
+        Some(owner) => anyhow::bail!("window_id {xid} belongs to pid {owner}, not pid {pid}"),
+        None => anyhow::bail!("window_id {xid} has no verifiable _NET_WM_PID owner"),
+    }
+    let atom = get_atom(&conn, "_NET_CLOSE_WINDOW")?;
+    let event = ClientMessageEvent::new(
+        32,
+        window,
+        atom,
+        ClientMessageData::from([0u32, 1u32, 0, 0, 0]),
+    );
+    conn.send_event(
+        false,
+        root,
+        EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+        event,
+    )?;
+    conn.flush()?;
+    Ok(())
+}
+
+/// `_NET_WM_STATE` carries `_NET_WM_STATE_MODAL`: the dialog blocks input to
+/// the window it is transient for.
+pub fn window_is_modal(xid: u64) -> bool {
+    let Ok(xid) = u32::try_from(xid) else {
+        return false;
+    };
+    let Ok((conn, _)) = RustConnection::connect(None) else {
+        return false;
+    };
+    let (Ok(state_atom), Ok(modal_atom)) =
+        (get_atom(&conn, "_NET_WM_STATE"), get_atom(&conn, "_NET_WM_STATE_MODAL"))
+    else {
+        return false;
+    };
+    conn.get_property(false, xid, state_atom, AtomEnum::ATOM, 0, 64)
+        .ok()
+        .and_then(|cookie| cookie.reply().ok())
+        .and_then(|reply| reply.value32().map(|atoms| atoms.collect::<Vec<_>>()))
+        .is_some_and(|atoms| atoms.contains(&modal_atom))
+}
+
+/// True while `xid` exists on the server and is viewable.
+pub fn window_is_viewable(xid: u64) -> bool {
+    window_info(xid).is_some_and(|w| w.is_on_screen)
+}
+
+/// `_NET_WM_PID` of a toplevel, when the window advertises one.
+pub fn window_pid(xid: u64) -> Option<u32> {
+    let xid = u32::try_from(xid).ok()?;
+    let (conn, _) = RustConnection::connect(None).ok()?;
+    get_window_pid(&conn, xid).ok().flatten()
 }
 
 fn get_window_pid(conn: &RustConnection, window: Window) -> Result<Option<u32>> {

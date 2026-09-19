@@ -162,6 +162,7 @@ struct PerceptionRuntimeContract {
     protocol_version: u32,
     worker: RuntimeBinding,
     runtime: RuntimeBinding,
+    model_manifest: RuntimeBinding,
     models: Vec<RuntimeBinding>,
     dictionary: RuntimeBinding,
     reject_mismatch: bool,
@@ -1135,6 +1136,15 @@ fn validate_runtime_contract(
         &format!("runtime/{}", contract.runtime.name),
         &contract.runtime,
     )?;
+    let model_manifest_path = unique_model_manifest_path(manifest)?;
+    let model_manifest_name = Path::new(model_manifest_path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| anyhow!("perception model manifest has no portable file name"))?;
+    if contract.model_manifest.name != model_manifest_name {
+        bail!("perception runtime contract names a different model manifest");
+    }
+    validate_runtime_binding(manifest, model_manifest_path, &contract.model_manifest)?;
     for model in &contract.models {
         validate_runtime_binding(manifest, &format!("models/{}", model.name), model)?;
     }
@@ -5080,6 +5090,7 @@ mod tests {
             "protocolVersion": 1,
             "worker": {"name": worker_name, "sha256": hex_sha256(worker)},
             "runtime": {"name": runtime_name, "sha256": hex_sha256(runtime)},
+            "modelManifest": {"name": "model-manifest.json", "sha256": hex_sha256(model_manifest)},
             "models": [
                 {"name": "icon.onnx", "role": "icon-detect", "sha256": hex_sha256(model)},
                 {"name": "ocr-det.onnx", "role": "ocr-detect", "sha256": hex_sha256(model)},

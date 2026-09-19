@@ -273,6 +273,7 @@ jobs:
             $extensionHome = Join-Path $env:RUNNER_TEMP 'cua-perception-extension-home/live'
           }
           "CUA_PERCEPTION_EXTENSION_HOME=$extensionHome" >> $env:GITHUB_ENV
+          "CUA_DRIVER_RS_HOME=$extensionHome" >> $env:GITHUB_ENV
           "CUA_PERCEPTION_EVIDENCE_DIR=$(Join-Path $env:RUNNER_TEMP 'cua-perception-evidence/live')" >> $env:GITHUB_ENV
       - name: Check out the exact reviewed Jev chooser
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -545,6 +546,7 @@ jobs:
         env:
           CUA_JEV_MOCK_DEMO: "1"
           CUA_PERCEPTION_EVIDENCE_DIR: ${{ runner.temp }}/perception-evidence/mock
+          CUA_TEST_DRIVER_STDERR: "1"
         run: |
           & $env:CUA_LIVE_TEST_BINARY --ignored --exact $env:CUA_LIVE_WINDOW_TEST --nocapture
           if ($LASTEXITCODE -ne 0) { throw 'artifact-gated mock window demo failed' }

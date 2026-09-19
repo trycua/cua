@@ -40,6 +40,7 @@ def card_at(x: int, y: int) -> Optional[str]:
 def oracle_state(selected: Optional[str], action_count: int) -> dict[str, object]:
     return {
         "fixture": "visual-only-canvas/v1",
+        "pid": os.getpid(),
         "ready": True,
         "selected": selected,
         "action_count": action_count,

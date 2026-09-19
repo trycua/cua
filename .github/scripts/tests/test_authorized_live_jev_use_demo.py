@@ -172,6 +172,7 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         self.assertNotIn("LOCALAPPDATA", configure["run"])
         self.assertIn("$extensionHome = Join-Path $env:RUNNER_TEMP 'cua-perception-extension-home/live'", configure["run"])
         self.assertIn('"CUA_PERCEPTION_EXTENSION_HOME=$extensionHome" >> $env:GITHUB_ENV', configure["run"])
+        self.assertIn('"CUA_DRIVER_RS_HOME=$extensionHome" >> $env:GITHUB_ENV', configure["run"])
         self.assertIn(
             "CUA_PERCEPTION_EVIDENCE_DIR=$(Join-Path $env:RUNNER_TEMP 'cua-perception-evidence/live')",
             configure["run"],
@@ -343,6 +344,7 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
             {
                 "CUA_JEV_MOCK_DEMO": "1",
                 "CUA_PERCEPTION_EVIDENCE_DIR": "${{ runner.temp }}/perception-evidence/mock",
+                "CUA_TEST_DRIVER_STDERR": "1",
             },
         )
         self.assertNotIn("CHOOSER", str(mock))

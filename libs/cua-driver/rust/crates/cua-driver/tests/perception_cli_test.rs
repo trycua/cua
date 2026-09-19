@@ -216,6 +216,7 @@ fn fixture_extension_archive(directory: &Path) -> PathBuf {
         "protocolVersion": 1,
         "worker": {"name": worker_name, "sha256": sha256(&worker)},
         "runtime": {"name": runtime_name, "sha256": sha256(&runtime)},
+        "modelManifest": {"name": "model-manifest.json", "sha256": sha256(&model_manifest)},
         "models": [
             {"name": "icon.onnx", "role": "icon-detect", "sha256": sha256(&model)},
             {"name": "ocr-det.onnx", "role": "ocr-detect", "sha256": sha256(&model)},

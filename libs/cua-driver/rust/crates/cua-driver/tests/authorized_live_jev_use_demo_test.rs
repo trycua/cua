@@ -768,6 +768,13 @@ mod e2e {
         }
     }
 
+    fn fixture_pid(state: &Value) -> Result<i64, String> {
+        state["pid"]
+            .as_i64()
+            .filter(|pid| *pid > 0)
+            .ok_or_else(|| format!("fixture journal reported an invalid pid: {}", state["pid"]))
+    }
+
     fn fixture_window_id(window: &Value, pid: i64) -> Result<u64, String> {
         window["window_id"]
             .as_u64()
@@ -1019,11 +1026,12 @@ mod e2e {
         let fixture_title = fixture_title(&gate.session_label, scope);
         let fixture = spawn_in_job(&mut fixture_command(journal.url(), &fixture_title))
             .expect("start canvas fixture");
-        let pid = i64::from(fixture.id());
         wait_until(
             || journal.snapshot()["ready"].as_bool() == Some(true),
             "fixture did not become ready",
         );
+        let pid = fixture_pid(&journal.snapshot())
+            .unwrap_or_else(|error| panic!("read fixture process identity: {error}"));
         #[cfg(target_os = "macos")]
         let mut driver = McpDriver::spawn_macos_daemon_proxy_named(&gate.session_label)
             .expect("connect to the exact TCC-authorized review Driver daemon");
@@ -1433,6 +1441,23 @@ mod e2e {
             exact_fixture_window(&windows, 42, FIXTURE_TEST_TITLE).unwrap(),
             Some((12, FIXTURE_TEST_TITLE.to_owned()))
         );
+    }
+
+    #[test]
+    fn fixture_journal_requires_positive_integer_pid() {
+        assert_eq!(fixture_pid(&json!({"pid": 42})).unwrap(), 42);
+        for pid in [
+            Value::Null,
+            json!(0),
+            json!(-1),
+            json!("42"),
+            json!(1.5),
+            json!(u64::MAX),
+        ] {
+            let error = fixture_pid(&json!({"pid": pid})).unwrap_err();
+            assert!(error.contains("invalid pid"), "unexpected error: {error}");
+        }
+        assert!(fixture_pid(&json!({})).unwrap_err().contains("invalid pid"));
     }
 
     #[test]

@@ -18,11 +18,15 @@ class VisualOnlyCanvasTests(unittest.TestCase):
         self.assertEqual(fixture.card_at(614, 220), "cancel")
         self.assertIsNone(fixture.card_at(40, 220))
 
-    def test_oracle_contains_behavior_without_coordinates_or_labels(self):
+    @mock.patch.object(fixture.os, "getpid", return_value=4242)
+    def test_oracle_contains_behavior_and_process_identity_without_coordinates_or_labels(
+        self, _getpid
+    ):
         self.assertEqual(
             fixture.oracle_state("send", 3),
             {
                 "fixture": "visual-only-canvas/v1",
+                "pid": 4242,
                 "ready": True,
                 "selected": "send",
                 "action_count": 3,

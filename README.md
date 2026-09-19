@@ -7,7 +7,7 @@
     </picture>
   </a>
 
-  <p align="center"><strong>Give AI agents computers they can use.</strong><br>Cua provides open-source desktop automation, isolated cloud desktops, local macOS VMs, and benchmarks for evaluating computer-use agents.</p>
+  <p align="center"><strong>Give AI agents computers they can use.</strong><br>Cua provides open-source desktop automation, isolated cloud desktops, local macOS VMs, specialist decision models, and benchmarks for evaluating computer-use agents.</p>
 
   <p align="center"><strong><a href="https://run.cua.ai/?utm_source=github&utm_medium=referral&utm_campaign=fleet_activation&content_id=repo_readme" target="_blank" rel="noopener noreferrer">Try Cua Fleets now at run.cua.ai</a></strong></p>
 
@@ -27,24 +27,29 @@
 <div align="center">
   <table width="100%">
     <tr>
-      <td colspan="3" align="center">
+      <td colspan="2" align="center" valign="top" width="66.66%">
         <a href="#cua-fleets">
-          <img src="img/card-cua-fleets.gif" alt="Cua Fleets: isolated cloud desktops for your agents" width="100%">
+          <img src="img/card-cua-fleets-wide.gif" alt="Cua Fleets: isolated cloud desktops for your agents" width="100%">
+        </a>
+      </td>
+      <td align="center" valign="top" width="33.33%">
+        <a href="https://github.com/trycua/cua/tree/main/libs/cua-s1">
+          <img src="img/card-cua-s1.gif" alt="CUA-S1: small, specialized models for computer use." width="100%">
         </a>
       </td>
     </tr>
     <tr>
-      <td align="center" width="33%">
+      <td align="center" valign="top" width="33.33%">
         <a href="#cua-driver">
           <img src="img/card-cua-driver.gif" alt="Cua Driver: inspect and operate apps on macOS, Windows, and Linux" width="100%">
         </a>
       </td>
-      <td align="center" width="33%">
+      <td align="center" valign="top" width="33.33%">
         <a href="#lume">
           <img src="img/card-cua-lume.gif" alt="Lume: local macOS and Linux VMs on Apple Silicon" width="100%">
         </a>
       </td>
-      <td align="center" width="33%">
+      <td align="center" valign="top" width="33.33%">
         <a href="#cua-bench">
           <img src="img/card-cua-bench.gif" alt="Cua Bench: create tasks, evaluate agents, and export trajectories" width="100%">
         </a>
@@ -54,11 +59,12 @@
 </div>
 
 - **Cua Fleets:** [Provision a Linux desktop, run a command, and save a screenshot](https://cua.ai/docs/tutorials/your-first-cloud-fleet).
+- **CUA-S1:** [Explore small, specialized models for computer-use decisions](#cua-s1).
 - **Cua Driver:** [Operate Calculator and verify its result](https://cua.ai/docs/tutorials/drive-your-first-app).
 - **Lume:** [Create a Tahoe VM and connect over SSH](https://cua.ai/docs/tutorials/create-your-first-lume-vm).
 - **Cua Bench:** [Create and verify a simulated task](https://cua.ai/docs/tutorials/your-first-cua-bench-task).
 
-You bring the agent and model. Cua provides the computer and automation tools. [Computer-Use 2.0](https://cua.ai/docs/concepts/what-is-computer-use) describes an agent moving between code, APIs, and graphical interfaces within the same task.
+Bring your own agent and model, or explore CUA-S1 for specialized decisions. Cua provides the computer and automation tools. [Computer-Use 2.0](https://cua.ai/docs/concepts/what-is-computer-use) describes an agent moving between code, APIs, and graphical interfaces within the same task.
 
 ## See Cua Driver in action
 
@@ -77,6 +83,18 @@ Provision isolated cloud desktops at [run.cua.ai](https://run.cua.ai/?utm_source
 Local sandboxes and Fleets share the Sandbox SDK, but credentials, images, operations, and runtime requirements differ. Use the [runtime support reference](https://cua.ai/docs/reference/sandbox-sdk/runtime-support) to choose an environment. For your own hardware, see [Manage local sandbox lifecycle](https://cua.ai/docs/how-to-guides/sandbox/manage-local-lifecycle).
 
 **[Your first Cloud Fleet](https://cua.ai/docs/tutorials/your-first-cloud-fleet)** | **[Fleet overview](https://cua.ai/docs/cloud-fleets)** | **[Sandbox SDK reference](https://cua.ai/docs/reference/sandbox-sdk)**
+
+---
+
+## CUA-S1
+
+CUA-S1 is our family of small, specialized System 1 models for computer use. We use "System 1" as an engineering analogy for fast, bounded decisions, such as choosing which value belongs in a field or whether to leave an element alone. It is not a strict classification of model architectures or a replacement for a general-purpose agent's planning and reasoning.
+
+The first research profile focuses on forms: scoring decisions from structured interface elements and document values rather than generating a response token by token. Application code orders the actions, and the optional Cua Driver integration handles execution with explicit action boundaries.
+
+The project includes Python model code, synthetic-data generation, training, and evaluation. This is an early, source-only research release; model weights are not bundled. The source is MIT-licensed, while any future model weights will carry their own terms.
+
+**[Explore CUA-S1](libs/cua-s1)** | **[Model card](libs/cua-s1/MODEL_CARD.md)** | **[Safety and deployment guidance](libs/cua-s1/SECURITY.md)**
 
 ---
 

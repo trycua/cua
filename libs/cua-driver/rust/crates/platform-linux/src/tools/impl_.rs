@@ -11960,12 +11960,12 @@ impl Tool for GetDesktopStateTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
+        let scale_key = resolve_cursor_key(&args);
         let input = match parse_typed_input::<GetDesktopStateInput>("get_desktop_state", args) {
             Ok(input) => input,
             Err(result) => return result,
         };
         let out_file = input.screenshot_out_file;
-        let scale_key = input.session.filter(|s| !s.is_empty()).unwrap_or_else(|| "default".to_owned());
 
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
             // Capture the full display at native size first. When the

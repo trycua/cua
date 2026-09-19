@@ -18,12 +18,15 @@
 //!
 //! Everything here is **best-effort**: if the extension isn't installed/enabled
 //! the calls return `None` / no-op and callers keep the prior behaviour (no
-//! screen coords, no Wayland cursor). Uses a short-lived `gdbus` subprocess so
-//! there's no zbus blocking-feature or async-context coupling — the calls are
-//! infrequent (once per `get_window_state`, a few per click).
+//! screen coords, no Wayland cursor). Uses a short-lived `gdbus` subprocess.
+//! Visual updates are serialized on a dedicated thread so helper discovery and
+//! subprocess waits never run on the invoking async runtime thread. Geometry,
+//! capture and focus calls retain their existing synchronous behavior.
 
+use std::collections::VecDeque;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::process::Command;
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::Duration;
 
 use crate::x11::WindowInfo;
@@ -540,19 +543,162 @@ fn parse_shell_windows(raw: &str, filter_pid: Option<u32>) -> Option<Vec<ShellWi
     )
 }
 
-/// Glide the agent cursor to screen `(x, y)`.
+// One process-wide dispatcher matches the existing helper's single cursor.
+// There is no new per-session or persistent-connection helper protocol here.
+const VISUAL_QUEUE_CAPACITY: usize = 64;
+static VISUAL_DISPATCHER: OnceLock<Option<VisualDispatcher>> = OnceLock::new();
+
+#[derive(Debug, PartialEq, Eq)]
+struct VisualRequest {
+    method: &'static str,
+    args: Vec<String>,
+}
+
+impl VisualRequest {
+    fn hide() -> Self {
+        Self {
+            method: "HideCursor",
+            args: Vec::new(),
+        }
+    }
+
+    fn is_hide(&self) -> bool {
+        self.method == "HideCursor"
+    }
+}
+
+#[derive(Default)]
+struct VisualQueue {
+    pending: VecDeque<VisualRequest>,
+    closed: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum VisualQueueError {
+    Full,
+    Closed,
+}
+
+struct VisualDispatcher {
+    shared: Arc<(Mutex<VisualQueue>, Condvar)>,
+}
+
+impl VisualDispatcher {
+    fn spawn(
+        mut dispatch: impl FnMut(VisualRequest) + Send + 'static,
+    ) -> std::io::Result<(Self, std::thread::JoinHandle<()>)> {
+        let shared = Arc::new((Mutex::new(VisualQueue::default()), Condvar::new()));
+        // Closing the worker's guard also closes admission if dispatch panics.
+        let worker = Self {
+            shared: Arc::clone(&shared),
+        };
+        let thread = std::thread::Builder::new()
+            .name("cua-gnome-cursor".to_owned())
+            .spawn(move || {
+                loop {
+                    let request = {
+                        let (lock, ready) = &*worker.shared;
+                        let mut queue = lock.lock().unwrap_or_else(|e| e.into_inner());
+                        while queue.pending.is_empty() && !queue.closed {
+                            queue = ready.wait(queue).unwrap_or_else(|e| e.into_inner());
+                        }
+                        if queue.closed {
+                            break;
+                        }
+                        queue.pending.pop_front().expect("nonempty visual queue")
+                    };
+                    // Never hold the admission lock over discovery or helper I/O.
+                    dispatch(request);
+                }
+                // Dropping an owned dispatcher discards queued updates and hides
+                // after the in-flight call, never concurrently with that call.
+                dispatch(VisualRequest::hide());
+            })?;
+        Ok((Self { shared }, thread))
+    }
+
+    fn enqueue(&self, request: VisualRequest) -> Result<(), VisualQueueError> {
+        let (lock, ready) = &*self.shared;
+        let mut queue = lock.lock().unwrap_or_else(|e| e.into_inner());
+        if queue.closed {
+            return Err(VisualQueueError::Closed);
+        }
+        if request.is_hide() {
+            // Reserve one terminal slot so removal cannot be lost to a full
+            // queue. Consecutive hides are idempotent. Ordinary commands count
+            // ALL pending entries toward capacity, keeping the total <= N + 1.
+            if queue.pending.back().is_some_and(VisualRequest::is_hide) {
+                return Ok(());
+            }
+        } else if queue.pending.len() >= VISUAL_QUEUE_CAPACITY {
+            return Err(VisualQueueError::Full);
+        }
+        queue.pending.push_back(request);
+        ready.notify_one();
+        Ok(())
+    }
+}
+
+impl Drop for VisualDispatcher {
+    fn drop(&mut self) {
+        let (lock, ready) = &*self.shared;
+        let mut queue = lock.lock().unwrap_or_else(|e| e.into_inner());
+        queue.closed = true;
+        queue.pending.clear();
+        ready.notify_one();
+        // Do not join here: callers can be on a current-thread async runtime.
+    }
+}
+
+fn with_visual_dispatcher<R>(body: impl FnOnce(Option<&VisualDispatcher>) -> R) -> R {
+    #[cfg(test)]
+    if let Some(dispatcher) = tests::VISUAL_OVERRIDE.with(|slot| slot.borrow().clone()) {
+        return body(Some(&dispatcher));
+    }
+    let dispatcher = VISUAL_DISPATCHER.get_or_init(|| {
+        match VisualDispatcher::spawn(|request| {
+            if gdbus_call(request.method, &request.args).is_none() {
+                tracing::debug!(
+                    method = request.method,
+                    "GNOME visual helper call unavailable"
+                );
+            }
+        }) {
+            // This is process-lived, like the existing overlay dispatcher.
+            Ok((dispatcher, _thread)) => Some(dispatcher),
+            Err(error) => {
+                tracing::warn!(%error, "could not start GNOME visual dispatcher");
+                None
+            }
+        }
+    });
+    body(dispatcher.as_ref())
+}
+
+fn enqueue_visual(method: &'static str, args: Vec<String>) {
+    let result = with_visual_dispatcher(|dispatcher| {
+        dispatcher
+            .ok_or(VisualQueueError::Closed)
+            .and_then(|dispatcher| dispatcher.enqueue(VisualRequest { method, args }))
+    });
+    if let Err(error) = result {
+        tracing::warn!(method, ?error, "GNOME visual queue rejected command");
+    }
+}
+
+/// Glide the agent cursor to screen `(x, y)` (best-effort queue admission).
 pub fn move_cursor(x: i32, y: i32) {
-    let _ = gdbus_call("MoveCursor", &[x.to_string(), y.to_string()]);
+    enqueue_visual("MoveCursor", vec![x.to_string(), y.to_string()]);
 }
 
 /// Snap + pulse the agent cursor at screen `(x, y)` (a click indicator).
 pub fn click_pulse(x: i32, y: i32) {
-    let _ = gdbus_call("ClickPulse", &[x.to_string(), y.to_string()]);
+    enqueue_visual("ClickPulse", vec![x.to_string(), y.to_string()]);
 }
 
 /// Set the stable session-specific fill color for the compositor cursor.
 pub fn set_cursor_color(fill_color: &str) {
-    let _ = gdbus_call("SetCursorColor", &[fill_color.to_owned()]);
+    enqueue_visual("SetCursorColor", vec![fill_color.to_owned()]);
 }
 
 /// Update the compositor-owned cursor's semantic action state.
@@ -560,9 +706,9 @@ pub fn set_cursor_color(fill_color: &str) {
 /// Callers gate this method on helper v8 so an older helper cannot silently
 /// render the retired cursor artwork.
 pub fn set_cursor_state(action: &str, delivery: &str, target: &str, active: bool) {
-    let _ = gdbus_call(
+    enqueue_visual(
         "SetCursorState",
-        &[
+        vec![
             action.to_owned(),
             delivery.to_owned(),
             target.to_owned(),
@@ -573,12 +719,14 @@ pub fn set_cursor_state(action: &str, delivery: &str, target: &str, active: bool
 
 /// Set the renderer-visible public session label for the compositor cursor.
 pub fn set_session_label(label: &str) {
-    let _ = gdbus_call("SetSessionLabel", &[label.to_owned()]);
+    enqueue_visual("SetSessionLabel", vec![label.to_owned()]);
 }
 
-/// Hide the agent cursor.
+/// Queue a hide after all previously accepted updates, including on removal.
+/// A saturated queue reserves room for this terminal command. Later updates
+/// can show the cursor again; session lifetime remains the caller's concern.
 pub fn hide_cursor() {
-    let _ = gdbus_call("HideCursor", &[]);
+    enqueue_visual("HideCursor", Vec::new());
 }
 
 #[cfg(test)]
@@ -589,6 +737,225 @@ mod tests {
         include_str!("../../../../../wayland-helper/winrects@cua/extension.js");
     const EXTENSION_METADATA: &str =
         include_str!("../../../../../wayland-helper/winrects@cua/metadata.json");
+
+    // Thread-local injection keeps public-route tests independent and prevents
+    // them from ever contacting the process-global helper or a real desktop.
+    thread_local! {
+        pub(super) static VISUAL_OVERRIDE: std::cell::RefCell<Option<Arc<VisualDispatcher>>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
+    struct VisualOverride;
+
+    impl VisualOverride {
+        fn install(dispatcher: VisualDispatcher) -> Self {
+            VISUAL_OVERRIDE.with(|slot| {
+                assert!(slot.borrow_mut().replace(Arc::new(dispatcher)).is_none());
+            });
+            Self
+        }
+    }
+
+    impl Drop for VisualOverride {
+        fn drop(&mut self) {
+            VISUAL_OVERRIDE.with(|slot| slot.borrow_mut().take());
+        }
+    }
+
+    fn visual_request(method: &'static str, args: &[&str]) -> VisualRequest {
+        VisualRequest {
+            method,
+            args: args.iter().map(|arg| (*arg).to_owned()).collect(),
+        }
+    }
+
+    #[test]
+    fn slow_visual_helper_does_not_stall_current_thread_heartbeat() {
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let mut started_tx = Some(started_tx);
+        let (dispatcher, worker) = VisualDispatcher::spawn(move |request| {
+            assert!(tokio::runtime::Handle::try_current().is_err());
+            if !request.is_hide() {
+                started_tx.take().unwrap().send(()).unwrap();
+                // Only the heartbeat can release this slow injected helper.
+                release_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            }
+        })
+        .unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let dispatcher = VisualOverride::install(dispatcher);
+        runtime.block_on(async {
+            move_cursor(10, 20);
+            tokio::time::timeout(Duration::from_secs(1), started_rx)
+                .await
+                .unwrap()
+                .unwrap();
+            for _ in 0..5 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            release_tx.send(()).unwrap();
+            // Closing on the runtime thread must not wait for helper I/O.
+            drop(dispatcher);
+        });
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn visual_dispatch_preserves_current_helper_methods_arguments_and_order() {
+        let (observed_tx, observed_rx) = std::sync::mpsc::channel();
+        let (dispatcher, worker) = VisualDispatcher::spawn(move |request| {
+            observed_tx.send(request).unwrap();
+        })
+        .unwrap();
+        let requests = [
+            visual_request("SetCursorColor", &["#123456"]),
+            visual_request("SetCursorState", &["click", "background", "window", "true"]),
+            visual_request("SetSessionLabel", &["session"]),
+            visual_request("MoveCursor", &["10", "20"]),
+            visual_request("ClickPulse", &["30", "40"]),
+            visual_request("SetCursorState", &["click", "", "", "false"]),
+            VisualRequest::hide(),
+        ];
+        let dispatcher = VisualOverride::install(dispatcher);
+        set_cursor_color("#123456");
+        set_cursor_state("click", "background", "window", true);
+        set_session_label("session");
+        move_cursor(10, 20);
+        click_pulse(30, 40);
+        set_cursor_state("click", "", "", false);
+        hide_cursor();
+        for expected in requests {
+            assert_eq!(
+                observed_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+                expected
+            );
+        }
+        drop(dispatcher);
+        worker.join().unwrap();
+        assert_eq!(observed_rx.recv().unwrap(), VisualRequest::hide());
+        assert!(observed_rx.recv().is_err(), "worker and sender must exit");
+    }
+
+    #[test]
+    fn full_visual_queue_reserves_terminal_hide_after_all_accepted_updates() {
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let (observed_tx, observed_rx) = std::sync::mpsc::channel();
+        let mut first = true;
+        let (dispatcher, worker) = VisualDispatcher::spawn(move |request| {
+            if first {
+                first = false;
+                started_tx.send(()).unwrap();
+                release_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            }
+            observed_tx.send(request).unwrap();
+        })
+        .unwrap();
+        dispatcher
+            .enqueue(visual_request("MoveCursor", &["in-flight"]))
+            .unwrap();
+        started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        for index in 0..VISUAL_QUEUE_CAPACITY {
+            dispatcher
+                .enqueue(visual_request("MoveCursor", &[&index.to_string()]))
+                .unwrap();
+        }
+        assert_eq!(
+            dispatcher.enqueue(visual_request("ClickPulse", &["refused"])),
+            Err(VisualQueueError::Full)
+        );
+        // OverlayMsg::Remove and SetEnabled(false) both use this global hide.
+        for _ in 0..100 {
+            dispatcher.enqueue(VisualRequest::hide()).unwrap();
+        }
+        assert_eq!(
+            dispatcher.shared.0.lock().unwrap().pending.len(),
+            VISUAL_QUEUE_CAPACITY + 1
+        );
+        assert_eq!(
+            dispatcher.enqueue(visual_request("MoveCursor", &["also refused"])),
+            Err(VisualQueueError::Full)
+        );
+        release_tx.send(()).unwrap();
+        assert_eq!(
+            observed_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+            visual_request("MoveCursor", &["in-flight"])
+        );
+        for index in 0..VISUAL_QUEUE_CAPACITY {
+            assert_eq!(
+                observed_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+                visual_request("MoveCursor", &[&index.to_string()])
+            );
+        }
+        assert_eq!(
+            observed_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+            VisualRequest::hide()
+        );
+        assert!(
+            observed_rx.try_recv().is_err(),
+            "no stale update after hide"
+        );
+        // Hiding is not permanent shutdown: a subsequent caller can show again.
+        dispatcher
+            .enqueue(visual_request("MoveCursor", &["new activity"]))
+            .unwrap();
+        assert_eq!(
+            observed_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+            visual_request("MoveCursor", &["new activity"])
+        );
+        drop(dispatcher);
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn dropping_visual_dispatcher_discards_pending_updates_then_hides_and_exits() {
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let (observed_tx, observed_rx) = std::sync::mpsc::channel();
+        let (dispatcher, worker) = VisualDispatcher::spawn(move |request| {
+            if !request.is_hide() {
+                started_tx.send(()).unwrap();
+                release_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            }
+            observed_tx.send(request).unwrap();
+        })
+        .unwrap();
+        dispatcher
+            .enqueue(visual_request("MoveCursor", &["in-flight"]))
+            .unwrap();
+        started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        dispatcher
+            .enqueue(visual_request("ClickPulse", &["stale"]))
+            .unwrap();
+        drop(dispatcher);
+        release_tx.send(()).unwrap();
+        worker.join().unwrap();
+        assert_eq!(
+            observed_rx.into_iter().collect::<Vec<_>>(),
+            vec![
+                visual_request("MoveCursor", &["in-flight"]),
+                VisualRequest::hide()
+            ]
+        );
+    }
+
+    #[test]
+    fn failed_visual_worker_closes_admission() {
+        let (dispatcher, worker) =
+            VisualDispatcher::spawn(|_| panic!("injected helper failure")).unwrap();
+        dispatcher
+            .enqueue(visual_request("MoveCursor", &["10", "20"]))
+            .unwrap();
+        assert!(worker.join().is_err());
+        assert_eq!(
+            dispatcher.enqueue(VisualRequest::hide()),
+            Err(VisualQueueError::Closed)
+        );
+    }
 
     #[test]
     fn parses_and_filters_shell_windows() {

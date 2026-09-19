@@ -2070,10 +2070,18 @@ impl ExtensionStore {
                 let cleanup = remove_cap_subdirectory(&staging_parent_handle, staging_name);
                 let manifest = verified?;
                 verify_install_record_at(&existing, entry.id, &manifest.version)?;
-                run_extension_hook(&destination, &manifest, true)?;
+                run_verified_extension_hook(
+                    &destination,
+                    &existing,
+                    &manifest,
+                    entry,
+                    Some(&inspected.manifest_bytes),
+                    true,
+                )?;
                 cleanup?;
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let mut placed = false;
                 let staged = (|| -> Result<()> {
                     // Record and fully verify the staged version before any
                     // hook instruction runs, so a hook can never execute from
@@ -2082,17 +2090,10 @@ impl ExtensionStore {
                     // stays durable whichever step failed.
                     write_install_record_at(&staging_handle, &inspected, source)?;
                     #[cfg(windows)]
-                    converge_windows_acl(
-                        WINDOWS_ACL_CONVERGENCE_ATTEMPTS,
-                        WINDOWS_ACL_CONVERGENCE_RETRY_WINDOW,
-                        || windows_harden_private_tree(&staging_handle),
-                        || {
-                            verify_installed_version_at(
-                                &staging_handle,
-                                entry,
-                                Some(&inspected.manifest_bytes),
-                            )
-                        },
+                    converge_windows_installed_version(
+                        &staging_handle,
+                        entry,
+                        Some(&inspected.manifest_bytes),
                     )?;
                     #[cfg(not(windows))]
                     verify_installed_version_at(
@@ -2100,18 +2101,45 @@ impl ExtensionStore {
                         entry,
                         Some(&inspected.manifest_bytes),
                     )?;
-                    run_extension_hook(&staging, &inspected.manifest, true)?;
+                    run_verified_extension_hook(
+                        &staging,
+                        &staging_handle,
+                        &inspected.manifest,
+                        entry,
+                        Some(&inspected.manifest_bytes),
+                        true,
+                    )?;
                     staging_parent_handle
                         .rename(staging_name, &versions_handle, &version_text)
                         .with_context(|| {
                             format!("place extension version at {}", destination.display())
                         })?;
+                    placed = true;
+                    #[cfg(windows)]
+                    {
+                        let installed = versions_handle
+                            .open_dir_nofollow(&version_text)
+                            .context("reopen placed extension version")?;
+                        converge_windows_installed_version(
+                            &installed,
+                            entry,
+                            Some(&inspected.manifest_bytes),
+                        )?;
+                    }
                     sync_cap_dir(&staging_parent_handle)?;
                     sync_cap_dir(&versions_handle)?;
                     Ok(())
                 })();
                 if staged.is_err() {
-                    remove_cap_subdirectory(&staging_parent_handle, staging_name)?;
+                    if placed {
+                        #[cfg(windows)]
+                        if let Ok(installed) = versions_handle.open_dir_nofollow(&version_text) {
+                            let _ = windows_harden_private_tree(&installed);
+                        }
+                        remove_cap_subdirectory(&versions_handle, version_text.as_ref())?;
+                    } else {
+                        remove_cap_subdirectory(&staging_parent_handle, staging_name)?;
+                    }
                 }
                 staged?;
             }
@@ -2374,10 +2402,12 @@ impl ExtensionStore {
             })?;
             verify_cap_directory_permissions_portable(&installed)?;
             let manifest = verify_installed_version_at(&installed, entry, None)?;
-            let record = read_install_record_at(&installed, entry.id, &manifest.version)?;
-            run_extension_hook(
+            let record = run_verified_extension_hook(
                 &self.versions_dir(entry.id).join(&version),
+                &installed,
                 &manifest,
+                entry,
+                None,
                 self_test,
             )?;
             Ok(record)
@@ -3104,6 +3134,60 @@ fn run_extension_hook(root: &Path, manifest: &ExtensionManifest, self_test: bool
     )
 }
 
+#[cfg(windows)]
+fn converge_windows_installed_version(
+    root: &Dir,
+    entry: &RegistryEntry,
+    expected_manifest: Option<&[u8]>,
+) -> Result<ExtensionManifest> {
+    converge_windows_acl(
+        WINDOWS_ACL_CONVERGENCE_ATTEMPTS,
+        WINDOWS_ACL_CONVERGENCE_RETRY_WINDOW,
+        || windows_harden_private_tree(root),
+        || verify_installed_version_at(root, entry, expected_manifest),
+    )
+}
+
+fn run_verified_extension_hook(
+    root_path: &Path,
+    root: &Dir,
+    manifest: &ExtensionManifest,
+    entry: &RegistryEntry,
+    expected_manifest: Option<&[u8]>,
+    self_test: bool,
+) -> Result<InstallRecord> {
+    run_verified_extension_hook_with(root, entry, expected_manifest, &manifest.version, || {
+        run_extension_hook(root_path, manifest, self_test)
+    })
+}
+
+fn run_verified_extension_hook_with(
+    root: &Dir,
+    entry: &RegistryEntry,
+    expected_manifest: Option<&[u8]>,
+    version: &str,
+    hook: impl FnOnce() -> Result<()>,
+) -> Result<InstallRecord> {
+    let hook = hook();
+    #[cfg(windows)]
+    {
+        let restored = converge_windows_installed_version(root, entry, expected_manifest).map(drop);
+        match (hook, restored) {
+            (Ok(()), restored) => restored,
+            (Err(error), Ok(())) => Err(error),
+            (Err(error), Err(restore_error)) => Err(anyhow!(
+                "{error:#}; additionally failed to restore and verify private Windows ACLs after the extension hook: {restore_error:#}"
+            )),
+        }?;
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (root, entry, expected_manifest);
+        hook?;
+    }
+    read_install_record_at(root, entry.id, version)
+}
+
 /// Test-only record of the installed state each hook launch could see.
 ///
 /// A hook may run only after its extension has been recorded and fully
@@ -3593,8 +3677,11 @@ fn converge_windows_acl_with<T>(
                 attempt - 1
             );
         }
-        harden()?;
-        match verify() {
+        let result = match harden() {
+            Ok(()) => verify(),
+            Err(error) => Err(error),
+        };
+        match result {
             Ok(value) => return Ok(value),
             Err(error) => {
                 let retryable = error.downcast_ref::<WindowsAclDrift>().is_some();
@@ -4446,6 +4533,65 @@ mod tests {
         assert_eq!(hardens.get(), 2);
         assert_eq!(verifies.get(), 2);
         assert_eq!(sleeps.get(), 1);
+    }
+
+    #[test]
+    fn windows_acl_convergence_retries_hardening_drift_then_succeeds() {
+        let hardens = Cell::new(0);
+        let verifies = Cell::new(0);
+        let sleeps = Cell::new(0);
+        let value = converge_windows_acl_with(
+            3,
+            std::time::Duration::from_secs(90),
+            || std::time::Duration::ZERO,
+            |_| sleeps.set(sleeps.get() + 1),
+            || {
+                hardens.set(hardens.get() + 1);
+                if hardens.get() == 1 {
+                    Err(acl_drift_error())
+                } else {
+                    Ok(())
+                }
+            },
+            || {
+                verifies.set(verifies.get() + 1);
+                Ok("verified")
+            },
+        )
+        .unwrap();
+
+        assert_eq!(value, "verified");
+        assert_eq!(hardens.get(), 2);
+        assert_eq!(verifies.get(), 1);
+        assert_eq!(sleeps.get(), 1);
+    }
+
+    #[test]
+    fn windows_acl_convergence_stops_after_persistent_hardening_drift() {
+        let hardens = Cell::new(0);
+        let verifies = Cell::new(0);
+        let error = converge_windows_acl_with::<()>(
+            3,
+            std::time::Duration::from_secs(90),
+            || std::time::Duration::ZERO,
+            |_| {},
+            || {
+                hardens.set(hardens.get() + 1);
+                Err(acl_drift_error())
+            },
+            || {
+                verifies.set(verifies.get() + 1);
+                Ok(())
+            },
+        )
+        .unwrap_err();
+
+        assert!(error.downcast_ref::<WindowsAclDrift>().is_some());
+        assert!(error
+            .to_string()
+            .contains("did not converge after 3 hardening attempt(s)"));
+        assert_eq!(hardens.get(), 3);
+        assert_eq!(verifies.get(), 0);
     }
 
     #[test]
@@ -5743,6 +5889,129 @@ mod tests {
         assert_eq!(hardens.get(), 1);
         windows_verify_directory_handle(&staged).unwrap();
         inspect_owned_tree(&staged).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn post_hook_acl_grant_is_removed_before_staged_version_is_placed() {
+        let temp = TempDir::new().unwrap();
+        let root = open_directory_path_nofollow(temp.path()).unwrap();
+        create_private_subdirectory(&root, std::ffi::OsStr::new("staging")).unwrap();
+        create_private_subdirectory(&root, std::ffi::OsStr::new("versions")).unwrap();
+        let staging = root.open_dir_nofollow("staging").unwrap();
+        let versions = root.open_dir_nofollow("versions").unwrap();
+        let entry = registry_entry(PERCEPTION_ID).unwrap();
+        let archive = fixture_archive(
+            temp.path(),
+            "1.0.0",
+            &current_target().unwrap(),
+            1,
+            b"worker",
+        );
+        let source = InstallSource {
+            archive: archive.clone(),
+            trust: TrustClass::DeveloperUnsignedLocal,
+            catalog: None,
+            signed_catalog: None,
+            trust_update: None,
+        };
+        let inspected = inspect_archive(&archive, entry, &staging).unwrap();
+        write_install_record_at(&staging, &inspected, &source).unwrap();
+
+        run_verified_extension_hook_with(
+            &staging,
+            entry,
+            Some(&inspected.manifest_bytes),
+            &inspected.manifest.version,
+            || {
+                let grant = std::process::Command::new("icacls")
+                    .arg(temp.path().join("staging"))
+                    .arg("/grant")
+                    .arg("*S-1-15-2-1:(OI)(CI)(RX)")
+                    .output()?;
+                if !grant.status.success() {
+                    bail!("icacls failed: {}", String::from_utf8_lossy(&grant.stderr));
+                }
+                assert!(verify_installed_version_at(
+                    &staging,
+                    entry,
+                    Some(&inspected.manifest_bytes)
+                )
+                .is_err());
+                Ok(())
+            },
+        )
+        .unwrap();
+        root.rename("staging", &versions, "1.0.0").unwrap();
+        let installed = versions.open_dir_nofollow("1.0.0").unwrap();
+
+        let manifest =
+            converge_windows_installed_version(&installed, entry, Some(&inspected.manifest_bytes))
+                .unwrap();
+        assert_eq!(manifest.version, "1.0.0");
+        windows_verify_directory_handle(&installed).unwrap();
+        inspect_owned_tree(&installed).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn health_hook_acl_grant_is_removed_before_status_returns_healthy() {
+        let temp = TempDir::new().unwrap();
+        let root = open_directory_path_nofollow(temp.path()).unwrap();
+        create_private_subdirectory(&root, std::ffi::OsStr::new("installed")).unwrap();
+        let installed = root.open_dir_nofollow("installed").unwrap();
+        let entry = registry_entry(PERCEPTION_ID).unwrap();
+        let archive = fixture_archive(
+            temp.path(),
+            "1.0.0",
+            &current_target().unwrap(),
+            1,
+            b"worker",
+        );
+        let source = InstallSource {
+            archive: archive.clone(),
+            trust: TrustClass::DeveloperUnsignedLocal,
+            catalog: None,
+            signed_catalog: None,
+            trust_update: None,
+        };
+        let inspected = inspect_archive(&archive, entry, &installed).unwrap();
+        write_install_record_at(&installed, &inspected, &source).unwrap();
+        converge_windows_installed_version(&installed, entry, None).unwrap();
+
+        let post_hook_archive_sha256 = "ab".repeat(32);
+        let record = run_verified_extension_hook_with(
+            &installed,
+            entry,
+            None,
+            &inspected.manifest.version,
+            || {
+                let grant = std::process::Command::new("icacls")
+                    .arg(temp.path().join("installed"))
+                    .arg("/grant")
+                    .arg("*S-1-15-2-1:(OI)(CI)(RX)")
+                    .output()?;
+                if !grant.status.success() {
+                    bail!("icacls failed: {}", String::from_utf8_lossy(&grant.stderr));
+                }
+                let mut record =
+                    read_install_record_at(&installed, entry.id, &inspected.manifest.version)?;
+                record.archive_sha256 = post_hook_archive_sha256.clone();
+                fs::write(
+                    temp.path().join("installed").join(INSTALL_RECORD_NAME),
+                    serde_json::to_vec_pretty(&record)?,
+                )?;
+                assert!(verify_installed_version_at(&installed, entry, None).is_err());
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(record.archive_sha256, post_hook_archive_sha256);
+        let manifest = verify_installed_version_at(&installed, entry, None).unwrap();
+        assert_eq!(manifest.version, "1.0.0");
+        windows_verify_directory_handle(&installed).unwrap();
+        inspect_owned_tree(&installed).unwrap();
     }
 
     #[cfg(windows)]

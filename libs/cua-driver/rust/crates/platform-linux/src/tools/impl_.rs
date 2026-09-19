@@ -6903,6 +6903,8 @@ async fn focus_by_pixel(
         "_session_id",
         "_transport_session_id",
         "cursor_id",
+        "scope",
+        "coordinate_frame",
     ] {
         if let Some(value) = parent_args.get(field) {
             click_args[field] = value.clone();
@@ -6981,9 +6983,10 @@ impl Tool for TypeTextTool {
                     "element_index": cua_driver_core::tool_schema::element_index_schema(),
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
                     "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
-                    "x":{"type":"number","description":"Screenshot-pixel X of the field to type into — the element px action form. Pass x,y (no element_index) and the tool pixel-clicks there to establish real renderer focus, then types. Use for Chromium/Electron inputs the AX path can't reach. Read straight off the get_window_state PNG, same convention as click."},
-                    "y":{"type":"number","description":"Screenshot-pixel Y of the field (see x)."},
+                    "x":{"type":"number","description":"Pixel X of the field to type into — the element px action form. Pass x,y (no element_index) and the tool pixel-clicks there to establish real renderer focus, then types. Use for Chromium/Electron inputs the AX path can't reach. Window-local pixels of the target window's own get_window_state screenshot by default (same convention as click); for get_desktop_state pixels pass scope:\"desktop\" (or coordinate_frame:\"desktop\") — a bare pid+x/y is otherwise misinterpreted as window-local and can focus the wrong widget."},
+                    "y":{"type":"number","description":"Pixel Y of the field (see x)."},
                     "scope":{"type":"string","enum":["window","desktop"],"default":"window"},
+                    "coordinate_frame": coordinate_frame_schema(),
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
@@ -6993,7 +6996,7 @@ impl Tool for TypeTextTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        if args.opt_str("scope").as_deref() == Some("desktop") && args.get("pid").is_none() {
+        if (args.opt_str("scope").as_deref() == Some("desktop") || coordinate_frame_is_desktop(&args)) && args.get("pid").is_none() {
             let input = match parse_typed_projection::<TypeTextInput>("type_text", &args) {
                 Ok(input) => input,
                 Err(result) => return result,
@@ -7882,9 +7885,10 @@ impl Tool for PressKeyTool {
                     "element_index": cua_driver_core::tool_schema::element_index_schema(),
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
                     "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
-                    "x":{"type":"number","description":"Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the key. Use when the key must go to a Chromium/Electron surface the AX path can't focus. Pass with y, no element_index."},
-                    "y":{"type":"number","description":"Screenshot-pixel Y (see x)."},
+                    "x":{"type":"number","description":"Pixel X — the element px action form: pixel-click there to focus, then send the key. Use when the key must go to a Chromium/Electron surface the AX path can't focus. Pass with y, no element_index. Window-local pixels by default (same convention as click); for get_desktop_state pixels pass scope:\"desktop\" (or coordinate_frame:\"desktop\")."},
+                    "y":{"type":"number","description":"Pixel Y (see x)."},
                     "scope":{"type":"string","enum":["window","desktop"],"default":"window"},
+                    "coordinate_frame": coordinate_frame_schema(),
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
@@ -7894,7 +7898,7 @@ impl Tool for PressKeyTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        if args.opt_str("scope").as_deref() == Some("desktop") && args.get("pid").is_none() {
+        if (args.opt_str("scope").as_deref() == Some("desktop") || coordinate_frame_is_desktop(&args)) && args.get("pid").is_none() {
             let input = match parse_typed_projection::<PressKeyInput>("press_key", &args) {
                 Ok(input) => input,
                 Err(result) => return result,

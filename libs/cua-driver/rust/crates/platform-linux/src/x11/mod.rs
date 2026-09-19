@@ -303,6 +303,65 @@ pub fn transient_for(xid: u64) -> Option<u64> {
     (owner != 0 && owner != root).then_some(u64::from(owner))
 }
 
+/// Windows NOT owned by `pid` whose `WM_TRANSIENT_FOR` chain (bounded to
+/// avoid cycles) resolves to one of `pid`'s own top-level windows.
+///
+/// A dialog or plugin window can legitimately run as a *different* process
+/// than the application it belongs to — e.g. GIMP's separate-process export
+/// option dialogs, or LibreOffice's "Document Recovery" dialog surfacing
+/// under a distinct `soffice.bin` instance. Exact-pid matching alone makes
+/// `get_window_state`'s `dialogs[]` invisible to such windows even though
+/// they are clearly the target application's own popup.
+///
+/// `WM_TRANSIENT_FOR` pointing (directly or transitively) at a window this
+/// pid actually owns is used as the sole correlation signal because it is an
+/// explicit, spoofing-resistant relationship the window manager enforces —
+/// unlike `WM_CLASS`/process-name similarity, which many unrelated
+/// applications built on the same toolkit share and which a hostile window
+/// could set to anything.
+pub fn list_cross_pid_transient_windows(pid: u32) -> Vec<WindowInfo> {
+    list_cross_pid_transient_windows_with(pid, list_windows(None), transient_for)
+}
+
+fn list_cross_pid_transient_windows_with(
+    pid: u32,
+    all_windows: Vec<WindowInfo>,
+    transient_for: impl Fn(u64) -> Option<u64>,
+) -> Vec<WindowInfo> {
+    let own_xids: std::collections::HashSet<u64> = all_windows
+        .iter()
+        .filter(|w| w.pid == Some(pid))
+        .map(|w| w.xid)
+        .collect();
+    if own_xids.is_empty() {
+        return Vec::new();
+    }
+    all_windows
+        .into_iter()
+        .filter(|w| w.pid != Some(pid))
+        .filter(|w| transient_chain_reaches(w.xid, &own_xids, &transient_for))
+        .collect()
+}
+
+/// Walks `WM_TRANSIENT_FOR` from `start`, bounded to guard against a cycle a
+/// misbehaving client could create, until it lands on a member of `targets`.
+fn transient_chain_reaches(
+    start: u64,
+    targets: &std::collections::HashSet<u64>,
+    transient_for: &impl Fn(u64) -> Option<u64>,
+) -> bool {
+    let mut current = start;
+    for _ in 0..8 {
+        match transient_for(current) {
+            Some(owner) if targets.contains(&owner) => return true,
+            Some(owner) if owner == current => return false,
+            Some(owner) => current = owner,
+            None => return false,
+        }
+    }
+    false
+}
+
 /// The window a pid-only keyboard action means in a multi-window app, in
 /// order: the pid's window holding the core focus; its topmost on-screen
 /// transient dialog (a file chooser, a filter dialog); the WM's active
@@ -540,5 +599,87 @@ mod tests {
         assert_eq!(flags & 0xff, 10);
         assert_eq!(flags & 0x0f00, 0x0f00);
         assert_eq!(flags & !0x0fff, 0);
+    }
+
+    fn win(xid: u64, pid: Option<u32>, title: &str) -> WindowInfo {
+        WindowInfo {
+            xid,
+            pid,
+            app_name: String::new(),
+            title: title.into(),
+            is_on_screen: true,
+            z_index: None,
+            x: 0,
+            y: 0,
+            width: 400,
+            height: 300,
+        }
+    }
+
+    #[test]
+    fn a_different_process_dialog_transient_to_the_target_pid_is_surfaced() {
+        // GIMP-style separate-process export dialog: xid 90 belongs to pid 999
+        // (not the target pid 7) but is WM_TRANSIENT_FOR the target's own
+        // window (10).
+        let windows = vec![
+            win(10, Some(7), "GIMP"),
+            win(90, Some(999), "Export Image as JPEG"),
+        ];
+        let cross = list_cross_pid_transient_windows_with(7, windows, |xid| match xid {
+            90 => Some(10),
+            _ => None,
+        });
+        assert_eq!(cross.len(), 1);
+        assert_eq!(cross[0].xid, 90);
+        assert_eq!(cross[0].pid, Some(999));
+    }
+
+    #[test]
+    fn a_transitive_transient_chain_through_another_cross_pid_window_still_resolves() {
+        // xid 91 is transient-for xid 90, which is transient-for the target's
+        // own window 10: both 90 and 91 should be attributed to pid 7.
+        let windows = vec![
+            win(10, Some(7), "LibreOffice"),
+            win(90, Some(999), "Recovery helper"),
+            win(91, Some(999), "Document Recovery"),
+        ];
+        let cross = list_cross_pid_transient_windows_with(7, windows, |xid| match xid {
+            90 => Some(10),
+            91 => Some(90),
+            _ => None,
+        });
+        let mut xids: Vec<u64> = cross.iter().map(|w| w.xid).collect();
+        xids.sort();
+        assert_eq!(xids, vec![90, 91]);
+    }
+
+    #[test]
+    fn an_unrelated_window_of_a_totally_different_app_is_not_attributed() {
+        // No transient_for relationship at all to the target's windows: this
+        // must never be surfaced, no matter how similar its title/class.
+        let windows = vec![win(10, Some(7), "GIMP"), win(50, Some(555), "Firefox")];
+        let cross =
+            list_cross_pid_transient_windows_with(7, windows, |_| None);
+        assert!(cross.is_empty());
+    }
+
+    #[test]
+    fn a_transient_cycle_fails_closed_instead_of_looping_forever() {
+        let windows = vec![win(10, Some(7), "target"), win(90, Some(999), "cyclic")];
+        let cross = list_cross_pid_transient_windows_with(7, windows, |xid| match xid {
+            90 => Some(91),
+            91 => Some(90),
+            _ => None,
+        });
+        assert!(cross.is_empty());
+    }
+
+    #[test]
+    fn no_own_windows_for_the_pid_yields_nothing_to_correlate_against() {
+        let windows = vec![win(90, Some(999), "orphan dialog")];
+        let cross = list_cross_pid_transient_windows_with(7, windows, |xid| {
+            (xid == 90).then_some(10)
+        });
+        assert!(cross.is_empty());
     }
 }

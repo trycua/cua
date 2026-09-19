@@ -153,7 +153,8 @@ const RESOURCE_LIMIT_EXITS: &[u32] = &[
     0xC000_012D, // STATUS_COMMITMENT_LIMIT
 ];
 
-const APP_CONTAINER_NAME_PREFIX: &str = "com.trycua.cua-driver.perception.worker";
+const APP_CONTAINER_NAME_PREFIX: &str = "com.trycua.perception.worker";
+const LEGACY_OVERSIZED_APP_CONTAINER_NAME_PREFIX: &str = "com.trycua.cua-driver.perception.worker";
 const APP_CONTAINER_DISPLAY_NAME: &str = "Cua Driver perception worker";
 const APP_CONTAINER_DESCRIPTION: &str =
     "Contained inference worker for the optional Cua Driver perception extension.";
@@ -1507,25 +1508,32 @@ fn remove_journal_tombstone(path: &Path) -> Result<(), VisualParseError> {
 }
 
 fn validate_profile_name(name: &str) -> Result<(), VisualParseError> {
-    let Some(suffix) = name.strip_prefix(APP_CONTAINER_NAME_PREFIX) else {
+    if name.encode_utf16().count() > 64 {
         return Err(containment_error(
-            "the perception AppContainer recovery journal is malformed",
+            "the perception AppContainer profile name exceeds the Windows limit",
             None,
         ));
-    };
-    let Some(token) = suffix.strip_prefix('.') else {
-        return Err(containment_error(
-            "the perception AppContainer recovery journal is malformed",
-            None,
-        ));
-    };
-    if token.len() != 32 || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+    }
+    if !profile_name_has_shape(name, APP_CONTAINER_NAME_PREFIX) {
         return Err(containment_error(
             "the perception AppContainer recovery journal is malformed",
             None,
         ));
     }
     Ok(())
+}
+
+fn profile_name_has_shape(name: &str, prefix: &str) -> bool {
+    name.strip_prefix(prefix)
+        .and_then(|suffix| suffix.strip_prefix('.'))
+        .is_some_and(|token| {
+            token.len() == 32 && token.bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
+}
+
+fn is_legacy_oversized_profile_name(name: &str) -> bool {
+    profile_name_has_shape(name, LEGACY_OVERSIZED_APP_CONTAINER_NAME_PREFIX)
+        && name.encode_utf16().count() > 64
 }
 
 fn read_journal_profile(path: &Path) -> Result<String, VisualParseError> {
@@ -1589,7 +1597,9 @@ fn read_journal_profile(path: &Path) -> Result<String, VisualParseError> {
             None,
         )
     })?;
-    validate_profile_name(profile)?;
+    if !is_legacy_oversized_profile_name(profile) {
+        validate_profile_name(profile)?;
+    }
     Ok(profile.to_owned())
 }
 
@@ -1684,7 +1694,12 @@ fn recover_acl_profile_journal_with(
         return Ok(());
     };
     let profile = read_journal_profile(state)?;
-    delete_profile(&profile)?;
+    // The prior preview wrote this journal before asking Windows to create a
+    // 72-unit profile name. Windows rejects such names, so no profile exists
+    // to delete; retaining the journal would permanently block the upgrade.
+    if !is_legacy_oversized_profile_name(&profile) {
+        delete_profile(&profile)?;
+    }
     if !tombstone_exists {
         move_journal_state_to_tombstone(state, path)?;
     }
@@ -2614,6 +2629,38 @@ mod tests {
         )
     }
 
+    #[test]
+    fn generated_profile_names_fit_the_windows_limit() {
+        let first = test_profile_name();
+        let second = test_profile_name();
+        assert_ne!(first, second);
+        assert!(first.encode_utf16().count() <= 64);
+        validate_profile_name(&first).unwrap();
+    }
+
+    #[test]
+    fn legacy_oversized_profile_journal_is_removed_without_deletion() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("runtime-acl.lock.profile");
+        let legacy = format!(
+            "{LEGACY_OVERSIZED_APP_CONTAINER_NAME_PREFIX}.{}",
+            uuid::Uuid::new_v4().simple()
+        );
+        assert!(legacy.encode_utf16().count() > 64);
+        let mut file = std::fs::File::create(&path).unwrap();
+        file.write_all(legacy.as_bytes()).unwrap();
+        file.write_all(b"\n").unwrap();
+        file.sync_all().unwrap();
+
+        recover_acl_profile_journal_with(&path, |_| {
+            panic!("an oversized legacy profile could not have been created")
+        })
+        .unwrap();
+
+        assert!(!path.exists());
+        assert!(!journal_tombstone_path(&path).exists());
+    }
+
     #[repr(C)]
     struct AceHeader {
         ace_type: u8,
@@ -2987,6 +3034,14 @@ mod tests {
         std::fs::create_dir(&working).unwrap();
         std::fs::write(&model, b"model").unwrap();
         std::fs::write(&scratch, b"capture").unwrap();
+
+        // Production boundaries are canonicalized before ACL admission. Match
+        // that contract so Windows short-path aliases cannot affect this test.
+        let bundle = std::fs::canonicalize(bundle).unwrap();
+        let models = bundle.join("models");
+        let model = models.join("detector.onnx");
+        let working = std::fs::canonicalize(working).unwrap();
+        let scratch = working.join("capture.png");
 
         let user = current_user_sid().unwrap();
         protect_tree(&bundle, &[(user.sid(), GENERIC_ALL)]);

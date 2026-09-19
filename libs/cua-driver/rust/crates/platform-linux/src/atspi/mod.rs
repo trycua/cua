@@ -263,18 +263,23 @@ pub fn walk_tree_bounded_within(
 }
 
 /// Perform the first advertised action on element `idx` within pid's app tree.
-/// Returns `Ok((action_name, suspected_noop))` on success — `suspected_noop`
-/// is true when the actuated node looked like a silent no-op (a passive
-/// display role, or no advertised action), so the caller can surface
-/// `effect: "suspected_noop"`.
-pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
+/// Returns `Ok((action_name, suspected_noop, unacknowledged))` on success —
+/// `suspected_noop` is true when the actuated node looked like a silent
+/// no-op (a passive display role, or no advertised action), so the caller
+/// can surface `effect: "suspected_noop"`. `unacknowledged` is true when the
+/// `doAction` D-Bus reply never arrived in time: the toolkit may still be
+/// processing the request (e.g. behind a nested dialog loop), so neither
+/// acceptance nor effect is known — the caller must report this as
+/// `unverifiable` with an explicit note, never as a plain confirmed/dispatched
+/// success.
+pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool, bool)> {
     perform_action_in(pid, None, idx)
 }
 
 /// [`perform_action`] that first tries the element identity cached by the last
 /// `get_window_state` snapshot of (pid, xid) — no re-walk — and only resolves
 /// the index against a fresh walk when the cached object is gone.
-pub fn perform_action_in(pid: u32, xid: Option<u64>, idx: usize) -> Result<(String, bool)> {
+pub fn perform_action_in(pid: u32, xid: Option<u64>, idx: usize) -> Result<(String, bool, bool)> {
     if let Some(object_ref) = cache::cached_element(pid, xid, idx).and_then(|e| e.object_ref) {
         match native::perform_action_ref(&object_ref) {
             Ok(done) => return Ok(done),
@@ -289,7 +294,7 @@ pub fn perform_action_in(pid: u32, xid: Option<u64>, idx: usize) -> Result<(Stri
 /// [`perform_action`] on the exact object a snapshot observed. Never re-walks
 /// or retargets by index: when the object is gone the error downcasts to
 /// [`native::CachedElementGone`] so the caller can refuse as stale.
-pub fn perform_action_observed(element: &cache::CachedElement) -> Result<(String, bool)> {
+pub fn perform_action_observed(element: &cache::CachedElement) -> Result<(String, bool, bool)> {
     let Some(object_ref) = element.object_ref.as_ref() else {
         return Err(
             native::CachedElementGone("observed element has no D-Bus address".into()).into(),
@@ -405,7 +410,7 @@ pub fn perform_action_at_point_in(
                     );
                 } else if let Some(object_ref) = element.object_ref {
                     match native::perform_action_ref(&object_ref) {
-                        Ok((action, _)) => {
+                        Ok((action, _, _)) => {
                             return Ok(Some(AtPointHit::fired(
                                 action,
                                 element.role.clone(),

@@ -3092,7 +3092,7 @@ fn dedupe_menu_matches(visited: &[Visited<'_>], matches: Vec<usize>) -> Vec<usiz
     candidates
 }
 
-pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
+pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool, bool)> {
     bounded_for(
         INDEX_RESOLVE_BUDGET,
         async {
@@ -3136,11 +3136,21 @@ pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
             // `doAction` answers a bool: `false` is the toolkit declining the
             // request (LibreOffice VCL menus answer it for a closed menu), not
             // a delivered click, so it is reported as a suspected no-op.
+            // `unacknowledged` is distinct from `rejected`: the D-Bus call
+            // never got a reply in time (the toolkit may still be processing
+            // it — e.g. a nested dialog main loop), so we know neither
+            // acceptance nor effect. This must never read as a plain
+            // dispatched/confirmed success; the caller reports it as
+            // `unverifiable` with an explicit "no acknowledgement received"
+            // note, and — unlike a genuine `suspected_noop` — does not by
+            // itself imply the toolkit declined anything.
+            let mut unacknowledged = false;
             let rejected = match call(ap.do_action(chosen as i32)).await {
                 Some(Ok(accepted)) => !accepted,
                 Some(Err(e)) => return Err(anyhow!("doAction failed: {e}")),
                 None => {
                     dlog!("doAction dispatched but not acknowledged in time");
+                    unacknowledged = true;
                     false
                 }
             };
@@ -3150,7 +3160,7 @@ pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
             // turn before returning success so a caller's immediate external
             // state read observes the action it was told was delivered.
             tokio::time::sleep(Duration::from_millis(50)).await;
-            Ok((action, suspected_noop))
+            Ok((action, suspected_noop, unacknowledged))
         },
         || {
             Err(anyhow!(
@@ -3233,7 +3243,7 @@ async fn live_accessible<'a>(
 /// [`perform_action`] on a snapshot-cached element identity. Same contract:
 /// `Ok((action_name, suspected_noop))`. Errors when the object no longer
 /// exists so the caller can fall back to resolving the index afresh.
-pub fn perform_action_ref(object_ref: &ObjectRef) -> Result<(String, bool)> {
+pub fn perform_action_ref(object_ref: &ObjectRef) -> Result<(String, bool, bool)> {
     bounded_for(
         REF_ACTION_BUDGET,
         async {
@@ -3252,6 +3262,11 @@ pub fn perform_action_ref(object_ref: &ObjectRef) -> Result<(String, bool)> {
             let chosen = activation_index(&role, &actions).ok_or_else(|| {
                 anyhow!("element does not advertise a safe activation action")
             })?;
+            // See `perform_action`'s `unacknowledged`: an unanswered doAction
+            // is unknown, not dispatched-implies-success, and must not be
+            // folded into `rejected`/`suspected_noop` (which would claim the
+            // toolkit declined it) nor silently reported as a plain success.
+            let mut unacknowledged = false;
             let rejected = match call(ap.do_action(chosen as i32)).await {
                 Some(Ok(accepted)) => !accepted,
                 Some(Err(e)) => return Err(anyhow!("doAction failed: {e}")),
@@ -3261,6 +3276,7 @@ pub fn perform_action_ref(object_ref: &ObjectRef) -> Result<(String, bool)> {
                 // falling back to another route would fire the item twice.
                 None => {
                     dlog!("doAction dispatched but not acknowledged in time");
+                    unacknowledged = true;
                     false
                 }
             };
@@ -3268,6 +3284,7 @@ pub fn perform_action_ref(object_ref: &ObjectRef) -> Result<(String, bool)> {
             Ok((
                 actions.get(chosen).cloned().unwrap_or_default(),
                 suspected_noop || rejected,
+                unacknowledged,
             ))
         },
         || Err(anyhow!("perform_action (cached element) timed out")),

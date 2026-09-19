@@ -13,9 +13,14 @@ use image::RgbaImage;
 
 const CELL_ID: &str = "desktop-agent-cursor-showcase-px";
 const SESSION: &str = "Cursor showcase";
-// MoveTo offsets the cursor artwork by 16 points so its tip lands on the
-// requested coordinate. The session badge follows that artwork anchor.
-const MAX_CURSOR_ANCHOR_OFFSET: f64 = 16.0;
+// MoveTo offsets the artwork centre by a 16-point vector at 45 degrees so the
+// cursor tip lands on the requested coordinate. Each axis moves by 16/sqrt(2),
+// and the session badge follows that artwork centre.
+const CURSOR_ANCHOR_OFFSET_MAGNITUDE: f64 = 16.0;
+const CURSOR_ANCHOR_OFFSET_PER_AXIS: f64 =
+    CURSOR_ANCHOR_OFFSET_MAGNITUDE * std::f64::consts::FRAC_1_SQRT_2;
+const POINTER_ORACLE_RADIUS: f64 = 24.0;
+const BADGE_CURSOR_EXCLUSION: f64 = 34.0;
 
 #[test]
 #[ignore]
@@ -187,50 +192,39 @@ fn assert_cursor_and_badge_pixels_changed(
         cursor_frame.dimensions(),
         "desktop dimensions changed while checking the cursor overlay"
     );
-    let scale_x = f64::from(baseline.width()) / logical_width;
-    let scale_y = f64::from(baseline.height()) / logical_height;
-    let center_x = (logical_x * scale_x).round() as i64;
-    let center_y = (logical_y * scale_y).round() as i64;
-
-    // The pointer is anchored at the requested coordinate (with at most the
-    // renderer's small click offset). The session badge is a separate pill
-    // centered below it. Keep the regions disjoint so a visible pointer alone
-    // cannot satisfy the badge oracle, which was possible with the previous
-    // single large region/count check.
-    let pointer_radius_x = (48.0 * scale_x).ceil() as i64;
-    let pointer_radius_y = (48.0 * scale_y).ceil() as i64;
+    let regions = cursor_oracle_regions(
+        baseline.width(),
+        baseline.height(),
+        logical_x,
+        logical_y,
+        logical_width,
+        logical_height,
+    );
     let pointer_pixels = changed_pixels_in_rect(
         baseline,
         cursor_frame,
-        center_x - pointer_radius_x,
-        center_y - pointer_radius_y,
-        center_x + pointer_radius_x,
-        center_y + (f64::from(BADGE_CURSOR_GAP) * scale_y).floor() as i64,
+        regions.pointer.x0,
+        regions.pointer.y0,
+        regions.pointer.x1,
+        regions.pointer.y1,
     );
-
-    let badge_half_width = (f64::from(BADGE_MAX_WIDTH) * 0.5 * scale_x).ceil() as i64;
-    let badge_cursor_exclusion = (34.0 * scale_x).ceil() as i64;
-    let badge_top = center_y + (f64::from(BADGE_CURSOR_GAP) * scale_y).floor() as i64;
-    let badge_bottom = center_y
-        + ((f64::from(BADGE_CURSOR_GAP + BADGE_HEIGHT) + MAX_CURSOR_ANCHOR_OFFSET) * scale_y).ceil()
-            as i64;
     // Ignore the center corridor where the pointer's lower edge or glow could
     // overlap the pill. Requiring changed pixels in the badge's outer wings
     // makes this an independent badge assertion.
     let badge_pixels = changed_pixels_in_rect(
         baseline,
         cursor_frame,
-        center_x - badge_half_width,
-        badge_top,
-        center_x - badge_cursor_exclusion,
-        badge_bottom,
+        regions.badge_left.x0,
+        regions.badge_left.y0,
+        regions.badge_left.x1,
+        regions.badge_left.y1,
     ) + changed_pixels_in_rect(
         baseline,
         cursor_frame,
-        center_x + badge_cursor_exclusion,
-        badge_top,
-        center_x + badge_half_width,
-        badge_bottom,
+        regions.badge_right.x0,
+        regions.badge_right.y0,
+        regions.badge_right.x1,
+        regions.badge_right.y1,
     );
 
     assert!(
@@ -238,22 +232,94 @@ fn assert_cursor_and_badge_pixels_changed(
         "agent cursor overlay was incomplete near ({logical_x:.0},{logical_y:.0}): \
          pointer region changed {pointer_pixels} pixels (minimum 12), \
          badge region changed {badge_pixels} pixels (minimum 24); \
-         image={}x{}, logical={}x{}, scale={scale_x:.3}x{scale_y:.3}, \
+         image={}x{}, logical={}x{}, scale={:.3}x{:.3}, \
          pointer_rect=({},{}..{},{}), badge_rect=({},{}..{},{}), \
-         badge_exclusion={badge_cursor_exclusion}",
+         badge_exclusion={}",
         baseline.width(),
         baseline.height(),
         logical_width,
         logical_height,
-        center_x - pointer_radius_x,
-        center_y - pointer_radius_y,
-        center_x,
-        center_y + (f64::from(BADGE_CURSOR_GAP) * scale_y).floor() as i64,
-        center_x - badge_half_width,
-        badge_top,
-        center_x + badge_half_width,
-        badge_bottom,
+        regions.scale_x,
+        regions.scale_y,
+        regions.pointer.x0,
+        regions.pointer.y0,
+        regions.pointer.x1,
+        regions.pointer.y1,
+        regions.badge_left.x0,
+        regions.badge_left.y0,
+        regions.badge_right.x1,
+        regions.badge_right.y1,
+        (BADGE_CURSOR_EXCLUSION * regions.scale_x).ceil() as i64,
     );
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PixelRect {
+    x0: i64,
+    y0: i64,
+    x1: i64,
+    y1: i64,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CursorOracleRegions {
+    anchor: (i64, i64),
+    scale_x: f64,
+    scale_y: f64,
+    pointer: PixelRect,
+    badge_left: PixelRect,
+    badge_right: PixelRect,
+}
+
+fn cursor_oracle_regions(
+    image_width: u32,
+    image_height: u32,
+    logical_x: f64,
+    logical_y: f64,
+    logical_width: f64,
+    logical_height: f64,
+) -> CursorOracleRegions {
+    let scale_x = f64::from(image_width) / logical_width;
+    let scale_y = f64::from(image_height) / logical_height;
+    let anchor_x = (logical_x + CURSOR_ANCHOR_OFFSET_PER_AXIS) * scale_x;
+    let anchor_y = (logical_y + CURSOR_ANCHOR_OFFSET_PER_AXIS) * scale_y;
+
+    // The production artwork is 42 points across. A 24-point radius includes
+    // its outline while remaining one logical point above the badge. Floor the
+    // pointer bottom and ceil the badge top so fractional and unequal scales
+    // cannot round the two regions onto the same pixel row.
+    let pointer = PixelRect {
+        x0: (anchor_x - POINTER_ORACLE_RADIUS * scale_x).floor() as i64,
+        y0: (anchor_y - POINTER_ORACLE_RADIUS * scale_y).floor() as i64,
+        x1: (anchor_x + POINTER_ORACLE_RADIUS * scale_x).ceil() as i64,
+        y1: (anchor_y + POINTER_ORACLE_RADIUS * scale_y).floor() as i64,
+    };
+    let badge_half_width = f64::from(BADGE_MAX_WIDTH) * 0.5 * scale_x;
+    let badge_exclusion = BADGE_CURSOR_EXCLUSION * scale_x;
+    let badge_top = (anchor_y + f64::from(BADGE_CURSOR_GAP) * scale_y).ceil() as i64;
+    let badge_bottom =
+        (anchor_y + f64::from(BADGE_CURSOR_GAP + BADGE_HEIGHT) * scale_y).ceil() as i64;
+    let badge_left = PixelRect {
+        x0: (anchor_x - badge_half_width).floor() as i64,
+        y0: badge_top,
+        x1: (anchor_x - badge_exclusion).floor() as i64,
+        y1: badge_bottom,
+    };
+    let badge_right = PixelRect {
+        x0: (anchor_x + badge_exclusion).ceil() as i64,
+        y0: badge_top,
+        x1: (anchor_x + badge_half_width).ceil() as i64,
+        y1: badge_bottom,
+    };
+
+    CursorOracleRegions {
+        anchor: (anchor_x.round() as i64, anchor_y.round() as i64),
+        scale_x,
+        scale_y,
+        pointer,
+        badge_left,
+        badge_right,
+    }
 }
 
 fn changed_pixels_in_rect(
@@ -381,60 +447,154 @@ mod pixel_oracle_tests {
     use super::*;
     use image::Rgba;
 
-    const WIDTH: u32 = 400;
-    const HEIGHT: u32 = 300;
     const CURSOR_X: f64 = 200.0;
     const CURSOR_Y: f64 = 150.0;
 
     #[test]
-    fn accepts_independent_pointer_and_badge_changes() {
-        let baseline = RgbaImage::new(WIDTH, HEIGHT);
-        let mut overlay = baseline.clone();
-        paint_changed_rect(&mut overlay, 196, 146, 200, 150);
-        paint_changed_rect(&mut overlay, 150, 180, 156, 186);
+    fn accepts_colocated_pointer_and_badge_at_1x() {
+        assert_colocated_overlay(400, 300, 400.0, 300.0, (211, 161));
+    }
+
+    #[test]
+    fn accepts_colocated_pointer_and_badge_at_2x() {
+        assert_colocated_overlay(800, 600, 400.0, 300.0, (423, 323));
+    }
+
+    #[test]
+    fn accepts_colocated_pointer_and_badge_at_fractional_unequal_scale() {
+        assert_colocated_overlay(500, 525, 400.0, 300.0, (264, 282));
+    }
+
+    #[test]
+    fn rejects_meaningfully_desynchronized_pointer() {
+        let (baseline, mut overlay, regions) = oracle_images(500, 525, 400.0, 300.0);
+        paint_badge(&mut overlay, regions);
+        paint_changed_rect_i64(
+            &mut overlay,
+            regions.anchor.0 + (30.0 * regions.scale_x).round() as i64,
+            regions.anchor.1 - 2,
+            4,
+            4,
+        );
+
+        let failure = std::panic::catch_unwind(|| {
+            assert_cursor_and_badge_pixels_changed(
+                &baseline, &overlay, CURSOR_X, CURSOR_Y, 400.0, 300.0,
+            );
+        });
+        assert!(
+            failure.is_err(),
+            "desynchronized pointer unexpectedly passed"
+        );
+    }
+
+    #[test]
+    fn rejects_meaningfully_desynchronized_badge() {
+        let (baseline, mut overlay, regions) = oracle_images(800, 600, 400.0, 300.0);
+        paint_pointer(&mut overlay, regions);
+        paint_changed_rect_i64(
+            &mut overlay,
+            regions.badge_left.x0 + 2,
+            regions.badge_left.y1 + 8,
+            6,
+            4,
+        );
+
+        let failure = std::panic::catch_unwind(|| {
+            assert_cursor_and_badge_pixels_changed(
+                &baseline, &overlay, CURSOR_X, CURSOR_Y, 400.0, 300.0,
+            );
+        });
+        assert!(failure.is_err(), "desynchronized badge unexpectedly passed");
+    }
+
+    #[test]
+    fn badge_cannot_satisfy_pointer_oracle_at_supported_scales() {
+        for (width, height, logical_width, logical_height) in [
+            (400, 300, 400.0, 300.0),
+            (800, 600, 400.0, 300.0),
+            (500, 525, 400.0, 300.0),
+        ] {
+            let (baseline, mut badge_only, regions) =
+                oracle_images(width, height, logical_width, logical_height);
+            assert!(regions.pointer.y1 < regions.badge_left.y0);
+            paint_badge(&mut badge_only, regions);
+
+            let failure = std::panic::catch_unwind(|| {
+                assert_cursor_and_badge_pixels_changed(
+                    &baseline,
+                    &badge_only,
+                    CURSOR_X,
+                    CURSOR_Y,
+                    logical_width,
+                    logical_height,
+                );
+            });
+            assert!(failure.is_err(), "badge-only overlay unexpectedly passed");
+        }
+    }
+
+    fn assert_colocated_overlay(
+        width: u32,
+        height: u32,
+        logical_width: f64,
+        logical_height: f64,
+        expected_anchor: (i64, i64),
+    ) {
+        let (baseline, mut overlay, regions) =
+            oracle_images(width, height, logical_width, logical_height);
+        assert_eq!(regions.anchor, expected_anchor);
+        assert!(regions.pointer.y1 < regions.badge_left.y0);
+        paint_pointer(&mut overlay, regions);
+        paint_badge(&mut overlay, regions);
 
         assert_cursor_and_badge_pixels_changed(
             &baseline,
             &overlay,
             CURSOR_X,
             CURSOR_Y,
-            f64::from(WIDTH),
-            f64::from(HEIGHT),
+            logical_width,
+            logical_height,
         );
     }
 
-    #[test]
-    fn accepts_badge_at_shifted_cursor_artwork_anchor() {
-        let baseline = RgbaImage::new(WIDTH, HEIGHT);
-        let mut overlay = baseline.clone();
-        paint_changed_rect(&mut overlay, 196, 146, 200, 150);
-        paint_changed_rect(&mut overlay, 250, 204, 256, 210);
-
-        assert_cursor_and_badge_pixels_changed(
-            &baseline,
-            &overlay,
+    fn oracle_images(
+        width: u32,
+        height: u32,
+        logical_width: f64,
+        logical_height: f64,
+    ) -> (RgbaImage, RgbaImage, CursorOracleRegions) {
+        let baseline = RgbaImage::new(width, height);
+        let overlay = baseline.clone();
+        let regions = cursor_oracle_regions(
+            width,
+            height,
             CURSOR_X,
             CURSOR_Y,
-            f64::from(WIDTH),
-            f64::from(HEIGHT),
+            logical_width,
+            logical_height,
+        );
+        (baseline, overlay, regions)
+    }
+
+    fn paint_pointer(image: &mut RgbaImage, regions: CursorOracleRegions) {
+        paint_changed_rect_i64(image, regions.anchor.0 - 2, regions.anchor.1 - 2, 4, 4);
+    }
+
+    fn paint_badge(image: &mut RgbaImage, regions: CursorOracleRegions) {
+        paint_changed_rect_i64(
+            image,
+            regions.badge_left.x0 + 2,
+            regions.badge_left.y0 + 2,
+            6,
+            4,
         );
     }
 
-    #[test]
-    #[should_panic(expected = "badge region changed 0 pixels")]
-    fn rejects_pointer_without_badge() {
-        let baseline = RgbaImage::new(WIDTH, HEIGHT);
-        let mut pointer_only = baseline.clone();
-        paint_changed_rect(&mut pointer_only, 196, 146, 200, 150);
-
-        assert_cursor_and_badge_pixels_changed(
-            &baseline,
-            &pointer_only,
-            CURSOR_X,
-            CURSOR_Y,
-            f64::from(WIDTH),
-            f64::from(HEIGHT),
-        );
+    fn paint_changed_rect_i64(image: &mut RgbaImage, x: i64, y: i64, width: u32, height: u32) {
+        let x = u32::try_from(x).expect("test rectangle x");
+        let y = u32::try_from(y).expect("test rectangle y");
+        paint_changed_rect(image, x, y, x + width, y + height);
     }
 
     fn paint_changed_rect(image: &mut RgbaImage, x0: u32, y0: u32, x1: u32, y1: u32) {

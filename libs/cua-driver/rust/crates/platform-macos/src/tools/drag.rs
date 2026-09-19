@@ -219,6 +219,15 @@ impl Tool for DragTool {
         };
 
         let window_id = args.opt_u64("window_id").map(|v| v as u32);
+        if delivery_mode.is_foreground() && window_id.is_none() {
+            return ToolResult::error(
+                "delivery_mode=foreground requires window_id for drag on macOS".to_owned(),
+            )
+            .with_structured(serde_json::json!({
+                "code": "window_id_required",
+                "effect": "refused"
+            }));
+        }
         let duration_ms = args.u64_or("duration_ms", 500);
         let steps = args.u64_or("steps", 20) as usize;
         let from_zoom = args.bool_or("from_zoom", false);
@@ -297,7 +306,8 @@ impl Tool for DragTool {
 
         // Dispatch blocking drag synthesis.
         let mods_owned = modifiers.clone();
-        let fg = delivery_mode.is_foreground() && window_id.is_some();
+        let fg = delivery_mode.is_foreground();
+        let foreground_window_id = window_id;
         let cursor_for_drag = cursor_key.clone();
         crate::cursor::overlay::send_command(
             cursor_key.clone(),
@@ -315,29 +325,31 @@ impl Tool for DragTool {
                 tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
                     let do_it = move || -> anyhow::Result<()> {
                         let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
-                        if fg {
-                            // HID delivery is global, so foreground mode must
-                            // establish a real active application before the
-                            // gesture begins. The SkyLight flash can be
-                            // unavailable for Electron child windows; the
-                            // documented Cocoa activation is the fallback.
-                            apps::activate_pid(pid);
-                            std::thread::sleep(std::time::Duration::from_millis(40));
-                            let observed_cursor = cursor_for_drag.clone();
-                            return crate::input::mouse::drag_at_xy_foreground_observed(
-                                from_sx,
-                                from_sy,
-                                to_sx,
-                                to_sy,
-                                duration_ms,
-                                steps,
-                                &m,
-                                button,
-                                move |x, y| {
-                                    crate::cursor::overlay::send_command(
-                                        observed_cursor.clone(),
-                                        cursor_overlay::track_pointer_command(x, y),
-                                    );
+                        if let Some(wid) = foreground_window_id {
+                            // Global HID delivery has no pid addressing. Keep
+                            // the exact target window active for the complete
+                            // gesture, then restore the prior front process.
+                            return crate::input::skylight::with_foreground_hid_activation(
+                                pid as libc::pid_t,
+                                wid,
+                                || {
+                                    let observed_cursor = cursor_for_drag.clone();
+                                    crate::input::mouse::drag_at_xy_foreground_observed(
+                                        from_sx,
+                                        from_sy,
+                                        to_sx,
+                                        to_sy,
+                                        duration_ms,
+                                        steps,
+                                        &m,
+                                        button,
+                                        move |x, y| {
+                                            crate::cursor::overlay::send_command(
+                                                observed_cursor.clone(),
+                                                cursor_overlay::track_pointer_command(x, y),
+                                            );
+                                        },
+                                    )
                                 },
                             );
                         }
@@ -363,22 +375,7 @@ impl Tool for DragTool {
                             },
                         )
                     };
-                    // Foreground rung: activate for the complete HID gesture,
-                    // then restore the prior app after pointer capture settles.
-                    match (fg, window_id) {
-                        (true, Some(_wid)) => {
-                            let result = do_it();
-                            std::thread::sleep(std::time::Duration::from_millis(100));
-                            if let Some(previous_pid) = prior_front {
-                                if previous_pid != pid {
-                                    apps::activate_pid(previous_pid);
-                                }
-                            }
-                            result?;
-                            Ok(())
-                        }
-                        _ => do_it(),
-                    }
+                    do_it()
                 })
                 .await
             },

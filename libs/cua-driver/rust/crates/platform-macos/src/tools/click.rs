@@ -25,12 +25,13 @@ use std::sync::Arc;
 
 use crate::apps;
 use crate::ax::bindings::{
-    copy_action_names, copy_children, copy_string_attr, element_at_screen_position,
-    element_screen_rect, kAXErrorSuccess, AXUIElementPerformAction, AXUIElementRef,
+    copy_action_names, copy_bool_attr, copy_children, copy_element_attr, copy_string_attr,
+    element_at_screen_position, element_screen_rect, kAXErrorSuccess, AXUIElementPerformAction,
+    AXUIElementRef,
 };
 use crate::focus_guard;
 use crate::window_change_detector::WindowChangeDetector;
-use core_foundation::base::{CFRelease, TCFType};
+use core_foundation::base::{CFRelease, CFTypeRef, TCFType};
 
 use super::ToolState;
 
@@ -64,6 +65,55 @@ struct SelectionPixelTarget {
     screen_y: f64,
     window_x: f64,
     window_y: f64,
+}
+
+fn selection_pixel_target(
+    screen_center: (f64, f64),
+    window_origin: (f64, f64),
+) -> SelectionPixelTarget {
+    SelectionPixelTarget {
+        screen_x: screen_center.0,
+        screen_y: screen_center.1,
+        window_x: screen_center.0 - window_origin.0,
+        window_y: screen_center.1 - window_origin.1,
+    }
+}
+
+/// Resolve the selectable row/item rather than an actionable child such as a
+/// selectable NSTextField. A modified click on the child can be consumed as a
+/// text interaction without ever reaching the collection's selection model.
+fn nearest_selectable_container_center(element_ptr: usize) -> Option<(f64, f64)> {
+    let mut current = element_ptr as AXUIElementRef;
+    let mut owns_current = false;
+
+    for _ in 0..8 {
+        let role = unsafe { copy_string_attr(current, "AXRole") }.unwrap_or_default();
+        if matches!(role.as_str(), "AXRow" | "AXCell" | "AXListItem" | "AXImage")
+            && unsafe { copy_bool_attr(current, "AXSelected") }.is_some()
+        {
+            let center = unsafe { element_screen_rect(current) }
+                .map(|rect| (rect[0] + rect[2] / 2.0, rect[1] + rect[3] / 2.0));
+            if owns_current {
+                unsafe { CFRelease(current as CFTypeRef) };
+            }
+            return center;
+        }
+
+        let parent = unsafe { copy_element_attr(current, "AXParent") };
+        if owns_current {
+            unsafe { CFRelease(current as CFTypeRef) };
+        }
+        let Some(parent) = parent else {
+            return None;
+        };
+        current = parent;
+        owns_current = true;
+    }
+
+    if owns_current {
+        unsafe { CFRelease(current as CFTypeRef) };
+    }
+    None
 }
 
 fn selection_readback_confirms(
@@ -565,33 +615,26 @@ impl Tool for ClickTool {
             // verified coordinate frame only for those collection-like
             // elements so perform_ax_click can cross that one failed semantic
             // rung internally and confirm the result by AX read-back.
-            let selection_candidate = if effective_action == "press" {
+            let selection_center = if effective_action == "press" {
                 let selection_guard = element_guard.clone();
                 tokio::task::spawn_blocking(move || {
                     crate::input::ax_actions::nearest_container_selection_state(
                         selection_guard.as_ptr(),
                     )
-                    .is_some()
+                    .and_then(|_| nearest_selectable_container_center(selection_guard.as_ptr()))
                 })
                 .await
-                .unwrap_or(false)
+                .unwrap_or(None)
             } else {
-                false
+                None
             };
-            let mut selection_pixel = if selection_candidate {
-                if let Some((cx, cy)) = center {
-                    super::px_frame::resolve_or_refuse(wid)
-                        .await
-                        .ok()
-                        .map(|frame| SelectionPixelTarget {
-                            screen_x: cx,
-                            screen_y: cy,
-                            window_x: cx - frame.bounds.x,
-                            window_y: cy - frame.bounds.y,
-                        })
-                } else {
-                    None
-                }
+            let mut selection_pixel = if let Some(screen_center) = selection_center {
+                super::px_frame::resolve_or_refuse(wid)
+                    .await
+                    .ok()
+                    .map(|frame| {
+                        selection_pixel_target(screen_center, (frame.bounds.x, frame.bounds.y))
+                    })
             } else {
                 None
             };
@@ -1497,7 +1540,16 @@ fn perform_ax_click(
 
 #[cfg(test)]
 mod selection_fallback_tests {
-    use super::selection_readback_confirms;
+    use super::{selection_pixel_target, selection_readback_confirms};
+
+    #[test]
+    fn selection_pixel_uses_container_center_in_both_coordinate_spaces() {
+        let target = selection_pixel_target((360.0, 240.0), (100.0, 80.0));
+        assert_eq!(target.screen_x, 360.0);
+        assert_eq!(target.screen_y, 240.0);
+        assert_eq!(target.window_x, 260.0);
+        assert_eq!(target.window_y, 160.0);
+    }
 
     #[test]
     fn plain_click_requires_selected_readback() {

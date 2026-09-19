@@ -86,18 +86,6 @@ Local sandboxes and Fleets share the Sandbox SDK, but credentials, images, opera
 
 ---
 
-## CUA-S1
-
-CUA-S1 is our family of small, specialized System 1 models for computer use. We use "System 1" as an engineering analogy for fast, bounded decisions, such as choosing which value belongs in a field or whether to leave an element alone. It is not a strict classification of model architectures or a replacement for a general-purpose agent's planning and reasoning.
-
-The first research profile focuses on forms: scoring decisions from structured interface elements and document values rather than generating a response token by token. Application code orders the actions, and the optional Cua Driver integration handles execution with explicit action boundaries.
-
-The project includes Python model code, synthetic-data generation, training, and evaluation. This is an early, source-only research release; model weights are not bundled. The source is MIT-licensed, while any future model weights will carry their own terms.
-
-**[Explore CUA-S1](libs/cua-s1)** | **[Model card](libs/cua-s1/MODEL_CARD.md)** | **[Safety and deployment guidance](libs/cua-s1/SECURITY.md)**
-
----
-
 ## Cua Driver
 
 Give your agent tools to inspect and operate native desktop apps and browsers on macOS, Windows, and Linux. Connect through the CLI, MCP, or typed SDKs. Background delivery lets agents work without moving your pointer or taking focus when the app and platform support it; see [platform support](https://cua.ai/docs/reference/cua-driver/platform-support) for the boundaries.
@@ -119,6 +107,18 @@ irm https://cua.ai/driver/install.ps1 | iex
 **[Drive your first app](https://cua.ai/docs/tutorials/drive-your-first-app)** | **[Installation](https://cua.ai/docs/how-to-guides/driver/install)** | **[CLI Reference](https://cua.ai/docs/reference/cua-driver/cli-reference)**
 
 Using Claude Code, Codex, Cursor, OpenClaw, or another agent? [Find your integration](https://cua.ai/docs/how-to-guides/driver/connect-your-agent). Source documentation and architecture notes live in [`libs/cua-driver/README.md`](libs/cua-driver/README.md).
+
+---
+
+## CUA-S1
+
+CUA-S1 is our family of small, specialized System 1 models for computer use. We use "System 1" as an engineering analogy for fast, bounded decisions, such as choosing which value belongs in a field or whether to leave an element alone. It is not a strict classification of model architectures or a replacement for a general-purpose agent's planning and reasoning.
+
+The first research profile focuses on forms: scoring decisions from structured interface elements and document values rather than generating a response token by token. Application code orders the actions, and the optional Cua Driver integration handles execution with explicit action boundaries.
+
+The project includes Python model code, synthetic-data generation, training, and evaluation. This is an early, source-only research release; model weights are not bundled. The source is MIT-licensed, while any future model weights will carry their own terms.
+
+**[Explore CUA-S1](libs/cua-s1)** | **[Model card](libs/cua-s1/MODEL_CARD.md)** | **[Safety and deployment guidance](libs/cua-s1/SECURITY.md)**
 
 ---
 

@@ -150,7 +150,7 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         self.assertGreater(shared, self.orchestrator.index('Command::new("py")'))
         self.assertGreater(shared, self.orchestrator.index('Command::new("python3")'))
 
-    def test_live_paths_are_runner_temp_owned(self):
+    def test_live_paths_use_private_windows_extension_home_and_runner_temp_evidence(self):
         live_env = self.jobs["live"]["env"]
         self.assertNotIn("CUA_PERCEPTION_EXTENSION_HOME", live_env)
         self.assertNotIn("CUA_PERCEPTION_EVIDENCE_DIR", live_env)
@@ -160,9 +160,15 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
             if step.get("name") == "Configure temporary evidence paths"
         )
         self.assertIn(
-            "CUA_PERCEPTION_EXTENSION_HOME=$(Join-Path $env:RUNNER_TEMP 'cua-perception-extension-home/live')",
+            '$extensionHomeName = "cua-perception-extension-home-$($env:GITHUB_RUN_ID)-$($env:GITHUB_RUN_ATTEMPT)"',
             configure["run"],
         )
+        self.assertIn("$localAppData = [IO.Path]::GetFullPath($env:LOCALAPPDATA)", configure["run"])
+        self.assertIn("[IO.Path]::GetDirectoryName($extensionHome) -ne $localAppData", configure["run"])
+        self.assertIn("if (Test-Path -LiteralPath $extensionHome) { throw 'Windows extension home must be fresh' }", configure["run"])
+        self.assertIn("New-Item -ItemType Directory -Path $extensionHome", configure["run"])
+        self.assertIn("$extensionHome = Join-Path $env:RUNNER_TEMP 'cua-perception-extension-home/live'", configure["run"])
+        self.assertIn('"CUA_PERCEPTION_EXTENSION_HOME=$extensionHome" >> $env:GITHUB_ENV', configure["run"])
         self.assertIn(
             "CUA_PERCEPTION_EVIDENCE_DIR=$(Join-Path $env:RUNNER_TEMP 'cua-perception-evidence/live')",
             configure["run"],
@@ -385,6 +391,23 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         self.assertEqual(cleanup["if"], "always()")
         for directory in ("cua-perception-evidence", "perception-evidence", "publish-evidence"):
             self.assertIn(f'"{directory}"', cleanup["run"])
+        self.assertIn("-not [string]::IsNullOrWhiteSpace($env:CUA_PERCEPTION_EXTENSION_HOME)", cleanup["run"])
+        self.assertIn('$expectedExtensionHome = [IO.Path]::GetFullPath((Join-Path $localAppData $extensionHomeName))', cleanup["run"])
+        self.assertIn("$extensionHome -ne $expectedExtensionHome", cleanup["run"])
+        self.assertIn("[IO.Path]::GetDirectoryName($extensionHome) -ne $localAppData", cleanup["run"])
+        self.assertIn("try {", cleanup["run"])
+        self.assertIn("} finally {", cleanup["run"])
+        self.assertLess(cleanup["run"].index("try {"), cleanup["run"].index("} finally {"))
+        self.assertLess(cleanup["run"].index("} finally {"), cleanup["run"].index("import pathlib, shutil, sys"))
+        self.assertIn("$extensionHomeItem.Attributes -band [IO.FileAttributes]::ReparsePoint", cleanup["run"])
+        self.assertIn("Remove-Item -LiteralPath $expectedExtensionHome -Force", cleanup["run"])
+        self.assertIn("Remove-Item -LiteralPath $expectedExtensionHome -Recurse -Force", cleanup["run"])
+        reparse = cleanup["run"].index("$extensionHomeItem.Attributes -band [IO.FileAttributes]::ReparsePoint")
+        unlink = cleanup["run"].index("Remove-Item -LiteralPath $expectedExtensionHome -Force")
+        recursive = cleanup["run"].index("Remove-Item -LiteralPath $expectedExtensionHome -Recurse -Force")
+        self.assertLess(reparse, unlink)
+        self.assertLess(unlink, recursive)
+        self.assertNotIn("Remove-Item -Path $env:CUA_PERCEPTION_EXTENSION_HOME", cleanup["run"])
         self.assertNotIn("publish-evidence", str(upload))
         self.assertNotIn("manifest.json", str(upload))
         self.assertNotIn("recording.mp4", str(upload))

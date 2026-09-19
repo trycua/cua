@@ -79,6 +79,7 @@ jobs:
             "extension_manager::tests::hardens_a_precreated_extension_root_with_a_broad_acl",
             "extension_manager::tests::acl_hardening_reopens_directory_and_file_handles",
             "extension_manager::tests::recursive_acl_hardening_removes_package_access_from_staged_tree",
+            "extension_manager::tests::staged_install_acl_converges_after_post_hardening_package_grant",
             "extension_manager::tests::acl_identity_check_rejects_a_different_object",
             "extension_manager::tests::rejects_windows_junctions_and_broad_acl_entries"
           )

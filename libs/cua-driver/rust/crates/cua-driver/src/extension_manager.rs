@@ -21,6 +21,8 @@ use std::io::{Read, Seek, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
+#[cfg(windows)]
+use std::time::{Duration, Instant};
 
 use cua_driver_core::perception_client::containment::{
     run_contained_hook, ContainmentLimits, HookOutcome,
@@ -81,6 +83,25 @@ const REVIEW_PUBLIC_KEY_BASE64: &str = env!(
 const PERCEPTION_ID: &str = "cua-perception";
 const PERCEPTION_RUNTIME_CONTRACT: &str = "metadata/runtime-contract.json";
 const PERCEPTION_MODEL_MANIFEST_NAME: &str = "model-manifest.json";
+
+#[cfg(any(windows, test))]
+#[derive(Debug, Clone, Copy)]
+struct WindowsAclDrift;
+
+#[cfg(any(windows, test))]
+impl std::fmt::Display for WindowsAclDrift {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("extension Windows ACL was modified after hardening")
+    }
+}
+
+#[cfg(any(windows, test))]
+impl std::error::Error for WindowsAclDrift {}
+
+#[cfg(windows)]
+const WINDOWS_ACL_CONVERGENCE_ATTEMPTS: u32 = 3;
+#[cfg(windows)]
+const WINDOWS_ACL_CONVERGENCE_RETRY_WINDOW: Duration = Duration::from_secs(90);
 
 #[derive(Clone, Copy)]
 struct RegistryEntry {
@@ -2061,7 +2082,19 @@ impl ExtensionStore {
                     // stays durable whichever step failed.
                     write_install_record_at(&staging_handle, &inspected, source)?;
                     #[cfg(windows)]
-                    windows_harden_private_tree(&staging_handle)?;
+                    converge_windows_acl(
+                        WINDOWS_ACL_CONVERGENCE_ATTEMPTS,
+                        WINDOWS_ACL_CONVERGENCE_RETRY_WINDOW,
+                        || windows_harden_private_tree(&staging_handle),
+                        || {
+                            verify_installed_version_at(
+                                &staging_handle,
+                                entry,
+                                Some(&inspected.manifest_bytes),
+                            )
+                        },
+                    )?;
+                    #[cfg(not(windows))]
                     verify_installed_version_at(
                         &staging_handle,
                         entry,
@@ -3526,6 +3559,75 @@ fn windows_harden_private_tree(directory: &Dir) -> Result<()> {
     Ok(())
 }
 
+#[cfg(any(windows, test))]
+fn converge_windows_acl_with<T>(
+    attempts: u32,
+    retry_window: std::time::Duration,
+    mut elapsed: impl FnMut() -> std::time::Duration,
+    mut sleep: impl FnMut(std::time::Duration),
+    mut harden: impl FnMut() -> Result<()>,
+    mut verify: impl FnMut() -> Result<T>,
+) -> Result<T> {
+    // Privileged Windows services can add an explicit ACE after a large tree is
+    // hardened. Re-run hardening and the complete content verification as one
+    // unit, but only for the typed drift signal and within strict bounds. The
+    // retry window controls whether another blocking attempt may begin; it
+    // cannot interrupt a Windows filesystem call that is already in flight.
+    debug_assert!(attempts > 0);
+    for attempt in 1..=attempts {
+        if attempt > 1 && elapsed() >= retry_window {
+            bail!(
+                "extension tree Windows ACLs did not converge before the {:?} retry window after {} hardening attempt(s)",
+                retry_window,
+                attempt - 1
+            );
+        }
+        harden()?;
+        match verify() {
+            Ok(value) => return Ok(value),
+            Err(error) => {
+                let retryable = error.downcast_ref::<WindowsAclDrift>().is_some();
+                if !retryable {
+                    return Err(error);
+                }
+                if attempt == attempts {
+                    return Err(error).context(format!(
+                        "extension tree Windows ACLs did not converge after {attempt} hardening attempt(s)"
+                    ));
+                }
+                let remaining = retry_window.saturating_sub(elapsed());
+                let backoff = std::time::Duration::from_millis(250 * u64::from(attempt));
+                if remaining <= backoff {
+                    return Err(error).context(format!(
+                        "extension tree Windows ACLs did not converge before the {:?} retry window after {attempt} hardening attempt(s)",
+                        retry_window
+                    ));
+                }
+                sleep(backoff);
+            }
+        }
+    }
+    unreachable!("the final convergence attempt always returns")
+}
+
+#[cfg(windows)]
+fn converge_windows_acl<T>(
+    attempts: u32,
+    retry_window: Duration,
+    harden: impl FnMut() -> Result<()>,
+    verify: impl FnMut() -> Result<T>,
+) -> Result<T> {
+    let started = Instant::now();
+    converge_windows_acl_with(
+        attempts,
+        retry_window,
+        || started.elapsed(),
+        std::thread::sleep,
+        harden,
+        verify,
+    )
+}
+
 fn apply_manifest_permissions_at(root: &Dir, manifest: &ExtensionManifest) -> Result<()> {
     set_private_file_permissions_at(root, Path::new(MANIFEST_NAME), false)?;
     for file in &manifest.files {
@@ -4128,11 +4230,12 @@ fn windows_verify_security(handle: *mut std::ffi::c_void) -> Result<()> {
                 if !is_user && !is_system && !is_admin {
                     let sid = windows_sid_string(sid)
                         .unwrap_or_else(|_| "<invalid Windows SID>".to_owned());
-                    bail!(
-                        "extension Windows ACL for {object} grants access to untrusted principal {sid} in ACE {index}: flags=0x{:02x}, mask=0x{:08x}",
+                    return Err(anyhow!(WindowsAclDrift).context(format!(
+                        "extension Windows ACL for {object} grants access to untrusted principal {sid} in ACE {index}: flags=0x{:02x}, mask=0x{:08x}, inherited={}",
                         ace.header.ace_flags,
-                        ace.mask
-                    );
+                        ace.mask,
+                        ace.header.ace_flags & 0x10 != 0
+                    )));
                 }
                 if is_user && ace.mask & 0x001f_01ff == 0x001f_01ff {
                     user_full_control = true;
@@ -4287,6 +4390,7 @@ fn target_triple(os: &str, arch: &str, abi: &str) -> Result<String> {
 mod tests {
     use super::*;
     use flate2::{write::GzEncoder, Compression};
+    use std::cell::Cell;
     use std::io::Cursor;
     use tempfile::TempDir;
 
@@ -4296,6 +4400,144 @@ mod tests {
         0xc4, 0x44, 0x49, 0xc5, 0x69, 0x7b, 0x32, 0x69, 0x19, 0x70, 0x3b, 0xac, 0x03, 0x1c, 0xae,
         0x7f, 0x60,
     ];
+
+    fn acl_drift_error() -> anyhow::Error {
+        anyhow!(WindowsAclDrift)
+            .context("extension Windows ACL grants access to untrusted principal in test fixture")
+    }
+
+    #[test]
+    fn windows_acl_convergence_retries_drift_then_succeeds() {
+        let hardens = Cell::new(0);
+        let verifies = Cell::new(0);
+        let sleeps = Cell::new(0);
+        let value = converge_windows_acl_with(
+            3,
+            std::time::Duration::from_secs(90),
+            || std::time::Duration::ZERO,
+            |_| sleeps.set(sleeps.get() + 1),
+            || {
+                hardens.set(hardens.get() + 1);
+                Ok(())
+            },
+            || {
+                verifies.set(verifies.get() + 1);
+                if verifies.get() == 1 {
+                    Err(acl_drift_error())
+                } else {
+                    Ok("verified")
+                }
+            },
+        )
+        .unwrap();
+
+        assert_eq!(value, "verified");
+        assert_eq!(hardens.get(), 2);
+        assert_eq!(verifies.get(), 2);
+        assert_eq!(sleeps.get(), 1);
+    }
+
+    #[test]
+    fn windows_acl_convergence_stops_after_persistent_drift() {
+        let hardens = Cell::new(0);
+        let verifies = Cell::new(0);
+        let error = converge_windows_acl_with::<()>(
+            3,
+            std::time::Duration::from_secs(90),
+            || std::time::Duration::ZERO,
+            |_| {},
+            || {
+                hardens.set(hardens.get() + 1);
+                Ok(())
+            },
+            || {
+                verifies.set(verifies.get() + 1);
+                Err(acl_drift_error())
+            },
+        )
+        .unwrap_err();
+
+        assert!(error.downcast_ref::<WindowsAclDrift>().is_some());
+        assert!(error
+            .to_string()
+            .contains("did not converge after 3 hardening attempt(s)"));
+        assert_eq!(hardens.get(), 3);
+        assert_eq!(verifies.get(), 3);
+    }
+
+    #[test]
+    fn windows_acl_convergence_does_not_retry_matching_untyped_text() {
+        let hardens = Cell::new(0);
+        let error = converge_windows_acl_with::<()>(
+            3,
+            std::time::Duration::from_secs(90),
+            || std::time::Duration::ZERO,
+            |_| panic!("non-drift verification failure must not sleep"),
+            || {
+                hardens.set(hardens.get() + 1);
+                Ok(())
+            },
+            || bail!("extension Windows ACL grants access to untrusted principal"),
+        )
+        .unwrap_err();
+
+        assert!(error.downcast_ref::<WindowsAclDrift>().is_none());
+        assert_eq!(hardens.get(), 1);
+    }
+
+    #[test]
+    fn windows_acl_convergence_does_not_retry_hardening_failure() {
+        let hardens = Cell::new(0);
+        let verifies = Cell::new(0);
+        let error = converge_windows_acl_with::<()>(
+            3,
+            std::time::Duration::from_secs(90),
+            || std::time::Duration::ZERO,
+            |_| panic!("hardening failure must not sleep"),
+            || {
+                hardens.set(hardens.get() + 1);
+                bail!("hardening failed")
+            },
+            || {
+                verifies.set(verifies.get() + 1);
+                Ok(())
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(error.to_string(), "hardening failed");
+        assert_eq!(hardens.get(), 1);
+        assert_eq!(verifies.get(), 0);
+    }
+
+    #[test]
+    fn windows_acl_convergence_honors_retry_window_after_attempt() {
+        let hardens = Cell::new(0);
+        let sleeps = Cell::new(0);
+        let elapsed = Cell::new(std::time::Duration::ZERO);
+        let error = converge_windows_acl_with::<()>(
+            3,
+            std::time::Duration::from_millis(250),
+            || elapsed.get(),
+            |_| sleeps.set(sleeps.get() + 1),
+            || {
+                hardens.set(hardens.get() + 1);
+                Ok(())
+            },
+            || {
+                elapsed.set(std::time::Duration::from_millis(300));
+                Err(acl_drift_error())
+            },
+        )
+        .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("did not converge before the 250ms retry window"));
+        assert!(error.downcast_ref::<WindowsAclDrift>().is_some());
+        assert_eq!(hardens.get(), 1);
+        assert_eq!(sleeps.get(), 0);
+    }
 
     fn fixture_archive(
         directory: &Path,
@@ -5391,6 +5633,62 @@ mod tests {
         assert!(inspect_owned_tree(&staged).is_err());
 
         windows_harden_private_tree(&staged).unwrap();
+        windows_verify_directory_handle(&staged).unwrap();
+        inspect_owned_tree(&staged).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn staged_install_acl_converges_after_post_hardening_package_grant() {
+        let temp = TempDir::new().unwrap();
+        let parent = open_directory_path_nofollow(temp.path()).unwrap();
+        create_private_subdirectory(&parent, std::ffi::OsStr::new("staged")).unwrap();
+        let staged = parent.open_dir_nofollow("staged").unwrap();
+        let entry = registry_entry(PERCEPTION_ID).unwrap();
+        let archive = fixture_archive(
+            temp.path(),
+            "1.0.0",
+            &current_target().unwrap(),
+            1,
+            b"worker",
+        );
+        let source = InstallSource {
+            archive: archive.clone(),
+            trust: TrustClass::DeveloperUnsignedLocal,
+            catalog: None,
+            signed_catalog: None,
+            trust_update: None,
+        };
+        let inspected = inspect_archive(&archive, entry, &staged).unwrap();
+        write_install_record_at(&staged, &inspected, &source).unwrap();
+
+        let hardens = Cell::new(0);
+        let manifest = converge_windows_acl_with(
+            3,
+            std::time::Duration::from_secs(90),
+            || std::time::Duration::ZERO,
+            |_| {},
+            || {
+                windows_harden_private_tree(&staged)?;
+                hardens.set(hardens.get() + 1);
+                if hardens.get() == 1 {
+                    let output = std::process::Command::new("icacls")
+                        .arg(temp.path().join("staged"))
+                        .arg("/grant")
+                        .arg("*S-1-15-2-1:(RX)")
+                        .output()?;
+                    if !output.status.success() {
+                        bail!("icacls failed: {}", String::from_utf8_lossy(&output.stderr));
+                    }
+                }
+                Ok(())
+            },
+            || verify_installed_version_at(&staged, entry, Some(&inspected.manifest_bytes)),
+        )
+        .unwrap();
+
+        assert_eq!(manifest.version, "1.0.0");
+        assert_eq!(hardens.get(), 2);
         windows_verify_directory_handle(&staged).unwrap();
         inspect_owned_tree(&staged).unwrap();
     }

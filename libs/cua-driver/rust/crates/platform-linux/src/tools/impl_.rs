@@ -11400,7 +11400,7 @@ impl Tool for MouseButtonUpTool {
             y *= ratio;
         }
         if desktop_frame {
-            let (dx, dy) = self.state.desktop_to_screen(x, y);
+            let (dx, dy) = self.state.desktop_to_screen(&cursor_id, x, y);
             match tokio::task::spawn_blocking(move || desktop_to_window_local(xid, dx, dy)).await {
                 Ok(Ok((lx, ly))) => {
                     x = lx;

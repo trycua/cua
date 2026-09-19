@@ -273,8 +273,7 @@ def build_candidates(
         matches = [
             region
             for region in visual.regions
-            if region.interactive
-            and region.confidence >= 0.8
+            if region.confidence >= 0.8
             and _ascii_lower(region.text or region.label or "") == "submit"
         ]
         if len(matches) == 1:

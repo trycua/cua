@@ -74,9 +74,11 @@ test('reserved candidates are always available', () => {
   assert.equal(chooseMock(candidates).choice, 'reobserve');
 });
 
-test('visual fixture builds the equivalent immutable capture-bound submit candidate', () => {
+test('visual fixture builds a candidate without claiming interactivity', () => {
+  const payload = fixture('parse-visual-regions-submit-v1.json');
+  payload.regions[0].interactive = false;
   const visual = parseVisualRegions(
-    fixture('parse-visual-regions-submit-v1.json'),
+    payload,
     'capture-submit',
     7,
     9
@@ -102,12 +104,27 @@ test('visual fixture builds the equivalent immutable capture-bound submit candid
 });
 
 test('ambiguous visual regions offer only reobserve and abstain', () => {
+  const payload = fixture('parse-visual-regions-ambiguous-v1.json');
+  for (const region of payload.regions) region.interactive = false;
   const visual = parseVisualRegions(
-    fixture('parse-visual-regions-ambiguous-v1.json'),
+    payload,
     'capture-ambiguous',
     7,
     9
   );
+  const page = snapshot('expected');
+  page.refs = page.refs.slice(0, 1);
+  assert.deepEqual(
+    buildCandidates(page, 'expected', visual, true).map((candidate) => candidate.id),
+    ['reobserve', 'abstain']
+  );
+});
+
+test('non-Submit visual observation offers only reobserve and abstain', () => {
+  const payload = fixture('parse-visual-regions-submit-v1.json');
+  payload.regions[0].text = 'Continue';
+  payload.regions[0].interactive = true;
+  const visual = parseVisualRegions(payload, 'capture-submit', 7, 9);
   const page = snapshot('expected');
   page.refs = page.refs.slice(0, 1);
   assert.deepEqual(

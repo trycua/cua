@@ -546,7 +546,8 @@ fn fixture_result(capture_id: &str, extension_id: &str, extension_version: &str)
             "kind": "text",
             "bounds": { "x": 0, "y": 0, "width": 1, "height": 1 },
             "text": "fixture",
-            "confidence": 1.0
+            "confidence": 1.0,
+            "interactive": false
         }],
         "runtime": "fixture_only",
         "identity": {
@@ -594,7 +595,8 @@ fn inference_result(
                 "id": format!("{}-{}", kind, index + 1),
                 "kind": kind,
                 "bounds": { "x": x, "y": y, "width": right.saturating_sub(x), "height": bottom.saturating_sub(y) },
-                "confidence": region.confidence
+                "confidence": region.confidence,
+                "interactive": false
             });
             if let Some(text) = region.text {
                 value["text"] = Value::String(text);
@@ -789,12 +791,13 @@ mod tests {
                 {
                     "id": "text-1", "kind": "text",
                     "bounds": { "x": 1, "y": 2, "width": 10, "height": 11 },
-                    "confidence": 0.75, "text": "Send"
+                    "confidence": 0.75, "text": "Send", "interactive": false
                 },
                 {
                     "id": "icon-2", "kind": "icon",
                     "bounds": { "x": 90, "y": 40, "width": 10, "height": 10 },
-                    "confidence": 0.5, "class_id": 4, "label": "icon-class-4"
+                    "confidence": 0.5, "class_id": 4, "label": "icon-class-4",
+                    "interactive": false
                 }
             ])
         );
@@ -806,5 +809,12 @@ mod tests {
             })
         );
         assert_eq!(decoded["text_geometry"], "axis_aligned_bounds");
+    }
+
+    #[test]
+    fn fixture_regions_explicitly_serialize_as_non_interactive() {
+        let result = fixture_result("capture-1", "cua-perception", "0.1.0");
+
+        assert_eq!(result["regions"][0]["interactive"], false);
     }
 }

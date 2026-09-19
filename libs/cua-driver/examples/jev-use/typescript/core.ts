@@ -246,7 +246,6 @@ export function buildCandidates(
   ) {
     const matches = visual.regions.filter(
       (region) =>
-        region.interactive &&
         region.confidence >= 0.8 &&
         asciiLower(region.text ?? region.label ?? '') === 'submit'
     );

@@ -60,8 +60,9 @@ class CoreTest(unittest.TestCase):
         self.assertEqual([candidate.id for candidate in candidates], ["reobserve", "abstain"])
         self.assertEqual(choose_mock(candidates)[0], "reobserve")
 
-    def test_visual_fixture_builds_equivalent_capture_bound_submit_candidate(self) -> None:
+    def test_visual_fixture_builds_candidate_without_claiming_interactivity(self) -> None:
         payload = json.loads((FIXTURES / "parse-visual-regions-submit-v1.json").read_text())
+        payload["regions"][0]["interactive"] = False
         visual = parse_visual_regions(
             payload,
             expected_capture_id="capture-submit",
@@ -90,6 +91,8 @@ class CoreTest(unittest.TestCase):
 
     def test_visual_ambiguity_offers_only_reserved_candidates(self) -> None:
         payload = json.loads((FIXTURES / "parse-visual-regions-ambiguous-v1.json").read_text())
+        for region in payload["regions"]:
+            region["interactive"] = False
         visual = parse_visual_regions(
             payload,
             expected_capture_id="capture-ambiguous",
@@ -98,6 +101,29 @@ class CoreTest(unittest.TestCase):
         )
         page = self.snapshot("expected")
         page["refs"] = page["refs"][:1]
+        self.assertEqual(
+            [
+                candidate.id
+                for candidate in build_candidates(
+                    page, "expected", visual, capture_bound_click=True
+                )
+            ],
+            ["reobserve", "abstain"],
+        )
+
+    def test_visual_non_submit_observation_offers_only_reserved_candidates(self) -> None:
+        payload = json.loads((FIXTURES / "parse-visual-regions-submit-v1.json").read_text())
+        payload["regions"][0]["text"] = "Continue"
+        payload["regions"][0]["interactive"] = True
+        visual = parse_visual_regions(
+            payload,
+            expected_capture_id="capture-submit",
+            expected_pid=7,
+            expected_window_id=9,
+        )
+        page = self.snapshot("expected")
+        page["refs"] = page["refs"][:1]
+
         self.assertEqual(
             [
                 candidate.id

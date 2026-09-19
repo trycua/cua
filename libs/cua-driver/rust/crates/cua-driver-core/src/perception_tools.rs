@@ -638,6 +638,7 @@ mod tests {
         assert_eq!(output.schema, VISUAL_REGIONS_SCHEMA);
         assert_eq!(output.capture.capture_id, "local_png_fixture");
         assert_eq!(output.regions.len(), 1);
+        assert!(!output.regions[0].interactive);
     }
 
     #[tokio::test]

@@ -11,7 +11,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 const MAX_REGIONS: usize = 64;
-const MAX_ACTION_CANDIDATES: usize = 16;
 const MAX_SAFE_ID_BYTES: usize = 96;
 const MAX_CHOOSER_ID_BYTES: usize = 64;
 const MIN_CONFIDENCE: f64 = 0.80;
@@ -145,7 +144,8 @@ fn bounded_candidates(
     }
 
     let mut region_ids = BTreeSet::new();
-    let mut candidates = Vec::new();
+    let mut send_candidate = None;
+    let mut ambiguous_send = false;
     let mut compact = Vec::with_capacity(regions.len());
     for region in regions {
         let id = region["id"]
@@ -208,18 +208,14 @@ fn bounded_candidates(
             confidence,
             interactive,
         });
-        let content = if kind == "text" {
-            text.expect("validated text region")
-        } else {
-            label.expect("validated icon region")
-        };
-        if interactive && confidence >= MIN_CONFIDENCE && !content.is_empty() {
-            if candidates.len() >= MAX_ACTION_CANDIDATES {
-                return Err("visual result exceeded the action candidate bound".into());
+        if kind == "text" && confidence >= MIN_CONFIDENCE && text == Some("Send") {
+            if send_candidate.is_some() {
+                ambiguous_send = true;
+                continue;
             }
-            candidates.push(Candidate {
+            send_candidate = Some(Candidate {
                 id: format!("region:{id}"),
-                description: format!("Activate the visual region labeled {content}."),
+                description: "Activate the visual region labeled Send.".into(),
                 action: Some(ClickAction {
                     capture_id: capture_id.into(),
                     x: x as f64 + width as f64 / 2.0,
@@ -228,6 +224,11 @@ fn bounded_candidates(
             });
         }
     }
+    let mut candidates = if ambiguous_send {
+        Vec::new()
+    } else {
+        send_candidate.into_iter().collect()
+    };
     candidates.extend([
         Candidate {
             id: "reobserve".into(),
@@ -366,8 +367,8 @@ fn chooser_request_matches_fixture_contract_and_contains_no_action_arguments() {
         "schema": "cua.visual_regions_v1",
         "capture": {"capture_id": "capture-1", "screenshot": {"width": 760, "height": 460}},
         "regions": [
-            {"id": "save", "kind": "icon", "bounds": {"x": 72, "y": 250, "width": 204, "height": 40}, "label": "Save", "confidence": 0.99, "interactive": true},
-            {"id": "send", "kind": "text", "bounds": {"x": 292, "y": 250, "width": 204, "height": 40}, "text": "Send", "confidence": 0.98, "interactive": true}
+            {"id": "save", "kind": "icon", "bounds": {"x": 72, "y": 250, "width": 204, "height": 40}, "label": "Save", "confidence": 0.99, "interactive": false},
+            {"id": "send", "kind": "text", "bounds": {"x": 292, "y": 250, "width": 204, "height": 40}, "text": "Send", "confidence": 0.98, "interactive": false}
         ]
     });
     let (candidates, regions) = bounded_candidates(&payload, "capture-1").unwrap();
@@ -389,7 +390,7 @@ fn chooser_request_matches_fixture_contract_and_contains_no_action_arguments() {
             "schema",
         ])
     );
-    assert_eq!(request["candidates"].as_array().unwrap().len(), 4);
+    assert_eq!(request["candidates"].as_array().unwrap().len(), 3);
     assert_eq!(
         request["regions"][0]
             .as_object()
@@ -481,12 +482,60 @@ fn chooser_response_and_live_mode_fail_closed() {
             "bounds": {"x": 0, "y": 0, "width": 10, "height": 10},
             "text": "Send",
             "confidence": 1.0,
-            "interactive": true
+            "interactive": false
         }]
     });
     assert!(bounded_candidates(&payload, "capture-1")
         .unwrap_err()
         .contains("unsafe ID"));
+}
+
+#[test]
+fn candidate_policy_refuses_ambiguous_and_non_send_regions() {
+    let missing_interactivity = json!({
+        "schema": "cua.visual_regions_v1",
+        "capture": {"capture_id": "capture-1", "screenshot": {"width": 100, "height": 100}},
+        "regions": [
+            {"id": "send", "kind": "text", "bounds": {"x": 0, "y": 0, "width": 40, "height": 20}, "text": "Send", "confidence": 0.99}
+        ]
+    });
+    assert!(bounded_candidates(&missing_interactivity, "capture-1")
+        .unwrap_err()
+        .contains("invalid interactivity"));
+
+    let payload = json!({
+        "schema": "cua.visual_regions_v1",
+        "capture": {"capture_id": "capture-1", "screenshot": {"width": 100, "height": 100}},
+        "regions": [
+            {"id": "send-1", "kind": "text", "bounds": {"x": 0, "y": 0, "width": 40, "height": 20}, "text": "Send", "confidence": 0.99, "interactive": false},
+            {"id": "send-2", "kind": "text", "bounds": {"x": 50, "y": 0, "width": 40, "height": 20}, "text": " Send ", "confidence": 0.98, "interactive": false}
+        ]
+    });
+    let (candidates, _) = bounded_candidates(&payload, "capture-1").unwrap();
+    assert_eq!(
+        candidates
+            .iter()
+            .map(|candidate| candidate.id.as_str())
+            .collect::<Vec<_>>(),
+        ["reobserve", "abstain"]
+    );
+
+    let payload = json!({
+        "schema": "cua.visual_regions_v1",
+        "capture": {"capture_id": "capture-1", "screenshot": {"width": 100, "height": 100}},
+        "regions": [
+            {"id": "save", "kind": "text", "bounds": {"x": 0, "y": 0, "width": 40, "height": 20}, "text": "Save", "confidence": 0.99, "interactive": true},
+            {"id": "send-low-confidence", "kind": "text", "bounds": {"x": 50, "y": 0, "width": 40, "height": 20}, "text": "Send", "confidence": 0.79, "interactive": false}
+        ]
+    });
+    let (candidates, _) = bounded_candidates(&payload, "capture-1").unwrap();
+    assert_eq!(
+        candidates
+            .iter()
+            .map(|candidate| candidate.id.as_str())
+            .collect::<Vec<_>>(),
+        ["reobserve", "abstain"]
+    );
 }
 
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]

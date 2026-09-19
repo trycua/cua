@@ -16,7 +16,8 @@
         "kind": "text",
         "bounds": { "x": 0, "y": 0, "width": 1, "height": 1 },
         "text": "fixture",
-        "confidence": 1.0
+        "confidence": 1.0,
+        "interactive": false
       }
     ],
     "runtime": "fixture_only",

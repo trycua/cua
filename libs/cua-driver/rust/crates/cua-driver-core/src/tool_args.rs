@@ -104,6 +104,22 @@ pub fn sanitize_reserved_args(args: &mut Value) {
     }
 }
 
+/// The session key an isolation-scoped state store should key on for this
+/// call: the public `session` label, else the proxy-minted `_session_id`,
+/// else the legacy `cursor_id`, else a shared `"default"` bucket for
+/// anonymous calls. Mirrors the cursor/mouse-hold isolation convention so new
+/// per-call state (e.g. desktop screenshot scale) doesn't invent its own.
+pub fn resolve_session_key(args: &Value) -> String {
+    for key in ["session", "_session_id", "cursor_id"] {
+        if let Some(v) = args.get(key).and_then(Value::as_str) {
+            if !v.is_empty() {
+                return v.to_owned();
+            }
+        }
+    }
+    "default".to_owned()
+}
+
 #[cfg(test)]
 mod reserved_args_tests {
     use super::{parse_legacy_click_input, parse_typed_input, sanitize_reserved_args};

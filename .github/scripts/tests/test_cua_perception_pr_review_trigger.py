@@ -74,14 +74,14 @@ def test_gate_revalidates_candidate_head_and_canonical_merged_jev_source() -> No
     assert "secrets." not in text
     assert workflow["permissions"] == {
         "actions": "read",
-        "contents": "write",
+        "contents": "read",
         "pull-requests": "read",
     }
-    assert {
-        scope for scope, access in workflow["permissions"].items() if access == "write"
-    } == {"contents"}
-    assert "called workflow cannot elevate this permission to discover draft assets" in text
-    assert all("permissions" not in job for job in workflow["jobs"].values())
+    assert workflow["jobs"]["candidate"]["permissions"] == {
+        "actions": "read",
+        "contents": "read",
+        "pull-requests": "read",
+    }
     assert workflow["jobs"]["resolve"]["outputs"]["jev_source_sha"] == (
         "${{ steps.resolve.outputs.jev_source_sha }}"
     )
@@ -96,17 +96,15 @@ def test_review_candidate_executes_release_gates_instead_of_synthesizing_evidenc
     assert "assembler:worker-protocol:" not in text
 
 
-def test_candidate_is_callable_discovers_one_draft_asset_and_returns_artifact_id() -> None:
+def test_candidate_is_callable_uses_pinned_reviewed_artifact_and_returns_artifact_id() -> None:
     text, workflow = load_workflow(CANDIDATE)
     candidate_triggers = triggers(workflow)
     assert set(candidate_triggers) == {"workflow_dispatch", "workflow_call"}
-    model_input = candidate_triggers["workflow_call"]["inputs"]["reviewed_model_asset_id"]
-    assert model_input["required"] is False
-    assert model_input["default"] == ""
-    assert "if len(candidates) != 1:" in text
-    assert 'release.get("draft") is not True' in text
-    assert 'release.get("published_at") is not None' in text
-    assert 'digest.hexdigest() != expected["sha256"]' in text
+    assert "reviewed_model_asset_id" not in candidate_triggers["workflow_call"]["inputs"]
+    assert 'REVIEWED_ARTIFACT_ID: "10582583541"' in text
+    assert 'REVIEWED_RUN_ID: "35438356263"' in text
+    assert 'REVIEWED_SOURCE_ASSET_ID: "571471639"' in text
+    assert "expected exactly one reviewed model in producer artifact" in text
     assert "CUA_REVIEWED_MODEL_ASSET_ID" in text
     assert "Number(process.env.CUA_REVIEWED_MODEL_ASSET_ID)" in text
     assert "${{ env.CUA_REVIEWED_MODEL_ASSET_ID }}" not in text
@@ -130,6 +128,7 @@ def test_pr_review_produces_candidates_without_entering_the_protected_environmen
     assert candidate["uses"] == (
         "./.github/workflows/cd-cua-perception-review-supplied-inputs.yml"
     )
+    assert candidate["permissions"]["contents"] == "read"
     assert candidate["with"] == {
         "source_sha": "${{ needs.resolve.outputs.source_sha }}",
         "catalog_version": "${{ needs.resolve.outputs.catalog_version }}",
@@ -139,9 +138,7 @@ def test_pr_review_produces_candidates_without_entering_the_protected_environmen
     assert "authorized-live-jev-use-demo.yml" not in trigger_text
     assert "secrets: inherit" not in trigger_text
     assert "${{ secrets." not in trigger_text
-    assert re.findall(r"^\s*([\w-]+):\s*write\s*$", trigger_text, re.MULTILINE) == [
-        "contents"
-    ]
+    assert not re.findall(r"^\s*([\w-]+):\s*write\s*$", trigger_text, re.MULTILINE)
     assert not re.findall(r"^\s*environment:", trigger_text, re.MULTILINE)
 
 

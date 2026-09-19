@@ -6,8 +6,7 @@ on:
 
 permissions:
   actions: read
-  # The called workflow cannot elevate this permission to discover draft assets.
-  contents: write
+  contents: read
   pull-requests: read
 
 concurrency:
@@ -73,6 +72,10 @@ jobs:
   candidate:
     name: Build ephemeral signed review candidates
     needs: resolve
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
     uses: ./.github/workflows/cd-cua-perception-review-supplied-inputs.yml
     with:
       source_sha: ${{ needs.resolve.outputs.source_sha }}

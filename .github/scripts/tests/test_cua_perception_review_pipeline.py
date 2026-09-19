@@ -35,13 +35,11 @@ def test_review_pipeline_is_valid_pinned_and_nonpublishing() -> None:
     assert isinstance(parsed, dict)
     assert parsed["permissions"] == {
         "actions": "read",
-        "contents": "write",
+        "contents": "read",
         "pull-requests": "read",
     }
-    assert {
-        scope for scope, access in parsed["permissions"].items() if access == "write"
-    } == {"contents"}
-    assert "GitHub exposes draft releases only to push-capable tokens" in text
+    assert all(access != "write" for access in parsed["permissions"].values())
+    assert "contents: write" not in text
     uses = re.findall(r"^\s*uses:\s*([^\s#]+)", text, flags=re.MULTILINE)
     assert uses
     assert all(re.fullmatch(r"[^@]+@[0-9a-f]{40}", use) for use in uses)
@@ -57,7 +55,78 @@ def test_review_pipeline_is_valid_pinned_and_nonpublishing() -> None:
     assert "review_only: true" in lowered
     assert "environment:" not in text
     assert "secrets." not in text
-    assert all("permissions" not in job for job in parsed["jobs"].values())
+    assert parsed["jobs"]["reviewed-model"]["permissions"] == {
+        "actions": "read",
+        "contents": "read",
+        "pull-requests": "read",
+    }
+    assert parsed["jobs"]["supplied-input"]["permissions"] == {
+        "actions": "read",
+        "contents": "read",
+        "pull-requests": "read",
+    }
+    assert parsed["jobs"]["aggregate"]["permissions"] == {
+        "actions": "read",
+        "contents": "read",
+    }
+
+
+def test_reviewed_model_broker_is_read_only_pinned_and_immutable() -> None:
+    text = workflow_text()
+    parsed = yaml.safe_load(text)
+    broker = parsed["jobs"]["reviewed-model"]
+    broker_text = str(broker)
+    assert "actions/checkout" not in broker_text
+    assert "libs/cua-driver" not in broker_text
+    assert broker["outputs"] == {
+        "source_asset_id": "${{ steps.verify.outputs.source_asset_id }}"
+    }
+    assert broker["permissions"] == {
+        "actions": "read",
+        "contents": "read",
+        "pull-requests": "read",
+    }
+    assert "35438356263" in broker_text
+    assert "10582583541" in broker_text
+    assert "571471639" in broker_text
+    assert "289372dea8b2b11f572f0f6a15824315bc74026b" in broker_text
+    assert ".github/workflows/review-cua-perception-pr3943.yml" in broker_text
+    assert '"$workflow_path" == "$expected_workflow"@*' in broker_text
+    assert '[[ "$(jq -r .conclusion <<<"$run_json")" == "success" ]]' in broker_text
+    assert '[[ "$(jq -r .expired <<<"$artifact_json")" == "false" ]]' in broker_text
+    assert '[[ "$(jq -r .workflow_run.id <<<"$artifact_json")" == "$REVIEWED_RUN_ID" ]]' in broker_text
+    assert '[[ "$(jq -r .workflow_run.head_sha <<<"$artifact_json")" == "$REVIEWED_SOURCE_SHA" ]]' in broker_text
+    assert "omniparser-icon-detect-1280-opset17.onnx" in broker_text
+    assert "d8a876bf7f9fb73d7da9432904ade7fa78e092e9a91674e5a2806b45562a9ab2" in broker_text
+    assert "80_933_219" in broker_text
+    producer_download = next(
+        step for step in broker["steps"]
+        if step.get("name") == "Download the exact reviewed producer artifact"
+    )
+    assert producer_download["with"] == {
+        "artifact-ids": "10582583541",
+        "github-token": "${{ github.token }}",
+        "path": "reviewed-producer-input",
+        "repository": "trycua/cua",
+        "run-id": "35438356263",
+    }
+    assert "actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08" in broker_text
+
+    supplied = parsed["jobs"]["supplied-input"]
+    assert supplied["needs"] == "reviewed-model"
+    assert any(
+        step.get("uses", "").startswith("actions/download-artifact@")
+        and step["with"] == {
+            "name": "reviewed-cua-perception-model",
+            "path": "reviewed-inputs",
+        }
+        for step in supplied["steps"]
+    )
+    assert "${{ needs.reviewed-model.outputs.source_asset_id }}" in text
+    assert "${{ needs.reviewed-model.outputs.asset_id }}" not in text
+    for job in parsed["jobs"].values():
+        if "actions/checkout@" in str(job):
+            assert job["permissions"]["contents"] == "read"
 
 
 def test_review_pipeline_binds_current_pr_head_and_authenticated_supplied_model() -> None:
@@ -67,11 +136,11 @@ def test_review_pipeline_binds_current_pr_head_and_authenticated_supplied_model(
     assert detector["url"] is None
     assert detector["size"] == 80_933_219
     assert detector["sha256"] == "d8a876bf7f9fb73d7da9432904ade7fa78e092e9a91674e5a2806b45562a9ab2"
-    assert 'digest.hexdigest() != expected["sha256"]' in text
+    assert "digest != expected_sha256" in text
     assert "refs/pull/3943/head" in text
     assert 'pulls/3943' in text
-    assert 'release.get("draft") is not True' in text
-    assert 'Accept="application/octet-stream"' in text
+    assert 'actions/runs/$REVIEWED_RUN_ID' in text
+    assert 'actions/artifacts/$REVIEWED_ARTIFACT_ID' in text
     assert "browser_download_url" not in text
     assert text.index("differ from the reviewed size or SHA-256") < text.index(
         "Generate an ephemeral review trust root"
@@ -79,6 +148,7 @@ def test_review_pipeline_binds_current_pr_head_and_authenticated_supplied_model(
     assert 'test "$EVENT_HEAD_SHA" = "$REQUESTED_SHA"' in text
     assert 'test "$GITHUB_SHA" = "$REQUESTED_SHA"' in text
     assert 'test "$EVENT_LABEL" = cua-perception-live-review' in text
+    assert '"$GITHUB_EVENT_NAME" == pull_request' in text
 
 
 def test_review_pipeline_builds_pending_trust_override_and_exact_artifact_contracts() -> None:

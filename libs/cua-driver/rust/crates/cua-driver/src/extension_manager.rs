@@ -2109,6 +2109,7 @@ impl ExtensionStore {
                         Some(&inspected.manifest_bytes),
                         true,
                     )?;
+                    drop(staging_handle);
                     staging_parent_handle
                         .rename(staging_name, &versions_handle, &version_text)
                         .with_context(|| {
@@ -5942,6 +5943,7 @@ mod tests {
             },
         )
         .unwrap();
+        drop(staging);
         root.rename("staging", &versions, "1.0.0").unwrap();
         let installed = versions.open_dir_nofollow("1.0.0").unwrap();
 

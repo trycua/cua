@@ -7,11 +7,6 @@ on:
         description: "Exact current head SHA of pull request #3943"
         required: true
         type: string
-      reviewed_model_asset_id:
-        description: "Optional asset ID for the reviewed ONNX; otherwise discover one matching draft asset"
-        required: false
-        default: ""
-        type: string
       catalog_version:
         description: "Positive review catalog version"
         required: true
@@ -25,11 +20,6 @@ on:
       source_sha:
         description: "Exact current head SHA of pull request #3943"
         required: true
-        type: string
-      reviewed_model_asset_id:
-        description: "Optional asset ID for the reviewed ONNX; otherwise discover one matching draft asset"
-        required: false
-        default: ""
         type: string
       catalog_version:
         description: "Positive review catalog version"
@@ -49,8 +39,7 @@ on:
 
 permissions:
   actions: read
-  # GitHub exposes draft releases only to push-capable tokens.
-  contents: write
+  contents: read
   pull-requests: read
 
 concurrency:
@@ -58,8 +47,95 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  reviewed-model:
+    name: Broker the pinned reviewed model artifact
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    outputs:
+      source_asset_id: ${{ steps.verify.outputs.source_asset_id }}
+    steps:
+      - id: verify
+        name: Verify the immutable producer run and artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # PR #3943 bootstrap input from a successful exact-head producer run.
+          REVIEWED_ARTIFACT_ID: "10582583541"
+          REVIEWED_ARTIFACT_NAME: cua-perception-input-linux-x86_64
+          REVIEWED_RUN_ID: "35438356263"
+          REVIEWED_SOURCE_ASSET_ID: "571471639"
+          REVIEWED_SOURCE_SHA: 289372dea8b2b11f572f0f6a15824315bc74026b
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REPOSITORY" == "trycua/cua" ]]
+          run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$REVIEWED_RUN_ID")"
+          [[ "$(jq -r .id <<<"$run_json")" == "$REVIEWED_RUN_ID" ]]
+          [[ "$(jq -r .status <<<"$run_json")" == "completed" ]]
+          [[ "$(jq -r .conclusion <<<"$run_json")" == "success" ]]
+          [[ "$(jq -r .event <<<"$run_json")" == "pull_request" ]]
+          [[ "$(jq -r .head_sha <<<"$run_json")" == "$REVIEWED_SOURCE_SHA" ]]
+          [[ "$(jq -r .head_repository.full_name <<<"$run_json")" == "$GITHUB_REPOSITORY" ]]
+          workflow_path="$(jq -r .path <<<"$run_json")"
+          expected_workflow=.github/workflows/review-cua-perception-pr3943.yml
+          [[ "$workflow_path" == "$expected_workflow" || "$workflow_path" == "$expected_workflow"@* ]]
+
+          artifact_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$REVIEWED_ARTIFACT_ID")"
+          [[ "$(jq -r .id <<<"$artifact_json")" == "$REVIEWED_ARTIFACT_ID" ]]
+          [[ "$(jq -r .name <<<"$artifact_json")" == "$REVIEWED_ARTIFACT_NAME" ]]
+          [[ "$(jq -r .expired <<<"$artifact_json")" == "false" ]]
+          [[ "$(jq -r .workflow_run.id <<<"$artifact_json")" == "$REVIEWED_RUN_ID" ]]
+          [[ "$(jq -r .workflow_run.head_sha <<<"$artifact_json")" == "$REVIEWED_SOURCE_SHA" ]]
+          echo "source_asset_id=$REVIEWED_SOURCE_ASSET_ID" >> "$GITHUB_OUTPUT"
+      - name: Download the exact reviewed producer artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: "10582583541"
+          github-token: ${{ github.token }}
+          path: reviewed-producer-input
+          repository: trycua/cua
+          run-id: "35438356263"
+      - name: Extract and verify the reviewed model
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, pathlib, shutil
+
+          root = pathlib.Path("reviewed-producer-input")
+          filename = "omniparser-icon-detect-1280-opset17.onnx"
+          expected_sha256 = "d8a876bf7f9fb73d7da9432904ade7fa78e092e9a91674e5a2806b45562a9ab2"
+          expected_size = 80_933_219
+          matches = [path for path in root.rglob(filename) if path.is_file()]
+          if len(matches) != 1:
+              raise SystemExit(f"expected exactly one reviewed model in producer artifact; found {len(matches)}")
+          source = matches[0]
+          size = source.stat().st_size
+          digest = hashlib.sha256(source.read_bytes()).hexdigest()
+          if size != expected_size or digest != expected_sha256:
+              raise SystemExit("producer artifact model differs from the reviewed size or SHA-256")
+          destination = pathlib.Path("reviewed-inputs") / filename
+          destination.parent.mkdir()
+          shutil.copyfile(source, destination)
+          print({"sha256": digest, "size": size})
+          PY
+      - name: Upload the immutable reviewed model handoff
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
+        with:
+          name: reviewed-cua-perception-model
+          path: reviewed-inputs/
+          if-no-files-found: error
+          retention-days: 1
+
   supplied-input:
     name: native review input (${{ matrix.target }})
+    needs: reviewed-model
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
     strategy:
       fail-fast: false
       matrix:
@@ -140,75 +216,35 @@ jobs:
           test "$head_sha" = "$REQUESTED_SHA"
           git fetch --no-tags origin "+refs/pull/3943/head:refs/cua-reviewed/pr-3943"
           test "$(git rev-parse refs/cua-reviewed/pr-3943)" = "$REQUESTED_SHA"
-      - name: Download the authenticated review-only supplied model
+      - name: Download the immutable reviewed model handoff
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: reviewed-cua-perception-model
+          path: reviewed-inputs
+      - name: Verify the supplied model handoff
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
-          REQUESTED_MODEL_ASSET_ID: ${{ inputs.reviewed_model_asset_id }}
+          CUA_REVIEWED_MODEL_ASSET_ID: ${{ needs.reviewed-model.outputs.source_asset_id }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import hashlib, json, os, pathlib, re, urllib.request
+          import hashlib, json, os, pathlib
 
-          repository = os.environ["GITHUB_REPOSITORY"]
-          requested_asset_id = os.environ["REQUESTED_MODEL_ASSET_ID"]
-          if requested_asset_id and not re.fullmatch(r"[1-9][0-9]*", requested_asset_id):
-              raise SystemExit("reviewed_model_asset_id must be empty or numeric")
-          lock = json.loads(pathlib.Path(
+          asset_id = os.environ["CUA_REVIEWED_MODEL_ASSET_ID"]
+          if not asset_id.isdigit() or asset_id.startswith("0"):
+              raise SystemExit("broker returned an invalid reviewed model asset ID")
+          expected = next(item for item in json.loads(pathlib.Path(
               "libs/cua-driver/rust/crates/cua-perception/scripts/artifacts.lock.json"
-          ).read_text())
-          expected = next(item for item in lock["artifacts"] if item["role"] == "icon-detect")
+          ).read_text())["artifacts"] if item["role"] == "icon-detect")
           if expected.get("url") is not None or expected["size"] != 80_933_219:
               raise SystemExit("reviewed detector lock must remain supplied-only at the reviewed size")
-          headers = {
-              "Accept": "application/vnd.github+json",
-              "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
-              "X-GitHub-Api-Version": "2022-11-28",
-              "User-Agent": "cua-perception-review-input/1",
-          }
-          def get_json(url):
-              with urllib.request.urlopen(urllib.request.Request(url, headers=headers)) as response:
-                  return json.load(response)
-          api = f"https://api.github.com/repos/{repository}"
-          candidates = []
-          for page in range(1, 11):
-              releases = get_json(f"{api}/releases?per_page=100&page={page}")
-              if not releases:
-                  break
-              for release in releases:
-                  if release.get("draft") is not True or release.get("published_at") is not None:
-                      continue
-                  for asset in release.get("assets", []):
-                      if requested_asset_id and str(asset["id"]) != requested_asset_id:
-                          continue
-                      if (asset["name"] == expected["filename"] and
-                              asset["state"] == "uploaded" and asset["size"] == expected["size"]):
-                          candidates.append(asset)
-          if len(candidates) != 1:
-              raise SystemExit(
-                  "expected exactly one unpublished draft asset matching the reviewed detector; "
-                  f"found {len(candidates)}"
-              )
-          asset = candidates[0]
-          asset_id = str(asset["id"])
           destination = pathlib.Path("reviewed-inputs") / expected["filename"]
-          destination.parent.mkdir()
-          download_headers = dict(headers, Accept="application/octet-stream")
-          request = urllib.request.Request(f"{api}/releases/assets/{asset_id}", headers=download_headers)
-          digest = hashlib.sha256()
-          size = 0
-          with urllib.request.urlopen(request) as response, destination.open("wb") as output:
-              while block := response.read(1024 * 1024):
-                  output.write(block)
-                  digest.update(block)
-                  size += len(block)
-          if size != expected["size"] or digest.hexdigest() != expected["sha256"]:
-              destination.unlink(missing_ok=True)
+          size = destination.stat().st_size
+          digest = hashlib.sha256(destination.read_bytes()).hexdigest()
+          if size != expected["size"] or digest != expected["sha256"]:
               raise SystemExit("supplied model bytes differ from the reviewed size or SHA-256")
-          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as github_env:
-              github_env.write(f"CUA_REVIEWED_MODEL_ASSET_ID={asset_id}\n")
           print(json.dumps({"asset_id": int(asset_id), "review_only": True,
-                            "sha256": digest.hexdigest(), "size": size}, sort_keys=True))
+                            "sha256": digest, "size": size}, sort_keys=True))
           PY
       - name: Generate an ephemeral review trust root
         shell: bash
@@ -296,6 +332,7 @@ jobs:
           PLATFORM: ${{ matrix.platform }}
           SOURCE_SHA: ${{ inputs.source_sha }}
           TARGET: ${{ matrix.target }}
+          CUA_REVIEWED_MODEL_ASSET_ID: ${{ needs.reviewed-model.outputs.source_asset_id }}
         run: |
           set -euo pipefail
           [[ "$CATALOG_VERSION" =~ ^[1-9][0-9]*$ ]]
@@ -622,6 +659,9 @@ jobs:
     name: aggregate signed review candidates
     needs: supplied-input
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
     outputs:
       signed_candidate_artifact_id: ${{ steps.upload.outputs.artifact-id }}
       producer_run_id: ${{ steps.producer.outputs.run_id }}

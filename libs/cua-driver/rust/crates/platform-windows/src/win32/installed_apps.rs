@@ -25,7 +25,7 @@ use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, IPersistFile, CLSCTX_INPROC_SERVER,
     COINIT_APARTMENTTHREADED, STGM,
 };
-use windows::Win32::UI::Shell::{IShellLinkW, ShellLink, SLGP_RAWPATH};
+use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
 
 /// Parsed metadata for an installed Windows application.
 #[derive(Debug, Clone)]
@@ -211,7 +211,8 @@ unsafe fn read_lnk_target(lnk_path: &Path) -> windows::core::Result<(String, Str
     persist.Load(PCWSTR(wide_path.as_ptr()), STGM(0))?;
 
     let mut path_buf = vec![0u16; MAX_PATH as usize + 1];
-    shell_link.GetPath(&mut path_buf, std::ptr::null_mut(), SLGP_RAWPATH.0 as u32)?;
+    // Raw shortcut paths can contain %windir%; launch_path consumers need the resolved target.
+    shell_link.GetPath(&mut path_buf, std::ptr::null_mut(), 0)?;
 
     // INFOTIPSIZE (1024) is the documented upper bound for the LNK
     // arguments field; allocate one extra slot for the NUL terminator.
@@ -654,6 +655,69 @@ fn unix_secs_to_rfc3339(secs: i64) -> String {
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;
+
+    #[test]
+    fn shortcut_environment_target_resolves_without_changing_arguments() {
+        unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }
+            .ok()
+            .expect("initialize COM for shortcut resolution");
+        struct Apartment;
+        impl Drop for Apartment {
+            fn drop(&mut self) {
+                unsafe { CoUninitialize() };
+            }
+        }
+        let _apartment = Apartment;
+        let directory = tempfile::tempdir().expect("create shortcut fixture directory");
+        let link_path = directory.path().join("Environment target.lnk");
+        let link_path_wide = to_wide_nul(link_path.to_str().expect("fixture path is UTF-8"));
+        let target = to_wide_nul(r"%windir%\system32\cmd.exe");
+        let expected = PathBuf::from(std::env::var_os("windir").expect("Windows directory"))
+            .join("system32")
+            .join("cmd.exe")
+            .canonicalize()
+            .expect("Windows command processor exists");
+
+        for arguments in ["", r#"/d /c echo "argument with spaces""#] {
+            let link: IShellLinkW = unsafe {
+                CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).expect("create shell link")
+            };
+            let arguments_wide = to_wide_nul(arguments);
+            let persist: IPersistFile = link.cast().expect("shell link persistence");
+            unsafe {
+                link.SetPath(PCWSTR(target.as_ptr()))
+                    .expect("set environment target");
+                link.SetArguments(PCWSTR(arguments_wide.as_ptr()))
+                    .expect("set arguments");
+                persist
+                    .Save(PCWSTR(link_path_wide.as_ptr()), true)
+                    .expect("save shortcut");
+                let mut raw = vec![0u16; MAX_PATH as usize + 1];
+                link.GetPath(
+                    &mut raw,
+                    std::ptr::null_mut(),
+                    windows::Win32::UI::Shell::SLGP_RAWPATH.0 as u32,
+                )
+                .expect("inspect raw target");
+                assert!(
+                    decode_wstr(&raw).starts_with('%'),
+                    "fixture must preserve its environment token"
+                );
+            }
+
+            let app = resolve_lnk(&link_path).expect("discover environment shortcut");
+            assert_eq!(
+                PathBuf::from(&app.bundle_id)
+                    .canonicalize()
+                    .expect("resolved executable exists"),
+                expected
+            );
+            assert!(!app.launch_path.contains("%windir%"));
+            if !arguments.is_empty() {
+                assert!(app.launch_path.ends_with(&format!(" {arguments}")));
+            }
+        }
+    }
 
     #[test]
     fn wedged_uwp_scan_has_bounded_worker_growth_and_recovers() {

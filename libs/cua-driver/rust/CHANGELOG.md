@@ -4,6 +4,7 @@
 
 ### Bug Fixes
 
+* **cua-driver:** resolve environment variables in Windows shortcut targets so discovered apps can launch.
 * **cua-driver:** deliver X11 key-down before the tap delay and finish background keyboard delivery before closing the input connection.
 
 ## [0.28.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.28.1...cua-driver-rs-v0.28.2) (2026-09-15)

@@ -133,6 +133,35 @@ impl WorkerProcess {
     }
 }
 
+// Use an OS-thread deadline rather than the host runtime's optional time driver
+// or its potentially saturated blocking pool. Dropping the sender cancels the
+// wait, so a graceful shutdown does not retain a sleeping thread for its budget.
+struct ShutdownDeadline {
+    _cancel: std::sync::mpsc::Sender<()>,
+    expired: tokio::sync::oneshot::Receiver<()>,
+}
+
+impl ShutdownDeadline {
+    fn new(deadline: Instant) -> std::io::Result<Self> {
+        let (cancel, cancelled) = std::sync::mpsc::channel();
+        let (notify, expired) = tokio::sync::oneshot::channel();
+        std::thread::Builder::new()
+            .name("cua-private-worker-deadline".into())
+            .spawn(move || {
+                if matches!(
+                    cancelled.recv_timeout(deadline.saturating_duration_since(Instant::now())),
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+                ) {
+                    let _ = notify.send(());
+                }
+            })?;
+        Ok(Self {
+            _cancel: cancel,
+            expired,
+        })
+    }
+}
+
 pub(crate) struct PrivateWorkerClient {
     generation: String,
     process: Mutex<WorkerProcess>,
@@ -294,6 +323,14 @@ impl PrivateWorkerClient {
             .ok_or_else(|| DriverError::Configuration {
                 reason: "private-worker shutdown timeout exceeds the platform clock range".into(),
             })?;
+        if self.shutdown_started.load(Ordering::Acquire) {
+            return Err(DriverError::Shutdown);
+        }
+        // Allocate the fallible watchdog before retiring the client or submitting
+        // work. A thread-spawn failure leaves admission open for a later retry.
+        let mut timer = ShutdownDeadline::new(deadline).map_err(|error| DriverError::Worker {
+            reason: format!("schedule private worker shutdown deadline: {error}"),
+        })?;
         if self.shutdown_started.swap(true, Ordering::AcqRel) {
             return Err(DriverError::Shutdown);
         }
@@ -304,15 +341,20 @@ impl PrivateWorkerClient {
         let progress = Arc::clone(&transmission);
         let mut task =
             tokio::task::spawn_blocking(move || client.shutdown_sync_until(deadline, &progress));
-        match tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), &mut task).await {
-            Ok(Ok(result)) => result,
-            Ok(Err(error)) => {
-                self.schedule_cleanup()?;
-                Err(DriverError::Worker {
-                    reason: format!("join private worker shutdown: {error}"),
-                })
-            }
-            Err(_) => {
+        tokio::select! {
+            // Preserve timeout_at's preference for a completed task; the task
+            // itself only reports success after observing exit by the deadline.
+            biased;
+            result = &mut task => match result {
+                Ok(result) => result,
+                Err(error) => {
+                    self.schedule_cleanup()?;
+                    Err(DriverError::Worker {
+                        reason: format!("join private worker shutdown: {error}"),
+                    })
+                }
+            },
+            _ = &mut timer.expired => {
                 let started = transmission.swap(2, Ordering::AcqRel) == 1;
                 // Abort removes queued work; an already-running closure retains
                 // its Arc until it returns. Cleanup does not use Tokio's pool.

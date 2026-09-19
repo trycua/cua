@@ -112,11 +112,16 @@ fn fixture_client(mode: &str, requests: &std::path::Path) -> Arc<PrivateWorkerCl
 }
 
 fn runtime() -> tokio::runtime::Runtime {
-    tokio::runtime::Builder::new_current_thread()
-        .max_blocking_threads(1)
-        .enable_time()
-        .build()
-        .unwrap()
+    runtime_with_time(true)
+}
+
+fn runtime_with_time(enable_time: bool) -> tokio::runtime::Runtime {
+    let mut builder = tokio::runtime::Builder::new_current_thread();
+    builder.max_blocking_threads(1);
+    if enable_time {
+        builder.enable_time();
+    }
+    builder.build().unwrap()
 }
 
 fn assert_interrupted(result: Result<(), DriverError>, completion: ActionCompletion) {
@@ -131,6 +136,39 @@ fn assert_reaped(client: &PrivateWorkerClient) -> std::process::ExitStatus {
 }
 
 fn assert_reaped_by(client: &PrivateWorkerClient, deadline: Instant) -> std::process::ExitStatus {
+    // On Unix, try_wait itself can reap a zombie and mask a missing production
+    // wait. First observe disappearance without reaping, keeping the client
+    // alive so its Drop cannot repair cleanup either. Only then read the cached
+    // exit status. Windows has no corresponding zombie/reaping requirement.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        let pid = loop {
+            if let Ok(child) = client.child.try_lock() {
+                break child.id();
+            }
+            assert!(Instant::now() < deadline, "child owner stayed locked");
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        loop {
+            let output = Command::new("ps")
+                .args(["-p", &pid.to_string(), "-o", "stat="])
+                .output()
+                .unwrap();
+            if output.stdout.is_empty()
+                && output.stderr.is_empty()
+                && output.status.code() == Some(1)
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "owned child was not reaped: pid={pid}, state={:?}, stderr={:?}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
     loop {
         if let Ok(mut child) = client.child.try_lock() {
             if let Some(status) = child.try_wait().unwrap() {
@@ -200,18 +238,39 @@ fn shutdown_deadline_is_not_restarted_after_acknowledgment() {
 
 #[test]
 fn shutdown_deadline_allows_graceful_exit() {
+    shutdown_deadline_allows_graceful_exit_on(runtime());
+}
+
+#[test]
+fn timerless_shutdown_deadline_allows_graceful_exit() {
+    shutdown_deadline_allows_graceful_exit_on(runtime_with_time(false));
+}
+
+fn shutdown_deadline_allows_graceful_exit_on(rt: tokio::runtime::Runtime) {
     let dir = tempfile::tempdir().unwrap();
     let client = fixture_client("graceful", &dir.path().join("requests"));
-    runtime().block_on(client.shutdown()).unwrap();
+    rt.block_on(client.shutdown()).unwrap();
     assert!(assert_reaped(&client).success());
 }
 
 #[test]
 fn shutdown_deadline_includes_blocking_pool_queue_and_never_sends_late() {
+    shutdown_deadline_includes_blocking_pool_queue_and_never_sends_late_on(runtime());
+}
+
+#[test]
+fn timerless_shutdown_deadline_includes_blocking_pool_queue_and_never_sends_late() {
+    shutdown_deadline_includes_blocking_pool_queue_and_never_sends_late_on(runtime_with_time(
+        false,
+    ));
+}
+
+fn shutdown_deadline_includes_blocking_pool_queue_and_never_sends_late_on(
+    rt: tokio::runtime::Runtime,
+) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("requests");
     let client = fixture_client("graceful", &path);
-    let rt = runtime();
     let (entered_tx, entered_rx) = mpsc::sync_channel(1);
     let blocker = rt.spawn_blocking(move || {
         entered_tx.send(()).unwrap();
@@ -308,12 +367,20 @@ fn shutdown_deadline_interrupts_unread_stdin_without_killing_sibling() {
 
 #[test]
 fn shutdown_deadline_bounds_its_own_blocked_write() {
+    shutdown_deadline_bounds_its_own_blocked_write_on(runtime());
+}
+
+#[test]
+fn timerless_shutdown_deadline_bounds_its_own_blocked_write() {
+    shutdown_deadline_bounds_its_own_blocked_write_on(runtime_with_time(false));
+}
+
+fn shutdown_deadline_bounds_its_own_blocked_write_on(rt: tokio::runtime::Runtime) {
     let dir = tempfile::tempdir().unwrap();
     let mut client = fixture_client("unread", &dir.path().join("requests"));
     // Exercise the shutdown write itself without changing the public protocol:
     // the fixture intentionally accepts an oversized generation for this test.
     Arc::get_mut(&mut client).unwrap().generation = "x".repeat(256 * 1024);
-    let rt = runtime();
     let start = Instant::now();
     let result = rt.block_on(client.shutdown());
     let elapsed = start.elapsed();
@@ -323,6 +390,54 @@ fn shutdown_deadline_bounds_its_own_blocked_write() {
         "shutdown write exceeded budget: {elapsed:?}"
     );
     assert_interrupted(result, ActionCompletion::Unknown);
+}
+
+#[test]
+fn shutdown_deadline_cancellation_releases_watchdog() {
+    let ShutdownDeadline {
+        _cancel: cancel,
+        mut expired,
+    } = ShutdownDeadline::new(Instant::now() + Duration::from_secs(60)).unwrap();
+    drop(cancel);
+    let deadline = Instant::now() + LIMIT;
+    loop {
+        match expired.try_recv() {
+            Err(tokio::sync::oneshot::error::TryRecvError::Closed) => break,
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {}
+            Ok(()) => panic!("cancelled watchdog reported expiry"),
+        }
+        assert!(
+            Instant::now() < deadline,
+            "cancelled watchdog kept sleeping"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn timerless_shutdown_keeps_executor_responsive() {
+    use std::future::{poll_fn, Future};
+    use std::task::Poll;
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut client = fixture_client("silent", &dir.path().join("requests"));
+    Arc::get_mut(&mut client).unwrap().shutdown_timeout = Duration::from_millis(600);
+    let rt = runtime_with_time(false);
+    let result = rt.block_on(async {
+        let mut shutdown = Box::pin(client.shutdown());
+        let start = Instant::now();
+        poll_fn(|cx| {
+            assert!(shutdown.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        // This code shares the only executor thread with shutdown and must run
+        // before the 600ms deadline, not after a synchronous timer wait.
+        assert!(start.elapsed() < LIMIT, "shutdown blocked the executor");
+        shutdown.await
+    });
+    assert_interrupted(result, ActionCompletion::Unknown);
+    assert_reaped(&client);
 }
 
 #[test]

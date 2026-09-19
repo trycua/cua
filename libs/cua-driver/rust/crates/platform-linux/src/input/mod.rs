@@ -1303,6 +1303,16 @@ pub fn with_x11_foreground<T>(
 /// the caller can report/inspect it. Best-effort; returns `None` prior on a
 /// headless display.
 pub fn x11_activate_window_persistent(xid: u64) -> Result<Option<u64>> {
+    // Called directly from the tool layer (bring_to_front / foreground
+    // activation), not through `send_virtual_pointer_*`/`deliver`, so without
+    // this guard its `XSetErrorHandler` swap below can race theirs: whichever
+    // thread restores its saved "previous" handler last can clobber the
+    // other's still-in-flight `ignore_x_error` installation, briefly leaving
+    // the process default handler active (which can abort the process on an
+    // unrelated async X11 error) — or vice versa. `MPX_OP_LOCK` is a leaf
+    // lock here (this function calls nothing that itself takes it), so no
+    // reentrancy risk.
+    let _op = mpx_op_guard("x11_activate_window_persistent");
     let display = unsafe { x11::xlib::XOpenDisplay(ptr::null()) };
     if display.is_null() {
         bail!(
@@ -4042,10 +4052,39 @@ mod path_tests {
     use super::{
         create_uinput_pointer, ensure_master_pointer_for_session, guarded_uinput_creation,
         is_uinput_unavailable, kde_x11_uinput_hotplug_is_unsafe, master_pointer_name,
-        modifiers_to_state, normalize_uinput_device_name, path_cumulative, point_on_path,
-        real_pointer_capabilities_available, sample_function, slave_pointer_name,
+        mpx_op_guard, modifiers_to_state, normalize_uinput_device_name, path_cumulative,
+        point_on_path, real_pointer_capabilities_available, sample_function, slave_pointer_name,
         EVDEV_UINPUT_NAME_MAX_BYTES, UINPUT_POINTER_SUFFIX,
     };
+
+    /// Regression for the `XSetErrorHandler` swap race: every caller that
+    /// could swap the process-global X11 error handler while an MPX
+    /// operation is mid-swap (`send_virtual_pointer_*`, `deliver`, and now
+    /// `x11_activate_window_persistent`) must take `MPX_OP_LOCK` first. This
+    /// doesn't touch X11 (no display in CI), but proves the lock itself is
+    /// exclusive and not reentrant-by-accident: a second `mpx_op_guard` call
+    /// blocks until the first is dropped, exactly the property the handler
+    /// swap needs to be race-free.
+    #[test]
+    fn mpx_op_guard_is_mutually_exclusive() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        let entered_second = Arc::new(AtomicBool::new(false));
+        let first = mpx_op_guard("test-a");
+        let entered_second_clone = entered_second.clone();
+        let handle = std::thread::spawn(move || {
+            let _second = mpx_op_guard("test-b");
+            entered_second_clone.store(true, Ordering::SeqCst);
+        });
+        // The second guard cannot have been acquired yet — it is blocked on
+        // the lock we are still holding.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert!(!entered_second.load(Ordering::SeqCst), "second guard acquired while the first was still held");
+        drop(first);
+        handle.join().unwrap();
+        assert!(entered_second.load(Ordering::SeqCst));
+    }
     use x11rb::protocol::xproto::KeyButMask;
 
     #[test]

@@ -1458,9 +1458,31 @@ fn normalize_windows_path(path: &Path) -> String {
 
 /// A minimal environment block. The worker inherits nothing from the Driver, so
 /// no proxy setting, token, or caller path reaches it; only the loader's
-/// `SystemRoot` and a temporary directory inside the private working directory
-/// are provided.
+/// `SystemRoot` and private temporary and profile directories inside the
+/// working directory are provided.
 fn environment_block(working_directory: &Path) -> Result<Vec<u16>, VisualParseError> {
+    let profile = working_directory.join("profile");
+    let roaming_app_data = profile.join("AppData").join("Roaming");
+    let local_app_data = profile.join("AppData").join("Local");
+    std::fs::create_dir_all(&profile).map_err(|cause| {
+        containment_error(
+            "failed to create the perception worker's private profile directory",
+            os_detail(&cause),
+        )
+    })?;
+    std::fs::create_dir_all(&roaming_app_data).map_err(|cause| {
+        containment_error(
+            "failed to create the perception worker's private roaming application data directory",
+            os_detail(&cause),
+        )
+    })?;
+    std::fs::create_dir_all(&local_app_data).map_err(|cause| {
+        containment_error(
+            "failed to create the perception worker's private local application data directory",
+            os_detail(&cause),
+        )
+    })?;
+
     let mut system_root = vec![0_u16; 260];
     let written =
         unsafe { GetSystemWindowsDirectoryW(system_root.as_mut_ptr(), system_root.len() as u32) };
@@ -1472,14 +1494,20 @@ fn environment_block(working_directory: &Path) -> Result<Vec<u16>, VisualParseEr
     system_root.truncate(written as usize);
     let system_root = String::from_utf16_lossy(&system_root);
     let temporary = working_directory.display().to_string();
+    let profile = profile.display().to_string();
+    let roaming_app_data = roaming_app_data.display().to_string();
+    let local_app_data = local_app_data.display().to_string();
 
     let mut block = Vec::new();
     let mut entries = [
+        format!("APPDATA={roaming_app_data}"),
+        format!("LOCALAPPDATA={local_app_data}"),
         format!("SystemRoot={system_root}"),
-        format!("windir={system_root}"),
         format!("PATH={system_root}\\System32"),
         format!("TEMP={temporary}"),
         format!("TMP={temporary}"),
+        format!("USERPROFILE={profile}"),
+        format!("windir={system_root}"),
     ];
     entries.sort_by_key(|entry| entry.to_ascii_lowercase());
     for entry in entries {
@@ -1605,13 +1633,52 @@ mod tests {
     }
 
     #[test]
-    fn the_environment_block_carries_only_the_loader_and_private_temporary_paths() {
-        let block = environment_block(Path::new(r"C:\temp\cua")).unwrap();
+    fn the_environment_block_carries_only_loader_and_private_worker_paths() {
+        let worker_root = tempfile::tempdir().unwrap();
+        let block = environment_block(worker_root.path()).unwrap();
         let rendered = String::from_utf16(&block).unwrap();
-        assert!(rendered.contains("TEMP=C:\\temp\\cua\0"));
-        assert!(rendered.contains("SystemRoot="));
-        for leaked in ["USERPROFILE=", "APPDATA=", "HTTP_PROXY=", "PATHEXT="] {
-            assert!(!rendered.contains(leaked), "{leaked} reached the worker");
+        let entries = rendered
+            .split('\0')
+            .filter(|entry| !entry.is_empty())
+            .map(|entry| entry.split_once('=').unwrap())
+            .collect::<std::collections::HashMap<_, _>>();
+
+        let expected_profile = worker_root.path().join("profile");
+        let expected_roaming = expected_profile.join("AppData").join("Roaming");
+        let expected_local = expected_profile.join("AppData").join("Local");
+        assert_eq!(entries["TEMP"], worker_root.path().display().to_string());
+        assert_eq!(entries["TMP"], worker_root.path().display().to_string());
+        assert_eq!(
+            entries["USERPROFILE"],
+            expected_profile.display().to_string()
+        );
+        assert_eq!(entries["APPDATA"], expected_roaming.display().to_string());
+        assert_eq!(
+            entries["LOCALAPPDATA"],
+            expected_local.display().to_string()
+        );
+        assert!(entries.contains_key("SystemRoot"));
+        assert!(entries.contains_key("windir"));
+        assert!(entries.contains_key("PATH"));
+        for unrelated in ["HTTP_PROXY", "PATHEXT", "USERNAME", "HOMEDRIVE"] {
+            assert!(
+                !entries.contains_key(unrelated),
+                "{unrelated} reached the worker"
+            );
+        }
+        for path in [&expected_profile, &expected_roaming, &expected_local] {
+            assert!(path.is_dir(), "{} was not created", path.display());
+            assert!(path.starts_with(worker_root.path()));
+        }
+        for name in ["USERPROFILE", "APPDATA", "LOCALAPPDATA"] {
+            assert!(Path::new(entries[name]).starts_with(worker_root.path()));
+            if let Some(host) = std::env::var_os(name) {
+                assert_ne!(
+                    normalize_windows_path(Path::new(entries[name])),
+                    normalize_windows_path(Path::new(&host)),
+                    "{name} reused the host profile path"
+                );
+            }
         }
         assert!(rendered.ends_with("\0\0"));
     }

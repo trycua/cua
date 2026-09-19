@@ -19,7 +19,7 @@ use crate::capture_runtime::{CaptureBinding, CaptureService, CaptureTarget};
 use crate::perception_client::{error, PerceptionCancellation, PerceptionClient};
 use crate::protocol::ToolResult;
 use crate::tool::{Tool, ToolDef, ToolRegistry};
-use crate::tool_args::parse_typed_input;
+use crate::tool_args::parse_typed_projection;
 
 pub type CaptureBindingResolver =
     Arc<dyn Fn(&Value) -> Result<CaptureBinding, VisualParseError> + Send + Sync + 'static>;
@@ -103,7 +103,8 @@ impl Tool for ParseVisualRegionsTool {
             Ok(binding) => binding,
             Err(error) => return tool_error(error),
         };
-        let mut input: ParseVisualRegionsInput = match parse_typed_input(&self.def.name, args) {
+        let mut input: ParseVisualRegionsInput = match parse_typed_projection(&self.def.name, &args)
+        {
             Ok(input) => input,
             Err(result) => return result,
         };
@@ -651,6 +652,50 @@ mod tests {
         let result = tool.invoke(json!({"capture_id": capture_id})).await;
         assert_eq!(result.is_error, Some(true));
         assert_eq!(result.structured_content.unwrap()["code"], "not_installed");
+    }
+
+    #[tokio::test]
+    async fn session_metadata_selects_capture_binding_without_entering_typed_input() {
+        let service = Arc::new(CaptureService::default());
+        let (capture_id, _) = capture(&service);
+        let resolve_service = service.clone();
+        let tool = ParseVisualRegionsTool::new(
+            service,
+            PerceptionClient::unavailable(),
+            Arc::new(move |args| {
+                resolve_service.binding_from_args(args).map_err(|error| {
+                    crate::perception_client::error(
+                        VisualParseErrorCode::CaptureGenerationMismatch,
+                        "capture session binding is unavailable",
+                        false,
+                        Some(error.to_string()),
+                    )
+                })
+            }),
+        );
+
+        let matched = tool
+            .invoke(json!({
+                "session": "session-a",
+                "_session_id": "session-a",
+                "_transport_session_id": "transport-a",
+                "capture_id": capture_id
+            }))
+            .await;
+        assert_eq!(matched.structured_content.unwrap()["code"], "not_installed");
+
+        let mismatched = tool
+            .invoke(json!({
+                "session": "session-b",
+                "_session_id": "session-b",
+                "_transport_session_id": "transport-b",
+                "capture_id": capture_id
+            }))
+            .await;
+        assert_eq!(
+            mismatched.structured_content.unwrap()["code"],
+            "capture_generation_mismatch"
+        );
     }
 
     #[tokio::test]

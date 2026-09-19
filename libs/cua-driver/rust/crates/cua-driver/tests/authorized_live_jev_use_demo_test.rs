@@ -1114,6 +1114,7 @@ mod e2e {
             .to_owned();
         driver.start_behavior_recording();
         let parsed = driver.call("parse_visual_regions", json!({
+            "session": action_session,
             "capture_id": capture_id,
             "options": {"kinds": ["text", "icon"], "min_confidence": MIN_CONFIDENCE, "max_regions": MAX_REGIONS}
         }));
@@ -1218,6 +1219,7 @@ mod e2e {
             .to_owned();
         assert_ne!(capture_id, second_capture_id);
         let reparsed = driver.call("parse_visual_regions", json!({
+            "session": action_session,
             "capture_id": second_capture_id,
             "options": {"kinds": ["text", "icon"], "min_confidence": MIN_CONFIDENCE, "max_regions": MAX_REGIONS}
         }));

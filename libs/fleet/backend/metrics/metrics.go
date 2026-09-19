@@ -9,6 +9,7 @@
 //	cyclops_cs_upstream_proxy_requests_total - counter, labels: target, status_code
 //	cyclops_cs_upstream_proxy_duration_seconds - histogram, labels: target, status_code
 //	cyclops_cs_active_requests              - gauge
+//	cyclops_cs_namespace_create_phase_duration_seconds - histogram, labels: phase, result
 //
 // The metrics server is started separately on METRICS_ADDR (default :9091)
 // so that the main HTTP server on :8080 stays free of /metrics traffic.
@@ -21,6 +22,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -46,6 +48,12 @@ var (
 		Help: "Number of HTTP requests currently being processed by the cyclops-cs backend.",
 	})
 
+	NamespaceCreatePhaseDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "cyclops_cs_namespace_create_phase_duration_seconds",
+		Help:    "Latency of bounded phases in POST /api/namespaces.",
+		Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},
+	}, []string{"phase", "result"})
+
 	// Keycloak admin API SLIs
 	KeycloakRequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "cyclops_cs_keycloak_requests_total",
@@ -68,6 +76,21 @@ var (
 		Name: "cyclops_cs_billing_webhook_events_total",
 		Help: "Total Stripe billing webhook requests by processing result and event type.",
 	}, []string{"result", "event_type"})
+
+	ProductAnalyticsEventsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "cyclops_cs_product_analytics_events_total",
+		Help: "Fleet product analytics events by event name and delivery result.",
+	}, []string{"event", "result"})
+
+	ProductAnalyticsQueueDepth = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "cyclops_cs_product_analytics_queue_depth",
+		Help: "Current Fleet product analytics delivery queue depth.",
+	})
+
+	ProductAnalyticsDeliveryDuration = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name: "cyclops_cs_product_analytics_delivery_duration_seconds",
+		Help: "Fleet product analytics batch delivery duration.",
+	})
 
 	// DatabaseFeaturesReady reports whether the PostgreSQL-backed features
 	// came up at startup. The serving tier deliberately does NOT gate
@@ -220,6 +243,11 @@ func normalizePath(p string) string {
 		return "/api/keys/:id"
 	case len(p) > 13 && p[:13] == "/api/gateway/":
 		return "/api/gateway/:name/:path"
+	case len(p) > 16 && p[:16] == "/api/signed-svc/":
+		if strings.Contains(p[16:], "/") {
+			return "/api/signed-svc/:token/:path"
+		}
+		return "/api/signed-svc/:token"
 	case len(p) > 9 && p[:9] == "/api/svc/":
 		return "/api/svc/:namespace/:service/:path"
 	case len(p) > 9 && p[:9] == "/api/k8s/":
@@ -227,6 +255,11 @@ func normalizePath(p string) string {
 	default:
 		return p
 	}
+}
+
+// RecordNamespaceCreatePhase observes a bounded namespace creation phase and result.
+func RecordNamespaceCreatePhase(phase, result string, duration time.Duration) {
+	NamespaceCreatePhaseDuration.WithLabelValues(phase, result).Observe(duration.Seconds())
 }
 
 // RecordKeycloakRequest records a Keycloak admin API operation result.
@@ -266,4 +299,16 @@ func StartMetricsServer(addr string) error {
 
 func RecordBillingWebhook(result, eventType string) {
 	BillingWebhookEventsTotal.WithLabelValues(result, eventType).Inc()
+}
+
+func RecordProductAnalytics(event, result string) {
+	ProductAnalyticsEventsTotal.WithLabelValues(event, result).Inc()
+}
+
+func SetProductAnalyticsQueueDepth(depth int) {
+	ProductAnalyticsQueueDepth.Set(float64(depth))
+}
+
+func ObserveProductAnalyticsDelivery(duration time.Duration) {
+	ProductAnalyticsDeliveryDuration.Observe(duration.Seconds())
 }

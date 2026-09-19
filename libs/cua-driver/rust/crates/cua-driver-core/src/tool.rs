@@ -179,26 +179,18 @@ impl ToolDef {
             "capabilities": caps,
             "risk": risk,
         });
-        let output_schema = if crate::action_record::is_action_tool(&self.name) {
-            Some(
-                <cua_driver_contract::ActionResult as cua_driver_contract::ToolOutput>::output_schema(
-                ),
-            )
-        } else {
-            cua_driver_contract::tool_success_output_schema(&self.name)
-        };
-        if let Some(output_schema) = output_schema {
-            // Advertise the refusal envelope alongside the success shape. MCP
-            // holds every `structuredContent` we emit — refusals included — to
-            // the advertised schema, and a success-only schema made strict
-            // clients discard our refusal message in favour of a schema error.
+        // Advertise the refusal envelope alongside the success shape. MCP
+        // holds every `structuredContent` we emit — refusals included — to
+        // the advertised schema, and a success-only schema made strict
+        // clients discard our refusal message in favour of a schema error.
+        // The `tools/call` boundary answers from the same lookup, so what a
+        // client is promised and what it is held to cannot drift.
+        if let Some(output_schema) = cua_driver_contract::advertised_tool_output_schema(&self.name)
+        {
             entry
                 .as_object_mut()
                 .expect("tool list entry is an object")
-                .insert(
-                    "outputSchema".into(),
-                    cua_driver_contract::advertised_output_schema(output_schema),
-                );
+                .insert("outputSchema".into(), output_schema);
         }
         entry
     }
@@ -437,9 +429,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
 /// richer live schema.
 pub fn advertised_capabilities_for(tool_name: &str, input_schema: &Value) -> Vec<String> {
     let mut capabilities = default_capabilities_for(tool_name);
-    let accepts_delivery_mode = input_schema
-        .pointer("/properties/delivery_mode")
-        .is_some_and(Value::is_object);
+    let accepts_delivery_mode = schema_accepts_delivery_mode(input_schema);
     if accepts_delivery_mode
         && !capabilities
             .iter()
@@ -448,6 +438,53 @@ pub fn advertised_capabilities_for(tool_name: &str, input_schema: &Value) -> Vec
         capabilities.push("input.delivery_mode".into());
     }
     capabilities
+}
+
+fn schema_accepts_delivery_mode(input_schema: &Value) -> bool {
+    input_schema
+        .pointer("/properties/delivery_mode")
+        .is_some_and(Value::is_object)
+}
+
+/// Canonicalize the hidden pre-0.7 Windows `dispatch` compatibility alias.
+///
+/// This runs at the native dispatch boundary before policy, protected-resource
+/// authorization, recording, and platform execution. Every downstream
+/// consumer therefore sees the same modern field and one of the two supported
+/// values. The live schema remains modern-only, and schema gating prevents an
+/// unrelated tool's `dispatch` argument from being reinterpreted.
+///
+/// Presence of `delivery_mode` always wins, including when its value is null or
+/// malformed. As with the platform parsers, only an explicit case-insensitive
+/// `foreground` opts into foreground delivery; every other supplied value,
+/// including the removed legacy `auto`, fails closed to `background`.
+fn normalize_delivery_mode_args(tool: &ToolDef, args: &mut Value) {
+    if !schema_accepts_delivery_mode(&tool.input_schema) {
+        return;
+    }
+    let Some(arguments) = args.as_object_mut() else {
+        return;
+    };
+
+    let supplied = if arguments.contains_key("delivery_mode") {
+        arguments.get("delivery_mode")
+    } else {
+        arguments.get("dispatch")
+    };
+    let Some(supplied) = supplied else {
+        return;
+    };
+    let mode = if supplied
+        .as_str()
+        .is_some_and(|value| value.eq_ignore_ascii_case("foreground"))
+    {
+        "foreground"
+    } else {
+        "background"
+    };
+
+    arguments.remove("dispatch");
+    arguments.insert("delivery_mode".to_owned(), Value::String(mode.to_owned()));
 }
 
 /// Runtime-owned provenance for protected-resource admission.
@@ -461,6 +498,15 @@ pub enum ProtectedResourceOwnership {
 #[async_trait]
 pub trait Tool: Send + Sync {
     fn def(&self) -> &ToolDef;
+
+    /// Implementation-attested routing that cannot touch the primary input
+    /// lane. The adapter must serialize its own lifecycle and fail closed if
+    /// that independent route is unavailable; it must never fall back to
+    /// global input. Caller fields alone cannot establish this guarantee.
+    /// Existing platform routes conservatively retain global coordination.
+    fn has_independent_input_lane(&self, _args: &Value) -> bool {
+        false
+    }
 
     /// Trusted implementation-side provenance for prompt-light disposable
     /// resources. The default is deliberately conservative: caller arguments
@@ -902,7 +948,7 @@ impl ToolRegistry {
                 .await;
         }
         let context = match crate::session_authorization::configured_registry()
-            .and_then(crate::session_authorization::SessionAuthorizationRegistry::legacy_context)
+            .and_then(|registry| registry.legacy_context())
         {
             Ok(context) => context,
             Err(error) => {
@@ -920,7 +966,7 @@ impl ToolRegistry {
     pub async fn invoke_from_trusted_adapter(&self, name: &str, mut args: Value) -> ToolResult {
         let evidence = TrustedInvocationEvidence::extract_from_adapter_args(&mut args);
         let context = match crate::session_authorization::configured_registry()
-            .and_then(crate::session_authorization::SessionAuthorizationRegistry::legacy_context)
+            .and_then(|registry| registry.legacy_context())
         {
             Ok(context) => context,
             Err(error) => {
@@ -1022,6 +1068,9 @@ impl ToolRegistry {
             return ToolResult::error(format!("Unknown tool: {name}"));
         };
 
+        // Normalize deprecated public argument spellings before any policy,
+        // consent, recording, or implementation layer interprets the call.
+        normalize_delivery_mode_args(tool.def(), &mut args);
         if let Err(result) = crate::action_target::normalize_action_target(resolved_name, &mut args)
         {
             return result;
@@ -1448,7 +1497,11 @@ impl ToolRegistry {
                 "start_recording" | "stop_recording" | "get_recording_state" | "replay_trajectory"
             );
         let private_consent_turn = is_existing_profile_prepare(resolved_name, &args);
-        let _desktop_action = if is_physical_desktop_action(resolved_name) {
+        let _desktop_action = if requires_desktop_coordination(
+            resolved_name,
+            &args,
+            tool.has_independent_input_lane(&args),
+        ) {
             let coordinator = desktop_action_coordinator();
             // Avoid yielding the dispatch task when the process-wide input
             // lane is uncontended. On Windows, that yield creates a window in
@@ -1474,7 +1527,11 @@ impl ToolRegistry {
             })
             .flatten();
 
-        let mut result = tool.invoke(args.clone()).await;
+        let mut result = crate::recording::scope_dispatch_click_capture(
+            pending_turn.as_ref(),
+            tool.invoke(args.clone()),
+        )
+        .await;
         drop(lifecycle_dispatch);
         // The platform worker has exited, so another text operation for this
         // pid may now start even while result projection and evidence capture
@@ -1536,10 +1593,11 @@ impl ToolRegistry {
         if result.is_error != Some(true) && crate::action_record::is_action_tool(resolved_name) {
             if let Err(error) = publish_action_result(&mut result) {
                 result = ToolResult::error(format!(
-                    "internal action outcome mismatch for {resolved_name}: {error}"
+                    "internal action outcome mismatch for {resolved_name}: {error}; the tool may have executed. Verify state before retrying."
                 ))
                 .with_structured(serde_json::json!({
                     "code": "action_outcome_mismatch",
+                    "execution_state": "unknown",
                     "tool": resolved_name,
                     "detail": error,
                 }));
@@ -1551,10 +1609,11 @@ impl ToolRegistry {
                     cua_driver_contract::validate_success_output(resolved_name, structured)
                 {
                     result = ToolResult::error(format!(
-                        "internal typed output mismatch for {resolved_name}: {error}"
+                        "internal typed output mismatch for {resolved_name}: {error}; the tool may have executed. Verify state before retrying."
                     ))
                     .with_structured(serde_json::json!({
                         "code": "typed_output_mismatch",
+                        "execution_state": "unknown",
                         "tool": resolved_name,
                         "detail": error,
                     }));
@@ -2513,6 +2572,21 @@ fn is_physical_desktop_action(tool: &str) -> bool {
     )
 }
 
+fn requires_desktop_coordination(tool: &str, args: &Value, independent_lane: bool) -> bool {
+    if !is_physical_desktop_action(tool) {
+        return false;
+    }
+    // Only an implementation-attested, exact-window background route can
+    // leave the shared lane. Explicit desktop and foreground calls never do.
+    let exact_background_window = args["pid"].as_u64().is_some_and(|pid| pid > 0)
+        && args["window_id"].as_u64().is_some_and(|id| id > 0)
+        && args["scope"] != "desktop"
+        && args.pointer("/target/kind").and_then(Value::as_str) != Some("desktop")
+        && args["delivery_mode"] != "foreground"
+        && args["dispatch"] != "foreground";
+    !(independent_lane && exact_background_window)
+}
+
 /// Bucket that owns the processes a call is allowed to terminate.
 ///
 /// A call that declares a session keys its launches to that session, so
@@ -2857,10 +2931,13 @@ mod runtime_isolation_tests {
             &self.def
         }
 
-        async fn invoke(&self, _args: serde_json::Value) -> crate::protocol::ToolResult {
+        async fn invoke(&self, args: serde_json::Value) -> crate::protocol::ToolResult {
             self.hits.fetch_add(1, Ordering::SeqCst);
-            crate::protocol::ToolResult::text("private state")
-                .with_structured(serde_json::json!({"snapshot_id": 1}))
+            crate::protocol::ToolResult::text("private state").with_structured(serde_json::json!({
+                "pid": args["pid"].as_u64().unwrap_or(42),
+                "window_id": args["window_id"].as_u64().unwrap_or(7),
+                "snapshot_id": "synthetic-snapshot", "elements": []
+            }))
         }
     }
 
@@ -2956,6 +3033,18 @@ mod runtime_isolation_tests {
         Arc::new(registry)
     }
 
+    // Use the same canonical spelling as manifest loading, including Windows'
+    // drive and extended-length prefix. This is an identity fixture only.
+    fn fixture_executable() -> String {
+        std::env::current_exe()
+            .unwrap()
+            .canonicalize()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned()
+    }
+
     fn attested_registry(
         name: &str,
         provider: Option<Arc<dyn ProtectedConsentProvider>>,
@@ -2969,7 +3058,7 @@ mod runtime_isolation_tests {
                 "fingerprint": {
                     "pid": 424242,
                     "start_time": 7,
-                    "executable": "/synthetic/fixture"
+                    "executable": fixture_executable()
                 }
             }),
             "get_window_state" => serde_json::json!({
@@ -2979,7 +3068,7 @@ mod runtime_isolation_tests {
                 "fingerprint": {
                     "pid": 424242,
                     "start_time": 7,
-                    "executable": "/synthetic/fixture"
+                    "executable": fixture_executable()
                 }
             }),
             _ => serde_json::json!({
@@ -3196,7 +3285,7 @@ mod runtime_isolation_tests {
     async fn bounded_observation_uses_only_the_manifest_without_a_protected_host() {
         let hits = Arc::new(AtomicUsize::new(0));
         let registry = attested_registry("get_window_state", None, hits.clone(), false);
-        let context = bounded_context(
+        let context = bounded_context(&format!(
             r#"
 version: 2
 mode: bounded
@@ -3206,12 +3295,13 @@ allow:
   tools: [get_window_state]
 resources:
   apps:
-    - executable: /synthetic/fixture
+    - executable: {executable}
       launch: false
       windows: all
       terminate: deny
 "#,
-        );
+            executable = serde_json::to_string(&fixture_executable()).unwrap()
+        ));
         let result = registry
             .invoke_with_context(
                 "get_window_state",
@@ -3231,15 +3321,18 @@ resources:
             let registry = attested_registry("get_window_state", None, allowed_hits.clone(), false);
             let allowed = manifest_context(
                 mode,
-                r#"
+                &format!(
+                    r#"
 version: 3
 allow:
   tools: [get_window_state]
 resources:
   apps:
-    - executable: /synthetic/fixture
+    - executable: {executable}
       windows: all
 "#,
+                    executable = serde_json::to_string(&fixture_executable()).unwrap()
+                ),
             );
             let result = registry
                 .invoke_with_context(
@@ -3255,15 +3348,22 @@ resources:
             let registry = attested_registry("get_window_state", None, denied_hits.clone(), false);
             let denied = manifest_context(
                 mode,
-                r#"
+                &format!(
+                    r#"
 version: 3
 allow:
   tools: [get_window_state]
 resources:
   apps:
-    - executable: /another/application
+    - executable: {executable}
       windows: all
 "#,
+                    executable = serde_json::to_string(
+                        &std::path::Path::new(&fixture_executable())
+                            .with_file_name("another-application.exe")
+                    )
+                    .unwrap()
+                ),
             );
             let result = registry
                 .invoke_with_context(
@@ -3569,6 +3669,114 @@ resources:
     }
 
     #[tokio::test]
+    async fn background_input_rechecks_manifest_before_every_adapter_dispatch() {
+        // The adapter may retain a native connection after a successful call.
+        // Reusing its public session label must not reuse resource authority.
+        for mode in [
+            PermissionMode::Standard,
+            PermissionMode::Bounded,
+            PermissionMode::Unrestricted,
+        ] {
+            let hits = Arc::new(AtomicUsize::new(0));
+            let registry = input_registry(None, hits.clone());
+            let context = manifest_context(
+                mode,
+                r#"
+version: 3
+expires_after: 1h
+idle_timeout: 30m
+allow:
+  tools: [click]
+resources:
+  desktop:
+    windows:
+      - pid: 42
+        window_id: 7
+"#,
+            );
+            for (window, expected_calls) in [(7, 1), (8, 1), (7, 2), (9, 2)] {
+                let result = registry.invoke_with_context("click", serde_json::json!({
+                    "pid": 42, "window_id": window, "x": 10, "y": 20,
+                    "delivery_mode": "background", "session": "persistent-native-connection",
+                    "_session_id": "forged-authority", "_lane": 0,
+                }), context.clone()).await;
+                assert_eq!(
+                    result.is_error == Some(true),
+                    window != 7,
+                    "{mode:?}: window {window}"
+                );
+                assert_eq!(
+                    hits.load(Ordering::SeqCst),
+                    expected_calls,
+                    "denied input must never enter the adapter"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn background_input_without_manifest_uses_existing_promptless_modes() {
+        for context in [standard_context(), unrestricted_context()] {
+            let hits = Arc::new(AtomicUsize::new(0));
+            let registry = input_registry(None, hits.clone());
+            for window in [7, 8] {
+                let result = registry
+                    .invoke_with_context(
+                        "click",
+                        serde_json::json!({
+                            "pid": 42, "window_id": window, "x": 10, "y": 20,
+                            "delivery_mode": "background", "session": "ordinary-desktop-input",
+                        }),
+                        context.clone(),
+                    )
+                    .await;
+                assert_ne!(result.is_error, Some(true));
+            }
+            assert_eq!(hits.load(Ordering::SeqCst), 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn canonical_dispatch_normalizes_legacy_delivery_mode_before_execution() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let last_args = Arc::new(Mutex::new(None));
+        let mut registry = super::ToolRegistry::new();
+        registry.register(Box::new(ArgumentProbe {
+            hits: hits.clone(),
+            last_args: last_args.clone(),
+            def: super::ToolDef {
+                name: "click".into(),
+                description: "test input".into(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "delivery_mode": crate::tool_schema::delivery_mode_schema()
+                    }
+                }),
+                read_only: false,
+                destructive: false,
+                idempotent: false,
+                open_world: false,
+            },
+        }));
+        let registry = Arc::new(registry);
+
+        let result = registry
+            .invoke_with_context(
+                "click",
+                serde_json::json!({"dispatch": "foreground"}),
+                standard_context(),
+            )
+            .await;
+
+        assert_ne!(result.is_error, Some(true));
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        let received = last_args.lock().unwrap().clone().expect("arguments");
+        assert_eq!(received["delivery_mode"], "foreground");
+        assert!(received.get("dispatch").is_none());
+    }
+
+    #[tokio::test]
     async fn standard_file_transfer_is_promptless_and_still_canonicalizes_paths() {
         let files = tempfile::tempdir().unwrap();
         let first = files.path().join("first.txt");
@@ -3839,7 +4047,7 @@ resources:
                 crate::browser::ProcessFingerprint {
                     pid: 424242,
                     start_time: Some(7),
-                    executable: Some("/synthetic/fixture".to_owned()),
+                    executable: Some(fixture_executable()),
                 },
             );
 
@@ -3867,7 +4075,7 @@ resources:
                 crate::browser::ProcessFingerprint {
                     pid: 424242,
                     start_time: Some(7),
-                    executable: Some("/synthetic/fixture".to_owned()),
+                    executable: Some(fixture_executable()),
                 },
             );
 
@@ -3897,7 +4105,7 @@ resources:
                 crate::browser::ProcessFingerprint {
                     pid: 424242,
                     start_time: Some(7),
-                    executable: Some("/synthetic/fixture".to_owned()),
+                    executable: Some(fixture_executable()),
                 },
             );
 
@@ -4000,7 +4208,7 @@ resources:
                 crate::browser::ProcessFingerprint {
                     pid: 424242,
                     start_time: Some(7),
-                    executable: Some("/synthetic/fixture".to_owned()),
+                    executable: Some(fixture_executable()),
                 },
             );
 
@@ -4340,48 +4548,51 @@ resources:
     #[tokio::test]
     async fn element_tokens_are_bound_to_the_dispatch_runtime_generation() {
         let pid = 8_675_309;
-        let token = DISPATCH_RUNTIME_SCOPE
-            .scope("runtime-a".to_owned(), async {
-                let snapshot = crate::element_token::global().register_snapshot(pid, 44, 1);
-                crate::element_token::token_for(snapshot, 0)
+        let (first_cache, token) = DISPATCH_RUNTIME_SCOPE
+            .scope("token-dispatch-runtime-a".to_owned(), async {
+                let cache = crate::snapshot_test_support::cache();
+                let snapshot =
+                    cache.publish(pid, 44, crate::snapshot_test_support::Payload(vec![0]));
+                (cache, crate::element_token::token_for(snapshot, 0))
             })
             .await;
-
-        let cross_runtime = DISPATCH_RUNTIME_SCOPE
-            .scope("runtime-b".to_owned(), async {
-                crate::element_token::global().resolve(pid, &token)
+        let second_cache = DISPATCH_RUNTIME_SCOPE
+            .scope("token-dispatch-runtime-b".to_owned(), async {
+                crate::snapshot_test_support::cache()
             })
             .await;
-        assert_eq!(
-            cross_runtime.unwrap_err(),
-            "element_token belongs to another runtime generation"
-        );
         let structured = DISPATCH_RUNTIME_SCOPE
-            .scope("runtime-b".to_owned(), async {
-                crate::element_token::resolve_element_args(
-                    pid,
-                    None,
-                    Some(&token),
-                    None,
-                    None,
-                    "click",
-                )
-                .unwrap_err()
+            .scope("token-dispatch-runtime-b".to_owned(), async {
+                second_cache
+                    .resolve_element_args(pid, None, Some(&token), None, None, "click")
+                    .unwrap_err()
             })
             .await
             .structured_content
             .unwrap();
+        assert_eq!(
+            structured["refusal"]["message"],
+            "element_token belongs to another runtime generation"
+        );
         assert_eq!(
             structured.pointer("/refusal/code"),
             Some(&serde_json::Value::String("generation_mismatch".into()))
         );
 
         let owner = DISPATCH_RUNTIME_SCOPE
-            .scope("runtime-a".to_owned(), async {
-                crate::element_token::global().resolve(pid, &token)
+            .scope("token-dispatch-runtime-a".to_owned(), async {
+                first_cache.resolve_element_args(pid, None, Some(&token), None, None, "click")
             })
             .await;
-        assert_eq!(owner.unwrap(), (44, 0));
+        assert!(matches!(
+            owner.unwrap(),
+            crate::element_token::ResolvedElement::Element {
+                window_id: Some(44),
+                element_index: 0,
+                element: 0,
+                ..
+            }
+        ));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -4404,6 +4615,33 @@ resources:
             task.await.unwrap();
         }
         assert_eq!(max_active.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn independent_input_requires_adapter_attestation_and_an_exact_background_window() {
+        use super::requires_desktop_coordination;
+        let exact = serde_json::json!({"pid": 10, "window_id": 20, "delivery_mode": "background"});
+        assert!(requires_desktop_coordination("drag", &exact, false));
+        assert!(!requires_desktop_coordination("drag", &exact, true));
+        for fields in [
+            serde_json::json!({"scope": "desktop"}),
+            serde_json::json!({"target": {"kind": "desktop"}}),
+            serde_json::json!({"delivery_mode": "foreground"}),
+            serde_json::json!({"dispatch": "foreground"}),
+            serde_json::json!({"pid": 0}),
+            serde_json::json!({"window_id": null}),
+        ] {
+            let mut args = exact.clone();
+            args.as_object_mut()
+                .unwrap()
+                .extend(fields.as_object().unwrap().clone());
+            assert!(requires_desktop_coordination("drag", &args, true), "{args}");
+        }
+        assert!(requires_desktop_coordination(
+            "drag",
+            &serde_json::json!({"independent_input_lane": true}),
+            false
+        ));
     }
 
     #[test]
@@ -5034,6 +5272,77 @@ mod capability_tests {
                 .iter()
                 .any(|capability| capability == "input.delivery_mode")
         );
+    }
+
+    #[test]
+    fn delivery_mode_normalization_is_schema_gated_modern_first_and_fail_closed() {
+        let with_delivery_mode = super::ToolDef {
+            name: "click".into(),
+            description: "test input".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "delivery_mode": crate::tool_schema::delivery_mode_schema()
+                }
+            }),
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        };
+        let without_delivery_mode = super::ToolDef {
+            name: "other".into(),
+            description: "unrelated tool".into(),
+            input_schema: serde_json::json!({"type": "object", "properties": {}}),
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        };
+
+        for (mut args, expected) in [
+            (serde_json::json!({"dispatch": "foreground"}), "foreground"),
+            (serde_json::json!({"dispatch": "Foreground"}), "foreground"),
+            (serde_json::json!({"dispatch": "background"}), "background"),
+            (serde_json::json!({"dispatch": "auto"}), "background"),
+            (serde_json::json!({"dispatch": "unknown"}), "background"),
+            (serde_json::json!({"dispatch": null}), "background"),
+            (
+                serde_json::json!({"delivery_mode": "Foreground"}),
+                "foreground",
+            ),
+            (
+                serde_json::json!({"delivery_mode": "unknown"}),
+                "background",
+            ),
+            (serde_json::json!({"delivery_mode": null}), "background"),
+            (
+                serde_json::json!({
+                    "delivery_mode": "background",
+                    "dispatch": "foreground"
+                }),
+                "background",
+            ),
+            (
+                serde_json::json!({
+                    "delivery_mode": null,
+                    "dispatch": "foreground"
+                }),
+                "background",
+            ),
+        ] {
+            super::normalize_delivery_mode_args(&with_delivery_mode, &mut args);
+            assert_eq!(args["delivery_mode"], expected, "arguments: {args}");
+            assert!(args.get("dispatch").is_none(), "arguments: {args}");
+        }
+
+        let mut absent = serde_json::json!({"x": 1});
+        super::normalize_delivery_mode_args(&with_delivery_mode, &mut absent);
+        assert_eq!(absent, serde_json::json!({"x": 1}));
+
+        let mut unrelated = serde_json::json!({"dispatch": "foreground"});
+        super::normalize_delivery_mode_args(&without_delivery_mode, &mut unrelated);
+        assert_eq!(unrelated, serde_json::json!({"dispatch": "foreground"}));
     }
 
     #[test]

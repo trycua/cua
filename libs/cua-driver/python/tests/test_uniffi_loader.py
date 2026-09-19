@@ -24,6 +24,59 @@ LIBRARY = Path(__file__).parents[1] / "src" / "cua_driver" / _library_name()
 
 
 @unittest.skipUnless(LIBRARY.exists(), "host-native UniFFI library is not staged")
+class GeneratedOptionsTests(unittest.TestCase):
+    def test_action_target_is_public_and_uses_the_generated_contract(self) -> None:
+        import cua_driver
+        from cua_driver import (
+            ActionTarget, ClickButton, ClickInput, ClickPosition, InputDeliveryMode,
+        )
+        from cua_driver._native_contract import ActionTarget as GeneratedActionTarget
+
+        self.assertIn("ActionTarget", cua_driver.__all__)
+        self.assertIs(ActionTarget, GeneratedActionTarget)
+        target = ActionTarget.DESKTOP(display_id="primary")
+        click = ClickInput(
+            position=ClickPosition.COORDINATES(x=10.0, y=20.0), target=target,
+            delivery_mode=InputDeliveryMode.FOREGROUND, session=None,
+            button=ClickButton.LEFT, count=1,
+        )
+        self.assertIs(click.target, target)
+        self.assertTrue(ActionTarget.WINDOW(pid=1, window_id=2).is_WINDOW())
+        with self.assertRaises(TypeError):
+            ClickInput(x=10.0, y=20.0)
+        for name in (
+            "AppInfo", "ClickPosition", "ElementFrame", "GetWindowStateInput",
+            "InputDeliveryMode", "ListAppsInput", "ListAppsOutput", "ListWindowsInput",
+            "ListWindowsOutput", "SnapshotImage", "WindowBounds", "WindowElement",
+            "WindowInfo", "WindowStateOutput",
+        ):
+            self.assertIn(name, cua_driver.__all__)
+            self.assertIsNotNone(getattr(cua_driver, name))
+
+    def test_embedded_overlay_option_defaults_false_and_accepts_true(self) -> None:
+        from cua_driver import EmbeddedDriverHostOptions
+
+        required = {
+            "binary_path": "/example/cua-driver",
+            "host_bundle_id": "com.example.host",
+            "socket_path": None,
+            "startup_timeout_ms": None,
+            "shutdown_timeout_ms": None,
+            "permission_mode": None,
+            "session_policy_path": None,
+            "approve_session_policy": False,
+            "dangerously_bypass_approvals": False,
+            "environment": [],
+            "inherit_stderr": False,
+        }
+
+        self.assertFalse(EmbeddedDriverHostOptions(**required).no_overlay)
+        self.assertTrue(
+            EmbeddedDriverHostOptions(**required, no_overlay=True).no_overlay
+        )
+
+
+@unittest.skipUnless(LIBRARY.exists(), "host-native UniFFI library is not staged")
 @unittest.skipIf(os.name == "nt", "Unix socket fixture")
 class SdkLoaderTests(unittest.TestCase):
     def test_generated_python_embedded_host_owns_the_rust_lifecycle(self) -> None:
@@ -58,7 +111,7 @@ while True:
             if request["method"] == "metadata":
                 result = {
                     "driver_version": "0.10.0",
-                    "contract_version": "0.7.0",
+                    "contract_version": "0.8.0",
                     "tools_list_schema_version": "1",
                     "capability_version": "1",
                     "mcp_protocol_version": "2025-06-18",
@@ -106,10 +159,12 @@ except FileNotFoundError:
         from cua_driver import (
             ActionEffect,
             ActionRoute,
+            ActionTarget,
+            ClickPosition,
+            InputDeliveryMode,
             ClickButton,
             ClickInput,
             CuaDriver,
-            DesktopScope,
             EffectiveScope,
             StatePredicate,
             StartSessionOutput,
@@ -142,7 +197,7 @@ except FileNotFoundError:
                         if request["method"] == "metadata":
                             result = {
                                 "driver_version": "0.12.6",
-                                "contract_version": "0.7.0",
+                                "contract_version": "0.8.0",
                                 "tools_list_schema_version": "1",
                                 "capability_version": "1",
                                 "mcp_protocol_version": "2025-06-18",
@@ -224,10 +279,9 @@ except FileNotFoundError:
             action_result = asyncio.run(
                 driver.click(
                     ClickInput(
-                        x=12.0,
-                        y=34.0,
-                        target=None,
-                        scope=DesktopScope.DESKTOP,
+                        position=ClickPosition.COORDINATES(x=12.0, y=34.0),
+                        target=ActionTarget.DESKTOP(display_id="primary"),
+                        delivery_mode=InputDeliveryMode.FOREGROUND,
                         session="python-run",
                         button=ClickButton.LEFT,
                         count=1,
@@ -243,9 +297,8 @@ except FileNotFoundError:
         self.assertEqual(
             verification_result.verification.status, VerificationStatus.SATISFIED
         )
-        self.assertIsNone(action_result.verification)
-        self.assertEqual(action_result.action.effect, ActionEffect.UNVERIFIABLE)
-        self.assertEqual(action_result.action.route, ActionRoute.GLOBAL_INPUT)
+        self.assertEqual(action_result.effect, ActionEffect.UNVERIFIABLE)
+        self.assertEqual(action_result.route, ActionRoute.GLOBAL_INPUT)
         self.assertFalse(hasattr(action_result, "verified"))
         self.assertEqual(captured[0]["name"], "verify_state")
         self.assertEqual(
@@ -267,7 +320,8 @@ except FileNotFoundError:
             {
                 "x": 12.0,
                 "y": 34.0,
-                "scope": "desktop",
+                "target": {"kind": "desktop", "display_id": "primary"},
+                "delivery_mode": "foreground",
                 "session": "python-run",
                 "button": "left",
                 "count": 1,

@@ -1,0 +1,164 @@
+---
+title: Your first Cloud Fleet
+description: Create a Cloud Fleet, use its computer-server to transform a file, verify the result locally, and clean up.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+In this tutorial, you create a one-computer Cloud Fleet, claim its Sandbox,
+write and hash a file through `computer-server`, and verify the hash on your
+computer. You then release the claim and request deletion of the Fleet.
+
+Python uses the Cua Sandbox SDK. TypeScript uses the Fleet SDK. Both paths use
+the same pool, claim, and guest-service concepts, but they are not equivalent
+Sandbox SDKs.
+
+<Callout type="warn">
+  A pool with one replica keeps cloud capacity available and can incur usage charges until it is
+  deleted. The examples request deletion even when the task fails, but a stopped process cannot run
+  its cleanup block. Keep the printed Fleet name until you confirm that the Fleet is absent.
+</Callout>
+
+## 1. Prepare your account
+
+Complete [Set up Fleet credentials](/how-to-guides/sandbox/set-up-fleet-credentials).
+You need a Fleet user API key with permission to create and delete pools.
+
+Set its client credentials in the shell where you will run the tutorial:
+
+```bash
+export CUA_CLIENT_ID="<your-client-id>"
+export CUA_CLIENT_SECRET="<your-client-secret>"
+```
+
+The examples connect to `https://run.cua.ai` and its default OAuth token
+endpoint. `cua auth login` does not supply these Fleet SDK credentials.
+
+## 2. Choose an image
+
+Follow [Choose a Fleet image](/how-to-guides/sandbox/choose-an-image) and select
+an immutable image reference that the catalog lists for Fleet use with
+`computer-server`. The image must listen on the declared `server` service at
+port `8000`.
+
+Set the exact registry reference from the catalog:
+
+```bash
+export CUA_FLEET_IMAGE="<immutable-registry-reference>"
+```
+
+This tutorial does not require Cua Driver or a desktop-control service.
+
+## 3. Download the example
+
+Choose a language. Your choice persists on other Fleet pages that use the same
+language tabs.
+
+<Tabs groupId="language" persist items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+
+You need Python `>=3.11,<3.14` and
+[`uv`](https://docs.astral.sh/uv/). Create a working directory and download the
+tested example:
+
+```bash
+mkdir first-cloud-fleet
+cd first-cloud-fleet
+curl -fsSLO https://cua.ai/docs-assets/scripts/first-cloud-fleet/first_cloud_fleet.py
+```
+
+The script metadata installs `cua-sandbox==0.7.0` and configures the Cua wheel
+index for its Fleet dependency in an isolated environment.
+
+  </Tab>
+  <Tab value="TypeScript">
+
+You need Node.js 20 or newer. Create a working directory, install the Fleet SDK
+and TypeScript runner, and download the tested example:
+
+```bash
+mkdir first-cloud-fleet
+cd first-cloud-fleet
+npm init -y
+npm pkg set type=module
+npm install @trycua/fleet@0.1.2
+npm install --save-dev tsx
+curl -fsSLo first-cloud-fleet.ts \
+  https://cua.ai/docs-assets/scripts/first-cloud-fleet/first-cloud-fleet.ts.txt
+```
+
+  </Tab>
+</Tabs>
+
+## 4. Create the Fleet and complete the task
+
+The example generates a unique pool name, then creates one replica with an
+explicit `server: 8000` service. After it claims the Sandbox and that service
+is ready, it performs these operations through `computer-server`:
+
+1. Write a small text file in the guest.
+2. Run `sha256sum` in the guest and save the digest to a second file.
+3. Read the saved digest from the guest.
+4. Compute SHA-256 independently on your computer and compare the values.
+
+Run the example:
+
+<Tabs groupId="language" persist items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+
+```bash
+uv run first_cloud_fleet.py
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```bash
+npx tsx first-cloud-fleet.ts
+```
+
+  </Tab>
+</Tabs>
+
+Provisioning can take several minutes. A successful run prints output similar
+to this:
+
+```text
+Cloud Fleet name: first-fleet-0123456789abcdef
+Verified SHA-256: d9359aad71bda9a11a4fd2e8d72044d6f0f77519c6b6fb30d251806febcfb4d0
+Requesting deletion of Cloud Fleet: first-fleet-0123456789abcdef
+```
+
+The matching digest proves that the guest read the same bytes that your local
+process hashed. It does not rely on the guest shell to verify its own result.
+
+## 5. Confirm cleanup
+
+Both examples release the claim before removing the dedicated Fleet resources.
+Python deletes the pool and the template it created; Fleet can then remove the
+empty namespace. TypeScript requests deletion of the dedicated namespace
+directly. An accepted cleanup request can precede final removal.
+
+Open [Fleet](https://run.cua.ai) and confirm that the printed Fleet name is no
+longer present. Do not treat closing the terminal, a local exception, or a
+cleanup request by itself as proof that chargeable capacity is gone.
+
+If the process stopped before cleanup completed, do not rerun the tutorial.
+Follow [Recover this tutorial after an interruption](/how-to-guides/sandbox/recover-first-cloud-fleet)
+with the printed pool name.
+
+## What you built
+
+You created a Fleet pool containing one hosted computer. A claim reserved that
+computer for the task, and the declared `server` service routed file and shell
+operations to its `computer-server` on port `8000`. Releasing the claim ended
+the reservation. The final cleanup removed the dedicated Fleet resources and
+requested removal of their capacity.
+
+## Next steps
+
+- [Create reusable Fleet capacity](/how-to-guides/sandbox/create-fleet-capacity)
+- [Configure a pool with Terraform](/how-to-guides/sandbox/configure-pool-with-terraform)
+- [Expire pools and claims automatically](/how-to-guides/sandbox/expire-pools-and-claims)
+- [Sandbox SDK API reference](/reference/sandbox-sdk)

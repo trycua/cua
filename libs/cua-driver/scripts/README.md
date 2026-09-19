@@ -94,3 +94,19 @@ libs/cua-driver/scripts/uninstall-local.ps1
 The local uninstaller leaves `cua-driver`, `CuaDriver.app`, release services,
 release state, and release TCC grants untouched. On macOS it revokes only
 `com.trycua.driver.local`; pass `--keep-tcc` to retain that local grant.
+
+The release Unix uninstaller shuts down the release service before removing
+anything. It first requires the systemd/launchd supervisor to stop, then uses
+the daemon PID file to validate the installed release process and invokes the
+trusted installed helper as `cua-driver --expected-pid <pid> stop`. A helper
+that supports this option reads daemon metadata and requires the daemon PID to
+match before sending shutdown; older helpers reject this argv shape instead of
+silently stopping an unrelated default-socket daemon. The uninstaller escalates
+only the already-validated release PID if graceful shutdown is unavailable, and
+verifies the daemon stays stopped before cleanup begins.
+
+With a missing or stale PID file, the script performs only a narrow
+release-executable process check. It never signals an ambiguous process. If
+supervisor shutdown, ownership validation, process inspection, or final
+shutdown verification cannot be proven safe, uninstall aborts non-zero while
+the runtime is still in place.

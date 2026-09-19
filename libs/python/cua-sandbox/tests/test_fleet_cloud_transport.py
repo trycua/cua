@@ -139,6 +139,35 @@ def test_pool_request_accepts_partial_autoscaling_bounds():
     assert request.spec.autoscaling == autoscaling
 
 
+def test_pool_request_carries_the_requested_creation_ttl():
+    request = FleetCloudTransport(
+        image=Image.from_registry("registry.example/workspace@sha256:abc"),
+        name="demo",
+        ttl_seconds_after_created=3600,
+    )._pool_request()
+
+    assert request.spec.ttl_seconds_after_created == 3600
+
+
+def test_pool_request_leaves_creation_ttl_unset_by_default():
+    request = FleetCloudTransport(
+        image=Image.from_registry("registry.example/workspace@sha256:abc"),
+        name="demo",
+    )._pool_request()
+
+    assert request.spec.ttl_seconds_after_created is None
+
+
+@pytest.mark.parametrize("ttl", [-1, True, "3600", 1.5, 2**32])
+def test_transport_rejects_invalid_creation_ttl(ttl):
+    with pytest.raises(ValueError, match="ttl_seconds_after_created"):
+        FleetCloudTransport(
+            image=Image.from_registry("registry.example/workspace@sha256:abc"),
+            name="demo",
+            ttl_seconds_after_created=ttl,
+        )
+
+
 def test_transport_rejects_untyped_autoscaling():
     with pytest.raises(TypeError, match="WarmPoolAutoscaling"):
         FleetCloudTransport(

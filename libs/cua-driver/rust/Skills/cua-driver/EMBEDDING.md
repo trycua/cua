@@ -250,11 +250,12 @@ gateway / node daemon                           YourApp.app
                                                      --socket <private-path>
 ```
 
-Note `check_permissions` cannot detect this: `source.attribution` reports
-`host` whenever `CUA_DRIVER_EMBEDDED=1` is set, even if a gateway spawned
-the driver. The symptoms are grant booleans that track the _gateway's_ TCC
-state and prompts/Settings entries naming the gateway process; see
-Troubleshooting below.
+`health_report(include=["bundle_identity"])` detects this wiring error by
+resolving the daemon's direct parent through macOS. It fails when the parent
+is not an identifiable app or when its observed bundle identifier differs
+from `CUA_DRIVER_HOST_BUNDLE_ID`. `check_permissions.source.attribution`
+still describes the configured mode; use the two reports together when
+diagnosing embedding.
 
 ## Reading `check_permissions` from the host
 
@@ -441,12 +442,29 @@ _ = readMessage()
 send(["jsonrpc": "2.0", "method": "notifications/initialized"])
 log("embedded cua-driver daemon + proxy started (\(driverPath)) — no driver prompt should have appeared")
 
-// 4. check_permissions must report attribution "host" and never prompt.
+// 4. health_report must observe this actual parent app, and
+//    check_permissions must report host attribution and matching TCC results.
+let health = call("health_report", ["include": ["bundle_identity"]])
+let healthStructured = health["structuredContent"] as? [String: Any] ?? [:]
+let healthChecks = healthStructured["checks"] as? [[String: Any]] ?? []
+let identity = healthChecks.first { $0["name"] as? String == "bundle_identity" } ?? [:]
+let identityData = identity["data"] as? [String: Any] ?? [:]
+let hostBundleId = Bundle.main.bundleIdentifier ?? ""
+let identityOk = identity["status"] as? String == "pass" &&
+    identityData["bundle_identifier"] as? String == hostBundleId &&
+    identityData["identity_source"] as? String == "parent_application" &&
+    (identityData["parent_process_id"] as? Int) == Int(ProcessInfo.processInfo.processIdentifier)
+log("health_report — bundle_identity: \(identity["status"] ?? "?"), " +
+    "observed host: \(identityData["bundle_identifier"] ?? "?") (want: \(hostBundleId))")
+
 let perms = call("check_permissions")
 let structured = perms["structuredContent"] as? [String: Any] ?? [:]
 let source = structured["source"] as? [String: Any] ?? [:]
 let attribution = source["attribution"] as? String ?? "?"
+let permissionsMatchHost = structured["accessibility"] as? Bool == ax &&
+    structured["screen_recording"] as? Bool == sr
 log("check_permissions — attribution: \(attribution) (want: host), " +
+    "TCC matches host: \(permissionsMatchHost), " +
     "capturable: \(structured["screen_recording_capturable"] ?? "?")")
 
 // 5. Background AX read + window screenshot — proves both grants
@@ -477,7 +495,8 @@ let cursorOk = (cursor1["isError"] as? Bool) != true &&
     (cursor2["isError"] as? Bool) != true
 log("move_cursor — \(cursorOk ? "ok" : "FAILED")")
 
-let pass = attribution == "host" && !images.isEmpty && hasTree && cursorOk
+let pass = identityOk && attribution == "host" && permissionsMatchHost &&
+    !images.isEmpty && hasTree && cursorOk
 log(pass ? "DEMO COMPLETE: PASS" : "DEMO COMPLETE: FAIL")
 driver.terminate()
 daemon.terminate()

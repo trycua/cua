@@ -698,7 +698,8 @@ fn process_identity(pid: u32) -> Result<(u64, Option<String>), BrowserRefusal> {
     }
     .ok()
     .filter(|_| path_len > 0)
-    .map(|_| String::from_utf16_lossy(&path_buf[..path_len as usize]));
+    .map(|_| String::from_utf16_lossy(&path_buf[..path_len as usize]))
+    .map(canonical_process_executable);
     let _ = unsafe { CloseHandle(handle) };
     times.map_err(|error| {
         refusal(
@@ -708,6 +709,14 @@ fn process_identity(pid: u32) -> Result<(u64, Option<String>), BrowserRefusal> {
     })?;
     let started = (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime);
     Ok((started, path))
+}
+
+fn canonical_process_executable(path: String) -> String {
+    // Manifest executable grants use `canonicalize` too. Normalize the Windows
+    // process evidence at collection time so shared authorization stays exact.
+    std::fs::canonicalize(&path)
+        .map(|canonical| canonical.to_string_lossy().into_owned())
+        .unwrap_or(path)
 }
 
 fn cdp_comparable_window_bounds(window_id: u64) -> Result<Rect, BrowserRefusal> {
@@ -984,6 +993,34 @@ async fn browser_websocket_url(port: u16) -> Option<String> {
     .await
     .ok()
     .flatten()
+}
+
+fn select_provisional_setup_port(
+    ports: &[u16],
+    listeners_before: &[u16],
+    setup_was_already_enabled: bool,
+) -> Result<Option<u16>, BrowserRefusal> {
+    let correlated = ports
+        .iter()
+        .copied()
+        .filter(|port| !listeners_before.contains(port))
+        .collect::<Vec<_>>();
+    match correlated.as_slice() {
+        [port] => Ok(Some(*port)),
+        [] if setup_was_already_enabled => match ports {
+            [] => Ok(None),
+            [port] => Ok(Some(*port)),
+            _ => Err(refusal(
+                BrowserRefusalCode::BrowserBindingAmbiguous,
+                "the pre-enabled browser setup exposed multiple existing exact-pid loopback listeners",
+            )),
+        },
+        [] => Ok(None),
+        _ => Err(refusal(
+            BrowserRefusalCode::BrowserBindingAmbiguous,
+            "the approved setup action exposed multiple newly correlated exact-pid listeners",
+        )),
+    }
 }
 
 const ENDPOINT_DISCOVERY_ATTEMPTS: usize = 4;
@@ -1662,6 +1699,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                 })??;
         let opened_setup_page = handle.opened_setup_page;
         let enabled_remote_debugging = handle.enabled_remote_debugging;
+        let setup_was_already_enabled = !enabled_remote_debugging;
         let focused_setup_address_field = handle.focused_setup_address_field;
         let foregrounded_window = handle.foregrounded_window;
         let injected_global_input = handle.injected_global_input;
@@ -1695,25 +1733,22 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                 }
             }
             if endpoints.is_empty() {
-                let correlated = ports
-                    .iter()
-                    .copied()
-                    .filter(|port| !listeners_before.contains(port))
-                    .collect::<Vec<_>>();
-                if let [port] = correlated.as_slice() {
-                    endpoints.push((
-                        *port,
+                match select_provisional_setup_port(
+                    &ports,
+                    &listeners_before,
+                    setup_was_already_enabled,
+                ) {
+                    Ok(Some(port)) => endpoints.push((
+                        port,
                         format!("ws://127.0.0.1:{port}/devtools/browser"),
-                        "new exact browser-pid listener correlated with approved setup",
-                    ));
-                } else if correlated.len() > 1 {
-                    break Err(refusal(
-                        BrowserRefusalCode::BrowserBindingAmbiguous,
-                        format!(
-                            "{} exposed multiple newly correlated exact-pid listeners",
-                            descriptor.product_name
-                        ),
-                    ));
+                        if listeners_before.contains(&port) {
+                            "unique existing exact browser-pid listener bound to a pre-enabled exact setup page"
+                        } else {
+                            "new exact browser-pid listener correlated with approved setup"
+                        },
+                    )),
+                    Ok(None) => {}
+                    Err(error) => break Err(error),
                 }
             }
             match endpoints.as_slice() {
@@ -1816,6 +1851,31 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         })?
     }
 
+    fn cleanup_existing_profile_setup(
+        &self,
+        request: ExistingProfileSetupRequest,
+    ) -> Result<bool, BrowserRefusal> {
+        let descriptor = existing_profile_setup_descriptor(request.browser).ok_or_else(|| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!(
+                    "existing-profile cleanup is not implemented for {:?}",
+                    request.browser
+                ),
+            )
+        })?;
+        let pid = u32::try_from(request.pid).map_err(|_| {
+            refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the approved browser pid is outside the Windows process-id range",
+            )
+        })?;
+        let dismissed_before = crate::browser_consent_ui::dismiss(pid, request.window_id)?;
+        let closed_setup_page = crate::browser_setup_ui::disable(request.window_id, descriptor)?;
+        let dismissed_after = crate::browser_consent_ui::dismiss(pid, request.window_id)?;
+        Ok(dismissed_before || closed_setup_page || dismissed_after)
+    }
+
     async fn abort_existing_profile_setup(
         &self,
         request: ExistingProfileSetupRequest,
@@ -1893,6 +1953,55 @@ impl BrowserPlatform for WindowsBrowserPlatform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn process_fingerprint_uses_manifest_canonical_executable_path() {
+        let (_started, executable) =
+            process_identity(std::process::id()).expect("current process fingerprint");
+        let expected = std::fs::canonicalize(std::env::current_exe().expect("current executable"))
+            .expect("canonical current executable")
+            .to_string_lossy()
+            .into_owned();
+
+        assert_eq!(executable.as_deref(), Some(expected.as_str()));
+    }
+
+    #[tokio::test]
+    async fn live_executable_grant_matches_without_installed_app_identity() {
+        use cua_driver_core::session_manifest::load_manifest;
+        use std::io::Write;
+
+        let pid = i64::from(std::process::id());
+        let fingerprint = WindowsBrowserPlatform::default()
+            .process_fingerprint(pid)
+            .await
+            .expect("live Windows process identity");
+        let directory = tempfile::tempdir().unwrap();
+        for (executable, allowed) in [
+            (std::env::current_exe().unwrap(), true),
+            (directory.path().join("ungranted-application.exe"), false),
+        ] {
+            let mut file = tempfile::NamedTempFile::new().unwrap();
+            write!(file, "version: 3\nallow:\n  tools: [get_window_state, click]\nresources:\n  apps:\n    - executable: {}\n      windows: all\n",
+                serde_json::to_string(&executable).unwrap()).unwrap();
+            let manifest = load_manifest(file.path()).unwrap();
+            for (adapter, kind) in [
+                ("private_observation", "window"),
+                ("desktop_input", "window_input"),
+            ] {
+                let resource = serde_json::json!({
+                    "kind": kind,
+                    "pid": pid,
+                    "window_id": 7,
+                    "fingerprint": fingerprint,
+                    "bundle_id": null,
+                    "launch_path": null,
+                });
+                assert_eq!(manifest.authorize_protected_resource(adapter, &resource).is_ok(), allowed,
+                    "{adapter} must use the live executable fingerprint even without an installed-app match");
+            }
+        }
+    }
 
     #[test]
     fn isolated_browser_candidates_are_vendor_attested_protected_installs() {
@@ -2385,6 +2494,18 @@ mod tests {
     }
 
     #[test]
+    fn pre_enabled_setup_reuses_one_exact_pid_port_before_consent() {
+        assert_eq!(
+            select_provisional_setup_port(&[9222], &[9222], true).unwrap(),
+            Some(9222)
+        );
+        assert_eq!(
+            select_provisional_setup_port(&[9222], &[9222], false).unwrap(),
+            None
+        );
+    }
+
+    #[test]
     fn windows_command_line_parser_preserves_quoted_profile_paths() {
         let args = parse_windows_command_line(
             r#""C:\Program Files\Google\Chrome\Application\chrome.exe" --flag "--user-data-dir=C:\Profiles\Personal Browser""#,
@@ -2420,6 +2541,16 @@ mod tests {
         assert_eq!(
             parse_devtools_active_port("9222\n/devtools/browser/id\nextra\n"),
             None
+        );
+    }
+
+    #[test]
+    fn pre_enabled_setup_refuses_multiple_existing_exact_pid_ports() {
+        assert_eq!(
+            select_provisional_setup_port(&[9222, 9333], &[9222, 9333], true)
+                .unwrap_err()
+                .code,
+            BrowserRefusalCode::BrowserBindingAmbiguous
         );
     }
 

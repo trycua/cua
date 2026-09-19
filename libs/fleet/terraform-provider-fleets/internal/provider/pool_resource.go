@@ -347,19 +347,24 @@ func (m poolResourceModel) toSDKTemplateSpec(ctx context.Context, diagnostics *d
 		value := cyclops_sdk_schema.FirmwareEfi
 		firmware = &value
 	}
-	imagePullSecret := m.ImagePullSecret.ValueString()
-	if imagePullSecret == "" {
-		imagePullSecret = "ecr-credentials"
-	}
+	imagePullSecret := configuredImagePullSecret(m.ImagePullSecret)
 	cpuCores := uint32(m.CPUCores.ValueInt64())
 	memory := m.Memory.ValueString()
 	probes := m.toSDKProbes(diagnostics)
 	return cyclops_sdk_schema.OsGymSandboxTemplateSpec{
 		VmTemplate: cyclops_sdk_schema.VmTemplate{
-			Runtime: runtime, ContainerDiskImage: m.ContainerDiskImage.ValueString(), ImagePullSecret: &imagePullSecret,
+			Runtime: runtime, ContainerDiskImage: m.ContainerDiskImage.ValueString(), ImagePullSecret: imagePullSecret,
 			CpuCores: &cpuCores, Memory: &memory, Firmware: firmware, Probes: probes, Services: &services,
 		},
 	}
+}
+
+func configuredImagePullSecret(value types.String) *string {
+	if value.IsNull() || value.IsUnknown() {
+		return nil
+	}
+	configured := value.ValueString()
+	return &configured
 }
 
 func (m poolResourceModel) toSDKProbes(diagnostics *diag.Diagnostics) **cyclops_sdk_schema.PreservedJson {
@@ -447,7 +452,11 @@ func (m *poolResourceModel) fromSDKTemplate(ctx context.Context, template *fleet
 	m.CPUCores = types.Int64Value(optionalUint32(vmTemplate.CpuCores))
 	m.Memory = types.StringValue(optionalString(vmTemplate.Memory))
 	m.ContainerDiskImage = types.StringValue(vmTemplate.ContainerDiskImage)
-	m.ImagePullSecret = types.StringValue(defaultString(vmTemplate.ImagePullSecret, "ecr-credentials"))
+	if vmTemplate.ImagePullSecret == nil {
+		m.ImagePullSecret = types.StringNull()
+	} else {
+		m.ImagePullSecret = types.StringValue(*vmTemplate.ImagePullSecret)
+	}
 	m.Runtime = types.StringValue(runtimeString(vmTemplate.Runtime))
 	m.Firmware = types.StringValue(firmwareString(vmTemplate.Firmware))
 	probes := sdkProbes(vmTemplate.Probes, diagnostics)

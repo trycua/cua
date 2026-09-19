@@ -29,10 +29,8 @@ func (facts stripeCardFacts) LoadFacts(ctx context.Context, request *http.Reques
 	}
 	createdAt, err := facts.handlers.UserAccounts.UserCreatedAt(ctx, user.ID)
 	if err != nil {
-		return nil, &auth.FactUnavailableError{
-			Namespace: auth.StripeCardsFactNamespace,
-			Err:       fmt.Errorf("Keycloak user lookup failed"),
-		}
+		return nil, auth.NewFactUnavailableError(auth.StripeCardsFactNamespace, err)
+
 	}
 	if createdAt.Before(billingCardRequiredFrom) {
 		return auth.FactSet{
@@ -46,10 +44,8 @@ func (facts stripeCardFacts) LoadFacts(ctx context.Context, request *http.Reques
 
 	cards, err := facts.handlers.Billing.AttachedCards(ctx, user.ID)
 	if err != nil {
-		return nil, &auth.FactUnavailableError{
-			Namespace: auth.StripeCardsFactNamespace,
-			Err:       fmt.Errorf("Stripe attached-card lookup failed"),
-		}
+		return nil, auth.NewFactUnavailableError(auth.StripeCardsFactNamespace, err)
+
 	}
 	projected := make([]map[string]any, 0, len(cards))
 	for _, card := range cards {

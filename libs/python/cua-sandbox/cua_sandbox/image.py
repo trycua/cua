@@ -24,7 +24,9 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Mapping, Optional, Tuple
+
+from cua_sandbox.generated.image_models import ImageFileReference, ImageResource
 
 logger = logging.getLogger(__name__)
 
@@ -180,12 +182,17 @@ class Image:
         *,
         os_type: str = "linux",
         kind: Optional[str] = None,
+        agent_type: Optional[str] = None,
     ) -> Image:
         """Create an image from a registry reference.
 
         os_type selects the firmware: Windows guest disks are built UEFI-only,
         so a Windows containerDisk pulled from a registry must say so or it is
         handed BIOS and will not boot. kind is resolved after pull when omitted.
+        agent_type names the guest control server the disk already runs, the
+        same hint as ``from_file``: ``"osworld"`` selects the OSWorld Flask
+        server on port 5000 instead of the computer-server on 8000, both for
+        local QEMU and for Fleet pools.
         """
         return cls(
             os_type=os_type,
@@ -193,6 +200,7 @@ class Image:
             version="latest",
             kind=kind,
             _registry=ref,
+            _agent_type=agent_type,
         )
 
     @classmethod
@@ -237,6 +245,7 @@ class Image:
             version=data["version"],
             kind=data.get("kind"),
             _registry=data.get("registry"),
+            _agent_type=data.get("agent_type"),
         )
         # Replay layers
         for layer in data.get("layers", []):
@@ -411,6 +420,87 @@ class Image:
 
     # ── Serialization ────────────────────────────────────────────────────
 
+    def to_build_recipe(
+        self,
+        *,
+        name: str,
+        namespace: str,
+        tags: Mapping[str, str] | None = None,
+        timeout_seconds: int | None = None,
+        disk_size: str | None = None,
+        file_references: Mapping[str, ImageFileReference] | None = None,
+    ) -> Dict[str, Any]:
+        """Return a CRD-validated Image custom-resource manifest."""
+        if self._registry is not None:
+            raise ValueError("remote builds do not accept registry-only images")
+        if self._disk_path is not None:
+            raise ValueError("remote builds do not accept local disk images")
+        if self._snapshot_source is not None:
+            raise ValueError("remote builds do not accept snapshot source images")
+        if self.os_type != "linux" or self.kind != "vm":
+            raise ValueError("remote builds currently support only Linux VM recipes")
+
+        references = dict(file_references or {})
+        required_sources = {source for source, _ in self._files}
+        missing_sources = sorted(required_sources - references.keys())
+        if missing_sources:
+            raise ValueError(f"missing file reference for {missing_sources[0]}")
+        unused_sources = sorted(references.keys() - required_sources)
+        if unused_sources:
+            raise ValueError(f"unused file references: {', '.join(unused_sources)}")
+
+        layers = []
+        for layer in self._layers:
+            if layer["type"] == "app_install":
+                layers.append({"type": "app_install", "appId": layer["app_id"]})
+            else:
+                layers.append(layer)
+
+        recipe: Dict[str, Any] = {
+            "osType": self.os_type,
+            "distro": self.distro,
+            "version": self.version,
+            "kind": self.kind,
+            "layers": layers,
+        }
+        if self._env:
+            recipe["env"] = dict(self._env)
+        if self._ports:
+            recipe["ports"] = list(self._ports)
+        if self._files:
+            recipe["files"] = [
+                {
+                    "source": references[source].model_dump(
+                        by_alias=True,
+                        exclude_none=True,
+                        mode="json",
+                    ),
+                    "destination": destination,
+                }
+                for source, destination in self._files
+            ]
+
+        spec: Dict[str, Any] = {"recipe": recipe}
+        if tags:
+            spec["metadata"] = {"tags": dict(tags)}
+        build: Dict[str, Any] = {}
+        if timeout_seconds is not None:
+            build["timeoutSeconds"] = timeout_seconds
+        if disk_size is not None:
+            build["diskSize"] = disk_size
+        if build:
+            spec["build"] = build
+
+        validated = ImageResource.model_validate(
+            {
+                "apiVersion": "images.cua.ai/v1alpha1",
+                "kind": "Image",
+                "metadata": {"name": name, "namespace": namespace},
+                "spec": spec,
+            }
+        )
+        return validated.model_dump(by_alias=True, exclude_none=True, mode="json")
+
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to a plain dict suitable for JSON or cloud API."""
         d: Dict[str, Any] = {
@@ -428,6 +518,8 @@ class Image:
             d["files"] = [list(f) for f in self._files]
         if self._registry:
             d["registry"] = self._registry
+        if self._agent_type:
+            d["agent_type"] = self._agent_type
         return d
 
     def to_cloud_init(self) -> str:

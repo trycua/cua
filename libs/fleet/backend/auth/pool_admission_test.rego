@@ -8,7 +8,11 @@ native_path := "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxtemplates
 
 allowed_image := "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:latest"
 
+public_ghcr_digest := "ghcr.io/trycua/gameworld-autoresearch@sha256:d626893f7bc3c42603557e8ae2d9fdf8ca6ce4c671c1c5958cdba2152674f7ed"
+
 osworld_v2_digest := "296062593712.dkr.ecr.us-west-2.amazonaws.com/osworld-v2-ubuntu-x86@sha256:6f981825c5970027df510006fcfc1ef7a502d2911f69ed9884f7f217007931dd"
+
+omarchy_digest := "296062593712.dkr.ecr.us-west-2.amazonaws.com/omarchy-workspace@sha256:c9cdba09d8cd2f742b9e9fa3818ca29dbcb66ee40edd057621e2987098226950"
 
 non_admin := {"sub": "user-1"}
 
@@ -78,6 +82,16 @@ test_ecr_secret_osworld_v2_digest_allowed {
 	}
 }
 
+test_ecr_secret_omarchy_digest_allowed {
+	pool_admission.allow with input as {
+		"method": "POST",
+		"params": {"path": native_path},
+		"body": sprintf(`{"spec":{"vmTemplate":{"containerDiskImage":%q,"imagePullSecret":"ecr-credentials"}}}`, [omarchy_digest]),
+		"user": non_admin,
+		"flags": non_admin_flags,
+	}
+}
+
 test_ecr_secret_gymdriver_dev_image_allowed {
 	pool_admission.allow with input as {
 		"method": "POST",
@@ -123,6 +137,26 @@ test_vm_template_ecr_secret_allowlisted_image_allowed {
 		"method": "POST",
 		"params": {"path": native_path},
 		"body": sprintf(`{"spec":{"vmTemplate":{"containerDiskImage":%q,"imagePullSecret":"ecr-credentials"}}}`, [allowed_image]),
+		"user": non_admin,
+		"flags": non_admin_flags,
+	}
+}
+
+test_native_vm_template_public_ghcr_without_pull_secret_allowed {
+	pool_admission.allow with input as {
+		"method": "POST",
+		"params": {"path": native_path},
+		"body": sprintf(`{"spec":{"vmTemplate":{"containerDiskImage":%q,"runtime":"gvisor"}}}`, [public_ghcr_digest]),
+		"user": non_admin,
+		"flags": non_admin_flags,
+	}
+}
+
+test_native_vm_template_public_ghcr_with_empty_pull_secret_denied {
+	not pool_admission.allow with input as {
+		"method": "POST",
+		"params": {"path": native_path},
+		"body": sprintf(`{"spec":{"vmTemplate":{"containerDiskImage":%q,"imagePullSecret":"","runtime":"gvisor"}}}`, [public_ghcr_digest]),
 		"user": non_admin,
 		"flags": non_admin_flags,
 	}

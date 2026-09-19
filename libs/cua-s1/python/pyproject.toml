@@ -1,0 +1,80 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cua-s1"
+version = "0.0.0"
+description = "Research tools for small, specialist computer-use models"
+readme = { text = "Cua-S1 provides research code for small, specialist computer-use models. The package does not include or download model weights.", content-type = "text/markdown" }
+license = { file = "LICENSE" }
+authors = [
+    { name = "TryCua", email = "hello@trycua.com" }
+]
+keywords = [
+    "computer-use",
+    "machine-learning",
+    "research",
+]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "numpy>=1.26",
+    "safetensors>=0.4,<1",
+    "torch>=2.2,<3",
+]
+
+[project.optional-dependencies]
+pdf = [
+    "pdfplumber>=0.11,<1",
+]
+mcp = [
+    "mcp>=1,<2",
+]
+all = [
+    "mcp>=1,<2",
+    "pdfplumber>=0.11,<1",
+]
+
+[project.scripts]
+cua-s1-mcp = "cua_s1.server:main"
+
+[project.urls]
+Homepage = "https://github.com/trycua/cua"
+Documentation = "https://github.com/trycua/cua/tree/main/libs/cua-s1"
+Repository = "https://github.com/trycua/cua"
+Issues = "https://github.com/trycua/cua/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cua_s1"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "W"]
+ignore = ["E501"]
+
+[dependency-groups]
+test = [
+    "pytest>=8,<10",
+    "pytest-asyncio>=0.24,<2",
+    "ruff>=0.12,<1",
+]

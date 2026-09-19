@@ -1,4 +1,5 @@
 import { Bash, type Command } from "just-bash/browser"
+import type { SensitiveOutputBuffer, SensitiveOutput } from "./sensitive-output.js"
 
 export const BASH_TIMEOUT = { min: 250, default: 10_000, max: 60_000 } as const
 export const BASH_OUTPUT = { min: 256, default: 20_000, max: 100_000 } as const
@@ -52,7 +53,7 @@ export type AgentEvent =
   | { type: "generation_start" }
   | { type: "assistant_delta"; delta: string }
   | { type: "tool_start"; toolCall: ToolCall; arguments: NormalizedBashArguments }
-  | { type: "tool_result"; toolCall: ToolCall; arguments: NormalizedBashArguments; result: BashToolResult }
+  | { type: "tool_result"; toolCall: ToolCall; arguments: NormalizedBashArguments; result: BashToolResult; sensitiveOutputs: SensitiveOutput[] }
   | { type: "complete"; message: AssistantMessage }
 
 export function normalizeBashArguments(input: BashToolArguments): NormalizedBashArguments {
@@ -94,10 +95,16 @@ export class BrowserBashAgent {
   private readonly shells = new Map<string, Bash>()
   private readonly client: TurnClient
   private readonly customCommands: Command[]
+  private readonly sensitiveOutputs?: SensitiveOutputBuffer
 
-  constructor(client: TurnClient, customCommands: Command[] = []) {
+  constructor(
+    client: TurnClient,
+    customCommands: Command[] = [],
+    sensitiveOutputs?: SensitiveOutputBuffer,
+  ) {
     this.client = client
     this.customCommands = customCommands
+    this.sensitiveOutputs = sensitiveOutputs
   }
 
   async executeBash(conversationID: string, input: BashToolArguments, signal?: AbortSignal): Promise<BashToolResult> {
@@ -180,14 +187,17 @@ export class BrowserBashAgent {
           arguments: normalizeBashArguments(JSON.parse(toolCall.function.arguments) as BashToolArguments),
         }
       })
-      const results = await Promise.all(
-        calls.map(async ({ toolCall, arguments: arguments_ }) => {
-          onEvent({ type: "tool_start", toolCall, arguments: arguments_ })
-          const result = await this.executeBash(conversationID, arguments_, signal)
-          onEvent({ type: "tool_result", toolCall, arguments: arguments_, result })
-          return { toolCall, result }
-        }),
-      )
+      for (const { toolCall, arguments: arguments_ } of calls) {
+        onEvent({ type: "tool_start", toolCall, arguments: arguments_ })
+      }
+      const results: Array<{ toolCall: ToolCall; result: BashToolResult }> = []
+      for (const { toolCall, arguments: arguments_ } of calls) {
+        this.sensitiveOutputs?.drain()
+        const result = await this.executeBash(conversationID, arguments_, signal)
+        const sensitiveOutputs = this.sensitiveOutputs?.drain() ?? []
+        onEvent({ type: "tool_result", toolCall, arguments: arguments_, result, sensitiveOutputs })
+        results.push({ toolCall, result })
+      }
       turnMessages = results.map(({ toolCall, result }) => ({
         role: "tool",
         tool_call_id: toolCall.id,

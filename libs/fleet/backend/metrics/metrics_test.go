@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -38,6 +39,43 @@ func TestMiddlewareRecordsUnknownUserByDefault(t *testing.T) {
 		"user":        "unknown",
 	}); count != 1 {
 		t.Fatalf("request histogram count = %d, want 1", count)
+	}
+}
+
+func TestMiddlewareNormalizesSignedServicePaths(t *testing.T) {
+	const (
+		token  = "signed-capability-token-must-not-leak"
+		suffix = "arbitrary-suffix-must-not-leak"
+	)
+
+	handler := Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	for _, testCase := range []struct {
+		path string
+		want string
+	}{
+		{"/api/signed-svc/" + token, "/api/signed-svc/:token"},
+		{"/api/signed-svc/" + token + "/tools/" + suffix, "/api/signed-svc/:token/:path"},
+	} {
+		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, testCase.path, nil))
+
+		if count := histogramCount(t, map[string]string{
+			"method":      "GET",
+			"path":        testCase.want,
+			"status_code": "200",
+			"user":        "unknown",
+		}); count != 1 {
+			t.Fatalf("normalized signed service path %q count = %d, want 1", testCase.want, count)
+		}
+		if count := histogramCount(t, map[string]string{
+			"method":      "GET",
+			"path":        testCase.path,
+			"status_code": "200",
+			"user":        "unknown",
+		}); count != 0 {
+			t.Fatalf("signed service request leaked raw path label %q", testCase.path)
+		}
 	}
 }
 
@@ -90,4 +128,36 @@ func TestNormalizePath(t *testing.T) {
 			t.Errorf("normalizePath(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
+}
+
+func TestRecordNamespaceCreatePhase(t *testing.T) {
+	before := namespaceCreatePhaseHistogramCount(t, "k8s_create", "http_201")
+	RecordNamespaceCreatePhase("k8s_create", "http_201", 750*time.Millisecond)
+	after := namespaceCreatePhaseHistogramCount(t, "k8s_create", "http_201")
+	if after != before+1 {
+		t.Fatalf("namespace create phase histogram count = %d, want %d", after, before+1)
+	}
+}
+
+func namespaceCreatePhaseHistogramCount(t *testing.T, phase, result string) uint64 {
+	t.Helper()
+	families, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range families {
+		if family.GetName() != "cyclops_cs_namespace_create_phase_duration_seconds" {
+			continue
+		}
+		for _, metric := range family.Metric {
+			labels := map[string]string{}
+			for _, pair := range metric.Label {
+				labels[pair.GetName()] = pair.GetValue()
+			}
+			if labels["phase"] == phase && labels["result"] == result {
+				return metric.GetHistogram().GetSampleCount()
+			}
+		}
+	}
+	return 0
 }

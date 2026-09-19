@@ -3,6 +3,7 @@
   "pages": [
     "install-lume",
     "create-vanilla-vm",
+    "run-omarchy-arm64",
     "run-openclaw",
     "manage-vms",
     "expand-vm-disk",

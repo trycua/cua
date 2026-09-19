@@ -584,6 +584,14 @@ fn encrypted_history_survives_restart_and_cryptographically_purges() {
             "Wayland click did not produce a delivered effect: {}",
             clicked.raw
         );
+        let route = clicked
+            .action_route()
+            .expect("Wayland click emitted no action route");
+        assert_eq!(
+            route, "accessibility",
+            "Wayland foreground click used an unexpected route: {}",
+            clicked.raw
+        );
         let _settled_state = wait_for_window_text(&mut driver, pid, window_id, "counter=1");
         let capability = cua_driver_core::tool::default_capabilities_for("click")
             .into_iter()
@@ -593,7 +601,7 @@ fn encrypted_history_survives_restart_and_cryptographically_purges() {
             capability, "input.pointer.click",
             "history must use click's primary closed-contract capability"
         );
-        (capability, effect.to_owned(), "accessibility")
+        (capability, effect.to_owned(), route.to_owned())
     } else {
         let requested_x = bounds["x"].as_f64().expect("fixture x") + 18.0;
         let requested_y = bounds["y"].as_f64().expect("fixture y") + 12.0;
@@ -620,7 +628,7 @@ fn encrypted_history_survives_restart_and_cryptographically_purges() {
         (
             "window.frame.set".to_owned(),
             "confirmed".to_owned(),
-            "system_api",
+            "system_api".to_owned(),
         )
     };
     let ended = driver.call("end_session", json!({"session": RAW_SESSION}));

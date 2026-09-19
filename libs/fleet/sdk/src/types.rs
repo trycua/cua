@@ -203,6 +203,38 @@ pub struct Sandbox {
 }
 
 #[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    uniffi::Record,
+    uniffi_builder_derive::UniffiBuilder,
+)]
+#[uniffi_builder(crate::SdkBuildError)]
+pub struct CreateSignedServiceUrlRequest {
+    pub sandbox: Sandbox,
+    pub service: String,
+    pub label: Option<String>,
+    pub expires_in_seconds: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
+#[serde(rename_all = "camelCase")]
+pub struct SignedServiceUrl {
+    pub id: String,
+    pub namespace: String,
+    pub claim: String,
+    pub sandbox: String,
+    pub service: String,
+    pub label: Option<String>,
+    pub url: String,
+    pub created_at: String,
+    pub expires_at: String,
+    pub revoked_at: Option<String>,
+}
+
+#[derive(
     Clone, Debug, Serialize, Deserialize, uniffi::Record, uniffi_builder_derive::UniffiBuilder,
 )]
 #[uniffi_builder(crate::SdkBuildError)]
@@ -271,6 +303,12 @@ pub struct CreateClaimRequest {
     #[serde(default)]
     #[uniffi(default = None)]
     pub name: Option<String>,
+    /// Labels stamped onto the created claim's metadata verbatim. Grouping
+    /// helpers (for example fleet fan-out) rely on this to tag related claims
+    /// so they can be listed back by label within a namespace.
+    #[serde(default)]
+    #[uniffi(default = None)]
+    pub labels: Option<HashMap<String, String>>,
 }
 
 impl PartialEq for CreateClaimRequest {
@@ -278,6 +316,30 @@ impl PartialEq for CreateClaimRequest {
         self.pool == other.pool
             && schema_values_equal(&self.spec, &other.spec)
             && self.name == other.name
+            && self.labels == other.labels
+    }
+}
+
+/// Where a native client opens its own WebSocket to a sandbox service through
+/// the gateway's `/api/svc` proxy. `url` is the `ws(s)://` endpoint;
+/// `auth_header_name`/`auth_header_value` carry the bearer the socket's HTTP
+/// upgrade request must send. Deliberately not serde-serializable: the value
+/// holds a live credential and must not be logged or persisted.
+#[derive(Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ServiceStreamTarget {
+    pub url: String,
+    pub auth_header_name: String,
+    pub auth_header_value: String,
+}
+
+impl fmt::Debug for ServiceStreamTarget {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ServiceStreamTarget")
+            .field("url", &self.url)
+            .field("auth_header_name", &self.auth_header_name)
+            .field("auth_header_value", &"<redacted>")
+            .finish()
     }
 }
 
@@ -309,6 +371,11 @@ pub struct HttpRequest {
     #[serde(default)]
     #[uniffi(default = None)]
     pub timeout_secs: Option<u64>,
+    /// Maximum bytes delivered in the response body. Absent preserves the
+    /// historical unbounded response behavior.
+    #[serde(default)]
+    #[uniffi(default = None)]
+    pub max_response_bytes: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]

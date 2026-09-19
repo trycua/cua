@@ -1,0 +1,59 @@
+name: "CI: Driver Linux dependency bootstrap"
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/cd-rust-cua-driver.yml"
+      - ".github/workflows/ci-driver-linux-bootstrap.yml"
+      - ".github/scripts/tests/test_driver_linux_bootstrap.py"
+
+permissions:
+  contents: read
+
+jobs:
+  bootstrap:
+    name: Debian 11 bootstrap (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Check snapshot and authentication contract
+        run: python3 .github/scripts/tests/test_driver_linux_bootstrap.py
+      - name: Extract the exact release-workflow bootstrap
+        run: |
+          python3 -m venv "$RUNNER_TEMP/bootstrap-parser"
+          "$RUNNER_TEMP/bootstrap-parser/bin/pip" install PyYAML==6.0.3
+          "$RUNNER_TEMP/bootstrap-parser/bin/python" - <<'PY'
+          import os
+          from pathlib import Path
+          import yaml
+
+          workflow = yaml.safe_load(Path('.github/workflows/cd-rust-cua-driver.yml').read_text())
+          job = workflow['jobs']['build-linux']
+          assert job['container']['image'] == 'debian:11'
+          steps = [step for step in job['steps'] if step.get('name') == 'Install base tooling (container is bare)']
+          assert len(steps) == 1
+          Path(os.environ['RUNNER_TEMP'], 'driver-bootstrap.sh').write_text('set -eu\n' + steps[0]['run'])
+          PY
+      - name: Install dependencies on the native architecture
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          docker pull debian:11
+          docker image inspect debian:11 --format '{{json .RepoDigests}}'
+          docker run --rm -i -e EXPECTED_ARCH debian:11 sh -e -c '
+            test "$(dpkg --print-architecture)" = "$EXPECTED_ARCH"
+            uname -m
+            sh -e -s
+            dpkg-query -W git ca-certificates curl python3 build-essential pkg-config libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev libxkbcommon-dev
+            ldd --version
+            test "$(getconf GNU_LIBC_VERSION)" = "glibc 2.31"
+          ' < "$RUNNER_TEMP/driver-bootstrap.sh"

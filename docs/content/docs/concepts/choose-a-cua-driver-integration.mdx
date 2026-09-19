@@ -36,9 +36,11 @@ The MCP client starts `cua-driver mcp` and keeps its standard input and output
 open. That authenticated transport receives a private implicit lifecycle
 session. Closing the transport releases its session state.
 
-This is the normal route for Codex, Claude Code, Cursor, Hermes, and a standard
-OpenClaw gateway. Generate the client-specific configuration with
-`cua-driver mcp-config --client <client>`.
+This is the normal route for Codex, Claude Code, Cursor, and a standard
+OpenClaw gateway. Hermes's built-in `computer_use` toolset also uses MCP
+internally, but owns the connection and presents a smaller Hermes-native tool
+surface. Generate configuration for clients that require direct registration
+with `cua-driver mcp-config --client <client>`.
 
 On Windows and Linux, bare `cua-driver mcp` owns its runtime. On macOS, it
 normally proxies to the installed `CuaDriver.app` daemon so Accessibility and

@@ -8,7 +8,9 @@ type User struct {
 	ID                string // sub or mapped owner_sub for GitHub OIDC
 	Name              string
 	Email             string
+	EmailVerified     bool
 	AZP               string   // authorized party = client_id of the token issuer
+	KeyClientPfx      string   // configured per-key client-id prefix, passed to OPA with the request
 	Namespace         string   // hardcoded-claim mapper on per-key clients
 	Groups            []string // groups for K8s impersonation (populated from user_groups claim for ukey- tokens)
 	Claims            map[string]string

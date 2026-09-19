@@ -694,6 +694,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref(
     ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created(
+    ): Short
     external fun uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_build(
     ): Short
     external fun uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_initial_pool_size(
@@ -827,6 +829,8 @@ external fun uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder
 external fun uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_replicas(`ptr`: Long,`value`: Int,uniffi_out_err: UniffiRustCallStatus,
 ): Long
 external fun uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created(`ptr`: Long,`value`: Int,uniffi_out_err: UniffiRustCallStatus,
 ): Long
 external fun uniffi_cyclops_sdk_schema_fn_clone_warmpoolautoscalingbuilder(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
 ): Long
@@ -1046,6 +1050,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref() != 7198.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created() != 44516.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_build() != 17132.toShort()) {
@@ -1744,6 +1751,8 @@ public interface OsGymSandboxWarmPoolSpecBuilderInterface {
 
     fun `sandboxTemplateRef`(`value`: SandboxTemplateRef): OsGymSandboxWarmPoolSpecBuilder
 
+    fun `ttlSecondsAfterCreated`(`value`: kotlin.UInt): OsGymSandboxWarmPoolSpecBuilder
+
     companion object
 }
 
@@ -1898,6 +1907,19 @@ open class OsGymSandboxWarmPoolSpecBuilder: Disposable, AutoCloseable, OsGymSand
     UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref(
         it,
         FfiConverterTypeSandboxTemplateRef.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+    override fun `ttlSecondsAfterCreated`(`value`: kotlin.UInt): OsGymSandboxWarmPoolSpecBuilder {
+            return FfiConverterTypeOSGymSandboxWarmPoolSpecBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created(
+        it,
+        FfiConverterUInt.lower(`value`),_status)
 }
     }
     )
@@ -3621,6 +3643,8 @@ data class ClaimSpec (
     var `bindDeadline`: kotlin.UInt?
     ,
     var `lifecycle`: ClaimLifecycle?
+    ,
+    var `ttlSecondsAfterCreated`: kotlin.UInt? = null
 
 ){
 
@@ -3641,6 +3665,7 @@ public object FfiConverterTypeClaimSpec: FfiConverterRustBuffer<ClaimSpec> {
             FfiConverterOptionalString.read(buf),
             FfiConverterOptionalUInt.read(buf),
             FfiConverterOptionalTypeClaimLifecycle.read(buf),
+            FfiConverterOptionalUInt.read(buf),
         )
     }
 
@@ -3648,7 +3673,8 @@ public object FfiConverterTypeClaimSpec: FfiConverterRustBuffer<ClaimSpec> {
             FfiConverterTypeSandboxTemplateRef.allocationSize(value.`sandboxTemplateRef`) +
             FfiConverterOptionalString.allocationSize(value.`warmpool`) +
             FfiConverterOptionalUInt.allocationSize(value.`bindDeadline`) +
-            FfiConverterOptionalTypeClaimLifecycle.allocationSize(value.`lifecycle`)
+            FfiConverterOptionalTypeClaimLifecycle.allocationSize(value.`lifecycle`) +
+            FfiConverterOptionalUInt.allocationSize(value.`ttlSecondsAfterCreated`)
     )
 
     override fun write(value: ClaimSpec, buf: ByteBuffer) {
@@ -3656,6 +3682,7 @@ public object FfiConverterTypeClaimSpec: FfiConverterRustBuffer<ClaimSpec> {
             FfiConverterOptionalString.write(value.`warmpool`, buf)
             FfiConverterOptionalUInt.write(value.`bindDeadline`, buf)
             FfiConverterOptionalTypeClaimLifecycle.write(value.`lifecycle`, buf)
+            FfiConverterOptionalUInt.write(value.`ttlSecondsAfterCreated`, buf)
     }
 }
 
@@ -3951,6 +3978,8 @@ data class OsGymSandboxWarmPoolSpec (
     var `sandboxTemplateRef`: SandboxTemplateRef
     ,
     var `autoscaling`: WarmPoolAutoscaling?
+    ,
+    var `ttlSecondsAfterCreated`: kotlin.UInt? = null
 
 ){
 
@@ -3970,19 +3999,22 @@ public object FfiConverterTypeOSGymSandboxWarmPoolSpec: FfiConverterRustBuffer<O
             FfiConverterUInt.read(buf),
             FfiConverterTypeSandboxTemplateRef.read(buf),
             FfiConverterOptionalTypeWarmPoolAutoscaling.read(buf),
+            FfiConverterOptionalUInt.read(buf),
         )
     }
 
     override fun allocationSize(value: OsGymSandboxWarmPoolSpec) = (
             FfiConverterUInt.allocationSize(value.`replicas`) +
             FfiConverterTypeSandboxTemplateRef.allocationSize(value.`sandboxTemplateRef`) +
-            FfiConverterOptionalTypeWarmPoolAutoscaling.allocationSize(value.`autoscaling`)
+            FfiConverterOptionalTypeWarmPoolAutoscaling.allocationSize(value.`autoscaling`) +
+            FfiConverterOptionalUInt.allocationSize(value.`ttlSecondsAfterCreated`)
     )
 
     override fun write(value: OsGymSandboxWarmPoolSpec, buf: ByteBuffer) {
             FfiConverterUInt.write(value.`replicas`, buf)
             FfiConverterTypeSandboxTemplateRef.write(value.`sandboxTemplateRef`, buf)
             FfiConverterOptionalTypeWarmPoolAutoscaling.write(value.`autoscaling`, buf)
+            FfiConverterOptionalUInt.write(value.`ttlSecondsAfterCreated`, buf)
     }
 }
 

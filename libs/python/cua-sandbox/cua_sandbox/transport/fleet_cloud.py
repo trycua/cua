@@ -22,6 +22,7 @@ from cua_sandbox._config import (
 from cua_sandbox.image import Image, cloud_registry_image
 from cua_sandbox.transport.cyclops_http_client import CyclopsHttpClient
 from cua_sandbox.transport.fleet import FleetTransport, build_http_request
+from cua_sandbox.transport.osworld import OSWORLD_SERVER_PORT, OSWorldOverServiceMixin
 from fleet_sdk import (
     AccessTokenProvider,
     AccessTokenProviderError,
@@ -337,6 +338,72 @@ class _FleetClient:
     ) -> Any:
         return await self._client.service_request(sandbox, service, path, request)
 
+    async def create_signed_service_url(
+        self,
+        sandbox: Any,
+        service: str,
+        *,
+        label: str | None,
+        expires_in_seconds: int,
+    ) -> Any:
+        try:
+            from fleet_sdk import CreateSignedServiceUrlRequestBuilder
+        except ImportError as error:
+            raise RuntimeError(
+                "Signed service URLs require a cua-fleet release with signed URL support"
+            ) from error
+
+        builder = (
+            CreateSignedServiceUrlRequestBuilder()
+            .sandbox(sandbox)
+            .service(service)
+            .expires_in_seconds(expires_in_seconds)
+        )
+        if label is not None:
+            builder = builder.label(label)
+        method = getattr(self._client, "create_signed_service_url", None)
+        if method is None:
+            raise RuntimeError(
+                "Signed service URLs require a cua-fleet release with signed URL support"
+            )
+        return await method(builder.build())
+
+    async def list_signed_service_urls(self, sandbox: Any) -> list[Any]:
+        method = getattr(self._client, "list_signed_service_urls", None)
+        if method is None:
+            raise RuntimeError(
+                "Signed service URLs require a cua-fleet release with signed URL support"
+            )
+        return await method(sandbox)
+
+    async def revoke_signed_service_url(self, signed_service_url: Any) -> None:
+        try:
+            from fleet_sdk import SignedServiceUrl
+        except ImportError as error:
+            raise RuntimeError(
+                "Signed service URLs require a cua-fleet release with signed URL support"
+            ) from error
+
+        method = getattr(self._client, "revoke_signed_service_url", None)
+        if method is None:
+            raise RuntimeError(
+                "Signed service URLs require a cua-fleet release with signed URL support"
+            )
+        await method(
+            SignedServiceUrl(
+                id=signed_service_url.id,
+                namespace=signed_service_url.namespace,
+                claim=signed_service_url.claim,
+                sandbox=signed_service_url.sandbox,
+                service=signed_service_url.service,
+                label=signed_service_url.label,
+                url=signed_service_url.url,
+                created_at=signed_service_url.created_at,
+                expires_at=signed_service_url.expires_at,
+                revoked_at=signed_service_url.revoked_at,
+            )
+        )
+
     async def get_pool(self, name: str) -> Any:
         return await self._client.get_pool(name)
 
@@ -406,6 +473,18 @@ def _needs_ecr_pull_secret(image: "str | None") -> bool:
     return _ECR_HOST_MARKER in host and host.endswith(_ECR_HOST_SUFFIX)
 
 
+_TTL_SECONDS_MAX = 2**32 - 1
+
+
+def validate_ttl_seconds_after_created(value: "int | None") -> None:
+    if value is not None and (
+        isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= _TTL_SECONDS_MAX
+    ):
+        raise ValueError(
+            f"ttl_seconds_after_created must be an integer between 0 and {_TTL_SECONDS_MAX}"
+        )
+
+
 class FleetCloudTransport(FleetTransport):
     """Provision image-backed pools or claim pre-created pools through Fleet."""
 
@@ -426,6 +505,7 @@ class FleetCloudTransport(FleetTransport):
         replicas: int = 1,
         services: Mapping[str, int] | None = None,
         autoscaling: Optional[WarmPoolAutoscaling] = None,
+        ttl_seconds_after_created: Optional[int] = None,
     ) -> None:
         if (
             isinstance(server_port, bool)
@@ -474,6 +554,7 @@ class FleetCloudTransport(FleetTransport):
                 raise ValueError(
                     "autoscaling.min_pool_size must not exceed autoscaling.max_pool_size"
                 )
+        validate_ttl_seconds_after_created(ttl_seconds_after_created)
         self._image = image
         self._name = name
         self._explicit_pool = pool_name is not None
@@ -488,6 +569,7 @@ class FleetCloudTransport(FleetTransport):
         self._replicas = replicas
         self._services = dict(services) if services is not None else None
         self._autoscaling = autoscaling
+        self._ttl_seconds_after_created = ttl_seconds_after_created
         self._provisioned = False
         self._owns_resources = image is not None or create_claim
         self._template: Any = None
@@ -724,6 +806,10 @@ class FleetCloudTransport(FleetTransport):
         )
         if self._autoscaling is not None:
             pool_spec_builder = pool_spec_builder.autoscaling(self._autoscaling)
+        if self._ttl_seconds_after_created is not None:
+            pool_spec_builder = pool_spec_builder.ttl_seconds_after_created(
+                self._ttl_seconds_after_created
+            )
         return (
             CreatePoolRequestBuilder()
             .namespace(self._pool_name)
@@ -751,3 +837,25 @@ class FleetCloudTransport(FleetTransport):
             raise NotImplementedError(
                 "Fleet cloud supports registry images with optional exposed services only"
             )
+
+
+class OSWorldFleetCloudTransport(OSWorldOverServiceMixin, FleetCloudTransport):
+    """``FleetCloudTransport`` whose guest control server is the OSWorld Flask API."""
+
+
+def fleet_cloud_transport_for(image: Optional[Image]) -> type[FleetCloudTransport]:
+    """Pick the provisioning transport class matching an image's ``agent_type`` hint."""
+    if image is not None and image._agent_type == "osworld":
+        return OSWorldFleetCloudTransport
+    return FleetCloudTransport
+
+
+def default_server_port(image: Optional[Image], server_port: int = 8000) -> int:
+    """Resolve the guest control-server port for an image.
+
+    ``server_port`` wins when the caller changed it from the default; otherwise an
+    OSWorld image (``agent_type="osworld"``) selects the OSWorld server on 5000.
+    """
+    if server_port == 8000 and image is not None and image._agent_type == "osworld":
+        return OSWORLD_SERVER_PORT
+    return server_port

@@ -591,10 +591,10 @@ fn build_element_entry(
         "depth": n.depth,
     });
     if let Some(snapshot_id) = snapshot_id {
-        entry["element_token"] = json!(cua_driver_core::element_token::token_for_identity(
+        entry["element_token"] = json!(cua_driver_core::element_token::token_for_reference(
             snapshot_id,
             idx,
-            &crate::atspi::element_resolver::identity_for_node(n)
+            &crate::atspi::element_resolver::reference_for_node(n)
         )
         .expect("fresh snapshot handle"));
     }

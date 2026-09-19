@@ -1,5 +1,5 @@
 use super::UiaNode;
-use cua_driver_core::element_token::{self, ElementTarget, ResolvedElement};
+use cua_driver_core::element_token::{self, ResolvedElement};
 use cua_driver_core::protocol::ToolResult;
 use windows::core::Interface;
 use windows::Win32::UI::Accessibility::{IAccessible, IUIAutomationElement};
@@ -124,7 +124,7 @@ impl FreshUiaElements {
             .cloned()
     }
 }
-pub fn identity_for_node(node: &UiaNode) -> Vec<u8> {
+pub fn reference_for_node(node: &UiaNode) -> Vec<u8> {
     serde_json::to_vec(&(
         &node.control_type,
         &node.name,
@@ -159,7 +159,7 @@ pub async fn resolve_element_args(
 pub(crate) fn resolve_fresh(
     pid: i32,
     w: u64,
-    t: &ElementTarget,
+    reference: &[u8],
 ) -> Result<Option<RetainedElement>, String> {
     let mut owner = 0;
     let thread = unsafe {
@@ -178,19 +178,73 @@ pub(crate) fn resolve_fresh(
         ElementBackend::Uia
     };
     let payload = FreshUiaElements::from_nodes(&tree.nodes, kind);
-    let matched = t.resolve_unique(
-        tree.nodes.iter().filter_map(|node| {
-            node.element_index
-                .map(|index| (identity_for_node(node), index))
-        }),
-        tree.complete,
-    )?;
+    let matched = resolve_nodes(reference, &tree.nodes, tree.complete)?;
     Ok(matched.and_then(|i| payload.retain_element(i)))
+}
+
+// UIA/MSAA own reference matching and the completeness required for that lookup.
+fn resolve_nodes(
+    reference: &[u8],
+    nodes: &[UiaNode],
+    complete: bool,
+) -> Result<Option<usize>, String> {
+    if !complete {
+        return Err("incomplete accessibility tree cannot establish a unique element".into());
+    }
+    let mut matches = nodes.iter().filter_map(|node| {
+        node.element_index
+            .filter(|_| reference_for_node(node) == reference)
+    });
+    let first = matches.next();
+    Ok(first.filter(|_| matches.next().is_none()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn node(index: usize, name: &str) -> UiaNode {
+        UiaNode {
+            element_index: Some(index),
+            control_type: "Button".into(),
+            name: Some(name.into()),
+            value: None,
+            automation_id: None,
+            help_text: None,
+            actions: vec!["invoke".into()],
+            enabled: Some(true),
+            selected: None,
+            element_ptr: 0,
+            center_x: 0,
+            center_y: 0,
+            rect: None,
+            msaa_role: None,
+            depth: 0,
+            parent_element_index: None,
+            in_web_content: false,
+        }
+    }
+
+    #[test]
+    fn uia_reference_requires_one_complete_current_match() {
+        let reference = reference_for_node(&node(0, "Save"));
+        assert_eq!(
+            resolve_nodes(&reference, &[node(9, "Save")], true).unwrap(),
+            Some(9)
+        );
+        assert_eq!(
+            resolve_nodes(&reference, &[node(0, "Delete")], true).unwrap(),
+            None
+        );
+        assert_eq!(
+            resolve_nodes(&reference, &[node(0, "Save"), node(1, "Save")], true).unwrap(),
+            None
+        );
+        assert!(resolve_nodes(&reference, &[node(0, "Save")], false).is_err());
+        let mut msaa_node = node(0, "Save");
+        msaa_node.msaa_role = Some(43);
+        assert_eq!(resolve_nodes(&reference, &[msaa_node], true).unwrap(), None);
+    }
 
     #[tokio::test]
     async fn fresh_lookup_refuses_a_window_owned_by_another_process() {
@@ -206,7 +260,7 @@ mod tests {
         assert_ne!(owner, pid as u32);
         let window = hwnd.0 as usize as u64;
         let snapshot = element_token::mint_snapshot_handle(pid, window);
-        let token = element_token::token_for_identity(&snapshot, 0, b"control").unwrap();
+        let token = element_token::token_for_reference(&snapshot, 0, b"control").unwrap();
         let error = resolve_element_args(pid, None, Some(&token), None, None, "click")
             .await
             .unwrap_err();

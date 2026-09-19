@@ -1,11 +1,12 @@
 use crate::protocol::ToolResult;
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 type HmacSha256 = Hmac<Sha256>;
 const SNAPSHOT_VERSION: &str = "sa1";
-const TOKEN_VERSION: &str = "et1";
+const TOKEN_VERSION: &str = "et2";
 const TAG_BYTES: usize = 16;
 static SNAPSHOT_COUNTER: AtomicU32 = AtomicU32::new(1);
 
@@ -37,35 +38,6 @@ impl<T> ResolvedElement<T> {
 }
 
 #[derive(Debug, Clone)]
-pub struct ElementTarget {
-    pub element_index: usize,
-    identity_tag: Option<[u8; TAG_BYTES]>,
-}
-impl ElementTarget {
-    pub fn matches_identity(&self, identity: &[u8]) -> bool {
-        self.identity_tag
-            .is_none_or(|expected| constant_time_eq(&expected, &identity_tag(identity)))
-    }
-    pub fn has_identity(&self) -> bool {
-        self.identity_tag.is_some()
-    }
-
-    pub fn resolve_unique<T>(
-        &self,
-        candidates: impl IntoIterator<Item = (Vec<u8>, T)>,
-        complete: bool,
-    ) -> Result<Option<T>, String> {
-        if !complete {
-            return Err("incomplete accessibility tree cannot establish a unique element".into());
-        }
-        let mut matches = candidates
-            .into_iter()
-            .filter_map(|(identity, element)| self.matches_identity(&identity).then_some(element));
-        let first = matches.next();
-        Ok(first.filter(|_| matches.next().is_none()))
-    }
-}
-#[derive(Debug, Clone)]
 struct SnapshotAddress {
     encoded: String,
     pid: i32,
@@ -92,23 +64,27 @@ pub fn mint_snapshot_handle(pid: i32, window_id: u64) -> String {
     )
 }
 pub fn token_for(snapshot_handle: &str, element_index: usize) -> String {
-    token_for_identity(snapshot_handle, element_index, &[])
+    token_for_reference(snapshot_handle, element_index, &[])
         .expect("snapshot handle minted in the current runtime")
 }
 pub fn format_token(snapshot_handle: &str, element_index: usize) -> String {
     token_for(snapshot_handle, element_index)
 }
-pub fn token_for_identity(
+/// Authenticate a platform-owned reference without interpreting its contents.
+pub fn token_for_reference(
     snapshot_handle: &str,
     element_index: usize,
-    identity: &[u8],
+    reference: &[u8],
 ) -> Result<String, ToolResult> {
     let snapshot = parse_snapshot(snapshot_handle).map_err(snapshot_failure)?;
     let scope = current_runtime_scope();
-    let identity = (!identity.is_empty()).then(|| identity_tag(identity));
-    let identity_hex = identity.map_or_else(|| "-".into(), |tag| hex(&tag));
+    let reference = if reference.is_empty() {
+        "-".into()
+    } else {
+        URL_SAFE_NO_PAD.encode(reference)
+    };
     let body = format!(
-        "{TOKEN_VERSION}.{}.{element_index}.{identity_hex}",
+        "{TOKEN_VERSION}.{}.{element_index}.{reference}",
         snapshot.encoded
     );
     Ok(format!(
@@ -135,7 +111,7 @@ pub fn resolve_element_args<T, F>(
     resolve_fresh: F,
 ) -> Result<ResolvedElement<T>, ToolResult>
 where
-    F: FnOnce(u64, &ElementTarget) -> Result<Option<T>, String>,
+    F: FnOnce(u64, &[u8]) -> Result<Option<T>, String>,
 {
     match (element_index, element_token, snapshot_handle) {
         (None, None, None) => return Ok(ResolvedElement::None),
@@ -143,7 +119,7 @@ where
         (Some(_), None, None) => return Err(refusal("snapshot_id_required", format!("{tool}: bare element_index is not accepted; pass element_token, or snapshot_id together with element_index"))),
         _ => {}
     }
-    let (snapshot, target, via_token) = if let Some(token) = element_token {
+    let (snapshot, element_index, reference, via_token) = if let Some(token) = element_token {
         let parsed = parse_element_token(token).map_err(token_failure)?;
         if element_index.is_some_and(|index| index != parsed.element_index)
             || snapshot_handle.is_some_and(|handle| handle != parsed.snapshot.encoded)
@@ -157,22 +133,13 @@ where
         }
         (
             parsed.snapshot,
-            ElementTarget {
-                element_index: parsed.element_index,
-                identity_tag: parsed.identity_tag,
-            },
+            parsed.element_index,
+            parsed.reference,
             true,
         )
     } else {
         let snapshot = parse_snapshot(snapshot_handle.unwrap()).map_err(snapshot_failure)?;
-        (
-            snapshot,
-            ElementTarget {
-                element_index: element_index.unwrap(),
-                identity_tag: None,
-            },
-            false,
-        )
+        (snapshot, element_index.unwrap(), None, false)
     };
     if snapshot.pid != pid || window_id.is_some_and(|window| window != snapshot.window_id) {
         return Err(conflicting_target(
@@ -182,16 +149,16 @@ where
             window_id,
         ));
     }
-    if !target.has_identity() {
+    let Some(reference) = reference else {
         return Err(refusal(
             "element_identity_required",
             format!("{tool}: pass an identity-bearing element_token from get_window_state; an index alone cannot identify an observed control"),
         ));
-    }
-    let element = resolve_fresh(snapshot.window_id, &target).map_err(|message| refusal("element_resolution_failed", message))?.ok_or_else(|| refusal("invalid_element_token", format!("element_token element_index {} does not identify an actionable element in the current accessibility state", target.element_index)))?;
+    };
+    let element = resolve_fresh(snapshot.window_id, &reference).map_err(|message| refusal("element_resolution_failed", message))?.ok_or_else(|| refusal("invalid_element_token", format!("element_token element_index {element_index} does not identify an actionable element in the current accessibility state")))?;
     Ok(ResolvedElement::Element {
         window_id: Some(snapshot.window_id),
-        element_index: target.element_index,
+        element_index,
         via_token,
         element,
     })
@@ -209,7 +176,7 @@ pub async fn resolve_native<T, F>(
 ) -> Result<ResolvedElement<T>, ToolResult>
 where
     T: Send + 'static,
-    F: FnOnce(u64, &ElementTarget) -> Result<Option<T>, String> + Send + 'static,
+    F: FnOnce(u64, &[u8]) -> Result<Option<T>, String> + Send + 'static,
 {
     if element_index.is_none() && element_token.is_none() && snapshot_handle.is_none() {
         return Ok(ResolvedElement::None);
@@ -243,12 +210,12 @@ where
 struct ParsedElementToken {
     snapshot: SnapshotAddress,
     element_index: usize,
-    identity_tag: Option<[u8; TAG_BYTES]>,
+    reference: Option<Vec<u8>>,
 }
 fn parse_element_token(token: &str) -> Result<ParsedElementToken, ParseFailure> {
     let mut fields = token.rsplitn(4, '.');
     let mac = decode_tag(fields.next().ok_or(ParseFailure::Invalid)?)?;
-    let identity_field = fields.next().ok_or(ParseFailure::Invalid)?;
+    let reference_field = fields.next().ok_or(ParseFailure::Invalid)?;
     let element_index = fields
         .next()
         .ok_or(ParseFailure::Invalid)?
@@ -268,15 +235,21 @@ fn parse_element_token(token: &str) -> Result<ParsedElementToken, ParseFailure> 
     if !constant_time_eq(&mac, &expected) {
         return Err(ParseFailure::Invalid);
     }
-    let identity_tag = if identity_field == "-" {
+    let reference = if reference_field == "-" {
         None
     } else {
-        Some(decode_tag(identity_field)?)
+        let reference = URL_SAFE_NO_PAD
+            .decode(reference_field)
+            .map_err(|_| ParseFailure::Invalid)?;
+        if reference.is_empty() {
+            return Err(ParseFailure::Invalid);
+        }
+        Some(reference)
     };
     Ok(ParsedElementToken {
         snapshot,
         element_index,
-        identity_tag,
+        reference,
     })
 }
 fn parse_snapshot(handle: &str) -> Result<SnapshotAddress, ParseFailure> {
@@ -316,9 +289,6 @@ fn generation_tag(scope: &str) -> [u8; TAG_BYTES] {
     Sha256::digest(scope.as_bytes())[..TAG_BYTES]
         .try_into()
         .unwrap()
-}
-fn identity_tag(identity: &[u8]) -> [u8; TAG_BYTES] {
-    mac_tag(&current_runtime_scope(), b"identity", identity)
 }
 fn mac_tag(scope: &str, domain: &[u8], body: &[u8]) -> [u8; TAG_BYTES] {
     let mut mac = HmacSha256::new_from_slice(scope.as_bytes()).expect("HMAC accepts any key size");
@@ -411,7 +381,7 @@ mod tests {
     fn token_resolves_without_lookup_table_or_cache_owner() {
         with_runtime_scope("stateless-token-runtime".into(), || {
             let snapshot = mint_snapshot_handle(42, 7);
-            let token = token_for_identity(&snapshot, 3, b"button:save").unwrap();
+            let token = token_for_reference(&snapshot, 3, b"button:save").unwrap();
             let resolved = resolve_element_args(
                 42,
                 None,
@@ -421,7 +391,7 @@ mod tests {
                 "click",
                 |window, target| {
                     assert_eq!(window, 7);
-                    assert!(target.matches_identity(b"button:save"));
+                    assert_eq!(target, b"button:save");
                     Ok(Some(99))
                 },
             )
@@ -441,7 +411,7 @@ mod tests {
     fn malformed_and_tampered_tokens_fail_closed() {
         with_runtime_scope("token-tamper-runtime".into(), || {
             let snapshot = mint_snapshot_handle(42, 7);
-            let mut token = token_for_identity(&snapshot, 3, b"button:save").unwrap();
+            let mut token = token_for_reference(&snapshot, 3, b"button:save").unwrap();
             token.push('0');
             assert_eq!(
                 code(
@@ -464,7 +434,7 @@ mod tests {
     fn runtime_generation_mismatch_is_explicit() {
         let token = with_runtime_scope("token-runtime-a".into(), || {
             let snapshot = mint_snapshot_handle(42, 7);
-            token_for_identity(&snapshot, 3, b"button:save").unwrap()
+            token_for_reference(&snapshot, 3, b"button:save").unwrap()
         });
         with_runtime_scope("token-runtime-b".into(), || {
             assert_eq!(
@@ -488,7 +458,7 @@ mod tests {
     fn window_mismatch_is_refused() {
         with_runtime_scope("token-window-runtime".into(), || {
             let snapshot = mint_snapshot_handle(42, 7);
-            let token = token_for_identity(&snapshot, 3, b"button:save").unwrap();
+            let token = token_for_reference(&snapshot, 3, b"button:save").unwrap();
             assert_eq!(
                 code(
                     resolve_element_args::<(), _>(
@@ -510,7 +480,7 @@ mod tests {
     fn disappeared_current_element_is_invalid() {
         with_runtime_scope("token-disappeared-runtime".into(), || {
             let snapshot = mint_snapshot_handle(42, 7);
-            let token = token_for_identity(&snapshot, 3, b"button:save").unwrap();
+            let token = token_for_reference(&snapshot, 3, b"button:save").unwrap();
             assert_eq!(
                 code(
                     resolve_element_args::<(), _>(

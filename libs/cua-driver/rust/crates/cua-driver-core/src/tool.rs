@@ -4551,7 +4551,7 @@ resources:
         let token = DISPATCH_RUNTIME_SCOPE
             .scope("token-dispatch-runtime-a".to_owned(), async {
                 let snapshot = crate::element_token::mint_snapshot_handle(pid, 44);
-                crate::element_token::token_for_identity(&snapshot, 0, b"button:Save").unwrap()
+                crate::element_token::token_for_reference(&snapshot, 0, b"button:Save").unwrap()
             })
             .await;
         let structured = DISPATCH_RUNTIME_SCOPE
@@ -4563,7 +4563,7 @@ resources:
                     None,
                     None,
                     "click",
-                    |_, target| Ok(Some(target.element_index)),
+                    |_, _| panic!("foreign runtime must refuse before native lookup"),
                 )
                 .unwrap_err()
             })
@@ -4587,7 +4587,10 @@ resources:
                     None,
                     None,
                     "click",
-                    |_, target| Ok(Some(target.element_index)),
+                    |_, reference| {
+                        assert_eq!(reference, b"button:Save");
+                        Ok(Some(0))
+                    },
                 )
             })
             .await;

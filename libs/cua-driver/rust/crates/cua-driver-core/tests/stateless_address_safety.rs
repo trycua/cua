@@ -2,78 +2,10 @@ use cua_driver_core::{element_token, tool::with_runtime_scope};
 use std::cell::Cell;
 
 #[test]
-fn incomplete_walk_cannot_prove_a_unique_identity() {
-    with_runtime_scope("partial-walk".into(), || {
-        let snapshot = element_token::mint_snapshot_handle(42, 7);
-        let token = element_token::token_for_identity(&snapshot, 0, b"Save").unwrap();
-        let lookup = |complete, names: Vec<&str>| {
-            element_token::resolve_element_args(
-                42,
-                None,
-                Some(&token),
-                None,
-                Some(7),
-                "click",
-                |_, target| {
-                    target.resolve_unique(
-                        names
-                            .into_iter()
-                            .enumerate()
-                            .map(|(index, name)| (name.as_bytes().to_vec(), index)),
-                        complete,
-                    )
-                },
-            )
-        };
-        assert!(
-            lookup(false, vec!["Save"]).is_err(),
-            "another match may be hidden beyond the cut"
-        );
-        assert!(lookup(true, vec!["Save", "Save"]).is_err());
-        assert!(lookup(true, vec!["Delete"]).is_err());
-        assert_eq!(
-            lookup(true, vec!["Delete", "Save"])
-                .unwrap()
-                .into_parts(None)
-                .2,
-            Some(1)
-        );
-    });
-}
-
-#[test]
-fn missing_native_identity_still_counts_as_an_ambiguous_match() {
-    let snapshot = element_token::mint_snapshot_handle(42, 7);
-    let token = element_token::token_for_identity(&snapshot, 0, b"Save").unwrap();
-    let result = element_token::resolve_element_args(
-        42,
-        None,
-        Some(&token),
-        None,
-        Some(7),
-        "click",
-        |_, target| {
-            target.resolve_unique(
-                vec![
-                    (b"Save".to_vec(), None),
-                    (b"Save".to_vec(), Some(String::from("native identity"))),
-                ],
-                true,
-            )
-        },
-    );
-    assert_eq!(
-        result.unwrap_err().structured_content.unwrap()["refusal"]["code"],
-        "invalid_element_token",
-        "missing native identity must not hide a duplicate"
-    );
-}
-
-#[test]
 fn native_resolution_allows_blocking_rpc_and_preserves_token_scope() {
     with_runtime_scope("native-lookup-owner".into(), || {
         let snapshot = element_token::mint_snapshot_handle(42, 7);
-        let token = element_token::token_for_identity(&snapshot, 0, b"button:Save").unwrap();
+        let token = element_token::token_for_reference(&snapshot, 0, b"button:Save").unwrap();
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();
@@ -85,15 +17,16 @@ fn native_resolution_allows_blocking_rpc_and_preserves_token_scope() {
                 None,
                 Some(7),
                 "click",
-                |_, target| {
+                |_, reference| {
                     // AT-SPI's synchronous facade runs its D-Bus future this way.
                     let rpc_runtime = tokio::runtime::Builder::new_current_thread()
                         .build()
                         .unwrap();
-                    let matches =
-                        rpc_runtime.block_on(async { target.matches_identity(b"button:Save") });
-                    assert!(
-                        matches,
+                    let matches = rpc_runtime.block_on(async { reference == b"button:Save" });
+                    assert!(matches);
+                    assert_eq!(
+                        cua_driver_core::tool::current_dispatch_runtime_scope().as_deref(),
+                        Some("native-lookup-owner"),
                         "the worker must retain the authenticated caller's scope"
                     );
                     Ok(Some("Save"))
@@ -121,15 +54,14 @@ fn identity_free_addresses_refuse_before_current_ordinal_lookup() {
                 snapshot_id,
                 Some(7),
                 "click",
-                |_, target| {
+                |_, _| {
                     lookup_called.set(true);
-                    let changed_controls = ["Delete", "Save"];
-                    Ok(changed_controls.get(target.element_index).copied())
+                    Ok(Some("Delete"))
                 },
             );
-            assert!(
-                result.is_err(),
-                "an ordinal cannot identify the observed control"
+            assert_eq!(
+                result.unwrap_err().structured_content.unwrap()["refusal"]["code"],
+                "element_identity_required"
             );
             assert!(!lookup_called.get(), "refuse before native lookup");
         }
@@ -137,10 +69,10 @@ fn identity_free_addresses_refuse_before_current_ordinal_lookup() {
 }
 
 #[test]
-fn observed_identity_still_resolves_after_another_observation() {
+fn observed_reference_still_resolves_after_another_observation() {
     with_runtime_scope("stateless-address-positive".into(), || {
         let snapshot = element_token::mint_snapshot_handle(42, 7);
-        let token = element_token::token_for_identity(&snapshot, 0, b"button:Save").unwrap();
+        let token = element_token::token_for_reference(&snapshot, 0, b"button:Save").unwrap();
         let _later_observation = element_token::mint_snapshot_handle(42, 7);
         let resolved = element_token::resolve_element_args(
             42,
@@ -149,10 +81,10 @@ fn observed_identity_still_resolves_after_another_observation() {
             None,
             Some(7),
             "click",
-            |_, target| {
+            |_, reference| {
                 Ok([b"button:Delete".as_slice(), b"button:Save".as_slice()]
                     .into_iter()
-                    .find(|description| target.matches_identity(description)))
+                    .find(|candidate| *candidate == reference))
             },
         )
         .unwrap();

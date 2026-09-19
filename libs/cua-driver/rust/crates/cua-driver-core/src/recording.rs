@@ -1790,7 +1790,7 @@ mod tests {
                 args.get("snapshot_id").and_then(Value::as_str),
                 args.opt_u64("window_id"),
                 "recording",
-                |window_id, target| Ok((window_id != 88).then_some(target.element_index)),
+                |window_id, _| Ok((window_id != 88).then_some(())),
             )
             .ok()?;
             let (index, window, _) = target.into_parts(None);
@@ -1852,7 +1852,7 @@ mod tests {
 
         let snapshot_id = crate::element_token::mint_snapshot_handle(1, 77);
         let token =
-            crate::element_token::token_for_identity(&snapshot_id, 0, b"button:Save").unwrap();
+            crate::element_token::token_for_reference(&snapshot_id, 0, b"button:Save").unwrap();
         let pending = session
             .begin_turn(
                 "click",
@@ -1872,7 +1872,7 @@ mod tests {
 
         let stale_snapshot = crate::element_token::mint_snapshot_handle(1, 88);
         let stale_token =
-            crate::element_token::token_for_identity(&stale_snapshot, 0, b"button:Save").unwrap();
+            crate::element_token::token_for_reference(&stale_snapshot, 0, b"button:Save").unwrap();
         let pending = session
             .begin_turn(
                 "click",

@@ -54,10 +54,24 @@ for the intentional SDK break and unchanged CLI/MCP wire forms.
 ### Native element addressing
 
 Copy `structuredContent.elements[].element_token` from `get_window_state` into
-an element-targeted action. The token authenticates the observed description;
-the action requires a unique match in a complete current accessibility tree.
-Another observation alone does not invalidate it. It is not a persistent native
-handle or a guarantee that application state cannot change during dispatch.
+an element-targeted action. The token authenticates a self-contained,
+platform-owned reference. Shared code validates runtime/process/window scope and
+passes the reference bytes to the platform's resolver; it does not prescribe
+identity fields, candidate matching, or a whole-tree completeness argument.
+Another observation alone does not invalidate the reference. It is not a
+persistent native handle or a guarantee that application state cannot change
+during dispatch.
+
+The current AX, UIA/MSAA and AT-SPI resolvers still require one matching
+description in a complete current traversal. Moving this policy out of the
+shared token interface does not relax those checks or fix known native
+incomplete-tree refusals. Backend-specific targeting improvements are separate.
+
+The opaque token envelope is now `et2`: it contains an authenticated base64url
+reference payload rather than an identity fingerprint. Earlier `et1` tokens
+are rejected; re-observe to obtain a current token. The payload is not encrypted
+and may contain UI labels, so treat tokens as observation data, not safe-to-log
+anonymous identifiers. Public tool names and argument fields are unchanged.
 
 **Compatibility break:** `element_index` plus `snapshot_id`, and identity-free
 legacy tokens, refuse with `element_identity_required`. Indices remain observation

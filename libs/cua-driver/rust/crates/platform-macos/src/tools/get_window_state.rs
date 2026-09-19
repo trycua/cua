@@ -835,10 +835,10 @@ pub(crate) fn build_elements_array_with_token(
             // `element_token` module.
             if let Some(sid) = snapshot_id {
                 entry["element_token"] =
-                    serde_json::json!(cua_driver_core::element_token::token_for_identity(
+                    serde_json::json!(cua_driver_core::element_token::token_for_reference(
                         sid,
                         idx,
-                        &crate::ax::element_resolver::identity_for_node(node)
+                        &crate::ax::element_resolver::reference_for_node(node)
                     )
                     .expect("fresh snapshot handle"));
             }

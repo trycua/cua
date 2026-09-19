@@ -113,7 +113,11 @@ fn spawn_driver() -> McpDriver {
 }
 
 fn has_image(response: &cua_driver_testkit::ToolResponse) -> bool {
-    response.raw["result"]["content"]
+    image_present(&response.raw, response.structured())
+}
+
+fn image_present(raw: &serde_json::Value, structured: &serde_json::Value) -> bool {
+    raw["result"]["content"]
         .as_array()
         .map(|content| {
             content
@@ -121,7 +125,7 @@ fn has_image(response: &cua_driver_testkit::ToolResponse) -> bool {
                 .any(|item| item["type"].as_str() == Some("image"))
         })
         .unwrap_or(false)
-        || response.structured()["screenshot_png_base64"]
+        || structured["screenshot_png_base64"]
             .as_str()
             .map(|png| !png.is_empty())
             .unwrap_or(false)
@@ -136,18 +140,168 @@ fn readiness_contract(
     !is_error && element_count > 0 && marker_present && image_present
 }
 
-fn preflight_state_ready(response: &cua_driver_testkit::ToolResponse, ax_marker: &str) -> bool {
-    let element_count = response.structured()["element_count"]
+fn ax_count(structured: &serde_json::Value) -> usize {
+    structured["element_count"]
         .as_u64()
         .map(|count| count as usize)
-        .or_else(|| response.structured()["elements"].as_array().map(Vec::len))
-        .unwrap_or_default();
+        .or_else(|| structured["elements"].as_array().map(Vec::len))
+        .unwrap_or_default()
+}
+
+fn preflight_state_ready(response: &cua_driver_testkit::ToolResponse, ax_marker: &str) -> bool {
+    let element_count = ax_count(response.structured());
     readiness_contract(
         response.is_error(),
         element_count,
         response.tree_text().contains(ax_marker),
         has_image(response),
     )
+}
+
+// Keep the timeout record safe for both terminal logs and environment.jsonl.
+// No raw response, free-form MCP text, AX payload, image, or unknown field is copied.
+const READINESS_DIAGNOSTIC_BYTES: usize = 8 * 1024;
+const DIAGNOSTIC_STRING_BYTES: usize = 512;
+
+fn diagnostic_string(value: &str) -> serde_json::Value {
+    let mut text = String::new();
+    let mut encoded_bytes = 2; // JSON quotes; account for escaping before appending.
+    let mut truncated = false;
+    let mut redacted = false;
+    for ch in value.chars() {
+        // ASCII-only diagnostics deliberately replace Unicode as well as C0/C1,
+        // escape, bidi, and other invisible terminal-formatting characters.
+        let safe = if ch.is_ascii() && !ch.is_ascii_control() {
+            ch
+        } else {
+            '\u{fffd}'
+        };
+        let cost = if matches!(safe, '"' | '\\') {
+            2
+        } else {
+            safe.len_utf8()
+        };
+        if encoded_bytes + cost > DIAGNOSTIC_STRING_BYTES {
+            truncated = true;
+            break;
+        }
+        redacted |= safe != ch;
+        text.push(safe);
+        encoded_bytes += cost;
+    }
+    // These fields describe a canonical fixture, not arbitrary user content.
+    // Conservatively suppress whole strings with URL/assignment syntax or
+    // credential hints, rather than retaining URL userinfo, queries, or fragments.
+    let lower = text.to_ascii_lowercase();
+    if text.contains([':', '@', '?', '#', '=', '%'])
+        || lower.split_whitespace().any(|word| word.len() > 64)
+        || [
+            "password",
+            "secret",
+            "token",
+            "credential",
+            "authorization",
+            "bearer",
+            "api_key",
+            "apikey",
+            "private key",
+            "cookie",
+        ]
+        .iter()
+        .any(|hint| lower.contains(hint))
+    {
+        text = "[redacted]".to_owned();
+        redacted = true;
+    }
+    serde_json::json!({
+        "state": "string", "value": text, "truncated": truncated, "redacted": redacted
+    })
+}
+
+fn diagnostic_scalar(value: Option<&serde_json::Value>, expected: &str) -> serde_json::Value {
+    use serde_json::{json, Value};
+    match value {
+        None => json!({"state": "absent", "value": null}),
+        Some(Value::Null) => json!({"state": "null", "value": null}),
+        Some(Value::String(text)) if expected == "string" => diagnostic_string(text),
+        Some(Value::Bool(value)) if expected == "boolean" => {
+            json!({"state": "boolean", "value": value})
+        }
+        Some(value) if expected == "u64" && value.as_u64().is_some() => {
+            json!({"state": "number", "value": value.as_u64()})
+        }
+        Some(value) => {
+            let kind = match value {
+                Value::Null => "null",
+                Value::Bool(_) => "boolean",
+                Value::Number(_) => "number",
+                Value::String(_) => "string",
+                Value::Array(_) => "array",
+                Value::Object(_) => "object",
+            };
+            json!({"state": "unexpected_type", "type": kind, "value": null})
+        }
+    }
+}
+
+fn readiness_diagnostic(
+    structured: &serde_json::Value,
+    is_error: bool,
+    marker_present: bool,
+    image_present: bool,
+    pid: i64,
+    window_id: u64,
+) -> String {
+    use serde_json::json;
+    let screenshot_error = match structured.get("screenshot_error") {
+        Some(serde_json::Value::Object(error)) => {
+            let fields = ["code", "window_id", "reason", "message", "suggestion"];
+            let mut projected = serde_json::Map::new();
+            for field in fields {
+                let expected = if field == "window_id" {
+                    "u64"
+                } else {
+                    "string"
+                };
+                projected.insert(
+                    field.to_owned(),
+                    diagnostic_scalar(error.get(field), expected),
+                );
+            }
+            json!({
+                "state": "object", "value": projected,
+                "other_fields_omitted": error.keys().any(|key| !fields.contains(&key.as_str()))
+            })
+        }
+        value => diagnostic_scalar(value, "string"),
+    };
+    let encoded = json!({
+        "sample": "latest_sampled_response",
+        "stage": "get_window_state",
+        "projection": "allowlisted_metadata_only",
+        "target_pid": pid,
+        "target_window_id": window_id,
+        "is_error": is_error,
+        "ax_count": ax_count(structured),
+        "marker_present": marker_present,
+        "image_present": image_present,
+        "screenshot_frame_valid": diagnostic_scalar(structured.get("screenshot_frame_valid"), "boolean"),
+        "degraded": diagnostic_scalar(structured.get("degraded"), "boolean"),
+        "degraded_reason": diagnostic_scalar(structured.get("degraded_reason"), "string"),
+        "screenshot_error": screenshot_error,
+    }).to_string();
+    // The closed projection has at most five strings, each <=512 encoded bytes.
+    // Keep a fail-closed bound even if a future edit expands that projection.
+    if encoded.len() > READINESS_DIAGNOSTIC_BYTES {
+        json!({
+            "sample": "latest_sampled_response", "stage": "get_window_state",
+            "target_pid": pid, "target_window_id": window_id,
+            "truncated": true, "diagnostic_omitted": "encoded_size_limit"
+        })
+        .to_string()
+    } else {
+        encoded
+    }
 }
 
 fn extract_last_video_frame(
@@ -312,7 +466,7 @@ fn run_preflight() {
     let mut child = FixtureChildGuard::new(child);
 
     let deadline = Instant::now() + Duration::from_secs(35);
-    let mut last_readiness = "fixture window has not appeared".to_owned();
+    let mut last_readiness = r#"{"sample":"none","stage":"get_window_state"}"#.to_owned();
     #[cfg(target_os = "linux")]
     let mut activated_window_id = None;
     let (pid, window_id) = loop {
@@ -338,9 +492,6 @@ fn run_preflight() {
                         .then(|| (window["pid"].as_i64().unwrap_or(launched_pid), window_id))
                 })
             });
-        if windows.is_error() {
-            last_readiness = format!("list_windows failed: {}", windows.text());
-        }
 
         if let Some((pid, window_id)) = candidate {
             #[cfg(target_os = "linux")]
@@ -371,12 +522,20 @@ fn run_preflight() {
             if preflight_state_ready(&state, fixture.ax_marker) {
                 break (pid, window_id);
             }
-            last_readiness = state.text().to_owned();
+            last_readiness = readiness_diagnostic(
+                state.structured(),
+                state.is_error(),
+                state.tree_text().contains(fixture.ax_marker),
+                has_image(&state),
+                pid,
+                window_id,
+            );
         }
 
         if Instant::now() >= deadline {
             panic!(
-                "preflight could not map a ready fixture window with AX state and screenshot: {last_readiness}"
+                "preflight could not map a ready fixture window with AX state and screenshot; latest sampled get_window_state (not necessarily current): {last_readiness}; latest list_windows is_error: {}",
+                windows.is_error()
             );
         }
         std::thread::sleep(Duration::from_millis(200));
@@ -461,6 +620,280 @@ fn readiness_requires_nonempty_ax_marker_and_screenshot_together() {
     assert!(!readiness_contract(false, 1, false, true));
     assert!(!readiness_contract(false, 1, true, false));
     assert!(!readiness_contract(true, 1, true, true));
+}
+
+#[cfg(test)]
+mod preflight_diagnostics {
+    use super::*;
+    use serde_json::{json, Value};
+
+    fn sample(structured: &Value, is_error: bool, marker: bool, image: bool) -> Value {
+        let encoded = readiness_diagnostic(structured, is_error, marker, image, 75315, 4935843840);
+        assert!(encoded.len() <= READINESS_DIAGNOSTIC_BYTES);
+        serde_json::from_str(&encoded).expect("bounded diagnostic must remain valid JSON")
+    }
+
+    #[test]
+    fn screenshot_error_shapes_are_distinct() {
+        let absent = sample(&json!({}), false, false, false);
+        assert_eq!(
+            absent["screenshot_error"],
+            json!({"state": "absent", "value": null})
+        );
+        for (error, expected_state, expected_type) in [
+            (Value::Null, "null", None),
+            (json!("capture refused"), "string", None),
+            (json!({}), "object", None),
+            (json!(false), "unexpected_type", Some("boolean")),
+            (json!(17), "unexpected_type", Some("number")),
+            (
+                json!(["private array content"]),
+                "unexpected_type",
+                Some("array"),
+            ),
+        ] {
+            let summary = sample(&json!({"screenshot_error": error}), false, false, false);
+            assert_eq!(summary["screenshot_error"]["state"], expected_state);
+            assert_eq!(summary["screenshot_error"]["type"].as_str(), expected_type);
+            assert!(!summary.to_string().contains("private array content"));
+        }
+        let string = sample(
+            &json!({"screenshot_error": "capture refused"}),
+            false,
+            false,
+            false,
+        );
+        assert_eq!(string["screenshot_error"]["value"], "capture refused");
+        assert_eq!(string["screenshot_error"]["redacted"], false);
+        assert_eq!(string["screenshot_error"]["truncated"], false);
+    }
+
+    #[test]
+    fn structured_refusal_survives_without_payloads() {
+        // Synthetic production-shaped refusal, NOT the lost response from CI.
+        let structured = json!({
+            "element_count": 23,
+            "tree_markdown": "HARNESS_TEXT_MARKER_v1 private AX tree",
+            "elements": [{"label": "private AX element"}],
+            "screenshot_png_base64": "private image payload",
+            "environment": {"TOKEN": "private environment"},
+            "unknown_secret": "private unknown field",
+            "screenshot_frame_valid": false,
+            "degraded": true,
+            "degraded_reason": "capture unavailable",
+            "screenshot_error": {
+                "code": "surface_identity_unproven",
+                "window_id": 4935843840_u64,
+                "reason": "no compositor-attested window geometry is available",
+                "message": "capture refused",
+                "suggestion": "use a compositor-attested capture route",
+                "unknown_secret": "private nested field",
+                "image": "private nested image"
+            }
+        });
+        let summary = sample(&structured, false, true, true);
+        assert_eq!(
+            summary["screenshot_error"]["value"]["code"]["value"],
+            "surface_identity_unproven"
+        );
+        assert_eq!(summary["sample"], "latest_sampled_response");
+        assert_eq!(summary["stage"], "get_window_state");
+        assert_eq!(summary["target_pid"], 75315);
+        assert_eq!(summary["target_window_id"], 4935843840_u64);
+        assert_eq!(summary["ax_count"], 23);
+        assert_eq!(summary["marker_present"], true);
+        assert_eq!(summary["image_present"], true);
+        assert_eq!(summary["is_error"], false);
+        assert_eq!(summary["screenshot_frame_valid"]["value"], false);
+        assert_eq!(summary["degraded"]["value"], true);
+        assert_eq!(summary["degraded_reason"]["value"], "capture unavailable");
+        let error = &summary["screenshot_error"];
+        assert_eq!(error["value"]["code"]["value"], "surface_identity_unproven");
+        assert_eq!(error["value"]["window_id"]["value"], 4935843840_u64);
+        assert_eq!(
+            error["value"]["reason"]["value"],
+            "no compositor-attested window geometry is available"
+        );
+        assert_eq!(error["value"]["message"]["value"], "capture refused");
+        assert_eq!(
+            error["value"]["suggestion"]["value"],
+            "use a compositor-attested capture route"
+        );
+        assert_eq!(error["other_fields_omitted"], true);
+        for excluded in [
+            "private",
+            "tree_markdown",
+            "elements",
+            "base64",
+            "environment",
+            "unknown_secret",
+        ] {
+            assert!(!summary.to_string().contains(excluded), "leaked {excluded}");
+        }
+    }
+
+    #[test]
+    fn nullable_and_malformed_metadata_is_not_coerced() {
+        let absent = sample(&Value::Null, true, false, false);
+        assert_eq!(absent["is_error"], true);
+        for key in ["screenshot_frame_valid", "degraded", "degraded_reason"] {
+            assert_eq!(absent[key]["state"], "absent");
+            assert!(absent[key]["value"].is_null());
+            let null = sample(&json!({key: null}), false, false, false);
+            assert_eq!(null[key]["state"], "null");
+        }
+        let malformed = sample(
+            &json!({
+                "screenshot_frame_valid": "private flag",
+                "degraded": {"secret": "private object"},
+                "degraded_reason": ["private array"],
+                "screenshot_error": {"code": ["private code"], "window_id": "private ID", "reason": null}
+            }),
+            false,
+            false,
+            false,
+        );
+        for key in ["screenshot_frame_valid", "degraded", "degraded_reason"] {
+            assert_eq!(malformed[key]["state"], "unexpected_type");
+            assert!(malformed[key]["value"].is_null());
+        }
+        let error = &malformed["screenshot_error"]["value"];
+        assert_eq!(error["code"]["state"], "unexpected_type");
+        assert_eq!(error["window_id"]["state"], "unexpected_type");
+        assert_eq!(error["reason"]["state"], "null");
+        assert_eq!(error["message"]["state"], "absent");
+        assert!(!malformed.to_string().contains("private"));
+    }
+
+    #[test]
+    fn controls_unicode_and_sensitive_strings_are_redacted() {
+        let unsafe_text = "refusal\u{1b}[2J\r\n\t\0\u{7f}\u{85}\u{202e}\u{2066}\u{200b}\u{feff}雪";
+        let field = diagnostic_string(unsafe_text);
+        let safe = field["value"].as_str().unwrap();
+        assert!(safe
+            .chars()
+            .all(|ch| (ch.is_ascii() && !ch.is_ascii_control()) || ch == '\u{fffd}'));
+        assert!(safe.contains('\u{fffd}'));
+        assert_eq!(field["redacted"], true);
+        assert_eq!(field["truncated"], false);
+        for text in [
+            "https://alice:private-pass@example.test/path?key=private-query#private-fragment",
+            "//alice@example.test/path",
+            "example.test/path?private-query",
+            "Bearer private-credential",
+            "PASSWORD private-credential",
+            "API_KEY private-credential",
+            "data:image/png;base64,private-image",
+            "TOKEN=private-env",
+            "secret private-value",
+        ] {
+            let field = diagnostic_string(text);
+            assert_eq!(field["value"], "[redacted]", "{text}");
+            assert_eq!(field["redacted"], true);
+            assert_eq!(field["truncated"], false);
+        }
+    }
+
+    #[test]
+    fn encoded_escaping_and_long_fields_respect_bounds() {
+        // Quotes/backslashes expand on JSON encoding; spaces avoid a long opaque token.
+        for unit in ["\" \\ ", "雪 ", "\u{1b} ", "readable words "] {
+            let long = unit.repeat(10_000);
+            let summary = sample(
+                &json!({
+                    "degraded_reason": long,
+                    "screenshot_error": {"code": long, "reason": long, "message": long, "suggestion": long}
+                }),
+                false,
+                true,
+                false,
+            );
+            assert!(summary.get("diagnostic_omitted").is_none());
+            for field in [
+                &summary["degraded_reason"],
+                &summary["screenshot_error"]["value"]["code"],
+                &summary["screenshot_error"]["value"]["reason"],
+                &summary["screenshot_error"]["value"]["message"],
+                &summary["screenshot_error"]["value"]["suggestion"],
+            ] {
+                assert!(field["value"].to_string().len() <= DIAGNOSTIC_STRING_BYTES);
+                assert_eq!(field["truncated"], true);
+                assert_eq!(
+                    field["redacted"],
+                    !unit.is_ascii() || unit.contains('\u{1b}')
+                );
+            }
+            // environment.jsonl embeds the already-encoded summary in a JSON string.
+            assert!(
+                json!({"error": summary.to_string()}).to_string().len()
+                    <= READINESS_DIAGNOSTIC_BYTES
+            );
+        }
+        let boundary = "a ".repeat(255); // 510 payload bytes plus two JSON quotes.
+        let exact = diagnostic_string(&boundary);
+        assert_eq!(exact["value"].to_string().len(), DIAGNOSTIC_STRING_BYTES);
+        assert_eq!(exact["truncated"], false);
+        let discarded_control = diagnostic_string(&(boundary.clone() + "\u{1b}"));
+        assert_eq!(discarded_control["truncated"], true);
+        assert_eq!(discarded_control["redacted"], false);
+        let clipped = diagnostic_string(&(boundary + "x"));
+        assert_eq!(clipped["truncated"], true);
+        assert_eq!(clipped["redacted"], false);
+        let opaque = diagnostic_string(&"a".repeat(10_000));
+        assert_eq!(opaque["truncated"], true);
+        assert_eq!(opaque["redacted"], true);
+        assert_eq!(opaque["value"], "[redacted]");
+    }
+
+    #[test]
+    fn ax_fallback_and_strict_readiness_are_unchanged() {
+        for (structured, count) in [
+            (json!({"element_count": 23, "elements": [{}]}), 23),
+            (json!({"element_count": 0, "elements": [{}]}), 0),
+            (json!({"elements": [{}, {}]}), 2),
+            (json!({"element_count": "invalid", "elements": [{}]}), 1),
+            (json!({"element_count": -1, "elements": [{}]}), 1),
+            (Value::Null, 0),
+        ] {
+            assert_eq!(ax_count(&structured), count);
+            for is_error in [false, true] {
+                for marker in [false, true] {
+                    for image in [false, true] {
+                        let summary = sample(&structured, is_error, marker, image);
+                        assert_eq!(summary["ax_count"], count);
+                        assert_eq!(summary["is_error"], is_error);
+                        assert_eq!(summary["marker_present"], marker);
+                        assert_eq!(summary["image_present"], image);
+                        assert_eq!(
+                            readiness_contract(is_error, count, marker, image),
+                            !is_error && count > 0 && marker && image
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn image_predicate_keeps_both_existing_routes() {
+        let no_image = json!({"result": {"content": [{"type": "text", "text": "marker"}]}});
+        assert!(!image_present(
+            &no_image,
+            &json!({"screenshot_png_base64": ""})
+        ));
+        assert!(!image_present(
+            &no_image,
+            &json!({"screenshot_png_base64": false})
+        ));
+        assert!(image_present(
+            &no_image,
+            &json!({"screenshot_png_base64": "image"})
+        ));
+        // The existing predicate checks the content type, not decoded image validity.
+        let image = json!({"result": {"content": [{"type": "image"}]}});
+        assert!(image_present(&image, &Value::Null));
+        assert!(!image_present(&Value::Null, &Value::Null));
+    }
 }
 
 #[test]

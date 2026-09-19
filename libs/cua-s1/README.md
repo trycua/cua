@@ -51,6 +51,16 @@ print(cua_s1.__version__)
 Loading a checkpoint requires a local `safetensors` file and matching JSON
 configuration. Pickle-based PyTorch checkpoints are rejected.
 
+A checkpoint distributed as a pickle archive must be converted once before it
+can be loaded. `cua-s1-convert` reads the archive with `weights_only=True`, so
+no pickled code object is executed, and writes the checked pair:
+
+```bash
+uv run --project libs/cua-s1/python cua-s1-convert model.pt ./checkpoint
+```
+
+Convert only archives you trust, then load the resulting directory.
+
 ## Safety boundary
 
 Planning and execution are separate. The optional runtime defaults to a dry

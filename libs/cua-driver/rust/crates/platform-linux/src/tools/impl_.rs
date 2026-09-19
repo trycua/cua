@@ -2343,19 +2343,23 @@ impl Tool for LaunchAppTool {
                         "launcher_pid": launcher_pid,
                     });
                     if resolved.handed_off {
-                        structured["handoff"] = json!("dbus_activation");
                         match resolved.pid {
-                            Some(pid) => text.push_str(&format!(
-                                " The launcher handed the request to the running service \
-                                 (D-Bus activation) and exited; the window belongs to pid {pid}."
-                            )),
+                            Some(pid) => {
+                                structured["handoff"] = json!("dbus_activation");
+                                text.push_str(&format!(
+                                    " The launcher handed the request to the running service \
+                                     (D-Bus activation) and exited; the window belongs to pid {pid}."
+                                ));
+                            }
                             None => {
-                                structured["running"] = Value::Null;
-                                text.push_str(
-                                    " The launcher exited (D-Bus activation or a failed start) and \
-                                     no new window of this app appeared within 8 s; call \
-                                     list_windows to find it, or retry.",
-                                );
+                                // The launcher exited (D-Bus activation or a failed
+                                // start) and the 8s deadline in
+                                // `resolve_launched_windows` passed with no new
+                                // window ever appearing. This is not a success: we
+                                // have no pid, no window, and no way to know the app
+                                // actually started. Report a typed refusal instead
+                                // of a `pid: null` shape that reads as success.
+                                return launch_handoff_timeout_result(&name, launcher_pid, 8);
                             }
                         }
                     }
@@ -2375,6 +2379,29 @@ impl Tool for LaunchAppTool {
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
+}
+
+/// The `launch_app` D-Bus-activation hand-off timed out: the launcher exited
+/// (handing the request to a running service) but no new window of the app
+/// ever appeared within the deadline. This has no pid and no confirmed
+/// window, so it is a refusal (`code: "launch_handoff_timeout"`), never a
+/// `pid: null` shape that a caller could mistake for success.
+fn launch_handoff_timeout_result(name: &str, launcher_pid: u32, waited_secs: u64) -> ToolResult {
+    ToolResult::error(format!(
+        "'{name}' was handed off for D-Bus activation but no new window appeared within \
+         {waited_secs}s; the launch could not be confirmed. Call list_windows to check \
+         whether it started anyway, or retry."
+    ))
+    .with_structured(json!({
+        "code": "launch_handoff_timeout",
+        "effect": "refused",
+        "handoff": "dbus_activation",
+        "name": name,
+        "launcher_pid": launcher_pid,
+        "pid": Value::Null,
+        "running": Value::Null,
+        "waited_secs": waited_secs,
+    }))
 }
 
 /// What `launch_app` could attribute to the launch after the spawn.
@@ -2520,6 +2547,19 @@ mod launch_resolution_tests {
     fn a_missing_process_counts_as_exited() {
         assert!(process_exited(u32::MAX - 1));
         assert!(!process_exited(std::process::id()));
+    }
+
+    #[test]
+    fn a_handoff_timeout_is_a_refusal_not_a_null_pid_success() {
+        let result = launch_handoff_timeout_result("Nautilus", 4242, 8);
+        assert_eq!(result.is_error, Some(true), "a hand-off timeout must be reported as an error, not success");
+        let s = result.structured_content.unwrap();
+        assert_eq!(s["code"], "launch_handoff_timeout");
+        assert_eq!(s["effect"], "refused");
+        assert_eq!(s["pid"], Value::Null);
+        assert_eq!(s["running"], Value::Null);
+        assert_eq!(s["launcher_pid"], 4242);
+        assert_eq!(s["waited_secs"], 8);
     }
 }
 
@@ -5789,13 +5829,27 @@ impl ClickTool {
                 )
                 .await;
                 match result {
-                    Ok(Ok(((action, suspected_noop), report))) => {
+                    Ok(Ok(((action, suspected_noop, unacknowledged), report))) => {
                         let mut extra = serde_json::Map::new();
                         extra.insert("ax_action".into(), json!(action));
                         extra.insert("bounds_reason".into(), json!(reason));
                         if suspected_noop {
                             extra.insert("effect".into(), json!("suspected_noop"));
                             extra.insert("escalation".into(), non_ax_escalation());
+                        } else if unacknowledged {
+                            // No doAction reply arrived in time: never let a
+                            // coincidental window-change observation promote
+                            // this to `confirmed` — the AT-SPI layer itself
+                            // never confirmed dispatch, let alone effect.
+                            extra.insert("effect".into(), json!("unverifiable"));
+                            extra.insert("verified".into(), json!(false));
+                            extra.insert(
+                                "note".into(),
+                                json!(
+                                    "no acknowledgement received for the doAction call within \
+                                     the AT-SPI timeout; its effect is unknown"
+                                ),
+                            );
                         }
                         ToolResult::text(format!(
                             "Clicked element [{idx}] (pid {pid}) through its AT-SPI action \
@@ -6275,7 +6329,7 @@ impl Tool for ClickTool {
                         }));
                     }
                 };
-                if let Ok(Ok(((_action, suspected_noop), guard))) = ax_result {
+                if let Ok(Ok(((_action, suspected_noop, unacknowledged), guard))) = ax_result {
                     let mut structured = json!({
                         "path": "ax",
                         "verified": false,
@@ -6283,6 +6337,11 @@ impl Tool for ClickTool {
                     });
                     if suspected_noop {
                         structured["escalation"] = non_ax_escalation();
+                    } else if unacknowledged {
+                        structured["note"] = json!(
+                            "no acknowledgement received for the doAction call within the \
+                             AT-SPI timeout; its effect is unknown"
+                        );
                     }
                     return attach_focus_guard(
                         ToolResult::text(format!("Clicked element [{idx}] (pid {pid})."))

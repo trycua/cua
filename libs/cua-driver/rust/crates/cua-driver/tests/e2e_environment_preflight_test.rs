@@ -161,6 +161,7 @@ fn preflight_state_ready(response: &cua_driver_testkit::ToolResponse, ax_marker:
 // Keep the timeout record safe for both terminal logs and environment.jsonl.
 // No raw response, free-form MCP text, AX payload, image, or unknown field is copied.
 const READINESS_DIAGNOSTIC_BYTES: usize = 8 * 1024;
+// Budget a string value at its first JSON encoding, not its persisted encoding.
 const DIAGNOSTIC_STRING_BYTES: usize = 512;
 
 fn diagnostic_string(value: &str) -> serde_json::Value {
@@ -169,7 +170,7 @@ fn diagnostic_string(value: &str) -> serde_json::Value {
     let mut truncated = false;
     let mut redacted = false;
     for ch in value.chars() {
-        // ASCII-only diagnostics deliberately replace Unicode as well as C0/C1,
+        // Printable ASCII plus U+FFFD: deliberately replace Unicode as well as C0/C1,
         // escape, bidi, and other invisible terminal-formatting characters.
         let safe = if ch.is_ascii() && !ch.is_ascii_control() {
             ch
@@ -244,29 +245,106 @@ fn diagnostic_scalar(value: Option<&serde_json::Value>, expected: &str) -> serde
     }
 }
 
+// Recognize only source-owned prefixes, independently of the free-form detail's
+// safety screening. A recognized prefix reports what the response said, not a
+// verified runtime cause; it must not confer trust on the rest of the string.
+fn diagnostic_reason(value: Option<&serde_json::Value>) -> serde_json::Value {
+    let mut projected = diagnostic_scalar(value, "string");
+    if let Some(text) = value.and_then(serde_json::Value::as_str) {
+        let category = text
+            .split_once(':')
+            .map(|(prefix, _)| prefix)
+            .filter(|prefix| {
+                matches!(
+                    *prefix,
+                    "ax_tree_empty"
+                        | "ax_window_unresolved"
+                        | "accessibility_window_identity_unproven"
+                        | "x11_property_fallback_partial"
+                        | "atspi_tree_empty"
+                        | "msaa_fallback_partial"
+                        | "surface_identity_unproven"
+                )
+            });
+        projected["category"] = serde_json::json!(category);
+        projected["category_state"] = serde_json::json!(if category.is_some() {
+            "recognized_source_prefix"
+        } else {
+            "unrecognized"
+        });
+    }
+    projected
+}
+
+// ToolResponse exposes structuredContent and the raw MCP envelope, not an error
+// code accessor. Only inspect these code locations on true error responses.
+// Never infer a code from free-form MCP/error text or nested screenshot errors.
+fn invocation_diagnostic(
+    structured: &serde_json::Value,
+    raw: &serde_json::Value,
+    is_error: bool,
+) -> serde_json::Value {
+    use serde_json::{json, Value};
+    if !is_error {
+        return json!({"state": "not_error"});
+    }
+    let (source, code) = if let Some(code) = structured.get("code") {
+        ("structuredContent.code", Some(code))
+    } else if let Some(error) = raw.get("error") {
+        ("json_rpc.error.code", error.get("code"))
+    } else {
+        ("structuredContent.code", None)
+    };
+    let code = match code {
+        Some(Value::String(code))
+            if source == "structuredContent.code"
+                && matches!(
+                    code.as_str(),
+                    "permission_denied"
+                        | "tool_output_invalid"
+                        | "window_target_not_found"
+                        | "tool_invocation_failed"
+                ) =>
+        {
+            json!({"state": "recognized", "value": code})
+        }
+        Some(Value::String(_)) => json!({"state": "unrecognized_omitted", "value": null}),
+        Some(code) if source == "json_rpc.error.code" && code.as_i64().is_some() => {
+            json!({"state": "integer", "value": code.as_i64()})
+        }
+        code => diagnostic_scalar(code, "recognized_code"),
+    };
+    json!({"state": "error", "code_source": source, "code": code, "detail": "omitted"})
+}
+
 fn readiness_diagnostic(
     structured: &serde_json::Value,
+    raw: &serde_json::Value,
     is_error: bool,
     marker_present: bool,
     image_present: bool,
     pid: i64,
     window_id: u64,
-) -> String {
+) -> serde_json::Value {
     use serde_json::json;
     let screenshot_error = match structured.get("screenshot_error") {
         Some(serde_json::Value::Object(error)) => {
             let fields = ["code", "window_id", "reason", "message", "suggestion"];
             let mut projected = serde_json::Map::new();
             for field in fields {
-                let expected = if field == "window_id" {
-                    "u64"
+                let value = if field == "reason" {
+                    diagnostic_reason(error.get(field))
                 } else {
-                    "string"
+                    diagnostic_scalar(
+                        error.get(field),
+                        if field == "window_id" {
+                            "u64"
+                        } else {
+                            "string"
+                        },
+                    )
                 };
-                projected.insert(
-                    field.to_owned(),
-                    diagnostic_scalar(error.get(field), expected),
-                );
+                projected.insert(field.to_owned(), value);
             }
             json!({
                 "state": "object", "value": projected,
@@ -275,32 +353,71 @@ fn readiness_diagnostic(
         }
         value => diagnostic_scalar(value, "string"),
     };
-    let encoded = json!({
+    json!({
         "sample": "latest_sampled_response",
         "stage": "get_window_state",
         "projection": "allowlisted_metadata_only",
         "target_pid": pid,
         "target_window_id": window_id,
         "is_error": is_error,
+        "invocation_error": invocation_diagnostic(structured, raw, is_error),
         "ax_count": ax_count(structured),
         "marker_present": marker_present,
         "image_present": image_present,
         "screenshot_frame_valid": diagnostic_scalar(structured.get("screenshot_frame_valid"), "boolean"),
         "degraded": diagnostic_scalar(structured.get("degraded"), "boolean"),
-        "degraded_reason": diagnostic_scalar(structured.get("degraded_reason"), "string"),
+        "degraded_reason": diagnostic_reason(structured.get("degraded_reason")),
         "screenshot_error": screenshot_error,
-    }).to_string();
-    // The closed projection has at most five strings, each <=512 encoded bytes.
-    // Keep a fail-closed bound even if a future edit expands that projection.
-    if encoded.len() > READINESS_DIAGNOSTIC_BYTES {
-        json!({
-            "sample": "latest_sampled_response", "stage": "get_window_state",
-            "target_pid": pid, "target_window_id": window_id,
-            "truncated": true, "diagnostic_omitted": "encoded_size_limit"
+    })
+}
+
+#[derive(Default)]
+struct PreflightDiagnostics {
+    last_readiness: Option<serde_json::Value>,
+    last_listing_failure: Option<serde_json::Value>,
+    latest_list_windows_is_error: bool,
+}
+
+impl PreflightDiagnostics {
+    fn observe_listing(
+        &mut self,
+        structured: &serde_json::Value,
+        raw: &serde_json::Value,
+        is_error: bool,
+    ) {
+        self.latest_list_windows_is_error = is_error;
+        if is_error {
+            self.last_listing_failure = Some(serde_json::json!({
+                "sample": "latest_sampled_failure", "stage": "list_windows", "is_error": true,
+                "invocation_error": invocation_diagnostic(structured, raw, is_error)
+            }));
+        }
+    }
+
+    fn summary(&self) -> String {
+        use serde_json::json;
+        let encoded = json!({
+            "get_window_state": self.last_readiness.as_ref().cloned().unwrap_or_else(||
+                json!({"sample": "none", "stage": "get_window_state"})),
+            "list_windows_failure": self.last_listing_failure.as_ref().cloned().unwrap_or_else(||
+                json!({"sample": "none", "stage": "list_windows"})),
         })
-        .to_string()
-    } else {
-        encoded
+        .to_string();
+        // Bound the combined first-encoded summary, including both samples.
+        // Re-encoding it in EnvironmentRecord.message adds escaping and context;
+        // neither this guard nor the string budget bounds the full JSONL record.
+        if encoded.len() > READINESS_DIAGNOSTIC_BYTES {
+            json!({"truncated": true, "diagnostic_omitted": "encoded_size_limit"}).to_string()
+        } else {
+            encoded
+        }
+    }
+
+    fn timeout_message(&self) -> String {
+        format!(
+            "preflight could not map a ready fixture window with AX state and screenshot; latest sampled get_window_state and list_windows failure (not necessarily current): {}; latest list_windows is_error: {}",
+            self.summary(), self.latest_list_windows_is_error
+        )
     }
 }
 
@@ -466,7 +583,7 @@ fn run_preflight() {
     let mut child = FixtureChildGuard::new(child);
 
     let deadline = Instant::now() + Duration::from_secs(35);
-    let mut last_readiness = r#"{"sample":"none","stage":"get_window_state"}"#.to_owned();
+    let mut diagnostics = PreflightDiagnostics::default();
     #[cfg(target_os = "linux")]
     let mut activated_window_id = None;
     let (pid, window_id) = loop {
@@ -478,6 +595,7 @@ fn run_preflight() {
             panic!("preflight fixture exited before mapping a window: {status}");
         }
         let windows = driver.call("list_windows", serde_json::json!({}));
+        diagnostics.observe_listing(windows.structured(), &windows.raw, windows.is_error());
         let candidate = windows.structured()["windows"]
             .as_array()
             .and_then(|windows| {
@@ -522,21 +640,19 @@ fn run_preflight() {
             if preflight_state_ready(&state, fixture.ax_marker) {
                 break (pid, window_id);
             }
-            last_readiness = readiness_diagnostic(
+            diagnostics.last_readiness = Some(readiness_diagnostic(
                 state.structured(),
+                &state.raw,
                 state.is_error(),
                 state.tree_text().contains(fixture.ax_marker),
                 has_image(&state),
                 pid,
                 window_id,
-            );
+            ));
         }
 
         if Instant::now() >= deadline {
-            panic!(
-                "preflight could not map a ready fixture window with AX state and screenshot; latest sampled get_window_state (not necessarily current): {last_readiness}; latest list_windows is_error: {}",
-                windows.is_error()
-            );
+            panic!("{}", diagnostics.timeout_message());
         }
         std::thread::sleep(Duration::from_millis(200));
     };
@@ -628,9 +744,316 @@ mod preflight_diagnostics {
     use serde_json::{json, Value};
 
     fn sample(structured: &Value, is_error: bool, marker: bool, image: bool) -> Value {
-        let encoded = readiness_diagnostic(structured, is_error, marker, image, 75315, 4935843840);
-        assert!(encoded.len() <= READINESS_DIAGNOSTIC_BYTES);
-        serde_json::from_str(&encoded).expect("bounded diagnostic must remain valid JSON")
+        let value = readiness_diagnostic(
+            structured,
+            &Value::Null,
+            is_error,
+            marker,
+            image,
+            75315,
+            4935843840,
+        );
+        assert!(value.to_string().len() <= READINESS_DIAGNOSTIC_BYTES);
+        value
+    }
+
+    #[test]
+    fn source_owned_reason_categories_survive_redaction() {
+        // Exact source templates rendered with synthetic IDs where interpolated.
+        // These are not observations of a real capture or the historical CI run.
+        for (field, category, reason) in [
+            // platform-macos/src/tools/get_window_state.rs:594
+            ("degraded_reason", "ax_tree_empty", "ax_tree_empty: the AX walk returned no actionable elements. The window may be a non-AX surface (canvas/WebGL/custom-drawn) or its accessibility tree was not ready (Chromium/Electron require an AX-enable + settle). Do not treat element data as authoritative — re-snapshot if the app just launched, otherwise switch to the visual path."),
+            // platform-macos/src/tools/get_window_state.rs:610
+            ("degraded_reason", "ax_window_unresolved", "ax_window_unresolved: window_id 42 exists and is owned by pid 7, but none of the 0 AXWindow element(s) under that pid reports this CGWindowID. The tree is returned EMPTY on purpose: the accessibility elements reachable under this pid belong to other surfaces (the menu bar, other windows), not to the requested window, so presenting them would misground the next action."),
+            // platform-linux/src/tools/impl_.rs:963
+            ("degraded_reason", "accessibility_window_identity_unproven", "accessibility_window_identity_unproven: tree is application-scoped; exact-window element tokens and bounds are unavailable"),
+            // platform-linux/src/tools/impl_.rs:968
+            ("degraded_reason", "x11_property_fallback_partial", "x11_property_fallback_partial: AT-SPI was unavailable and Cua Driver only recovered window metadata. Treat it as discovery evidence; it cannot prove checked state."),
+            // platform-linux/src/tools/impl_.rs:976
+            ("degraded_reason", "atspi_tree_empty", "atspi_tree_empty: the AT-SPI walk returned no actionable elements. Common causes: the a11y bridge is off (enable `gsettings set org.gnome.desktop.interface toolkit-accessibility true`), the daemon is not on the desktop session bus (DBUS_SESSION_BUS_ADDRESS unreachable — run `cua-driver doctor`), or the window is a non-AX surface (canvas/WebGL/custom-drawn). Do not treat element data as authoritative — verify via the screenshot, and re-snapshot after enabling a11y or if the app just launched."),
+            // platform-windows/src/tools/impl_.rs:1534
+            ("degraded_reason", "msaa_fallback_partial", "msaa_fallback_partial: the UIA provider was unavailable and Cua Driver used a partial MSAA tree. Treat it as discovery evidence only; it cannot prove checked state."),
+            // platform-windows/src/tools/impl_.rs:1541
+            ("degraded_reason", "ax_tree_empty", "ax_tree_empty: the UIA walk returned no actionable elements. The window may be a non-UIA surface (canvas/WebGL/custom-drawn) or its accessibility tree was not ready (Chromium/Electron require a UIA-enable + settle). Do not treat element data as authoritative — re-snapshot if the app just launched, otherwise switch to the visual path."),
+            // platform-linux/src/wayland/mod.rs:964
+            ("screenshot_error.reason", "surface_identity_unproven", "surface_identity_unproven: Wayland capture cannot prove pixels belong to window 42: no compositor-attested window geometry is available"),
+        ] {
+            let structured = if field == "degraded_reason" {
+                json!({"degraded_reason": reason})
+            } else {
+                json!({"screenshot_error": {"reason": reason}})
+            };
+            let summary = sample(&structured, false, false, false);
+            let projected = if field == "degraded_reason" {
+                &summary["degraded_reason"]
+            } else {
+                &summary["screenshot_error"]["value"]["reason"]
+            };
+            assert_eq!(projected["category"], category);
+            assert_eq!(projected["category_state"], "recognized_source_prefix");
+            assert_eq!(projected["value"], "[redacted]");
+            assert_eq!(projected["redacted"], true);
+            assert_eq!(projected["truncated"], false);
+        }
+        for code in [
+            "surface_identity_unproven",
+            "px_window_not_found",
+            "px_capture_unavailable",
+            "px_frame_mismatch",
+        ] {
+            let summary = sample(
+                &json!({"screenshot_error": {"code": code}}),
+                false,
+                false,
+                false,
+            );
+            assert_eq!(summary["screenshot_error"]["value"]["code"]["value"], code);
+        }
+        // A known prefix does not make its suffix safe, and lookalikes do not
+        // become known categories. Never emit the arbitrary suffix as a code.
+        for reason in [
+            "unknown: private detail",
+            " ax_tree_empty: private detail",
+            "ax_tree_empty_extra: private detail",
+            "ax_tree_empty",
+        ] {
+            let projected = diagnostic_reason(Some(&json!(reason)));
+            assert_eq!(projected["category_state"], "unrecognized");
+            assert!(projected["category"].is_null());
+        }
+        let unsafe_reason = "ax_tree_empty: https://user:private@example.test/?token=private";
+        let projected = diagnostic_reason(Some(&json!(unsafe_reason)));
+        assert_eq!(projected["category"], "ax_tree_empty");
+        assert_eq!(projected["redacted"], true);
+        assert!(!projected.to_string().contains("private"));
+    }
+
+    #[test]
+    fn root_invocation_errors_are_distinct_and_detail_is_omitted() {
+        // proxy.rs authorization; mcp_result.rs invalid output; window_target.rs
+        // target refusal; outputs.rs normalized error. Do not infer these codes.
+        for code in [
+            "permission_denied",
+            "tool_output_invalid",
+            "window_target_not_found",
+            "tool_invocation_failed",
+        ] {
+            let structured = json!({"code": code, "invalid_output": {"secret": "private payload"}});
+            let raw = json!({"result": {"isError": true, "structuredContent": structured,
+                "content": [{"type": "text", "text": "private MCP detail"}]}});
+            let summary = readiness_diagnostic(&structured, &raw, true, false, false, 7, 42);
+            let invocation = &summary["invocation_error"];
+            assert_eq!(invocation["code"]["value"], code);
+            assert_eq!(invocation["code"]["state"], "recognized");
+            assert_eq!(invocation["code_source"], "structuredContent.code");
+            assert_eq!(invocation["detail"], "omitted");
+            assert!(!summary.to_string().contains("private"));
+            assert_eq!(
+                invocation_diagnostic(&structured, &raw, false),
+                json!({"state": "not_error"})
+            );
+        }
+        // Response::error carries an i64 JSON-RPC code; negative is not unsigned.
+        for code in [-32602, -32600, i64::MIN, i64::MAX] {
+            let raw = json!({"error": {"code": code, "message": "private RPC detail"}});
+            let projected = invocation_diagnostic(&Value::Null, &raw, true);
+            assert_eq!(projected["code_source"], "json_rpc.error.code");
+            assert_eq!(
+                projected["code"],
+                json!({"state": "integer", "value": code})
+            );
+            assert_eq!(projected["detail"], "omitted");
+            assert!(!projected.to_string().contains("private"));
+        }
+        for (code, state) in [
+            (json!("unknown_private_code"), "unrecognized_omitted"),
+            (Value::Null, "null"),
+            (json!(false), "unexpected_type"),
+            (json!(17), "unexpected_type"),
+            (json!(["private"]), "unexpected_type"),
+            (json!({"secret": "private"}), "unexpected_type"),
+        ] {
+            let projected = invocation_diagnostic(&json!({"code": code}), &Value::Null, true);
+            assert_eq!(projected["code"]["state"], state);
+            assert!(projected["code"]["value"].is_null());
+            assert_eq!(projected["detail"], "omitted");
+            assert!(!projected.to_string().contains("private"));
+        }
+        for raw in [
+            Value::Null,
+            json!({"error": "private unstructured error"}),
+            json!({"error": {"message": "private error"}}),
+        ] {
+            let projected = invocation_diagnostic(
+                &json!({"screenshot_error": {"code": "px_frame_mismatch"}}),
+                &raw,
+                true,
+            );
+            assert_eq!(projected["code"]["state"], "absent");
+            assert!(projected["code"]["value"].is_null());
+            assert_eq!(projected["detail"], "omitted");
+            assert!(!projected.to_string().contains("private"));
+        }
+    }
+
+    #[test]
+    fn no_candidate_has_no_state_or_listing_failure_sample() {
+        let mut diagnostics = PreflightDiagnostics::default();
+        diagnostics.observe_listing(&json!({"windows": []}), &Value::Null, false);
+        let summary: Value = serde_json::from_str(&diagnostics.summary()).unwrap();
+        assert_eq!(summary["get_window_state"]["sample"], "none");
+        assert_eq!(summary["list_windows_failure"]["sample"], "none");
+        assert!(!diagnostics.latest_list_windows_is_error);
+    }
+
+    #[test]
+    fn listing_failure_survives_empty_success_without_candidate() {
+        let mut diagnostics = PreflightDiagnostics::default();
+        diagnostics.observe_listing(&json!({"code": "permission_denied"}), &Value::Null, true);
+        assert!(diagnostics.latest_list_windows_is_error);
+        let failed = diagnostics.last_listing_failure.clone();
+        diagnostics.observe_listing(&json!({"windows": []}), &Value::Null, false);
+        assert!(!diagnostics.latest_list_windows_is_error);
+        assert_eq!(diagnostics.last_listing_failure, failed);
+        let summary: Value = serde_json::from_str(&diagnostics.summary()).unwrap();
+        assert_eq!(summary["get_window_state"]["sample"], "none");
+        assert_eq!(
+            summary["list_windows_failure"]["sample"],
+            "latest_sampled_failure"
+        );
+        assert_eq!(
+            summary["list_windows_failure"]["invocation_error"]["code"]["value"],
+            "permission_denied"
+        );
+        let message = diagnostics.timeout_message();
+        assert!(message.contains("not necessarily current"));
+        assert!(message.ends_with("latest list_windows is_error: false"));
+    }
+
+    #[test]
+    fn listing_failure_after_state_preserves_separate_latest_samples() {
+        let state = sample(
+            &json!({"element_count": 23, "screenshot_error": {"code": "px_frame_mismatch"}}),
+            false,
+            true,
+            false,
+        );
+        let mut diagnostics = PreflightDiagnostics {
+            last_readiness: Some(state.clone()),
+            ..Default::default()
+        };
+        diagnostics.observe_listing(&json!({"code": "permission_denied"}), &Value::Null, true);
+        diagnostics.observe_listing(&json!({"code": "tool_output_invalid"}), &Value::Null, true);
+        assert_eq!(diagnostics.last_readiness, Some(state.clone()));
+        let failure = diagnostics.last_listing_failure.clone();
+        assert_eq!(
+            failure.as_ref().unwrap()["invocation_error"]["code"]["value"],
+            "tool_output_invalid"
+        );
+        // A later state sample replaces only the state, not the listing failure.
+        let later = sample(
+            &json!({"code": "window_target_not_found"}),
+            true,
+            false,
+            false,
+        );
+        diagnostics.last_readiness = Some(later.clone());
+        diagnostics.observe_listing(
+            &json!({"windows": [{"title": "private title"}]}),
+            &Value::Null,
+            false,
+        );
+        assert_eq!(diagnostics.last_listing_failure, failure);
+        let summary: Value = serde_json::from_str(&diagnostics.summary()).unwrap();
+        assert_eq!(summary["get_window_state"], later);
+        assert_eq!(summary["list_windows_failure"], failure.unwrap());
+        assert!(!summary.to_string().contains("private"));
+        assert!(diagnostics
+            .timeout_message()
+            .ends_with("latest list_windows is_error: false"));
+    }
+
+    #[test]
+    fn combined_summary_and_environment_envelope_encoding_are_bounded_honestly() {
+        use cua_driver_testkit::e2e::{
+            DisplayServer, EnvironmentStatus, Platform, ENVIRONMENT_SCHEMA,
+        };
+        // Fixed synthetic context, no EnvironmentRecord::error/current/env readers.
+        for unit in ["\" \\ ", "雪 ", "readable words "] {
+            let long = unit.repeat(10_000);
+            let mut diagnostics = PreflightDiagnostics {
+                last_readiness: Some(readiness_diagnostic(
+                    &json!({
+                        "code": "permission_denied", "degraded_reason": long,
+                        "screenshot_error": {"code": long, "reason": long, "message": long, "suggestion": long}
+                    }),
+                    &Value::Null,
+                    true,
+                    true,
+                    false,
+                    i64::MAX,
+                    u64::MAX,
+                )),
+                ..Default::default()
+            };
+            diagnostics.observe_listing(
+                &json!({"code": "tool_output_invalid"}),
+                &Value::Null,
+                true,
+            );
+            let summary = diagnostics.summary();
+            let decoded: Value = serde_json::from_str(&summary).unwrap();
+            assert!(decoded.get("diagnostic_omitted").is_none());
+            assert!(summary.len() <= READINESS_DIAGNOSTIC_BYTES);
+            assert_eq!(
+                decoded["list_windows_failure"]["invocation_error"]["code"]["value"],
+                "tool_output_invalid"
+            );
+            let message = diagnostics.timeout_message();
+            let record = EnvironmentRecord {
+                schema: ENVIRONMENT_SCHEMA.to_owned(),
+                platform: Platform::Macos,
+                display_server: DisplayServer::Quartz,
+                compositor: Some("windowserver".to_owned()),
+                input_backends: vec!["accessibility".to_owned(), "cg-event".to_owned()],
+                source_sha: Some("0123456789abcdef0123456789abcdef01234567".to_owned()),
+                status: EnvironmentStatus::Error,
+                duration_ms: 35_000,
+                message: message.clone(),
+            };
+            let jsonl = serde_json::to_string(&record).unwrap() + "\n";
+            let persisted: Value = serde_json::from_str(&jsonl).unwrap();
+            assert_eq!(persisted["message"], message);
+            assert!(jsonl.len() > message.len());
+            // Measured fixtures, NOT universal limits on persisted fields/records.
+            println!(
+                "encoding_sizes {}",
+                json!({"unit": unit, "summary_bytes": summary.len(),
+                "double_encoded_summary_bytes": json!(summary).to_string().len(),
+                "timeout_bytes": message.len(), "environment_jsonl_bytes": jsonl.len()})
+            );
+        }
+        let quoted = diagnostic_string(&"\" ".repeat(10_000));
+        let once = quoted["value"].to_string();
+        assert!(once.len() <= DIAGNOSTIC_STRING_BYTES);
+        assert!(json!(once).to_string().len() > DIAGNOSTIC_STRING_BYTES);
+        // Exercise the combined fail-closed guard with an isolated oversize
+        // mutation of each stored sample, not an unbounded production projection.
+        for listing in [false, true] {
+            let oversized = Some(json!({"synthetic": "x".repeat(READINESS_DIAGNOSTIC_BYTES)}));
+            let mut diagnostics = PreflightDiagnostics::default();
+            if listing {
+                diagnostics.last_listing_failure = oversized;
+            } else {
+                diagnostics.last_readiness = oversized;
+            }
+            let summary: Value = serde_json::from_str(&diagnostics.summary()).unwrap();
+            assert_eq!(
+                summary,
+                json!({"truncated": true, "diagnostic_omitted": "encoded_size_limit"})
+            );
+        }
     }
 
     #[test]
@@ -823,11 +1246,8 @@ mod preflight_diagnostics {
                     !unit.is_ascii() || unit.contains('\u{1b}')
                 );
             }
-            // environment.jsonl embeds the already-encoded summary in a JSON string.
-            assert!(
-                json!({"error": summary.to_string()}).to_string().len()
-                    <= READINESS_DIAGNOSTIC_BYTES
-            );
+            // The combined summary bound is checked separately with both samples;
+            // EnvironmentRecord re-encoding is not a 512-byte persisted-field cap.
         }
         let boundary = "a ".repeat(255); // 510 payload bytes plus two JSON quotes.
         let exact = diagnostic_string(&boundary);

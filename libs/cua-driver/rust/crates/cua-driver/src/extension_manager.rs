@@ -3681,6 +3681,18 @@ struct WindowsByHandleFileInformation {
 
 #[cfg(windows)]
 fn windows_file_identity(handle: *mut std::ffi::c_void) -> Result<WindowsFileIdentity> {
+    let information = windows_file_information(handle)?;
+    Ok(WindowsFileIdentity {
+        volume_serial_number: information.volume_serial_number,
+        file_index_high: information.file_index_high,
+        file_index_low: information.file_index_low,
+    })
+}
+
+#[cfg(windows)]
+fn windows_file_information(
+    handle: *mut std::ffi::c_void,
+) -> Result<WindowsByHandleFileInformation> {
     unsafe {
         #[link(name = "kernel32")]
         extern "system" {
@@ -3698,11 +3710,7 @@ fn windows_file_identity(handle: *mut std::ffi::c_void) -> Result<WindowsFileIde
         if information.file_attributes & 0x400 != 0 {
             bail!("extension object is a Windows reparse point");
         }
-        Ok(WindowsFileIdentity {
-            volume_serial_number: information.volume_serial_number,
-            file_index_high: information.file_index_high,
-            file_index_low: information.file_index_low,
-        })
+        Ok(information)
     }
 }
 
@@ -3892,7 +3900,7 @@ unsafe fn windows_sid_string(sid: *mut std::ffi::c_void) -> Result<String> {
     }
     let mut value = std::ptr::null_mut();
     if ConvertSidToStringSidW(sid, &mut value) == 0 || value.is_null() {
-        bail!("convert current user SID for extension ACL");
+        bail!("convert Windows SID for extension ACL");
     }
     let length = (0..).find(|&index| *value.add(index) == 0).unwrap_or(0);
     let result = String::from_utf16_lossy(std::slice::from_raw_parts(value, length));
@@ -3933,8 +3941,13 @@ fn windows_set_private_security(handle: *mut std::ffi::c_void) -> Result<()> {
         }
         let user = windows_current_user_sid()?;
         let user_ptr = user.as_ptr().cast_mut().cast();
+        let inheritance = if windows_file_information(handle)?.file_attributes & 0x10 != 0 {
+            "OICI"
+        } else {
+            ""
+        };
         let sddl = format!(
-            "D:P(A;;FA;;;{})(A;;FA;;;SY)(A;;FA;;;BA)",
+            "D:P(A;{inheritance};FA;;;{})(A;{inheritance};FA;;;SY)(A;{inheritance};FA;;;BA)",
             windows_sid_string(user_ptr)?
         );
         let wide = sddl
@@ -4015,6 +4028,11 @@ fn windows_verify_security(handle: *mut std::ffi::c_void) -> Result<()> {
         }
         let user = windows_current_user_sid()?;
         let user_ptr = user.as_ptr().cast_mut().cast();
+        let object = windows_final_path(handle)
+            .map(|path| {
+                String::from_utf16_lossy(path.strip_suffix(&[0]).unwrap_or(path.as_slice()))
+            })
+            .unwrap_or_else(|_| "<unresolved extension object>".to_owned());
         let mut owner = std::ptr::null_mut();
         let mut dacl = std::ptr::null_mut();
         let mut descriptor = std::ptr::null_mut();
@@ -4049,21 +4067,32 @@ fn windows_verify_security(handle: *mut std::ffi::c_void) -> Result<()> {
             for index in 0..(*dacl).ace_count as u32 {
                 let mut raw = std::ptr::null_mut();
                 if GetAce(dacl, index, &mut raw) == 0 || raw.is_null() {
-                    bail!("read extension Windows ACL entry");
+                    bail!("read extension Windows ACL entry {index} for {object}");
                 }
                 let ace = &*(raw.cast::<WindowsAccessAllowedAce>());
                 if ace.header.ace_type == 1 {
                     continue;
                 }
                 if ace.header.ace_type != 0 {
-                    bail!("extension Windows ACL contains an unsupported allow entry");
+                    bail!(
+                        "extension Windows ACL for {object} contains unsupported ACE {index}: type={}, flags=0x{:02x}, mask=0x{:08x}",
+                        ace.header.ace_type,
+                        ace.header.ace_flags,
+                        ace.mask
+                    );
                 }
                 let sid = std::ptr::addr_of!(ace.sid_start).cast_mut().cast();
                 let is_user = EqualSid(sid, user_ptr) != 0;
                 let is_system = IsWellKnownSid(sid, 22) != 0;
                 let is_admin = IsWellKnownSid(sid, 26) != 0;
                 if !is_user && !is_system && !is_admin {
-                    bail!("extension Windows ACL grants access to an untrusted principal");
+                    let sid = windows_sid_string(sid)
+                        .unwrap_or_else(|_| "<invalid Windows SID>".to_owned());
+                    bail!(
+                        "extension Windows ACL for {object} grants access to untrusted principal {sid} in ACE {index}: flags=0x{:02x}, mask=0x{:08x}",
+                        ace.header.ace_flags,
+                        ace.mask
+                    );
                 }
                 if is_user && ace.mask & 0x001f_01ff == 0x001f_01ff {
                     user_full_control = true;
@@ -5155,6 +5184,105 @@ mod tests {
 
         let hardened = ensure_private_directory_path(&root_path).unwrap();
         windows_verify_directory_handle(&hardened).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn installed_directory_tree_inherits_only_private_acl_entries() {
+        use std::os::windows::io::AsRawHandle as _;
+
+        unsafe fn assert_private_inheritance(directory: &Dir, relative: &Path) {
+            #[link(name = "advapi32")]
+            extern "system" {
+                fn GetSecurityInfo(
+                    handle: *mut std::ffi::c_void,
+                    object_type: i32,
+                    information: u32,
+                    owner: *mut *mut std::ffi::c_void,
+                    group: *mut *mut std::ffi::c_void,
+                    dacl: *mut *mut WindowsAcl,
+                    sacl: *mut *mut WindowsAcl,
+                    descriptor: *mut *mut std::ffi::c_void,
+                ) -> u32;
+                fn GetAce(
+                    acl: *const WindowsAcl,
+                    index: u32,
+                    ace: *mut *mut std::ffi::c_void,
+                ) -> i32;
+            }
+            #[link(name = "kernel32")]
+            extern "system" {
+                fn LocalFree(memory: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+            }
+
+            let mut dacl = std::ptr::null_mut();
+            let mut descriptor = std::ptr::null_mut();
+            let status = GetSecurityInfo(
+                directory.as_raw_handle().cast(),
+                1,
+                0x4,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut dacl,
+                std::ptr::null_mut(),
+                &mut descriptor,
+            );
+            assert_eq!(status, 0, "read ACL for {}", relative.display());
+            assert!(!dacl.is_null(), "missing DACL for {}", relative.display());
+            for index in 0..(*dacl).ace_count as u32 {
+                let mut raw = std::ptr::null_mut();
+                assert_ne!(
+                    GetAce(dacl, index, &mut raw),
+                    0,
+                    "read ACE {index} for {}",
+                    relative.display()
+                );
+                let ace = &*(raw.cast::<WindowsAccessAllowedAce>());
+                if ace.header.ace_type == 0 {
+                    assert_eq!(
+                        ace.header.ace_flags & 0x3,
+                        0x3,
+                        "directory ACE {index} does not propagate privately at {}",
+                        relative.display()
+                    );
+                }
+            }
+            let _ = LocalFree(descriptor);
+
+            for child in directory.entries().unwrap() {
+                let child = child.unwrap();
+                if child.file_type().unwrap().is_dir() {
+                    let child_relative = relative.join(child.file_name());
+                    let child_directory = directory.open_dir_nofollow(child.file_name()).unwrap();
+                    assert_private_inheritance(&child_directory, &child_relative);
+                }
+            }
+        }
+
+        let temp = TempDir::new().unwrap();
+        let acl = std::process::Command::new("icacls")
+            .arg(temp.path())
+            .args(["/grant", "*S-1-1-0:(OI)(CI)(W)"])
+            .output()
+            .unwrap();
+        assert!(
+            acl.status.success(),
+            "{}",
+            String::from_utf8_lossy(&acl.stderr)
+        );
+        let store = ExtensionStore::new(temp.path().join("extensions"));
+        let entry = registry_entry("cua-perception").unwrap();
+        let archive = fixture_archive(
+            temp.path(),
+            "1.0.0",
+            &current_target().unwrap(),
+            1,
+            b"worker",
+        );
+
+        store.install_archive(entry, &archive).unwrap();
+        let root = open_directory_path_nofollow(&store.root).unwrap();
+        unsafe { assert_private_inheritance(&root, Path::new("extensions")) };
     }
 
     #[cfg(windows)]

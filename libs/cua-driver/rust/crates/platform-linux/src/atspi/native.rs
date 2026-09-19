@@ -73,6 +73,40 @@ async fn call<T>(fut: impl std::future::Future<Output = T>) -> Option<T> {
     tokio::time::timeout(budget, fut).await.ok()
 }
 
+/// Run a *synchronous, blocking* closure (typically a raw X11 round-trip via
+/// `x11rb::RustConnection`, which has no built-in socket timeout) off the
+/// current task and bound how long the caller waits for it.
+///
+/// This exists because `tokio::time::timeout` around an `.await` only helps
+/// when the wrapped future actually yields control back to the runtime at
+/// its await points; a plain synchronous call made directly inside an async
+/// fn (no `.await` inside it) blocks the executor thread for its full
+/// duration regardless of any `timeout`/`timeout_at` wrapped around the
+/// *outer* future, because that outer future never gets polled again until
+/// the blocking call returns. `get_window_state`'s bounds phase hit exactly
+/// this on LibreOffice: `window_to_screen_offset`/`x11_window_origin` open a
+/// fresh X11 connection and block on `GetGeometry`/`TranslateCoordinates`
+/// replies with no timeout, and when the X server is slow to answer (busy
+/// servicing LibreOffice's own heavy repaint traffic) that single call could
+/// run for many seconds — well past `timeout_ms` — with none of the AT-SPI
+/// D-Bus deadline machinery able to see or bound it (#42).
+///
+/// `spawn_blocking` moves the closure to a dedicated blocking-pool thread so
+/// the timeout here can make the *caller* proceed with `None`; the orphaned
+/// thread may still be blocked on the X server afterward (there is no way to
+/// cancel a live X11 socket read), but that no longer holds up the walk or
+/// consumes the operation's wall-clock budget.
+async fn bounded_blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+    let budget = remaining_budget().min(CALL_TIMEOUT);
+    if budget.is_zero() {
+        return None;
+    }
+    match tokio::time::timeout(budget, tokio::task::spawn_blocking(f)).await {
+        Ok(Ok(value)) => Some(value),
+        _ => None,
+    }
+}
+
 async fn before_snapshot_deadline<T>(
     deadline: tokio::time::Instant,
     work: impl std::future::Future<Output = T>,
@@ -5534,7 +5568,16 @@ async fn element_bounds_for_visited(
             ))
         .then_some(node.name.as_str())
     });
-    let offset = window_to_screen_offset(pid, xid, window_title);
+    // Wayland's `window_to_screen_offset` path never touches X11 (it reads
+    // compositor IPC / AT-SPI state instead), so only the X11 branch risks an
+    // un-timed blocking round-trip; still route both through `bounded_blocking`
+    // so this single call site can't stall the walk past its budget (#42).
+    let window_title_owned = window_title.map(str::to_owned);
+    let offset = bounded_blocking(move || {
+        window_to_screen_offset(pid, xid, window_title_owned.as_deref())
+    })
+    .await
+    .flatten();
     if crate::wayland::is_wayland()
         && crate::wayland::hyprland::is_session()
         && (offset.is_none() || scoped_frame.is_none())
@@ -5546,9 +5589,11 @@ async fn element_bounds_for_visited(
     } else {
         CoordType::Screen
     };
-    let display = (!crate::wayland::is_wayland())
-        .then(x11_display_size)
-        .flatten();
+    let display = if crate::wayland::is_wayland() {
+        None
+    } else {
+        bounded_blocking(x11_display_size).await.flatten()
+    };
     // Chromium on X11 labels its component extents as Screen while
     // returning coordinates relative to the renderer frame. Rebase
     // those values by comparing the top-level accessible frame with
@@ -5557,7 +5602,7 @@ async fn element_bounds_for_visited(
     // required window-origin delta. GTK's explicit Window-coordinate
     // path above remains authoritative when available.
     let screen_rebase = if offset.is_none() && !crate::wayland::is_wayland() && xid != 0 {
-        let x11_origin = x11_window_origin(xid);
+        let x11_origin = bounded_blocking(move || x11_window_origin(xid)).await.flatten();
         let frame = visited.iter().find(|node| {
             scoped_frame.is_none_or(|scope| node.frame_ordinal == scope)
                 && node.has_component
@@ -5889,7 +5934,7 @@ mod frame_correlation_tests {
 mod coord_tests {
     use super::parse_gtk_frame_extents;
     use super::{
-        activation_index, before_snapshot_deadline, combine_wayland_content_offsets,
+        activation_index, before_snapshot_deadline, bounded_blocking, combine_wayland_content_offsets,
         hyprland_document_top_inset, is_activation_action, is_enabled_state,
         counts_as_showing, is_indexable_capabilities, is_passive_role, is_showing_state,
         is_web_process_bus,
@@ -5897,6 +5942,7 @@ mod coord_tests {
         scoped_component_nodes, screen_extent_rebase, select_click_target, select_web_document,
         ApplicationSelection,
     };
+    use super::OP_DEADLINE;
     use atspi::{State, StateSet};
     use std::time::Duration;
 
@@ -5966,6 +6012,69 @@ mod coord_tests {
             .expect_err("bounds must receive only the traversal's remaining budget");
 
         assert_eq!(tokio::time::Instant::now(), deadline);
+    }
+
+    // Regression coverage for #42: a synchronous, un-timed blocking call
+    // (the shape of `window_to_screen_offset`/`x11_window_origin`'s raw X11
+    // round-trips) executed directly inside the bounds phase must not be
+    // able to hold the walk hostage past the operation's deadline, even
+    // though the blocking work itself cannot be cancelled once started.
+    #[tokio::test]
+    async fn bounded_blocking_returns_none_once_the_operation_deadline_passes() {
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(20);
+        let started = std::time::Instant::now();
+
+        let result = OP_DEADLINE
+            .scope(deadline, async {
+                // Simulates a wedged X11 socket read: a plain blocking sleep
+                // with no cooperative await points of its own, far longer
+                // than the operation's deadline.
+                bounded_blocking(|| {
+                    std::thread::sleep(Duration::from_secs(2));
+                    "would-be X11 reply"
+                })
+                .await
+            })
+            .await;
+
+        assert_eq!(
+            result, None,
+            "bounded_blocking must give up once the deadline passes rather than \
+             waiting for the blocking closure to finish"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "the caller must not be held up by the still-running blocking thread; \
+             took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[tokio::test]
+    async fn bounded_blocking_returns_none_immediately_once_budget_is_exhausted() {
+        // A deadline already in the past means `remaining_budget()` is zero,
+        // so `bounded_blocking` must refuse to even spawn the closure —
+        // exercising the fast-bail branch the per-node `call()` helper shares.
+        let deadline = tokio::time::Instant::now();
+        tokio::time::sleep(Duration::from_millis(1)).await;
+
+        let ran = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let ran_in_closure = ran.clone();
+        let result = OP_DEADLINE
+            .scope(deadline, async {
+                bounded_blocking(move || {
+                    ran_in_closure.store(true, std::sync::atomic::Ordering::SeqCst);
+                    42
+                })
+                .await
+            })
+            .await;
+
+        assert_eq!(result, None);
+        assert!(
+            !ran.load(std::sync::atomic::Ordering::SeqCst),
+            "an already-exhausted budget must skip the closure entirely"
+        );
     }
 
     #[test]

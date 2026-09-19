@@ -71,7 +71,10 @@ jobs:
         run: cargo test -p cua-driver -p cua-driver-core -p cua-driver-sdk -p cua-driver-testkit -p cursor-overlay -p cursor-theme-cli -p platform-windows -p cua-driver-uia --all-targets --no-run --locked
       - name: Run complete desktop-independent core tests
         working-directory: libs/cua-driver/rust
-        run: cargo test -p cua-driver-core --lib --test recording_shutdown_errors --locked
+        run: cargo test -p cua-driver-core --lib --test recording_shutdown_errors --test native_reference --test stateless_address_safety --locked
+      - name: Test native reference matching without a desktop
+        working-directory: libs/cua-driver/rust
+        run: cargo test -p platform-windows --lib uia::element_resolver::tests::uia_reference_requires_one_complete_current_match --locked
       - name: Test LibreOffice target geometry without a desktop
         working-directory: libs/cua-driver/rust
         # Live LibreOffice scenarios remain ignored; run only pure request tests.

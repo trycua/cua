@@ -196,14 +196,19 @@ mod platform {
     /// install.ps1 surfaces any divergence; the moment install.ps1 changes
     /// shape, this script needs the same edit.
     ///
-    /// **Hidden-console launch (issue #1645):** the task action wraps
-    /// `cua-driver.exe serve` in `powershell -WindowStyle Hidden` +
-    /// `Start-Process -WindowStyle Hidden`. Without this, Task Scheduler
-    /// allocates a new CUI console window (because `cua-driver.exe` is a
-    /// console-subsystem binary) that stays visible on the user's desktop
-    /// for the lifetime of the daemon. The PowerShell wrapper exits
-    /// immediately after spawning the child, leaving only `cua-driver.exe`
-    /// in the process tree.
+    /// **Hidden-console launch (issues #1645, #3983):** the task action runs
+    /// `conhost.exe --headless "<cua-driver.exe>" serve`. `cua-driver.exe` is
+    /// a console-subsystem binary, so launching it directly makes Task
+    /// Scheduler allocate a visible console for the daemon's lifetime
+    /// (#1645). The earlier fix wrapped it in `powershell.exe -WindowStyle
+    /// Hidden`, but `powershell.exe` is itself a console binary: its console
+    /// is created (and, with Windows Terminal as the default terminal on
+    /// Windows 11, a Terminal window is shown) before `-WindowStyle Hidden`
+    /// takes effect, so a window still flashes at every logon. A headless
+    /// conhost gives the daemon a console that is never rendered, so no
+    /// window is created at any point. conhost stays as the daemon's
+    /// console host, so the task instance stays `Running` while the daemon
+    /// lives (ExecutionTimeLimit is already unlimited).
     ///
     /// **RunLevel = Highest** (since 2026-05-21): the daemon is registered to
     /// run at the user's elevated/admin token rather than the filtered
@@ -227,7 +232,7 @@ mod platform {
     /// $domain selector below picks USERDOMAIN when it's a real
     /// (non-WORKGROUP, non-COMPUTERNAME) domain and falls back to
     /// COMPUTERNAME otherwise, covering both shapes.
-    const REGISTER_PS: &str = r#"
+    pub(super) const REGISTER_PS: &str = r#"
 $ErrorActionPreference = 'Stop'
 if ($env:USERDOMAIN -and $env:USERDOMAIN -ne 'WORKGROUP' -and $env:USERDOMAIN -ne $env:COMPUTERNAME) {
     $domain = $env:USERDOMAIN
@@ -235,17 +240,13 @@ if ($env:USERDOMAIN -and $env:USERDOMAIN -ne 'WORKGROUP' -and $env:USERDOMAIN -n
     $domain = $env:COMPUTERNAME
 }
 $user = "$domain\$env:USERNAME"
-# Use a hidden PowerShell wrapper as the task action so Windows never
-# allocates a visible console window when the daemon is launched at
-# logon. cua-driver.exe is a CUI (console-subsystem) binary: without
-# this wrapper, Task Scheduler allocates a new console and the window
-# stays on the user's desktop for the lifetime of the daemon (issue #1645).
-# Start-Process -WindowStyle Hidden spawns the child fully detached;
-# the powershell.exe wrapper exits immediately after, leaving only the
-# cua-driver.exe daemon in the process tree.
+# Launch the daemon under a headless conhost so no console window is ever
+# shown at logon. cua-driver.exe is a CUI (console-subsystem) binary, and a
+# powershell.exe -WindowStyle Hidden wrapper still flashes its own console
+# (a Windows Terminal window on Windows 11) before hiding (#1645, #3983).
 $action = New-ScheduledTaskAction `
-    -Execute 'powershell.exe' `
-    -Argument "-NoProfile -WindowStyle Hidden -NonInteractive -Command `"Start-Process -FilePath '$env:CUA_DRIVER_AS_EXE' -ArgumentList 'serve' -WindowStyle Hidden -WorkingDirectory '$env:USERPROFILE'`"" `
+    -Execute "$env:SystemRoot\System32\conhost.exe" `
+    -Argument "--headless `"$env:CUA_DRIVER_AS_EXE`" serve" `
     -WorkingDirectory $env:USERPROFILE
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
 $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest
@@ -532,6 +533,18 @@ pub fn run_autostart_cmd(subcommand: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn autostart_action_uses_headless_conhost() {
+        // A powershell.exe -WindowStyle Hidden wrapper flashes a console
+        // window at logon (#3983); the daemon must run under a
+        // headless conhost instead.
+        let ps = platform::REGISTER_PS;
+        assert!(ps.contains(r#"-Execute "$env:SystemRoot\System32\conhost.exe""#));
+        assert!(ps.contains(r#"-Argument "--headless `"$env:CUA_DRIVER_AS_EXE`" serve""#));
+        assert!(!ps.contains("-Execute 'powershell.exe'"));
+    }
 
     #[test]
     fn windows_task_path_strips_short_extended_drive_prefix() {

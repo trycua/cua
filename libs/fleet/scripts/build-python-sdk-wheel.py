@@ -33,8 +33,8 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def repository_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+def workspace_root() -> Path:
+    return Path(__file__).resolve().parents[1]
 
 
 def native_library_name() -> str:
@@ -84,13 +84,13 @@ def native_library_name_for_platform_tag(platform_tag: str) -> str:
     raise RuntimeError(f"unsupported wheel platform tag: {platform_tag}")
 
 
-def build_native_library(repo_root: Path, cargo_target: str | None, expected_name: str) -> Path:
+def build_native_library(workspace_root: Path, cargo_target: str | None, expected_name: str) -> Path:
     command = [
         "cargo",
         "build",
         "--locked",
         "--manifest-path",
-        str(repo_root / "cyclops-cs" / "Cargo.toml"),
+        str(workspace_root / "Cargo.toml"),
         "--package",
         "cyclops-sdk",
         "--release",
@@ -99,7 +99,7 @@ def build_native_library(repo_root: Path, cargo_target: str | None, expected_nam
         command.extend(["--target", cargo_target])
     subprocess.run(command, check=True)
 
-    target_directory = repo_root / "cyclops-cs" / "target"
+    target_directory = workspace_root / "target"
     if cargo_target:
         target_directory /= cargo_target
     library = target_directory / "release" / expected_name
@@ -119,8 +119,8 @@ def csv_bytes(rows: list[list[str]]) -> bytes:
     return output.getvalue().encode()
 
 
-def package_entries(repo_root: Path, native_library: Path, expected_name: str) -> dict[str, bytes]:
-    source = repo_root / "cyclops-cs" / "sdk-bindings" / "python" / PACKAGE_NAME
+def package_entries(workspace_root: Path, native_library: Path, expected_name: str) -> dict[str, bytes]:
+    source = workspace_root / "sdk-bindings" / "python" / PACKAGE_NAME
     if not source.is_dir():
         raise RuntimeError(f"generated Python binding is missing: {source}")
 
@@ -135,7 +135,7 @@ def package_entries(repo_root: Path, native_library: Path, expected_name: str) -
 
 
 def build_wheel(
-    repo_root: Path,
+    workspace_root: Path,
     version: str,
     output_directory: Path,
     native_library: Path | None,
@@ -147,14 +147,14 @@ def build_wheel(
 
     tag = platform_tag or default_platform_tag()
     expected_name = native_library_name_for_platform_tag(tag)
-    library = native_library or build_native_library(repo_root, cargo_target, expected_name)
+    library = native_library or build_native_library(workspace_root, cargo_target, expected_name)
     library = library.resolve()
     if not library.is_file():
         raise RuntimeError(f"native library does not exist: {library}")
     if library.name != expected_name:
         raise RuntimeError(f"native library must be named {expected_name}, got {library.name}")
 
-    entries = package_entries(repo_root, library, expected_name)
+    entries = package_entries(workspace_root, library, expected_name)
     dist_info = f"{DISTRIBUTION_STEM}-{version}.dist-info"
     entries[f"{dist_info}/METADATA"] = (
         "Metadata-Version: 2.4\n"
@@ -205,7 +205,7 @@ def main() -> int:
     args = parse_args()
     try:
         wheel = build_wheel(
-            repository_root(),
+            workspace_root(),
             args.version,
             args.outdir,
             args.native_library,

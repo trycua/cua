@@ -1910,15 +1910,19 @@ fn is_gtk_process(pid: u32) -> bool {
 enum BackgroundAction {
     AxSemantic,
     WindowClick,
+    /// Indexed X11 click on editable text or a table cell: the AT-SPI action
+    /// places no caret or selection, so it needs a real pointer.
+    ElementSelectionClick,
     WindowPointerGesture,
     WindowScroll,
     PidKeyboard,
 }
 
 impl BackgroundAction {
-    const ALL: [BackgroundAction; 5] = [
+    const ALL: [BackgroundAction; 6] = [
         BackgroundAction::AxSemantic,
         BackgroundAction::WindowClick,
+        BackgroundAction::ElementSelectionClick,
         BackgroundAction::WindowPointerGesture,
         BackgroundAction::WindowScroll,
         BackgroundAction::PidKeyboard,
@@ -1928,6 +1932,7 @@ impl BackgroundAction {
         match self {
             BackgroundAction::AxSemantic => "accessibility",
             BackgroundAction::WindowClick => "window_click",
+            BackgroundAction::ElementSelectionClick => "element_selection_click",
             BackgroundAction::WindowPointerGesture => "window_pointer_gesture",
             BackgroundAction::WindowScroll => "window_scroll",
             BackgroundAction::PidKeyboard => "pid_keyboard",
@@ -1938,6 +1943,7 @@ impl BackgroundAction {
         match self {
             BackgroundAction::AxSemantic => &["click", "scroll", "set_value"],
             BackgroundAction::WindowClick => &["click"],
+            BackgroundAction::ElementSelectionClick => &["click"],
             BackgroundAction::WindowPointerGesture => &["double_click", "right_click", "drag"],
             BackgroundAction::WindowScroll => &["scroll"],
             BackgroundAction::PidKeyboard => &["press_key", "hotkey"],
@@ -2011,6 +2017,14 @@ trait BackgroundSurface {
             .then_some(crate::input::delivery::BackgroundUnavailable::FocusedInputOnly)
     }
 
+    fn x11_selection_pointer_refusal(
+        &self,
+        delivery: crate::input::delivery::DeliveryMode,
+    ) -> Option<crate::input::delivery::BackgroundUnavailable> {
+        (!delivery.is_foreground() && !self.wayland_input())
+            .then_some(crate::input::delivery::BackgroundUnavailable::FocusedInputOnly)
+    }
+
     fn refusal(
         &self,
         action: BackgroundAction,
@@ -2019,6 +2033,9 @@ trait BackgroundSurface {
         match action {
             BackgroundAction::AxSemantic => None,
             BackgroundAction::WindowClick => self.chromium_refusal(delivery),
+            BackgroundAction::ElementSelectionClick => self
+                .chromium_refusal(delivery)
+                .or_else(|| self.x11_selection_pointer_refusal(delivery)),
             BackgroundAction::WindowPointerGesture => self
                 .chromium_refusal(delivery)
                 .or_else(|| self.webkit_pointer_refusal(delivery))
@@ -2287,17 +2304,23 @@ mod background_input_route_tests {
     fn each_pointer_family_reports_its_own_ladder() {
         for (name, surface) in surfaces() {
             let expected: Vec<&'static str> = match name {
-                "x11 native toolkit" => vec![],
+                "x11 native toolkit" => vec!["element_selection_click"],
                 "x11 chromium" => vec![
                     "window_click",
+                    "element_selection_click",
                     "window_pointer_gesture",
                     "window_scroll",
                     "pid_keyboard",
                 ],
-                "x11 webkitgtk" | "x11 gtk" => {
-                    vec!["window_pointer_gesture", "window_scroll", "pid_keyboard"]
+                "x11 webkitgtk" | "x11 gtk" => vec![
+                    "element_selection_click",
+                    "window_pointer_gesture",
+                    "window_scroll",
+                    "pid_keyboard",
+                ],
+                "x11 gtk with a target-addressed pointer backend" => {
+                    vec!["element_selection_click", "pid_keyboard"]
                 }
-                "x11 gtk with a target-addressed pointer backend" => vec!["pid_keyboard"],
                 "native wayland" => {
                     vec!["window_pointer_gesture", "window_scroll", "pid_keyboard"]
                 }
@@ -3625,7 +3648,12 @@ impl ClickTool {
                     if error.is::<crate::atspi::ClickActionUnavailable>()
                         || error.is::<crate::atspi::ElementClickNeedsForeground>() =>
                 {
-                    if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
+                    let action = if target.needs_foreground_pointer() {
+                        BackgroundAction::ElementSelectionClick
+                    } else {
+                        BackgroundAction::WindowClick
+                    };
+                    if let Some(refusal) = background_refusal(action, pid, delivery) {
                         return Ok(refusal);
                     }
                     let local_center = || -> anyhow::Result<(f64, f64)> {
@@ -3638,11 +3666,7 @@ impl ClickTool {
                     };
                     let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
                     let (lx, ly) = local_center()?;
-                    let path = if !delivery.is_foreground() && target.needs_foreground_pointer() {
-                        return Ok(crate::input::delivery::background_unavailable_error(
-                            crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
-                        ));
-                    } else if delivery.is_foreground() {
+                    let path = if delivery.is_foreground() {
                         crate::input::with_x11_foreground(xid, 80, || {
                             let (lx, ly) = local_center()?;
                             let (sx, sy) = window_local_to_screen(xid, lx, ly)?;

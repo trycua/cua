@@ -38,6 +38,21 @@ inspection, deletion, and stable-channel return instructions. The [architecture
 and staged plan](docs/computer-history-architecture.md) defines the format,
 security boundary, release gates, and later NVIDIA OpenShell integration.
 
+## Optional policy head
+
+`suggest_action` asks a small, fast classifier which element to act on next
+for one step of a goal in one window. It snapshots the window, projects the
+tree to named interactive elements, and returns a typed pick with calibrated
+probabilities. It never generates text and never dispatches input: the
+caller still calls `click` or `type_text`.
+
+It is off unless you set `TYPESAFE_API_KEY`. Without a credential the tool is
+not registered and the tool list is unchanged.
+
+See [Optional policy head](docs/optional-policy-head.md) for the response
+shape, how the `deny` list is enforced in code rather than by prompt, what
+leaves the machine, and the failure codes.
+
 ## Permission modes
 
 `standard` is the promptless default for normal automation. `bounded` admits

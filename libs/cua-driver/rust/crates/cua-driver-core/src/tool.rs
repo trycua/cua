@@ -403,6 +403,11 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "browser_download" => &["browser.download"],
         "browser_pointer" => &["browser.input.pointer"],
 
+        // ── optional policy head ─────────────────────────────────────
+        // Registered only when a provider credential is configured, so a
+        // default install advertises neither the tool nor these tokens.
+        "suggest_action" => &["policy.suggest_action", "accessibility.element_tokens"],
+
         // ── driver self-service ──────────────────────────────────────
         "check_for_update" => &["driver.update_check"],
         "probe" => &["driver.probe"],
@@ -865,6 +870,19 @@ impl ToolRegistry {
     /// Call this once, immediately after `Arc::new(registry)`.
     pub fn init_self_weak(self: &Arc<Self>) {
         *self.replay_registry.lock().unwrap() = Arc::downgrade(self);
+    }
+
+    /// Hand a composing tool the same weak self-reference the replay tool
+    /// holds, so it can dispatch other tools through the canonical
+    /// chokepoint instead of reaching into a platform module.
+    ///
+    /// The slot is empty until [`init_self_weak`](Self::init_self_weak)
+    /// runs, which is why it is an `Arc<Mutex<Weak<_>>>` and not a
+    /// `Weak<_>`: tools are registered while the registry is still owned
+    /// by value. A composing tool must therefore handle the "registry not
+    /// initialised yet" case, exactly as `replay_trajectory` does.
+    pub fn self_registry_slot(&self) -> ReplayRegistrySlot {
+        self.replay_registry.clone()
     }
 
     pub fn tools_list(&self) -> Value {
@@ -5099,6 +5117,7 @@ mod capability_tests {
         "install_ffmpeg",
         // misc
         "page",
+        "suggest_action",
         "check_for_update",
         "probe",
         // browser-tool v1
@@ -5186,6 +5205,8 @@ mod capability_tests {
         "recording.install_dependency",
         // page
         "page.action",
+        // optional policy head
+        "policy.suggest_action",
         // browser-tool v1
         "browser.state",
         "browser.prepare",

@@ -418,6 +418,9 @@ pub fn register_into(registry: &mut ToolRegistry) {
 
 pub fn register_host_tools(registry: &mut ToolRegistry) {
     crate::check_update_tool::register_into(registry);
+    // No-op unless a policy-head credential is configured, so a default
+    // install advertises exactly the tool list it advertised before.
+    crate::policy_tool::register_into(registry);
     register_into(registry);
 }
 

@@ -5955,6 +5955,7 @@ impl Tool for ClickTool {
                     "modifier": cua_driver_core::tool_schema::modifier_schema(),
                     "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."},
                     "scope":{"type":"string","enum":["window","desktop"],"default":"window"},
+                    "coordinate_frame": coordinate_frame_schema(),
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
@@ -9052,6 +9053,7 @@ impl Tool for ScrollTool {
                     "x":{"type":"number","description":"Window-local screenshot-pixel X of the scroll target. Pass with y and without element_index."},
                     "y":{"type":"number","description":"Window-local screenshot-pixel Y of the scroll target. Pass with x and without element_index."},
                     "scope":{"type":"string","enum":["window","desktop"],"default":"window"},
+                    "coordinate_frame": coordinate_frame_schema(),
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
@@ -10210,6 +10212,7 @@ impl Tool for DragTool {
                 "button": cua_driver_core::tool_schema::button_schema(),
                 "from_zoom":{"type":"boolean"},
                 "scope":{"type":"string","enum":["window","desktop"],"default":"window"},
+                "coordinate_frame": coordinate_frame_schema(),
                 "delivery_mode": crate::input::delivery::delivery_mode_schema()
             },"additionalProperties":false}),
             read_only: false, destructive: true, idempotent: false, open_world: true,
@@ -11259,6 +11262,7 @@ impl Tool for MouseButtonUpTool {
                 "window_id":{"type":"integer"},
                 "x":{"type":"number","description":"Window-local pixel X of the target window's own get_window_state screenshot (0..screenshot_width). For get_desktop_state pixels pass scope:\"desktop\" (or coordinate_frame:\"desktop\")."},
                 "y":{"type":"number","description":"Window-local pixel Y of the target window's own get_window_state screenshot (0..screenshot_height); see x."},
+                "coordinate_frame": coordinate_frame_schema(),
                 "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."}
             },"additionalProperties":false}),
             read_only: false, destructive: true, idempotent: false, open_world: true,
@@ -11288,7 +11292,12 @@ impl Tool for MouseButtonUpTool {
 
         let mut x = args.opt_f64("x").unwrap_or(hold.x);
         let mut y = args.opt_f64("y").unwrap_or(hold.y);
-        if args.bool_or("from_zoom", false) {
+        let desktop_frame = args.opt_f64("x").is_some()
+            && args.opt_f64("y").is_some()
+            && desktop_frame_requested(&args);
+        if desktop_frame {
+            // Desktop pixels: no zoom/resize scaling; translated once below.
+        } else if args.bool_or("from_zoom", false) {
             match self.state.zoom_registry.get(hold.pid) {
                 Some(ctx) => {
                     let (wx, wy) = ctx.zoom_to_window(x, y);
@@ -11306,6 +11315,25 @@ impl Tool for MouseButtonUpTool {
         } else if let Some(ratio) = self.state.resize_registry.ratio(hold.pid) {
             x *= ratio;
             y *= ratio;
+        }
+        if desktop_frame {
+            let (dx, dy) = self.state.desktop_to_screen(x, y);
+            match tokio::task::spawn_blocking(move || desktop_to_window_local(xid, dx, dy)).await {
+                Ok(Ok((lx, ly))) => {
+                    x = lx;
+                    y = ly;
+                }
+                Ok(Err(e)) => {
+                    return ToolResult::error(format!(
+                        "desktop-frame coordinates could not be mapped into window {xid}: {e}"
+                    ))
+                    .with_structured(mouse_hold_json(&cursor_id, Some(&hold)))
+                }
+                Err(e) => {
+                    return ToolResult::error(format!("Task error: {e}"))
+                        .with_structured(mouse_hold_json(&cursor_id, Some(&hold)))
+                }
+            }
         }
 
         crate::overlay::send_command_for(

@@ -3238,13 +3238,25 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
     let window = xid as u32;
     let root = conn.setup().roots[0].root;
     let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    // Remap guards live until the function returns: a character outside the
+    // keymap (CJK, emoji, ...) borrows a spare keycode rather than being
+    // silently dropped — see keycode_for_keysym's doc and the analogous fix
+    // in mpx_keyboard::plan_text_with_fallback for the background path.
+    let mut remap_guards = Vec::new();
 
     for ch in text.chars() {
         // Resolve the keycode and whether Shift must be held — without it,
         // uppercase and shifted symbols would otherwise type their unshifted
         // form (e.g. "A" arriving as "a").
-        let Some((keycode, needs_shift)) = char_to_keycode_shift(&mapping, ch as u32) else {
-            continue;
+        let (keycode, needs_shift) = match char_to_keycode_shift(&mapping, mpx_keyboard::keysym_for_char(ch)) {
+            Some(found) => found,
+            None => match keycode_for_keysym(&conn, &mapping, mpx_keyboard::keysym_for_char(ch), &ch.to_string()) {
+                Ok((keycode, guard)) => {
+                    remap_guards.extend(guard);
+                    (keycode, false)
+                }
+                Err(_) => continue,
+            },
         };
         let state = if needs_shift {
             KeyButMask::SHIFT
@@ -3317,14 +3329,19 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
         .get(..kpm)
         .and_then(|s| s.iter().copied().find(|&k| k != 0))
         .unwrap_or(50);
+    // Remap guards live until the function returns — see send_type_text_with_delay.
+    let mut remap_guards = Vec::new();
     for ch in text.chars() {
-        let cp = match ch {
-            '\n' => 0xff0d, // XK_Return
-            '\t' => 0xff09, // XK_Tab
-            c => c as u32,
-        };
-        let Some((keycode, needs_shift)) = char_to_keycode_shift(&mapping, cp) else {
-            continue;
+        let cp = mpx_keyboard::keysym_for_char(ch);
+        let (keycode, needs_shift) = match char_to_keycode_shift(&mapping, cp) {
+            Some(found) => found,
+            None => match keycode_for_keysym(&conn, &mapping, cp, &ch.to_string()) {
+                Ok((keycode, guard)) => {
+                    remap_guards.extend(guard);
+                    (keycode, false)
+                }
+                Err(_) => continue,
+            },
         };
         if needs_shift {
             conn.xtest_fake_input(KEY_PRESS_EVENT, shift_kc, 0, x11rb::NONE, 0, 0, 0)?;

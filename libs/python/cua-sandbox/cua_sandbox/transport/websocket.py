@@ -47,8 +47,8 @@ class WebSocketTransport(Transport):
         await self._ws.send(json.dumps(payload))
         raw = await self._ws.recv()
         resp = json.loads(raw)
-        if isinstance(resp, dict) and resp.get("error"):
-            raise RuntimeError(f"Remote error: {resp['error']}")
+        if isinstance(resp, dict) and (resp.get("error") or resp.get("success") is False):
+            raise RuntimeError(f"Remote error: {resp.get('error') or 'Command failed'}")
         return resp
 
     async def send(self, action: str, **params: Any) -> Any:

@@ -115,10 +115,18 @@ async def test_get_screen_size_response_formats(response):
     assert await transport.get_screen_size() == {"width": 1920, "height": 1080}
 
 
-@pytest.mark.parametrize("method", ["send", "screenshot", "get_screen_size"])
-async def test_remote_errors(method):
-    transport = _make_transport({"success": False, "error": "permission denied"})
+@pytest.mark.parametrize("method", ["send", "screenshot", "get_screen_size", "get_environment"])
+@pytest.mark.parametrize(
+    "response, message",
+    [
+        ({"success": False, "error": "permission denied"}, "permission denied"),
+        ({"success": False, "error": ""}, "Command failed"),
+        ({"success": False}, "Command failed"),
+    ],
+)
+async def test_remote_errors(method, response, message):
+    transport = _make_transport(response)
     args = ("read_text",) if method == "send" else ()
 
-    with pytest.raises(RuntimeError, match="Remote error: permission denied"):
+    with pytest.raises(RuntimeError, match=f"Remote error: {message}"):
         await getattr(transport, method)(*args)

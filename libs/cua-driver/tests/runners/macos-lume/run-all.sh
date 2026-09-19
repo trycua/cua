@@ -27,6 +27,8 @@ RETRY_INTERNAL_LANE=shared
 RETRY_ATTEMPTS_LIMIT=3
 # How long to wait for a daemon mode transition, in one-second polls.
 DAEMON_MODE_WAIT_ATTEMPTS="${CUA_E2E_DAEMON_WAIT_ATTEMPTS:-10}"
+KEYCHAIN_COMMAND_TIMEOUT_SECONDS=5
+KEYCHAIN_COMMAND_KILL_GRACE_SECONDS=1
 # Lanes whose failure is attributable to one typed matrix cell that an exact
 # single-cell rerun can reproduce. The embedded-browser lane is excluded on
 # purpose: filtering to one of its cells leaves the shared web-action lane with
@@ -187,28 +189,158 @@ output_contains() {
   [[ "${CAPTURED_OUTPUT}" == *"${needle}"* ]]
 }
 
+run_bounded_command() {
+  command -v python3 >/dev/null 2>&1 || {
+    echo "Missing golden-image dependency: python3" >&2
+    return 127
+  }
+  python3 - "${KEYCHAIN_COMMAND_TIMEOUT_SECONDS}" \
+      "${KEYCHAIN_COMMAND_KILL_GRACE_SECONDS}" "$@" <<'PY'
+import os
+import signal
+import subprocess
+import sys
+
+timeout = float(sys.argv[1])
+kill_grace = float(sys.argv[2])
+try:
+    process = subprocess.Popen(sys.argv[3:], start_new_session=True)
+except OSError as error:
+    print(f"failed to start bounded command {sys.argv[3]}: {error}", file=sys.stderr)
+    raise SystemExit(127)
+try:
+    raise SystemExit(process.wait(timeout=timeout))
+except subprocess.TimeoutExpired:
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        raise SystemExit(process.wait())
+    try:
+        process.wait(timeout=kill_grace)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait()
+    raise SystemExit(124)
+PY
+}
+
+probe_signing_keychain() {
+  local keychain="$1"
+  local signing_identity="${CUA_E2E_SIGNING_IDENTITY:-${SIGNING_CN}}"
+  local probe_dir probe_binary status=0
+  probe_dir="$(mktemp -d \
+    "${TMPDIR:-/tmp}/cua-signing-keychain-probe.XXXXXX")" || return 1
+  probe_binary="${probe_dir}/probe"
+  cp /usr/bin/true "${probe_binary}" || status=$?
+  if ((status == 0)); then
+    run_bounded_command codesign --force --timestamp=none \
+      --sign "${signing_identity}" \
+      --keychain "${keychain}" "${probe_binary}" || status=$?
+  fi
+  if ((status == 0)); then
+    run_bounded_command codesign --verify --strict "${probe_binary}" || status=$?
+  fi
+  rm -f "${probe_binary}"
+  rmdir "${probe_dir}" 2>/dev/null || true
+  return "${status}"
+}
+
+probe_login_keychain() {
+  local keychain="$1"
+  local service="cua-driver-keychain-probe-${$}-${RANDOM}"
+  local account="cua-driver-keychain-probe"
+  local probe_value="${service}"
+  local observed_value="" status=0 cleanup_status=0
+
+  if run_bounded_command security add-generic-password -a "${account}" \
+      -s "${service}" -w "${probe_value}" "${keychain}"; then
+    :
+  else
+    status=$?
+  fi
+  if ((status == 0)); then
+    observed_value="$(run_bounded_command security find-generic-password \
+      -a "${account}" -s "${service}" -w "${keychain}")" || status=$?
+    if ((status == 0)) && [[ "${observed_value}" != "${probe_value}" ]]; then
+      status=1
+    fi
+  fi
+  run_bounded_command security delete-generic-password -a "${account}" \
+    -s "${service}" "${keychain}" >/dev/null || cleanup_status=$?
+  if ((cleanup_status != 0)); then
+    echo "Login keychain probe cleanup failed; retrying the bounded delete once" >&2
+    cleanup_status=0
+    run_bounded_command security delete-generic-password -a "${account}" \
+      -s "${service}" "${keychain}" >/dev/null || cleanup_status=$?
+  fi
+  if ((cleanup_status != 0)); then
+    echo "Login keychain probe cleanup failed after two bounded delete attempts; temporary item ${service} may remain" >&2
+    status=${cleanup_status}
+  fi
+  observed_value=""
+  probe_value=""
+  return "${status}"
+}
+
+prepare_keychain() {
+  local label="$1"
+  local keychain="$2"
+  local provided_password="$3"
+  local probe_kind="$4"
+  local keychain_password="${provided_password}"
+
+  if [[ -z "${keychain_password}" && -t 0 ]]; then
+    read -r -s -p "${label} password: " keychain_password
+    printf '\n'
+  fi
+  if [[ -n "${keychain_password}" ]]; then
+    if ! run_bounded_command security unlock-keychain -p \
+        "${keychain_password}" "${keychain}"; then
+      echo "${label} could not be unlocked within the bounded operation" >&2
+      return 2
+    fi
+  else
+    case "${probe_kind}" in
+      signing)
+        if ! probe_signing_keychain "${keychain}"; then
+          echo "${label} did not permit the bounded signing and verification probe" >&2
+          return 2
+        fi
+        ;;
+      login)
+        if ! probe_login_keychain "${keychain}"; then
+          echo "${label} did not permit the bounded add/read/delete probe" >&2
+          return 2
+        fi
+        ;;
+      *)
+        echo "Unknown keychain probe kind: ${probe_kind}" >&2
+        return 2
+        ;;
+    esac
+  fi
+  keychain_password=""
+}
+
 unlock_required_keychains() {
-  local keychain_password="${CUA_E2E_SIGNING_KEYCHAIN_PASSWORD:-}"
+  local provided_password="${CUA_E2E_SIGNING_KEYCHAIN_PASSWORD:-}"
   unset CUA_E2E_SIGNING_KEYCHAIN_PASSWORD
 
-  echo "[SIGNING] Unlocking the golden image's dedicated signing keychain"
-  if [[ -n "${keychain_password}" ]]; then
-    security unlock-keychain -p "${keychain_password}" "${SIGNING_KEYCHAIN}"
-  else
-    security unlock-keychain "${SIGNING_KEYCHAIN}"
-  fi
+  echo "[SIGNING] Preparing the golden image's dedicated signing keychain"
+  prepare_keychain "Dedicated signing keychain" "${SIGNING_KEYCHAIN}" \
+    "${provided_password}" signing
 
   if [[ ! -f "${LOGIN_KEYCHAIN}" ]]; then
     echo "Missing console user's login Keychain: ${LOGIN_KEYCHAIN}" >&2
     return 2
   fi
-  echo "[HISTORY] Unlocking the login Keychain for encrypted computer history"
-  if [[ -n "${keychain_password}" ]]; then
-    security unlock-keychain -p "${keychain_password}" "${LOGIN_KEYCHAIN}"
-  else
-    security unlock-keychain "${LOGIN_KEYCHAIN}"
-  fi
-  keychain_password=""
+  echo "[HISTORY] Preparing the login Keychain for encrypted computer history"
+  prepare_keychain "Login keychain" "${LOGIN_KEYCHAIN}" \
+    "${provided_password}" login
+  provided_password=""
 }
 
 json_string_array() {
@@ -761,7 +893,7 @@ if [[ "${SIP_STATUS}" != *"System Integrity Protection status: disabled."* ]]; t
   exit 2
 fi
 
-for command_name in cargo codesign ffmpeg ffprobe jq node npm osascript security xcrun; do
+for command_name in cargo codesign ffmpeg ffprobe jq node npm osascript python3 security xcrun; do
   command -v "${command_name}" >/dev/null 2>&1 || {
     echo "Missing golden-image dependency: ${command_name}" >&2
     exit 2

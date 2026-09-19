@@ -1,0 +1,758 @@
+name: "Review: Cua Perception supplied-input candidates"
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: "Exact current head SHA of pull request #3943"
+        required: true
+        type: string
+      catalog_version:
+        description: "Positive review catalog version"
+        required: true
+        type: string
+      expires_unix:
+        description: "Review catalog expiry as Unix seconds"
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      source_sha:
+        description: "Exact current head SHA of pull request #3943"
+        required: true
+        type: string
+      catalog_version:
+        description: "Positive review catalog version"
+        required: true
+        type: string
+      expires_unix:
+        description: "Review catalog expiry as Unix seconds"
+        required: true
+        type: string
+    outputs:
+      signed_candidate_artifact_id:
+        description: "Artifact ID containing all signed review candidates"
+        value: ${{ jobs.aggregate.outputs.signed_candidate_artifact_id }}
+      producer_run_id:
+        description: "Actions run ID that produced the signed review candidates"
+        value: ${{ jobs.aggregate.outputs.producer_run_id }}
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: cua-perception-review-inputs-${{ inputs.source_sha }}
+  cancel-in-progress: false
+
+jobs:
+  reviewed-model:
+    name: Broker the pinned reviewed model artifact
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    outputs:
+      source_asset_id: ${{ steps.verify.outputs.source_asset_id }}
+    steps:
+      - id: verify
+        name: Verify the immutable producer run and artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # PR #3943 bootstrap input from a successful exact-head producer run.
+          REVIEWED_ARTIFACT_ID: "10582583541"
+          REVIEWED_ARTIFACT_NAME: cua-perception-input-linux-x86_64
+          REVIEWED_RUN_ID: "35438356263"
+          REVIEWED_SOURCE_ASSET_ID: "571471639"
+          REVIEWED_SOURCE_SHA: 289372dea8b2b11f572f0f6a15824315bc74026b
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REPOSITORY" == "trycua/cua" ]]
+          run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$REVIEWED_RUN_ID")"
+          [[ "$(jq -r .id <<<"$run_json")" == "$REVIEWED_RUN_ID" ]]
+          [[ "$(jq -r .status <<<"$run_json")" == "completed" ]]
+          [[ "$(jq -r .conclusion <<<"$run_json")" == "success" ]]
+          [[ "$(jq -r .event <<<"$run_json")" == "pull_request" ]]
+          [[ "$(jq -r .head_sha <<<"$run_json")" == "$REVIEWED_SOURCE_SHA" ]]
+          [[ "$(jq -r .head_repository.full_name <<<"$run_json")" == "$GITHUB_REPOSITORY" ]]
+          workflow_path="$(jq -r .path <<<"$run_json")"
+          expected_workflow=.github/workflows/review-cua-perception-pr3943.yml
+          [[ "$workflow_path" == "$expected_workflow" || "$workflow_path" == "$expected_workflow"@* ]]
+
+          artifact_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$REVIEWED_ARTIFACT_ID")"
+          [[ "$(jq -r .id <<<"$artifact_json")" == "$REVIEWED_ARTIFACT_ID" ]]
+          [[ "$(jq -r .name <<<"$artifact_json")" == "$REVIEWED_ARTIFACT_NAME" ]]
+          [[ "$(jq -r .expired <<<"$artifact_json")" == "false" ]]
+          [[ "$(jq -r .workflow_run.id <<<"$artifact_json")" == "$REVIEWED_RUN_ID" ]]
+          [[ "$(jq -r .workflow_run.head_sha <<<"$artifact_json")" == "$REVIEWED_SOURCE_SHA" ]]
+          echo "source_asset_id=$REVIEWED_SOURCE_ASSET_ID" >> "$GITHUB_OUTPUT"
+      - name: Download the exact reviewed producer artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: "10582583541"
+          github-token: ${{ github.token }}
+          path: reviewed-producer-input
+          repository: trycua/cua
+          run-id: "35438356263"
+      - name: Extract and verify the reviewed model
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, pathlib, shutil
+
+          root = pathlib.Path("reviewed-producer-input")
+          filename = "omniparser-icon-detect-1280-opset17.onnx"
+          expected_sha256 = "d8a876bf7f9fb73d7da9432904ade7fa78e092e9a91674e5a2806b45562a9ab2"
+          expected_size = 80_933_219
+          matches = [path for path in root.rglob(filename) if path.is_file()]
+          if len(matches) != 1:
+              raise SystemExit(f"expected exactly one reviewed model in producer artifact; found {len(matches)}")
+          source = matches[0]
+          size = source.stat().st_size
+          digest = hashlib.sha256(source.read_bytes()).hexdigest()
+          if size != expected_size or digest != expected_sha256:
+              raise SystemExit("producer artifact model differs from the reviewed size or SHA-256")
+          destination = pathlib.Path("reviewed-inputs") / filename
+          destination.parent.mkdir()
+          shutil.copyfile(source, destination)
+          print({"sha256": digest, "size": size})
+          PY
+      - name: Upload the immutable reviewed model handoff
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
+        with:
+          name: reviewed-cua-perception-model
+          path: reviewed-inputs/
+          if-no-files-found: error
+          retention-days: 1
+
+  supplied-input:
+    name: native review input (${{ matrix.target }})
+    needs: reviewed-model
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            platform: linux-x11
+            input_artifact: cua-perception-input-linux-x86_64
+            worker: cua-perception
+            driver: cua-driver
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            platform: windows
+            input_artifact: cua-perception-input-windows-x86_64
+            worker: cua-perception.exe
+            driver: cua-driver.exe
+          # Match the production Driver build and hosted desktop E2E image.
+          # The macOS 15 image cannot use the ephemeral self-signed review key.
+          - runner: macos-26
+            target: aarch64-apple-darwin
+            platform: macos
+            input_artifact: cua-perception-input-macos-aarch64
+            worker: cua-perception
+            driver: cua-driver
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - name: Check out the exact workflow and candidate source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Install native Linux build dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
+            libei-dev libx11-dev libxi-dev libxtst-dev libxext-dev \
+            libwebkit2gtk-4.1-dev libssl-dev libxdo-dev \
+            libayatana-appindicator3-dev librsvg2-dev
+      - name: Require the exact current pull request head
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_SHA: ${{ inputs.source_sha }}
+          EVENT_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_LABEL: ${{ github.event.label.name }}
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "trycua/cua"
+          [[ "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            test "$EVENT_PR_NUMBER" = 3943
+            test "$EVENT_HEAD_REPOSITORY" = "$GITHUB_REPOSITORY"
+            test "$EVENT_HEAD_SHA" = "$REQUESTED_SHA"
+            test "$EVENT_LABEL" = cua-perception-live-review
+          else
+            test "$GITHUB_EVENT_NAME" = workflow_dispatch
+            test "$GITHUB_SHA" = "$REQUESTED_SHA"
+          fi
+          IFS=$'\t' read -r state head_sha head_repo < <(
+            gh api "repos/$GITHUB_REPOSITORY/pulls/3943" \
+              --jq '[.state, .head.sha, .head.repo.full_name] | @tsv'
+          )
+          test "$state" = open
+          test "$head_repo" = "$GITHUB_REPOSITORY"
+          test "$head_sha" = "$REQUESTED_SHA"
+          git fetch --no-tags origin "+refs/pull/3943/head:refs/cua-reviewed/pr-3943"
+          test "$(git rev-parse refs/cua-reviewed/pr-3943)" = "$REQUESTED_SHA"
+      - name: Download the immutable reviewed model handoff
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: reviewed-cua-perception-model
+          path: reviewed-inputs
+      - name: Verify the supplied model handoff
+        shell: bash
+        env:
+          CUA_REVIEWED_MODEL_ASSET_ID: ${{ needs.reviewed-model.outputs.source_asset_id }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib
+
+          asset_id = os.environ["CUA_REVIEWED_MODEL_ASSET_ID"]
+          if not asset_id.isdigit() or asset_id.startswith("0"):
+              raise SystemExit("broker returned an invalid reviewed model asset ID")
+          expected = next(item for item in json.loads(pathlib.Path(
+              "libs/cua-driver/rust/crates/cua-perception/scripts/artifacts.lock.json"
+          ).read_text())["artifacts"] if item["role"] == "icon-detect")
+          if expected.get("url") is not None or expected["size"] != 80_933_219:
+              raise SystemExit("reviewed detector lock must remain supplied-only at the reviewed size")
+          destination = pathlib.Path("reviewed-inputs") / expected["filename"]
+          size = destination.stat().st_size
+          digest = hashlib.sha256(destination.read_bytes()).hexdigest()
+          if size != expected["size"] or digest != expected["sha256"]:
+              raise SystemExit("supplied model bytes differ from the reviewed size or SHA-256")
+          print(json.dumps({"asset_id": int(asset_id), "review_only": True,
+                            "sha256": digest, "size": size}, sort_keys=True))
+          PY
+      - name: Generate an ephemeral review trust root
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'JS'
+          const crypto = require("node:crypto");
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const {privateKey, publicKey} = crypto.generateKeyPairSync("ed25519");
+          const privateDer = privateKey.export({format: "der", type: "pkcs8"});
+          const publicDer = publicKey.export({format: "der", type: "spki"});
+          const rawPublicKey = publicDer.subarray(-32);
+          if (rawPublicKey.length !== 32) throw new Error("unexpected Ed25519 public key length");
+          fs.writeFileSync(path.join(process.env.RUNNER_TEMP, "review-private-key.der"), privateDer, {mode: 0o600});
+          fs.appendFileSync(process.env.GITHUB_ENV,
+            `CUA_DRIVER_REVIEW_EXTENSION_PUBLIC_KEY_BASE64=${rawPublicKey.toString("base64")}\n`);
+          JS
+      - name: Build the native worker and measured review Driver
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          cargo build --manifest-path libs/cua-driver/rust/Cargo.toml \
+            -p cua-perception --release --locked
+          cargo build --manifest-path libs/cua-driver/rust/Cargo.toml \
+            -p cua-driver --features review-trust-root --locked
+      - name: Assemble and execute native health, self-test, and real parse
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          TARGET: ${{ matrix.target }}
+          WORKER: ${{ matrix.worker }}
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < libs/cua-driver/rust/crates/cua-perception/VERSION)"
+          python3 libs/cua-driver/rust/crates/cua-perception/scripts/assemble_bundle.py \
+            --target "$TARGET" \
+            --worker "libs/cua-driver/rust/target/release/$WORKER" \
+            --inputs reviewed-inputs \
+            --cache "$RUNNER_TEMP/cua-perception-cache" \
+            --real-parse-fixture libs/cua-driver/tests/fixtures/apps/cross-platform/tauri/src-tauri/icons/icon.png \
+            --source-sha "$SOURCE_SHA" \
+            --version "$version" \
+            --output perception-input
+      - name: Convert sealed assembler evidence to candidate input
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, pathlib
+
+          root = pathlib.Path("perception-input")
+          manifest = json.loads((root / "artifact-manifest.json").read_text())
+          (root / "release-input.json").write_text(
+              json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+          )
+          PY
+          python3 .github/scripts/perception_release.py bind-source \
+            --manifest perception-input/release-input.json \
+            --payload-root perception-input \
+            --repository-root .
+          python3 .github/scripts/perception_release.py validate \
+            --manifest perception-input/release-input.json \
+            --payload-root perception-input
+          python3 - <<'PY'
+          import pathlib
+          for stale in ("artifact-manifest.json", "SHA256SUMS"):
+              (pathlib.Path("perception-input") / stale).unlink()
+          PY
+      - name: Preserve exact candidate packaging input
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
+        with:
+          name: ${{ matrix.input_artifact }}
+          path: perception-input/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Package, review-sign, and measure the candidate
+        shell: bash
+        env:
+          CATALOG_VERSION: ${{ inputs.catalog_version }}
+          DRIVER: ${{ matrix.driver }}
+          EXPIRES_UNIX: ${{ inputs.expires_unix }}
+          PLATFORM: ${{ matrix.platform }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          TARGET: ${{ matrix.target }}
+          CUA_REVIEWED_MODEL_ASSET_ID: ${{ needs.reviewed-model.outputs.source_asset_id }}
+        run: |
+          set -euo pipefail
+          [[ "$CATALOG_VERSION" =~ ^[1-9][0-9]*$ ]]
+          [[ "$EXPIRES_UNIX" =~ ^[1-9][0-9]*$ ]]
+          python3 .github/scripts/perception_release.py run-gates \
+            --manifest perception-input/release-input.json \
+            --payload-root perception-input \
+            --evidence executed-verification.json
+          python3 .github/scripts/perception_release.py package \
+            --manifest perception-input/release-input.json \
+            --payload-root perception-input \
+            --executed-evidence executed-verification.json \
+            --output perception-candidate \
+            --key-id cua-extension-ed25519-2026-01 \
+            --catalog-version "$CATALOG_VERSION" \
+            --expires-unix "$EXPIRES_UNIX"
+          python3 .github/scripts/perception_release.py \
+            verify-checksums perception-candidate/checksums.txt
+          mkdir -p "review-staging/$PLATFORM"
+          cp perception-candidate/* "review-staging/$PLATFORM/"
+          cp "libs/cua-driver/rust/target/debug/$DRIVER" "review-staging/$PLATFORM/review-$DRIVER"
+          if [[ "$PLATFORM" == macos ]]; then
+            bash .github/scripts/macos-review-codesign.sh \
+              "review-staging/$PLATFORM/review-$DRIVER" \
+              "review-staging/$PLATFORM/code-signing.json"
+          else
+            python3 - "review-staging/$PLATFORM/code-signing.json" <<'PY'
+          import json, pathlib, sys
+          pathlib.Path(sys.argv[1]).write_text(json.dumps({
+              "status": "not-applicable",
+              "format": "none",
+              "identity": "none",
+              "certificate_sha256": None,
+              "designated_requirement": None,
+          }, indent=2, sort_keys=True) + "\n")
+          PY
+          fi
+          node <<'JS'
+          const crypto = require("node:crypto");
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const platform = process.env.PLATFORM;
+          const root = path.join("review-staging", platform);
+          const privatePath = path.join(process.env.RUNNER_TEMP, "review-private-key.der");
+          const privateBytes = fs.readFileSync(privatePath);
+          const privateKey = crypto.createPrivateKey({key: privateBytes, format: "der", type: "pkcs8"});
+          const publicKey = crypto.createPublicKey(privateKey);
+          const publicRaw = publicKey.export({format: "der", type: "spki"}).subarray(-32);
+          const publicBase64 = publicRaw.toString("base64");
+          if (publicBase64 !== process.env.CUA_DRIVER_REVIEW_EXTENSION_PUBLIC_KEY_BASE64) {
+            throw new Error("review Driver trust root differs from the signing key");
+          }
+          const payloadPath = path.join(root, "catalog-payload.json");
+          const payload = JSON.parse(fs.readFileSync(payloadPath));
+          payload.publisher_id = "cua-review-only";
+          payload.publisher_name = "Cua REVIEW ONLY";
+          payload.key_id = "review-only-build-override";
+          payload.next_key = null;
+          const payloadBytes = Buffer.from(JSON.stringify(payload));
+          fs.writeFileSync(payloadPath, payloadBytes);
+          const signature = crypto.sign(null, payloadBytes, privateKey);
+          if (!crypto.verify(null, payloadBytes, publicKey, signature)) {
+            throw new Error("review Ed25519 signature verification failed");
+          }
+          fs.writeFileSync(path.join(root, "catalog.signature"), signature);
+          fs.writeFileSync(path.join(root, "signed-catalog.json"), JSON.stringify({
+            payload,
+            signature_algorithm: "ed25519",
+            signature: signature.toString("base64"),
+          }) + "\n");
+          const digest = name => crypto.createHash("sha256").update(fs.readFileSync(path.join(root, name))).digest("hex");
+          const driverName = `review-${process.env.DRIVER}`;
+          const archiveName = payload.archive;
+          const modelLock = JSON.parse(fs.readFileSync(
+            "libs/cua-driver/rust/crates/cua-perception/scripts/artifacts.lock.json"));
+          const model = modelLock.artifacts.find(item => item.role === "icon-detect");
+          const codeSigning = JSON.parse(fs.readFileSync(path.join(root, "code-signing.json")));
+          const measurements = {
+            review_only: true,
+            source_sha: process.env.SOURCE_SHA,
+            target: process.env.TARGET,
+            supplied_model_asset_id: Number(process.env.CUA_REVIEWED_MODEL_ASSET_ID),
+            supplied_model_sha256: model.sha256,
+            supplied_model_size: model.size,
+            public_key_base64: publicBase64,
+            public_key_sha256: crypto.createHash("sha256").update(publicRaw).digest("hex"),
+            key_id: payload.key_id,
+            publisher_id: payload.publisher_id,
+            signature_algorithm: "ed25519",
+            catalog_sha256: digest("signed-catalog.json"),
+            archive_sha256: digest(archiveName),
+            review_driver_relative_path: driverName,
+            review_driver_build_profile: "debug-review-trust-root",
+            review_driver_sha256: digest(driverName),
+            code_signing: codeSigning,
+          };
+          fs.writeFileSync(path.join(root, "review-measurements.json"),
+            JSON.stringify(measurements, null, 2) + "\n");
+          const signedFiles = [archiveName, "catalog-payload.json", "catalog.signature", "code-signing.json",
+            "signed-catalog.json", "sbom.spdx.json", "provenance.redacted.json",
+            "runtime-contract.json", driverName, "review-measurements.json"];
+          fs.writeFileSync(path.join(root, "signed-candidate-checksums.txt"),
+            signedFiles.sort().map(name => `${digest(name)}  ${name}\n`).join(""));
+          fs.unlinkSync(path.join(root, "checksums.txt"));
+          fs.writeFileSync(privatePath, Buffer.alloc(privateBytes.length), {flag: "r+"});
+          fs.unlinkSync(privatePath);
+          JS
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, re, subprocess, tarfile
+
+          root = pathlib.Path("review-staging") / os.environ["PLATFORM"]
+          measurements_path = root / "review-measurements.json"
+          measurements = json.loads(measurements_path.read_text())
+          archive = root / json.loads((root / "catalog-payload.json").read_text())["archive"]
+
+          def digest(data):
+              return hashlib.sha256(data).hexdigest()
+
+          with tarfile.open(archive, "r:gz") as package:
+              members = package.getmembers()
+              names = [member.name for member in members]
+              if len(names) != len(set(names)) or any(
+                  member.issym() or member.islnk() or pathlib.PurePosixPath(member.name).is_absolute()
+                  or ".." in pathlib.PurePosixPath(member.name).parts for member in members
+              ):
+                  raise SystemExit("signed archive contains an unsafe or duplicate member")
+
+              def member_bytes(name):
+                  matches = [member for member in members if member.name == name and member.isfile()]
+                  if len(matches) != 1:
+                      raise SystemExit(f"signed archive must contain one regular {name}")
+                  stream = package.extractfile(matches[0])
+                  if stream is None:
+                      raise SystemExit(f"signed archive member cannot be read: {name}")
+                  return stream.read()
+
+              def member_json(name):
+                  return json.loads(member_bytes(name))
+
+              artifact_bytes = member_bytes("metadata/artifact-manifest.json")
+              artifact_manifest = json.loads(artifact_bytes)
+              extension_bytes = member_bytes("extension.json")
+              extension = json.loads(extension_bytes)
+              runtime_contract = member_json("metadata/runtime-contract.json")
+              model_manifest = member_json("model-manifest.json")
+              model_ledger = member_json("modelLedger.json")
+              verification_bytes = member_bytes("metadata/executed-verification.json")
+              verification = json.loads(verification_bytes)
+
+              if artifact_manifest["sourceSha"] != measurements["source_sha"]:
+                  raise SystemExit("sealed artifact manifest source differs from candidate")
+              if artifact_manifest["target"]["triple"] != measurements["target"]:
+                  raise SystemExit("sealed artifact manifest target differs from candidate")
+              if extension["version"] != artifact_manifest["version"]:
+                  raise SystemExit("sealed extension and artifact manifest versions differ")
+              if runtime_contract["protocolVersion"] != artifact_manifest["protocol"]["version"]:
+                  raise SystemExit("sealed runtime contract protocol differs from artifact manifest")
+
+              artifacts = artifact_manifest["artifacts"]
+              worker = next(item for item in artifacts if item["kind"] == "worker")
+              runtime = next(item for item in artifacts if item["kind"] == "runtime")
+              models = []
+              for role in ("icon-detect", "ocr-detect", "ocr-recognize"):
+                  artifact = next(item for item in artifacts if item.get("role") == role)
+                  ledger = next(item for item in model_ledger["models"] if item["artifact"] == artifact["name"])
+                  sealed_bytes = member_bytes(f"models/{artifact['name']}")
+                  if digest(sealed_bytes) != artifact["sha256"]:
+                      raise SystemExit(f"sealed {role} bytes differ from artifact manifest")
+                  original = ledger.get("sourceArtifact", {}).get("sha256", artifact["sha256"])
+                  models.append({
+                      "role": role,
+                      "id": artifact["name"],
+                      "revision": ledger["revision"],
+                      "original_sha256": original,
+                      "converted_sha256": artifact["sha256"],
+                      "license": ledger["license"],
+                  })
+
+              runtime_bytes = member_bytes(f"runtime/{runtime['name']}")
+              worker_bytes = member_bytes(f"bin/{worker['name']}")
+              if digest(runtime_bytes) != runtime["sha256"] or digest(worker_bytes) != worker["sha256"]:
+                  raise SystemExit("sealed worker or runtime bytes differ from artifact manifest")
+              gates = {gate["gate"]: gate for gate in verification["gates"]}
+              if gates.get("self-test", {}).get("status") != "passed" or gates.get("mismatch-rejection", {}).get("status") != "passed":
+                  raise SystemExit("sealed executed evidence does not prove self-test and mismatch rejection")
+
+          driver = root / measurements["review_driver_relative_path"]
+          version_output = subprocess.run(
+              [str(driver), "--version"], check=True, capture_output=True, text=True
+          ).stdout.strip()
+          match = re.search(r"\b[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?\b", version_output)
+          if not match:
+              raise SystemExit("review Driver did not report a bounded semantic version")
+          measurements.update({
+              "review_driver_version": match.group(0),
+              "extension_version": artifact_manifest["version"],
+              "protocol_version": artifact_manifest["protocol"]["version"],
+              "worker_sha256": worker["sha256"],
+              "models": models,
+              "onnx_runtime": {
+                  "revision": model_manifest["onnx_runtime"]["version"],
+                  "sha256": runtime["sha256"],
+                  "license": runtime["license"]["spdx"],
+              },
+              "self_test": {
+                  "status": "passed",
+                  "mismatch_rejection": True,
+                  "evidence_sha256": digest(verification_bytes),
+              },
+              "sealed_artifact_manifest_sha256": digest(artifact_bytes),
+              "sealed_extension_manifest_sha256": digest(extension_bytes),
+          })
+          icon = next(item for item in models if item["role"] == "icon-detect")
+          if measurements["supplied_model_sha256"] != icon["converted_sha256"]:
+              raise SystemExit("supplied model measurement differs from sealed archive")
+          measurements_path.write_text(json.dumps(measurements, indent=2, sort_keys=True) + "\n")
+
+          signed_files = [
+              archive.name, "catalog-payload.json", "catalog.signature", "code-signing.json", "signed-catalog.json",
+              "sbom.spdx.json", "provenance.redacted.json", "runtime-contract.json",
+              measurements["review_driver_relative_path"], "review-measurements.json",
+          ]
+          (root / "signed-candidate-checksums.txt").write_text("".join(
+              f"{hashlib.sha256((root / name).read_bytes()).hexdigest()}  {name}\n"
+              for name in sorted(signed_files)
+          ))
+          PY
+      - name: Inspect the signed candidate with the native review Driver
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          root="review-staging/$PLATFORM"
+          driver="$root/review-${{ matrix.driver }}"
+          catalog="$root/signed-catalog.json"
+          preview="$RUNNER_TEMP/cua-perception-producer-inspect.json"
+          inspect_home="$RUNNER_TEMP/cua-perception-producer-inspect-home"
+          test ! -e "$inspect_home"
+          mkdir "$inspect_home"
+          CUA_DRIVER_RS_HOME="$inspect_home" \
+            "$driver" extension inspect cua-perception --catalog "$catalog" --json > "$preview"
+          python3 - "$preview" "$catalog" "$root/review-measurements.json" <<'PY'
+          import hashlib, json, pathlib, re, sys
+
+          preview_path, catalog_path, measurements_path = map(pathlib.Path, sys.argv[1:])
+          preview = json.loads(preview_path.read_text())
+          catalog = json.loads(catalog_path.read_text())
+          measurements = json.loads(measurements_path.read_text())
+          payload = catalog["payload"]
+
+          assert preview["trust"] == "review-only-publisher-verified"
+          assert preview["evidence_class"] == "review-only-not-release-evidence"
+          assert preview["publisher_signature_verified"] is True
+          assert preview["publisher_id"] == measurements["publisher_id"] == "cua-review-only"
+          assert preview["publisher_key_id"] == measurements["key_id"] == "review-only-build-override"
+          assert preview["signing_key_algorithm"] == measurements["signature_algorithm"] == "ed25519"
+          assert preview["archive_sha256"] == measurements["archive_sha256"] == payload["archive_sha256"]
+          archive_relative = pathlib.PurePosixPath(payload["archive"])
+          assert not archive_relative.is_absolute() and ".." not in archive_relative.parts
+          archive = catalog_path.parent.joinpath(*archive_relative.parts).resolve()
+          archive.relative_to(catalog_path.parent.resolve())
+          assert hashlib.sha256(archive.read_bytes()).hexdigest() == preview["archive_sha256"]
+          assert preview["authorization"] == {
+              "request": "cli-inspect",
+              "confirmation_required": False,
+              "confirmation_received": False,
+              "mutation_authorized": False,
+              "mutation_performed": False,
+          }
+          assert preview["mutation_performed"] is False
+          assert preview["installed"] is False
+          assert preview["ran"] is False
+
+          files = {item["path"]: item["sha256"] for item in preview["files"]}
+          assert len(files) == len(preview["files"])
+
+          def assert_binding(label, binding):
+              assert set(binding) == {"path", "sha256"}, label
+              assert re.fullmatch(r"[0-9a-f]{64}", binding["sha256"]), label
+              assert files.get(binding["path"]) == binding["sha256"], label
+
+          model_licenses = {item["model"]: item["file"] for item in preview["model_licenses"]}
+          assert len(model_licenses) == len(preview["models"]) == 3
+          for model in preview["models"]:
+              assert files.get(model["path"]) == model["conversion_sha256"]
+              assert_binding(f"model license {model['path']}", model["license_file"])
+              assert model_licenses[model["path"]] == model["license_file"]
+
+          notices = {item["component"]: item["file"] for item in preview["license_notices"]}
+          assert len(notices) == len(preview["components"]) > 0
+          for component in preview["components"]:
+              assert_binding(f"component notice {component['name']}", component["notice_file"])
+              assert notices[component["name"]] == component["notice_file"]
+
+          source = preview["corresponding_source"]
+          assert_binding("corresponding source", source["file"])
+          assert source["uri"] == preview["corresponding_source_uri"] == payload["corresponding_source_uri"]
+          assert source["revision"] == preview["corresponding_source_revision"] == payload["corresponding_source_revision"]
+          PY
+      - name: Destroy any remaining ephemeral private key
+        if: always()
+        shell: bash
+        run: |
+          node <<'JS'
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const privatePath = path.join(process.env.RUNNER_TEMP, "review-private-key.der");
+          if (fs.existsSync(privatePath)) {
+            const size = fs.statSync(privatePath).size;
+            fs.writeFileSync(privatePath, Buffer.alloc(size), {flag: "r+"});
+            fs.unlinkSync(privatePath);
+          }
+          JS
+      - name: Preserve signed review-only target without publishing
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
+        with:
+          name: review-cua-perception-${{ matrix.platform }}-${{ inputs.source_sha }}
+          path: review-staging/
+          if-no-files-found: error
+          retention-days: 7
+
+  aggregate:
+    name: aggregate signed review candidates
+    needs: supplied-input
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      signed_candidate_artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      producer_run_id: ${{ steps.producer.outputs.run_id }}
+    steps:
+      - id: producer
+        name: Bind the aggregate to this producer run
+        shell: bash
+        run: echo "run_id=$GITHUB_RUN_ID" >> "$GITHUB_OUTPUT"
+      - name: Download all signed target layouts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: review-cua-perception-*-${{ inputs.source_sha }}
+          path: staged
+          merge-multiple: true
+      - name: Verify the live workflow catalog layout
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib
+          root = pathlib.Path("staged")
+          for platform, target in (("windows", "x86_64-pc-windows-msvc"),
+                                   ("linux-x11", "x86_64-unknown-linux-gnu"),
+                                   ("macos", "aarch64-apple-darwin")):
+              directory = root / platform
+              catalog_path = directory / "signed-catalog.json"
+              measurements_path = directory / "review-measurements.json"
+              catalog = json.loads(catalog_path.read_text())
+              measurements = json.loads(measurements_path.read_text())
+              payload = catalog["payload"]
+              assert measurements["review_only"] is True
+              assert measurements["source_sha"] == os.environ["SOURCE_SHA"]
+              assert measurements["target"] == target == payload["target"]
+              assert measurements["review_driver_version"]
+              assert measurements["extension_version"] == payload["version"]
+              assert measurements["protocol_version"] > 0 and len(measurements["worker_sha256"]) == 64
+              assert [item["role"] for item in measurements["models"]] == ["icon-detect", "ocr-detect", "ocr-recognize"]
+              assert all(len(item["original_sha256"]) == len(item["converted_sha256"]) == 64 and item["revision"] and item["license"] for item in measurements["models"])
+              assert measurements["onnx_runtime"]["revision"] and len(measurements["onnx_runtime"]["sha256"]) == 64
+              assert measurements["self_test"]["status"] == "passed" and measurements["self_test"]["mismatch_rejection"] is True
+              assert len(measurements["sealed_artifact_manifest_sha256"]) == len(measurements["sealed_extension_manifest_sha256"]) == 64
+              assert payload["publisher_id"] == "cua-review-only"
+              assert payload["publisher_name"] == "Cua REVIEW ONLY"
+              assert payload["key_id"] == "review-only-build-override"
+              assert catalog["signature_algorithm"] == "ed25519"
+              archive = directory / payload["archive"]
+              assert archive.is_file()
+              assert hashlib.sha256(archive.read_bytes()).hexdigest() == payload["archive_sha256"]
+              driver_relative = pathlib.PurePosixPath(measurements["review_driver_relative_path"])
+              assert not driver_relative.is_absolute() and ".." not in driver_relative.parts
+              driver = directory.joinpath(*driver_relative.parts)
+              assert driver.is_file()
+              assert measurements["review_driver_build_profile"] == "debug-review-trust-root"
+              assert hashlib.sha256(driver.read_bytes()).hexdigest() == measurements["review_driver_sha256"]
+              signing = measurements["code_signing"]
+              assert set(signing) == {"status", "format", "identity", "certificate_sha256", "designated_requirement"}
+              if platform == "macos":
+                  assert signing["status"] == "verified"
+                  assert signing["format"] == "apple-codesign"
+                  assert signing["identity"] == "ephemeral-self-signed-review-only"
+                  assert len(signing["certificate_sha256"]) == 64
+                  assert any(marker in signing["designated_requirement"] for marker in ("certificate leaf", "certificate root"))
+              else:
+                  assert signing == {"status": "not-applicable", "format": "none", "identity": "none", "certificate_sha256": None, "designated_requirement": None}
+          PY
+          node <<'JS'
+          const crypto = require("node:crypto");
+          const fs = require("node:fs");
+          for (const platform of ["windows", "linux-x11", "macos"]) {
+            const root = `staged/${platform}`;
+            const catalog = JSON.parse(fs.readFileSync(`${root}/signed-catalog.json`));
+            const metadata = JSON.parse(fs.readFileSync(`${root}/review-measurements.json`));
+            const payloadBytes = fs.readFileSync(`${root}/catalog-payload.json`);
+            if (JSON.stringify(catalog.payload) !== payloadBytes.toString()) {
+              throw new Error(`${platform} signed payload bytes are not exact`);
+            }
+            const raw = Buffer.from(metadata.public_key_base64, "base64");
+            const spki = Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), raw]);
+            const key = crypto.createPublicKey({key: spki, format: "der", type: "spki"});
+            if (!crypto.verify(null, payloadBytes, key, Buffer.from(catalog.signature, "base64"))) {
+              throw new Error(`${platform} review signature is invalid`);
+            }
+          }
+          JS
+      - id: upload
+        name: Upload one immutable staged artifact for the authorized live workflow
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
+        with:
+          name: STAGING-cua-perception-review-candidates-${{ inputs.source_sha }}
+          path: staged/
+          if-no-files-found: error
+          retention-days: 7

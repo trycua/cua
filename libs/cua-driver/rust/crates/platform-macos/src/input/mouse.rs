@@ -806,9 +806,6 @@ where
     use core_graphics::display::CGDisplay;
     use core_graphics::event::CGEventTapLocation;
 
-    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
-        .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
-    let flags = parse_modifier_flags(modifiers);
     let (cg_button, down_type, dragged_type, up_type) = match button {
         DragButton::Left => (
             CGMouseButton::Left,
@@ -829,14 +826,13 @@ where
             CGEventType::OtherMouseUp,
         ),
     };
+    let events = foreground_drag_events(from_x, from_y, to_x, to_y, steps);
     let steps = steps.max(1);
     let step_delay_ms = if steps > 1 {
         duration_ms / steps as u64
     } else {
         duration_ms
     };
-
-    let post = |event: &CGEvent| event.post(CGEventTapLocation::HID);
 
     // Keep WindowServer's hardware cursor and event stream coupled. AppKit
     // hit-tests some pointer-capture surfaces against the actual cursor even
@@ -846,61 +842,108 @@ where
     observe(from_x, from_y);
     std::thread::sleep(std::time::Duration::from_millis(40));
 
-    // Prime the renderer's tracking state with a genuine HID mouse move.
-    if let Ok(move_event) = CGEvent::new_mouse_event(
-        source.clone(),
-        CGEventType::MouseMoved,
-        CGPoint::new(from_x, from_y),
-        cg_button,
-    ) {
-        post(&move_event);
-    }
-    std::thread::sleep(std::time::Duration::from_millis(30));
-
-    let down = CGEvent::new_mouse_event(
-        source.clone(),
-        down_type,
-        CGPoint::new(from_x, from_y),
-        cg_button,
-    )
-    .map_err(|_| anyhow::anyhow!("foreground drag mouseDown failed"))?;
-    if flags != CGEventFlags::CGEventFlagNull {
-        down.set_flags(flags);
-    }
-    down.set_integer_value_field(core_graphics::event::EventField::MOUSE_EVENT_CLICK_STATE, 1);
-    down.post(CGEventTapLocation::HID);
-    std::thread::sleep(std::time::Duration::from_millis(16));
-
-    for i in 1..=steps {
-        let t = i as f64 / steps as f64;
-        let x = from_x + (to_x - from_x) * t;
-        let y = from_y + (to_y - from_y) * t;
-        let event =
-            CGEvent::new_mouse_event(source.clone(), dragged_type, CGPoint::new(x, y), cg_button)
-                .map_err(|_| anyhow::anyhow!("foreground drag mouseDragged failed"))?;
-        if flags != CGEventFlags::CGEventFlagNull {
+    super::keyboard::with_global_modifier_keys(modifiers, |flags| {
+        for spec in events {
+            let event_type = match spec.kind {
+                ForegroundDragEventKind::Move => CGEventType::MouseMoved,
+                ForegroundDragEventKind::Down => down_type,
+                ForegroundDragEventKind::Dragged => dragged_type,
+                ForegroundDragEventKind::Up => up_type,
+            };
+            // A null source matches macOS's established global mouse-controller
+            // path. WindowServer then carries the pressed-button state from the
+            // down through every dragged event instead of treating each event as
+            // an independent HIDSystemState snapshot.
+            let event =
+                new_global_mouse_event(event_type, spec.point, cg_button).map_err(|_| {
+                    anyhow::anyhow!("foreground drag {:?} event creation failed", spec.kind)
+                })?;
             event.set_flags(flags);
-        }
-        event.set_integer_value_field(core_graphics::event::EventField::MOUSE_EVENT_CLICK_STATE, 1);
-        post(&event);
-        observe(x, y);
-        if step_delay_ms > 0 {
-            std::thread::sleep(std::time::Duration::from_millis(step_delay_ms));
-        }
-    }
+            event.post(CGEventTapLocation::HID);
 
-    let up = CGEvent::new_mouse_event(source, up_type, CGPoint::new(to_x, to_y), cg_button)
-        .map_err(|_| anyhow::anyhow!("foreground drag mouseUp failed"))?;
-    if flags != CGEventFlags::CGEventFlagNull {
-        up.set_flags(flags);
-    }
-    up.set_integer_value_field(core_graphics::event::EventField::MOUSE_EVENT_CLICK_STATE, 1);
-    post(&up);
+            match spec.kind {
+                ForegroundDragEventKind::Move => {
+                    std::thread::sleep(std::time::Duration::from_millis(30));
+                }
+                ForegroundDragEventKind::Down => {
+                    std::thread::sleep(std::time::Duration::from_millis(16));
+                }
+                ForegroundDragEventKind::Dragged => {
+                    observe(spec.point.x, spec.point.y);
+                    if step_delay_ms > 0 {
+                        std::thread::sleep(std::time::Duration::from_millis(step_delay_ms));
+                    }
+                }
+                ForegroundDragEventKind::Up => {}
+            }
+        }
+        Ok(())
+    })?;
     // The foreground wrapper restores the previous app immediately after this
     // function returns. Let the target's run loop consume the queued HID
     // gesture, including pointer-capture release, before that restore happens.
     std::thread::sleep(std::time::Duration::from_millis(100));
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ForegroundDragEventKind {
+    Move,
+    Down,
+    Dragged,
+    Up,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ForegroundDragEvent {
+    kind: ForegroundDragEventKind,
+    point: CGPoint,
+}
+
+fn foreground_drag_events(
+    from_x: f64,
+    from_y: f64,
+    to_x: f64,
+    to_y: f64,
+    steps: usize,
+) -> Vec<ForegroundDragEvent> {
+    let steps = steps.max(1);
+    let mut events = Vec::with_capacity(steps + 3);
+    let from = CGPoint::new(from_x, from_y);
+    events.push(ForegroundDragEvent {
+        kind: ForegroundDragEventKind::Move,
+        point: from,
+    });
+    events.push(ForegroundDragEvent {
+        kind: ForegroundDragEventKind::Down,
+        point: from,
+    });
+    for i in 1..=steps {
+        let t = i as f64 / steps as f64;
+        events.push(ForegroundDragEvent {
+            kind: ForegroundDragEventKind::Dragged,
+            point: CGPoint::new(from_x + (to_x - from_x) * t, from_y + (to_y - from_y) * t),
+        });
+    }
+    events.push(ForegroundDragEvent {
+        kind: ForegroundDragEventKind::Up,
+        point: CGPoint::new(to_x, to_y),
+    });
+    events
+}
+
+fn new_global_mouse_event(
+    event_type: CGEventType,
+    point: CGPoint,
+    button: CGMouseButton,
+) -> Result<CGEvent, ()> {
+    let event_ref =
+        unsafe { CGEventCreateMouseEvent(std::ptr::null_mut(), event_type, point, button) };
+    if event_ref.is_null() {
+        Err(())
+    } else {
+        Ok(unsafe { CGEvent::from_ptr(event_ref) })
+    }
 }
 
 /// Mouse button for drag gestures.
@@ -1303,6 +1346,15 @@ pub fn scroll_wheel_at_xy(
 }
 
 extern "C" {
+    /// Quartz mouse constructor with a null source, matching established
+    /// foreground controller libraries and the global scroll path above.
+    fn CGEventCreateMouseEvent(
+        source: core_graphics::sys::CGEventSourceRef,
+        event_type: core_graphics::event::CGEventType,
+        point: CGPoint,
+        button: core_graphics::event::CGMouseButton,
+    ) -> core_graphics::sys::CGEventRef;
+
     /// `void CGEventSetLocation(CGEventRef event, CGPoint location)`.
     ///
     /// `CGPoint { double x, double y }` is classified as two FP eightbytes on
@@ -1324,4 +1376,76 @@ fn parse_modifier_flags(modifiers: &[&str]) -> CGEventFlags {
         }
     }
     flags
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn foreground_drag_plan_is_one_coherent_gesture() {
+        let events = foreground_drag_events(10.0, 20.0, 40.0, 80.0, 3);
+        let kinds: Vec<_> = events.iter().map(|event| event.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                ForegroundDragEventKind::Move,
+                ForegroundDragEventKind::Down,
+                ForegroundDragEventKind::Dragged,
+                ForegroundDragEventKind::Dragged,
+                ForegroundDragEventKind::Dragged,
+                ForegroundDragEventKind::Up,
+            ]
+        );
+        let points: Vec<_> = events
+            .iter()
+            .map(|event| (event.point.x, event.point.y))
+            .collect();
+        assert_eq!(
+            points,
+            [
+                (10.0, 20.0),
+                (10.0, 20.0),
+                (20.0, 40.0),
+                (30.0, 60.0),
+                (40.0, 80.0),
+                (40.0, 80.0),
+            ]
+        );
+    }
+
+    #[test]
+    fn foreground_drag_plan_keeps_a_drag_sample_for_zero_steps() {
+        let events = foreground_drag_events(1.0, 2.0, 3.0, 4.0, 0);
+        assert_eq!(events.len(), 4);
+        assert_eq!(events[2].kind, ForegroundDragEventKind::Dragged);
+        assert_eq!((events[2].point.x, events[2].point.y), (3.0, 4.0));
+    }
+
+    #[test]
+    fn global_drag_events_use_hardware_like_source_and_button_fields() {
+        use core_graphics::event::EventField;
+
+        let point = CGPoint::new(10.0, 20.0);
+        let cases = [
+            (CGEventType::LeftMouseDown, 1, 1.0),
+            (CGEventType::LeftMouseDragged, 1, 1.0),
+            (CGEventType::LeftMouseUp, 0, 0.0),
+        ];
+        for (event_type, click_state, pressure) in cases {
+            let event = new_global_mouse_event(event_type, point, CGMouseButton::Left).unwrap();
+            assert_eq!(
+                event.get_integer_value_field(EventField::EVENT_SOURCE_STATE_ID),
+                CGEventSourceStateID::CombinedSessionState as i64
+            );
+            assert_eq!(
+                event.get_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE),
+                click_state
+            );
+            assert_eq!(
+                event.get_double_value_field(EventField::MOUSE_EVENT_PRESSURE),
+                pressure
+            );
+        }
+    }
 }

@@ -1,0 +1,32 @@
+{
+  "protocol": "cua-perception/1",
+  "request_id": "fixture-parse-1",
+  "status": "ok",
+  "result": {
+    "capture_id": "synthetic-1x1",
+    "image": {
+      "sha256": "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",
+      "width": 1,
+      "height": 1
+    },
+    "coordinate_space": "image_pixels",
+    "regions": [
+      {
+        "id": "fixture-text-1",
+        "kind": "text",
+        "bounds": { "x": 0, "y": 0, "width": 1, "height": 1 },
+        "text": "fixture",
+        "confidence": 1.0
+      }
+    ],
+    "runtime": "fixture_only",
+    "identity": {
+      "extension": {
+        "id": "cua-perception",
+        "version": "0.1.0"
+      },
+      "backend": "deterministic_fixture",
+      "fixture_sha256": "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460"
+    }
+  }
+}

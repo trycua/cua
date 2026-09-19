@@ -44,6 +44,10 @@ const FILES: &[(&str, &str)] = &[
         include_str!("../../../Skills/cua-driver/SKILL.md"),
     ),
     (
+        "VISUAL.md",
+        include_str!("../../../Skills/cua-driver/VISUAL.md"),
+    ),
+    (
         "WINDOWS.md",
         include_str!("../../../Skills/cua-driver/WINDOWS.md"),
     ),
@@ -221,7 +225,7 @@ mod tests {
         );
         let manifest = entry["resources"].as_array().unwrap();
         let resources = call("resources/list", Some(json!({})));
-        assert_eq!(manifest.len(), 8);
+        assert_eq!(manifest.len(), 9);
         assert_eq!(
             resources["resources"].as_array().unwrap().len(),
             manifest.len()

@@ -887,10 +887,10 @@ fi
         self.assertEqual(
             len(expected["baseTools"]), len(set(expected["baseTools"]))
         )
-        self.assertEqual(len(expected["baseTools"]), 56)
+        self.assertEqual(len(expected["baseTools"]), 58)
         self.assertEqual(
             expected["outputSchemaCountByPlatform"],
-            {"darwin": 34, "linux": 38, "win32": 34},
+            {"darwin": 35, "linux": 39, "win32": 35},
         )
         self.assertEqual(
             expected["platformTools"],

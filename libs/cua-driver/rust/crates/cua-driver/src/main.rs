@@ -23,9 +23,11 @@ mod check_update_tool;
 mod cli;
 mod doctor;
 mod driver_service_http;
+mod extension_manager;
 mod history_runtime;
 mod mcp_envelope;
 mod mcp_http;
+mod perception_cli;
 mod private_worker;
 mod proxy;
 mod release_channel;
@@ -280,6 +282,11 @@ fn maybe_init_pip() {
 
 // ── Public SDK runtime host ──────────────────────────────────────────────
 
+fn register_host_tools(registry: &mut cua_driver_core::tool::ToolRegistry) {
+    history_runtime::register_host_tools(registry);
+    extension_manager::register_host_tools(registry);
+}
+
 /// Construct the canonical SDK-owned runtime for the CLI or daemon host.
 /// The private socket and MCP layers consume this object downstream.
 fn build_driver(
@@ -293,7 +300,7 @@ fn build_driver(
         host_bundle_id: std::env::var(cua_driver_core::HOST_BUNDLE_ID_ENV).ok(),
         claude_code_compatibility: compatibility_mode,
         prepare_desktop_environment: true,
-        register_host_tools: Some(history_runtime::register_host_tools),
+        register_host_tools: Some(register_host_tools),
         authorization_host: None,
         activity_observer: None,
     })
@@ -327,7 +334,7 @@ fn inspect_tools_without_runtime() -> serde_json::Value {
         host_bundle_id: None,
         claude_code_compatibility: false,
         prepare_desktop_environment: false,
-        register_host_tools: Some(history_runtime::register_host_tools),
+        register_host_tools: Some(register_host_tools),
         authorization_host: None,
         activity_observer: None,
     })
@@ -458,6 +465,7 @@ mod mcp_runtime_selection_tests {
 
 #[cfg(target_os = "macos")]
 fn main() {
+    cua_driver_sdk::configure_perception_client_provider(extension_manager::perception_client);
     if let Some(code) = platform_macos::permissions::gate::run_permission_probe_if_requested() {
         std::process::exit(code);
     }
@@ -811,6 +819,12 @@ fn main() {
         cli::Command::Skills { subcommand, flags } => {
             skills::run(&subcommand, &flags);
         }
+        cli::Command::Extension { args } => {
+            extension_manager::run(&args);
+        }
+        cli::Command::Perception { args } => {
+            perception_cli::run(&args);
+        }
         cli::Command::CursorTheme { args } => {
             run_cursor_theme_command(&args);
         }
@@ -882,6 +896,7 @@ fn main() {
 
 #[cfg(not(target_os = "macos"))]
 fn main() -> anyhow::Result<()> {
+    cua_driver_sdk::configure_perception_client_provider(extension_manager::perception_client);
     if let Some(code) = history_runtime::run_offline_purge_if_requested() {
         std::process::exit(code);
     }
@@ -1098,6 +1113,14 @@ fn main() -> anyhow::Result<()> {
         }
         cli::Command::Skills { subcommand, flags } => {
             skills::run(&subcommand, &flags);
+            return Ok(());
+        }
+        cli::Command::Extension { args } => {
+            extension_manager::run(&args);
+            return Ok(());
+        }
+        cli::Command::Perception { args } => {
+            perception_cli::run(&args);
             return Ok(());
         }
         cli::Command::CursorTheme { args } => {

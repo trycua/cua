@@ -12,6 +12,9 @@
 // 125%/150%/200% scaling and clicks land where screenshots say they do.
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=CUA_DRIVER_REVIEW_EXTENSION_PUBLIC_KEY_BASE64");
+    validate_review_trust_root_build();
+
     #[cfg(target_os = "windows")]
     {
         embed_resource::compile("cua-driver.rc", embed_resource::NONE);
@@ -22,6 +25,27 @@ fn main() {
     }
     emit_sdk_framework_search_path();
     emit_swift_runtime_link_args();
+}
+
+fn validate_review_trust_root_build() {
+    if std::env::var_os("CARGO_FEATURE_REVIEW_TRUST_ROOT").is_none() {
+        return;
+    }
+    if std::env::var("PROFILE").as_deref() == Ok("release") {
+        panic!("review-trust-root is review-only and cannot be enabled in release artifacts");
+    }
+    let key = std::env::var("CUA_DRIVER_REVIEW_EXTENSION_PUBLIC_KEY_BASE64").expect(
+        "review-trust-root requires CUA_DRIVER_REVIEW_EXTENSION_PUBLIC_KEY_BASE64 at build time",
+    );
+    let key = key.trim().as_bytes();
+    if key.len() != 44
+        || key[43] != b'='
+        || !key[..43]
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/'))
+    {
+        panic!("review-trust-root override must be standard base64 for exactly one 32-byte Ed25519 public key");
+    }
 }
 
 fn emit_sdk_framework_search_path() {

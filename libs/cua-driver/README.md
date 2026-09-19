@@ -5,6 +5,31 @@ Background computer-use driver for any agents. Speaks MCP over stdio; drives nat
 See [MCP protocol and skills](docs/mcp-protocol-and-skills.md) for the modern
 stdio profile, legacy compatibility, bundled skill resources, and HTTP limits.
 
+## Optional visual perception
+
+The default MIT-licensed Driver works without model artifacts. An explicitly
+installed `cua-perception` extension can parse one retained native window or
+desktop screenshot into model-neutral text and icon regions. Capture and input
+authority remain in Driver, and a region-derived pixel click must carry the
+same one-use `capture_id` as the observation.
+
+See the [extension and runtime contract](docs/perception-extension.md) for
+installation, failure, capture, and action boundaries. Review the [third-party
+notices](docs/perception-third-party-notices.md) before distributing the
+separate worker, model, or ONNX Runtime artifacts.
+
+For offline inspection of an existing PNG, the CLI also provides a local-only
+mode:
+
+```bash
+cua-driver perception parse --image /tmp/window.png --capture /tmp/capture.json --json
+```
+
+This mode never registers the file as a Driver capture and its output cannot
+authorize a Driver action. Its required JSON mode returns failures as
+`{"ok":false,"error":{"code":"...","message":"...","retryable":false}}`;
+see the extension contract for the stable codes.
+
 **[Documentation](https://cua.ai/docs/cua-driver)** - Installation, guides, and API reference.
 
 ## Integration surfaces

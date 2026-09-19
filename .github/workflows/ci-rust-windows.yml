@@ -72,6 +72,24 @@ jobs:
       - name: Run complete desktop-independent core tests
         working-directory: libs/cua-driver/rust
         run: cargo test -p cua-driver-core --lib --test recording_shutdown_errors --locked
+      - name: Run extension manager security regressions
+        working-directory: libs/cua-driver/rust
+        run: |
+          $tests = @(
+            "extension_manager::tests::hardens_a_precreated_extension_root_with_a_broad_acl",
+            "extension_manager::tests::acl_hardening_reopens_directory_and_file_handles",
+            "extension_manager::tests::recursive_acl_hardening_removes_package_access_from_staged_tree",
+            "extension_manager::tests::recursive_acl_hardening_reasserts_root_after_descendant_walk",
+            "extension_manager::tests::staged_install_verification_survives_acl_drift_during_recursive_hardening",
+            "extension_manager::tests::post_hook_acl_grant_is_removed_before_staged_version_is_placed",
+            "extension_manager::tests::health_hook_acl_grant_is_removed_before_status_returns_healthy",
+            "extension_manager::tests::acl_identity_check_rejects_a_different_object",
+            "extension_manager::tests::rejects_windows_junctions_and_broad_acl_entries"
+          )
+          foreach ($test in $tests) {
+            cargo test -p cua-driver --bin cua-driver $test --locked -- --exact
+            if ($LASTEXITCODE -ne 0) { throw "Extension manager security regression $test failed with exit $LASTEXITCODE" }
+          }
       - name: Run deferred text publication regressions
         working-directory: libs/cua-driver/rust
         run: |

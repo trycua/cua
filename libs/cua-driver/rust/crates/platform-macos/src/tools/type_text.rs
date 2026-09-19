@@ -75,8 +75,12 @@ fn def() -> &'static ToolDef {
              X's compose box): AXValue is not independent proof that the \
              renderer/DOM observed an AX write or synthesized keystrokes. The \
              driver detects this at the element level (an AXWebArea ancestor) and \
-             refuses to trust AXValue-only read-back there — type_text returns \
-             effect:\"unverifiable\" + escalation, never a false \"confirmed\" (a \
+             refuses to trust AXValue-only read-back there. Electron AX targets that \
+             are web content or cannot be proven native refuse background delivery \
+             before mutation because the AX route cannot establish exact renderer \
+             focus; use the px form or explicit foreground delivery. Other web-content \
+             paths return effect:\"unverifiable\" + \
+             escalation, never a false \"confirmed\" (a \
              browser's own native address bar/toolbar stays trusted). For a browser \
              TAB the reliable path is the `page` tool (drives the DOM via CDP); for \
              an embedded web view use this tool's px form: pass x,y (no \
@@ -312,6 +316,27 @@ impl Tool for TypeTextTool {
             // element_index stays None → the type path below writes to the now-
             // focused element via the CGEvent (key_events) rung.
         }
+        let element_ptr = element_guard
+            .as_ref()
+            .map(|(g, idx)| (g.as_ptr(), Some(*idx)));
+
+        let electron_background_ax_unsafe = element_ptr.is_some()
+            && crate::browser::electron_js::ElectronJs::is_electron(pid)
+            && electron_background_ax_ancestry_is_unsafe(classify_target_web_area(
+                pid,
+                element_ptr,
+                window_id,
+            ));
+        if let Some(refusal) = electron_background_ax_refusal(
+            delivery_mode,
+            element_ptr.is_some(),
+            used_pixel_focus,
+            electron_background_ax_unsafe,
+        ) {
+            let wid = window_id.expect("AX element targets require window_id");
+            return super::background_refusal_result(pid, wid, &refusal);
+        }
+
         if let (Some((element, _)), Some(wid)) = (element_guard.as_ref(), window_id) {
             let center_guard = element.clone();
             if let Ok(Some((screen_x, screen_y))) = tokio::task::spawn_blocking(move || unsafe {
@@ -331,10 +356,6 @@ impl Tool for TypeTextTool {
                     .update_position(&cursor_key, screen_x, screen_y);
             }
         }
-        let element_ptr = element_guard
-            .as_ref()
-            .map(|(g, idx)| (g.as_ptr(), Some(*idx)));
-
         let text_clone = text.clone();
         let char_count = text.chars().count();
 
@@ -732,6 +753,27 @@ fn web_readback_next_rung(is_electron: bool, used_pixel_focus: bool) -> Option<&
     }
 }
 
+fn electron_background_ax_refusal(
+    delivery_mode: super::DeliveryMode,
+    has_ax_target: bool,
+    used_pixel_focus: bool,
+    electron_background_ax_unsafe: bool,
+) -> Option<BackgroundRefusal> {
+    if delivery_mode.is_foreground()
+        || !has_ax_target
+        || used_pixel_focus
+        || !electron_background_ax_unsafe
+    {
+        return None;
+    }
+    Some(BackgroundRefusal {
+        code: "background_unavailable",
+        reason: "The Electron AX target cannot establish a safe exact background text route on macOS because its ancestry is web content or could not be proven native; use the pixel-targeted type_text form (x,y) or delivery_mode:\"foreground\"."
+            .to_owned(),
+        advice: Some("px"),
+    })
+}
+
 const DELIVERY_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 const DELIVERY_DRAIN_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
 
@@ -940,6 +982,37 @@ pub(super) fn target_in_web_area(
     element_ptr_and_idx: Option<(usize, Option<usize>)>,
     window_id: Option<u32>,
 ) -> bool {
+    web_readback_is_untrusted(classify_target_web_area(
+        pid,
+        element_ptr_and_idx,
+        window_id,
+    ))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WebAreaClassification {
+    WebContent,
+    NonWebContent,
+    Incomplete,
+    WindowFocusUnavailable,
+}
+
+fn web_readback_is_untrusted(classification: WebAreaClassification) -> bool {
+    matches!(
+        classification,
+        WebAreaClassification::WebContent | WebAreaClassification::WindowFocusUnavailable
+    )
+}
+
+fn electron_background_ax_ancestry_is_unsafe(classification: WebAreaClassification) -> bool {
+    !matches!(classification, WebAreaClassification::NonWebContent)
+}
+
+fn classify_target_web_area(
+    pid: i32,
+    element_ptr_and_idx: Option<(usize, Option<usize>)>,
+    window_id: Option<u32>,
+) -> WebAreaClassification {
     use crate::ax::bindings::AXUIElementCopyAttributeValue;
     use core_foundation::base::{CFTypeRef, TCFType};
     use core_foundation::string::CFString;
@@ -956,26 +1029,30 @@ pub(super) fn target_in_web_area(
             None => match window_id {
                 Some(wid) => match crate::ax::exact_target::focused_element_in_window(pid, wid) {
                     Some(el) => (el, true),
-                    None => return true,
+                    None => return WebAreaClassification::WindowFocusUnavailable,
                 },
                 None => match focused_element_of_pid(pid) {
                     Some(el) => (el, true),
-                    None => return false,
+                    None => return WebAreaClassification::NonWebContent,
                 },
             },
         };
         let parent_attr = CFString::new("AXParent");
         let mut cur = start;
         let mut cur_owned = start_owned;
-        let mut found = false;
+        let mut classification = WebAreaClassification::Incomplete;
         for _ in 0..40 {
             match copy_string_attr(cur, "AXRole").as_deref() {
                 Some("AXWebArea") => {
-                    found = true;
+                    classification = WebAreaClassification::WebContent;
                     break;
                 }
                 // No web area lives above the window/app root — stop.
-                Some("AXWindow") | Some("AXApplication") | None => break,
+                Some("AXWindow") | Some("AXApplication") => {
+                    classification = WebAreaClassification::NonWebContent;
+                    break;
+                }
+                None => break,
                 _ => {}
             }
             let mut parent: CFTypeRef = std::ptr::null_mut();
@@ -995,7 +1072,7 @@ pub(super) fn target_in_web_area(
         if cur_owned && !cur.is_null() {
             CFRelease(cur as CFTypeRef);
         }
-        found
+        classification
     }
 }
 
@@ -1615,6 +1692,61 @@ mod tests {
         assert_eq!(web_readback_next_rung(true, true), None);
         assert_eq!(web_readback_next_rung(false, false), Some("page"));
         assert_eq!(web_readback_next_rung(false, true), Some("page"));
+    }
+
+    #[test]
+    fn electron_web_ax_background_refuses_before_synthesis() {
+        let refusal = electron_background_ax_refusal(
+            crate::tools::DeliveryMode::Background,
+            true,
+            false,
+            true,
+        )
+        .expect("Electron AX background typing must refuse");
+        assert_eq!(refusal.code, "background_unavailable");
+        assert_eq!(refusal.advice, Some("px"));
+
+        assert!(electron_background_ax_refusal(
+            crate::tools::DeliveryMode::Foreground,
+            true,
+            false,
+            true,
+        )
+        .is_none());
+        assert!(electron_background_ax_refusal(
+            crate::tools::DeliveryMode::Background,
+            false,
+            true,
+            true,
+        )
+        .is_none());
+        assert!(electron_background_ax_refusal(
+            crate::tools::DeliveryMode::Background,
+            true,
+            false,
+            false,
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn incomplete_web_ancestry_only_fails_closed_for_electron_background_ax() {
+        assert!(electron_background_ax_ancestry_is_unsafe(
+            WebAreaClassification::Incomplete
+        ));
+        assert!(electron_background_ax_ancestry_is_unsafe(
+            WebAreaClassification::WindowFocusUnavailable
+        ));
+        assert!(!electron_background_ax_ancestry_is_unsafe(
+            WebAreaClassification::NonWebContent
+        ));
+
+        assert!(!web_readback_is_untrusted(
+            WebAreaClassification::Incomplete
+        ));
+        assert!(web_readback_is_untrusted(
+            WebAreaClassification::WindowFocusUnavailable
+        ));
     }
 
     #[test]

@@ -159,10 +159,22 @@ fn exact_cancel_button(nodes: &[AXNode]) -> Result<Option<usize>, BrowserRefusal
             continue;
         }
         for node in sheet_nodes {
-            if node.role == "AXButton"
-                && node.actions.iter().any(|action| action == "AXPress")
-                && normalized_text(node) == "cancel"
-            {
+            if node.role != "AXButton" || !node.actions.iter().any(|action| action == "AXPress") {
+                continue;
+            }
+            // The button label is localized, so a label equality check only
+            // matches English hosts. The accessibility identifier is not
+            // localized; accept it as an equivalent signal, mirroring how
+            // `exact_allow_button` already considers the identifier alongside
+            // the label. The label check is kept so English hosts are
+            // unaffected.
+            let label = normalized_text(node);
+            let identifier = node
+                .identifier
+                .as_deref()
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            if label == "cancel" || identifier.contains("cancel") {
                 matches.push(node.element_ptr);
             }
         }

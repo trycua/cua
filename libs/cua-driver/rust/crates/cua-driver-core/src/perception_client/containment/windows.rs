@@ -70,6 +70,7 @@ const GENERIC_READ: u32 = 0x8000_0000;
 const GENERIC_WRITE: u32 = 0x4000_0000;
 const GENERIC_EXECUTE: u32 = 0x2000_0000;
 const GENERIC_ALL: u32 = 0x1000_0000;
+const FILE_READ_DATA: u32 = 0x0000_0001;
 const READ_CONTROL: u32 = 0x0002_0000;
 const WRITE_DAC: u32 = 0x0004_0000;
 const OPEN_EXISTING: u32 = 3;
@@ -2159,12 +2160,6 @@ impl SavedDacl {
     }
 
     fn restore(&self) -> Result<(), VisualParseError> {
-        if self.target.current_identity()? != self.target.identity {
-            return Err(containment_error(
-                "a perception worker ACL target was replaced before revocation",
-                None,
-            ));
-        }
         let dacl = self.dacl_offset.map_or(std::ptr::null_mut(), |offset| {
             (self.descriptor.0 as usize + offset) as *mut c_void
         });
@@ -2274,11 +2269,11 @@ impl Drop for AclGrantLedger {
     }
 }
 
-/// Visit an ACL root and every existing descendant. The ledger retains each
-/// verified no-follow handle without delete sharing through worker exit, so no
-/// visited object can be replaced before its exact DACL is restored. Protected
-/// child DACLs do not inherit a root grant, so each object receives its own ACE.
-/// Any failed open, validation, enumeration, or ACL update aborts the launch.
+/// Visit an ACL root and every existing descendant. After each verified
+/// no-follow handle is acquired without delete sharing, the retained handle
+/// blocks new delete or rename opens through DACL restoration. Protected child
+/// DACLs do not inherit a root grant, so each object receives its own ACE. Any
+/// failed open, validation, enumeration, or ACL update aborts the launch.
 fn walk_acl_tree(
     path: &Path,
     apply: &mut impl FnMut(AclTarget) -> Result<(), VisualParseError>,
@@ -2335,12 +2330,12 @@ fn apply_dacl(
     Ok(())
 }
 
-/// An ACL target opened without following a final reparse point and held
-/// without delete sharing through worker exit and DACL restoration. The final
+/// An ACL target opened without following a final reparse point. The final
 /// kernel-resolved name is compared with the already canonical policy path
 /// before any grant is applied. A concurrent ancestor swap that redirects the
-/// open resolves to a different name and is refused; after the open, withholding
-/// delete sharing leaves this exact object pinned through revocation.
+/// open resolves to a different name and is refused. Once acquired, the handle
+/// is retained without delete sharing, blocking new delete or rename opens
+/// through DACL restoration.
 struct AclTarget {
     handle: OwnedHandle,
     path: PathBuf,
@@ -2354,10 +2349,12 @@ impl AclTarget {
         let handle = unsafe {
             CreateFileW(
                 name.as_ptr(),
-                READ_CONTROL | WRITE_DAC,
+                FILE_READ_DATA | READ_CONTROL | WRITE_DAC,
                 // Allow ordinary readers and writers to keep using shared
-                // installation roots. Deliberately withhold delete sharing so
-                // this object cannot be renamed out from under the ACL update.
+                // installation roots. FILE_READ_DATA engages file share
+                // accounting; descriptor-only rights such as READ_CONTROL and
+                // WRITE_DAC do not. Once acquired, withholding delete sharing
+                // blocks new delete or rename opens until the handle is released.
                 FILE_SHARE_READ | FILE_SHARE_WRITE,
                 std::ptr::null(),
                 OPEN_EXISTING,
@@ -2432,23 +2429,6 @@ impl AclTarget {
         } else {
             NO_INHERITANCE
         }
-    }
-
-    fn current_identity(&self) -> Result<FileIdentity, VisualParseError> {
-        let mut information = std::mem::MaybeUninit::<ByHandleFileInformation>::uninit();
-        if unsafe { GetFileInformationByHandle(self.handle.get(), information.as_mut_ptr()) }
-            == FALSE
-        {
-            return Err(last_error(
-                "failed to revalidate a perception worker ACL target",
-            ));
-        }
-        let information = unsafe { information.assume_init() };
-        Ok(FileIdentity {
-            volume_serial_number: information.volume_serial_number,
-            file_index_high: information.file_index_high,
-            file_index_low: information.file_index_low,
-        })
     }
 }
 
@@ -2625,6 +2605,11 @@ mod tests {
     // Windows may map generic rights to their file-specific equivalents.
     const FILE_READ_EXECUTE: u32 = 0x0012_00A9;
     const FILE_ALL_ACCESS: u32 = 0x001F_01FF;
+    const DELETE: u32 = 0x0001_0000;
+    const FILE_SHARE_DELETE: u32 = 0x0000_0004;
+    const ERROR_SHARING_VIOLATION: i32 = 32;
+    const INHERIT_ONLY_ACE: u8 = 0x08;
+    const INHERITED_ACE: u8 = 0x10;
 
     fn test_profile_name() -> String {
         format!(
@@ -2635,6 +2620,29 @@ mod tests {
 
     fn canonical_test_root(root: &tempfile::TempDir) -> PathBuf {
         std::fs::canonicalize(root.path()).unwrap()
+    }
+
+    fn open_delete_shared(path: &Path) -> OwnedHandle {
+        let name = wide(path.as_os_str());
+        let handle = unsafe {
+            CreateFileW(
+                name.as_ptr(),
+                DELETE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                std::ptr::null(),
+                OPEN_EXISTING,
+                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                std::ptr::null_mut(),
+            )
+        };
+        if handle as isize == -1 {
+            panic!(
+                "failed to pre-open {} with DELETE access: {}",
+                path.display(),
+                std::io::Error::last_os_error()
+            );
+        }
+        OwnedHandle(handle)
     }
 
     fn is_equivalent_file_grant(mask: u32, requested: u32) -> bool {
@@ -3211,12 +3219,17 @@ mod tests {
         for path in [&writable, &artifact] {
             let (_, grants) = matching_grants(path, container.sid()).unwrap();
             assert_eq!(
-                grants.len(),
+                grants
+                    .iter()
+                    .filter(|(_, flags)| flags & (INHERITED_ACE | INHERIT_ONLY_ACE) == 0)
+                    .count(),
                 1,
-                "{} received duplicate grants",
+                "{} received duplicate direct grants",
                 path.display()
             );
-            assert!(is_equivalent_file_grant(grants[0].0, GENERIC_ALL));
+            assert!(grants
+                .iter()
+                .all(|(mask, _)| is_equivalent_file_grant(*mask, GENERIC_ALL)));
         }
     }
 
@@ -3259,26 +3272,109 @@ mod tests {
     }
 
     #[test]
-    fn acl_targets_cannot_be_replaced_until_revocation_finishes() {
+    fn acl_target_handles_block_cross_process_renames_until_revocation() {
+        const CHILD_MARKER: &str = "CUA_DRIVER_ACL_RENAME_CHILD";
+        const CHILD_PROOF: &str = "cross-process rename was blocked";
+        const ORIGINAL_PATH: &str = "CUA_DRIVER_ACL_RENAME_ORIGINAL";
+        const MOVED_PATH: &str = "CUA_DRIVER_ACL_RENAME_MOVED";
+        const TEST_NAME: &str = "perception_client::containment::windows::tests::acl_target_handles_block_cross_process_renames_until_revocation";
+
+        if std::env::var_os(CHILD_MARKER).is_some() {
+            let original = PathBuf::from(std::env::var_os(ORIGINAL_PATH).unwrap());
+            let moved = PathBuf::from(std::env::var_os(MOVED_PATH).unwrap());
+            let error = std::fs::rename(&original, &moved).unwrap_err();
+            assert_eq!(
+                error.raw_os_error(),
+                Some(ERROR_SHARING_VIOLATION),
+                "renaming {} to {} failed with an unexpected error: {error}",
+                original.display(),
+                moved.display()
+            );
+            println!("{CHILD_PROOF}");
+            return;
+        }
+
         let root = tempfile::tempdir().unwrap();
-        let original = root.path().join("model.bin");
-        std::fs::write(&original, b"original").unwrap();
+        std::fs::write(root.path().join("model.bin"), b"original").unwrap();
+        std::fs::create_dir(root.path().join("models")).unwrap();
 
         let root = canonical_test_root(&root);
-        let original = root.join("model.bin");
-        let moved = root.join("moved.bin");
-
         let container = AppContainerSid::create_unique().unwrap();
-        let mut ledger = AclGrantLedger::default();
-        ledger
-            .merge_grant_tree(&original, container.sid(), GENERIC_READ, false)
-            .unwrap();
-        assert!(std::fs::rename(&original, &moved).is_err());
-        ledger.revoke().unwrap();
-        drop(ledger);
-        std::fs::rename(&original, &moved).unwrap();
-        let (_, grants) = matching_grants(&moved, container.sid()).unwrap();
-        assert!(grants.is_empty());
+
+        for (original, moved) in [
+            (root.join("model.bin"), root.join("moved.bin")),
+            (root.join("models"), root.join("moved-models")),
+        ] {
+            let mut ledger = AclGrantLedger::default();
+            ledger
+                .merge_grant_tree(&original, container.sid(), GENERIC_READ, false)
+                .unwrap();
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", TEST_NAME, "--nocapture"])
+                .env(CHILD_MARKER, "1")
+                .env(ORIGINAL_PATH, &original)
+                .env(MOVED_PATH, &moved)
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                output.status.success(),
+                "child rename proof failed for {} with {}\nstdout:\n{}\nstderr:\n{}",
+                original.display(),
+                output.status,
+                stdout,
+                stderr
+            );
+            assert!(
+                stdout.contains(CHILD_PROOF),
+                "child did not run the exact rename test for {}\nstdout:\n{stdout}\nstderr:\n{stderr}",
+                original.display()
+            );
+
+            ledger.revoke().unwrap();
+            drop(ledger);
+            std::fs::rename(&original, &moved).unwrap();
+            let (_, grants) = matching_grants(&moved, container.sid()).unwrap();
+            assert!(
+                grants.is_empty(),
+                "{} retained a temporary AppContainer grant",
+                moved.display()
+            );
+        }
+    }
+
+    #[test]
+    fn acl_target_open_conflicts_with_existing_delete_handles() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("model.bin"), b"model").unwrap();
+        std::fs::create_dir(root.path().join("models")).unwrap();
+
+        let root = canonical_test_root(&root);
+        for path in [root.join("model.bin"), root.join("models")] {
+            let delete_handle = open_delete_shared(&path);
+            let error = match AclTarget::open(&path) {
+                Ok(_) => panic!(
+                    "opened {} without delete sharing while a DELETE handle was live",
+                    path.display()
+                ),
+                Err(error) => error,
+            };
+            assert_eq!(
+                error.detail.as_deref(),
+                Some("os error 32"),
+                "opening {} failed with an unexpected error: {error:?}",
+                path.display()
+            );
+
+            drop(delete_handle);
+            AclTarget::open(&path).unwrap_or_else(|error| {
+                panic!(
+                    "failed to open {} after releasing the DELETE handle: {error:?}",
+                    path.display()
+                )
+            });
+        }
     }
 
     #[test]

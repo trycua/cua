@@ -2060,6 +2060,8 @@ impl ExtensionStore {
                     // removes the staging directory below, so the rollback
                     // stays durable whichever step failed.
                     write_install_record_at(&staging_handle, &inspected, source)?;
+                    #[cfg(windows)]
+                    windows_harden_private_tree(&staging_handle)?;
                     verify_installed_version_at(
                         &staging_handle,
                         entry,
@@ -3479,6 +3481,44 @@ fn inspect_owned_tree(directory: &Dir) -> Result<()> {
         } else {
             bail!(
                 "refusing to delete extension directory containing special file {:?}",
+                child.file_name()
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn windows_harden_private_tree(directory: &Dir) -> Result<()> {
+    windows_reject_reparse_directory(directory)?;
+    windows_secure_handle(directory)?;
+    for child in directory.entries()? {
+        let child = child?;
+        let file_type = child.file_type()?;
+        use cap_std::fs::MetadataExt as _;
+        if child.metadata()?.file_attributes() & 0x400 != 0 {
+            bail!(
+                "refusing to harden extension directory containing reparse point {:?}",
+                child.file_name()
+            );
+        }
+        if file_type.is_symlink() {
+            bail!(
+                "refusing to harden extension directory containing symbolic link {:?}",
+                child.file_name()
+            );
+        }
+        if file_type.is_dir() {
+            let opened = directory.open_dir_nofollow(child.file_name())?;
+            windows_harden_private_tree(&opened)?;
+        } else if file_type.is_file() {
+            let mut options = CapOpenOptions::new();
+            options.read(true).follow(FollowSymlinks::No);
+            let file = child.open_with(&options)?;
+            windows_secure_handle(&file)?;
+        } else {
+            bail!(
+                "refusing to harden extension directory containing special file {:?}",
                 child.file_name()
             );
         }
@@ -5315,6 +5355,44 @@ mod tests {
         )
         .unwrap();
         assert!(private_regular_file_or_missing_at(&private, "owned").unwrap());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn recursive_acl_hardening_removes_package_access_from_staged_tree() {
+        let temp = TempDir::new().unwrap();
+        let parent = open_directory_path_nofollow(temp.path()).unwrap();
+        create_private_subdirectory(&parent, std::ffi::OsStr::new("staged")).unwrap();
+        let staged = parent.open_dir_nofollow("staged").unwrap();
+        create_private_subdirectory(&staged, std::ffi::OsStr::new("nested")).unwrap();
+        let nested = staged.open_dir_nofollow("nested").unwrap();
+        write_new_file_at(&nested, "payload", b"content").unwrap();
+
+        for path in [
+            temp.path().join("staged"),
+            temp.path().join("staged/nested"),
+            temp.path().join("staged/nested/payload"),
+        ] {
+            let output = std::process::Command::new("icacls")
+                .arg(&path)
+                .arg("/grant")
+                .arg("*S-1-15-2-1:(RX)")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "icacls failed for {}: {}",
+                path.display(),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        assert!(windows_verify_directory_handle(&staged).is_err());
+        assert!(inspect_owned_tree(&staged).is_err());
+
+        windows_harden_private_tree(&staged).unwrap();
+        windows_verify_directory_handle(&staged).unwrap();
+        inspect_owned_tree(&staged).unwrap();
     }
 
     #[cfg(windows)]

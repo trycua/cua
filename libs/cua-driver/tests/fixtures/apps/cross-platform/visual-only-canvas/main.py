@@ -13,6 +13,7 @@ import urllib.request
 
 WIDTH = 760
 HEIGHT = 460
+DEFAULT_TITLE = "Cua Visual-Only Canvas Fixture"
 CARDS = (
     {"id": "save", "label": "Save", "bounds": (72, 132, 276, 310), "color": "#e85d3f"},
     {"id": "send", "label": "Send", "bounds": (292, 132, 496, 310), "color": "#1e8b99"},
@@ -58,12 +59,12 @@ def post_oracle(url: str, state: dict[str, object]) -> None:
 
 
 class VisualFixture:
-    def __init__(self, journal_url: str) -> None:
+    def __init__(self, journal_url: str, title: str = DEFAULT_TITLE) -> None:
         self.journal_url = journal_url
         self.selected: Optional[str] = None
         self.action_count = 0
         self.root = tk.Tk()
-        self.root.title("Cua Visual-Only Canvas Fixture")
+        self.root.title(title)
         self.root.geometry(f"{WIDTH}x{HEIGHT}")
         self.root.resizable(False, False)
         self.canvas = tk.Canvas(
@@ -123,9 +124,11 @@ class VisualFixture:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--journal-url")
+    parser.add_argument("--title", default=DEFAULT_TITLE)
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     if args.self_test:
+        assert args.title
         assert card_at(174, 220) == "save"
         assert card_at(394, 220) == "send"
         assert card_at(614, 220) == "cancel"
@@ -135,7 +138,7 @@ def main() -> int:
     if not args.journal_url:
         parser.error("--journal-url is required unless --self-test is used")
     validate_journal_url(args.journal_url)
-    VisualFixture(args.journal_url).run()
+    VisualFixture(args.journal_url, args.title).run()
     return 0
 
 

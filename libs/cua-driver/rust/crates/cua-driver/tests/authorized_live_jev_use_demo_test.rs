@@ -501,7 +501,8 @@ mod e2e {
     use std::thread;
     use std::time::{Duration, Instant};
 
-    const FIXTURE_TITLE: &str = "Cua Visual-Only Canvas Fixture";
+    const FIXTURE_TITLE_PREFIX: &str = "Cua Visual-Only Canvas Fixture";
+    const FIXTURE_TEST_TITLE: &str = "Cua Visual-Only Canvas Fixture [test-session:window]";
     const FIXTURE_DISCOVERY_ATTEMPTS: usize = 3;
     const CHOOSER_TIMEOUT: Duration = Duration::from_secs(30);
     const MAX_CHOOSER_OUTPUT: u64 = 64 * 1024;
@@ -737,7 +738,11 @@ mod e2e {
             .join("../../../tests/fixtures/apps/cross-platform/visual-only-canvas/main.py")
     }
 
-    fn fixture_command(journal_url: &str) -> Command {
+    fn fixture_title(session_label: &str, scope: DemoScope) -> String {
+        format!("{FIXTURE_TITLE_PREFIX} [{session_label}:{}]", scope.slug())
+    }
+
+    fn fixture_command(journal_url: &str, title: &str) -> Command {
         #[cfg(target_os = "windows")]
         let mut command = {
             let mut command = Command::new("py");
@@ -748,7 +753,7 @@ mod e2e {
         let mut command = Command::new("python3");
         command
             .arg(fixture_path())
-            .args(["--journal-url", journal_url])
+            .args(["--journal-url", journal_url, "--title", title])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::inherit());
@@ -763,13 +768,26 @@ mod e2e {
         }
     }
 
-    fn exact_fixture_window(windows: &Value, pid: i64) -> Result<Option<(u64, String)>, String> {
+    fn fixture_window_id(window: &Value, pid: i64) -> Result<u64, String> {
+        window["window_id"]
+            .as_u64()
+            .filter(|window_id| *window_id != 0)
+            .ok_or_else(|| {
+                format!("exact fixture window for pid {pid} has an invalid window_id: {window}")
+            })
+    }
+
+    fn exact_fixture_window(
+        windows: &Value,
+        pid: i64,
+        title: &str,
+    ) -> Result<Option<(u64, String)>, String> {
         let windows = windows
             .as_array()
             .ok_or_else(|| "list_windows omitted its windows array".to_owned())?;
         let titled = windows
             .iter()
-            .filter(|window| window["title"].as_str() == Some(FIXTURE_TITLE))
+            .filter(|window| window["title"].as_str() == Some(title))
             .collect::<Vec<_>>();
         let owned = titled
             .iter()
@@ -777,18 +795,24 @@ mod e2e {
             .filter(|window| window["pid"].as_i64() == Some(pid))
             .collect::<Vec<_>>();
         match owned.as_slice() {
-            [] => Ok(None),
-            [window] => {
-                let window_id = window["window_id"]
-                    .as_u64()
-                    .filter(|window_id| *window_id != 0)
-                    .ok_or_else(|| {
-                        format!(
-                            "exact fixture window for pid {pid} has an invalid window_id: {window}"
-                        )
-                    })?;
-                Ok(Some((window_id, FIXTURE_TITLE.to_owned())))
-            }
+            [] => match titled.as_slice() {
+                [] => Ok(None),
+                [window] if window.get("pid").is_none_or(Value::is_null) => {
+                    Ok(Some((fixture_window_id(window, pid)?, title.to_owned())))
+                }
+                [window] if window["pid"].as_i64().is_some() => Err(format!(
+                    "exact fixture title belongs to pid {}, not expected pid {pid}",
+                    window["pid"]
+                )),
+                [window] => Err(format!(
+                    "exact fixture window has invalid pid metadata: {window}"
+                )),
+                _ => Err(format!(
+                    "ambiguous fixture identity: {} exact-title windows lacked expected pid {pid}",
+                    titled.len()
+                )),
+            },
+            [window] => Ok(Some((fixture_window_id(window, pid)?, title.to_owned()))),
             _ => Err(format!(
                 "ambiguous fixture identity: {} exact-title windows claimed pid {pid}",
                 owned.len()
@@ -796,13 +820,13 @@ mod e2e {
         }
     }
 
-    fn fixture_window_diagnostic(windows: &Value, pid: i64) -> String {
+    fn fixture_window_diagnostic(windows: &Value, pid: i64, title: &str) -> String {
         let Some(windows) = windows.as_array() else {
             return "structured response omitted the windows array".to_owned();
         };
         let titled = windows
             .iter()
-            .filter(|window| window["title"].as_str() == Some(FIXTURE_TITLE))
+            .filter(|window| window["title"].as_str() == Some(title))
             .map(|window| {
                 format!(
                     "window_id={} pid={}",
@@ -828,7 +852,11 @@ mod e2e {
         }
     }
 
-    fn find_fixture_window(driver: &mut impl Driver, pid: i64) -> Result<(u64, String), String> {
+    fn find_fixture_window(
+        driver: &mut impl Driver,
+        pid: i64,
+        title: &str,
+    ) -> Result<(u64, String), String> {
         for attempt in 1..=FIXTURE_DISCOVERY_ATTEMPTS {
             // Validate ownership locally so a backend-side PID filter cannot
             // hide whether the fixture was absent or merely lacked metadata.
@@ -837,10 +865,10 @@ mod e2e {
                 format!("list_windows failed: {}", response.text())
             } else {
                 let windows = &response.structured()["windows"];
-                if let Some(window) = exact_fixture_window(windows, pid)? {
+                if let Some(window) = exact_fixture_window(windows, pid, title)? {
                     return Ok(window);
                 }
-                fixture_window_diagnostic(windows, pid)
+                fixture_window_diagnostic(windows, pid, title)
             };
             if attempt == FIXTURE_DISCOVERY_ATTEMPTS {
                 return Err(format!(
@@ -990,8 +1018,9 @@ mod e2e {
         );
 
         let journal = FixtureJournal::start();
-        let fixture =
-            spawn_in_job(&mut fixture_command(journal.url())).expect("start canvas fixture");
+        let fixture_title = fixture_title(&gate.session_label, scope);
+        let fixture = spawn_in_job(&mut fixture_command(journal.url(), &fixture_title))
+            .expect("start canvas fixture");
         let pid = i64::from(fixture.id());
         wait_until(
             || journal.snapshot()["ready"].as_bool() == Some(true),
@@ -1010,7 +1039,7 @@ mod e2e {
             .expect("start Driver with installed candidate extension")
         };
         driver.reaper().push(fixture);
-        let (window_id, _) = find_fixture_window(&mut driver, pid)
+        let (window_id, _) = find_fixture_window(&mut driver, pid, &fixture_title)
             .unwrap_or_else(|error| panic!("find canvas fixture: {error}"));
 
         let window_session = format!("{}-window-target", gate.session_label);
@@ -1397,43 +1426,53 @@ mod e2e {
     fn fixture_discovery_requires_exact_title_and_owner() {
         let windows = json!([
             {"window_id": 10, "pid": 42, "title": "Cua Visual-Only Canvas Fixture - stale"},
-            {"window_id": 11, "pid": 41, "title": FIXTURE_TITLE},
-            {"window_id": 12, "pid": 42, "title": FIXTURE_TITLE}
+            {"window_id": 11, "pid": 41, "title": FIXTURE_TEST_TITLE},
+            {"window_id": 12, "pid": 42, "title": FIXTURE_TEST_TITLE}
         ]);
         assert_eq!(
-            exact_fixture_window(&windows, 42).unwrap(),
-            Some((12, FIXTURE_TITLE.to_owned()))
+            exact_fixture_window(&windows, 42, FIXTURE_TEST_TITLE).unwrap(),
+            Some((12, FIXTURE_TEST_TITLE.to_owned()))
         );
     }
 
     #[test]
     fn fixture_discovery_refuses_ambiguous_owner_matches() {
         let windows = json!([
-            {"window_id": 10, "pid": 42, "title": FIXTURE_TITLE},
-            {"window_id": 11, "pid": 42, "title": FIXTURE_TITLE}
+            {"window_id": 10, "pid": null, "title": FIXTURE_TEST_TITLE},
+            {"window_id": 11, "pid": null, "title": FIXTURE_TEST_TITLE}
         ]);
-        assert!(exact_fixture_window(&windows, 42)
+        assert!(exact_fixture_window(&windows, 42, FIXTURE_TEST_TITLE)
             .unwrap_err()
             .contains("ambiguous fixture identity"));
     }
 
     #[test]
-    fn fixture_discovery_reports_missing_pid_metadata() {
+    fn fixture_discovery_accepts_one_unique_title_with_missing_pid() {
         let windows = json!([
-            {"window_id": 10, "pid": null, "title": FIXTURE_TITLE}
+            {"window_id": 10, "pid": null, "title": FIXTURE_TEST_TITLE}
         ]);
-        assert_eq!(exact_fixture_window(&windows, 42).unwrap(), None);
-        let diagnostic = fixture_window_diagnostic(&windows, 42);
-        assert!(diagnostic.contains("expected pid 42"));
-        assert!(diagnostic.contains("pid=missing"));
+        assert_eq!(
+            exact_fixture_window(&windows, 42, FIXTURE_TEST_TITLE).unwrap(),
+            Some((10, FIXTURE_TEST_TITLE.to_owned()))
+        );
+    }
+
+    #[test]
+    fn fixture_discovery_rejects_explicit_mismatched_pid() {
+        let windows = json!([
+            {"window_id": 10, "pid": 41, "title": FIXTURE_TEST_TITLE}
+        ]);
+        assert!(exact_fixture_window(&windows, 42, FIXTURE_TEST_TITLE)
+            .unwrap_err()
+            .contains("not expected pid 42"));
     }
 
     #[test]
     fn fixture_discovery_refuses_zero_window_id() {
         let windows = json!([
-            {"window_id": 0, "pid": 42, "title": FIXTURE_TITLE}
+            {"window_id": 0, "pid": null, "title": FIXTURE_TEST_TITLE}
         ]);
-        assert!(exact_fixture_window(&windows, 42)
+        assert!(exact_fixture_window(&windows, 42, FIXTURE_TEST_TITLE)
             .unwrap_err()
             .contains("invalid window_id"));
     }
@@ -1441,7 +1480,7 @@ mod e2e {
     #[test]
     fn fixture_discovery_refuses_missing_or_non_array_windows() {
         for windows in [Value::Null, json!({"window_id": 10})] {
-            assert!(exact_fixture_window(&windows, 42)
+            assert!(exact_fixture_window(&windows, 42, FIXTURE_TEST_TITLE)
                 .unwrap_err()
                 .contains("omitted its windows array"));
         }
@@ -1450,11 +1489,11 @@ mod e2e {
     #[test]
     fn fixture_discovery_accepts_maximum_window_id() {
         let windows = json!([
-            {"window_id": u64::MAX, "pid": 42, "title": FIXTURE_TITLE}
+            {"window_id": u64::MAX, "pid": null, "title": FIXTURE_TEST_TITLE}
         ]);
         assert_eq!(
-            exact_fixture_window(&windows, 42).unwrap(),
-            Some((u64::MAX, FIXTURE_TITLE.to_owned()))
+            exact_fixture_window(&windows, 42, FIXTURE_TEST_TITLE).unwrap(),
+            Some((u64::MAX, FIXTURE_TEST_TITLE.to_owned()))
         );
     }
 

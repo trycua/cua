@@ -532,6 +532,31 @@ pub fn click_at_xy_chromium(
     // ≥1 frame so Chromium sees primer + target as separate gestures, not run-on.
     std::thread::sleep(std::time::Duration::from_millis(100));
 
+    // Re-aim before the real click.
+    //
+    // Some toolkits resolve a mouse-button event at the pointer position they
+    // last SAW, not at the coordinate the event carries -- Blender's GHOST
+    // event loop is one. The off-screen primer above is a move to (-1,-1)
+    // followed by a full frame of settle, which is exactly long enough for
+    // such an app to adopt (-1,-1) as where the pointer is; the target
+    // down/up that follows then resolves off the window and the click does
+    // nothing at all, silently, while every layer reports success.
+    //
+    // Chromium needs the off-screen primer (it opens the user-activation gate
+    // at a coordinate that cannot hit a DOM element), so this does not remove
+    // it -- it moves the cached pointer back onto the target afterwards, which
+    // costs one event and a frame and leaves the Chromium gate open.
+    let reaim = CGEvent::new_mouse_event(
+        source.clone(),
+        CGEventType::MouseMoved,
+        target,
+        CGMouseButton::Left,
+    )
+    .map_err(|_| anyhow::anyhow!("re-aim event creation failed"))?;
+    stamp(&reaim, win_local, 0, 2);
+    post(&reaim);
+    std::thread::sleep(std::time::Duration::from_millis(12));
+
     // Step 3: target click pair(s) with clickState stepped 1→N for double-click
     // coalescing (Chromium renderer coalesces pairs into dblclick when state=1→2).
     for pair_index in 1..=click_pairs {
@@ -546,7 +571,11 @@ pub fn click_at_xy_chromium(
         .map_err(|_| anyhow::anyhow!("target down event creation failed"))?;
         stamp(&down, win_local, click_state, 3);
         post(&down);
-        std::thread::sleep(std::time::Duration::from_millis(1));
+        // 28 ms, matching the foreground path and the background RIGHT-click
+        // path, both of which Blender honours. A 1 ms gap puts the down and the
+        // up in one pass of an app's event loop, which some toolkits collapse
+        // into nothing.
+        std::thread::sleep(std::time::Duration::from_millis(28));
 
         let up = CGEvent::new_mouse_event(
             source.clone(),
@@ -1172,6 +1201,29 @@ fn post_mouse_event_with_mode(
 /// default Rust pixel path had dropped. Click-state 0 / no button (move events
 /// carry no button); window-routing fields still stamped so the move reaches the
 /// right backgrounded window.
+/// Background move primer for the interactive-input path: put the pointer at
+/// `point` so an app that caches the pointer position resolves the button
+/// event that follows at the right place.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn post_background_move_primer(
+    pid: i32,
+    source: &CGEventSource,
+    point: CGPoint,
+    window_local: Option<(f64, f64)>,
+    wid: Option<u32>,
+    click_group_id: Option<i64>,
+) {
+    post_mouse_moved_primer(
+        pid,
+        source,
+        point,
+        window_local,
+        wid,
+        click_group_id,
+        MousePostMode::Both,
+    );
+}
+
 fn post_mouse_moved_primer(
     pid: i32,
     source: &CGEventSource,

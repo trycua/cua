@@ -1103,8 +1103,9 @@ impl WindowOverlays {
         let mut parts = Vec::new();
         for dialog in &self.dialogs {
             let id = dialog["window_id"].as_u64().unwrap_or(0);
+            let owning_pid = dialog.get("owning_pid").and_then(|v| v.as_u64());
             parts.push(format!(
-                "dialog \"{}\" (window_id {id}, transient of window {}{}) is open over this \
+                "dialog \"{}\" (window_id {id}, transient of window {}{}{}) is open over this \
                  window: call get_window_state(pid={pid}, window_id={id}) to index it and act \
                  there (pid-only keys go to it).",
                 dialog["title"].as_str().unwrap_or(""),
@@ -1113,7 +1114,12 @@ impl WindowOverlays {
                     ", modal"
                 } else {
                     ""
-                }
+                },
+                owning_pid
+                    .map(|owner| format!(
+                        ", owned by a different process pid {owner}, not pid {pid}"
+                    ))
+                    .unwrap_or_default(),
             ));
         }
         for popup in &self.popups {
@@ -1152,6 +1158,31 @@ fn window_overlays(pid: u32, xid: u64) -> WindowOverlays {
             "transient_for": owner,
             "modal": crate::x11::window_is_modal(window.xid),
             "bounds": { "x": window.x, "y": window.y, "width": window.width, "height": window.height },
+        }));
+    }
+    // A dialog/plugin window can legitimately run as a DIFFERENT process than
+    // the application it belongs to (GIMP's separate-process export dialogs,
+    // LibreOffice's Document Recovery dialog under a distinct soffice.bin).
+    // Exact-pid matching above would make such a window invisible even though
+    // it is unambiguously this application's own popup. WM_TRANSIENT_FOR
+    // resolving to one of pid's own windows is the correlation signal (see
+    // `list_cross_pid_transient_windows`); such entries are tagged with
+    // `owning_pid` so callers can tell it apart from a same-process dialog.
+    for window in crate::x11::list_cross_pid_transient_windows(pid) {
+        if window.xid == xid || !window.is_on_screen || window.width == 0 || window.height == 0 {
+            continue;
+        }
+        let Some(owner) = crate::x11::transient_for(window.xid) else {
+            continue;
+        };
+        covers |= over((window.x, window.y, window.width, window.height));
+        out.dialogs.push(json!({
+            "window_id": window.xid,
+            "title": window.title,
+            "transient_for": owner,
+            "modal": crate::x11::window_is_modal(window.xid),
+            "bounds": { "x": window.x, "y": window.y, "width": window.width, "height": window.height },
+            "owning_pid": window.pid,
         }));
     }
     for popup in crate::input::mapped_popup_windows() {
@@ -1391,6 +1422,15 @@ impl Tool for GetWindowStateTool {
             crate::x11::window_belongs_to_pid(xid, pid)
                 || crate::input::popup_window_info(xid)
                     .is_some_and(|popup| popup.pid.is_none_or(|owner| owner == pid))
+                // A cross-process dialog/plugin window transient-for one of
+                // pid's own windows (GIMP export dialogs, LibreOffice's
+                // Document Recovery) legitimately belongs to a different pid
+                // than the caller's target; accept it here too so the
+                // get_window_state(window_id=...) follow-up named in the
+                // dialogs[] overlay actually works.
+                || crate::x11::list_cross_pid_transient_windows(pid)
+                    .iter()
+                    .any(|w| w.xid == xid)
         };
         if !process_is_live || !window_matches {
             return ToolResult::error(format!(
@@ -14355,5 +14395,28 @@ mod visibility_tests {
         assert!(note.contains("popup (window_id 72, bounds x=10 y=30 200x400)"), "{note}");
         assert!(rects_intersect((0, 0, 800, 600), (100, 100, 400, 300)));
         assert!(!rects_intersect((0, 0, 800, 600), (800, 0, 10, 10)));
+    }
+
+    #[test]
+    fn a_cross_process_dialog_names_its_real_owning_pid_in_the_follow_up() {
+        // GIMP's "Export Image as JPEG" dialog spawned as a separate process
+        // (owning_pid 999) but is transient-for the target pid (5)'s window.
+        let overlays = WindowOverlays {
+            dialogs: vec![json!({
+                "window_id": 90, "title": "Export Image as JPEG", "transient_for": 10,
+                "modal": false,
+                "bounds": {"x": 0, "y": 0, "width": 300, "height": 200},
+                "owning_pid": 999,
+            })],
+            popups: vec![],
+            covers_window: false,
+            window_rect: Some((0, 0, 800, 600)),
+        };
+        let note = overlays.follow_up(5).unwrap();
+        assert!(
+            note.contains("owned by a different process pid 999, not pid 5"),
+            "{note}"
+        );
+        assert!(note.contains("get_window_state(pid=5, window_id=90)"), "{note}");
     }
 }

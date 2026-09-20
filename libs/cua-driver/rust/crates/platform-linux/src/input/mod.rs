@@ -2031,9 +2031,10 @@ pub fn send_click_with_modifiers(
         // Select the press client for both payloads so a press-only toolkit
         // binding (such as Tk's <Button-1>) receives one coherent click.
         conn.send_event(false, target.window, EventMask::BUTTON_PRESS, &press)?;
+        conn.flush()?;
         sleep(Duration::from_millis(CLICK_DELAY_MS));
         conn.send_event(false, target.window, EventMask::BUTTON_PRESS, &release)?;
-        conn.flush()?;
+        conn.get_input_focus()?.reply()?;
 
         if count > 1 {
             sleep(Duration::from_millis(80));

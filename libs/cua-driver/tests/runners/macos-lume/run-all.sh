@@ -18,6 +18,8 @@ LOCAL_APP="/Applications/CuaDriverLocal.app"
 INSTALLED_BIN="${HOME}/.local/bin/cua-driver-local"
 LOCAL_PLIST="${HOME}/Library/LaunchAgents/com.trycua.cua-driver-local.plist"
 CUA_E2E_MACOS_DAEMON_SOCKET="${CUA_E2E_MACOS_DAEMON_SOCKET:-${HOME}/Library/Caches/cua-driver-local/cua-driver-local.sock}"
+SCREEN_CAPTURE_APPROVALS="${HOME}/Library/Group Containers/group.com.apple.replayd/ScreenCaptureApprovals.plist"
+SCREEN_CAPTURE_CLIENT="com.trycua.driver.local"
 # A run-owned Cargo namespace keeps a certification build off the seed image's
 # and any other commit's target state without deleting a shared cache.
 CARGO_TARGET_ROOT="${CUA_E2E_CARGO_TARGET_ROOT:-${HOME}/Library/Caches/cua-driver-e2e/cargo-target}"
@@ -388,6 +390,26 @@ preserve_previous_artifacts() {
   mv "${ARTIFACT_DIR}" "${destination}"
   mkdir -p "${ARTIFACT_DIR}"
   echo "[EVIDENCE] Preserved the previous certification run at ${destination}"
+}
+
+setup_screen_capture_approval() {
+  local evidence_file="${ARTIFACT_DIR}/screen-capture-approval.txt"
+  echo "[CAPTURE] Suppressing the app-specific private-window-picker reminder"
+  mkdir -p "$(dirname "${SCREEN_CAPTURE_APPROVALS}")"
+  defaults write "${SCREEN_CAPTURE_APPROVALS}" "${SCREEN_CAPTURE_CLIENT}" -dict \
+    kScreenCaptureApprovalLastAlerted -date "3024-01-01 00:00:00 +0000" \
+    kScreenCaptureApprovalLastUsed -date "3024-01-01 00:00:00 +0000"
+  killall -HUP replayd >/dev/null 2>&1 || true
+  defaults read "${SCREEN_CAPTURE_APPROVALS}" "${SCREEN_CAPTURE_CLIENT}" \
+    > "${evidence_file}"
+  grep -Fq "kScreenCaptureApprovalLastAlerted" "${evidence_file}" || {
+    echo "The app-specific screen capture reminder approval was not stored" >&2
+    return 1
+  }
+  grep -Fq "kScreenCaptureApprovalLastUsed" "${evidence_file}" || {
+    echo "The app-specific screen capture last-used approval was not stored" >&2
+    return 1
+  }
 }
 
 RESTORE_STANDARD_DAEMON=0
@@ -870,6 +892,11 @@ fi
   echo "The Lume macOS runner must run in a macOS guest" >&2
   exit 2
 }
+MODEL="$(/usr/sbin/sysctl -n hw.model 2>/dev/null || true)"
+if [[ "${MODEL}" != VirtualMac* ]]; then
+  echo "The Lume macOS runner requires a VirtualMac guest, got: ${MODEL:-unknown}" >&2
+  exit 2
+fi
 if [[ -n "${SSH_CONNECTION:-}" || -n "${SSH_TTY:-}" ]]; then
   echo "Run this command from Terminal in the VM display so fixtures inherit the GUI login session" >&2
   exit 2
@@ -987,6 +1014,7 @@ if ! grep -Fq "certificate leaf" "${ARTIFACT_DIR}/codesign-requirement.txt"; the
   echo "CuaDriverLocal.app is not signed with the golden image's stable certificate identity" >&2
   exit 1
 fi
+setup_screen_capture_approval
 
 export CUA_E2E_INSTALLED_DRIVER_BIN="${INSTALLED_BIN}"
 export CUA_E2E_MACOS_DAEMON_SOCKET

@@ -505,6 +505,68 @@ def test_previous_artifact_run_is_preserved_without_mixing_results(tmp_path: Pat
     )
 
 
+def test_screen_capture_approval_is_written_reloaded_and_verified(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    calls = tmp_path / "calls.txt"
+    approvals = tmp_path / "preferences/ScreenCaptureApprovals.plist"
+    artifact_dir = tmp_path / "artifacts"
+    artifact_dir.mkdir()
+    _write_executable(
+        fake_bin / "defaults",
+        """printf 'defaults %s\n' "$*" >> "$CUA_TEST_CALLS"
+if [ "$1" = "read" ]; then
+  printf '{\n    kScreenCaptureApprovalLastAlerted = "3024-01-01 00:00:00 +0000";\n    kScreenCaptureApprovalLastUsed = "3024-01-01 00:00:00 +0000";\n}\n'
+fi
+""",
+    )
+    _write_executable(
+        fake_bin / "killall",
+        """printf 'killall %s\n' "$*" >> "$CUA_TEST_CALLS"
+""",
+    )
+    completed = _run(
+        RUN_ALL,
+        'ARTIFACT_DIR="$TEST_ARTIFACT_DIR"\n'
+        'SCREEN_CAPTURE_APPROVALS="$TEST_APPROVALS"\n'
+        "setup_screen_capture_approval\n",
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "CUA_TEST_CALLS": str(calls),
+            "TEST_APPROVALS": str(approvals),
+            "TEST_ARTIFACT_DIR": str(artifact_dir),
+        },
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert approvals.parent.is_dir()
+    recorded = calls.read_text(encoding="utf-8").splitlines()
+    assert recorded == [
+        f"defaults write {approvals} com.trycua.driver.local -dict "
+        "kScreenCaptureApprovalLastAlerted -date 3024-01-01 00:00:00 +0000 "
+        "kScreenCaptureApprovalLastUsed -date 3024-01-01 00:00:00 +0000",
+        "killall -HUP replayd",
+        f"defaults read {approvals} com.trycua.driver.local",
+    ]
+    evidence = (artifact_dir / "screen-capture-approval.txt").read_text(encoding="utf-8")
+    assert "kScreenCaptureApprovalLastAlerted" in evidence
+    assert "kScreenCaptureApprovalLastUsed" in evidence
+
+
+def test_screen_capture_approval_precedes_capture_capability_probe() -> None:
+    text = RUN_ALL.read_text(encoding="utf-8")
+    main = text.split('if [[ "${CUA_E2E_RUNNER_LIB_ONLY:-0}" == 1 ]]', 1)[1]
+    approval = main.index("setup_screen_capture_approval")
+    assert approval < main.index('"${INSTALLED_BIN}" permissions status --json')
+    assert approval < main.index('if [[ "${RETRY_ONLY}" == 1 ]]')
+    assert approval < main.index("run_full_matrix")
+
+
+def test_lume_runner_gates_persistent_guest_setup_to_virtualmac() -> None:
+    text = RUN_ALL.read_text(encoding="utf-8")
+    assert 'MODEL="$(/usr/sbin/sysctl -n hw.model 2>/dev/null || true)"' in text
+    assert '[[ "${MODEL}" != VirtualMac* ]]' in text
+    assert "requires a VirtualMac guest" in text
+
+
 def test_artifact_history_is_never_overwritten(tmp_path: Path) -> None:
     artifact_dir = tmp_path / "macos"
     history_root = tmp_path / "macos-history"

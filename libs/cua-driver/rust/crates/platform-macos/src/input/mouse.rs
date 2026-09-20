@@ -142,6 +142,22 @@ fn click_at_xy_desktop_inner(
     unsafe { CGAssociateMouseAndMouseCursorPosition(true) };
     std::thread::sleep(std::time::Duration::from_millis(40));
     let result = super::keyboard::with_global_modifier_keys(modifiers, |flags| {
+        if !modifiers.is_empty() {
+            // Prime AppKit's cursor-tracking state after the physical modifiers
+            // are down so the modified mouseDown preserves the existing
+            // selection. Leave ordinary clicks on their established event path.
+            let moved = CGEvent::new_mouse_event(
+                source.clone(),
+                CGEventType::MouseMoved,
+                point,
+                CGMouseButton::Left,
+            )
+            .map_err(|_| anyhow::anyhow!("CGEvent::new_mouse_event(move) failed"))?;
+            moved.set_flags(flags);
+            moved.post(CGEventTapLocation::HID);
+            std::thread::sleep(std::time::Duration::from_millis(12));
+        }
+
         for pair_index in 0..count.max(1) {
             let down = CGEvent::new_mouse_event(source.clone(), down_ty, point, btn)
                 .map_err(|_| anyhow::anyhow!("CGEvent::new_mouse_event(down) failed"))?;

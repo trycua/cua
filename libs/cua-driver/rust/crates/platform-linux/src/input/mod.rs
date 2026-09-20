@@ -2030,11 +2030,11 @@ pub fn send_click_with_modifiers(
         // The event mask selects recipients independently of the payload type.
         // Select the press client for both payloads so a press-only toolkit
         // binding (such as Tk's <Button-1>) receives one coherent click.
-        conn.send_event(false, target.window, EventMask::BUTTON_PRESS, &press)?;
-        conn.flush()?;
+        conn.send_event(false, target.window, EventMask::BUTTON_PRESS, &press)?
+            .check()?;
         sleep(Duration::from_millis(CLICK_DELAY_MS));
-        conn.send_event(false, target.window, EventMask::BUTTON_PRESS, &release)?;
-        conn.get_input_focus()?.reply()?;
+        conn.send_event(false, target.window, EventMask::BUTTON_PRESS, &release)?
+            .check()?;
 
         if count > 1 {
             sleep(Duration::from_millis(80));

@@ -83,7 +83,27 @@ fn remote_debugging_sheet_present(nodes: &[AXNode]) -> bool {
             .map_or(nodes.len(), |(index, _)| index);
         nodes[sheet_index..end].iter().any(|node| {
             let text = normalized_text(node);
-            text.contains("remote debugging") || text.contains("remote-debugging")
+            if text.contains("remote debugging") || text.contains("remote-debugging") {
+                return true;
+            }
+            // The sheet's prompt text is localized, so the check above only
+            // matches English hosts. The allow action's accessibility
+            // identifier is not localized, and `exact_allow_button` already
+            // accepts it as an equivalent signal for the consent action;
+            // recognising the sheet by that same identifier lets non-English
+            // hosts reach the allow/cancel matchers instead of being dropped
+            // here. English hosts are unaffected: this only ever adds matches
+            // that the allow matcher would have accepted anyway.
+            if node.role != "AXButton" || !node.actions.iter().any(|action| action == "AXPress") {
+                return false;
+            }
+            let identifier = node
+                .identifier
+                .as_deref()
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            identifier.contains("allow")
+                && (identifier.contains("debug") || identifier.contains("confirm"))
         })
     })
 }
@@ -102,10 +122,10 @@ fn exact_allow_button(nodes: &[AXNode]) -> Result<Option<usize>, BrowserRefusal>
             .find(|(_, node)| node.depth <= sheet.depth)
             .map_or(nodes.len(), |(index, _)| index);
         let sheet_nodes = &nodes[sheet_index..end];
-        let prompt_is_remote_debugging = sheet_nodes.iter().any(|node| {
-            let text = normalized_text(node);
-            text.contains("remote debugging") || text.contains("remote-debugging")
-        });
+        // `sheet_nodes` starts at the AXSheet, so this is the same sheet-wide
+        // scan the detection pass performs. Sharing one definition keeps the
+        // gate and the action matchers from disagreeing about the sheet.
+        let prompt_is_remote_debugging = remote_debugging_sheet_present(sheet_nodes);
         if !prompt_is_remote_debugging {
             continue;
         }
@@ -151,10 +171,10 @@ fn exact_cancel_button(nodes: &[AXNode]) -> Result<Option<usize>, BrowserRefusal
             .find(|(_, node)| node.depth <= sheet.depth)
             .map_or(nodes.len(), |(index, _)| index);
         let sheet_nodes = &nodes[sheet_index..end];
-        let prompt_is_remote_debugging = sheet_nodes.iter().any(|node| {
-            let text = normalized_text(node);
-            text.contains("remote debugging") || text.contains("remote-debugging")
-        });
+        // `sheet_nodes` starts at the AXSheet, so this is the same sheet-wide
+        // scan the detection pass performs. Sharing one definition keeps the
+        // gate and the action matchers from disagreeing about the sheet.
+        let prompt_is_remote_debugging = remote_debugging_sheet_present(sheet_nodes);
         if !prompt_is_remote_debugging {
             continue;
         }
@@ -454,6 +474,37 @@ mod tests {
             node("AXButton", 2, Some("Cancel"), &["AXPress"]),
         ];
         assert_eq!(exact_cancel_button(&unrelated).unwrap(), None);
+    }
+
+    #[test]
+    fn localized_sheet_is_detected_and_allowable_by_identifier() {
+        let mut nodes = vec![
+            node("AXWindow", 0, Some("Chrome"), &[]),
+            node(
+                "AXSheet",
+                1,
+                Some("Debugging über Remoteverbindung zulassen?"),
+                &[],
+            ),
+            node("AXButton", 2, Some("Abbrechen"), &["AXPress"]),
+            node("AXButton", 2, Some("Zulassen"), &["AXPress"]),
+        ];
+        nodes[2].identifier = Some("cancel_button".to_owned());
+        nodes[3].identifier = Some("allow_remote_debugging_button".to_owned());
+        assert!(remote_debugging_sheet_present(&nodes));
+        assert_eq!(exact_allow_button(&nodes).unwrap(), Some(7));
+    }
+
+    #[test]
+    fn localized_unrelated_sheet_stays_unmatched() {
+        let nodes = vec![
+            node("AXSheet", 1, Some("Änderungen sichern?"), &[]),
+            node("AXButton", 2, Some("Abbrechen"), &["AXPress"]),
+            node("AXButton", 2, Some("Sichern"), &["AXPress"]),
+        ];
+        assert!(!remote_debugging_sheet_present(&nodes));
+        assert_eq!(exact_allow_button(&nodes).unwrap(), None);
+        assert_eq!(exact_cancel_button(&nodes).unwrap(), None);
     }
 
     #[test]

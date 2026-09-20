@@ -822,6 +822,8 @@ where
     use core_graphics::display::CGDisplay;
     use core_graphics::event::CGEventTapLocation;
 
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+        .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
     let (cg_button, down_type, dragged_type, up_type) = match button {
         DragButton::Left => (
             CGMouseButton::Left,
@@ -866,14 +868,22 @@ where
                 ForegroundDragEventKind::Dragged => dragged_type,
                 ForegroundDragEventKind::Up => up_type,
             };
-            // A null source matches macOS's established global mouse-controller
-            // path. WindowServer then carries the pressed-button state from the
-            // down through every dragged event instead of treating each event as
-            // an independent HIDSystemState snapshot.
-            let event =
-                new_global_mouse_event(event_type, spec.point, cg_button).map_err(|_| {
-                    anyhow::anyhow!("foreground drag {:?} event creation failed", spec.kind)
-                })?;
+            let click_state = match spec.kind {
+                ForegroundDragEventKind::Move => 0,
+                ForegroundDragEventKind::Down
+                | ForegroundDragEventKind::Dragged
+                | ForegroundDragEventKind::Up => 1,
+            };
+            let event = new_foreground_drag_event(
+                source.clone(),
+                event_type,
+                spec.point,
+                cg_button,
+                click_state,
+            )
+            .map_err(|_| {
+                anyhow::anyhow!("foreground drag {:?} event creation failed", spec.kind)
+            })?;
             event.set_flags(flags);
             event.post(CGEventTapLocation::HID);
 
@@ -948,18 +958,19 @@ fn foreground_drag_events(
     events
 }
 
-fn new_global_mouse_event(
+fn new_foreground_drag_event(
+    source: CGEventSource,
     event_type: CGEventType,
     point: CGPoint,
     button: CGMouseButton,
+    click_state: i64,
 ) -> Result<CGEvent, ()> {
-    let event_ref =
-        unsafe { CGEventCreateMouseEvent(std::ptr::null_mut(), event_type, point, button) };
-    if event_ref.is_null() {
-        Err(())
-    } else {
-        Ok(unsafe { CGEvent::from_ptr(event_ref) })
-    }
+    let event = CGEvent::new_mouse_event(source, event_type, point, button)?;
+    event.set_integer_value_field(
+        core_graphics::event::EventField::MOUSE_EVENT_CLICK_STATE,
+        click_state,
+    );
+    Ok(event)
 }
 
 /// Mouse button for drag gestures.
@@ -1362,15 +1373,6 @@ pub fn scroll_wheel_at_xy(
 }
 
 extern "C" {
-    /// Quartz mouse constructor with a null source, matching established
-    /// foreground controller libraries and the global scroll path above.
-    fn CGEventCreateMouseEvent(
-        source: core_graphics::sys::CGEventSourceRef,
-        event_type: core_graphics::event::CGEventType,
-        point: CGPoint,
-        button: core_graphics::event::CGMouseButton,
-    ) -> core_graphics::sys::CGEventRef;
-
     /// `void CGEventSetLocation(CGEventRef event, CGPoint location)`.
     ///
     /// `CGPoint { double x, double y }` is classified as two FP eightbytes on
@@ -1442,25 +1444,30 @@ mod tests {
     fn global_drag_events_use_hardware_like_source_and_button_fields() {
         use core_graphics::event::EventField;
 
+        let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState).unwrap();
         let point = CGPoint::new(10.0, 20.0);
         let cases = [
-            (CGEventType::LeftMouseDown, 1, 1.0),
-            (CGEventType::LeftMouseDragged, 1, 1.0),
-            (CGEventType::LeftMouseUp, 0, 0.0),
+            (CGEventType::MouseMoved, 0),
+            (CGEventType::LeftMouseDown, 1),
+            (CGEventType::LeftMouseDragged, 1),
+            (CGEventType::LeftMouseUp, 1),
         ];
-        for (event_type, click_state, pressure) in cases {
-            let event = new_global_mouse_event(event_type, point, CGMouseButton::Left).unwrap();
+        for (event_type, click_state) in cases {
+            let event = new_foreground_drag_event(
+                source.clone(),
+                event_type,
+                point,
+                CGMouseButton::Left,
+                click_state,
+            )
+            .unwrap();
             assert_eq!(
                 event.get_integer_value_field(EventField::EVENT_SOURCE_STATE_ID),
-                CGEventSourceStateID::CombinedSessionState as i64
+                CGEventSourceStateID::HIDSystemState as i64
             );
             assert_eq!(
                 event.get_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE),
                 click_state
-            );
-            assert_eq!(
-                event.get_double_value_field(EventField::MOUSE_EVENT_PRESSURE),
-                pressure
             );
         }
     }

@@ -1982,9 +1982,12 @@ pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
                 .await
                 .map_err(|e| anyhow!("Action unavailable: {e}"))?;
             let action = target.actions.get(chosen).cloned().unwrap_or_default();
-            ap.do_action(chosen as i32)
+            let accepted = ap
+                .do_action(chosen as i32)
                 .await
                 .map_err(|e| anyhow!("doAction failed: {e}"))?;
+            require_action_accepted(accepted)
+                .with_context(|| format!("element {idx} rejected its native action"))?;
             // AT-SPI's doAction acknowledgement can precede the renderer's
             // queued DOM mutation. Give WebKit/Chromium one short event-loop
             // turn before returning success so a caller's immediate external
@@ -2873,10 +2876,14 @@ pub fn perform_action_at_point(pid: u32, win_x: i32, win_y: i32) -> Result<Optio
                 .action()
                 .await
                 .map_err(|e| anyhow!("Action unavailable: {e}"))?;
-            ap.do_action(chosen as i32)
+            let accepted = ap
+                .do_action(chosen as i32)
                 .await
                 .map_err(|e| anyhow!("doAction failed: {e}"))?;
-            Ok(target.actions.get(chosen).cloned())
+            Ok(accepted_action(
+                accepted,
+                target.actions.get(chosen).cloned(),
+            ))
         },
         || Ok(None),
     )
@@ -2902,8 +2909,8 @@ pub fn perform_action_at_point(pid: u32, win_x: i32, win_y: i32) -> Result<Optio
 ///
 /// `screen_x`/`screen_y` are full-display screen pixels (what the vision
 /// screenshot and `get_window_state` frames are in). Returns `Ok(Some(action))`
-/// on a hit, `Ok(None)` when no element covers the point so the caller can fall
-/// back to its native injection path.
+/// when AT-SPI accepts the action, `Ok(None)` when there is no target or the
+/// action is rejected so the caller can fall back to its native injection path.
 pub fn perform_action_at_screen_point(
     pid: u32,
     xid: u64,
@@ -2946,13 +2953,33 @@ pub fn perform_action_at_screen_point(
                 .action()
                 .await
                 .map_err(|e| anyhow!("Action unavailable: {e}"))?;
-            ap.do_action(chosen as i32)
+            let accepted = ap
+                .do_action(chosen as i32)
                 .await
                 .map_err(|e| anyhow!("doAction failed: {e}"))?;
-            Ok(target.actions.get(chosen).cloned())
+            Ok(accepted_action(
+                accepted,
+                target.actions.get(chosen).cloned(),
+            ))
         },
         || Ok(None),
     )
+}
+
+fn accepted_action(accepted: bool, action: Option<String>) -> Option<String> {
+    if accepted {
+        action
+    } else {
+        None
+    }
+}
+
+fn require_action_accepted(accepted: bool) -> Result<()> {
+    if accepted {
+        Ok(())
+    } else {
+        Err(anyhow!("AT-SPI action was rejected"))
+    }
 }
 
 /// Roles that draw text/graphics but don't *do* anything when actuated. GTK4
@@ -3814,12 +3841,12 @@ mod frame_correlation_tests {
 mod coord_tests {
     use super::parse_gtk_frame_extents;
     use super::{
-        activation_index, before_snapshot_deadline, combine_wayland_content_offsets,
-        hyprland_document_top_inset, is_activation_action, is_enabled_state,
-        is_indexable_capabilities, is_passive_role, is_web_process_bus,
+        accepted_action, activation_index, before_snapshot_deadline,
+        combine_wayland_content_offsets, hyprland_document_top_inset, is_activation_action,
+        is_enabled_state, is_indexable_capabilities, is_passive_role, is_web_process_bus,
         prefer_authoritative_wayland_origin, project_screen_extents, rebase_renderer_window_offset,
-        scoped_component_nodes, screen_extent_rebase, select_click_target, select_web_document,
-        ApplicationSelection,
+        require_action_accepted, scoped_component_nodes, screen_extent_rebase, select_click_target,
+        select_web_document, ApplicationSelection,
     };
     use atspi::{State, StateSet};
     use std::time::Duration;
@@ -4245,6 +4272,25 @@ mod coord_tests {
         assert_eq!(select_click_target(&frames, 20, 30), None); // bottom edge exclusive
         assert_eq!(select_click_target(&frames, 5, 5), None); // outside
         assert_eq!(select_click_target(&[], 0, 0), None); // no frames
+    }
+
+    #[test]
+    fn rejected_action_acknowledgement_does_not_report_success() {
+        assert_eq!(accepted_action(false, Some("click".to_owned())), None);
+    }
+
+    #[test]
+    fn accepted_action_acknowledgement_reports_the_selected_action() {
+        assert_eq!(
+            accepted_action(true, Some("click".to_owned())),
+            Some("click".to_owned())
+        );
+    }
+
+    #[test]
+    fn indexed_action_rejection_is_an_error() {
+        assert!(require_action_accepted(false).is_err());
+        assert!(require_action_accepted(true).is_ok());
     }
 
     #[test]

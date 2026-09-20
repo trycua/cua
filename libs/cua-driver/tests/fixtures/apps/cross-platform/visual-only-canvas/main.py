@@ -19,6 +19,7 @@ import urllib.request
 
 WIDTH = 760
 HEIGHT = 460
+CARD_LABEL_FONT_PIXELS = 32
 DEFAULT_TITLE = "Cua Visual-Only Canvas Fixture"
 X11_DISCOVERY_ATTEMPTS = 20
 X11_DISCOVERY_INTERVAL_SECONDS = 0.05
@@ -262,7 +263,11 @@ class VisualFixture:
             self.canvas.create_rectangle(left, top, right, bottom, fill=card["color"], outline=border, width=width)
             self.canvas.create_oval(left + 61, top + 42, left + 143, top + 124, fill="#fff8e8", outline="")
             self.canvas.create_text(
-                (left + right) // 2, bottom - 28, text=card["label"], fill="#fff8e8", font=("Helvetica", 18, "bold")
+                (left + right) // 2,
+                bottom - 28,
+                text=card["label"],
+                fill="#fff8e8",
+                font=("Helvetica", -CARD_LABEL_FONT_PIXELS, "bold"),
             )
         status = "WAITING FOR A VISUAL CHOICE" if self.selected is None else f"SELECTED: {self.selected.upper()}"
         self.canvas.create_text(380, 386, text=status, fill="#172b36", font=("Helvetica", 15, "bold"))
@@ -301,6 +306,12 @@ def main() -> int:
     args = parser.parse_args()
     if args.self_test:
         assert args.title
+        assert CARD_LABEL_FONT_PIXELS == 32
+        for card in CARDS:
+            left, _, right, _ = card["bounds"]
+            label = str(card["label"])
+            assert label
+            assert len(label) * CARD_LABEL_FONT_PIXELS <= right - left
         assert card_at(174, 220) == "save"
         assert card_at(394, 220) == "send"
         assert card_at(614, 220) == "cancel"

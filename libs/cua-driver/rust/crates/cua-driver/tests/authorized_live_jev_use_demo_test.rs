@@ -14,6 +14,7 @@ const MAX_REGIONS: usize = 64;
 const MAX_SAFE_ID_BYTES: usize = 96;
 const MAX_CHOOSER_ID_BYTES: usize = 64;
 const MIN_CONFIDENCE: f64 = 0.80;
+const SEND_ACTION_DESCRIPTION: &str = "Activate the visual region labeled Send.";
 
 #[derive(Clone, Debug, PartialEq)]
 struct ClickAction {
@@ -215,7 +216,7 @@ fn bounded_candidates(
             }
             send_candidate = Some(Candidate {
                 id: format!("region:{id}"),
-                description: "Activate the visual region labeled Send.".into(),
+                description: SEND_ACTION_DESCRIPTION.into(),
                 action: Some(ClickAction {
                     capture_id: capture_id.into(),
                     x: x as f64 + width as f64 / 2.0,
@@ -242,6 +243,29 @@ fn bounded_candidates(
         },
     ]);
     Ok((candidates, compact))
+}
+
+fn require_unique_actionable_send(
+    candidates: &[Candidate],
+    region_count: usize,
+) -> Result<(), String> {
+    let actionable_count = candidates
+        .iter()
+        .filter(|candidate| candidate.action.is_some())
+        .count();
+    let exact_send_count = candidates
+        .iter()
+        .filter(|candidate| {
+            candidate.action.is_some() && candidate.description == SEND_ACTION_DESCRIPTION
+        })
+        .count();
+    if actionable_count != 1 || exact_send_count != 1 {
+        return Err(format!(
+            "expected exactly one actionable Send candidate; region_count={region_count}, candidate_count={}, actionable_count={actionable_count}, exact_send_count={exact_send_count}",
+            candidates.len()
+        ));
+    }
+    Ok(())
 }
 
 fn choice_request(
@@ -538,6 +562,38 @@ fn candidate_policy_refuses_ambiguous_and_non_send_regions() {
     );
 }
 
+#[test]
+fn actionable_send_requirement_reports_only_bounded_counts() {
+    let fallback_candidates = vec![
+        Candidate {
+            id: "reobserve".into(),
+            description: "Reobserve.".into(),
+            action: None,
+        },
+        Candidate {
+            id: "abstain".into(),
+            description: "Abstain.".into(),
+            action: None,
+        },
+    ];
+    assert_eq!(
+        require_unique_actionable_send(&fallback_candidates, 7).unwrap_err(),
+        "expected exactly one actionable Send candidate; region_count=7, candidate_count=2, actionable_count=0, exact_send_count=0"
+    );
+
+    let mut candidates = fallback_candidates;
+    candidates.push(Candidate {
+        id: "region:send".into(),
+        description: SEND_ACTION_DESCRIPTION.into(),
+        action: Some(ClickAction {
+            capture_id: "capture-1".into(),
+            x: 50.0,
+            y: 25.0,
+        }),
+    });
+    assert!(require_unique_actionable_send(&candidates, 7).is_ok());
+}
+
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 mod e2e {
     use super::*;
@@ -813,6 +869,38 @@ mod e2e {
         let deadline = Instant::now() + Duration::from_secs(10);
         while !predicate() {
             assert!(Instant::now() < deadline, "{message}");
+            thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    fn wait_for_send_transition(
+        journal: &FixtureJournal,
+        scope: DemoScope,
+        window_id: u64,
+        choice: &ClickAction,
+        click: &cua_driver_testkit::ToolResponse,
+    ) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let state = journal.snapshot();
+            if state["selected"] == "send" && state["action_count"] == 1 {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "journal did not record exactly one Send transition: {}",
+                json!({
+                    "scope": scope.slug(),
+                    "fixture_window_id": window_id,
+                    "capture_bound_coordinates": {"x": choice.x, "y": choice.y},
+                    "click_action": {
+                        "route": click.action_route(),
+                        "delivery_mode": click.action_delivery_mode(),
+                        "effect": click.action_effect(),
+                    },
+                    "journal_snapshot": state,
+                })
+            );
             thread::sleep(Duration::from_millis(50));
         }
     }
@@ -1182,6 +1270,8 @@ mod e2e {
         );
         let (candidates, regions) =
             bounded_candidates(parsed.structured(), &capture_id).expect("bounded candidates");
+        require_unique_actionable_send(&candidates, regions.len())
+            .unwrap_or_else(|error| panic!("perception candidate contract failed: {error}"));
         let request = choice_request(&capture_id, regions, &candidates);
         let (choice_response, selected_candidate) = choose(&gate.choice, &request, &candidates);
         if matches!(&gate.choice, ChoiceConfig::Live { .. }) {
@@ -1261,13 +1351,7 @@ mod e2e {
                 click.text()
             );
         }
-        wait_until(
-            || {
-                let state = journal.snapshot();
-                state["selected"] == "send" && state["action_count"] == 1
-            },
-            "journal did not record exactly one Send transition",
-        );
+        wait_for_send_transition(&journal, scope, window_id, &choice, &click);
         let capture_preserved_after_refusal = refused_capture_id
             .map(|refused_capture_id| click_succeeded && refused_capture_id == choice.capture_id);
         assert_eq!(

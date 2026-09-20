@@ -51,6 +51,7 @@ pub enum Command {
     },
     Serve {
         socket: Option<String>,
+        pid_file: Option<String>,
         /// Immutable agent-authorization mode selected at trusted daemon
         /// startup. This is distinct from the macOS OS-permissions gate.
         permission_mode: Option<String>,
@@ -807,6 +808,7 @@ pub fn parse_command() -> Command {
         Some("mcp-config") => Command::McpConfig { client: mcp_client },
         Some("serve") => Command::Serve {
             socket,
+            pid_file: flag_value(&args, "--pid-file"),
             permission_mode: flag_value(&args, "--permission-mode"),
             dangerously_bypass_approvals: args
                 .iter()
@@ -4988,6 +4990,20 @@ mod tests {
     fn expected_pid_does_not_shadow_other_subcommands() {
         let argv = args(&["--expected-pid", "42", "status"]);
         assert_eq!(positional_args(&argv), vec!["status"]);
+    }
+
+    #[test]
+    fn pid_file_is_parsed_for_serve_before_or_after_the_subcommand() {
+        for argv in [
+            args(&["serve", "--pid-file", "/tmp/cua-driver.pid"]),
+            args(&["--pid-file=/tmp/cua-driver.pid", "serve"]),
+        ] {
+            assert_eq!(positional_args(&argv), vec!["serve"]);
+            assert_eq!(
+                flag_value(&argv, "--pid-file"),
+                Some("/tmp/cua-driver.pid".to_owned())
+            );
+        }
     }
 
     #[test]

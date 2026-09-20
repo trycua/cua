@@ -546,6 +546,7 @@ fn main() {
         }
         cli::Command::Serve {
             socket,
+            pid_file,
             permission_mode,
             dangerously_bypass_approvals,
             capability_manifest,
@@ -636,7 +637,7 @@ fn main() {
                 }
             };
             let sp = socket.unwrap_or_else(serve::default_socket_path);
-            let pid_path = serve::default_pid_file_path();
+            let pid_path = pid_file.unwrap_or_else(serve::default_pid_file_path);
 
             // Bind the Unix socket FIRST, on a background thread, BEFORE
             // running the (blocking) permissions gate (#1761).
@@ -959,6 +960,7 @@ fn main() -> anyhow::Result<()> {
         }
         cli::Command::Serve {
             socket,
+            pid_file,
             permission_mode,
             dangerously_bypass_approvals,
             capability_manifest,
@@ -1010,7 +1012,7 @@ fn main() -> anyhow::Result<()> {
             )?;
             maybe_init_pip();
             let sp = socket.unwrap_or_else(serve::default_socket_path);
-            let pid_path = serve::default_pid_file_path();
+            let pid_path = pid_file.unwrap_or_else(serve::default_pid_file_path);
             // run_serve_cmd builds its own runtime; must run on a fresh thread.
             std::thread::spawn(move || {
                 serve::run_serve_cmd(driver, &sp, Some(&pid_path));

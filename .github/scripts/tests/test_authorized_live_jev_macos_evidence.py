@@ -19,8 +19,7 @@ def test_macos_live_evidence_is_manual_exact_sha_and_protected() -> None:
     assert set(triggers) == {"workflow_dispatch", "workflow_call"}
     assert triggers["workflow_dispatch"]["inputs"] == triggers["workflow_call"]["inputs"]
     jev_description = (
-        "Canonical merged commit SHA bdaf8c2570e35254f5e50a317781374efe7aa91a "
-        "of pull request #3916"
+        "Canonical merged commit SHA bdaf8c2570e35254f5e50a317781374efe7aa91a of pull request #3916"
     )
     assert triggers["workflow_dispatch"]["inputs"]["jev_source_sha"]["description"] == (
         jev_description
@@ -48,15 +47,14 @@ def test_macos_live_evidence_is_manual_exact_sha_and_protected() -> None:
         '== "$GITHUB_REPOSITORY" ]]' in workflow
     )
     assert (
-        '[[ "$(jq -r .merge_commit_sha <<<"$jev_pr_json")" '
-        '== "$REQUESTED_JEV_SHA" ]]' in workflow
+        '[[ "$(jq -r .merge_commit_sha <<<"$jev_pr_json")" == "$REQUESTED_JEV_SHA" ]]' in workflow
     )
-    assert 'ref: ${{ needs.resolve.outputs.source_sha }}' in workflow
-    assert 'ref: ${{ needs.resolve.outputs.jev_source_sha }}' in workflow
+    assert "ref: ${{ needs.resolve.outputs.source_sha }}" in workflow
+    assert "ref: ${{ needs.resolve.outputs.jev_source_sha }}" in workflow
     assert "persist-credentials: false" in workflow
     assert '[[ "$run_id" == "$CANDIDATE_RUN_ID" ]]' in workflow
-    assert 'STAGING-cua-perception-review-candidates-$REQUESTED_SHA' in workflow
-    assert '.github/workflows/review-cua-perception-pr3943.yml' in workflow
+    assert "STAGING-cua-perception-review-candidates-$REQUESTED_SHA" in workflow
+    assert ".github/workflows/review-cua-perception-pr3943.yml" in workflow
     assert '[[ "$(jq -r .event <<<"$run_json")" == pull_request ]]' in workflow
     assert "run-id: ${{ needs.resolve.outputs.candidate_run_id }}" in workflow
 
@@ -73,11 +71,10 @@ def test_macos_dispatch_accepts_only_a_completed_successful_exact_producer_run()
 
 def test_macos_live_evidence_uses_canonical_lume_and_signed_arm64_candidate() -> None:
     workflow = (ROOT / ".github/workflows/authorized-live-jev-macos-evidence.yml").read_text()
+    assert "CUA_PERCEPTION_EXTENSION_HOME: ${{ github.workspace }}/.cua-perception-home" in workflow
     assert (
-        "CUA_PERCEPTION_EXTENSION_HOME: ${{ github.workspace }}/.cua-perception-home"
-        in workflow
+        'echo "CUA_PERCEPTION_EVIDENCE_DIR=$RUNNER_TEMP/cua-perception-evidence/live"' in workflow
     )
-    assert 'echo "CUA_PERCEPTION_EVIDENCE_DIR=$RUNNER_TEMP/cua-perception-evidence/live"' in workflow
     assert 'CUA_E2E_UNRESTRICTED_GUI: "1"' in workflow
     assert 'echo "CUA_E2E_RECORDINGS_ROOT=$RUNNER_TEMP/cua-perception-recordings"' in workflow
     assert "CUA_PERCEPTION_EVIDENCE_DIR: ${{ github.workspace }}" not in workflow
@@ -91,11 +88,11 @@ def test_macos_live_evidence_uses_canonical_lume_and_signed_arm64_candidate() ->
     assert 'signing["certificate_sha256"]' in workflow
     assert 'arches == ["arm64"]' in workflow
     assert 'measured["review_driver_sha256"]' in workflow
-    assert 'publisher_signature_verified' in workflow
-    assert 'review-only-publisher-verified' in workflow
+    assert "publisher_signature_verified" in workflow
+    assert "review-only-publisher-verified" in workflow
     assert workflow.index('CUA_JEV_MOCK_DEMO: "1"') < workflow.index("secrets.TYPESAFE_API_KEY")
-    assert 'CUA_JEV_LIVE=1' in workflow
-    assert 'secrets.TYPESAFE_API_KEY' in workflow
+    assert "CUA_JEV_LIVE=1" in workflow
+    assert "secrets.TYPESAFE_API_KEY" in workflow
     assert "signed-candidate-checksums.txt" in workflow
     assert "crypto.verify(null, payloadBytes, key" in workflow
     assert "catalog.signature" in workflow
@@ -104,9 +101,11 @@ def test_macos_live_evidence_uses_canonical_lume_and_signed_arm64_candidate() ->
     assert "libs/cua-driver/tests/runners/macos-lume/seed-tcc-guest.sh" in workflow
     assert 'CUA_TCC_APP_PATH="$candidate"' in workflow
     assert 'CUA_TCC_EXPECTED_CLIENT="$candidate"' in workflow
-    assert workflow.index("Verify signed arm64 Driver and candidate measurements") < workflow.index(
-        "Grant the exact review Driver path in this disposable Lume guest"
-    ) < workflow.index("Install and measure the signed perception extension")
+    assert (
+        workflow.index("Verify signed arm64 Driver and candidate measurements")
+        < workflow.index("Grant the exact review Driver path in this disposable Lume guest")
+        < workflow.index("Install and measure the signed perception extension")
+    )
     assert "Preflight noninteractive Lume privileges, keychains, and browsers" in workflow
     assert "/usr/bin/sudo -n -v" in workflow
     preflight = workflow.split(
@@ -133,10 +132,19 @@ def test_macos_live_evidence_uses_canonical_lume_and_signed_arm64_candidate() ->
     assert workflow.index("driver.chmod(driver.stat().st_mode | 0o111)") < workflow.index(
         "seed-tcc-guest.sh"
     )
-    assert 'nohup "$candidate" serve --socket "$socket"' in workflow
+    assert (
+        'daemon_pid_file="$RUNNER_TEMP/cua-review-driver-${GITHUB_RUN_ID}-'
+        '${GITHUB_RUN_ATTEMPT}.pid"' in workflow
+    )
+    assert 'nohup "$candidate" serve --pid-file "$daemon_pid_file" --socket "$socket"' in workflow
+    assert 'HOME="$daemon_home"' not in workflow
+    assert "Library/Caches/cua-driver/cua-driver.pid" not in workflow
+    assert 'echo "$daemon_pid" > "$RUNNER_TEMP/cua-review-driver.pid"' not in workflow
+    assert '[[ ! -L "$daemon_pid_file" ]]' in workflow
+    assert 'kill -0 "$daemon_pid" 2>/dev/null' in workflow
     assert '"$candidate" call check_permissions \'{"prompt":false}\'' in workflow
     assert '"$candidate" call get_desktop_state "$capture_args" --socket "$socket"' in workflow
-    assert 'CUA_E2E_MACOS_DAEMON_SOCKET=$socket' in workflow
+    assert "CUA_E2E_MACOS_DAEMON_SOCKET=$socket" in workflow
     assert '--expected-pid "$CUA_REVIEW_DAEMON_PID" stop' in workflow
     assert 'content.startswith(b"\\x89PNG\\r\\n\\x1a\\n")' in workflow
     assert 'permissions.get("accessibility") is True' in workflow
@@ -146,22 +154,45 @@ def test_macos_live_evidence_uses_canonical_lume_and_signed_arm64_candidate() ->
         "- name: Start the exact review Driver and prove direct desktop capture", 1
     )[1].split("- name:", 1)[0]
     assert start_step.index("trap cleanup_failed_start EXIT") < start_step.index(
-        'echo "$daemon_pid" >'
+        'nohup "$candidate" serve'
     )
+    assert 'rm -f -- "$socket" "$daemon_pid_file"' in start_step
+    assert 'kill "$daemon_pid" >/dev/null 2>&1 || true' in start_step
+    assert 'kill -KILL "$daemon_pid" >/dev/null 2>&1 || true' in start_step
+    assert start_step.index('kill -0 "$daemon_pid" 2>/dev/null; then') < start_step.index(
+        'rm -f -- "$socket" "$daemon_pid_file"'
+    )
+    stop_step = workflow.split("- name: Stop the exact review Driver daemon", 1)[1].split(
+        "- name:", 1
+    )[0]
+    assert 'expected_pid_file="$RUNNER_TEMP/cua-review-driver-${GITHUB_RUN_ID}-' in stop_step
+    assert '[[ "$CUA_REVIEW_DAEMON_PID_FILE" == "$expected_pid_file" ]]' in stop_step
+    assert 'serving_pid="$(<"$expected_pid_file")"' in stop_step
+    assert '--expected-pid "$CUA_REVIEW_DAEMON_PID" stop' in stop_step
+    assert 'rm -f -- "$expected_socket" "$expected_pid_file"' in stop_step
+    assert '[[ ! -e "$expected_pid_file" && ! -L "$expected_pid_file" ]]' in stop_step
+    assert "rm -rf" not in start_step and "rm -rf" not in stop_step
     assert workflow.index("Stop the exact review Driver daemon") < workflow.index(
         "Upload only encrypted evidence envelopes"
     )
 
 
+def test_macos_github_api_check_uses_explicit_http_failure() -> None:
+    workflow = (ROOT / ".github/workflows/authorized-live-jev-macos-evidence.yml").read_text()
+    assert "if response.status != 200:" in workflow
+    assert 'raise RuntimeError(f"GitHub API returned HTTP {response.status}")' in workflow
+    assert "assert response.status == 200" not in workflow
+
+
 def test_macos_publication_fully_decodes_and_keeps_private_inputs_local() -> None:
     workflow = (ROOT / ".github/workflows/authorized-live-jev-macos-evidence.yml").read_text()
-    assert 'for scope in window primary-desktop; do' in workflow
+    assert "for scope in window primary-desktop; do" in workflow
     assert 'ffmpeg -v error -xerror -i "$evidence/recording.mp4"' in workflow
     assert "libs/cua-driver/tests/perception-demo/sanitize_evidence.py" in workflow
-    assert "--raw-evidence \"$raw\"" in workflow
+    assert '--raw-evidence "$raw"' in workflow
     assert '--output-dir "$publish_root/$scope"' in workflow
     assert '--session-label "$CUA_SESSION_LABEL-$scope"' in workflow
-    assert "python3 -m venv \"$validation_venv\"" in workflow
+    assert 'python3 -m venv "$validation_venv"' in workflow
     assert 'uv pip install --no-config --python "$validation_venv/bin/python"' in workflow
     assert "uv pip install --no-config --system" not in workflow
     assert "Draft202012Validator(schema).validate(manifest)" in workflow
@@ -176,8 +207,14 @@ def test_macos_publication_fully_decodes_and_keeps_private_inputs_local() -> Non
     assert 'chooser["source_sha"] == os.environ["CUA_JEV_SOURCE_SHA"]' in workflow
     assert '"runner_identity_class": "self-hosted-lume"' in workflow
     assert '== ["manifest.json", "recording.mp4"]' in workflow
-    assert '"window": (evidence_root / "raw-manifest.json", "window", "get_window_state", "background")' in workflow
-    assert '"primary-desktop": (evidence_root / "primary-desktop" / "raw-manifest.json", "desktop", "get_desktop_state", "foreground")' in workflow
+    assert (
+        '"window": (evidence_root / "raw-manifest.json", "window", "get_window_state", "background")'
+        in workflow
+    )
+    assert (
+        '"primary-desktop": (evidence_root / "primary-desktop" / "raw-manifest.json", "desktop", "get_desktop_state", "foreground")'
+        in workflow
+    )
     assert '== ["primary-desktop", "window"]' in workflow
     assert '[[ -f "$raw" && -f "$evidence/timeline.json" ]]' in workflow
 
@@ -197,9 +234,7 @@ def test_macos_encrypts_each_validated_bundle_and_cleans_plaintext_after_upload(
     )
 
     assert encrypt["env"] == {
-        "CUA_PERCEPTION_EVIDENCE_RECIPIENT": (
-            "${{ vars.EVIDENCE_ARCHIVE_RECIPIENT_PUBLIC_KEY }}"
-        )
+        "CUA_PERCEPTION_EVIDENCE_RECIPIENT": ("${{ vars.EVIDENCE_ARCHIVE_RECIPIENT_PUBLIC_KEY }}")
     }
     assert sum("vars.EVIDENCE_ARCHIVE_RECIPIENT_PUBLIC_KEY" in str(step) for step in steps) == 1
     assert "EVIDENCE_ARCHIVE_KEY" not in text
@@ -240,7 +275,7 @@ def test_live_secret_is_cleared_even_when_the_command_fails() -> None:
     assert "unset LIVE_TYPESAFE_API_KEY" in live_step
     assert "trap clear_typesafe_key EXIT" in live_step
     assert "unset TYPESAFE_API_KEY" in live_step
-    assert 'pulls/3943' in live_step and 'pulls/3916' in live_step
+    assert "pulls/3943" in live_step and "pulls/3916" in live_step
     assert '[[ "$(jq -r .state <<<"$jev_pr_json")" == closed ]]' in live_step
     assert '[[ "$(jq -r .merged <<<"$jev_pr_json")" == true ]]' in live_step
     assert (
@@ -248,11 +283,10 @@ def test_live_secret_is_cleared_even_when_the_command_fails() -> None:
         '== "$GITHUB_REPOSITORY" ]]' in live_step
     )
     assert (
-        '[[ "$(jq -r .merge_commit_sha <<<"$jev_pr_json")" '
-        '== "$CUA_JEV_SOURCE_SHA" ]]' in live_step
+        '[[ "$(jq -r .merge_commit_sha <<<"$jev_pr_json")" == "$CUA_JEV_SOURCE_SHA" ]]' in live_step
     )
     assert '$(jq -r .head.sha <<<"$jev_pr_json")' not in live_step
-    assert 'jq -e \'.labels | any(.name == "cua-perception-live-review")\'' in live_step
+    assert "jq -e '.labels | any(.name == \"cua-perception-live-review\")'" in live_step
     assert "unset GH_TOKEN" in live_step
     command_with_secret = live_step.index('            "$CUA_LIVE_TEST_BINARY"')
     assert live_step.index("export TYPESAFE_API_KEY") < command_with_secret

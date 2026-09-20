@@ -332,38 +332,72 @@ jobs:
           set -euo pipefail
           candidate="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$CUA_TEST_DRIVER_BIN")"
           socket="/tmp/cua-review-driver-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.sock"
+          daemon_pid_file="$RUNNER_TEMP/cua-review-driver-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.pid"
           daemon_log="$RUNNER_TEMP/cua-review-driver.log"
           capture="$RUNNER_TEMP/cua-review-driver-direct-capture.png"
           permissions="$RUNNER_TEMP/review-driver-permissions.json"
           [[ ${#socket} -lt 104 ]] || { echo "review Driver socket exceeds macOS SUN_LEN" >&2; exit 1; }
-          [[ "$candidate" == "$CUA_TEST_DRIVER_BIN" && ! -e "$socket" ]]
-          CUA_DRIVER_RS_HOME="$CUA_PERCEPTION_EXTENSION_HOME" \
-          CUA_DRIVER_RS_TELEMETRY_ENABLED=false \
-            nohup "$candidate" serve --socket "$socket" \
-              --permission-mode unrestricted \
-              --dangerously-bypass-approvals \
-              --no-permissions-gate \
-              --no-overlay >"$daemon_log" 2>&1 </dev/null &
-          daemon_pid=$!
+          [[ "$candidate" == "$CUA_TEST_DRIVER_BIN" ]]
+          [[ ! -e "$socket" && ! -L "$socket" && ! -e "$daemon_pid_file" && ! -L "$daemon_pid_file" ]]
+          launcher_pid=""
+          daemon_pid=""
           cleanup_failed_start() {
             status=$?
             trap - EXIT INT TERM
             if [[ "$status" != 0 ]]; then
-              "$candidate" --socket "$socket" --expected-pid "$daemon_pid" stop >/dev/null 2>&1 || true
-              kill "$daemon_pid" >/dev/null 2>&1 || true
-              wait "$daemon_pid" 2>/dev/null || true
-              [[ ! -S "$socket" ]] || rm -f -- "$socket"
+              if [[ "$daemon_pid" =~ ^[1-9][0-9]*$ ]]; then
+                if ! "$candidate" --socket "$socket" --expected-pid "$daemon_pid" stop >/dev/null 2>&1; then
+                  kill "$daemon_pid" >/dev/null 2>&1 || true
+                fi
+                for _ in {1..100}; do
+                  kill -0 "$daemon_pid" 2>/dev/null || break
+                  sleep 0.1
+                done
+                if kill -0 "$daemon_pid" 2>/dev/null; then
+                  kill -KILL "$daemon_pid" >/dev/null 2>&1 || true
+                  for _ in {1..100}; do
+                    kill -0 "$daemon_pid" 2>/dev/null || break
+                    sleep 0.1
+                  done
+                fi
+              fi
+              if [[ "$launcher_pid" =~ ^[1-9][0-9]*$ ]]; then
+                kill "$launcher_pid" >/dev/null 2>&1 || true
+                wait "$launcher_pid" 2>/dev/null || true
+              fi
+              if [[ "$daemon_pid" =~ ^[1-9][0-9]*$ ]] && kill -0 "$daemon_pid" 2>/dev/null; then
+                echo "failed to stop task-owned review Driver PID $daemon_pid" >&2
+                exit "$status"
+              fi
+              rm -f -- "$socket" "$daemon_pid_file"
+              [[ ! -e "$socket" && ! -L "$socket" ]]
+              [[ ! -e "$daemon_pid_file" && ! -L "$daemon_pid_file" ]]
             fi
             exit "$status"
           }
           trap cleanup_failed_start EXIT
           trap 'exit 130' INT
           trap 'exit 143' TERM
-          echo "$daemon_pid" > "$RUNNER_TEMP/cua-review-driver.pid"
-          {
-            echo "CUA_E2E_MACOS_DAEMON_SOCKET=$socket"
-            echo "CUA_REVIEW_DAEMON_PID=$daemon_pid"
-          } >> "$GITHUB_ENV"
+          CUA_DRIVER_RS_HOME="$CUA_PERCEPTION_EXTENSION_HOME" \
+          CUA_DRIVER_RS_TELEMETRY_ENABLED=false \
+            nohup "$candidate" serve --pid-file "$daemon_pid_file" --socket "$socket" \
+              --permission-mode unrestricted \
+              --dangerously-bypass-approvals \
+              --no-permissions-gate \
+              --no-overlay >"$daemon_log" 2>&1 </dev/null &
+          launcher_pid=$!
+          for _ in {1..100}; do
+            if [[ -f "$daemon_pid_file" ]]; then
+              [[ ! -L "$daemon_pid_file" ]]
+              daemon_pid="$(<"$daemon_pid_file")"
+              [[ "$daemon_pid" =~ ^[1-9][0-9]*$ ]]
+              kill -0 "$daemon_pid" 2>/dev/null
+              break
+            fi
+            kill -0 "$launcher_pid" 2>/dev/null || break
+            sleep 0.1
+          done
+          [[ "$daemon_pid" =~ ^[1-9][0-9]*$ ]]
           ready=0
           for _ in {1..100}; do
             if daemon_status="$("$candidate" status --socket "$socket" 2>&1)" \
@@ -405,6 +439,11 @@ jobs:
           content = pathlib.Path(sys.argv[1]).read_bytes()
           assert len(content) > 8 and content.startswith(b"\x89PNG\r\n\x1a\n")
           PY
+          {
+            echo "CUA_E2E_MACOS_DAEMON_SOCKET=$socket"
+            echo "CUA_REVIEW_DAEMON_PID=$daemon_pid"
+            echo "CUA_REVIEW_DAEMON_PID_FILE=$daemon_pid_file"
+          } >> "$GITHUB_ENV"
           trap - EXIT INT TERM
 
       - name: Install locked chooser and compile exact live test
@@ -458,13 +497,35 @@ jobs:
             typesafe_key=""
           }
           trap clear_typesafe_key EXIT
-          pr_json="$(gh api "repos/$GITHUB_REPOSITORY/pulls/3943")"
+          github_api() {
+            python3 - "$1" <<'PY'
+          import os, sys, urllib.request
+          token = os.environ.get("GH_TOKEN", "")
+          if not token:
+              raise SystemExit("missing GitHub API token")
+          request = urllib.request.Request(
+              sys.argv[1],
+              headers={
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {token}",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              },
+          )
+          with urllib.request.urlopen(request, timeout=30) as response:
+              if response.status != 200:
+                  raise RuntimeError(f"GitHub API returned HTTP {response.status}")
+              sys.stdout.buffer.write(response.read())
+          PY
+          }
+          api_root="${GITHUB_API_URL:-https://api.github.com}"
+          [[ "$api_root" == "https://api.github.com" ]]
+          pr_json="$(github_api "$api_root/repos/$GITHUB_REPOSITORY/pulls/3943")"
           [[ "$(jq -r .state <<<"$pr_json")" == open ]]
           [[ "$(jq -r .draft <<<"$pr_json")" == true ]]
           [[ "$(jq -r .head.repo.full_name <<<"$pr_json")" == "$GITHUB_REPOSITORY" ]]
           [[ "$(jq -r .head.sha <<<"$pr_json")" == "$CUA_E2E_SOURCE_SHA" ]]
           jq -e '.labels | any(.name == "cua-perception-live-review")' <<<"$pr_json" >/dev/null
-          jev_pr_json="$(gh api "repos/$GITHUB_REPOSITORY/pulls/3916")"
+          jev_pr_json="$(github_api "$api_root/repos/$GITHUB_REPOSITORY/pulls/3916")"
           [[ "$(jq -r .state <<<"$jev_pr_json")" == closed ]]
           [[ "$(jq -r .merged <<<"$jev_pr_json")" == true ]]
           [[ "$(jq -r .head.repo.full_name <<<"$jev_pr_json")" == "$GITHUB_REPOSITORY" ]]
@@ -636,9 +697,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ -n "${CUA_REVIEW_DAEMON_PID:-}" && -n "${CUA_E2E_MACOS_DAEMON_SOCKET:-}" ]] || exit 0
+          expected_socket="/tmp/cua-review-driver-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.sock"
+          expected_pid_file="$RUNNER_TEMP/cua-review-driver-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.pid"
+          cleanup_owned_paths() {
+            rm -f -- "$expected_socket" "$expected_pid_file"
+            [[ ! -e "$expected_socket" && ! -L "$expected_socket" ]]
+            [[ ! -e "$expected_pid_file" && ! -L "$expected_pid_file" ]]
+          }
+          trap cleanup_owned_paths EXIT
+          [[ -n "${CUA_REVIEW_DAEMON_PID:-}" && -n "${CUA_REVIEW_DAEMON_PID_FILE:-}" && -n "${CUA_E2E_MACOS_DAEMON_SOCKET:-}" ]] || exit 0
+          [[ "$CUA_E2E_MACOS_DAEMON_SOCKET" == "$expected_socket" ]]
+          [[ "$CUA_REVIEW_DAEMON_PID_FILE" == "$expected_pid_file" ]]
+          [[ -f "$expected_pid_file" && ! -L "$expected_pid_file" ]]
           candidate="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$CUA_TEST_DRIVER_BIN")"
-          "$candidate" --socket "$CUA_E2E_MACOS_DAEMON_SOCKET" \
+          serving_pid="$(<"$expected_pid_file")"
+          [[ "$serving_pid" =~ ^[1-9][0-9]*$ && "$serving_pid" == "$CUA_REVIEW_DAEMON_PID" ]]
+          "$candidate" --socket "$expected_socket" \
             --expected-pid "$CUA_REVIEW_DAEMON_PID" stop
           for _ in {1..100}; do
             kill -0 "$CUA_REVIEW_DAEMON_PID" 2>/dev/null || break
@@ -648,7 +722,10 @@ jobs:
             echo "review Driver daemon did not stop after its PID-bound shutdown" >&2
             exit 1
           fi
-          [[ ! -e "$CUA_E2E_MACOS_DAEMON_SOCKET" ]]
+          cleanup_owned_paths
+          trap - EXIT
+          [[ ! -e "$expected_socket" && ! -L "$expected_socket" ]]
+          [[ ! -e "$expected_pid_file" && ! -L "$expected_pid_file" ]]
 
       - name: Upload only encrypted evidence envelopes
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2

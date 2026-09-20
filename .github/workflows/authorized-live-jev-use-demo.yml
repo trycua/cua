@@ -274,6 +274,7 @@ jobs:
           }
           "CUA_PERCEPTION_EXTENSION_HOME=$extensionHome" >> $env:GITHUB_ENV
           "CUA_DRIVER_RS_HOME=$extensionHome" >> $env:GITHUB_ENV
+          "CUA_E2E_RECORDINGS_ROOT=$(Join-Path $env:RUNNER_TEMP 'cua-perception-recordings')" >> $env:GITHUB_ENV
           "CUA_PERCEPTION_EVIDENCE_DIR=$(Join-Path $env:RUNNER_TEMP 'cua-perception-evidence/live')" >> $env:GITHUB_ENV
       - name: Check out the exact reviewed Jev chooser
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -717,7 +718,7 @@ jobs:
             $runnerTemp = [IO.Path]::GetFullPath($env:RUNNER_TEMP)
             $runnerTempItem = Get-Item -LiteralPath $runnerTemp -Force
             if (-not $runnerTempItem.PSIsContainer -or $runnerTempItem.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'RUNNER_TEMP must be a real directory' }
-            foreach ($name in @('cua-perception-evidence', 'perception-evidence', 'publish-evidence')) {
+            foreach ($name in @('cua-perception-recordings', 'cua-perception-evidence', 'perception-evidence', 'publish-evidence')) {
               $target = [IO.Path]::GetFullPath((Join-Path $runnerTemp $name))
               if ([IO.Path]::GetDirectoryName($target) -ne $runnerTemp -or [IO.Path]::GetFileName($target) -ne $name) { throw 'refusing to clean an unexpected plaintext evidence path' }
               if (Test-Path -LiteralPath $target) {

@@ -154,9 +154,11 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         live_env = self.jobs["live"]["env"]
         self.assertNotIn("CUA_PERCEPTION_EXTENSION_HOME", live_env)
         self.assertNotIn("CUA_PERCEPTION_EVIDENCE_DIR", live_env)
+        self.assertNotIn("CUA_E2E_RECORDINGS_ROOT", live_env)
+        steps = self.jobs["live"]["steps"]
         configure = next(
             step
-            for step in self.jobs["live"]["steps"]
+            for step in steps
             if step.get("name") == "Configure temporary evidence paths"
         )
         self.assertIn(
@@ -174,12 +176,29 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         self.assertIn('"CUA_PERCEPTION_EXTENSION_HOME=$extensionHome" >> $env:GITHUB_ENV', configure["run"])
         self.assertIn('"CUA_DRIVER_RS_HOME=$extensionHome" >> $env:GITHUB_ENV', configure["run"])
         self.assertIn(
+            "CUA_E2E_RECORDINGS_ROOT=$(Join-Path $env:RUNNER_TEMP 'cua-perception-recordings')",
+            configure["run"],
+        )
+        self.assertIn(
             "CUA_PERCEPTION_EVIDENCE_DIR=$(Join-Path $env:RUNNER_TEMP 'cua-perception-evidence/live')",
             configure["run"],
+        )
+        self.assertNotIn("if", configure)
+        mock = next(step for step in steps if "deterministic mock" in step.get("name", ""))
+        live = next(step for step in steps if "bounded live Jev chooser" in step.get("name", ""))
+        self.assertLess(steps.index(configure), steps.index(mock))
+        self.assertLess(steps.index(configure), steps.index(live))
+        self.assertEqual(
+            {item["platform"] for item in self.jobs["live"]["strategy"]["matrix"]["include"]},
+            {"windows", "linux-x11"},
         )
         self.assertNotRegex(
             self.text,
             r"CUA_PERCEPTION_EXTENSION_HOME[^\n]*github\.workspace",
+        )
+        self.assertNotRegex(
+            self.text,
+            r"CUA_E2E_RECORDINGS_ROOT[^\n]*github\.workspace",
         )
         self.assertNotIn("github.workspace", configure["run"])
         self.assertFalse(any("${{ runner." in value for value in live_env.values()))
@@ -438,7 +457,12 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         self.assertLess(steps.index(encrypt_step), steps.index(upload))
         self.assertLess(steps.index(upload), steps.index(cleanup))
         self.assertEqual(cleanup["if"], "always()")
-        for directory in ("cua-perception-evidence", "perception-evidence", "publish-evidence"):
+        for directory in (
+            "cua-perception-recordings",
+            "cua-perception-evidence",
+            "perception-evidence",
+            "publish-evidence",
+        ):
             self.assertIn(f"'{directory}'", cleanup["run"])
         self.assertIn("-not [string]::IsNullOrWhiteSpace($env:CUA_PERCEPTION_EXTENSION_HOME)", cleanup["run"])
         self.assertIn('$expectedExtensionHome = [IO.Path]::GetFullPath((Join-Path $userProfile $extensionHomeName))', cleanup["run"])

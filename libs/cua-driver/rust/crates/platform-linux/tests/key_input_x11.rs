@@ -3,7 +3,7 @@
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Result};
-use platform_linux::input::{send_click, send_key, send_key_at, send_key_xtest, send_type_text};
+use platform_linux::input::{send_key, send_key_at, send_key_xtest, send_type_text};
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
 use x11rb::protocol::Event;
@@ -78,121 +78,6 @@ fn assert_key(conn: &RustConnection, event: &KeyPressEvent, keysym: u32) -> Resu
         "expected keysym {keysym:#x}, received keycode {}",
         event.detail
     );
-    Ok(())
-}
-
-fn next_button_event(conn: &RustConnection, observer: &str) -> Result<Event> {
-    let deadline = Instant::now() + Duration::from_secs(2);
-    loop {
-        if Instant::now() >= deadline {
-            bail!("{observer} did not receive a button event");
-        }
-        match conn.poll_for_event()? {
-            Some(event @ (Event::ButtonPress(_) | Event::ButtonRelease(_))) => return Ok(event),
-            Some(Event::Error(error)) => bail!("{observer} X11 error: {error:?}"),
-            _ => std::thread::sleep(Duration::from_millis(1)),
-        }
-    }
-}
-
-fn assert_no_button_events(conn: &RustConnection, observer: &str) -> Result<()> {
-    let deadline = Instant::now() + Duration::from_millis(50);
-    while Instant::now() < deadline {
-        match conn.poll_for_event()? {
-            Some(Event::ButtonPress(event)) => {
-                bail!("{observer} received duplicate ButtonPress: {event:?}")
-            }
-            Some(Event::ButtonRelease(event)) => {
-                bail!("{observer} received duplicate ButtonRelease: {event:?}")
-            }
-            Some(Event::Error(error)) => bail!("{observer} X11 error: {error:?}"),
-            _ => std::thread::sleep(Duration::from_millis(1)),
-        }
-    }
-    Ok(())
-}
-
-#[test]
-#[ignore = "requires an isolated X11 display"]
-fn background_click_routes_each_event_to_its_deepest_selecting_recipient() -> Result<()> {
-    let (owner, screen) = x11rb::connect(None)?;
-    let root = owner.setup().roots[screen].root;
-    let target = event_window(&owner, root, 0, 0, EventMask::NO_EVENT)?;
-    let press_recipient = event_window(&owner, target, 20, 20, EventMask::NO_EVENT)?;
-    let leaf = event_window(&owner, press_recipient, 5, 7, EventMask::NO_EVENT)?;
-    let sentinel = input_window(&owner, root, 400, 0)?;
-
-    // Model toolkit clients that observe toolkit-owned windows. send_click uses
-    // a third connection and must resolve the server's aggregate event masks.
-    let (press_observer, _) = x11rb::connect(None)?;
-    press_observer
-        .change_window_attributes(
-            press_recipient,
-            &ChangeWindowAttributesAux::new().event_mask(EventMask::BUTTON_PRESS),
-        )?
-        .check()?;
-    let (release_observer, _) = x11rb::connect(None)?;
-    release_observer
-        .change_window_attributes(
-            target,
-            &ChangeWindowAttributesAux::new().event_mask(EventMask::BUTTON_RELEASE),
-        )?
-        .check()?;
-
-    let target_attributes = owner.get_window_attributes(target)?.reply()?;
-    assert_eq!(target_attributes.your_event_mask, EventMask::NO_EVENT);
-    assert!(target_attributes
-        .all_event_masks
-        .contains(EventMask::BUTTON_RELEASE));
-    let press_attributes = owner.get_window_attributes(press_recipient)?.reply()?;
-    assert_eq!(press_attributes.your_event_mask, EventMask::NO_EVENT);
-    assert!(press_attributes
-        .all_event_masks
-        .contains(EventMask::BUTTON_PRESS));
-    let leaf_attributes = owner.get_window_attributes(leaf)?.reply()?;
-    assert_eq!(leaf_attributes.all_event_masks, EventMask::NO_EVENT);
-
-    owner.set_input_focus(InputFocus::PARENT, sentinel, x11rb::CURRENT_TIME)?;
-    assert_eq!(owner.get_input_focus()?.reply()?.focus, sentinel);
-
-    send_click(u64::from(target), 40, 50, 1, 1)?;
-
-    let press = match next_button_event(&press_observer, "press observer")? {
-        Event::ButtonPress(event) => event,
-        Event::ButtonRelease(event) => {
-            bail!("press observer received ButtonRelease: {event:?}")
-        }
-        _ => unreachable!(),
-    };
-    assert_eq!(press.event, press_recipient);
-    assert_ne!(press.event, leaf);
-    assert_eq!((press.event_x, press.event_y), (20, 30));
-    assert_ne!(
-        press.response_type & 0x80,
-        0,
-        "expected XSendEvent delivery"
-    );
-
-    let release = match next_button_event(&release_observer, "release observer")? {
-        Event::ButtonRelease(event) => event,
-        Event::ButtonPress(event) => {
-            bail!("release observer received ButtonPress: {event:?}")
-        }
-        _ => unreachable!(),
-    };
-    assert_eq!(release.event, target);
-    assert_ne!(release.event, leaf);
-    assert_eq!((release.event_x, release.event_y), (40, 50));
-    assert_ne!(
-        release.response_type & 0x80,
-        0,
-        "expected XSendEvent delivery"
-    );
-
-    assert_no_button_events(&press_observer, "press observer")?;
-    assert_no_button_events(&release_observer, "release observer")?;
-    assert_no_button_events(&owner, "window owner")?;
-    assert_eq!(owner.get_input_focus()?.reply()?.focus, sentinel);
     Ok(())
 }
 

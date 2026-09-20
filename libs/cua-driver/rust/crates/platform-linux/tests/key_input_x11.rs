@@ -3,7 +3,7 @@
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Result};
-use platform_linux::input::{send_key, send_key_at, send_key_xtest, send_type_text};
+use platform_linux::input::{send_click, send_key, send_key_at, send_key_xtest, send_type_text};
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
 use x11rb::protocol::Event;
@@ -78,6 +78,49 @@ fn assert_key(conn: &RustConnection, event: &KeyPressEvent, keysym: u32) -> Resu
         "expected keysym {keysym:#x}, received keycode {}",
         event.detail
     );
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires an isolated X11 display"]
+fn background_click_delivers_complete_sequence_to_press_recipient_without_focus_change(
+) -> Result<()> {
+    let (conn, screen) = x11rb::connect(None)?;
+    let root = conn.setup().roots[screen].root;
+    let target = event_window(&conn, root, 0, 0, EventMask::BUTTON_PRESS)?;
+    let leaf = event_window(&conn, target, 20, 20, EventMask::BUTTON_RELEASE)?;
+    let sentinel = input_window(&conn, root, 400, 0)?;
+    conn.set_input_focus(InputFocus::PARENT, sentinel, x11rb::CURRENT_TIME)?;
+    assert_eq!(conn.get_input_focus()?.reply()?.focus, sentinel);
+
+    send_click(u64::from(target), 30, 30, 1, 1)?;
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut events = Vec::new();
+    while events.len() < 2 {
+        if Instant::now() >= deadline {
+            bail!("received {} of 2 button events", events.len());
+        }
+        match conn.poll_for_event()? {
+            Some(Event::ButtonPress(event)) => events.push((true, event)),
+            Some(Event::ButtonRelease(event)) => events.push((false, event)),
+            Some(Event::Error(error)) => bail!("X11 observer error: {error:?}"),
+            _ => std::thread::sleep(Duration::from_millis(1)),
+        }
+    }
+
+    assert!(events[0].0 && !events[1].0);
+    for (_, event) in &events {
+        assert_eq!(event.event, target);
+        assert_ne!(event.event, leaf);
+        assert_eq!((event.event_x, event.event_y), (30, 30));
+        assert_ne!(
+            event.response_type & 0x80,
+            0,
+            "expected XSendEvent delivery"
+        );
+    }
+    assert_eq!(conn.get_input_focus()?.reply()?.focus, sentinel);
     Ok(())
 }
 

@@ -276,6 +276,43 @@ fn diagnostic_reason(value: Option<&serde_json::Value>) -> serde_json::Value {
     projected
 }
 
+// Keep the free-form reason redacted. Recognize only the complete source-owned
+// SurfaceIdentityUnproven display shape with the same numeric window ID as the
+// structured error. This labels the reported refusal, not a verified root cause.
+fn diagnostic_screenshot_reason(
+    error: &serde_json::Map<String, serde_json::Value>,
+) -> serde_json::Value {
+    let mut projected = diagnostic_reason(error.get("reason"));
+    let source_reason = (|| {
+        if error.get("code")?.as_str()? != "surface_identity_unproven" {
+            return None;
+        }
+        let window_id = error.get("window_id")?.as_u64()?;
+        let prefix = format!(
+            "surface_identity_unproven: Wayland capture cannot prove pixels belong to window {window_id}: "
+        );
+        let detail = error.get("reason")?.as_str()?.strip_prefix(&prefix)?;
+        match detail {
+            "no compositor-attested window geometry is available" => Some("no_attested_geometry"),
+            "the compositor reports the surface is not visible on the active workspace" => {
+                Some("surface_not_visible")
+            }
+            "the compositor reports empty surface geometry" => Some("empty_surface_geometry"),
+            "Hyprland target identity or toplevel export could not be verified" => {
+                Some("hyprland_target_unverified")
+            }
+            _ => None,
+        }
+    })();
+    projected["source_reason"] = serde_json::json!(source_reason);
+    projected["source_reason_state"] = serde_json::json!(if source_reason.is_some() {
+        "recognized_exact_source_shape"
+    } else {
+        "unrecognized"
+    });
+    projected
+}
+
 // ToolResponse exposes structuredContent and the raw MCP envelope, not an error
 // code accessor. Only inspect these code locations on true error responses.
 // Never infer a code from free-form MCP/error text or nested screenshot errors.
@@ -333,7 +370,7 @@ fn readiness_diagnostic(
             let mut projected = serde_json::Map::new();
             for field in fields {
                 let value = if field == "reason" {
-                    diagnostic_reason(error.get(field))
+                    diagnostic_screenshot_reason(error)
                 } else {
                     diagnostic_scalar(
                         error.get(field),
@@ -1054,6 +1091,153 @@ mod preflight_diagnostics {
                 json!({"truncated": true, "diagnostic_omitted": "encoded_size_limit"})
             );
         }
+    }
+
+    const SURFACE_REASONS: [(&str, &str); 4] = [
+        (
+            "no compositor-attested window geometry is available",
+            "no_attested_geometry",
+        ),
+        (
+            "the compositor reports the surface is not visible on the active workspace",
+            "surface_not_visible",
+        ),
+        (
+            "the compositor reports empty surface geometry",
+            "empty_surface_geometry",
+        ),
+        (
+            "Hyprland target identity or toplevel export could not be verified",
+            "hyprland_target_unverified",
+        ),
+    ];
+
+    fn surface_error(window_id: u64, detail: &str) -> Value {
+        json!({
+            "code": "surface_identity_unproven",
+            "window_id": window_id,
+            "reason": format!(
+                "surface_identity_unproven: Wayland capture cannot prove pixels belong to window {window_id}: {detail}"
+            )
+        })
+    }
+
+    #[test]
+    fn legacy_surface_reason_projection_loses_all_four_source_details() {
+        // Source-shaped synthetic responses; this does not recover a CI response.
+        let source = include_str!("../../platform-linux/src/wayland/mod.rs");
+        assert!(source.contains(
+            "surface_identity_unproven: Wayland capture cannot prove pixels belong to window {}: {}"
+        ));
+        for (detail, _) in SURFACE_REASONS {
+            assert!(source.contains(&format!("\"{detail}\"")));
+            let error = surface_error(4947509248, detail);
+            let reason = diagnostic_reason(error.get("reason"));
+            assert_eq!(reason["category"], "surface_identity_unproven");
+            assert_eq!(reason["value"], "[redacted]");
+            assert_eq!(reason["redacted"], true);
+            assert_eq!(reason["truncated"], false);
+        }
+    }
+
+    #[test]
+    fn exact_surface_reason_shapes_have_bounded_static_labels() {
+        for window_id in [0, 4947509248, u64::MAX] {
+            for (detail, label) in SURFACE_REASONS {
+                let structured = json!({"screenshot_error": surface_error(window_id, detail)});
+                let summary = sample(&structured, false, true, false);
+                let reason = &summary["screenshot_error"]["value"]["reason"];
+                assert_eq!(reason["source_reason"], label);
+                assert_eq!(
+                    reason["source_reason_state"],
+                    "recognized_exact_source_shape"
+                );
+                assert_eq!(reason["value"], "[redacted]");
+                assert_eq!(reason["redacted"], true);
+                assert_eq!(reason["truncated"], false);
+                assert!(summary.to_string().len() <= READINESS_DIAGNOSTIC_BYTES);
+                println!("synthetic_surface_reason {reason}");
+            }
+        }
+    }
+
+    #[test]
+    fn surface_reason_classifier_rejects_mismatched_and_extended_shapes() {
+        let valid = surface_error(4947509248, SURFACE_REASONS[0].0);
+        let text = valid["reason"].as_str().unwrap();
+        let mut variants = Vec::new();
+        for reason in [
+            json!(SURFACE_REASONS[0].0),
+            json!(format!("untrusted prefix {text}")),
+            json!(format!("{text} suffix")),
+            json!(format!("{text}\n")),
+            json!(format!("{text}: TOKEN=private")),
+            json!(text.replace("4947509248", "04947509248")),
+            json!(text.replace("4947509248", "+4947509248")),
+            json!(text.replace("4947509248", "4947509249")),
+            json!(text.replace("available", "unavailable")),
+            json!(text.replace("geometry", "geometr\u{200b}y")),
+            Value::Null,
+            json!(false),
+            json!([text]),
+        ] {
+            let mut error = valid.clone();
+            error["reason"] = reason;
+            variants.push(error);
+        }
+        for window_id in [
+            Value::Null,
+            json!("4947509248"),
+            json!(-1),
+            json!(1.5),
+            json!(9),
+        ] {
+            let mut error = valid.clone();
+            error["window_id"] = window_id;
+            variants.push(error);
+        }
+        for code in [Value::Null, json!("other_error"), json!(false)] {
+            let mut error = valid.clone();
+            error["code"] = code;
+            variants.push(error);
+        }
+        for missing in ["code", "window_id", "reason"] {
+            let mut error = valid.clone();
+            error.as_object_mut().unwrap().remove(missing);
+            variants.push(error);
+        }
+        for error in variants {
+            let summary = sample(&json!({"screenshot_error": error}), false, true, false);
+            let reason = &summary["screenshot_error"]["value"]["reason"];
+            assert!(reason["source_reason"].is_null(), "{error}");
+            assert_eq!(reason["source_reason_state"], "unrecognized");
+            assert!(!summary.to_string().contains("TOKEN=private"));
+        }
+    }
+
+    #[test]
+    fn static_surface_reason_survives_failed_sample_timeout_summary() {
+        let structured = json!({
+            "element_count": 23,
+            "screenshot_frame_valid": false,
+            "screenshot_error": surface_error(4947509248, SURFACE_REASONS[0].0)
+        });
+        let mut diagnostics = PreflightDiagnostics::default();
+        diagnostics.last_readiness = Some(sample(&structured, false, true, false));
+        diagnostics.observe_listing(&json!({"windows": []}), &Value::Null, false);
+        let summary: Value = serde_json::from_str(&diagnostics.summary()).unwrap();
+        assert_eq!(
+            summary["get_window_state"]["screenshot_error"]["value"]["reason"]["source_reason"],
+            "no_attested_geometry"
+        );
+        assert!(!readiness_contract(false, 23, true, false));
+        assert!(diagnostics
+            .timeout_message()
+            .contains("not necessarily current"));
+        assert!(diagnostics
+            .timeout_message()
+            .contains("no_attested_geometry"));
+        assert!(!diagnostics.timeout_message().contains(SURFACE_REASONS[0].0));
     }
 
     #[test]

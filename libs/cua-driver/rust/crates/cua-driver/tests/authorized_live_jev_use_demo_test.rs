@@ -1246,11 +1246,17 @@ mod e2e {
             "capture-bound click failed: {}",
             click.text()
         );
-        #[cfg(target_os = "windows")]
         if matches!(scope, DemoScope::Window) {
             assert_eq!(
-                click.structured()["path"],
-                "pixel",
+                click.action_delivery_mode(),
+                Some("background"),
+                "Tk window click did not preserve background delivery: {}",
+                click.text()
+            );
+            #[cfg(target_os = "windows")]
+            assert_eq!(
+                click.action_route(),
+                Some("global_input"),
                 "Tk window/background click did not use targeted injection: {}",
                 click.text()
             );

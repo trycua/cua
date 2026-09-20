@@ -1821,11 +1821,54 @@ fn deepest_child_at_point(
     Ok((window, local_x, local_y))
 }
 
-fn resolve_event_target(conn: &RustConnection, xid: u64, x: i32, y: i32) -> Result<EventTarget> {
+fn window_path_at_point(
+    conn: &RustConnection,
+    window: Window,
+    local_x: i32,
+    local_y: i32,
+) -> Result<Vec<(Window, i32, i32, EventMask)>> {
+    let attributes = conn.get_window_attributes(window)?.reply()?;
+    let mut path = vec![(window, local_x, local_y, attributes.all_event_masks)];
+    let tree = conn.query_tree(window)?.reply()?;
+    for child in tree.children.iter().rev() {
+        let Ok(geom) = conn.get_geometry(*child)?.reply() else {
+            continue;
+        };
+        if !point_in_rect(local_x, local_y, &geom) {
+            continue;
+        }
+        let child_x = local_x - geom.x as i32;
+        let child_y = local_y - geom.y as i32;
+        path.extend(window_path_at_point(conn, *child, child_x, child_y)?);
+        break;
+    }
+    Ok(path)
+}
+
+fn deepest_event_target(
+    path: &[(Window, i32, i32, EventMask)],
+    required_masks: EventMask,
+) -> (Window, i32, i32) {
+    path.iter()
+        .rev()
+        .find(|(_, _, _, selected)| selected.contains(required_masks))
+        .or_else(|| path.last())
+        .map(|&(window, x, y, _)| (window, x, y))
+        .expect("window path always contains its toplevel")
+}
+
+fn build_event_target(
+    conn: &RustConnection,
+    xid: u64,
+    x: i32,
+    y: i32,
+    window: Window,
+    local_x: i32,
+    local_y: i32,
+) -> Result<EventTarget> {
     let top = xid as Window;
     let root = conn.setup().roots[0].root;
     let root_pos = conn.translate_coordinates(top, root, 0, 0)?.reply()?;
-    let (window, local_x, local_y) = deepest_child_at_point(conn, top, x, y)?;
     Ok(EventTarget {
         window,
         local_x: local_x as i16,
@@ -1833,6 +1876,28 @@ fn resolve_event_target(conn: &RustConnection, xid: u64, x: i32, y: i32) -> Resu
         root_x: (root_pos.dst_x as i32 + x) as i16,
         root_y: (root_pos.dst_y as i32 + y) as i16,
     })
+}
+
+fn resolve_event_target(conn: &RustConnection, xid: u64, x: i32, y: i32) -> Result<EventTarget> {
+    let top = xid as Window;
+    let (window, local_x, local_y) = deepest_child_at_point(conn, top, x, y)?;
+    build_event_target(conn, xid, x, y, window, local_x, local_y)
+}
+
+fn resolve_click_event_target(
+    conn: &RustConnection,
+    xid: u64,
+    x: i32,
+    y: i32,
+) -> Result<EventTarget> {
+    let top = xid as Window;
+    let path = window_path_at_point(conn, top, x, y)?;
+    // XSendEvent with propagate=false discards events when the geometric leaf
+    // has no client selecting their masks. A click needs one recipient for both
+    // halves, so choose the deepest ancestor selecting press and release.
+    let required_masks = EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE;
+    let (window, local_x, local_y) = deepest_event_target(&path, required_masks);
+    build_event_target(conn, xid, x, y, window, local_x, local_y)
 }
 
 fn button_state_mask(button: u8) -> KeyButMask {
@@ -1923,7 +1988,7 @@ pub fn send_click_with_modifiers(
     let modifier_state = modifiers_to_state(modifiers);
 
     for _ in 0..count {
-        let target = resolve_event_target(&conn, xid, x, y)?;
+        let target = resolve_click_event_target(&conn, xid, x, y)?;
         let press = ButtonPressEvent {
             response_type: BUTTON_PRESS_EVENT,
             detail: button,
@@ -2967,13 +3032,69 @@ exit 0"#,
 #[cfg(test)]
 mod path_tests {
     use super::{
-        create_uinput_pointer, ensure_master_pointer_for_session, guarded_uinput_creation,
-        is_uinput_unavailable, kde_x11_uinput_hotplug_is_unsafe, master_pointer_name,
-        modifiers_to_state, normalize_uinput_device_name, path_cumulative, point_on_path,
-        real_pointer_capabilities_available, sample_function, slave_pointer_name,
+        create_uinput_pointer, deepest_event_target, ensure_master_pointer_for_session,
+        guarded_uinput_creation, is_uinput_unavailable, kde_x11_uinput_hotplug_is_unsafe,
+        master_pointer_name, modifiers_to_state, normalize_uinput_device_name, path_cumulative,
+        point_on_path, real_pointer_capabilities_available, sample_function, slave_pointer_name,
         EVDEV_UINPUT_NAME_MAX_BYTES, UINPUT_POINTER_SUFFIX,
     };
-    use x11rb::protocol::xproto::KeyButMask;
+    use x11rb::protocol::xproto::{EventMask, KeyButMask};
+
+    #[test]
+    fn synthetic_click_targets_deepest_window_selecting_button_events() {
+        let path = [
+            (
+                10,
+                394,
+                220,
+                EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE,
+            ),
+            (
+                11,
+                394,
+                220,
+                EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE,
+            ),
+            (12, 6, 8, EventMask::NO_EVENT),
+        ];
+
+        assert_eq!(
+            deepest_event_target(&path, EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE),
+            (11, 394, 220)
+        );
+    }
+
+    #[test]
+    fn synthetic_click_skips_window_selecting_only_half_of_click() {
+        let path = [
+            (
+                10,
+                394,
+                220,
+                EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE,
+            ),
+            (11, 394, 220, EventMask::BUTTON_PRESS),
+            (12, 6, 8, EventMask::NO_EVENT),
+        ];
+
+        assert_eq!(
+            deepest_event_target(&path, EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE),
+            (10, 394, 220)
+        );
+    }
+
+    #[test]
+    fn synthetic_click_keeps_deepest_target_when_no_window_selects_event() {
+        let path = [
+            (10, 394, 220, EventMask::NO_EVENT),
+            (11, 6, 8, EventMask::NO_EVENT),
+        ];
+
+        assert_eq!(
+            deepest_event_target(&path, EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE),
+            (11, 6, 8)
+        );
+    }
 
     #[test]
     fn click_modifier_state_combines_canonical_names_and_aliases() {

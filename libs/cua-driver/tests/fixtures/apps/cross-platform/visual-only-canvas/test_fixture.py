@@ -1,4 +1,6 @@
+import contextlib
 import importlib.util
+import io
 from pathlib import Path
 import unittest
 from unittest import mock
@@ -17,6 +19,63 @@ class VisualOnlyCanvasTests(unittest.TestCase):
         self.assertEqual(fixture.card_at(394, 220), "send")
         self.assertEqual(fixture.card_at(614, 220), "cancel")
         self.assertIsNone(fixture.card_at(40, 220))
+
+    def test_background_click_is_bound_on_canvas_and_toplevel(self):
+        toplevel = mock.Mock()
+        canvas = mock.Mock()
+        handler = mock.Mock()
+
+        fixture.bind_background_click(toplevel, canvas, handler)
+
+        canvas.bind.assert_called_once_with("<Button-1>", handler)
+        toplevel.bind.assert_called_once_with("<Button-1>", handler)
+
+    def test_toplevel_event_coordinates_are_translated_to_the_canvas(self):
+        canvas = mock.Mock()
+        canvas.winfo_rootx.return_value = 120
+        canvas.winfo_rooty.return_value = 80
+        event = mock.Mock(x_root=514, y_root=300)
+
+        self.assertEqual(fixture.canvas_point(event, canvas), (394, 220))
+
+    def test_toplevel_click_updates_the_oracle_once(self):
+        visual_fixture = fixture.VisualFixture.__new__(fixture.VisualFixture)
+        visual_fixture.canvas = mock.Mock()
+        visual_fixture.canvas.winfo_rootx.return_value = 120
+        visual_fixture.canvas.winfo_rooty.return_value = 80
+        visual_fixture.selected = None
+        visual_fixture.action_count = 0
+        visual_fixture.paint = mock.Mock()
+        visual_fixture.publish = mock.Mock()
+
+        result = visual_fixture.on_click(mock.Mock(x_root=514, y_root=300))
+
+        self.assertEqual(visual_fixture.selected, "send")
+        self.assertEqual(visual_fixture.action_count, 1)
+        self.assertEqual(result, "break")
+        visual_fixture.paint.assert_called_once_with()
+        visual_fixture.publish.assert_called_once_with()
+
+    def test_click_outside_cards_stops_bindtag_propagation_without_mutating_oracle(self):
+        visual_fixture = fixture.VisualFixture.__new__(fixture.VisualFixture)
+        visual_fixture.canvas = mock.Mock()
+        visual_fixture.canvas.winfo_rootx.return_value = 120
+        visual_fixture.canvas.winfo_rooty.return_value = 80
+        visual_fixture.selected = None
+        visual_fixture.action_count = 0
+        visual_fixture.paint = mock.Mock()
+        visual_fixture.publish = mock.Mock()
+
+        diagnostic = io.StringIO()
+        with contextlib.redirect_stderr(diagnostic):
+            result = visual_fixture.on_click(mock.Mock(x_root=130, y_root=90))
+
+        self.assertEqual(result, "break")
+        self.assertIn("ignored click outside cards at canvas (10, 10)", diagnostic.getvalue())
+        self.assertIsNone(visual_fixture.selected)
+        self.assertEqual(visual_fixture.action_count, 0)
+        visual_fixture.paint.assert_not_called()
+        visual_fixture.publish.assert_not_called()
 
     @mock.patch.object(fixture.os, "getpid", return_value=4242)
     def test_oracle_contains_behavior_and_process_identity_without_coordinates_or_labels(

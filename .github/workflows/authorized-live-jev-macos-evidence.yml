@@ -331,10 +331,11 @@ jobs:
         run: |
           set -euo pipefail
           candidate="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$CUA_TEST_DRIVER_BIN")"
-          socket="$RUNNER_TEMP/cua-review-driver.sock"
+          socket="/tmp/cua-review-driver-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.sock"
           daemon_log="$RUNNER_TEMP/cua-review-driver.log"
           capture="$RUNNER_TEMP/cua-review-driver-direct-capture.png"
           permissions="$RUNNER_TEMP/review-driver-permissions.json"
+          [[ ${#socket} -lt 104 ]] || { echo "review Driver socket exceeds macOS SUN_LEN" >&2; exit 1; }
           [[ "$candidate" == "$CUA_TEST_DRIVER_BIN" && ! -e "$socket" ]]
           CUA_DRIVER_RS_HOME="$CUA_PERCEPTION_EXTENSION_HOME" \
           CUA_DRIVER_RS_TELEMETRY_ENABLED=false \
@@ -351,6 +352,7 @@ jobs:
               "$candidate" --socket "$socket" --expected-pid "$daemon_pid" stop >/dev/null 2>&1 || true
               kill "$daemon_pid" >/dev/null 2>&1 || true
               wait "$daemon_pid" 2>/dev/null || true
+              [[ ! -S "$socket" ]] || rm -f -- "$socket"
             fi
             exit "$status"
           }

@@ -12,7 +12,7 @@ import subprocess
 import sys
 import tkinter as tk
 import time
-from typing import Optional
+from typing import Callable, Optional
 import urllib.parse
 import urllib.request
 
@@ -35,6 +35,25 @@ def card_at(x: int, y: int) -> Optional[str]:
         if left <= x <= right and top <= y <= bottom:
             return str(card["id"])
     return None
+
+
+def bind_background_click(
+    toplevel: tk.Misc,
+    canvas: tk.Canvas,
+    handler: Callable[[tk.Event], str],
+) -> None:
+    # X11 targets the deepest child while Windows targeted injection may reach
+    # the toplevel. Returning "break" keeps a canvas event from firing twice as
+    # Tk walks from the widget bindtag to the toplevel bindtag.
+    canvas.bind("<Button-1>", handler)
+    toplevel.bind("<Button-1>", handler)
+
+
+def canvas_point(event: tk.Event, canvas: tk.Canvas) -> tuple[int, int]:
+    return (
+        int(event.x_root) - canvas.winfo_rootx(),
+        int(event.y_root) - canvas.winfo_rooty(),
+    )
 
 
 def oracle_state(selected: Optional[str], action_count: int) -> dict[str, object]:
@@ -219,7 +238,7 @@ class VisualFixture:
             takefocus=0,
         )
         self.canvas.pack(fill="both", expand=True)
-        self.canvas.bind("<Button-1>", self.on_click)
+        bind_background_click(self.root, self.canvas, self.on_click)
         self.paint()
         if sys.platform.startswith("linux"):
             self.root.update()
@@ -248,14 +267,21 @@ class VisualFixture:
         status = "WAITING FOR A VISUAL CHOICE" if self.selected is None else f"SELECTED: {self.selected.upper()}"
         self.canvas.create_text(380, 386, text=status, fill="#172b36", font=("Helvetica", 15, "bold"))
 
-    def on_click(self, event: tk.Event) -> None:
-        selected = card_at(int(event.x), int(event.y))
-        if selected is None:
-            return
-        self.selected = selected
-        self.action_count += 1
-        self.paint()
-        self.publish()
+    def on_click(self, event: tk.Event) -> str:
+        x, y = canvas_point(event, self.canvas)
+        selected = card_at(x, y)
+        if selected is not None:
+            self.selected = selected
+            self.action_count += 1
+            self.paint()
+            self.publish()
+        else:
+            print(
+                f"visual-only-canvas ignored click outside cards at canvas ({x}, {y})",
+                file=sys.stderr,
+                flush=True,
+            )
+        return "break"
 
     def publish(self) -> None:
         try:

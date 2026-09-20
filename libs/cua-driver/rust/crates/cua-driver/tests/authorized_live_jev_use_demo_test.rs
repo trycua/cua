@@ -1246,6 +1246,15 @@ mod e2e {
             "capture-bound click failed: {}",
             click.text()
         );
+        #[cfg(target_os = "windows")]
+        if matches!(scope, DemoScope::Window) {
+            assert_eq!(
+                click.structured()["path"],
+                "pixel",
+                "Tk window/background click did not use targeted injection: {}",
+                click.text()
+            );
+        }
         wait_until(
             || {
                 let state = journal.snapshot();

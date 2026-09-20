@@ -336,4 +336,40 @@ mod tests {
         let response = serde_json::to_value(classify_request(&req).unwrap_err()).unwrap();
         assert_eq!(response["error"]["code"], -32602);
     }
+
+    #[test]
+    fn ping_returns_empty_result_for_legacy_and_modern_clients() {
+        // Legacy client without params
+        let req_no_params: Request = serde_json::from_value(json!({
+            "jsonrpc": "2.0", "id": 2, "method": "ping"
+        }))
+        .unwrap();
+        let response = handle_metadata_request(&req_no_params, json!(2)).unwrap();
+        let finished = finish_response(ProtocolEra::Legacy, &req_no_params.method, response);
+        let value = serde_json::to_value(finished).unwrap();
+        assert_eq!(value["jsonrpc"], "2.0");
+        assert_eq!(value["id"], 2);
+        assert_eq!(value["result"], json!({}));
+
+        // Legacy client with empty params
+        let req_empty_params: Request = serde_json::from_value(json!({
+            "jsonrpc": "2.0", "id": 3, "method": "ping", "params": {}
+        }))
+        .unwrap();
+        let response = handle_metadata_request(&req_empty_params, json!(3)).unwrap();
+        let finished = finish_response(ProtocolEra::Legacy, &req_empty_params.method, response);
+        let value = serde_json::to_value(finished).unwrap();
+        assert_eq!(value["jsonrpc"], "2.0");
+        assert_eq!(value["id"], 3);
+        assert_eq!(value["result"], json!({}));
+
+        // Modern client with valid metadata
+        let req_modern = request("ping", modern_meta());
+        let response = handle_metadata_request(&req_modern, json!(4)).unwrap();
+        let finished = finish_response(ProtocolEra::Modern, &req_modern.method, response);
+        let value = serde_json::to_value(finished).unwrap();
+        assert_eq!(value["jsonrpc"], "2.0");
+        assert_eq!(value["id"], 4);
+        assert_eq!(value["result"]["resultType"], "complete");
+    }
 }

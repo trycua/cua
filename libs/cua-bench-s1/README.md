@@ -44,40 +44,45 @@ instead marks the next-best score.
 
 | Family | Split / modality | N | `jev` | `djev` | `semif` (0-shot) | `cua-s1-nano-0.1` | `cua-s1-4b-0.1` |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `consent_checkbox` | text, hard cross-dataset (GUI-360) | 615 total | 0.000 | **0.500** | — | 0.000 | 0.250 |
-| `form_filling` | text, hard cross-dataset (GUI-360) | 615 total | 0.576 | **0.939** | — | 0.273 | 0.455 |
-| `login_auth` | text, hard cross-dataset (GUI-360) | 615 total | 0.083 | **0.250** | — | 0.250 | 0.167 |
-| `multi_step_submit` | text, hard cross-dataset (GUI-360) | 615 total | 0.034 | **0.412** | — | 0.256 | 0.322 |
-| `pagination` | text, hard cross-dataset (GUI-360) | 615 total | 0.000 | **0.714** | — | 0.286 | 0.571 |
-| `search_filter` | text, hard cross-dataset (GUI-360) | 615 total | 0.021 | **0.271** | — | 0.208 | **0.271** |
+| `consent_checkbox` | text, hard cross-dataset (GUI-360) | 615 total | 0.000 | **0.500** | 0.250 | 0.000 | 0.250 |
+| `form_filling` | text, hard cross-dataset (GUI-360) | 615 total | 0.576 | **0.939** | 0.212 | 0.273 | 0.455 |
+| `login_auth` | text, hard cross-dataset (GUI-360) | 615 total | 0.083 | **0.250** | 0.167 | 0.250 | 0.167 |
+| `multi_step_submit` | text, hard cross-dataset (GUI-360) | 615 total | 0.034 | **0.412** | 0.270 | 0.256 | 0.322 |
+| `pagination` | text, hard cross-dataset (GUI-360) | 615 total | 0.000 | **0.714** | 0.286 | 0.286 | 0.571 |
+| `search_filter` | text, hard cross-dataset (GUI-360) | 615 total | 0.021 | 0.271 | **0.292** | 0.208 | 0.271 |
 | `consent_checkbox` | multimodal, same-distribution | 14-86 | n/a | 0.071 | 0.357 | 1.000 | **1.000** |
 | `form_filling` | multimodal, same-distribution | 14-86 | n/a | 0.000 | 0.100 | 1.000 | **1.000** |
 | `login_auth` | multimodal, same-distribution | 14-86 | n/a | 0.000 | 0.235 | 1.000 | **1.000** |
 | `multi_step_submit` | multimodal, same-distribution | 14-86 | n/a | 0.750 | 0.167 | 1.000 | **1.000** |
 | `pagination` | multimodal, same-distribution | 14-86 | n/a | 0.444 | 0.000 | 1.000 | **1.000** |
 | `search_filter` | multimodal, same-distribution | 14-86 | n/a | 0.429 | 0.214 | 1.000 | **1.000** |
-| `safety_gate` | text, zero-shot | 14 | **0.286** | — | 0.000 | 0.000 | 0.071 |
+| `safety_gate` | text, zero-shot | 14 | 0.286 | **0.500** | 0.000 | 0.000 | 0.071 |
+| `safety_gate` | multimodal, zero-shot | 14 | n/a | **0.286** | 0.000 | — | — |
 | `safety_gate` | text, finetuned on own train split | 14 | — | — | — | 1.000 | **1.000** |
-| `chess` | text, task accuracy | 800 | — | — | — | 0.000 | **0.000** (N=15, <=26-option subset) |
-| `chess` | text, element accuracy | 800 | — | — | — | 0.035 | **0.515** (N=15, <=26-option subset) |
-| `chess` | multimodal, task accuracy | 800 | — | — | — | 0.000 | **0.000** (N=15, <=26-option subset) |
-| `chess` | multimodal, element accuracy | 800 | — | — | — | 0.035 | **0.409** (N=15, <=26-option subset) |
+| `chess` | text, task accuracy (fair N=15, all models capped equally) | 15 | **0.133** | 0.000 | 0.000 | 0.000 | 0.000 |
+| `chess` | text, element accuracy (fair N=15) | 15 | **0.682** | 0.227 | 0.424 | 0.227 | 0.515 |
+| `chess` | multimodal, task accuracy (fair N=15) | 15 | n/a | 0.000 | 0.000 | 0.000 | blocked |
+| `chess` | multimodal, element accuracy (fair N=15) | 15 | n/a | 0.227 | **0.409** | 0.227 | blocked |
 | `general_decision` (external `jevbench`) | text, zero-shot, out-of-domain | 231 | **0.667** | 0.623 | 0.563 | n/a | 0.563 |
 
 `chess` uses a real Stockfish-backed, freshly generated 800-position dataset
 where every legal move is scored as its own real click-vs-skip decision (a
 prior version of this table reported a since-withdrawn 1.000 on a task
-construction that let every non-gold move auto-score as correct). Task
-accuracy requires the model to be right about every legal move in a
-position, so 0.000 is the expected floor once move selection is genuinely
-tested; element accuracy (per move) is the more informative number at this
-model scale. `game_control` is temporarily withdrawn while its dataset is
+construction that let every non-gold move auto-score as correct). Since
+`cua-s1-4b-0.1`'s letter-based decoding contract caps it at 26 options per
+task, and most of the 800 positions exceed that, **every model in the chess
+rows above is scored on the same identical 15-position subset** (options
+<=26) rather than comparing mismatched sample sizes -- the nerf that one
+model needed is applied equally to all five. `cua-s1-4b-0.1` multimodal is
+marked `blocked`, not `0`: its published LoRA adapter was exported for the
+flat causal-LM layer layout and fails to load onto the multimodal model
+class's nested layer paths, a real limitation of the published artifact, not
+a measured zero score. Task accuracy requires every legal move in a position
+to be scored correctly, so 0.000 is the expected floor once move selection
+is genuinely tested; element accuracy (per move) is the more informative
+number at this model scale, and only `jev` clearly discriminates real moves
+here. `game_control` is temporarily withdrawn while its dataset is
 regenerated under the same fix.
-
-`cua-s1-4b-0.1`'s decoding contract assigns each candidate option a unique
-single-token letter, capping it at 26 options per task -- most real chess
-positions exceed that, so its chess numbers cover the 15 positions (of 800)
-that fit.
 
 ### Latency
 
@@ -90,18 +95,20 @@ controlled benchmark. `—` = not measured.
 
 | Split / modality | `jev` | `djev` | `semif` (0-shot) | `cua-s1-nano-0.1` | `cua-s1-4b-0.1` |
 | --- | --- | --- | --- | --- | --- |
-| 6 core families, text, hard cross-dataset | 0.556 | 0.770 | — | 0.003 | 0.121-0.128 |
+| 6 core families, text, hard cross-dataset | 0.556 | 0.770 | 0.120 | 0.003 | 0.121-0.128 |
 | 6 core families, multimodal, same-distribution | n/a | 1.195 | 0.293 | 0.222 | 0.353 |
-| `safety_gate`, text | 0.553 | — | 1.078 | — | — |
-| `safety_gate`, multimodal | n/a | — | 1.557 | — | — |
-| `chess`, text (N=15, <=26-option subset) | — | — | — | 0.003 | 1.174 |
-| `chess`, multimodal (N=15, <=26-option subset) | n/a | — | — | 0.030 | 0.729 |
+| `safety_gate`, text | 0.553 | 3.061 | 1.078 | — | — |
+| `safety_gate`, multimodal | n/a | 3.389 | 1.557 | — | — |
+| `chess`, text (fair N=15, all models capped equally) | 0.534 | 3.168 | 1.117 | 0.015 | 1.274 |
+| `chess`, multimodal (fair N=15) | n/a | 3.450 | 1.151 | 0.739 | blocked |
 | `general_decision` (external `jevbench`) | 0.597 | 0.858 | 0.157 | n/a | — |
 
 `cua-s1-4b-0.1`'s core-families text latency spans two nearly-identical reruns
 of the same eval (0.121s and 0.128s); both are reported since neither is
 clearly the canonical one. `cua-s1-nano-0.1`'s sub-10ms text latency reflects
 its much smaller, from-scratch architecture rather than a hardware advantage.
+`djev` (a 26B model) is consistently the slowest entry per task across every
+row it appears in.
 
 ## Task families
 

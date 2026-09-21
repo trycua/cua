@@ -203,6 +203,18 @@ pub fn move_cursor_desktop(x: f64, y: f64) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Prepare the hardware cursor for a foreground window drag.
+///
+/// The exact-window activation guard must remain active while the routed drag
+/// runs; this helper preserves the old global foreground path's cursor warp,
+/// cursor/event coupling, and AppKit settle interval.
+pub fn prepare_foreground_drag_cursor(x: f64, y: f64) {
+    use core_graphics::display::CGDisplay;
+    let _ = CGDisplay::warp_mouse_cursor_position(CGPoint::new(x, y));
+    unsafe { CGAssociateMouseAndMouseCursorPosition(true) };
+    std::thread::sleep(std::time::Duration::from_millis(40));
+}
+
 /// Scroll the foreground desktop surface at a logical screen point through the
 /// global HID queue. Mirrors computer-server's pynput wheel behavior while
 /// preserving cua-driver's explicit direction/amount contract.
@@ -701,8 +713,21 @@ where
         duration_ms
     };
 
-    // MouseDown at start.
+    // Prime the routed target's cursor-tracking state immediately before the
+    // press, matching the click path's stamped mouseMoved + settle interval.
     let from_pt = CGPoint::new(from_x, from_y);
+    post_mouse_moved_primer(
+        pid,
+        &source,
+        from_pt,
+        from_local,
+        wid,
+        click_group_id,
+        MousePostMode::Both,
+    );
+    std::thread::sleep(std::time::Duration::from_millis(12));
+
+    // MouseDown at start.
     let down = CGEvent::new_mouse_event(source.clone(), down_type, from_pt, cg_button)
         .map_err(|_| anyhow::anyhow!("drag mouseDown failed"))?;
     if flags != CGEventFlags::CGEventFlagNull {

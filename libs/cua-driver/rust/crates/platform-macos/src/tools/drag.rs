@@ -334,15 +334,23 @@ impl Tool for DragTool {
                                 wid,
                                 || {
                                     let observed_cursor = cursor_for_drag.clone();
-                                    crate::input::mouse::drag_at_xy_foreground_observed(
+                                    crate::input::mouse::prepare_foreground_drag_cursor(
+                                        from_sx, from_sy,
+                                    );
+                                    crate::input::mouse::drag_at_xy_observed(
+                                        pid,
                                         from_sx,
                                         from_sy,
                                         to_sx,
                                         to_sy,
+                                        Some((from_lx, from_ly)),
+                                        Some((to_lx, to_ly)),
+                                        Some(wid),
                                         duration_ms,
                                         steps,
                                         &m,
                                         button,
+                                        true,
                                         move |x, y| {
                                             crate::cursor::overlay::send_command(
                                                 observed_cursor.clone(),

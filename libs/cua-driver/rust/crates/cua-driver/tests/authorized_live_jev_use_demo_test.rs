@@ -15,6 +15,7 @@ const MAX_SAFE_ID_BYTES: usize = 96;
 const MAX_CHOOSER_ID_BYTES: usize = 64;
 const MIN_CONFIDENCE: f64 = 0.80;
 const SEND_ACTION_DESCRIPTION: &str = "Activate the visual region labeled Send.";
+const CHOOSER_GOAL: &str = "Select the supplied action candidate for the uniquely host-validated exact painted Send region. Select reobserve or abstain only when no supplied action candidate meets that condition.";
 
 #[derive(Clone, Debug, PartialEq)]
 struct ClickAction {
@@ -275,7 +276,7 @@ fn choice_request(
 ) -> ChoiceRequest {
     ChoiceRequest {
         schema: "cua.jev_choice_request_v1",
-        goal: "Select the painted Send control, or reobserve/abstain if it is not unambiguous.",
+        goal: CHOOSER_GOAL,
         capture_id: capture_id.into(),
         regions,
         history: Vec::new(),
@@ -287,6 +288,34 @@ fn choice_request(
             })
             .collect(),
     }
+}
+
+fn choice_failure_diagnostic(response: &ChoiceResponse, candidates: &[Candidate]) -> String {
+    let candidate_ids = candidates
+        .iter()
+        .map(|candidate| candidate.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let probabilities = response
+        .probabilities
+        .iter()
+        .filter(|(id, probability)| {
+            candidate_ids.contains(id.as_str())
+                && probability.is_finite()
+                && (0.0..=1.0).contains(*probability)
+        })
+        .take(MAX_REGIONS + 2)
+        .map(|(id, probability)| (id.clone(), *probability))
+        .collect::<BTreeMap<_, _>>();
+    json!({
+        "selected_id": safe_chooser_id(&response.selected_id)
+            .then_some(response.selected_id.as_str()),
+        "model": response.model.as_deref().filter(|value| safe_id(value)),
+        "confidence": (response.confidence.is_finite()
+            && (0.0..=1.0).contains(&response.confidence))
+            .then_some(response.confidence),
+        "probabilities": probabilities,
+    })
+    .to_string()
 }
 
 fn validate_choice(
@@ -327,7 +356,9 @@ fn validate_choice(
 fn mock_choice(candidates: &[Candidate]) -> ChoiceResponse {
     let selected_id = candidates
         .iter()
-        .find(|candidate| candidate.description.contains("Send"))
+        .find(|candidate| {
+            candidate.action.is_some() && candidate.description == SEND_ACTION_DESCRIPTION
+        })
         .expect("fixture must expose a Send candidate")
         .id
         .clone();
@@ -398,6 +429,7 @@ fn chooser_request_matches_fixture_contract_and_contains_no_action_arguments() {
     let (candidates, regions) = bounded_candidates(&payload, "capture-1").unwrap();
     let request = serde_json::to_value(choice_request("capture-1", regions, &candidates)).unwrap();
     assert_eq!(request["schema"], "cua.jev_choice_request_v1");
+    assert_eq!(request["goal"], CHOOSER_GOAL);
     assert_eq!(
         request
             .as_object()
@@ -442,6 +474,11 @@ fn chooser_request_matches_fixture_contract_and_contains_no_action_arguments() {
     );
     assert!(request.to_string().contains("reobserve"));
     assert!(request.to_string().contains("abstain"));
+    assert_eq!(request["candidates"][0]["id"], "region:send");
+    assert_eq!(
+        request["candidates"][0]["description"],
+        SEND_ACTION_DESCRIPTION
+    );
     for forbidden in ["tool", "arguments", "delivery_mode", "secret"] {
         assert!(
             !request.to_string().contains(forbidden),
@@ -459,11 +496,72 @@ fn chooser_request_matches_fixture_contract_and_contains_no_action_arguments() {
 }
 
 #[test]
+fn chooser_failure_diagnostic_is_bounded_and_excludes_action_context() {
+    let candidates = vec![
+        Candidate {
+            id: "region:send".into(),
+            description: SEND_ACTION_DESCRIPTION.into(),
+            action: Some(ClickAction {
+                capture_id: "private-capture-id".into(),
+                x: 12345.0,
+                y: 67890.0,
+            }),
+        },
+        Candidate {
+            id: "reobserve".into(),
+            description: "Reobserve.".into(),
+            action: None,
+        },
+        Candidate {
+            id: "abstain".into(),
+            description: "Abstain.".into(),
+            action: None,
+        },
+    ];
+    let response = ChoiceResponse {
+        schema: "cua.jev_choice_v1".into(),
+        selected_id: "invented".into(),
+        model: Some("jev-model".into()),
+        confidence: 0.25,
+        probabilities: BTreeMap::from([("region:send".into(), 0.25), ("invented".into(), 0.75)]),
+    };
+
+    let diagnostic = choice_failure_diagnostic(&response, &candidates);
+    let diagnostic_json: Value = serde_json::from_str(&diagnostic).unwrap();
+    assert_eq!(
+        diagnostic_json
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(["confidence", "model", "probabilities", "selected_id"])
+    );
+    assert_eq!(diagnostic_json["selected_id"], "invented");
+    assert_eq!(diagnostic_json["model"], "jev-model");
+    assert_eq!(diagnostic_json["confidence"], 0.25);
+    assert_eq!(
+        diagnostic_json["probabilities"],
+        json!({"region:send": 0.25})
+    );
+    for forbidden in [
+        "private-capture-id",
+        "12345",
+        "67890",
+        "description",
+        "regions",
+        "coordinates",
+    ] {
+        assert!(!diagnostic.contains(forbidden), "leaked {forbidden}");
+    }
+}
+
+#[test]
 fn chooser_response_and_live_mode_fail_closed() {
     let candidates = vec![
         Candidate {
             id: "region:send".into(),
-            description: "Activate Send.".into(),
+            description: SEND_ACTION_DESCRIPTION.into(),
             action: Some(ClickAction {
                 capture_id: "capture-1".into(),
                 x: 1.0,
@@ -1148,8 +1246,9 @@ mod e2e {
             ChoiceConfig::Mock => mock_choice(candidates),
             ChoiceConfig::Live { program, script } => external_choice(program, script, request),
         };
+        let diagnostic = choice_failure_diagnostic(&response, candidates);
         validate_choice(response, candidates)
-            .unwrap_or_else(|error| panic!("chooser response refused: {error}"))
+            .unwrap_or_else(|error| panic!("chooser response refused: {error}; {diagnostic}"))
     }
 
     fn run_authorized_visual_only_demo(scope: DemoScope) {
@@ -1308,10 +1407,12 @@ mod e2e {
                 "live chooser must return its bounded provider model identity"
             );
         }
-        let choice = selected_candidate
-            .action
-            .clone()
-            .expect("demo chooser must select an action");
+        let choice = selected_candidate.action.clone().unwrap_or_else(|| {
+            panic!(
+                "demo chooser did not select the uniquely host-validated Send action; {}",
+                choice_failure_diagnostic(&choice_response, &candidates)
+            )
+        });
 
         let click_args = match scope {
             DemoScope::Window => json!({

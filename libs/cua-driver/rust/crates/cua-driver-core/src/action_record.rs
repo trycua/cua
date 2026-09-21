@@ -696,10 +696,11 @@ fn transport_from_legacy(
         }
         "hid" | "cgevent_hid" | "cgevent_fg" => ActionTransport::MacosCgEventHid,
         "cgevent" => {
-            if args
-                .get("delivery_mode")
-                .and_then(serde_json::Value::as_str)
-                == Some("foreground")
+            if tool_name != "drag"
+                && args
+                    .get("delivery_mode")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("foreground")
             {
                 ActionTransport::MacosCgEventHid
             } else {
@@ -1851,6 +1852,22 @@ mod tests {
                 "legacy path {path} must normalize before the breaking cutover"
             );
         }
+    }
+
+    #[test]
+    fn routed_macos_drag_path_uses_pid_transport() {
+        let record = ActionExecutionRecord::from_legacy(
+            "drag",
+            &serde_json::json!({"delivery_mode": "foreground"}),
+            &serde_json::json!({
+                "path": "cgevent",
+                "effect": "unverifiable",
+            }),
+        )
+        .expect("routed macOS drag should normalize");
+
+        assert_eq!(record.transport, ActionTransport::MacosCgEventPid);
+        assert_eq!(record.actual_delivery, Some(ActualDelivery::Foreground));
     }
 
     #[test]

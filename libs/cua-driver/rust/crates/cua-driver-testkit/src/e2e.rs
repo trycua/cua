@@ -203,6 +203,9 @@ fn shared_web_route_for_environment(
             Ok(Route::Composite)
         }
 
+        (Platform::Macos, DisplayServer::Quartz, Targeting::Px, "drag") => {
+            Ok(Route::MacosCgEventPid)
+        }
         (Platform::Macos, DisplayServer::Quartz, Targeting::Px, _) => {
             pointer_or_key_route(Route::MacosCgEventPid, Route::MacosCgEventHid)
         }
@@ -3090,6 +3093,20 @@ mod tests {
                 Delivery::Background,
             ),
             Ok(DriverRoute::WindowsTargetedInjection)
+        );
+    }
+
+    #[test]
+    fn macos_pixel_foreground_drag_route_is_pid_addressed() {
+        assert_eq!(
+            shared_web_route(
+                Platform::Macos,
+                DisplayServer::Quartz,
+                "drag",
+                Targeting::Px,
+                Delivery::Foreground,
+            ),
+            Ok(DriverRoute::MacosCgEventPid)
         );
     }
 

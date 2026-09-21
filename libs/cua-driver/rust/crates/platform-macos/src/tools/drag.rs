@@ -314,9 +314,9 @@ impl Tool for DragTool {
             cursor_overlay::OverlayCommand::SetPressed(true),
         );
         let drag_input = focus_guard::with_focus_suppressed(
-            // Foreground drag deliberately activates the target so the global
-            // HID stream carries the pressed-button state. A suppression lease
-            // here would race that activation and restore the prior app before
+            // Foreground drag deliberately activates the target while the
+            // PID/window-routed gesture is delivered. A suppression lease here
+            // would race that activation and restore the prior app before
             // Chromium receives the gesture.
             if fg { None } else { Some(pid) },
             prior_front,
@@ -326,9 +326,9 @@ impl Tool for DragTool {
                     let do_it = move || -> anyhow::Result<()> {
                         let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
                         if let Some(wid) = foreground_window_id {
-                            // Global HID delivery has no pid addressing. Keep
-                            // the exact target window active for the complete
-                            // gesture, then restore the prior front process.
+                            // Keep the exact target window active for the
+                            // complete routed gesture, then restore the prior
+                            // front process.
                             return crate::input::skylight::with_foreground_hid_activation(
                                 pid as libc::pid_t,
                                 wid,
@@ -431,18 +431,22 @@ impl Tool for DragTool {
                  from window-pixel ({}, {}) → ({}, {}), \
                  screen ({}, {}) → ({}, {}) \
                  in {duration_ms}ms / {steps} steps{mode_label} \
-                 (background CGEvent; not driver-verified — confirm via screenshot).{}",
-                from_x as i64, from_y as i64,
-                to_x   as i64, to_y   as i64,
-                from_sx as i64, from_sy as i64,
-                to_sx   as i64, to_sy   as i64,
+                 (PID/window-routed CGEvent; not driver-verified — confirm via screenshot).{}",
+                from_x as i64,
+                from_y as i64,
+                to_x as i64,
+                to_y as i64,
+                from_sx as i64,
+                from_sy as i64,
+                to_sx as i64,
+                to_sy as i64,
                 changes.result_suffix(),
             ))
             .with_structured(serde_json::json!({
-                "path": if fg { "cgevent_fg" } else { "cgevent" }, "verified": false, "effect": "unverifiable"
+                "path": "cgevent", "verified": false, "effect": "unverifiable"
             })),
             Ok(Err(e)) => ToolResult::error(format!("drag failed: {e}")),
-            Err(e)     => ToolResult::error(format!("Task error: {e}")),
+            Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
 }

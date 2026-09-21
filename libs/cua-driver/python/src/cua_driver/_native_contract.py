@@ -1820,6 +1820,30 @@ class ClickPosition:
             return True
 
     @dataclass
+    class ELEMENT:
+
+        def __init__(self, element_token:str):
+            self.element_token = element_token
+
+
+            pass
+
+
+
+
+
+        def __str__(self):
+            return "ClickPosition.ELEMENT(element_token={})".format(self.element_token)
+        def __eq__(self, other):
+            if not isinstance(other, ClickPosition):
+                return NotImplemented
+            if not other.is_ELEMENT():
+                return False
+            if self.element_token != other.element_token:
+                return False
+            return True
+
+    @dataclass
     class CAPTURED_COORDINATES:
 
         def __init__(self, x:float, y:float, capture_id:str):
@@ -1853,30 +1877,6 @@ class ClickPosition:
                 return False
             return True
 
-    @dataclass
-    class ELEMENT:
-
-        def __init__(self, element_token:str):
-            self.element_token = element_token
-
-
-            pass
-
-
-
-
-
-        def __str__(self):
-            return "ClickPosition.ELEMENT(element_token={})".format(self.element_token)
-        def __eq__(self, other):
-            if not isinstance(other, ClickPosition):
-                return NotImplemented
-            if not other.is_ELEMENT():
-                return False
-            if self.element_token != other.element_token:
-                return False
-            return True
-
 
 
     # For each variant, we have `is_NAME` and `is_name` methods for easily checking
@@ -1885,22 +1885,22 @@ class ClickPosition:
         return isinstance(self, ClickPosition.COORDINATES)
     def is_coordinates(self) -> bool:
         return isinstance(self, ClickPosition.COORDINATES)
-    def is_CAPTURED_COORDINATES(self) -> bool:
-        return isinstance(self, ClickPosition.CAPTURED_COORDINATES)
-    def is_captured_coordinates(self) -> bool:
-        return isinstance(self, ClickPosition.CAPTURED_COORDINATES)
     def is_ELEMENT(self) -> bool:
         return isinstance(self, ClickPosition.ELEMENT)
     def is_element(self) -> bool:
         return isinstance(self, ClickPosition.ELEMENT)
+    def is_CAPTURED_COORDINATES(self) -> bool:
+        return isinstance(self, ClickPosition.CAPTURED_COORDINATES)
+    def is_captured_coordinates(self) -> bool:
+        return isinstance(self, ClickPosition.CAPTURED_COORDINATES)
 
 
 # Now, a little trick - we make each nested variant class be a subclass of the main
 # enum class, so that method calls and instance checks etc will work intuitively.
 # We might be able to do this a little more neatly with a metaclass, but this'll do.
 ClickPosition.COORDINATES = type("ClickPosition.COORDINATES", (ClickPosition.COORDINATES, ClickPosition,), {})  # type: ignore
-ClickPosition.CAPTURED_COORDINATES = type("ClickPosition.CAPTURED_COORDINATES", (ClickPosition.CAPTURED_COORDINATES, ClickPosition,), {})  # type: ignore
 ClickPosition.ELEMENT = type("ClickPosition.ELEMENT", (ClickPosition.ELEMENT, ClickPosition,), {})  # type: ignore
+ClickPosition.CAPTURED_COORDINATES = type("ClickPosition.CAPTURED_COORDINATES", (ClickPosition.CAPTURED_COORDINATES, ClickPosition,), {})  # type: ignore
 
 
 
@@ -1915,13 +1915,13 @@ class _UniffiFfiConverterTypeClickPosition(_UniffiConverterRustBuffer):
                 _UniffiFfiConverterFloat64.read(buf),
             )
         if variant == 2:
-            return ClickPosition.CAPTURED_COORDINATES(
-                _UniffiFfiConverterFloat64.read(buf),
-                _UniffiFfiConverterFloat64.read(buf),
+            return ClickPosition.ELEMENT(
                 _UniffiFfiConverterString.read(buf),
             )
         if variant == 3:
-            return ClickPosition.ELEMENT(
+            return ClickPosition.CAPTURED_COORDINATES(
+                _UniffiFfiConverterFloat64.read(buf),
+                _UniffiFfiConverterFloat64.read(buf),
                 _UniffiFfiConverterString.read(buf),
             )
         raise InternalError("Raw enum value doesn't match any cases")
@@ -1932,13 +1932,13 @@ class _UniffiFfiConverterTypeClickPosition(_UniffiConverterRustBuffer):
             _UniffiFfiConverterFloat64.check_lower(value.x)
             _UniffiFfiConverterFloat64.check_lower(value.y)
             return
+        if value.is_ELEMENT():
+            _UniffiFfiConverterString.check_lower(value.element_token)
+            return
         if value.is_CAPTURED_COORDINATES():
             _UniffiFfiConverterFloat64.check_lower(value.x)
             _UniffiFfiConverterFloat64.check_lower(value.y)
             _UniffiFfiConverterString.check_lower(value.capture_id)
-            return
-        if value.is_ELEMENT():
-            _UniffiFfiConverterString.check_lower(value.element_token)
             return
         raise ValueError(value)
 
@@ -1948,14 +1948,14 @@ class _UniffiFfiConverterTypeClickPosition(_UniffiConverterRustBuffer):
             buf.write_i32(1)
             _UniffiFfiConverterFloat64.write(value.x, buf)
             _UniffiFfiConverterFloat64.write(value.y, buf)
-        if value.is_CAPTURED_COORDINATES():
+        if value.is_ELEMENT():
             buf.write_i32(2)
+            _UniffiFfiConverterString.write(value.element_token, buf)
+        if value.is_CAPTURED_COORDINATES():
+            buf.write_i32(3)
             _UniffiFfiConverterFloat64.write(value.x, buf)
             _UniffiFfiConverterFloat64.write(value.y, buf)
             _UniffiFfiConverterString.write(value.capture_id, buf)
-        if value.is_ELEMENT():
-            buf.write_i32(3)
-            _UniffiFfiConverterString.write(value.element_token, buf)
 
 
 

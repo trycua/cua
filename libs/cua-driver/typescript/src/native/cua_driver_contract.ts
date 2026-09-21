@@ -715,8 +715,8 @@ const FfiConverterTypeActionTarget = (() => {
 // Enum: ClickPosition
 export enum ClickPosition_Tags {
     Coordinates = "Coordinates",
-    CapturedCoordinates = "CapturedCoordinates",
-    Element = "Element"
+    Element = "Element",
+    CapturedCoordinates = "CapturedCoordinates"
 }
 export const ClickPosition = (() => {
 
@@ -747,37 +747,6 @@ inner: {x: number; y: number }): Coordinates_ {
 
         static instanceOf(obj: any): obj is Coordinates_ {
             return obj.tag === ClickPosition_Tags.Coordinates;
-        }
-
-    }
-
-    type CapturedCoordinates__interface = {
-        tag: ClickPosition_Tags.CapturedCoordinates;
-        inner:
-Readonly<{x: number; y: number; captureId: string}>
-    };
-    class CapturedCoordinates_ extends UniffiEnum implements CapturedCoordinates__interface {
-        /**
-         * @private
-         * This field is private and should not be used, use `tag` instead.
-         */
-        readonly [uniffiTypeNameSymbol] = "ClickPosition";
-        readonly tag = ClickPosition_Tags.CapturedCoordinates;
-        readonly inner:
-Readonly<{x: number; y: number; captureId: string}>;
-        constructor(
-inner: {x: number; y: number; captureId: string }) {
-            super("ClickPosition", "CapturedCoordinates");
-
-            this.inner = Object.freeze(inner);
-        }
-        static new(
-inner: {x: number; y: number; captureId: string }): CapturedCoordinates_ {
-            return new CapturedCoordinates_(inner);
-        }
-
-        static instanceOf(obj: any): obj is CapturedCoordinates_ {
-            return obj.tag === ClickPosition_Tags.CapturedCoordinates;
         }
 
     }
@@ -813,6 +782,37 @@ inner: {elementToken: string }): Element_ {
 
     }
 
+    type CapturedCoordinates__interface = {
+        tag: ClickPosition_Tags.CapturedCoordinates;
+        inner:
+Readonly<{x: number; y: number; captureId: string}>
+    };
+    class CapturedCoordinates_ extends UniffiEnum implements CapturedCoordinates__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "ClickPosition";
+        readonly tag = ClickPosition_Tags.CapturedCoordinates;
+        readonly inner:
+Readonly<{x: number; y: number; captureId: string}>;
+        constructor(
+inner: {x: number; y: number; captureId: string }) {
+            super("ClickPosition", "CapturedCoordinates");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {x: number; y: number; captureId: string }): CapturedCoordinates_ {
+            return new CapturedCoordinates_(inner);
+        }
+
+        static instanceOf(obj: any): obj is CapturedCoordinates_ {
+            return obj.tag === ClickPosition_Tags.CapturedCoordinates;
+        }
+
+    }
+
     function instanceOf(obj: any): obj is ClickPosition {
         return obj[uniffiTypeNameSymbol] === "ClickPosition";
     }
@@ -820,13 +820,13 @@ inner: {elementToken: string }): Element_ {
     return Object.freeze({
         instanceOf,
   Coordinates: Coordinates_,
-  CapturedCoordinates: CapturedCoordinates_,
-  Element: Element_
+  Element: Element_,
+  CapturedCoordinates: CapturedCoordinates_
     });
 
 })();
 export type ClickPosition = InstanceType<
-    typeof ClickPosition['Coordinates' | 'CapturedCoordinates' | 'Element']
+    typeof ClickPosition['Coordinates' | 'Element' | 'CapturedCoordinates']
 >;
 
 // FfiConverter for enum ClickPosition
@@ -837,8 +837,8 @@ const FfiConverterTypeClickPosition = (() => {
         read(from: RustBuffer): TypeName {
             switch (ordinalConverter.read(from)) {
                 case 1: return new ClickPosition.Coordinates({x: FfiConverterFloat64.read(from), y: FfiConverterFloat64.read(from) });
-                case 2: return new ClickPosition.CapturedCoordinates({x: FfiConverterFloat64.read(from), y: FfiConverterFloat64.read(from), captureId: FfiConverterString.read(from) });
-                case 3: return new ClickPosition.Element({elementToken: FfiConverterString.read(from) });
+                case 2: return new ClickPosition.Element({elementToken: FfiConverterString.read(from) });
+                case 3: return new ClickPosition.CapturedCoordinates({x: FfiConverterFloat64.read(from), y: FfiConverterFloat64.read(from), captureId: FfiConverterString.read(from) });
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -851,18 +851,18 @@ const FfiConverterTypeClickPosition = (() => {
                     FfiConverterFloat64.write(inner.y, into);
                     return;
                 }
-                case ClickPosition_Tags.CapturedCoordinates: {
+                case ClickPosition_Tags.Element: {
                     ordinalConverter.write(2, into);
+                    const inner = value.inner;
+                    FfiConverterString.write(inner.elementToken, into);
+                    return;
+                }
+                case ClickPosition_Tags.CapturedCoordinates: {
+                    ordinalConverter.write(3, into);
                     const inner = value.inner;
                     FfiConverterFloat64.write(inner.x, into);
                     FfiConverterFloat64.write(inner.y, into);
                     FfiConverterString.write(inner.captureId, into);
-                    return;
-                }
-                case ClickPosition_Tags.Element: {
-                    ordinalConverter.write(3, into);
-                    const inner = value.inner;
-                    FfiConverterString.write(inner.elementToken, into);
                     return;
                 }
                 default:
@@ -879,18 +879,18 @@ const FfiConverterTypeClickPosition = (() => {
                     size += FfiConverterFloat64.allocationSize(inner.y);
                     return size;
                 }
-                case ClickPosition_Tags.CapturedCoordinates: {
+                case ClickPosition_Tags.Element: {
                     const inner = value.inner;
                     let size = ordinalConverter.allocationSize(2);
+                    size += FfiConverterString.allocationSize(inner.elementToken);
+                    return size;
+                }
+                case ClickPosition_Tags.CapturedCoordinates: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(3);
                     size += FfiConverterFloat64.allocationSize(inner.x);
                     size += FfiConverterFloat64.allocationSize(inner.y);
                     size += FfiConverterString.allocationSize(inner.captureId);
-                    return size;
-                }
-                case ClickPosition_Tags.Element: {
-                    const inner = value.inner;
-                    let size = ordinalConverter.allocationSize(3);
-                    size += FfiConverterString.allocationSize(inner.elementToken);
                     return size;
                 }
                 default: throw new UniffiInternalError.UnexpectedEnumCase();

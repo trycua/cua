@@ -609,8 +609,8 @@ pub enum InputDeliveryMode {
 #[serde(untagged)]
 pub enum ClickPosition {
     Coordinates { x: f64, y: f64 },
-    CapturedCoordinates { x: f64, y: f64, capture_id: String },
     Element { element_token: String },
+    CapturedCoordinates { x: f64, y: f64, capture_id: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, uniffi::Record)]

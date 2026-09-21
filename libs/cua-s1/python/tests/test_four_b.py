@@ -166,6 +166,30 @@ def test_forward_softmaxes_only_the_option_letter_logits():
     assert results[1].action == "click"
 
 
+def test_resolve_adapter_path_picks_modality_subdir_when_present(tmp_path):
+    root = tmp_path / "cua-s1-4b-0.1"
+    (root / "text").mkdir(parents=True)
+    (root / "text" / "adapter_config.json").write_text("{}")
+    (root / "multimodal").mkdir(parents=True)
+    (root / "multimodal" / "adapter_config.json").write_text("{}")
+
+    text_model = FourBModel(lora_adapter_path=root, modality="text")
+    mm_model = FourBModel(lora_adapter_path=root, modality="multimodal")
+
+    assert text_model._resolve_adapter_path() == root / "text"
+    assert mm_model._resolve_adapter_path() == root / "multimodal"
+
+
+def test_resolve_adapter_path_falls_back_to_root_without_subdirs(tmp_path):
+    root = tmp_path / "semif_lora_multimodal"
+    root.mkdir()
+    (root / "adapter_config.json").write_text("{}")
+
+    model = FourBModel(lora_adapter_path=root, modality="multimodal")
+
+    assert model._resolve_adapter_path() == root
+
+
 def test_letter_token_ids_rejects_multi_token_letters():
     model = FourBModel(modality="text")
     model._tokenizer = _FakeTokenizer({"A": 10})  # "B" falls through to the 3-token stand-in

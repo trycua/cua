@@ -273,9 +273,36 @@ class FourBModel:
         if self.lora_adapter_path:
             from peft import PeftModel
 
-            model = PeftModel.from_pretrained(model, str(self.lora_adapter_path))
+            model = PeftModel.from_pretrained(model, str(self._resolve_adapter_path()))
         model.eval()
         self._model = model
+
+    def _resolve_adapter_path(self) -> Path:
+        """Resolve `lora_adapter_path` to the on-disk adapter directory to
+        actually load for `self.modality`.
+
+        `cua-s1-4b`'s text and multimodal LoRA adapters are two independently
+        trained checkpoints with different `target_modules` (the text
+        adapter is a flat causal-LM LoRA; the multimodal one is jointly
+        trained with the vision projector's `linear_fc1`/`linear_fc2`
+        modules, and its key paths only match `AutoModelForImageTextToText`'s
+        nested `.language_model.` layer structure). They are not
+        interchangeable and are not merged into one adapter, so the on-disk
+        layout mirrors `cua-s1-nano-0.1`: a `text/` and a `multimodal/`
+        subdirectory, each a standalone PEFT adapter dir (`adapter_config.json`
+        + `adapter_model.safetensors`), under one adapter root.
+
+        If `lora_adapter_path` already points directly at a standalone
+        adapter dir (no `text/`/`multimodal/` subdirs -- e.g. a bare
+        checkpoint dir used in training/eval scripts), it is used as-is, so
+        this stays backward compatible with callers that already pass a
+        fully-resolved single-modality adapter path.
+        """
+        root = Path(self.lora_adapter_path)
+        per_modality = root / self.modality
+        if per_modality.is_dir() and (per_modality / "adapter_config.json").exists():
+            return per_modality
+        return root
 
     def _ensure_loaded(self) -> None:
         if self._model is None:

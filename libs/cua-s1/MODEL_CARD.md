@@ -86,7 +86,17 @@ the current screen state (an accessibility tree, or a screenshot) and a
 fixed, closed set of candidate (element, action) options, select the single
 best option. Both a text-only mode (accessibility tree) and a multimodal mode
 (screenshot, using the base model's own vision-language input) are supported,
-because `Qwen/Qwen3.5-4B` is natively vision-language.
+because `Qwen/Qwen3.5-4B` is natively vision-language. The text and
+multimodal modes are two independently trained LoRA adapters, not one
+adapter used two ways (their target modules differ, since the multimodal
+adapter also trains the vision-projector layers) -- published as `text/` and
+`multimodal/` subdirectories under the same HF repo, and
+`cua_s1.four_b.FourBModel` selects the right one for the requested
+`modality`. The multimodal adapter was trained only on the 6 core GUI
+families' synthetic/same-distribution data; it does not generalize to
+out-of-distribution families such as `chess` or `game_control` (see
+Evaluation below) -- that is a real, measured limitation, not an
+architectural one.
 
 **Status:** research profile. This component includes the inference-only
 Python implementation (`cua_s1.four_b`). LoRA adapter weights are published at
@@ -107,10 +117,16 @@ describes the code/checkpoint's scope and limitations, not its benchmark
 history, which changes independently of this document). As of that
 package's current Results section: on a genuinely held-out cross-dataset
 text split, task-level accuracy ranges 0.167-0.571 depending on family; on
-`chess` (a real, Stockfish-backed move-selection task where every legal move
-is its own scored option), 0.000 task accuracy and 0.409-0.515 element
-(per-move) accuracy, on the 15-of-800 positions that fit this checkpoint's
-26-option letter-decoding cap; on `safety_gate`, 0.071 zero-shot and 1.000
+the same-distribution multimodal split for the 6 core families, 1.000 (the
+multimodal adapter's actual training distribution); on `chess` (a real,
+Stockfish-backed move-selection task where every legal move is its own
+scored option), 0.000 task accuracy and 0.227-0.515 element (per-move)
+accuracy depending on modality, on the 15-of-800 positions that fit this
+checkpoint's 26-option letter-decoding cap; on `game_control`, 0.000 task
+accuracy and 0.333 element accuracy. Chess and game_control accuracy does
+not survive chance-correction (see the Results section's calibrated table)
+-- this checkpoint shows no measurable signal on either out-of-distribution
+family yet, in either modality. On `safety_gate`, 0.071 zero-shot and 1.000
 once finetuned on that family's own training split; on the external,
 out-of-domain `general_decision` benchmark, 0.563 zero-shot. These are not general
 computer-use capability figures -- see `libs/cua-bench-s1/docs/TASK_FAMILIES.md`
@@ -259,8 +275,14 @@ Real, measured results for this checkpoint are published in
 `libs/cua-bench-s1/README.md`'s Results section, not here. As of that
 package's current Results section: on a genuinely held-out cross-dataset
 text split, task-level accuracy ranges 0.000-0.286 depending on family; on
-`chess` (a real, Stockfish-backed move-selection task, 800 positions), 0.000
-task accuracy and 0.035 element (per-move) accuracy; on `safety_gate`, 0.000
+the same-distribution multimodal split for the 6 core families, 1.000; on
+`chess` (a real, Stockfish-backed move-selection task, evaluated on the
+15-of-800 positions used for a fair cross-model comparison), 0.000 task
+accuracy and 0.227 element (per-move) accuracy in both modalities; on
+`game_control`, 0.000 task accuracy and 0.333 element accuracy. Neither
+chess nor game_control accuracy survives chance-correction (see the Results
+section's calibrated table) -- this checkpoint shows no measurable signal on
+either out-of-distribution family yet. On `safety_gate`, 0.000
 zero-shot and 1.000 once finetuned on that family's own training split. This
 checkpoint has no text-modality shape for the external `general_decision`
 benchmark (its adapter expects real GUI elements/frames). See

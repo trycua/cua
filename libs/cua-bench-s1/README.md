@@ -50,22 +50,42 @@ instead marks the next-best score.
 | `multi_step_submit` | text, hard cross-dataset (GUI-360) | 615 total | 0.034 | **0.412** | 0.270 | 0.256 | 0.322 |
 | `pagination` | text, hard cross-dataset (GUI-360) | 615 total | 0.000 | **0.714** | 0.286 | 0.286 | 0.571 |
 | `search_filter` | text, hard cross-dataset (GUI-360) | 615 total | 0.021 | 0.271 | **0.292** | 0.208 | 0.271 |
-| `consent_checkbox` | multimodal, same-distribution | 14-86 | n/a | 0.071 | 0.357 | 1.000 | **1.000** |
-| `form_filling` | multimodal, same-distribution | 14-86 | n/a | 0.000 | 0.100 | 1.000 | **1.000** |
-| `login_auth` | multimodal, same-distribution | 14-86 | n/a | 0.000 | 0.235 | 1.000 | **1.000** |
-| `multi_step_submit` | multimodal, same-distribution | 14-86 | n/a | 0.750 | 0.167 | 1.000 | **1.000** |
-| `pagination` | multimodal, same-distribution | 14-86 | n/a | 0.444 | 0.000 | 1.000 | **1.000** |
-| `search_filter` | multimodal, same-distribution | 14-86 | n/a | 0.429 | 0.214 | 1.000 | **1.000** |
+| `consent_checkbox` | multimodal, same-distribution | 14-86 | n/a | 0.071 | 0.357 | **1.000** | 1.000 |
+| `form_filling` | multimodal, same-distribution | 14-86 | n/a | 0.000 | 0.100 | **1.000** | 1.000 |
+| `login_auth` | multimodal, same-distribution | 14-86 | n/a | 0.000 | 0.235 | **1.000** | 1.000 |
+| `multi_step_submit` | multimodal, same-distribution | 14-86 | n/a | 0.750 | 0.167 | **1.000** | 1.000 |
+| `pagination` | multimodal, same-distribution | 14-86 | n/a | 0.444 | 0.000 | **1.000** | 1.000 |
+| `search_filter` | multimodal, same-distribution | 14-86 | n/a | 0.429 | 0.214 | **1.000** | 1.000 |
 | `safety_gate` | text, zero-shot | 14 | 0.286 | **0.500** | 0.000 | 0.000 | 0.071 |
 | `safety_gate` | multimodal, zero-shot | 14 | n/a | **0.286** | 0.000 | — | — |
 | `safety_gate` | text, finetuned on own train split | 14 | — | — | — | 1.000 | **1.000** |
 | `chess` | text, task accuracy (fair N=15, all models capped equally) | 15 | **0.133** | 0.000 | 0.000 | 0.000 | 0.000 |
 | `chess` | text, element accuracy (fair N=15) | 15 | **0.682** | 0.227 | 0.424 | 0.227 | 0.515 |
-| `chess` | multimodal, task accuracy (fair N=15) | 15 | n/a | 0.000 | 0.000 | 0.000 | blocked |
-| `chess` | multimodal, element accuracy (fair N=15) | 15 | n/a | 0.227 | **0.409** | 0.227 | blocked |
-| `game_control` | multimodal, task accuracy | 82 | n/a | 0.000 | 0.000 | 0.000 | blocked |
-| `game_control` | multimodal, element accuracy | 82 | n/a | 0.333 | 0.333 | 0.333 | blocked |
+| `chess` | multimodal, task accuracy (fair N=15) | 15 | n/a | 0.000 | 0.000 | 0.000 | 0.000 |
+| `chess` | multimodal, element accuracy (fair N=15) | 15 | n/a | 0.227 | **0.409** | 0.227 | 0.227 |
+| `game_control` | multimodal, task accuracy | 82 | n/a | 0.000 | 0.000 | 0.000 | 0.000 |
+| `game_control` | multimodal, element accuracy | 82 | n/a | 0.333 | 0.333 | 0.333 | 0.333 |
 | `general_decision` (external `jevbench`) | text, zero-shot, out-of-domain | 231 | **0.667** | 0.623 | 0.563 | n/a | 0.563 |
+
+**`cua-s1-4b-0.1` could not do multimodal inference at all as originally
+published, and this has since been fixed.** Its published LoRA was a
+text-only adapter that failed to load onto the multimodal model class; an
+earlier version of this table conflated it with a different, never-published
+multimodal-trained adapter and wrongly reported 1.000 on its behalf, then a
+later revision correctly caught the conflation and marked every
+`cua-s1-4b-0.1` multimodal cell `blocked`. Both are now resolved: the real,
+working multimodal LoRA has been packaged and published to
+`cua-ai/cua-s1-4b-0.1` alongside the existing text adapter (`text/` and
+`multimodal/` subdirectories), `cua_s1.four_b.FourBModel` now loads the
+correct one for the requested modality, and every number above is a fresh
+measurement through that fixed, public code path -- not carried over from
+the earlier internal-only eval. The 6-core-families multimodal 1.000 holds
+up under this real path (same-distribution data the adapter was actually
+trained on). Chess and game_control multimodal both come back nearly
+identical to `cua-s1-nano-0.1`'s and `djev`'s numbers, because the
+multimodal LoRA was only ever trained on the 6-core-families synthetic
+distribution and does not generalize to these out-of-distribution families
+-- an honest result, not a remaining bug.
 
 `chess` uses a real Stockfish-backed, freshly generated 800-position dataset
 where every legal move is scored as its own real click-vs-skip decision (a
@@ -75,26 +95,77 @@ construction that let every non-gold move auto-score as correct). Since
 task, and most of the 800 positions exceed that, **every model in the chess
 rows above is scored on the same identical 15-position subset** (options
 <=26) rather than comparing mismatched sample sizes -- the nerf that one
-model needed is applied equally to all five. `cua-s1-4b-0.1` multimodal is
-marked `blocked`, not `0`: its published LoRA adapter was exported for the
-flat causal-LM layer layout and fails to load onto the multimodal model
-class's nested layer paths, a real limitation of the published artifact, not
-a measured zero score. Task accuracy requires every legal move in a position
-to be scored correctly, so 0.000 is the expected floor once move selection
-is genuinely tested; element accuracy (per move) is the more informative
-number at this model scale, and only `jev` clearly discriminates real moves
-here.
+model needed is applied equally to all five. Task accuracy requires every
+legal move in a position to be scored correctly, so 0.000 is the expected
+floor once move selection is genuinely tested; element accuracy (per move)
+is the more informative number at this model scale, and only `jev` clearly
+discriminates real moves here -- see the calibrated table below, though,
+before reading too much into that.
 
 `game_control` was regenerated the same way as `chess`: a fresh, real
 82-task ViZDoom dataset (400 frames total across train/val/test) where every
 candidate button gets a real click-vs-skip option pair, gold actions from
-the engine's own live labels-buffer heuristic. All three measurable models
+the engine's own live labels-buffer heuristic. All four measurable models
 tie exactly at 0.333 element accuracy here -- a real result, not an
-artifact of rounding, and not a meaningfully differentiating one at N=82
-with only ~6 options per task. `cua-s1-4b-0.1` is `blocked` for the same
-real reason as chess multimodal (its published LoRA adapter's layer layout
-doesn't match the multimodal model class), confirmed here to not be a
-chess-specific fluke.
+artifact of rounding, and, per the calibration below, not actually above
+chance either.
+
+### Chance-corrected results
+
+Raw accuracy is misleading when task families offer different numbers of
+options: scoring 25% on a decision with 4 real options is exactly what
+random guessing gets, not a real 25% of signal. This table applies
+
+  `calibrated = max(0, (raw - p_chance) / (1 - p_chance))`
+
+where `p_chance` is the *real*, measured chance-level accuracy for that row
+-- for task-accuracy rows, the average (over every task in that row's real
+dataset) of the product, across all of a task's elements, of
+`1 / options_for_that_element` (a skip-only decoy with exactly 1 option
+contributes a free factor of 1); for element-accuracy rows, the average of
+`1 / options` over every scored element. Both are computed directly from
+the real dataset files, not estimated. A calibrated score of 0 means "no
+better than guessing," not "the raw score was 0."
+
+| Row | `p_chance` | `jev` | `djev` | `semif` (0-shot) | `cua-s1-nano-0.1` | `cua-s1-4b-0.1` |
+| --- | --- | --- | --- | --- | --- | --- |
+| `consent_checkbox`, text hard cross-dataset | 0.250 | 0.000 | **0.333** | 0.000 | 0.000 | 0.000 |
+| `form_filling`, text hard cross-dataset | 0.250 | 0.435 | **0.919** | 0.000 | 0.031 | 0.273 |
+| `login_auth`, text hard cross-dataset | 0.250 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 |
+| `multi_step_submit`, text hard cross-dataset | 0.250 | 0.000 | **0.216** | 0.027 | 0.008 | 0.096 |
+| `pagination`, text hard cross-dataset | 0.250 | 0.000 | **0.619** | 0.048 | 0.048 | 0.428 |
+| `search_filter`, text hard cross-dataset | 0.250 | 0.000 | 0.028 | **0.056** | 0.000 | 0.028 |
+| `consent_checkbox`, multimodal same-distribution | 0.232 | n/a | 0.000 | 0.163 | **1.000** | **1.000** |
+| `form_filling`, multimodal same-distribution | 0.044 | n/a | 0.000 | 0.058 | **1.000** | **1.000** |
+| `login_auth`, multimodal same-distribution | 0.169 | n/a | 0.000 | 0.079 | **1.000** | **1.000** |
+| `multi_step_submit`, multimodal same-distribution | 0.188 | n/a | 0.692 | 0.000 | **1.000** | **1.000** |
+| `pagination`, multimodal same-distribution | 0.500 | n/a | 0.000 | 0.000 | **1.000** | **1.000** |
+| `search_filter`, multimodal same-distribution | 0.130 | n/a | 0.344 | 0.097 | **1.000** | **1.000** |
+| `safety_gate`, text zero-shot | 0.138 | 0.171 | **0.420** | 0.000 | 0.000 | 0.000 |
+| `safety_gate`, multimodal zero-shot | 0.138 | n/a | **0.171** | 0.000 | — | — |
+| `safety_gate`, finetuned | 0.138 | — | — | — | 1.000 | **1.000** |
+| `chess`, text, task accuracy (N=15) | 0.072 | **0.065** | 0.000 | 0.000 | 0.000 | 0.000 |
+| `chess`, text, element accuracy (N=15) | 0.500 | **0.364** | 0.000 | 0.000 | 0.000 | 0.030 |
+| `chess`, multimodal, task accuracy (N=15) | 0.072 | n/a | 0.000 | 0.000 | 0.000 | 0.000 |
+| `chess`, multimodal, element accuracy (N=15) | 0.500 | n/a | 0.000 | 0.000 | 0.000 | 0.000 |
+| `game_control`, task accuracy | 0.125 | n/a | 0.000 | 0.000 | 0.000 | 0.000 |
+| `game_control`, element accuracy | 0.500 | n/a | 0.000 | 0.000 | 0.000 | 0.000 |
+| `general_decision` (jevbench) | 0.500 | **0.334** | 0.246 | 0.126 | n/a | 0.126 |
+
+Once corrected for chance, several raw-table stories change:
+`consent_checkbox`'s "semif matches jev" and chess/game_control's apparent
+`jev`/`semif` edges over 0 mostly do not survive -- `chess` multimodal
+element accuracy in particular had `semif`'s raw 0.409 as the bolded best
+score, but 0.409 is *below* its own row's true chance level (0.5), so every
+model calibrates to 0 there: no model shows real signal on chess when
+scored on a screenshot. `game_control` is the same story across every row:
+its raw 0.333 three-way (now four-way) tie sits below the true 0.5 chance
+level for a 2-option click/skip design, so it calibrates to 0 everywhere --
+none of these models show measurable game-state understanding on this
+family yet. `djev` and `cua-s1-4b-0.1`'s wins on the text hard
+cross-dataset split hold up well under calibration; `cua-s1-nano-0.1`'s
+1.000s on the multimodal same-distribution split are unaffected by
+definition (a perfect score calibrates to 1.000 regardless of chance).
 
 ### Latency
 
@@ -108,12 +179,12 @@ controlled benchmark. `—` = not measured.
 | Split / modality | `jev` | `djev` | `semif` (0-shot) | `cua-s1-nano-0.1` | `cua-s1-4b-0.1` |
 | --- | --- | --- | --- | --- | --- |
 | 6 core families, text, hard cross-dataset | 0.556 | 0.770 | 0.120 | 0.003 | 0.121-0.128 |
-| 6 core families, multimodal, same-distribution | n/a | 1.195 | 0.293 | 0.222 | 0.353 |
+| 6 core families, multimodal, same-distribution | n/a | 1.195 | 0.293 | 0.222 | 0.345 |
 | `safety_gate`, text | 0.553 | 3.061 | 1.078 | — | — |
 | `safety_gate`, multimodal | n/a | 3.389 | 1.557 | — | — |
 | `chess`, text (fair N=15, all models capped equally) | 0.534 | 3.168 | 1.117 | 0.015 | 1.274 |
-| `chess`, multimodal (fair N=15) | n/a | 3.450 | 1.151 | 0.739 | blocked |
-| `game_control`, multimodal | n/a | 1.172 | 0.300 | 0.206 | blocked |
+| `chess`, multimodal (fair N=15) | n/a | 3.450 | 1.151 | 0.739 | 1.355 |
+| `game_control`, multimodal | n/a | 1.172 | 0.300 | 0.206 | 0.343 |
 | `general_decision` (external `jevbench`) | 0.597 | 0.858 | 0.157 | n/a | — |
 
 `cua-s1-4b-0.1`'s core-families text latency spans two nearly-identical reruns

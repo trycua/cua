@@ -51,8 +51,8 @@ def test_build_prompt_text_mode_embeds_ax_tree_and_lettered_options():
     user = messages[1]
     assert user["role"] == "user"
     assert "<tree/>" in user["content"]
-    assert "A. Button \"submit\" -> click" in user["content"]
-    assert "B. Button \"email\" -> fill" in user["content"]
+    assert 'A. Button "submit" -> click' in user["content"]
+    assert 'B. Button "email" -> fill' in user["content"]
 
 
 def test_build_prompt_multimodal_mode_requires_screenshot_and_emits_image_block():

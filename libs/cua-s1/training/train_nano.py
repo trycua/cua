@@ -228,7 +228,11 @@ def cmd_finetune(args: argparse.Namespace) -> None:
         args.batch_size,
         args.learning_rate,
         args.checkpoint_out,
-        {"stage": "finetune", "modality": args.modality, "warm_start_from": str(args.checkpoint_in)},
+        {
+            "stage": "finetune",
+            "modality": args.modality,
+            "warm_start_from": str(args.checkpoint_in),
+        },
     )
 
 
@@ -238,7 +242,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     base = sub.add_parser("base", help="base training on a prepared bulk split")
     base.add_argument(
-        "--data", type=Path, required=True, help="dir with train.jsonl/validation.jsonl (+ .features.pt)"
+        "--data",
+        type=Path,
+        required=True,
+        help="dir with train.jsonl/validation.jsonl (+ .features.pt)",
     )
     base.add_argument("--modality", choices=["text", "multimodal"], required=True)
     base.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
@@ -253,7 +260,9 @@ def build_parser() -> argparse.ArgumentParser:
     base.add_argument("--seed", type=int, default=7)
     base.set_defaults(func=cmd_base)
 
-    finetune = sub.add_parser("finetune", help="warm-start fine-tune of a base checkpoint on a small split")
+    finetune = sub.add_parser(
+        "finetune", help="warm-start fine-tune of a base checkpoint on a small split"
+    )
     finetune.add_argument("--data", type=Path, required=True)
     finetune.add_argument("--modality", choices=["text", "multimodal"], required=True)
     finetune.add_argument("--checkpoint-in", type=Path, required=True)

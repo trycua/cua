@@ -98,7 +98,9 @@ def test_tiny_base_training_run_produces_loadable_checkpoint(
     tmp_path, nano_data, train_nano, cua_bench_s1_task_module
 ):
     tasks = [
-        _make_task(cua_bench_s1_task_module, f"task-{i}", gold_action=("click" if i % 2 == 0 else "skip"))
+        _make_task(
+            cua_bench_s1_task_module, f"task-{i}", gold_action=("click" if i % 2 == 0 else "skip")
+        )
         for i in range(8)
     ]
     tasks_path = tmp_path / "tasks.jsonl"

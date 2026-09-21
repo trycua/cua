@@ -103,9 +103,7 @@ def explode_task(task: CuaTask, modality: str) -> list[PreparedExample]:
         gold_action = task.expected.get(element_id)
         if gold_action is None:
             continue
-        gold_index = next(
-            (i for i, o in enumerate(options) if o.action == gold_action), None
-        )
+        gold_index = next((i for i, o in enumerate(options) if o.action == gold_action), None)
         if gold_index is None:
             continue
         option_texts = tuple(_render_option_text(o) for o in options)
@@ -256,7 +254,11 @@ def _collate_options(option_lists: list[list[str]], option_tokens: int) -> dict[
         option_mask[r, : len(row)] = True
         for c, tokens in enumerate(row):
             option_ids[r, c, : len(tokens)] = torch.tensor(tokens)
-    return {"option_ids": option_ids, "option_token_mask": option_ids.ne(0), "option_mask": option_mask}
+    return {
+        "option_ids": option_ids,
+        "option_token_mask": option_ids.ne(0),
+        "option_mask": option_mask,
+    }
 
 
 def _collate_bytes(texts: list[str], length: int) -> tuple[torch.Tensor, torch.Tensor]:
@@ -276,7 +278,11 @@ class NanoPreparedCollator:
     def __init__(self, modality: str, option_tokens: int = 96, context_tokens: int = 256) -> None:
         if modality not in ("text", "multimodal"):
             raise ValueError(f"unknown modality: {modality!r}")
-        self.modality, self.option_tokens, self.context_tokens = modality, option_tokens, context_tokens
+        self.modality, self.option_tokens, self.context_tokens = (
+            modality,
+            option_tokens,
+            context_tokens,
+        )
 
     def __call__(self, examples: list[tuple]) -> dict[str, Any]:
         option_lists = [ex[0] for ex in examples]
@@ -290,7 +296,9 @@ class NanoPreparedCollator:
             batch["crop_mask"] = torch.ones(crops.shape[:2], dtype=torch.bool)
         else:
             texts = [ex[2] or "" for ex in examples]
-            batch["context_ids"], batch["context_token_mask"] = _collate_bytes(texts, self.context_tokens)
+            batch["context_ids"], batch["context_token_mask"] = _collate_bytes(
+                texts, self.context_tokens
+            )
         return batch
 
 

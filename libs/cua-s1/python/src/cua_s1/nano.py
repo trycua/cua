@@ -106,7 +106,9 @@ def _tensor_batch(
     batch = len(contexts)
     max_context = max(1, max(map(len, contexts)))
     max_options = max(len(row) for row in option_rows)
-    max_option_tokens = max(1, max((len(tokens) for row in option_rows for tokens in row), default=1))
+    max_option_tokens = max(
+        1, max((len(tokens) for row in option_rows for tokens in row), default=1)
+    )
     context_ids = torch.zeros((batch, max_context), dtype=torch.long)
     option_ids = torch.zeros((batch, max_options, max_option_tokens), dtype=torch.long)
     option_mask = torch.zeros((batch, max_options), dtype=torch.bool)
@@ -130,14 +132,19 @@ def _tensor_batch(
 class NanoOptionEncoder(nn.Module):
     """Byte embeddings + a 1-layer transformer, mean-pooled per option."""
 
-    def __init__(self, width: int, option_tokens: int, heads: int = 4, dropout: float = 0.1) -> None:
+    def __init__(
+        self, width: int, option_tokens: int, heads: int = 4, dropout: float = 0.1
+    ) -> None:
         super().__init__()
         if width % heads:
             raise ValueError("model width must be divisible by attention heads")
         self.embedding = nn.Embedding(257, width, padding_idx=0)
         self.position = nn.Embedding(option_tokens, width)
         self.encoder = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(width, heads, width * 4, dropout, batch_first=True, norm_first=True), 1
+            nn.TransformerEncoderLayer(
+                width, heads, width * 4, dropout, batch_first=True, norm_first=True
+            ),
+            1,
         )
 
     def forward(self, option_ids: torch.Tensor, option_token_mask: torch.Tensor) -> torch.Tensor:
@@ -162,14 +169,19 @@ class NanoTextContextEncoder(nn.Module):
     multimodal path produces (a sequence of patch tokens, not one vector).
     """
 
-    def __init__(self, width: int, context_tokens: int, heads: int = 4, layers: int = 2, dropout: float = 0.1) -> None:
+    def __init__(
+        self, width: int, context_tokens: int, heads: int = 4, layers: int = 2, dropout: float = 0.1
+    ) -> None:
         super().__init__()
         if width % heads:
             raise ValueError("model width must be divisible by attention heads")
         self.embedding = nn.Embedding(257, width, padding_idx=0)
         self.position = nn.Embedding(context_tokens, width)
         self.encoder = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(width, heads, width * 4, dropout, batch_first=True, norm_first=True), layers
+            nn.TransformerEncoderLayer(
+                width, heads, width * 4, dropout, batch_first=True, norm_first=True
+            ),
+            layers,
         )
 
     def forward(self, context_ids: torch.Tensor, context_token_mask: torch.Tensor) -> torch.Tensor:
@@ -204,7 +216,11 @@ class NanoScorer(nn.Module):
         self.option_encoder = NanoOptionEncoder(width, option_tokens)
         self.head = AttentionHead(width, rank)
         self.width, self.rank = width, rank
-        self.option_tokens, self.context_tokens, self.vision_dim = option_tokens, context_tokens, vision_dim
+        self.option_tokens, self.context_tokens, self.vision_dim = (
+            option_tokens,
+            context_tokens,
+            vision_dim,
+        )
 
     def forward(self, batch: TensorBatch, shuffle_context: bool = False) -> torch.Tensor:
         modality = batch["modality"]
@@ -408,9 +424,13 @@ class SmolVlmVisionBackbone:
 
     def _pool(self, features: torch.Tensor) -> torch.Tensor:
         b = features.shape[0]
-        grid = features.reshape(b, self.RAW_GRID, self.RAW_GRID, self.FEATURE_DIM).permute(0, 3, 1, 2)
+        grid = features.reshape(b, self.RAW_GRID, self.RAW_GRID, self.FEATURE_DIM).permute(
+            0, 3, 1, 2
+        )
         pooled = torch.nn.functional.adaptive_avg_pool2d(grid, (self.POOLED_GRID, self.POOLED_GRID))
-        return pooled.permute(0, 2, 3, 1).reshape(b, self.POOLED_GRID * self.POOLED_GRID, self.FEATURE_DIM)
+        return pooled.permute(0, 2, 3, 1).reshape(
+            b, self.POOLED_GRID * self.POOLED_GRID, self.FEATURE_DIM
+        )
 
 
 class SiglipVisionBackbone:
@@ -434,7 +454,9 @@ class SiglipVisionBackbone:
         self.dtype = dtype if self.device.type == "cuda" else torch.float32
         self.image_processor = AutoImageProcessor.from_pretrained(self.MODEL_NAME)
         self.vision_model = (
-            SiglipVisionModel.from_pretrained(self.MODEL_NAME, dtype=self.dtype).to(self.device).eval()
+            SiglipVisionModel.from_pretrained(self.MODEL_NAME, dtype=self.dtype)
+            .to(self.device)
+            .eval()
         )
         for parameter in self.vision_model.parameters():
             parameter.requires_grad_(False)
@@ -460,9 +482,13 @@ class SiglipVisionBackbone:
 
     def _pool(self, features: torch.Tensor) -> torch.Tensor:
         b = features.shape[0]
-        grid = features.reshape(b, self.RAW_GRID, self.RAW_GRID, self.FEATURE_DIM).permute(0, 3, 1, 2)
+        grid = features.reshape(b, self.RAW_GRID, self.RAW_GRID, self.FEATURE_DIM).permute(
+            0, 3, 1, 2
+        )
         pooled = torch.nn.functional.adaptive_avg_pool2d(grid, (self.POOLED_GRID, self.POOLED_GRID))
-        return pooled.permute(0, 2, 3, 1).reshape(b, self.POOLED_GRID * self.POOLED_GRID, self.FEATURE_DIM)
+        return pooled.permute(0, 2, 3, 1).reshape(
+            b, self.POOLED_GRID * self.POOLED_GRID, self.FEATURE_DIM
+        )
 
 
 def load_vision_backbone(

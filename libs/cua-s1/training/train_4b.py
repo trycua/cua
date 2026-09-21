@@ -27,6 +27,7 @@ Usage:
     python libs/cua-s1/training/train_4b.py --train runs/cua4b_train.jsonl \
         --out runs/cua4b_lora --modality text --epochs 3
 """
+
 from __future__ import annotations
 
 import argparse
@@ -50,8 +51,13 @@ from cua_s1.four_b import DEFAULT_BASE_MODEL, Option, assign_letters, build_prom
 
 # Standard Qwen-family LLM attention + MLP projection layer names.
 LLM_LORA_TARGET_MODULES = [
-    "q_proj", "k_proj", "v_proj", "o_proj",
-    "gate_proj", "up_proj", "down_proj",
+    "q_proj",
+    "k_proj",
+    "v_proj",
+    "o_proj",
+    "gate_proj",
+    "up_proj",
+    "down_proj",
 ]
 
 # Vision-projector/merger layer names for `Qwen/Qwen3.5-4B`'s vision tower
@@ -128,7 +134,9 @@ def _augment_image(image):
     return image
 
 
-def build_example(task: CuaTask, tokenizer, modality: str = "text", processor=None, augment: bool = False):
+def build_example(
+    task: CuaTask, tokenizer, modality: str = "text", processor=None, augment: bool = False
+):
     """Build one training example: input_ids (+ pixel values for multimodal)
     for the prompt (ending right before the answer position) plus a soft
     target distribution over the option-letter token ids at that position.
@@ -146,7 +154,9 @@ def build_example(task: CuaTask, tokenizer, modality: str = "text", processor=No
     for letter in assignment.letters:
         toks = tokenizer.encode(letter, add_special_tokens=False)
         if len(toks) != 1:
-            raise ValueError(f"task {task.id}: letter {letter!r} is not a single token for this tokenizer")
+            raise ValueError(
+                f"task {task.id}: letter {letter!r} is not a single token for this tokenizer"
+            )
         letter_ids.append(toks[0])
 
     messages = build_prompt(
@@ -177,7 +187,9 @@ def build_example(task: CuaTask, tokenizer, modality: str = "text", processor=No
         # `processor(...)` then scatters the image features into. Flattening
         # to text-only here would silently drop those placeholders and leave
         # pixel values unused.
-        chat_text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        chat_text = processor.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
         inputs = processor(text=[chat_text], images=[image], return_tensors="pt")
         mm_inputs = {k: v for k, v in inputs.items() if k != "input_ids"}
         return {
@@ -188,7 +200,9 @@ def build_example(task: CuaTask, tokenizer, modality: str = "text", processor=No
             "task_id": task.id,
         }
 
-    text_prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    text_prompt = tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
     input_ids = tokenizer(text_prompt, return_tensors="pt").input_ids[0]
 
     return {
@@ -203,7 +217,12 @@ def train(args: argparse.Namespace) -> None:
     import torch
     from peft import LoraConfig, get_peft_model
     from torch.nn import functional as F
-    from transformers import AutoModelForCausalLM, AutoModelForImageTextToText, AutoProcessor, AutoTokenizer
+    from transformers import (
+        AutoModelForCausalLM,
+        AutoModelForImageTextToText,
+        AutoProcessor,
+        AutoTokenizer,
+    )
 
     tokenizer = AutoTokenizer.from_pretrained(args.base_model)
     if tokenizer.pad_token is None:
@@ -215,13 +234,24 @@ def train(args: argparse.Namespace) -> None:
 
     tasks = load_jsonl(args.train)
     examples = [
-        e for t in tasks
-        if (e := build_example(t, tokenizer, modality=args.modality, processor=processor,
-                                augment=(args.modality == "multimodal"))) is not None
+        e
+        for t in tasks
+        if (
+            e := build_example(
+                t,
+                tokenizer,
+                modality=args.modality,
+                processor=processor,
+                augment=(args.modality == "multimodal"),
+            )
+        )
+        is not None
     ]
     if not examples:
-        raise SystemExit(f"no trainable examples found in {args.train} (all tasks had no gold option, "
-                          f"or all were multimodal without --modality multimodal support)")
+        raise SystemExit(
+            f"no trainable examples found in {args.train} (all tasks had no gold option, "
+            f"or all were multimodal without --modality multimodal support)"
+        )
     print(f"[train_4b] {len(examples)}/{len(tasks)} tasks yielded a trainable example")
 
     if args.modality == "multimodal":
@@ -233,7 +263,9 @@ def train(args: argparse.Namespace) -> None:
         )
         target_modules = LLM_LORA_TARGET_MODULES + VISION_PROJECTOR_TARGET_MODULES
     else:
-        model = AutoModelForCausalLM.from_pretrained(args.base_model, torch_dtype=torch.bfloat16, device_map="cuda")
+        model = AutoModelForCausalLM.from_pretrained(
+            args.base_model, torch_dtype=torch.bfloat16, device_map="cuda"
+        )
         target_modules = LLM_LORA_TARGET_MODULES
 
     lora_config = LoraConfig(
@@ -264,8 +296,10 @@ def train(args: argparse.Namespace) -> None:
     param_groups = [{"params": llm_params, "lr": args.lr}]
     if vision_params:
         param_groups.append({"params": vision_params, "lr": vision_lr})
-        print(f"[train_4b] differential LR: {len(llm_params)} LLM-LoRA params @ lr={args.lr}, "
-              f"{len(vision_params)} vision-projector-LoRA params @ lr={vision_lr}")
+        print(
+            f"[train_4b] differential LR: {len(llm_params)} LLM-LoRA params @ lr={args.lr}, "
+            f"{len(vision_params)} vision-projector-LoRA params @ lr={vision_lr}"
+        )
     optim = torch.optim.AdamW(param_groups)
 
     for epoch in range(args.epochs):
@@ -280,7 +314,9 @@ def train(args: argparse.Namespace) -> None:
                 fwd_kwargs[k] = v
             out = model(**fwd_kwargs)
             final_logits = out.logits[0, -1, :]
-            option_logits = final_logits[torch.tensor(ex["letter_token_ids"], device=final_logits.device)]
+            option_logits = final_logits[
+                torch.tensor(ex["letter_token_ids"], device=final_logits.device)
+            ]
             log_probs = F.log_softmax(option_logits.float(), dim=-1)
             target = torch.tensor(ex["target"], device=log_probs.device, dtype=log_probs.dtype)
             loss = -(target * log_probs).sum()  # soft-label cross-entropy
@@ -289,7 +325,9 @@ def train(args: argparse.Namespace) -> None:
             loss.backward()
             optim.step()
             total_loss += loss.item()
-        print(f"[train_4b] epoch {epoch + 1}/{args.epochs} mean loss = {total_loss / len(examples):.4f}")
+        print(
+            f"[train_4b] epoch {epoch + 1}/{args.epochs} mean loss = {total_loss / len(examples):.4f}"
+        )
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -298,20 +336,28 @@ def train(args: argparse.Namespace) -> None:
     # already expects to load via `peft.PeftModel.from_pretrained`.
     model.save_pretrained(str(out_dir))
     tokenizer.save_pretrained(str(out_dir))
-    (out_dir / "train_config.json").write_text(json.dumps(vars(args), default=str, indent=2), encoding="utf-8")
+    (out_dir / "train_config.json").write_text(
+        json.dumps(vars(args), default=str, indent=2), encoding="utf-8"
+    )
     print(f"[train_4b] saved LoRA adapter to {out_dir}")
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("--train", required=True, help="path to a CuaTask jsonl training split")
     p.add_argument("--out", required=True, help="output directory for the LoRA adapter")
     p.add_argument("--base-model", default=DEFAULT_BASE_MODEL)
     p.add_argument("--modality", choices=["text", "multimodal"], default="text")
     p.add_argument("--epochs", type=int, default=3)
     p.add_argument("--lr", type=float, default=1e-4)
-    p.add_argument("--vision-lr", type=float, default=None,
-                    help="LR for vision-projector LoRA params (multimodal only); default lr/4")
+    p.add_argument(
+        "--vision-lr",
+        type=float,
+        default=None,
+        help="LR for vision-projector LoRA params (multimodal only); default lr/4",
+    )
     p.add_argument("--lora-r", type=int, default=16)
     p.add_argument("--lora-alpha", type=int, default=32)
     args = p.parse_args()

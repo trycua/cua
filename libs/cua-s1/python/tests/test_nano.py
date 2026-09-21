@@ -111,7 +111,9 @@ def test_nano_checkpoint_round_trip_preserves_logits(tmp_path):
     expected = model(collator(elements)).detach()
 
     save_nano_checkpoint(tmp_path / "checkpoint", model, NANO_CONFIG, {"synthetic": True})
-    restored, restored_collator, restored_config = load_nano_checkpoint(tmp_path / "checkpoint", "cpu")
+    restored, restored_collator, restored_config = load_nano_checkpoint(
+        tmp_path / "checkpoint", "cpu"
+    )
     actual = restored(restored_collator(elements)).detach()
 
     assert restored_config == NANO_CONFIG

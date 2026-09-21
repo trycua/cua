@@ -32,7 +32,9 @@ def _task(**overrides) -> CuaTask:
         entities=[{"id": "e1", "label": "Email", "value": "a@b.com"}],
         options=[
             OptionSpec(element_id="submit", role="Button", label="Submit", action="click"),
-            OptionSpec(element_id="email", role="Edit", label="Email", action="fill", entity_id="e1"),
+            OptionSpec(
+                element_id="email", role="Edit", label="Email", action="fill", entity_id="e1"
+            ),
             OptionSpec(element_id="email", role="Edit", label="Email", action="skip"),
         ],
         expected={"submit": "skip", "email": "fill"},

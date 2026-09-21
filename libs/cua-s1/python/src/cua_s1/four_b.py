@@ -264,8 +264,12 @@ class FourBModel:
         # does not match a LoRA adapter trained against the other class,
         # causing `peft` to attach ~none of the adapter's weights (`peft`
         # only warns on missing adapter keys; it does not raise).
-        model_cls = AutoModelForImageTextToText if self.modality == "multimodal" else AutoModelForCausalLM
-        model = model_cls.from_pretrained(self.base_model, torch_dtype=torch_dtype, device_map=self.device)
+        model_cls = (
+            AutoModelForImageTextToText if self.modality == "multimodal" else AutoModelForCausalLM
+        )
+        model = model_cls.from_pretrained(
+            self.base_model, torch_dtype=torch_dtype, device_map=self.device
+        )
         if self.lora_adapter_path:
             from peft import PeftModel
 
@@ -332,10 +336,16 @@ class FourBModel:
             # `{"type": "image", ...}` content block, so the chat template
             # would never emit the placeholder tokens the expanded image
             # features need to be scattered into.
-            chat_text = self._processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-            inputs = self._processor(text=[chat_text], images=[image], return_tensors="pt").to(self._model.device)
+            chat_text = self._processor.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+            inputs = self._processor(text=[chat_text], images=[image], return_tensors="pt").to(
+                self._model.device
+            )
         else:
-            chat_text = self._tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            chat_text = self._tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
             inputs = self._tokenizer(chat_text, return_tensors="pt").to(self._model.device)
 
         with torch.no_grad():
@@ -345,7 +355,9 @@ class FourBModel:
         probs = torch.softmax(option_logits.float(), dim=-1).tolist()
 
         results = []
-        for letter, option, probability in zip(assignment.letters, assignment.options, probs, strict=False):
+        for letter, option, probability in zip(
+            assignment.letters, assignment.options, probs, strict=False
+        ):
             results.append(
                 OptionProbability(
                     element_id=option.element_id,

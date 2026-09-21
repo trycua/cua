@@ -855,7 +855,6 @@ where
     use core_graphics::display::CGDisplay;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    let flags = parse_modifier_flags(modifiers);
     let (cg_button, down_type, dragged_type, up_type, button_number) = match button {
         DragButton::Left => (
             CGMouseButton::Left,
@@ -893,78 +892,75 @@ where
     };
     let events = foreground_drag_events(from_x, from_y, to_x, to_y, steps);
 
-    for spec in events {
-        let (event_type, click_state, event_button, event_button_number, subtype, event_flags) =
-            match spec.kind {
-                ForegroundDragEventKind::Move => (
-                    CGEventType::MouseMoved,
-                    0,
-                    CGMouseButton::Left,
-                    0,
-                    3,
-                    CGEventFlags::CGEventFlagNull,
-                ),
-                ForegroundDragEventKind::Down => (down_type, 1, cg_button, button_number, 0, flags),
-                ForegroundDragEventKind::Dragged => {
-                    (dragged_type, 1, cg_button, button_number, 0, flags)
+    super::keyboard::with_global_modifier_keys(modifiers, |flags| {
+        for spec in events {
+            let (event_type, click_state, event_button, event_button_number, subtype) = match spec
+                .kind
+            {
+                ForegroundDragEventKind::Move => {
+                    (CGEventType::MouseMoved, 0, CGMouseButton::Left, 0, 3)
                 }
-                ForegroundDragEventKind::Up => (up_type, 1, cg_button, button_number, 0, flags),
+                ForegroundDragEventKind::Down => (down_type, 1, cg_button, button_number, 0),
+                ForegroundDragEventKind::Dragged => (dragged_type, 1, cg_button, button_number, 0),
+                ForegroundDragEventKind::Up => (up_type, 1, cg_button, button_number, 0),
             };
-        let local = from_local.zip(to_local).map(|((fx, fy), (tx, ty))| {
-            (
-                fx + (tx - fx) * spec.progress,
-                fy + (ty - fy) * spec.progress,
-            )
-        });
+            let local = from_local.zip(to_local).map(|((fx, fy), (tx, ty))| {
+                (
+                    fx + (tx - fx) * spec.progress,
+                    fy + (ty - fy) * spec.progress,
+                )
+            });
 
-        match spec.kind {
-            ForegroundDragEventKind::Move => {
-                let _ = CGDisplay::warp_mouse_cursor_position(spec.point);
-                unsafe { CGAssociateMouseAndMouseCursorPosition(true) };
-                std::thread::sleep(std::time::Duration::from_millis(40));
-            }
-            ForegroundDragEventKind::Dragged => {
-                let _ = CGDisplay::warp_mouse_cursor_position(spec.point);
-            }
-            ForegroundDragEventKind::Up => {
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-            ForegroundDragEventKind::Down => {}
-        }
-
-        post_drag_mouse_event(
-            pid,
-            event_type,
-            spec.point,
-            event_button,
-            local,
-            wid,
-            click_group_id,
-            click_state,
-            event_button_number,
-            subtype,
-            MousePostMode::HidOnly,
-            event_flags,
-            "foreground drag event creation failed",
-        )?;
-
-        match spec.kind {
-            ForegroundDragEventKind::Move => {
-                std::thread::sleep(std::time::Duration::from_millis(12));
-            }
-            ForegroundDragEventKind::Down => {
-                observe(spec.point.x, spec.point.y);
-                std::thread::sleep(std::time::Duration::from_millis(16));
-            }
-            ForegroundDragEventKind::Dragged => {
-                observe(spec.point.x, spec.point.y);
-                if step_delay_ms > 0 {
-                    std::thread::sleep(std::time::Duration::from_millis(step_delay_ms));
+            match spec.kind {
+                ForegroundDragEventKind::Move => {
+                    let _ = CGDisplay::warp_mouse_cursor_position(spec.point);
+                    unsafe { CGAssociateMouseAndMouseCursorPosition(true) };
+                    std::thread::sleep(std::time::Duration::from_millis(40));
                 }
+                ForegroundDragEventKind::Dragged => {
+                    let _ = CGDisplay::warp_mouse_cursor_position(spec.point);
+                }
+                ForegroundDragEventKind::Up => {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                ForegroundDragEventKind::Down => {}
             }
-            ForegroundDragEventKind::Up => {}
+
+            post_drag_mouse_event(
+                pid,
+                event_type,
+                spec.point,
+                event_button,
+                local,
+                wid,
+                click_group_id,
+                click_state,
+                event_button_number,
+                subtype,
+                MousePostMode::HidOnly,
+                flags,
+                "foreground drag event creation failed",
+            )?;
+
+            match spec.kind {
+                ForegroundDragEventKind::Move => {
+                    std::thread::sleep(std::time::Duration::from_millis(12));
+                }
+                ForegroundDragEventKind::Down => {
+                    observe(spec.point.x, spec.point.y);
+                    std::thread::sleep(std::time::Duration::from_millis(16));
+                }
+                ForegroundDragEventKind::Dragged => {
+                    observe(spec.point.x, spec.point.y);
+                    if step_delay_ms > 0 {
+                        std::thread::sleep(std::time::Duration::from_millis(step_delay_ms));
+                    }
+                }
+                ForegroundDragEventKind::Up => {}
+            }
         }
-    }
+        Ok(())
+    })?;
 
     std::thread::sleep(std::time::Duration::from_millis(100));
     Ok(())

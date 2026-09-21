@@ -553,14 +553,39 @@ def build_manifest(
         raise ValueError("chooser request regions do not match executable candidate-linked regions")
     if chooser["selected_id"] not in {candidate["id"] for candidate in candidates}:
         raise ValueError("selected candidate was not in the bounded candidate set")
+    selected_candidate_id = chooser["selected_id"]
+    if not selected_candidate_id.startswith("region:"):
+        raise ValueError("selected candidate does not resolve to an executable region action")
+    selected_region = {
+        region["id"]: region for region in request_regions
+    }.get(selected_candidate_id[len("region:"):])
+    if selected_region is None:
+        raise ValueError("selected executable candidate has no exact chooser request region")
     resolved_action = raw.get("resolved_action")
     if (
         not isinstance(resolved_action, dict)
         or set(resolved_action) != {"candidate_id", "x", "y"}
-        or resolved_action["candidate_id"] != chooser["selected_id"]
+        or resolved_action["candidate_id"] != selected_candidate_id
         or any(type(resolved_action[field]) not in (int, float) for field in ("x", "y"))
     ):
         raise ValueError("raw evidence resolved action differs from the selected candidate")
+    action_x = resolved_action["x"]
+    action_y = resolved_action["y"]
+    if (
+        not math.isfinite(action_x)
+        or not math.isfinite(action_y)
+        or not 0 <= action_x < observation["width"]
+        or not 0 <= action_y < observation["height"]
+    ):
+        raise ValueError("raw evidence resolved action coordinates are outside the observation")
+    bounds = selected_region["bounds"]
+    expected_x = float(bounds["x"]) + float(bounds["width"]) / 2.0
+    expected_y = float(bounds["y"]) + float(bounds["height"]) / 2.0
+    if (
+        not math.isclose(action_x, expected_x, rel_tol=0.0, abs_tol=math.ulp(expected_x))
+        or not math.isclose(action_y, expected_y, rel_tol=0.0, abs_tol=math.ulp(expected_y))
+    ):
+        raise ValueError("raw evidence resolved action does not match the selected region center")
     recording_sha256 = sha256_file(recording)
     raw_recording = raw.get("recording")
     if (

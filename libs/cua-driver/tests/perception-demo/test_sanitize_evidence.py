@@ -297,6 +297,39 @@ class EvidenceSanitizerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "executable candidate-linked regions"):
             sanitizer.build_manifest(**inputs)
 
+    def test_rejects_fallback_selection_as_a_resolved_action(self):
+        for selected_id in ("reobserve", "abstain"):
+            with self.subTest(selected_id=selected_id):
+                inputs = self.inputs()
+                choice = json.loads(inputs["chooser_result"].read_text())
+                choice["selected_id"] = selected_id
+                inputs["chooser_result"].write_text(json.dumps(choice))
+                raw = json.loads(inputs["raw_evidence"].read_text())
+                raw["chooser"]["response"] = choice
+                raw["resolved_action"]["candidate_id"] = selected_id
+                inputs["raw_evidence"].write_text(json.dumps(raw))
+                with self.assertRaisesRegex(ValueError, "executable region action"):
+                    sanitizer.build_manifest(**inputs)
+
+    def test_rejects_invalid_or_unbound_resolved_action_coordinates(self):
+        invalid_coordinates = [
+            (float("nan"), 270.0, "outside the observation"),
+            (float("inf"), 270.0, "outside the observation"),
+            (-1.0, 270.0, "outside the observation"),
+            (760.0, 270.0, "outside the observation"),
+            (394.0, 460.0, "outside the observation"),
+            (395.0, 270.0, "selected region center"),
+            (32.0, 32.0, "selected region center"),
+        ]
+        for x, y, error in invalid_coordinates:
+            with self.subTest(x=x, y=y):
+                inputs = self.inputs()
+                raw = json.loads(inputs["raw_evidence"].read_text())
+                raw["resolved_action"].update({"x": x, "y": y})
+                inputs["raw_evidence"].write_text(json.dumps(raw))
+                with self.assertRaisesRegex(ValueError, error):
+                    sanitizer.build_manifest(**inputs)
+
     def test_primary_desktop_observation_is_a_closed_foreground_route(self):
         inputs = self.inputs()
         raw = json.loads(inputs["raw_evidence"].read_text())

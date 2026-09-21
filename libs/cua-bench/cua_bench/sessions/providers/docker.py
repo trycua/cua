@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .base import SessionProvider
+from ...reward import try_parse_reward
 
 
 class DockerProvider(SessionProvider):
@@ -431,7 +432,6 @@ class DockerProvider(SessionProvider):
                     # Process finished or psutil not available - check output to determine status
                     output_dir = session.get("output_dir")
                     if output_dir:
-                        import re
                         from pathlib import Path
 
                         log_file = Path(output_dir) / "run.log"
@@ -445,14 +445,9 @@ class DockerProvider(SessionProvider):
                                     if "✓ Task completed successfully!" in logs:
                                         final_status = "completed"
                                         # Try to extract reward
-                                        match = re.search(
-                                            r"✓ Evaluation result: \[([^\]]+)\]", logs
-                                        )
-                                        if match:
-                                            try:
-                                                reward = float(match.group(1))
-                                            except ValueError:
-                                                pass
+                                        parsed_reward = try_parse_reward(logs)
+                                        if parsed_reward is not None:
+                                            reward = parsed_reward
                                     elif "✗ Task failed" in logs or "Error:" in logs:
                                         final_status = "failed"
                                         reward = 0.0

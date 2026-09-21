@@ -3,16 +3,18 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "cua-s1"
+name = "cua-bench-s1"
 version = "0.0.0"
-description = "Research tools for small, specialist computer-use models"
-readme = { text = "Cua-S1 provides research code for small, specialist computer-use models. The package does not include or download model weights.", content-type = "text/markdown" }
+description = "A benchmark for computer-use GUI decision-making: closed-option-set task generation and model-agnostic scoring"
+readme = { text = "cua-bench-s1 provides a task schema, synthetic/real task generators, and a model-agnostic scoring harness for computer-use GUI decision-making. The package does not include or download model weights.", content-type = "text/markdown" }
 license = { file = "LICENSE" }
 authors = [
     { name = "TryCua", email = "hello@trycua.com" }
 ]
 keywords = [
     "computer-use",
+    "benchmark",
+    "evaluation",
     "machine-learning",
     "research",
 ]
@@ -30,63 +32,37 @@ classifiers = [
 ]
 requires-python = ">=3.11,<3.14"
 dependencies = [
-    "numpy>=1.26",
-    "safetensors>=0.4,<1",
-    "torch>=2.2,<3",
+    "pillow>=10,<12",
 ]
 
 [project.optional-dependencies]
-pdf = [
-    "pdfplumber>=0.11,<1",
+chess = [
+    "chess>=1.10,<2",
 ]
-mcp = [
-    "mcp>=1,<2",
+vizdoom = [
+    "vizdoom>=1.2,<2",
 ]
-nano-vision = [
-    "transformers>=4.45,<5",
-    "pillow>=10,<12",
-]
-four-b = [
-    "transformers>=4.45,<5",
-    "peft>=0.13,<1",
-]
-four-b-train = [
-    "transformers>=4.45,<5",
-    "peft>=0.13,<1",
-    "accelerate>=0.34,<2",
-    "torchvision>=0.17,<1",
-    "cua-bench-s1",
+androidcontrol = [
+    "tfrecord>=1.14,<2",
 ]
 all = [
-    "mcp>=1,<2",
-    "pdfplumber>=0.11,<1",
-    "transformers>=4.45,<5",
-    "pillow>=10,<12",
-    "peft>=0.13,<1",
+    "chess>=1.10,<2",
+    "vizdoom>=1.2,<2",
+    "tfrecord>=1.14,<2",
 ]
-training = [
-    "cua-bench-s1",
-]
-
-[tool.uv.sources]
-cua-bench-s1 = { path = "../../cua-bench-s1/python", editable = true }
-
-[project.scripts]
-cua-s1-mcp = "cua_s1.server:main"
 
 [project.urls]
 Homepage = "https://github.com/trycua/cua"
-Documentation = "https://github.com/trycua/cua/tree/main/libs/cua-s1"
+Documentation = "https://github.com/trycua/cua/tree/main/libs/cua-bench-s1"
 Repository = "https://github.com/trycua/cua"
 Issues = "https://github.com/trycua/cua/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/cua_s1"]
+packages = ["src/cua_bench_s1"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-asyncio_mode = "auto"
 
 [tool.ruff]
 line-length = 100
@@ -99,6 +75,5 @@ ignore = ["E501"]
 [dependency-groups]
 test = [
     "pytest>=8,<10",
-    "pytest-asyncio>=0.24,<2",
     "ruff>=0.12,<1",
 ]

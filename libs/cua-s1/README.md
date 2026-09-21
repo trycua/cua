@@ -5,10 +5,18 @@ models. The project is intentionally scoped around models that perform a
 defined class of interface tasks rather than a generally capable computer-use
 agent.
 
-The first checkpoint in the project family is `cua-s1-form-v0`, a specialist
-checkpoint for research on form-oriented user-interface tasks. It should not be
-treated as a general-purpose assistant or as evidence of reliable performance
-outside its evaluated task and environment boundaries.
+The project family currently has three checkpoints:
+
+- `cua-s1-form-v0`, a finetuned, text-only variant of `cua-s1-nano-0.1`
+  specialized for research on form-oriented user-interface tasks;
+- `cua-s1-nano-0.1`, a from-scratch, ~855K-parameter option-attention
+  classifier that scores every candidate (element, action) option for a
+  screen state in a single forward pass; and
+- `cua-s1-4b-0.1`, a LoRA fine-tune on top of the frozen, open-weight
+  `Qwen/Qwen3.5-4B` model for general computer-use element/action decisions.
+
+None should be treated as a general-purpose assistant or as evidence of
+reliable performance outside its evaluated task and environment boundaries.
 
 ## Project status
 
@@ -48,8 +56,22 @@ import cua_s1
 print(cua_s1.__version__)
 ```
 
-Loading a checkpoint requires a local `safetensors` file and matching JSON
-configuration. Pickle-based PyTorch checkpoints are rejected.
+Loading a `tiny`/`tinyx` checkpoint (e.g. `cua-s1-form-v0`) requires a local
+`safetensors` file and matching JSON configuration. Pickle-based PyTorch
+checkpoints are rejected. `cua-s1-4b-0.1` is a LoRA adapter and uses the
+standard PEFT on-disk layout instead (`adapter_config.json` plus
+`adapter_model.safetensors`); see [`cua_s1/four_b.py`](python/src/cua_s1/four_b.py)
+for why that is a different, and still safetensors-only, shape.
+
+`cua_s1.nano` (the `cua-s1-nano-0.1` architecture) supports a text-only
+context modality with no extra dependencies, and an optional multimodal
+context modality backed by a frozen vision backbone (`smolvlm` or `siglip`,
+selected explicitly via a config field, never an environment variable).
+Install the `nano-vision` extra to use a vision backbone:
+
+```bash
+uv sync --project libs/cua-s1/python --extra nano-vision
+```
 
 ## Safety boundary
 
@@ -100,7 +122,9 @@ entry.
 
 | Checkpoint | Scope | Status |
 | --- | --- | --- |
-| `cua-s1-form-v0` | Form-oriented computer-use research | Profile defined; weights not distributed |
+| `cua-s1-form-v0` | Form-oriented computer-use research (finetuned, text-only variant of `cua-s1-nano-0.1`) | Profile defined; weights not distributed |
+| `cua-s1-nano-0.1` | General closed-option GUI decision research (element + action selection) | Profile defined; weights at [`cua-ai/cua-s1-nano-0.1`](https://huggingface.co/cua-ai/cua-s1-nano-0.1) |
+| `cua-s1-4b-0.1` | General computer-use element/action decisions (LoRA on frozen `Qwen/Qwen3.5-4B`), text and multimodal (screenshot) input | Profile defined; adapter weights at [`cua-ai/cua-s1-4b-0.1`](https://huggingface.co/cua-ai/cua-s1-4b-0.1) |
 
 Checkpoint-specific release materials should document the exact artifact,
 runtime requirements, evaluation setup, results, and applicable terms. Do not

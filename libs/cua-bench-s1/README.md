@@ -34,6 +34,8 @@ Actions are drawn from a small, closed taxonomy: `fill`, `check`, `click`,
 
 ![Combined results chart: 6 core GUI families (text, hard cross-dataset split) and general_decision, across jev, djev, cua-s1-nano-0.1, cua-s1-4b-0.1, and semif](docs/assets/results_chart.png)
 
+![Combined results chart: 6 core GUI families (multimodal, same-distribution split) and mean per-task latency, across djev, semif, cua-s1-nano-0.1, and cua-s1-4b-0.1](docs/assets/results_chart_mm_latency.png)
+
 Task-level accuracy (every element in a task must be scored correctly). `jev`
 is a hosted external API baseline; `djev` and `semif` are zero-shot/untrained
 baselines for the two architectures `cua-s1-nano-0.1` and `cua-s1-4b-0.1`
@@ -42,30 +44,30 @@ descend from. `—` = not measured for that model; `n/a` = not applicable
 each row; where `cua-s1-nano-0.1` is (or ties for) the best score, the bold
 instead marks the next-best score.
 
-| Family | Split / modality | N | `jev` | `djev` | `semif` (0-shot) | `cua-s1-nano-0.1` | `cua-s1-4b-0.1` |
+| Family | Split / modality | Options/task (avg) | `jev` | `djev` | `semif` (0-shot) | `cua-s1-nano-0.1` | `cua-s1-4b-0.1` |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `consent_checkbox` | text, hard cross-dataset (GUI-360) | 615 total | 0.000 | **0.500** | 0.250 | 0.000 | 0.250 |
-| `form_filling` | text, hard cross-dataset (GUI-360) | 615 total | 0.576 | **0.939** | 0.212 | 0.273 | 0.455 |
-| `login_auth` | text, hard cross-dataset (GUI-360) | 615 total | 0.083 | **0.250** | 0.167 | 0.250 | 0.167 |
-| `multi_step_submit` | text, hard cross-dataset (GUI-360) | 615 total | 0.034 | **0.412** | 0.270 | 0.256 | 0.322 |
-| `pagination` | text, hard cross-dataset (GUI-360) | 615 total | 0.000 | **0.714** | 0.286 | 0.286 | 0.571 |
-| `search_filter` | text, hard cross-dataset (GUI-360) | 615 total | 0.021 | 0.271 | **0.292** | 0.208 | 0.271 |
-| `consent_checkbox` | multimodal, same-distribution | 14-86 | n/a | 0.071 | 0.357 | **1.000** | 1.000 |
-| `form_filling` | multimodal, same-distribution | 14-86 | n/a | 0.000 | 0.100 | **1.000** | 1.000 |
-| `login_auth` | multimodal, same-distribution | 14-86 | n/a | 0.000 | 0.235 | **1.000** | 1.000 |
-| `multi_step_submit` | multimodal, same-distribution | 14-86 | n/a | 0.750 | 0.167 | **1.000** | 1.000 |
-| `pagination` | multimodal, same-distribution | 14-86 | n/a | 0.444 | 0.000 | **1.000** | 1.000 |
-| `search_filter` | multimodal, same-distribution | 14-86 | n/a | 0.429 | 0.214 | **1.000** | 1.000 |
-| `safety_gate` | text, zero-shot | 14 | 0.286 | **0.500** | 0.000 | 0.000 | 0.071 |
-| `safety_gate` | multimodal, zero-shot | 14 | n/a | **0.286** | 0.000 | — | — |
-| `safety_gate` | text, finetuned on own train split | 14 | — | — | — | 1.000 | **1.000** |
-| `chess` | text, task accuracy (fair N=15, all models capped equally) | 15 | **0.133** | 0.000 | 0.000 | 0.000 | 0.000 |
-| `chess` | text, element accuracy (fair N=15) | 15 | **0.682** | 0.227 | 0.424 | 0.227 | 0.515 |
-| `chess` | multimodal, task accuracy (fair N=15) | 15 | n/a | 0.000 | 0.000 | 0.000 | 0.000 |
-| `chess` | multimodal, element accuracy (fair N=15) | 15 | n/a | 0.227 | **0.409** | 0.227 | 0.227 |
-| `game_control` | multimodal, task accuracy | 82 | n/a | 0.000 | 0.000 | 0.000 | 0.000 |
-| `game_control` | multimodal, element accuracy | 82 | n/a | 0.333 | 0.333 | 0.333 | 0.333 |
-| `general_decision` (external `jevbench`) | text, zero-shot, out-of-domain | 231 | **0.667** | 0.623 | 0.563 | n/a | 0.563 |
+| `consent_checkbox` | text, hard cross-dataset (GUI-360) | 18.0 | 0.000 | **0.500** | 0.250 | 0.000 | 0.250 |
+| `form_filling` | text, hard cross-dataset (GUI-360) | 18.0 | 0.576 | **0.939** | 0.212 | 0.273 | 0.455 |
+| `login_auth` | text, hard cross-dataset (GUI-360) | 18.0 | 0.083 | **0.250** | 0.167 | 0.250 | 0.167 |
+| `multi_step_submit` | text, hard cross-dataset (GUI-360) | 18.0 | 0.034 | **0.412** | 0.270 | 0.256 | 0.322 |
+| `pagination` | text, hard cross-dataset (GUI-360) | 18.0 | 0.000 | **0.714** | 0.286 | 0.286 | 0.571 |
+| `search_filter` | text, hard cross-dataset (GUI-360) | 18.0 | 0.021 | 0.271 | **0.292** | 0.208 | 0.271 |
+| `consent_checkbox` | multimodal, same-distribution | 5.8 | n/a | 0.071 | 0.357 | **1.000** | 1.000 |
+| `form_filling` | multimodal, same-distribution | 14.0 | n/a | 0.000 | 0.100 | **1.000** | 1.000 |
+| `login_auth` | multimodal, same-distribution | 6.2 | n/a | 0.000 | 0.235 | **1.000** | 1.000 |
+| `multi_step_submit` | multimodal, same-distribution | 6.3 | n/a | 0.750 | 0.167 | **1.000** | 1.000 |
+| `pagination` | multimodal, same-distribution | 2.6 | n/a | 0.444 | 0.000 | **1.000** | 1.000 |
+| `search_filter` | multimodal, same-distribution | 9.5 | n/a | 0.429 | 0.214 | **1.000** | 1.000 |
+| `safety_gate` | text, zero-shot | 7.1 | 0.286 | **0.500** | 0.000 | 0.000 | 0.071 |
+| `safety_gate` | multimodal, zero-shot | 7.1 | n/a | **0.286** | 0.000 | — | — |
+| `safety_gate` | text, finetuned on own train split | 7.1 | — | — | — | 1.000 | **1.000** |
+| `chess` | text, task accuracy (fair N=15, all models capped equally) | 8.8 | **0.133** | 0.000 | 0.000 | 0.000 | 0.000 |
+| `chess` | text, element accuracy (fair N=15) | 8.8 | **0.682** | 0.227 | 0.424 | 0.227 | 0.515 |
+| `chess` | multimodal, task accuracy (fair N=15) | 8.8 | n/a | 0.000 | 0.000 | 0.000 | 0.000 |
+| `chess` | multimodal, element accuracy (fair N=15) | 8.8 | n/a | 0.227 | **0.409** | 0.227 | 0.227 |
+| `game_control` | multimodal, task accuracy | 6.0 | n/a | 0.000 | 0.000 | 0.000 | 0.000 |
+| `game_control` | multimodal, element accuracy | 6.0 | n/a | 0.333 | 0.333 | 0.333 | 0.333 |
+| `general_decision` (external `jevbench`) | text, zero-shot, out-of-domain | 4.7 | **0.667** | 0.623 | 0.563 | n/a | 0.632 |
 
 **`cua-s1-4b-0.1` could not do multimodal inference at all as originally
 published, and this has since been fixed.** Its published LoRA was a
@@ -150,7 +152,7 @@ better than guessing," not "the raw score was 0."
 | `chess`, multimodal, element accuracy (N=15) | 0.500 | n/a | 0.000 | 0.000 | 0.000 | 0.000 |
 | `game_control`, task accuracy | 0.125 | n/a | 0.000 | 0.000 | 0.000 | 0.000 |
 | `game_control`, element accuracy | 0.500 | n/a | 0.000 | 0.000 | 0.000 | 0.000 |
-| `general_decision` (jevbench) | 0.500 | **0.334** | 0.246 | 0.126 | n/a | 0.126 |
+| `general_decision` (jevbench) | 0.500 | **0.334** | 0.246 | 0.126 | n/a | 0.264 |
 
 Once corrected for chance, several raw-table stories change:
 `consent_checkbox`'s "semif matches jev" and chess/game_control's apparent
@@ -185,7 +187,7 @@ controlled benchmark. `—` = not measured.
 | `chess`, text (fair N=15, all models capped equally) | 0.534 | 3.168 | 1.117 | 0.015 | 1.274 |
 | `chess`, multimodal (fair N=15) | n/a | 3.450 | 1.151 | 0.739 | 1.355 |
 | `game_control`, multimodal | n/a | 1.172 | 0.300 | 0.206 | 0.343 |
-| `general_decision` (external `jevbench`) | 0.597 | 0.858 | 0.157 | n/a | — |
+| `general_decision` (external `jevbench`) | 0.597 | 0.858 | 0.157 | n/a | 0.203 |
 
 `cua-s1-4b-0.1`'s core-families text latency spans two nearly-identical reruns
 of the same eval (0.121s and 0.128s); both are reported since neither is

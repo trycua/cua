@@ -567,13 +567,7 @@ pub fn click_at_xy_chromium(
 
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
-    let route_plan = chromium_click_route_plan(
-        screen_x,
-        screen_y,
-        win_local_x,
-        win_local_y,
-        count,
-    );
+    let route_plan = chromium_click_route_plan(screen_x, screen_y, win_local_x, win_local_y, count);
     let flags = parse_modifier_flags(modifiers);
     let window_id = wid as i64;
 

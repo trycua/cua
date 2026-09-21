@@ -14,7 +14,6 @@ const MAX_REGIONS: usize = 64;
 const MAX_SAFE_ID_BYTES: usize = 96;
 const MAX_CHOOSER_ID_BYTES: usize = 64;
 const MIN_CONFIDENCE: f64 = 0.80;
-const SEND_ACTION_DESCRIPTION: &str = "Activate the visual region labeled Send.";
 const CHOOSER_GOAL: &str = "Select the supplied action candidate for the uniquely host-validated exact painted Send region. Select reobserve or abstain only when no supplied action candidate meets that condition.";
 
 #[derive(Clone, Debug, PartialEq)]
@@ -28,6 +27,7 @@ struct ClickAction {
 struct Candidate {
     id: String,
     description: String,
+    region_id: Option<String>,
     action: Option<ClickAction>,
 }
 
@@ -117,6 +117,12 @@ fn safe_chooser_id(value: &str) -> bool {
 
 fn safe_text(value: &str, maximum: usize) -> bool {
     !value.trim().is_empty() && value.len() <= maximum && !value.chars().any(char::is_control)
+}
+
+fn send_action_description(region_id: &str, kind: &str, text: &str, confidence: f64) -> String {
+    format!(
+        "Activate region id={region_id}, kind={kind}, exact_text={text:?}, confidence={confidence}."
+    )
 }
 
 fn bounded_candidates(
@@ -217,7 +223,8 @@ fn bounded_candidates(
             }
             send_candidate = Some(Candidate {
                 id: format!("region:{id}"),
-                description: SEND_ACTION_DESCRIPTION.into(),
+                description: send_action_description(id, kind, "Send", confidence),
+                region_id: Some(id.into()),
                 action: Some(ClickAction {
                     capture_id: capture_id.into(),
                     x: x as f64 + width as f64 / 2.0,
@@ -235,11 +242,13 @@ fn bounded_candidates(
         Candidate {
             id: "reobserve".into(),
             description: "Discard this decision set and capture a fresh observation.".into(),
+            region_id: None,
             action: None,
         },
         Candidate {
             id: "abstain".into(),
             description: "Stop without acting when no proposed action is safe.".into(),
+            region_id: None,
             action: None,
         },
     ]);
@@ -256,9 +265,7 @@ fn require_unique_actionable_send(
         .count();
     let exact_send_count = candidates
         .iter()
-        .filter(|candidate| {
-            candidate.action.is_some() && candidate.description == SEND_ACTION_DESCRIPTION
-        })
+        .filter(|candidate| candidate.action.is_some() && candidate.region_id.is_some())
         .count();
     if actionable_count != 1 || exact_send_count != 1 {
         return Err(format!(
@@ -271,14 +278,23 @@ fn require_unique_actionable_send(
 
 fn choice_request(
     capture_id: &str,
-    regions: Vec<CompactRegion>,
+    regions: &[CompactRegion],
     candidates: &[Candidate],
 ) -> ChoiceRequest {
+    let action_region_ids = candidates
+        .iter()
+        .filter(|candidate| candidate.action.is_some())
+        .filter_map(|candidate| candidate.region_id.as_deref())
+        .collect::<BTreeSet<_>>();
     ChoiceRequest {
         schema: "cua.jev_choice_request_v1",
         goal: CHOOSER_GOAL,
         capture_id: capture_id.into(),
-        regions,
+        regions: regions
+            .iter()
+            .filter(|region| action_region_ids.contains(region.id.as_str()))
+            .cloned()
+            .collect(),
         history: Vec::new(),
         candidates: candidates
             .iter()
@@ -356,9 +372,7 @@ fn validate_choice(
 fn mock_choice(candidates: &[Candidate]) -> ChoiceResponse {
     let selected_id = candidates
         .iter()
-        .find(|candidate| {
-            candidate.action.is_some() && candidate.description == SEND_ACTION_DESCRIPTION
-        })
+        .find(|candidate| candidate.action.is_some() && candidate.region_id.is_some())
         .expect("fixture must expose a Send candidate")
         .id
         .clone();
@@ -427,7 +441,8 @@ fn chooser_request_matches_fixture_contract_and_contains_no_action_arguments() {
         ]
     });
     let (candidates, regions) = bounded_candidates(&payload, "capture-1").unwrap();
-    let request = serde_json::to_value(choice_request("capture-1", regions, &candidates)).unwrap();
+    assert_eq!(regions.len(), 2, "host must retain the full parsed set");
+    let request = serde_json::to_value(choice_request("capture-1", &regions, &candidates)).unwrap();
     assert_eq!(request["schema"], "cua.jev_choice_request_v1");
     assert_eq!(request["goal"], CHOOSER_GOAL);
     assert_eq!(
@@ -454,15 +469,16 @@ fn chooser_request_matches_fixture_contract_and_contains_no_action_arguments() {
             .keys()
             .map(String::as_str)
             .collect::<BTreeSet<_>>(),
-        BTreeSet::from(["bounds", "confidence", "id", "interactive", "kind", "label",])
+        BTreeSet::from(["bounds", "confidence", "id", "interactive", "kind", "text",])
     );
     assert_eq!(
         request["regions"][0]["bounds"],
-        json!({"x": 72, "y": 250, "width": 204, "height": 40})
+        json!({"x": 292, "y": 250, "width": 204, "height": 40})
     );
+    assert_eq!(request["regions"].as_array().unwrap().len(), 1);
+    assert_eq!(request["regions"][0]["id"], "send");
     assert!(request["regions"][0].get("content").is_none());
-    assert!(request["regions"][0].get("text").is_none());
-    assert!(request["regions"][1].get("label").is_none());
+    assert!(request["regions"][0].get("label").is_none());
     assert_eq!(
         request["candidates"][0]
             .as_object()
@@ -477,13 +493,30 @@ fn chooser_request_matches_fixture_contract_and_contains_no_action_arguments() {
     assert_eq!(request["candidates"][0]["id"], "region:send");
     assert_eq!(
         request["candidates"][0]["description"],
-        SEND_ACTION_DESCRIPTION
+        send_action_description("send", "text", "Send", 0.98)
     );
-    for forbidden in ["tool", "arguments", "delivery_mode", "secret"] {
-        assert!(
-            !request.to_string().contains(forbidden),
-            "leaked {forbidden}"
-        );
+    let mut sensitive_candidates = candidates.clone();
+    let sensitive_action = sensitive_candidates[0].action.as_mut().unwrap();
+    sensitive_action.capture_id = "sensitive-action-capture".into();
+    sensitive_action.x = 12345.0;
+    sensitive_action.y = 67890.0;
+    let sensitive_request = serde_json::to_string(&choice_request(
+        "capture-1",
+        &regions,
+        &sensitive_candidates,
+    ))
+    .unwrap();
+    for forbidden in [
+        "tool",
+        "arguments",
+        "delivery_mode",
+        "secret",
+        "screenshot",
+        "sensitive-action-capture",
+        "12345",
+        "67890",
+    ] {
+        assert!(!sensitive_request.contains(forbidden), "leaked {forbidden}");
     }
 
     let (response, selected) = validate_choice(mock_choice(&candidates), &candidates).unwrap();
@@ -500,7 +533,8 @@ fn chooser_failure_diagnostic_is_bounded_and_excludes_action_context() {
     let candidates = vec![
         Candidate {
             id: "region:send".into(),
-            description: SEND_ACTION_DESCRIPTION.into(),
+            description: send_action_description("send", "text", "Send", 0.98),
+            region_id: Some("send".into()),
             action: Some(ClickAction {
                 capture_id: "private-capture-id".into(),
                 x: 12345.0,
@@ -510,11 +544,13 @@ fn chooser_failure_diagnostic_is_bounded_and_excludes_action_context() {
         Candidate {
             id: "reobserve".into(),
             description: "Reobserve.".into(),
+            region_id: None,
             action: None,
         },
         Candidate {
             id: "abstain".into(),
             description: "Abstain.".into(),
+            region_id: None,
             action: None,
         },
     ];
@@ -561,7 +597,8 @@ fn chooser_response_and_live_mode_fail_closed() {
     let candidates = vec![
         Candidate {
             id: "region:send".into(),
-            description: SEND_ACTION_DESCRIPTION.into(),
+            description: send_action_description("send", "text", "Send", 0.98),
+            region_id: Some("send".into()),
             action: Some(ClickAction {
                 capture_id: "capture-1".into(),
                 x: 1.0,
@@ -571,11 +608,13 @@ fn chooser_response_and_live_mode_fail_closed() {
         Candidate {
             id: "reobserve".into(),
             description: "Reobserve.".into(),
+            region_id: None,
             action: None,
         },
         Candidate {
             id: "abstain".into(),
             description: "Abstain.".into(),
+            region_id: None,
             action: None,
         },
     ];
@@ -633,7 +672,8 @@ fn candidate_policy_refuses_ambiguous_and_non_send_regions() {
             {"id": "send-2", "kind": "text", "bounds": {"x": 50, "y": 0, "width": 40, "height": 20}, "text": " Send ", "confidence": 0.98, "interactive": false}
         ]
     });
-    let (candidates, _) = bounded_candidates(&payload, "capture-1").unwrap();
+    let (candidates, regions) = bounded_candidates(&payload, "capture-1").unwrap();
+    assert_eq!(regions.len(), 2, "ambiguity check must use the full set");
     assert_eq!(
         candidates
             .iter()
@@ -641,6 +681,10 @@ fn candidate_policy_refuses_ambiguous_and_non_send_regions() {
             .collect::<Vec<_>>(),
         ["reobserve", "abstain"]
     );
+    assert!(require_unique_actionable_send(&candidates, regions.len()).is_err());
+    assert!(choice_request("capture-1", &regions, &candidates)
+        .regions
+        .is_empty());
 
     let payload = json!({
         "schema": "cua.visual_regions_v1",
@@ -661,16 +705,62 @@ fn candidate_policy_refuses_ambiguous_and_non_send_regions() {
 }
 
 #[test]
+fn cancel_counterfactual_is_not_actionable_and_abstain_fails_closed() {
+    let payload = json!({
+        "schema": "cua.visual_regions_v1",
+        "capture": {"capture_id": "capture-1", "screenshot": {"width": 100, "height": 100}},
+        "regions": [
+            {"id": "cancel", "kind": "text", "bounds": {"x": 0, "y": 0, "width": 40, "height": 20}, "text": "Cancel", "confidence": 0.99, "interactive": true},
+            {"id": "send", "kind": "text", "bounds": {"x": 50, "y": 0, "width": 40, "height": 20}, "text": "Send", "confidence": 0.98, "interactive": false}
+        ]
+    });
+    let (candidates, regions) = bounded_candidates(&payload, "capture-1").unwrap();
+    assert_eq!(
+        candidates
+            .iter()
+            .filter_map(|candidate| candidate.region_id.as_deref())
+            .collect::<Vec<_>>(),
+        ["send"]
+    );
+    assert_eq!(
+        choice_request("capture-1", &regions, &candidates)
+            .regions
+            .iter()
+            .map(|region| region.id.as_str())
+            .collect::<Vec<_>>(),
+        ["send"]
+    );
+    let cancel_response = ChoiceResponse {
+        schema: "cua.jev_choice_v1".into(),
+        selected_id: "region:cancel".into(),
+        model: Some("mock".into()),
+        confidence: 1.0,
+        probabilities: BTreeMap::new(),
+    };
+    assert!(validate_choice(cancel_response, &candidates).is_err());
+
+    let mut abstain_response = mock_choice(&candidates);
+    abstain_response.selected_id = "abstain".into();
+    let (_, abstain) = validate_choice(abstain_response, &candidates).unwrap();
+    assert!(
+        abstain.action.is_none(),
+        "abstain must never resolve to an action"
+    );
+}
+
+#[test]
 fn actionable_send_requirement_reports_only_bounded_counts() {
     let fallback_candidates = vec![
         Candidate {
             id: "reobserve".into(),
             description: "Reobserve.".into(),
+            region_id: None,
             action: None,
         },
         Candidate {
             id: "abstain".into(),
             description: "Abstain.".into(),
+            region_id: None,
             action: None,
         },
     ];
@@ -682,7 +772,8 @@ fn actionable_send_requirement_reports_only_bounded_counts() {
     let mut candidates = fallback_candidates;
     candidates.push(Candidate {
         id: "region:send".into(),
-        description: SEND_ACTION_DESCRIPTION.into(),
+        description: send_action_description("send", "text", "Send", 0.98),
+        region_id: Some("send".into()),
         action: Some(ClickAction {
             capture_id: "capture-1".into(),
             x: 50.0,
@@ -1399,7 +1490,7 @@ mod e2e {
             bounded_candidates(parsed.structured(), &capture_id).expect("bounded candidates");
         require_unique_actionable_send(&candidates, regions.len())
             .unwrap_or_else(|error| panic!("perception candidate contract failed: {error}"));
-        let request = choice_request(&capture_id, regions, &candidates);
+        let request = choice_request(&capture_id, &regions, &candidates);
         let (choice_response, selected_candidate) = choose(&gate.choice, &request, &candidates);
         if matches!(&gate.choice, ChoiceConfig::Live { .. }) {
             assert!(
@@ -1586,6 +1677,7 @@ mod e2e {
             "extension_status": extension_status,
             "parser": parser,
             "chooser": {"mode": mode, "request": request, "response": choice_response},
+            "host_validated_regions": regions,
             "resolved_action": {"candidate_id": selected_candidate.id, "x": choice.x, "y": choice.y},
             "verification": {
                 "oracle": "passed",

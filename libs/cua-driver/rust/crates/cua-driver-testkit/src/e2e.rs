@@ -203,9 +203,6 @@ fn shared_web_route_for_environment(
             Ok(Route::Composite)
         }
 
-        (Platform::Macos, DisplayServer::Quartz, Targeting::Px, "drag") => {
-            Ok(Route::MacosCgEventPid)
-        }
         (Platform::Macos, DisplayServer::Quartz, Targeting::Px, _) => {
             pointer_or_key_route(Route::MacosCgEventPid, Route::MacosCgEventHid)
         }
@@ -3097,7 +3094,17 @@ mod tests {
     }
 
     #[test]
-    fn macos_pixel_foreground_drag_route_is_pid_addressed() {
+    fn macos_pixel_drag_routes_preserve_background_and_use_hid_for_foreground() {
+        assert_eq!(
+            shared_web_route(
+                Platform::Macos,
+                DisplayServer::Quartz,
+                "drag",
+                Targeting::Px,
+                Delivery::Background,
+            ),
+            Ok(DriverRoute::MacosCgEventPid)
+        );
         assert_eq!(
             shared_web_route(
                 Platform::Macos,
@@ -3106,7 +3113,7 @@ mod tests {
                 Targeting::Px,
                 Delivery::Foreground,
             ),
-            Ok(DriverRoute::MacosCgEventPid)
+            Ok(DriverRoute::MacosCgEventHid)
         );
     }
 

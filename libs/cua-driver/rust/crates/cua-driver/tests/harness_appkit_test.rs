@@ -1553,7 +1553,7 @@ fn harness_appkit_slider_drag_px_foreground() {
             "appkit",
             "slider_drag",
             Targeting::Px,
-            DriverRoute::MacosCgEventPid,
+            DriverRoute::MacosCgEventHid,
         ),
         |pid, wid, driver| {
             let pre = snapshot_elements(driver, pid, wid);

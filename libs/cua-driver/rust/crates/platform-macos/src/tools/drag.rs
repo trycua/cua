@@ -315,7 +315,7 @@ impl Tool for DragTool {
         );
         let drag_input = focus_guard::with_focus_suppressed(
             // Foreground drag deliberately activates the target while the
-            // PID/window-routed gesture is delivered. A suppression lease here
+            // HID gesture is delivered. A suppression lease here
             // would race that activation and restore the prior app before
             // Chromium receives the gesture.
             if fg { None } else { Some(pid) },
@@ -327,16 +327,13 @@ impl Tool for DragTool {
                         let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
                         if let Some(wid) = foreground_window_id {
                             // Keep the exact target window active for the
-                            // complete routed gesture, then restore the prior
+                            // complete HID gesture, then restore the prior
                             // front process.
                             return crate::input::skylight::with_foreground_hid_activation(
                                 pid as libc::pid_t,
                                 wid,
                                 || {
                                     let observed_cursor = cursor_for_drag.clone();
-                                    crate::input::mouse::prepare_foreground_drag_cursor(
-                                        from_sx, from_sy,
-                                    );
                                     crate::input::mouse::drag_at_xy_observed(
                                         pid,
                                         from_sx,
@@ -431,7 +428,7 @@ impl Tool for DragTool {
                  from window-pixel ({}, {}) → ({}, {}), \
                  screen ({}, {}) → ({}, {}) \
                  in {duration_ms}ms / {steps} steps{mode_label} \
-                 (PID/window-routed CGEvent; not driver-verified — confirm via screenshot).{}",
+                 (foreground HID CGEvent; not driver-verified — confirm via screenshot).{}",
                 from_x as i64,
                 from_y as i64,
                 to_x as i64,
@@ -443,7 +440,7 @@ impl Tool for DragTool {
                 changes.result_suffix(),
             ))
             .with_structured(serde_json::json!({
-                "path": "cgevent", "verified": false, "effect": "unverifiable"
+                "path": "cgevent_hid", "verified": false, "effect": "unverifiable"
             })),
             Ok(Err(e)) => ToolResult::error(format!("drag failed: {e}")),
             Err(e) => ToolResult::error(format!("Task error: {e}")),

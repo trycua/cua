@@ -117,6 +117,16 @@ class EvidenceSanitizerTests(unittest.TestCase):
             "action_count": 1,
         }))
         recording.write_bytes(b"measured-video-bytes")
+        send_region = {
+            "id": "send", "kind": "text",
+            "bounds": {"x": 354, "y": 250, "width": 80, "height": 40},
+            "text": "Send", "confidence": 0.99, "interactive": True,
+        }
+        archive_region = {
+            "id": "archive", "kind": "icon",
+            "bounds": {"x": 20, "y": 20, "width": 24, "height": 24},
+            "label": "Archive", "confidence": 0.95, "interactive": False,
+        }
         raw_evidence.write_text(json.dumps({
             "schema": "cua-visual-perception-demo-raw/v2",
             "source_sha": "a" * 40,
@@ -127,7 +137,7 @@ class EvidenceSanitizerTests(unittest.TestCase):
                             "capture_source": "driver-screenshot", "width": 760, "height": 460,
                             "desktop_session": "x11-openbox", "runner_identity_class": "github-hosted",
                             "delivery_mode": "background"},
-            "chooser": {"request": {"candidates": [
+            "chooser": {"request": {"regions": [send_region], "candidates": [
                 {"id": "region:send", "description": "Activate Send."},
                 {"id": "reobserve", "description": "Capture again."},
                 {"id": "abstain", "description": "Stop safely."},
@@ -144,6 +154,7 @@ class EvidenceSanitizerTests(unittest.TestCase):
             },
             "extension_status": json.loads(extension_status.read_text()),
             "parser": {"model_id": "cua-perception/demo-v1"},
+            "host_validated_regions": [send_region, archive_region],
             "resolved_action": {"candidate_id": "region:send", "x": 394.0, "y": 270.0},
             "verification": {
                 "oracle": "passed",
@@ -227,6 +238,64 @@ class EvidenceSanitizerTests(unittest.TestCase):
         self.assertIsNone(manifest["result"]["capture_preserved_after_refusal"])
         self.assertNotIn("capture_ids", json.dumps(manifest))
         self.assertNotIn("coordinates", json.dumps(manifest))
+        self.assertNotIn("host_validated_regions", json.dumps(manifest))
+
+    def test_rejects_unsafe_or_out_of_bounds_host_validated_regions(self):
+        invalid_regions = [
+            [{
+                "id": "send", "kind": "text",
+                "bounds": {"x": 740, "y": 250, "width": 80, "height": 40},
+                "text": "Send", "confidence": 0.99, "interactive": True,
+            }],
+            [{
+                "id": "send", "kind": "text",
+                "bounds": {"x": 354, "y": 250, "width": 80, "height": 40},
+                "text": "Send\nsecret", "confidence": 0.99, "interactive": True,
+            }],
+            [{
+                "id": "send", "kind": "text",
+                "bounds": {"x": 354, "y": 250, "width": 80, "height": 40},
+                "text": "Send", "confidence": float("inf"), "interactive": True,
+            }],
+            [{
+                "id": "send", "kind": "text",
+                "bounds": {"x": 354, "y": 250, "width": 80, "height": 40},
+                "text": "Send", "confidence": 0.99, "interactive": 1,
+            }],
+        ]
+        for regions in invalid_regions:
+            with self.subTest(regions=regions):
+                inputs = self.inputs()
+                raw = json.loads(inputs["raw_evidence"].read_text())
+                raw["host_validated_regions"] = regions
+                inputs["raw_evidence"].write_text(json.dumps(raw))
+                with self.assertRaisesRegex(ValueError, "host_validated_regions"):
+                    sanitizer.build_manifest(**inputs)
+
+    def test_rejects_chooser_regions_outside_host_validated_subset(self):
+        inputs = self.inputs()
+        raw = json.loads(inputs["raw_evidence"].read_text())
+        raw["chooser"]["request"]["regions"][0]["confidence"] = 0.98
+        inputs["raw_evidence"].write_text(json.dumps(raw))
+        with self.assertRaisesRegex(ValueError, "not a subset"):
+            sanitizer.build_manifest(**inputs)
+
+    def test_rejects_chooser_region_ids_that_do_not_match_executable_candidates(self):
+        inputs = self.inputs()
+        raw = json.loads(inputs["raw_evidence"].read_text())
+        raw["chooser"]["request"]["regions"] = [raw["host_validated_regions"][1]]
+        inputs["raw_evidence"].write_text(json.dumps(raw))
+        with self.assertRaisesRegex(ValueError, "executable candidate-linked regions"):
+            sanitizer.build_manifest(**inputs)
+
+        inputs = self.inputs()
+        raw = json.loads(inputs["raw_evidence"].read_text())
+        raw["chooser"]["request"]["candidates"].insert(1, {
+            "id": "region:missing", "description": "Activate missing region.",
+        })
+        inputs["raw_evidence"].write_text(json.dumps(raw))
+        with self.assertRaisesRegex(ValueError, "executable candidate-linked regions"):
+            sanitizer.build_manifest(**inputs)
 
     def test_primary_desktop_observation_is_a_closed_foreground_route(self):
         inputs = self.inputs()

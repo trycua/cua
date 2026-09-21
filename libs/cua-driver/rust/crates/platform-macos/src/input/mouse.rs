@@ -17,10 +17,11 @@ use core_graphics::{
 };
 use foreign_types::ForeignType;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MousePostMode {
     Both,
     PublicOnly,
+    HidOnly,
 }
 
 #[derive(Clone, Copy)]
@@ -201,18 +202,6 @@ pub fn move_cursor_desktop(x: f64, y: f64) -> anyhow::Result<()> {
         .map_err(|error| anyhow::anyhow!("CGWarpMouseCursorPosition failed: {error:?}"))?;
     unsafe { CGAssociateMouseAndMouseCursorPosition(true) };
     Ok(())
-}
-
-/// Prepare the hardware cursor for a foreground window drag.
-///
-/// The exact-window activation guard must remain active while the routed drag
-/// runs; this helper preserves the old global foreground path's cursor warp,
-/// cursor/event coupling, and AppKit settle interval.
-pub fn prepare_foreground_drag_cursor(x: f64, y: f64) {
-    use core_graphics::display::CGDisplay;
-    let _ = CGDisplay::warp_mouse_cursor_position(CGPoint::new(x, y));
-    unsafe { CGAssociateMouseAndMouseCursorPosition(true) };
-    std::thread::sleep(std::time::Duration::from_millis(40));
 }
 
 /// Scroll the foreground desktop surface at a logical screen point through the
@@ -597,7 +586,7 @@ pub fn click_at_xy_chromium(
 }
 
 /// Press-drag-release gesture from `(from_x, from_y)` to `(to_x, to_y)` in
-/// screen coordinates, posted to `pid`.
+/// screen coordinates, addressed to `pid` and the optional exact window.
 ///
 /// `duration_ms` is the wall-clock budget for the drag path; `steps` is the
 /// number of intermediate `leftMouseDragged` events linearly interpolated
@@ -620,7 +609,7 @@ pub fn drag_at_xy(
     steps: usize,
     modifiers: &[&str],
     button: DragButton,
-    foreground_release: bool,
+    foreground_hid: bool,
 ) -> anyhow::Result<()> {
     drag_at_xy_observed(
         pid,
@@ -635,12 +624,16 @@ pub fn drag_at_xy(
         steps,
         modifiers,
         button,
-        foreground_release,
+        foreground_hid,
         |_, _| {},
     )
 }
 
-/// PID-routed drag with an observer called for every native pointer position.
+/// Window drag with an observer called for every native pointer position.
+///
+/// Background delivery keeps the established PID-routed sequence. When
+/// `foreground_hid` is true, the same stamped gesture is posted once per event
+/// through the global HID queue while the hardware cursor follows the path.
 ///
 /// The cursor overlay uses this for the same reason as
 /// [`drag_at_xy_foreground_observed`]: the synthetic cursor should follow the
@@ -659,14 +652,31 @@ pub fn drag_at_xy_observed<F>(
     steps: usize,
     modifiers: &[&str],
     button: DragButton,
-    foreground_release: bool,
+    foreground_hid: bool,
     mut observe: F,
 ) -> anyhow::Result<()>
 where
     F: FnMut(f64, f64),
 {
-    use core_graphics::event::CGEventTapLocation;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    if foreground_hid {
+        return drag_at_xy_window_foreground_observed(
+            pid,
+            from_x,
+            from_y,
+            to_x,
+            to_y,
+            from_local,
+            to_local,
+            wid,
+            duration_ms,
+            steps,
+            modifiers,
+            button,
+            observe,
+        );
+    }
 
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
@@ -778,18 +788,185 @@ where
         up.set_flags(flags);
     }
     post_mouse_event(pid, &up, to_local, wid, click_group_id, 1, button_number, 0);
-    if foreground_release {
-        // A frontmost Chromium surface can consume PID-routed down/move
-        // events yet filter the synthetic release. Re-post only the release
-        // through the HID tap while the foreground assist still holds focus.
-        up.post(CGEventTapLocation::HID);
-    }
     // Chromium may process the final pointerup on the next run-loop turn. In
     // the foreground rung the caller restores the previous app immediately
     // after this function returns, so let the target consume the release and
     // complete pointer capture before that restore.
     std::thread::sleep(std::time::Duration::from_millis(100));
 
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn post_drag_mouse_event(
+    pid: i32,
+    event_type: CGEventType,
+    point: CGPoint,
+    button: CGMouseButton,
+    window_local: Option<(f64, f64)>,
+    wid: Option<u32>,
+    click_group_id: Option<i64>,
+    click_state: i64,
+    button_number: i64,
+    subtype: i64,
+    mode: MousePostMode,
+    flags: CGEventFlags,
+    error_context: &str,
+) -> anyhow::Result<()> {
+    debug_assert_eq!(mode, MousePostMode::HidOnly);
+    let event = new_global_mouse_event(event_type, point, button)
+        .map_err(|_| anyhow::anyhow!(error_context.to_owned()))?;
+    if flags != CGEventFlags::CGEventFlagNull {
+        event.set_flags(flags);
+    }
+    post_mouse_event_with_mode(
+        pid,
+        &event,
+        window_local,
+        wid,
+        click_group_id,
+        click_state,
+        button_number,
+        subtype,
+        mode,
+    );
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn drag_at_xy_window_foreground_observed<F>(
+    pid: i32,
+    from_x: f64,
+    from_y: f64,
+    to_x: f64,
+    to_y: f64,
+    from_local: Option<(f64, f64)>,
+    to_local: Option<(f64, f64)>,
+    wid: Option<u32>,
+    duration_ms: u64,
+    steps: usize,
+    modifiers: &[&str],
+    button: DragButton,
+    mut observe: F,
+) -> anyhow::Result<()>
+where
+    F: FnMut(f64, f64),
+{
+    use core_graphics::display::CGDisplay;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let flags = parse_modifier_flags(modifiers);
+    let (cg_button, down_type, dragged_type, up_type, button_number) = match button {
+        DragButton::Left => (
+            CGMouseButton::Left,
+            CGEventType::LeftMouseDown,
+            CGEventType::LeftMouseDragged,
+            CGEventType::LeftMouseUp,
+            0,
+        ),
+        DragButton::Right => (
+            CGMouseButton::Right,
+            CGEventType::RightMouseDown,
+            CGEventType::RightMouseDragged,
+            CGEventType::RightMouseUp,
+            1,
+        ),
+        DragButton::Middle => (
+            CGMouseButton::Center,
+            CGEventType::OtherMouseDown,
+            CGEventType::OtherMouseDragged,
+            CGEventType::OtherMouseUp,
+            2,
+        ),
+    };
+    let click_group_id = wid.map(|_| {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .subsec_nanos() as i64
+    });
+    let steps = steps.max(1);
+    let step_delay_ms = if steps > 1 {
+        duration_ms / steps as u64
+    } else {
+        duration_ms
+    };
+    let events = foreground_drag_events(from_x, from_y, to_x, to_y, steps);
+
+    for spec in events {
+        let (event_type, click_state, event_button, event_button_number, subtype, event_flags) =
+            match spec.kind {
+                ForegroundDragEventKind::Move => (
+                    CGEventType::MouseMoved,
+                    0,
+                    CGMouseButton::Left,
+                    0,
+                    3,
+                    CGEventFlags::CGEventFlagNull,
+                ),
+                ForegroundDragEventKind::Down => (down_type, 1, cg_button, button_number, 0, flags),
+                ForegroundDragEventKind::Dragged => {
+                    (dragged_type, 1, cg_button, button_number, 0, flags)
+                }
+                ForegroundDragEventKind::Up => (up_type, 1, cg_button, button_number, 0, flags),
+            };
+        let local = from_local.zip(to_local).map(|((fx, fy), (tx, ty))| {
+            (
+                fx + (tx - fx) * spec.progress,
+                fy + (ty - fy) * spec.progress,
+            )
+        });
+
+        match spec.kind {
+            ForegroundDragEventKind::Move => {
+                let _ = CGDisplay::warp_mouse_cursor_position(spec.point);
+                unsafe { CGAssociateMouseAndMouseCursorPosition(true) };
+                std::thread::sleep(std::time::Duration::from_millis(40));
+            }
+            ForegroundDragEventKind::Dragged => {
+                let _ = CGDisplay::warp_mouse_cursor_position(spec.point);
+            }
+            ForegroundDragEventKind::Up => {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            ForegroundDragEventKind::Down => {}
+        }
+
+        post_drag_mouse_event(
+            pid,
+            event_type,
+            spec.point,
+            event_button,
+            local,
+            wid,
+            click_group_id,
+            click_state,
+            event_button_number,
+            subtype,
+            MousePostMode::HidOnly,
+            event_flags,
+            "foreground drag event creation failed",
+        )?;
+
+        match spec.kind {
+            ForegroundDragEventKind::Move => {
+                std::thread::sleep(std::time::Duration::from_millis(12));
+            }
+            ForegroundDragEventKind::Down => {
+                observe(spec.point.x, spec.point.y);
+                std::thread::sleep(std::time::Duration::from_millis(16));
+            }
+            ForegroundDragEventKind::Dragged => {
+                observe(spec.point.x, spec.point.y);
+                if step_delay_ms > 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(step_delay_ms));
+                }
+            }
+            ForegroundDragEventKind::Up => {}
+        }
+    }
+
+    std::thread::sleep(std::time::Duration::from_millis(100));
     Ok(())
 }
 
@@ -939,6 +1116,7 @@ enum ForegroundDragEventKind {
 struct ForegroundDragEvent {
     kind: ForegroundDragEventKind,
     point: CGPoint,
+    progress: f64,
 }
 
 fn foreground_drag_events(
@@ -954,21 +1132,25 @@ fn foreground_drag_events(
     events.push(ForegroundDragEvent {
         kind: ForegroundDragEventKind::Move,
         point: from,
+        progress: 0.0,
     });
     events.push(ForegroundDragEvent {
         kind: ForegroundDragEventKind::Down,
         point: from,
+        progress: 0.0,
     });
     for i in 1..=steps {
         let t = i as f64 / steps as f64;
         events.push(ForegroundDragEvent {
             kind: ForegroundDragEventKind::Dragged,
             point: CGPoint::new(from_x + (to_x - from_x) * t, from_y + (to_y - from_y) * t),
+            progress: t,
         });
     }
     events.push(ForegroundDragEvent {
         kind: ForegroundDragEventKind::Up,
         point: CGPoint::new(to_x, to_y),
+        progress: 1.0,
     });
     events
 }
@@ -1242,6 +1424,7 @@ fn post_mouse_event_with_mode(
             event.post_to_pid(pid as libc::pid_t);
         }
         MousePostMode::PublicOnly => event.post_to_pid(pid as libc::pid_t),
+        MousePostMode::HidOnly => event.post(core_graphics::event::CGEventTapLocation::HID),
     }
 }
 
@@ -1453,6 +1636,33 @@ mod tests {
                 (40.0, 80.0),
             ]
         );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == ForegroundDragEventKind::Up)
+                .count(),
+            1,
+            "the HID gesture must release exactly once"
+        );
+        let cursor_plan: Vec<_> = events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event.kind,
+                    ForegroundDragEventKind::Move | ForegroundDragEventKind::Dragged
+                )
+            })
+            .map(|event| (event.point.x, event.point.y))
+            .collect();
+        assert_eq!(
+            cursor_plan,
+            [(10.0, 20.0), (20.0, 40.0), (30.0, 60.0), (40.0, 80.0)]
+        );
+    }
+
+    #[test]
+    fn hid_only_post_mode_is_distinct_from_routed_background() {
+        assert_ne!(MousePostMode::Both, MousePostMode::HidOnly);
     }
 
     #[test]

@@ -7,6 +7,7 @@ import argparse
 import base64
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -20,6 +21,8 @@ SHA64 = re.compile(r"^[0-9a-f]{64}$")
 SAFE_ID = re.compile(r"^[A-Za-z0-9._:/-]{1,96}$")
 CHOOSER_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
 SAFE_TEXT = re.compile(r"^[^\x00-\x1f\x7f]{1,256}$")
+MAX_REGIONS = 64
+MAX_REGION_TEXT = 128
 
 
 def sha256_file(path: Path) -> str:
@@ -166,6 +169,64 @@ def load_chooser_result(path: Path) -> dict:
     if any(type(item) not in (int, float) or not 0 <= item <= 1 for item in probabilities.values()):
         raise ValueError("chooser result contains an invalid probability")
     return value
+
+
+def validate_compact_regions(value: object, width: int, height: int, label: str) -> list[dict]:
+    if not isinstance(value, list) or not 1 <= len(value) <= MAX_REGIONS:
+        raise ValueError(f"{label} must be a nonempty bounded region list")
+    regions = []
+    for region in value:
+        if not isinstance(region, dict):
+            raise ValueError(f"{label} contains an invalid compact region")
+        required = {"id", "kind", "bounds", "confidence", "interactive"}
+        optional = {"text", "label"}
+        if not required <= set(region) or not set(region) <= required | optional:
+            raise ValueError(f"{label} contains an invalid compact region")
+        region_id = region["id"]
+        kind = region["kind"]
+        if (
+            not isinstance(region_id, str)
+            or not CHOOSER_ID.fullmatch(region_id)
+            or len(region_id) > 64 - len("region:")
+            or kind not in {"text", "icon"}
+        ):
+            raise ValueError(f"{label} contains unsafe region identity")
+        for field in optional & set(region):
+            text = region[field]
+            if (
+                not isinstance(text, str)
+                or text != text.strip()
+                or len(text.encode("utf-8")) > MAX_REGION_TEXT
+                or not SAFE_TEXT.fullmatch(text)
+            ):
+                raise ValueError(f"{label} contains unsafe region text or label")
+        if (kind == "text" and "text" not in region) or (kind == "icon" and "label" not in region):
+            raise ValueError(f"{label} contains content missing for its region kind")
+        confidence = region["confidence"]
+        if (
+            type(confidence) not in (int, float)
+            or not math.isfinite(confidence)
+            or not 0 <= confidence <= 1
+            or type(region["interactive"]) is not bool
+        ):
+            raise ValueError(f"{label} contains invalid confidence or interactivity")
+        bounds = region["bounds"]
+        if not isinstance(bounds, dict) or set(bounds) != {"x", "y", "width", "height"}:
+            raise ValueError(f"{label} contains invalid region bounds")
+        if (
+            any(type(bounds[field]) is not int for field in bounds)
+            or bounds["x"] < 0
+            or bounds["y"] < 0
+            or bounds["width"] <= 0
+            or bounds["height"] <= 0
+            or bounds["x"] + bounds["width"] > width
+            or bounds["y"] + bounds["height"] > height
+        ):
+            raise ValueError(f"{label} contains region bounds outside the observation")
+        regions.append(region)
+    if len({region["id"] for region in regions}) != len(regions):
+        raise ValueError(f"{label} contains duplicate region IDs")
+    return regions
 
 
 def load_candidate_measurements(path: Path) -> dict:
@@ -360,7 +421,7 @@ def build_manifest(
     expected_raw_keys = {
         "schema", "source_sha", "jev_source_sha", "platform", "capture_ids",
         "observation", "fixture_oracle", "extension_status", "parser", "chooser",
-        "resolved_action", "verification", "timeline", "recording",
+        "host_validated_regions", "resolved_action", "verification", "timeline", "recording",
     }
     if set(raw) != expected_raw_keys or raw.get("schema") != "cua-visual-perception-demo-raw/v2":
         raise ValueError("raw evidence does not match the closed live demo contract")
@@ -455,6 +516,19 @@ def build_manifest(
     if any(type(observation[field]) is not int or observation[field] <= 0 for field in ("width", "height")):
         raise ValueError("raw evidence contains invalid capture dimensions")
     request = chooser_record["request"]
+    if not isinstance(request, dict):
+        raise ValueError("raw evidence chooser request must be an object")
+    host_regions = validate_compact_regions(
+        raw.get("host_validated_regions"), observation["width"], observation["height"],
+        "raw evidence host_validated_regions",
+    )
+    request_regions = validate_compact_regions(
+        request.get("regions"), observation["width"], observation["height"],
+        "raw evidence chooser request regions",
+    )
+    host_regions_by_id = {region["id"]: region for region in host_regions}
+    if any(host_regions_by_id.get(region["id"]) != region for region in request_regions):
+        raise ValueError("chooser request regions are not a subset of host_validated_regions")
     candidate_values = request.get("candidates")
     if not isinstance(candidate_values, list) or not 2 <= len(candidate_values) <= 18:
         raise ValueError("raw evidence must contain the bounded chooser candidates")
@@ -470,6 +544,13 @@ def build_manifest(
         candidates.append(candidate)
     if len({candidate["id"] for candidate in candidates}) != len(candidates):
         raise ValueError("raw evidence contains duplicate candidate IDs")
+    executable_region_ids = {
+        candidate["id"][len("region:"):]
+        for candidate in candidates
+        if candidate["id"].startswith("region:")
+    }
+    if {region["id"] for region in request_regions} != executable_region_ids:
+        raise ValueError("chooser request regions do not match executable candidate-linked regions")
     if chooser["selected_id"] not in {candidate["id"] for candidate in candidates}:
         raise ValueError("selected candidate was not in the bounded candidate set")
     resolved_action = raw.get("resolved_action")

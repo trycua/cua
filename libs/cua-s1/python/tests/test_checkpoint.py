@@ -22,9 +22,26 @@ def test_checkpoint_path_resolution_is_explicit(tmp_path):
         tmp_path / "run" / "model.safetensors",
         tmp_path / "run" / "config.json",
     )
+    assert resolve_checkpoint_paths(tmp_path / "run" / "model.safetensors") == (
+        tmp_path / "run" / "model.safetensors",
+        tmp_path / "run" / "config.json",
+    )
+    assert resolve_checkpoint_paths(tmp_path / "run" / "config.json") == (
+        tmp_path / "run" / "model.safetensors",
+        tmp_path / "run" / "config.json",
+    )
     assert resolve_checkpoint_paths(tmp_path / "named.safetensors") == (
         tmp_path / "named.safetensors",
         tmp_path / "named.json",
+    )
+
+    # When a matching-stem JSON exists alongside model.safetensors, prefer it
+    run_custom = tmp_path / "custom"
+    run_custom.mkdir()
+    (run_custom / "model.json").write_text("{}", encoding="utf-8")
+    assert resolve_checkpoint_paths(run_custom / "model.safetensors") == (
+        run_custom / "model.safetensors",
+        run_custom / "model.json",
     )
 
 
@@ -43,7 +60,11 @@ def test_safetensors_checkpoint_round_trip_uses_data_only_files(tmp_path):
         {"epoch": 2},
     )
     loaded_state, config, metadata = load_checkpoint_files(tmp_path / "checkpoint")
+    loaded_from_weights, _, _ = load_checkpoint_files(weights_path)
+    loaded_from_config, _, _ = load_checkpoint_files(config_path)
 
+    assert set(loaded_from_weights) == set(state)
+    assert set(loaded_from_config) == set(state)
     assert weights_path.suffix == ".safetensors"
     assert config_path.suffix == ".json"
     assert config == {"encoder": "tiny", "width": 3}

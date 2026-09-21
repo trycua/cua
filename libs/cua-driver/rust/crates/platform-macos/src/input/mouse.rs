@@ -274,8 +274,9 @@ extern "C" {
 }
 
 /// Like `click_at_xy` but also targets a specific window. Foreground delivery
-/// uses one public pid post; background delivery uses one SkyLight post with a
-/// public fallback only when the private symbol is unavailable.
+/// uses the supplied window-local point with one public pid post. Background
+/// delivery keeps the translated screen point through the SkyLight route, with
+/// a public fallback only when the private symbol is unavailable.
 // The flattened arguments mirror the native event fields used by existing callers.
 #[allow(clippy::too_many_arguments)]
 pub fn click_at_xy_with_window_local(
@@ -427,8 +428,8 @@ pub fn prepare_background_pixel_click(pid: i32, wid: u32) -> bool {
     activated
 }
 
-/// Post the stamped event half of the Chromium-compatible left-click recipe
-/// matching Swift's `clickViaAuthSignedPost`.
+/// Event kinds in the pure route plan for the Chromium-compatible background
+/// left-click recipe.
 ///
 /// The sequence stays PID/window-routed throughout. The caller must first run
 /// [`prepare_background_pixel_click`] for background delivery, then re-pin any
@@ -446,11 +447,110 @@ pub fn prepare_background_pixel_click(pid: i32, wid: u32) -> bool {
 ///  - f40 = target pid   (Chromium synthetic-event filter)
 ///  - f51 / f91 / f92 = CGWindowID (window routing)
 ///  - f58 = constant click-group ID across all events (gesture coalescing)
-///  - `CGEventSetWindowLocation` per-event (window-local point)
+///  - `CGEventSetWindowLocation` per-event (screen point for SkyLight,
+///    window-local point for the public fallback)
 ///
 /// Uses the SkyLight route required by Chromium-compatible targets, with the
 /// public API only as a fallback when the private symbol is unavailable.
-// The flattened arguments mirror the native event fields used by existing callers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ChromiumClickEventKind {
+    Move,
+    Down,
+    Up,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ChromiumClickRouteStep {
+    kind: ChromiumClickEventKind,
+    event_location: (f64, f64),
+    skylight_window_location: (f64, f64),
+    public_window_location: (f64, f64),
+    click_state: i64,
+    phase: i64,
+    button_number: i64,
+    subtype: i64,
+    delay_after_ms: u64,
+}
+
+fn chromium_click_route_plan(
+    screen_x: f64,
+    screen_y: f64,
+    win_local_x: f64,
+    win_local_y: f64,
+    count: usize,
+) -> Vec<ChromiumClickRouteStep> {
+    let screen_target = (screen_x, screen_y);
+    let local_target = (win_local_x, win_local_y);
+    let off_screen = (-1.0, -1.0);
+    let mut steps = vec![
+        ChromiumClickRouteStep {
+            kind: ChromiumClickEventKind::Move,
+            event_location: screen_target,
+            skylight_window_location: screen_target,
+            public_window_location: local_target,
+            click_state: 0,
+            phase: 2,
+            button_number: 0,
+            subtype: 3,
+            delay_after_ms: 15,
+        },
+        ChromiumClickRouteStep {
+            kind: ChromiumClickEventKind::Down,
+            event_location: off_screen,
+            skylight_window_location: off_screen,
+            public_window_location: off_screen,
+            click_state: 1,
+            phase: 1,
+            button_number: 0,
+            subtype: 3,
+            delay_after_ms: 1,
+        },
+        ChromiumClickRouteStep {
+            kind: ChromiumClickEventKind::Up,
+            event_location: off_screen,
+            skylight_window_location: off_screen,
+            public_window_location: off_screen,
+            click_state: 1,
+            phase: 2,
+            button_number: 0,
+            subtype: 3,
+            delay_after_ms: 100,
+        },
+    ];
+
+    let click_pairs = count.clamp(1, 2);
+    for pair_index in 1..=click_pairs {
+        let click_state = pair_index as i64;
+        steps.push(ChromiumClickRouteStep {
+            kind: ChromiumClickEventKind::Down,
+            event_location: screen_target,
+            skylight_window_location: screen_target,
+            public_window_location: local_target,
+            click_state,
+            phase: 3,
+            button_number: 0,
+            subtype: 3,
+            delay_after_ms: 1,
+        });
+        steps.push(ChromiumClickRouteStep {
+            kind: ChromiumClickEventKind::Up,
+            event_location: screen_target,
+            skylight_window_location: screen_target,
+            public_window_location: local_target,
+            click_state,
+            phase: 3,
+            button_number: 0,
+            subtype: 3,
+            delay_after_ms: if pair_index < click_pairs { 80 } else { 0 },
+        });
+    }
+    steps
+}
+
+/// Post the route plan for the Chromium-compatible background left-click
+/// recipe. `CGEvent::new_mouse_event` starts with the screen-space location.
+/// `CGEventSetWindowLocation` uses that same point for SkyLight and is restamped
+/// with the window-local point if delivery falls back to the public PID API.
 #[allow(clippy::too_many_arguments)]
 pub fn click_at_xy_chromium(
     pid: i32,
@@ -466,12 +566,8 @@ pub fn click_at_xy_chromium(
 
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
-    let target = CGPoint::new(screen_x, screen_y);
-    let off_screen = CGPoint::new(-1.0, -1.0);
-    let win_local = (win_local_x, win_local_y);
-    let off_local = (-1.0_f64, -1.0_f64);
+    let route_plan = chromium_click_route_plan(screen_x, screen_y, win_local_x, win_local_y, count);
     let flags = parse_modifier_flags(modifiers);
-    let click_pairs = count.clamp(1, 2);
     let window_id = wid as i64;
 
     // All 5 events share the same click-group ID so WindowServer / Chromium
@@ -483,15 +579,15 @@ pub fn click_at_xy_chromium(
 
     // Stamp required fields onto a CGEvent.  All captured values are Copy so
     // this closure is Fn (callable multiple times).
-    let stamp = |event: &CGEvent, local: (f64, f64), click_state: i64, phase: i64| {
+    let stamp = |event: &CGEvent, step: &ChromiumClickRouteStep| {
         let ptr = event.as_ptr() as *mut std::ffi::c_void;
         let set = |f: u32, v: i64| {
             crate::input::skylight::set_integer_field(ptr, f, v);
         };
-        set(0, phase); // kCGMouseEventNumber (gesture phase)
-        set(1, click_state); // kCGMouseEventClickState
-        set(3, 0); // kCGMouseEventButtonNumber (left)
-        set(7, 3); // kCGMouseEventSubtype (NSEventSubtypeTouch)
+        set(0, step.phase); // kCGMouseEventNumber (gesture phase)
+        set(1, step.click_state); // kCGMouseEventClickState
+        set(3, step.button_number); // kCGMouseEventButtonNumber (left)
+        set(7, step.subtype); // kCGMouseEventSubtype (NSEventSubtypeTouch)
         set(40, pid as i64); // Chromium synthetic-event filter
         if window_id != 0 {
             set(51, window_id); // windowNumber (NSEvent bridge equivalent)
@@ -499,86 +595,51 @@ pub fn click_at_xy_chromium(
             set(92, window_id); // kCGMouseEventWindowUnderMousePointerThatCanHandleThisEvent
         }
         set(58, click_group_id); // click-group ID (gesture coalescing)
-        crate::input::skylight::set_window_location(ptr, local.0, local.1);
+        crate::input::skylight::set_window_location(
+            ptr,
+            step.skylight_window_location.0,
+            step.skylight_window_location.1,
+        );
         if flags != CGEventFlags::CGEventFlagNull {
             event.set_flags(flags);
         }
     };
 
-    let post = |event: &CGEvent| {
+    let post = |event: &CGEvent, step: &ChromiumClickRouteStep| {
         let ptr = event.as_ptr() as *mut std::ffi::c_void;
         if !crate::input::skylight::post_to_pid(pid as libc::pid_t, ptr, false) {
+            crate::input::skylight::set_window_location(
+                ptr,
+                step.public_window_location.0,
+                step.public_window_location.1,
+            );
             event.post_to_pid(pid as libc::pid_t);
         }
     };
 
-    // Step 1: mouseMoved at target (phase=2, clickState=0).
-    let move_event = CGEvent::new_mouse_event(
-        source.clone(),
-        CGEventType::MouseMoved,
-        target,
-        CGMouseButton::Left,
-    )
-    .map_err(|_| anyhow::anyhow!("mouseMoved event creation failed"))?;
-    stamp(&move_event, win_local, 0, 2);
-    post(&move_event);
-    std::thread::sleep(std::time::Duration::from_millis(15));
-
-    // Step 2: off-screen primer click — opens Chromium user-activation gate
-    // at an off-screen coordinate that can't hit any DOM element.
-    let primer_down = CGEvent::new_mouse_event(
-        source.clone(),
-        CGEventType::LeftMouseDown,
-        off_screen,
-        CGMouseButton::Left,
-    )
-    .map_err(|_| anyhow::anyhow!("primer down event creation failed"))?;
-    stamp(&primer_down, off_local, 1, 1);
-    post(&primer_down);
-    std::thread::sleep(std::time::Duration::from_millis(1));
-
-    let primer_up = CGEvent::new_mouse_event(
-        source.clone(),
-        CGEventType::LeftMouseUp,
-        off_screen,
-        CGMouseButton::Left,
-    )
-    .map_err(|_| anyhow::anyhow!("primer up event creation failed"))?;
-    stamp(&primer_up, off_local, 1, 2);
-    post(&primer_up);
-    // ≥1 frame so Chromium sees primer + target as separate gestures, not run-on.
-    std::thread::sleep(std::time::Duration::from_millis(100));
-
-    // Step 3: target click pair(s) with clickState stepped 1→N for double-click
-    // coalescing (Chromium renderer coalesces pairs into dblclick when state=1→2).
-    for pair_index in 1..=click_pairs {
-        let click_state = pair_index as i64;
-
-        let down = CGEvent::new_mouse_event(
+    for step in route_plan {
+        let (event_type, error_label) = match step.kind {
+            ChromiumClickEventKind::Move => (CGEventType::MouseMoved, "mouseMoved"),
+            ChromiumClickEventKind::Down if step.phase == 1 => {
+                (CGEventType::LeftMouseDown, "primer down")
+            }
+            ChromiumClickEventKind::Up if step.phase == 2 => {
+                (CGEventType::LeftMouseUp, "primer up")
+            }
+            ChromiumClickEventKind::Down => (CGEventType::LeftMouseDown, "target down"),
+            ChromiumClickEventKind::Up => (CGEventType::LeftMouseUp, "target up"),
+        };
+        let event = CGEvent::new_mouse_event(
             source.clone(),
-            CGEventType::LeftMouseDown,
-            target,
+            event_type,
+            CGPoint::new(step.event_location.0, step.event_location.1),
             CGMouseButton::Left,
         )
-        .map_err(|_| anyhow::anyhow!("target down event creation failed"))?;
-        stamp(&down, win_local, click_state, 3);
-        post(&down);
-        std::thread::sleep(std::time::Duration::from_millis(1));
-
-        let up = CGEvent::new_mouse_event(
-            source.clone(),
-            CGEventType::LeftMouseUp,
-            target,
-            CGMouseButton::Left,
-        )
-        .map_err(|_| anyhow::anyhow!("target up event creation failed"))?;
-        stamp(&up, win_local, click_state, 3);
-        post(&up);
-
-        if pair_index < click_pairs {
-            // ~80 ms between pairs — under the system double-click threshold,
-            // clear of coalescing back into pair N.
-            std::thread::sleep(std::time::Duration::from_millis(80));
+        .map_err(|_| anyhow::anyhow!("{error_label} event creation failed"))?;
+        stamp(&event, &step);
+        post(&event, &step);
+        if step.delay_after_ms > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(step.delay_after_ms));
         }
     }
 
@@ -1601,6 +1662,109 @@ fn parse_modifier_flags(modifiers: &[&str]) -> CGEventFlags {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capture_bound_background_route_preserves_nonzero_origin_hit() {
+        let frame = crate::tools::px_frame::WindowPxFrame {
+            bounds: crate::windows::WindowBounds {
+                x: 170.0,
+                y: 194.0,
+                width: 760.0,
+                height: 460.0,
+            },
+            scale: 2.0,
+        };
+        let capture_local = (394.0, 310.0);
+        let admitted_native = (capture_local.0 * frame.scale, capture_local.1 * frame.scale);
+        let (screen_x, screen_y, local_x, local_y) =
+            frame.to_screen(admitted_native.0, admitted_native.1);
+        assert_eq!((screen_x, screen_y), (564.0, 504.0));
+        assert_eq!((local_x, local_y), capture_local);
+
+        let plan = chromium_click_route_plan(screen_x, screen_y, local_x, local_y, 1);
+        assert_eq!(
+            plan,
+            vec![
+                ChromiumClickRouteStep {
+                    kind: ChromiumClickEventKind::Move,
+                    event_location: (564.0, 504.0),
+                    skylight_window_location: (564.0, 504.0),
+                    public_window_location: (394.0, 310.0),
+                    click_state: 0,
+                    phase: 2,
+                    button_number: 0,
+                    subtype: 3,
+                    delay_after_ms: 15,
+                },
+                ChromiumClickRouteStep {
+                    kind: ChromiumClickEventKind::Down,
+                    event_location: (-1.0, -1.0),
+                    skylight_window_location: (-1.0, -1.0),
+                    public_window_location: (-1.0, -1.0),
+                    click_state: 1,
+                    phase: 1,
+                    button_number: 0,
+                    subtype: 3,
+                    delay_after_ms: 1,
+                },
+                ChromiumClickRouteStep {
+                    kind: ChromiumClickEventKind::Up,
+                    event_location: (-1.0, -1.0),
+                    skylight_window_location: (-1.0, -1.0),
+                    public_window_location: (-1.0, -1.0),
+                    click_state: 1,
+                    phase: 2,
+                    button_number: 0,
+                    subtype: 3,
+                    delay_after_ms: 100,
+                },
+                ChromiumClickRouteStep {
+                    kind: ChromiumClickEventKind::Down,
+                    event_location: (564.0, 504.0),
+                    skylight_window_location: (564.0, 504.0),
+                    public_window_location: (394.0, 310.0),
+                    click_state: 1,
+                    phase: 3,
+                    button_number: 0,
+                    subtype: 3,
+                    delay_after_ms: 1,
+                },
+                ChromiumClickRouteStep {
+                    kind: ChromiumClickEventKind::Up,
+                    event_location: (564.0, 504.0),
+                    skylight_window_location: (564.0, 504.0),
+                    public_window_location: (394.0, 310.0),
+                    click_state: 1,
+                    phase: 3,
+                    button_number: 0,
+                    subtype: 3,
+                    delay_after_ms: 0,
+                },
+            ]
+        );
+
+        let screen_to_canvas = (-frame.bounds.x, -frame.bounds.y);
+        let unconverted_journal_point = (
+            capture_local.0 + screen_to_canvas.0,
+            capture_local.1 + screen_to_canvas.1,
+        );
+        assert_eq!(unconverted_journal_point, (224.0, 116.0));
+        assert!(!(292.0..=496.0).contains(&unconverted_journal_point.0));
+
+        let delivered = plan
+            .iter()
+            .find(|step| step.kind == ChromiumClickEventKind::Down && step.phase == 3)
+            .expect("target mouse-down step");
+        assert_eq!(delivered.skylight_window_location, (564.0, 504.0));
+        assert_eq!(delivered.public_window_location, (394.0, 310.0));
+        let skylight_journal_point = (
+            delivered.skylight_window_location.0 + screen_to_canvas.0,
+            delivered.skylight_window_location.1 + screen_to_canvas.1,
+        );
+        assert_eq!(skylight_journal_point, capture_local);
+        assert!((292.0..=496.0).contains(&skylight_journal_point.0));
+        assert!((132.0..=310.0).contains(&skylight_journal_point.1));
+    }
 
     #[test]
     fn foreground_drag_plan_is_one_coherent_gesture() {

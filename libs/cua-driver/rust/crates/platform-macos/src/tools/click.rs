@@ -913,8 +913,9 @@ impl Tool for ClickTool {
             // has no live frame — see px_frame's module docs for why there is
             // no screen-absolute fallback.
             //
-            // win_local_x/y: window-local logical-pixel coords needed for
-            // CGEventSetWindowLocation in the Chromium recipe.
+            // win_local_x/y: window-local logical-pixel coords used when the
+            // Chromium recipe falls back to public PID posting. Its SkyLight
+            // route uses the translated screen coordinates instead.
             let (screen_x, screen_y, win_local_x, win_local_y) = if let Some(wid) = window_id {
                 match super::px_frame::resolve_or_refuse(wid).await {
                     Ok(frame) => {
@@ -1170,10 +1171,10 @@ impl Tool for ClickTool {
                                 }
                                 // "left" (default) or anything else — preserve legacy left-click path.
                                 _ => {
-                                    // When we know the window_id, pass the window-local coordinates so
-                                    // `click_at_xy_with_window_local` can stamp `CGEventSetWindowLocation`
-                                    // and Chromium-specific fields (f40, f51, f58, f91, f92) onto events
-                                    // for better backgrounded-target delivery.
+                                    // When we know the window_id, use the targeted primitive so
+                                    // foreground delivery can stamp window-local coordinates and
+                                    // background delivery can retain the translated screen point
+                                    // while adding Chromium routing fields (f40, f51, f58, f91, f92).
                                     if let Some(wid) = window_id {
                                         return crate::input::mouse::click_at_xy_with_window_local(
                                             pid, screen_x, screen_y,

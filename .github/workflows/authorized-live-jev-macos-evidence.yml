@@ -446,21 +446,29 @@ jobs:
           } >> "$GITHUB_ENV"
           trap - EXIT INT TERM
 
-      - name: Install locked chooser and compile exact live test
+      - name: Install locked chooser with source-reviewed adapter and compile exact live test
         shell: bash
         run: |
           set -euo pipefail
           [[ "$(git -C jev-use-source rev-parse HEAD)" == "$CUA_JEV_SOURCE_SHA" ]]
           chooser_root="$GITHUB_WORKSPACE/jev-use-source/libs/cua-driver/examples/jev-use"
+          reviewed_adapter="$GITHUB_WORKSPACE/libs/cua-driver/examples/jev-use/python/jev_adapter.py"
+          installed_adapter="$chooser_root/python/jev_adapter.py"
+          [[ -f "$reviewed_adapter" && -f "$installed_adapter" ]]
+          cp "$reviewed_adapter" "$installed_adapter"
+          adapter_sha256="$(shasum -a 256 "$reviewed_adapter" | awk '{print $1}')"
+          [[ "$(shasum -a 256 "$installed_adapter" | awk '{print $1}')" == "$adapter_sha256" ]]
           uv sync --frozen --project "$chooser_root"
           echo "CUA_FIXED_CHOOSER_PROGRAM=$chooser_root/.venv/bin/python" >> "$GITHUB_ENV"
           echo "CUA_FIXED_CHOOSER_SCRIPT=$chooser_root/python/choose_action.py" >> "$GITHUB_ENV"
+          echo "CUA_FIXED_CHOOSER_ADAPTER=$installed_adapter" >> "$GITHUB_ENV"
+          echo "CUA_FIXED_CHOOSER_ADAPTER_SHA256=$adapter_sha256" >> "$GITHUB_ENV"
           messages="$RUNNER_TEMP/live-test-build.jsonl"
           cargo test --manifest-path libs/cua-driver/rust/Cargo.toml -p cua-driver \
             --test authorized_live_jev_use_demo_test --locked --no-run \
             --message-format=json-render-diagnostics > "$messages"
           python3 - "$messages" "$GITHUB_ENV" <<'PY'
-          import hashlib, json, pathlib, sys
+          import hashlib, json, pathlib, re, subprocess, sys
           binaries = []
           for line in pathlib.Path(sys.argv[1]).read_text().splitlines():
               try: value = json.loads(line)
@@ -468,8 +476,20 @@ jobs:
               if value.get("reason") == "compiler-artifact" and value.get("target", {}).get("name") == "authorized_live_jev_use_demo_test" and value.get("executable"):
                   binaries.append(pathlib.Path(value["executable"]).resolve())
           assert len(binaries) == 1 and binaries[0].is_file()
+          listing = subprocess.run(
+              [str(binaries[0]), "--list"], check=True, capture_output=True, text=True
+          ).stdout.splitlines()
+          available = [line.removesuffix(": test") for line in listing if line.endswith(": test")]
+          def resolve(short_name):
+              matches = [name for name in available if name == short_name or name.endswith(f"::{short_name}")]
+              assert len(matches) == 1, f"required live test {short_name!r} resolved to {matches!r}"
+              assert re.fullmatch(r"[A-Za-z0-9_]+(?:::[A-Za-z0-9_]+)*", matches[0]), matches[0]
+              return matches[0]
+          window_test = resolve("authorized_visual_only_window_demo")
+          desktop_test = resolve("authorized_visual_only_primary_desktop_demo")
+          negative_test = resolve("authorized_live_jev_no_matching_action_control")
           with pathlib.Path(sys.argv[2]).open("a") as output:
-              output.write(f"CUA_LIVE_TEST_BINARY={binaries[0]}\nCUA_LIVE_TEST_BINARY_SHA256={hashlib.sha256(binaries[0].read_bytes()).hexdigest()}\n")
+              output.write(f"CUA_LIVE_TEST_BINARY={binaries[0]}\nCUA_LIVE_TEST_BINARY_SHA256={hashlib.sha256(binaries[0].read_bytes()).hexdigest()}\nCUA_LIVE_WINDOW_TEST={window_test}\nCUA_LIVE_DESKTOP_TEST={desktop_test}\nCUA_LIVE_NEGATIVE_TEST={negative_test}\n")
           PY
 
       - name: Run signed candidate with deterministic mock chooser before secret use
@@ -478,8 +498,8 @@ jobs:
           CUA_JEV_MOCK_DEMO: "1"
           CUA_PERCEPTION_EVIDENCE_DIR: ${{ runner.temp }}/perception-evidence/mock
         run: |
-          "$CUA_LIVE_TEST_BINARY" --ignored --exact authorized_visual_only_window_demo --nocapture
-          "$CUA_LIVE_TEST_BINARY" --ignored --exact authorized_visual_only_primary_desktop_demo --nocapture
+          "$CUA_LIVE_TEST_BINARY" --ignored --exact "$CUA_LIVE_WINDOW_TEST" --nocapture
+          "$CUA_LIVE_TEST_BINARY" --ignored --exact "$CUA_LIVE_DESKTOP_TEST" --nocapture
 
       - name: Run bounded live Jev chooser against signed arm64 candidate
         shell: bash
@@ -534,15 +554,24 @@ jobs:
           [[ "$(git rev-parse HEAD)" == "$CUA_E2E_SOURCE_SHA" ]]
           [[ "$(git -C jev-use-source rev-parse HEAD)" == "$CUA_JEV_SOURCE_SHA" ]]
           [[ "$(shasum -a 256 "$CUA_LIVE_TEST_BINARY" | awk '{print $1}')" == "$CUA_LIVE_TEST_BINARY_SHA256" ]]
+          [[ "$CUA_LIVE_WINDOW_TEST" == *authorized_visual_only_window_demo ]]
+          [[ "$CUA_LIVE_DESKTOP_TEST" == *authorized_visual_only_primary_desktop_demo ]]
+          [[ "$CUA_LIVE_NEGATIVE_TEST" == *authorized_live_jev_no_matching_action_control ]]
+          [[ "$(shasum -a 256 "$GITHUB_WORKSPACE/libs/cua-driver/examples/jev-use/python/jev_adapter.py" | awk '{print $1}')" == "$CUA_FIXED_CHOOSER_ADAPTER_SHA256" ]]
+          [[ "$(shasum -a 256 "$CUA_FIXED_CHOOSER_ADAPTER" | awk '{print $1}')" == "$CUA_FIXED_CHOOSER_ADAPTER_SHA256" ]]
           export TYPESAFE_API_KEY="$typesafe_key"
           CUA_JEV_LIVE=1 \
           CUA_JEV_CHOOSER_PROGRAM="$CUA_FIXED_CHOOSER_PROGRAM" \
           CUA_JEV_CHOOSER_SCRIPT="$CUA_FIXED_CHOOSER_SCRIPT" \
-            "$CUA_LIVE_TEST_BINARY" --ignored --exact authorized_visual_only_window_demo --nocapture
+            "$CUA_LIVE_TEST_BINARY" --ignored --exact "$CUA_LIVE_NEGATIVE_TEST" --nocapture
           CUA_JEV_LIVE=1 \
           CUA_JEV_CHOOSER_PROGRAM="$CUA_FIXED_CHOOSER_PROGRAM" \
           CUA_JEV_CHOOSER_SCRIPT="$CUA_FIXED_CHOOSER_SCRIPT" \
-            "$CUA_LIVE_TEST_BINARY" --ignored --exact authorized_visual_only_primary_desktop_demo --nocapture
+            "$CUA_LIVE_TEST_BINARY" --ignored --exact "$CUA_LIVE_WINDOW_TEST" --nocapture
+          CUA_JEV_LIVE=1 \
+          CUA_JEV_CHOOSER_PROGRAM="$CUA_FIXED_CHOOSER_PROGRAM" \
+          CUA_JEV_CHOOSER_SCRIPT="$CUA_FIXED_CHOOSER_SCRIPT" \
+            "$CUA_LIVE_TEST_BINARY" --ignored --exact "$CUA_LIVE_DESKTOP_TEST" --nocapture
           clear_typesafe_key
           trap - EXIT
 

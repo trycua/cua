@@ -13,8 +13,11 @@ use std::path::PathBuf;
 const MAX_REGIONS: usize = 64;
 const MAX_SAFE_ID_BYTES: usize = 96;
 const MAX_CHOOSER_ID_BYTES: usize = 64;
+const MAX_CANDIDATE_DESCRIPTION_BYTES: usize = 256;
 const MIN_CONFIDENCE: f64 = 0.80;
-const CHOOSER_GOAL: &str = "Select the supplied action candidate for the uniquely host-validated exact painted Send region. Select reobserve or abstain only when no supplied action candidate meets that condition.";
+const CHOOSER_GOAL: &str = "Choose exactly one candidate by applying its condition to the supplied state. The host alone authorizes any selected action.";
+const REOBSERVE_DESCRIPTION: &str = "Select only when no action candidate condition matches and no regions are supplied. Do not act; request one fresh bounded observation.";
+const ABSTAIN_DESCRIPTION: &str = "Select only when no action candidate condition matches and one or more regions are supplied. Do not act; stop.";
 
 #[derive(Clone, Debug, PartialEq)]
 struct ClickAction {
@@ -121,7 +124,7 @@ fn safe_text(value: &str, maximum: usize) -> bool {
 
 fn send_action_description(region_id: &str, kind: &str, text: &str, confidence: f64) -> String {
     format!(
-        "Activate region id={region_id}, kind={kind}, exact_text={text:?}, confidence={confidence}."
+        "Select only if exactly one supplied region has id={region_id}, kind={kind}, exact_text={text:?}, confidence={confidence}, and it is the sole exact Send match at or above {MIN_CONFIDENCE:.2}."
     )
 }
 
@@ -241,17 +244,23 @@ fn bounded_candidates(
     candidates.extend([
         Candidate {
             id: "reobserve".into(),
-            description: "Discard this decision set and capture a fresh observation.".into(),
+            description: REOBSERVE_DESCRIPTION.into(),
             region_id: None,
             action: None,
         },
         Candidate {
             id: "abstain".into(),
-            description: "Stop without acting when no proposed action is safe.".into(),
+            description: ABSTAIN_DESCRIPTION.into(),
             region_id: None,
             action: None,
         },
     ]);
+    if candidates
+        .iter()
+        .any(|candidate| !safe_text(&candidate.description, MAX_CANDIDATE_DESCRIPTION_BYTES))
+    {
+        return Err("candidate description is empty, unsafe, or exceeds 256 bytes".into());
+    }
     Ok((candidates, compact))
 }
 
@@ -280,13 +289,19 @@ fn choice_request(
     capture_id: &str,
     regions: &[CompactRegion],
     candidates: &[Candidate],
-) -> ChoiceRequest {
+) -> Result<ChoiceRequest, String> {
+    if candidates
+        .iter()
+        .any(|candidate| !safe_text(&candidate.description, MAX_CANDIDATE_DESCRIPTION_BYTES))
+    {
+        return Err("candidate description is empty, unsafe, or exceeds 256 bytes".into());
+    }
     let action_region_ids = candidates
         .iter()
         .filter(|candidate| candidate.action.is_some())
         .filter_map(|candidate| candidate.region_id.as_deref())
         .collect::<BTreeSet<_>>();
-    ChoiceRequest {
+    Ok(ChoiceRequest {
         schema: "cua.jev_choice_request_v1",
         goal: CHOOSER_GOAL,
         capture_id: capture_id.into(),
@@ -303,7 +318,7 @@ fn choice_request(
                 description: candidate.description.clone(),
             })
             .collect(),
-    }
+    })
 }
 
 fn choice_failure_diagnostic(response: &ChoiceResponse, candidates: &[Candidate]) -> String {
@@ -442,7 +457,8 @@ fn chooser_request_matches_fixture_contract_and_contains_no_action_arguments() {
     });
     let (candidates, regions) = bounded_candidates(&payload, "capture-1").unwrap();
     assert_eq!(regions.len(), 2, "host must retain the full parsed set");
-    let request = serde_json::to_value(choice_request("capture-1", &regions, &candidates)).unwrap();
+    let request =
+        serde_json::to_value(choice_request("capture-1", &regions, &candidates).unwrap()).unwrap();
     assert_eq!(request["schema"], "cua.jev_choice_request_v1");
     assert_eq!(request["goal"], CHOOSER_GOAL);
     assert_eq!(
@@ -462,6 +478,16 @@ fn chooser_request_matches_fixture_contract_and_contains_no_action_arguments() {
         ])
     );
     assert_eq!(request["candidates"].as_array().unwrap().len(), 3);
+    for candidate in request["candidates"].as_array().unwrap() {
+        assert!(
+            candidate["description"].as_str().unwrap().len() <= MAX_CANDIDATE_DESCRIPTION_BYTES
+        );
+    }
+    assert_eq!(
+        request["candidates"][1]["description"],
+        REOBSERVE_DESCRIPTION
+    );
+    assert_eq!(request["candidates"][2]["description"], ABSTAIN_DESCRIPTION);
     assert_eq!(
         request["regions"][0]
             .as_object()
@@ -500,11 +526,9 @@ fn chooser_request_matches_fixture_contract_and_contains_no_action_arguments() {
     sensitive_action.capture_id = "sensitive-action-capture".into();
     sensitive_action.x = 12345.0;
     sensitive_action.y = 67890.0;
-    let sensitive_request = serde_json::to_string(&choice_request(
-        "capture-1",
-        &regions,
-        &sensitive_candidates,
-    ))
+    let sensitive_request = serde_json::to_string(
+        &choice_request("capture-1", &regions, &sensitive_candidates).unwrap(),
+    )
     .unwrap();
     for forbidden in [
         "tool",
@@ -526,6 +550,15 @@ fn chooser_request_matches_fixture_contract_and_contains_no_action_arguments() {
     let oversized_capture_id = "a".repeat(MAX_SAFE_ID_BYTES + 1);
     payload["capture"]["capture_id"] = json!(oversized_capture_id);
     assert!(bounded_candidates(&payload, &oversized_capture_id).is_err());
+
+    let mut oversized_description_candidates = candidates;
+    oversized_description_candidates[0].description =
+        "a".repeat(MAX_CANDIDATE_DESCRIPTION_BYTES + 1);
+    assert!(
+        choice_request("capture-1", &regions, &oversized_description_candidates)
+            .unwrap_err()
+            .contains("exceeds 256 bytes")
+    );
 }
 
 #[test]
@@ -683,6 +716,7 @@ fn candidate_policy_refuses_ambiguous_and_non_send_regions() {
     );
     assert!(require_unique_actionable_send(&candidates, regions.len()).is_err());
     assert!(choice_request("capture-1", &regions, &candidates)
+        .unwrap()
         .regions
         .is_empty());
 
@@ -724,6 +758,7 @@ fn cancel_counterfactual_is_not_actionable_and_abstain_fails_closed() {
     );
     assert_eq!(
         choice_request("capture-1", &regions, &candidates)
+            .unwrap()
             .regions
             .iter()
             .map(|region| region.id.as_str())
@@ -1490,7 +1525,8 @@ mod e2e {
             bounded_candidates(parsed.structured(), &capture_id).expect("bounded candidates");
         require_unique_actionable_send(&candidates, regions.len())
             .unwrap_or_else(|error| panic!("perception candidate contract failed: {error}"));
-        let request = choice_request(&capture_id, &regions, &candidates);
+        let request =
+            choice_request(&capture_id, &regions, &candidates).expect("bounded chooser request");
         let (choice_response, selected_candidate) = choose(&gate.choice, &request, &candidates);
         if matches!(&gate.choice, ChoiceConfig::Live { .. }) {
             assert!(
@@ -1500,7 +1536,7 @@ mod e2e {
         }
         let choice = selected_candidate.action.clone().unwrap_or_else(|| {
             panic!(
-                "demo chooser did not select the uniquely host-validated Send action; {}",
+                "demo chooser did not select the host-authorized exact Send action; {}",
                 choice_failure_diagnostic(&choice_response, &candidates)
             )
         });
@@ -1891,6 +1927,70 @@ mod e2e {
         assert_eq!(
             exact_fixture_window(&windows, 42, FIXTURE_TEST_TITLE).unwrap(),
             Some((u64::MAX, FIXTURE_TEST_TITLE.to_owned()))
+        );
+    }
+
+    #[test]
+    #[ignore = "requires the reviewed live Jev chooser and protected credential"]
+    fn authorized_live_jev_no_matching_action_control() {
+        let config = choice_config_from(
+            std::env::var("CUA_JEV_LIVE").ok().as_deref(),
+            std::env::var("CUA_JEV_MOCK_DEMO").ok().as_deref(),
+            std::env::var("CUA_JEV_CHOOSER_PROGRAM").ok().as_deref(),
+            std::env::var("CUA_JEV_CHOOSER_SCRIPT").ok().as_deref(),
+        )
+        .expect("valid live chooser configuration");
+        assert!(matches!(config, ChoiceConfig::Live { .. }));
+        let candidates = vec![
+            Candidate {
+                id: "region:save".into(),
+                description: send_action_description("save", "text", "Send", 0.98),
+                region_id: Some("save".into()),
+                action: Some(ClickAction {
+                    capture_id: "synthetic-negative-1".into(),
+                    x: 50.0,
+                    y: 25.0,
+                }),
+            },
+            Candidate {
+                id: "reobserve".into(),
+                description: REOBSERVE_DESCRIPTION.into(),
+                region_id: None,
+                action: None,
+            },
+            Candidate {
+                id: "abstain".into(),
+                description: ABSTAIN_DESCRIPTION.into(),
+                region_id: None,
+                action: None,
+            },
+        ];
+        let regions = vec![CompactRegion {
+            id: "save".into(),
+            kind: "text".into(),
+            bounds: RegionBounds {
+                x: 10,
+                y: 10,
+                width: 80,
+                height: 30,
+            },
+            text: Some("Save".into()),
+            label: None,
+            confidence: 0.98,
+            interactive: true,
+        }];
+        let request = choice_request("synthetic-negative-1", &regions, &candidates)
+            .expect("bounded synthetic negative request");
+        let (response, selected) = choose(&config, &request, &candidates);
+        assert_eq!(
+            selected.id,
+            "abstain",
+            "no action condition matches the supplied state; {}",
+            choice_failure_diagnostic(&response, &candidates)
+        );
+        assert!(
+            selected.action.is_none(),
+            "negative control must never resolve to an action"
         );
     }
 

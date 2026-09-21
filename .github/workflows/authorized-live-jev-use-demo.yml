@@ -460,7 +460,7 @@ jobs:
               stream.write(f"CUA_PERCEPTION_MODEL={supplied_model_path}\nCUA_RUNNER_OS_NAME={runner_identity['name']}\nCUA_RUNNER_OS_VERSION={runner_identity['version']}\nCUA_RUNNER_OS_ARCH={runner_identity['arch']}\n")
           '@ | python - $inspect $status $catalog $installed $env:GITHUB_ENV $driver $measurements
           if ($LASTEXITCODE -ne 0) { throw 'candidate measurement failed' }
-      - name: Install the locked reviewed chooser and resolve its interpreter
+      - name: Install the locked reviewed chooser with the source-reviewed adapter
         shell: pwsh
         env:
           EXPECTED_JEV_SHA: ${{ needs.source.outputs.jev_sha }}
@@ -470,13 +470,21 @@ jobs:
           $chooserRoot = Join-Path $chooserRepo 'libs/cua-driver/examples/jev-use'
           if ((git -C $chooserRepo rev-parse HEAD).Trim() -ne $env:EXPECTED_JEV_SHA) { throw 'chooser checkout does not match jev_source_sha' }
           $script = Join-Path $chooserRoot 'python/choose_action.py'
+          $adapter = Join-Path $env:GITHUB_WORKSPACE 'libs/cua-driver/examples/jev-use/python/jev_adapter.py'
+          $installedAdapter = Join-Path $chooserRoot 'python/jev_adapter.py'
           if (-not (Test-Path $script -PathType Leaf)) { throw 'reviewed live chooser contract is unavailable' }
+          if (-not (Test-Path $adapter -PathType Leaf) -or -not (Test-Path $installedAdapter -PathType Leaf)) { throw 'reviewed live chooser adapter is unavailable' }
+          Copy-Item -LiteralPath $adapter -Destination $installedAdapter -Force
+          $adapterSha256 = (Get-FileHash $adapter -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ((Get-FileHash $installedAdapter -Algorithm SHA256).Hash.ToLowerInvariant() -ne $adapterSha256) { throw 'source-reviewed chooser adapter copy does not match' }
           uv sync --frozen --project $chooserRoot
           if ($LASTEXITCODE -ne 0) { throw 'locked chooser install failed' }
           $program = if ($IsWindows) { Join-Path $chooserRoot '.venv/Scripts/python.exe' } else { Join-Path $chooserRoot '.venv/bin/python' }
           if (-not (Test-Path $program -PathType Leaf)) { throw 'chooser interpreter is unavailable' }
           "CUA_FIXED_CHOOSER_PROGRAM=$program" >> $env:GITHUB_ENV
           "CUA_FIXED_CHOOSER_SCRIPT=$script" >> $env:GITHUB_ENV
+          "CUA_FIXED_CHOOSER_ADAPTER=$installedAdapter" >> $env:GITHUB_ENV
+          "CUA_FIXED_CHOOSER_ADAPTER_SHA256=$adapterSha256" >> $env:GITHUB_ENV
       - name: Compile and measure the exact live test binary without credentials
         shell: pwsh
         run: |
@@ -502,8 +510,9 @@ jobs:
               return matches[0]
           window_test = resolve("authorized_visual_only_window_demo")
           desktop_test = resolve("authorized_visual_only_primary_desktop_demo")
+          negative_test = resolve("authorized_live_jev_no_matching_action_control")
           with pathlib.Path(os.environ["GITHUB_ENV"]).open("a") as stream:
-              stream.write(f"CUA_LIVE_TEST_BINARY={binary}\nCUA_LIVE_TEST_BINARY_SHA256={hashlib.sha256(binary.read_bytes()).hexdigest()}\nCUA_LIVE_WINDOW_TEST={window_test}\nCUA_LIVE_DESKTOP_TEST={desktop_test}\n")
+              stream.write(f"CUA_LIVE_TEST_BINARY={binary}\nCUA_LIVE_TEST_BINARY_SHA256={hashlib.sha256(binary.read_bytes()).hexdigest()}\nCUA_LIVE_WINDOW_TEST={window_test}\nCUA_LIVE_DESKTOP_TEST={desktop_test}\nCUA_LIVE_NEGATIVE_TEST={negative_test}\n")
           '@ | python - $messages
           if ($LASTEXITCODE -ne 0) { throw 'live test binary measurement failed' }
       - name: Verify Linux X11 desktop survived setup steps
@@ -572,8 +581,11 @@ jobs:
           if ((git -C (Join-Path $env:GITHUB_WORKSPACE 'jev-use-source') rev-parse HEAD).Trim() -ne '${{ needs.source.outputs.jev_sha }}') { throw 'chooser source changed after setup' }
           if ((Get-FileHash $env:CUA_LIVE_TEST_BINARY -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:CUA_LIVE_TEST_BINARY_SHA256) { throw 'live test binary changed after measurement' }
           if (-not (Test-Path $env:CUA_FIXED_CHOOSER_SCRIPT -PathType Leaf)) { throw 'chooser script disappeared after setup' }
+          if ((Get-FileHash $env:CUA_FIXED_CHOOSER_ADAPTER -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:CUA_FIXED_CHOOSER_ADAPTER_SHA256) { throw 'source-reviewed chooser adapter changed after setup' }
           $env:CUA_JEV_LIVE = '1'; $env:CUA_JEV_CHOOSER_PROGRAM = $env:CUA_FIXED_CHOOSER_PROGRAM; $env:CUA_JEV_CHOOSER_SCRIPT = $env:CUA_FIXED_CHOOSER_SCRIPT; $env:TYPESAFE_API_KEY = $key
           try {
+            & $env:CUA_LIVE_TEST_BINARY --ignored --exact $env:CUA_LIVE_NEGATIVE_TEST --nocapture
+            if ($LASTEXITCODE -ne 0) { throw 'live Jev no-matching-action control failed' }
             & $env:CUA_LIVE_TEST_BINARY --ignored --exact $env:CUA_LIVE_WINDOW_TEST --nocapture
             if ($LASTEXITCODE -ne 0) { throw 'live Jev window demo failed' }
             & $env:CUA_LIVE_TEST_BINARY --ignored --exact $env:CUA_LIVE_DESKTOP_TEST --nocapture

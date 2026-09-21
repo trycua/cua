@@ -24,11 +24,10 @@ export async function chooseBoundedWithTypeSafe(
 ): Promise<ProviderChoice> {
   const response = await client.systemOne({
     state: {
-      goal,
       observation: JSON.stringify(observation),
     },
     questions: {
-      candidate: choice('Select exactly one supplied candidate ID.', { ...criteria }),
+      candidate: choice(goal, { ...criteria }),
     },
   });
   const answer = response.answers.candidate;

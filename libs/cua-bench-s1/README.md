@@ -79,7 +79,29 @@ single-token letter, capping it at 26 options per task -- most real chess
 positions exceed that, so its chess numbers cover the 15 positions (of 800)
 that fit.
 
-<!-- TODO: latency and memory-footprint figures per checkpoint go here once a standardized measurement setup (hardware, batch size) is finalized. -->
+### Latency
+
+Mean per-task inference latency (seconds), from the same eval runs as the
+results table above. Hardware/batch-size setup is not standardized across
+these runs (`jev` is a network round-trip to a hosted API; `djev`/`semif`
+ran locally on GPU; `cua-s1-nano-0.1` is CPU-fast enough that GPU placement
+barely matters) -- treat this as "what each run actually measured," not a
+controlled benchmark. `—` = not measured.
+
+| Split / modality | `jev` | `djev` | `semif` (0-shot) | `cua-s1-nano-0.1` | `cua-s1-4b-0.1` |
+| --- | --- | --- | --- | --- | --- |
+| 6 core families, text, hard cross-dataset | 0.556 | 0.770 | — | 0.003 | 0.121-0.128 |
+| 6 core families, multimodal, same-distribution | n/a | 1.195 | 0.293 | 0.222 | 0.353 |
+| `safety_gate`, text | 0.553 | — | 1.078 | — | — |
+| `safety_gate`, multimodal | n/a | — | 1.557 | — | — |
+| `chess`, text (N=15, <=26-option subset) | — | — | — | 0.003 | 1.174 |
+| `chess`, multimodal (N=15, <=26-option subset) | n/a | — | — | 0.030 | 0.729 |
+| `general_decision` (external `jevbench`) | 0.597 | 0.858 | 0.157 | n/a | — |
+
+`cua-s1-4b-0.1`'s core-families text latency spans two nearly-identical reruns
+of the same eval (0.121s and 0.128s); both are reported since neither is
+clearly the canonical one. `cua-s1-nano-0.1`'s sub-10ms text latency reflects
+its much smaller, from-scratch architecture rather than a hardware advantage.
 
 ## Task families
 

@@ -14,6 +14,24 @@ SPEC.loader.exec_module(fixture)
 
 
 class VisualOnlyCanvasTests(unittest.TestCase):
+    def test_send_label_font_pixels_are_bounded(self):
+        self.assertEqual(fixture.send_label_font_pixels("1"), 1)
+        self.assertEqual(fixture.send_label_font_pixels("48"), 48)
+        for value in ("0", "49", "not-an-integer"):
+            with self.subTest(value=value), self.assertRaises(
+                fixture.argparse.ArgumentTypeError
+            ):
+                fixture.send_label_font_pixels(value)
+
+    def test_send_label_font_override_does_not_change_other_cards(self):
+        self.assertEqual(fixture.card_label_font_pixels("send", 48), 48)
+        self.assertEqual(
+            fixture.card_label_font_pixels("save", 48), fixture.CARD_LABEL_FONT_PIXELS
+        )
+        self.assertEqual(
+            fixture.card_label_font_pixels("cancel", 48), fixture.CARD_LABEL_FONT_PIXELS
+        )
+
     def test_hit_testing_uses_painted_geometry(self):
         self.assertEqual(fixture.card_at(174, 220), "save")
         self.assertEqual(fixture.card_at(394, 220), "send")

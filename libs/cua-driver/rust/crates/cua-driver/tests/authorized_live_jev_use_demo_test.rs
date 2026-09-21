@@ -847,7 +847,7 @@ mod e2e {
         format!("{FIXTURE_TITLE_PREFIX} [{session_label}:{}]", scope.slug())
     }
 
-    fn fixture_command(journal_url: &str, title: &str) -> Command {
+    fn fixture_command(journal_url: &str, title: &str, scope: DemoScope) -> Command {
         #[cfg(target_os = "windows")]
         let mut command = {
             let mut command = Command::new("py");
@@ -862,7 +862,35 @@ mod e2e {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::inherit());
+        if matches!(scope, DemoScope::PrimaryDesktop) {
+            command.args(["--send-label-font-pixels", "48"]);
+        }
         command
+    }
+
+    #[test]
+    fn fixture_command_enlarges_only_the_primary_desktop_send_label() {
+        let window_args =
+            fixture_command("http://127.0.0.1:1234/state", "fixture", DemoScope::Window)
+                .get_args()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect::<Vec<_>>();
+        let desktop_args = fixture_command(
+            "http://127.0.0.1:1234/state",
+            "fixture",
+            DemoScope::PrimaryDesktop,
+        )
+        .get_args()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+
+        assert!(!window_args
+            .iter()
+            .any(|arg| arg == "--send-label-font-pixels"));
+        assert_eq!(
+            &desktop_args[desktop_args.len() - 2..],
+            ["--send-label-font-pixels", "48"]
+        );
     }
 
     fn wait_until(mut predicate: impl FnMut() -> bool, message: &str) {
@@ -1161,7 +1189,7 @@ mod e2e {
 
         let journal = FixtureJournal::start();
         let fixture_title = fixture_title(&gate.session_label, scope);
-        let fixture = spawn_in_job(&mut fixture_command(journal.url(), &fixture_title))
+        let fixture = spawn_in_job(&mut fixture_command(journal.url(), &fixture_title, scope))
             .expect("start canvas fixture");
         wait_until(
             || journal.snapshot()["ready"].as_bool() == Some(true),

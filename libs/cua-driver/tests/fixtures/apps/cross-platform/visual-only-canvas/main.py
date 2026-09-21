@@ -20,6 +20,8 @@ import urllib.request
 WIDTH = 760
 HEIGHT = 460
 CARD_LABEL_FONT_PIXELS = 32
+MIN_SEND_LABEL_FONT_PIXELS = 1
+MAX_SEND_LABEL_FONT_PIXELS = 48
 DEFAULT_TITLE = "Cua Visual-Only Canvas Fixture"
 X11_DISCOVERY_ATTEMPTS = 20
 X11_DISCOVERY_INTERVAL_SECONDS = 0.05
@@ -28,6 +30,23 @@ CARDS = (
     {"id": "send", "label": "Send", "bounds": (292, 132, 496, 310), "color": "#1e8b99"},
     {"id": "cancel", "label": "Cancel", "bounds": (512, 132, 716, 310), "color": "#6f8f3d"},
 )
+
+
+def send_label_font_pixels(value: str) -> int:
+    try:
+        pixels = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("send label font pixels must be an integer") from error
+    if not MIN_SEND_LABEL_FONT_PIXELS <= pixels <= MAX_SEND_LABEL_FONT_PIXELS:
+        raise argparse.ArgumentTypeError(
+            "send label font pixels must be between "
+            f"{MIN_SEND_LABEL_FONT_PIXELS} and {MAX_SEND_LABEL_FONT_PIXELS}"
+        )
+    return pixels
+
+
+def card_label_font_pixels(card_id: str, send_pixels: int) -> int:
+    return send_pixels if card_id == "send" else CARD_LABEL_FONT_PIXELS
 
 
 def card_at(x: int, y: int) -> Optional[str]:
@@ -221,8 +240,14 @@ def publish_x11_owner(
 
 
 class VisualFixture:
-    def __init__(self, journal_url: str, title: str = DEFAULT_TITLE) -> None:
+    def __init__(
+        self,
+        journal_url: str,
+        title: str = DEFAULT_TITLE,
+        send_pixels: int = CARD_LABEL_FONT_PIXELS,
+    ) -> None:
         self.journal_url = journal_url
+        self.send_label_font_pixels = send_label_font_pixels(str(send_pixels))
         self.selected: Optional[str] = None
         self.action_count = 0
         self.root = tk.Tk()
@@ -267,7 +292,11 @@ class VisualFixture:
                 bottom - 28,
                 text=card["label"],
                 fill="#fff8e8",
-                font=("Helvetica", -CARD_LABEL_FONT_PIXELS, "bold"),
+                font=(
+                    "Helvetica",
+                    -card_label_font_pixels(str(card["id"]), self.send_label_font_pixels),
+                    "bold",
+                ),
             )
         status = "WAITING FOR A VISUAL CHOICE" if self.selected is None else f"SELECTED: {self.selected.upper()}"
         self.canvas.create_text(380, 386, text=status, fill="#172b36", font=("Helvetica", 15, "bold"))
@@ -302,16 +331,26 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--journal-url")
     parser.add_argument("--title", default=DEFAULT_TITLE)
+    parser.add_argument(
+        "--send-label-font-pixels",
+        default=CARD_LABEL_FONT_PIXELS,
+        type=send_label_font_pixels,
+    )
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     if args.self_test:
         assert args.title
         assert CARD_LABEL_FONT_PIXELS == 32
+        assert send_label_font_pixels("48") == MAX_SEND_LABEL_FONT_PIXELS
+        assert card_label_font_pixels("send", args.send_label_font_pixels) == args.send_label_font_pixels
+        assert card_label_font_pixels("save", args.send_label_font_pixels) == CARD_LABEL_FONT_PIXELS
+        assert card_label_font_pixels("cancel", args.send_label_font_pixels) == CARD_LABEL_FONT_PIXELS
         for card in CARDS:
             left, _, right, _ = card["bounds"]
             label = str(card["label"])
             assert label
-            assert len(label) * CARD_LABEL_FONT_PIXELS <= right - left
+            pixels = card_label_font_pixels(str(card["id"]), args.send_label_font_pixels)
+            assert len(label) * pixels <= right - left
         assert card_at(174, 220) == "save"
         assert card_at(394, 220) == "send"
         assert card_at(614, 220) == "cancel"
@@ -321,7 +360,7 @@ def main() -> int:
     if not args.journal_url:
         parser.error("--journal-url is required unless --self-test is used")
     validate_journal_url(args.journal_url)
-    VisualFixture(args.journal_url, args.title).run()
+    VisualFixture(args.journal_url, args.title, args.send_label_font_pixels).run()
     return 0
 
 

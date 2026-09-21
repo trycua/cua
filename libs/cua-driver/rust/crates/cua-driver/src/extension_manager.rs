@@ -21,10 +21,7 @@ use std::io::{Read, Seek, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
-#[cfg(any(windows, test))]
-use std::time::Duration;
-#[cfg(windows)]
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 #[cfg(windows)]
 use cua_driver_core::perception_client::containment::{
@@ -89,6 +86,8 @@ const REVIEW_PUBLIC_KEY_BASE64: &str = env!(
 const PERCEPTION_ID: &str = "cua-perception";
 const PERCEPTION_RUNTIME_CONTRACT: &str = "metadata/runtime-contract.json";
 const PERCEPTION_MODEL_MANIFEST_NAME: &str = "model-manifest.json";
+const EXTENSION_LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(50);
+const EXTENSION_LOCK_RETRY_WINDOW: Duration = Duration::from_secs(1);
 #[cfg(any(windows, test))]
 const WINDOWS_ACL_LEASE_RETRY_INTERVAL: Duration = Duration::from_millis(50);
 
@@ -1997,8 +1996,14 @@ impl ExtensionStore {
         let lock_dir = ensure_private_subdirectory(&root, ".locks")?;
         let lock_name = format!("{id}.lock");
         let file = open_lock_file_at(&lock_dir, &lock_name)?;
-        file.try_lock_exclusive()
-            .with_context(|| format!("extension {id} is already being modified"))?;
+        let started = Instant::now();
+        acquire_extension_lock_with(
+            EXTENSION_LOCK_RETRY_WINDOW,
+            || started.elapsed(),
+            std::thread::sleep,
+            || file.try_lock_exclusive(),
+        )
+        .with_context(|| format!("extension {id} is already being modified"))?;
         #[cfg(windows)]
         let windows_acl_file = {
             let acl_name = windows_acl_lease_name(id);
@@ -3974,6 +3979,29 @@ fn open_lock_file_at(dir: &Dir, name: &str) -> Result<fs::File> {
     }
 }
 
+fn acquire_extension_lock_with(
+    retry_window: Duration,
+    mut elapsed: impl FnMut() -> Duration,
+    mut sleep: impl FnMut(Duration),
+    mut try_lock: impl FnMut() -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    loop {
+        match try_lock() {
+            Ok(()) => return Ok(()),
+            Err(cause)
+                if cause.kind() == std::io::ErrorKind::WouldBlock
+                    || cause.raw_os_error() == fs2::lock_contended_error().raw_os_error() =>
+            {
+                if elapsed() >= retry_window {
+                    return Err(cause);
+                }
+                sleep(EXTENSION_LOCK_RETRY_INTERVAL);
+            }
+            Err(cause) => return Err(cause),
+        }
+    }
+}
+
 #[cfg(any(windows, test))]
 fn windows_acl_lease_name(id: &str) -> String {
     format!("{id}.runtime-acl.lock")
@@ -4799,6 +4827,54 @@ mod tests {
 
         assert_eq!(attempts.get(), 3);
         assert_eq!(sleeps.get(), 2);
+    }
+
+    #[test]
+    fn extension_lock_retries_transient_contention_until_acquired() {
+        let attempts = Cell::new(0);
+        let elapsed = Cell::new(Duration::ZERO);
+        let sleeps = Cell::new(0);
+        acquire_extension_lock_with(
+            Duration::from_secs(1),
+            || elapsed.get(),
+            |duration| {
+                sleeps.set(sleeps.get() + 1);
+                elapsed.set(elapsed.get() + duration);
+            },
+            || {
+                attempts.set(attempts.get() + 1);
+                if attempts.get() < 3 {
+                    Err(fs2::lock_contended_error())
+                } else {
+                    Ok(())
+                }
+            },
+        )
+        .unwrap();
+
+        assert_eq!(attempts.get(), 3);
+        assert_eq!(sleeps.get(), 2);
+    }
+
+    #[test]
+    fn extension_lock_returns_persistent_contention_after_retry_window() {
+        let attempts = Cell::new(0);
+        let error = acquire_extension_lock_with(
+            Duration::ZERO,
+            || Duration::ZERO,
+            |_| panic!("an expired extension lock wait must not sleep"),
+            || {
+                attempts.set(attempts.get() + 1);
+                Err(fs2::lock_contended_error())
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(attempts.get(), 1);
+        assert_eq!(
+            error.raw_os_error(),
+            fs2::lock_contended_error().raw_os_error()
+        );
     }
 
     #[test]

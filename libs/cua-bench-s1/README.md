@@ -63,6 +63,8 @@ instead marks the next-best score.
 | `chess` | text, element accuracy (fair N=15) | 15 | **0.682** | 0.227 | 0.424 | 0.227 | 0.515 |
 | `chess` | multimodal, task accuracy (fair N=15) | 15 | n/a | 0.000 | 0.000 | 0.000 | blocked |
 | `chess` | multimodal, element accuracy (fair N=15) | 15 | n/a | 0.227 | **0.409** | 0.227 | blocked |
+| `game_control` | multimodal, task accuracy | 82 | n/a | 0.000 | 0.000 | 0.000 | blocked |
+| `game_control` | multimodal, element accuracy | 82 | n/a | 0.333 | 0.333 | 0.333 | blocked |
 | `general_decision` (external `jevbench`) | text, zero-shot, out-of-domain | 231 | **0.667** | 0.623 | 0.563 | n/a | 0.563 |
 
 `chess` uses a real Stockfish-backed, freshly generated 800-position dataset
@@ -81,8 +83,18 @@ a measured zero score. Task accuracy requires every legal move in a position
 to be scored correctly, so 0.000 is the expected floor once move selection
 is genuinely tested; element accuracy (per move) is the more informative
 number at this model scale, and only `jev` clearly discriminates real moves
-here. `game_control` is temporarily withdrawn while its dataset is
-regenerated under the same fix.
+here.
+
+`game_control` was regenerated the same way as `chess`: a fresh, real
+82-task ViZDoom dataset (400 frames total across train/val/test) where every
+candidate button gets a real click-vs-skip option pair, gold actions from
+the engine's own live labels-buffer heuristic. All three measurable models
+tie exactly at 0.333 element accuracy here -- a real result, not an
+artifact of rounding, and not a meaningfully differentiating one at N=82
+with only ~6 options per task. `cua-s1-4b-0.1` is `blocked` for the same
+real reason as chess multimodal (its published LoRA adapter's layer layout
+doesn't match the multimodal model class), confirmed here to not be a
+chess-specific fluke.
 
 ### Latency
 
@@ -101,6 +113,7 @@ controlled benchmark. `—` = not measured.
 | `safety_gate`, multimodal | n/a | 3.389 | 1.557 | — | — |
 | `chess`, text (fair N=15, all models capped equally) | 0.534 | 3.168 | 1.117 | 0.015 | 1.274 |
 | `chess`, multimodal (fair N=15) | n/a | 3.450 | 1.151 | 0.739 | blocked |
+| `game_control`, multimodal | n/a | 1.172 | 0.300 | 0.206 | blocked |
 | `general_decision` (external `jevbench`) | 0.597 | 0.858 | 0.157 | n/a | — |
 
 `cua-s1-4b-0.1`'s core-families text latency spans two nearly-identical reruns

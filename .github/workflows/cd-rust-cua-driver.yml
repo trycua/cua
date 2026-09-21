@@ -258,7 +258,7 @@ jobs:
           cp "target/${TARGET}/release/cua_driver_node_runtime.node" "release/${STAGE}/"
           cp include/cua_driver_abi.h "release/${STAGE}/"
           cp -R ../wayland-helper "release/${STAGE}/wayland-helper"
-          cp ../../LICENSE.md "release/${STAGE}/LICENSE" 2>/dev/null || true
+          cp ../../../LICENSE.md "release/${STAGE}/LICENSE"
           (cd release && tar -czf "${STAGE}.tar.gz" "${STAGE}")
           # Bare runtime tarball: CLI plus the UniFFI library consumed by the
           # Python and Node imported-SDK packages.
@@ -436,7 +436,7 @@ jobs:
           Copy-Item "target/$target/release/cua_driver_sdk.dll" "release/$stage/"
           Copy-Item "target/$target/release/cua_driver_node_runtime.node" "release/$stage/"
           Copy-Item "include/cua_driver_abi.h" "release/$stage/"
-          if (Test-Path "../../LICENSE.md") { Copy-Item "../../LICENSE.md" "release/$stage/LICENSE" }
+          Copy-Item "../../../LICENSE.md" "release/$stage/LICENSE" -ErrorAction Stop
           # Zip the directory itself (no trailing /*) so the archive contains
           # the top-level "$stage" wrapper dir — install.ps1 walks into
           # extracted/cua-driver-rs-<v>-<arch>/cua-driver.exe to find the
@@ -906,7 +906,7 @@ jobs:
             # attribution (issue #1525). Tarball callers that want only
             # the bare binary can grab the *-binary.tar.gz below.
             cp -R release/CuaDriver.app "release/${STAGE}/CuaDriver.app"
-            cp ../../LICENSE.md "release/${STAGE}/LICENSE" 2>/dev/null || true
+            cp ../../../LICENSE.md "release/${STAGE}/LICENSE"
             (cd release && tar -czf "${STAGE}.tar.gz" "${STAGE}")
           done
           # Bare runtime tarball: universal CLI plus universal UniFFI library.

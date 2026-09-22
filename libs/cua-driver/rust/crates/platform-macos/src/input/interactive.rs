@@ -171,6 +171,16 @@ struct WorkItem {
 /// The worker owns and reuses one `CGEventSource`, pointer-button state, click
 /// grouping, and fractional scroll residuals. Native CoreGraphics objects
 /// never cross threads.
+/// How long to let a target's event loop adopt the primed pointer position
+/// before the button event that depends on it. One display frame.
+const POINTER_PRIMER_SETTLE: Duration = Duration::from_millis(12);
+
+/// Minimum spacing between a background Down and its Up. Matches what the
+/// foreground and background right-click paths already use, both of which
+/// Blender honours; a shorter gap can land both in one pass of an app's event
+/// loop, where some toolkits collapse the pair into nothing.
+const POINTER_DOWN_UP_FLOOR: Duration = Duration::from_millis(28);
+
 pub struct InteractiveInputSession {
     sender: Option<SyncSender<WorkItem>>,
     worker: Mutex<Option<JoinHandle<()>>>,
@@ -366,6 +376,9 @@ struct NativeInputState {
     scroll_residual_y: f64,
     bounds: crate::windows::WindowBounds,
     last_bounds_refresh: Instant,
+    /// When the last background Down went out, so the Up can be held off until
+    /// the target's event loop has had a pass to see them as separate.
+    last_background_down: Option<Instant>,
 }
 
 impl NativeInputState {
@@ -383,6 +396,7 @@ impl NativeInputState {
             scroll_residual_y: 0.0,
             bounds,
             last_bounds_refresh: Instant::now(),
+            last_background_down: None,
         }
     }
 
@@ -506,14 +520,56 @@ impl NativeInputState {
             self.pressed_button = Some(effective_button);
             self.click_group_id = self.click_group_id.wrapping_add(1).max(1);
         }
+        // Background button events need the pointer to be WHERE the button is.
+        //
+        // An app that runs its own event loop can resolve a mouse-button event
+        // at the pointer position it last saw rather than at the coordinate the
+        // event carries -- Blender's GHOST layer does exactly this. Measured on
+        // a live guest: a background down+drag drew Blender's box-select
+        // rectangle anchored at the PREVIOUS interaction's coordinate, and an
+        // identical click that failed cold succeeded once two standalone moves
+        // had settled the pointer first. Nothing else differed.
+        //
+        // So prime the position before a Down and give the app a frame to adopt
+        // it, and never let the Up follow the Down in the same pass of that
+        // loop. The foreground path and the background RIGHT-click path already
+        // do both, which is why those worked while this one silently did not.
+        if !self.is_foreground() {
+            match phase {
+                PointerPhase::Down => {
+                    super::mouse::post_background_move_primer(
+                        self.config.pid,
+                        &self.source,
+                        point,
+                        Some(window_local),
+                        Some(self.config.window_id),
+                        Some(self.click_group_id),
+                    );
+                    std::thread::sleep(POINTER_PRIMER_SETTLE);
+                }
+                PointerPhase::Up => {
+                    if let Some(down_at) = self.last_background_down {
+                        let elapsed = down_at.elapsed();
+                        if elapsed < POINTER_DOWN_UP_FLOOR {
+                            std::thread::sleep(POINTER_DOWN_UP_FLOOR - elapsed);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
         self.post_pointer(
             &event,
             window_local,
             effective_button,
             matches!(phase, PointerPhase::Down | PointerPhase::Up),
         );
+        if !self.is_foreground() && phase == PointerPhase::Down {
+            self.last_background_down = Some(Instant::now());
+        }
         if matches!(phase, PointerPhase::Up | PointerPhase::Cancel) {
             self.pressed_button = None;
+            self.last_background_down = None;
         }
         Ok(())
     }

@@ -190,6 +190,12 @@ pub enum Command {
         subcommand: String,
         flags: Vec<String>,
     },
+    /// `cua-driver extension ...` is an unsigned local-code storage prototype.
+    /// Archive hashes are self-asserted by the same untrusted archive and do
+    /// not establish publisher or artifact provenance.
+    Extension {
+        args: Vec<String>,
+    },
     /// Trusted local cursor-theme authoring and installation workflow. The
     /// actual parser/compiler is a separate short-lived executable so Lottie,
     /// ZIP, and JSON are not linked into the privileged daemon.
@@ -232,6 +238,7 @@ const VALUE_FLAGS: &[&str] = &[
     "--session",
     "--profile-mode",
     "--profile-name",
+    "--archive",
     // Experimental PiP preview — value flag for the optional geometry
     // override (--experimental-pip itself is a bare flag and doesn't
     // need to be listed here).
@@ -319,6 +326,7 @@ fn finite_command_name_from_args(args: &[String]) -> Option<&'static str> {
         Some("permissions") => Some("permissions"),
         Some("autostart") => Some("autostart"),
         Some("skills") => Some("skills"),
+        Some("extension") => Some("extension"),
         Some("cursor-theme") => Some("cursor_theme"),
         Some("config") => Some("config"),
         Some(_) => Some("call"),
@@ -417,6 +425,15 @@ fn finite_operation_from_args(args: &[String]) -> &'static str {
             "path" => "path",
             _ => "other",
         },
+        Some("extension") => match subcommand.unwrap_or("list") {
+            "list" => "list",
+            "info" => "info",
+            "status" => "status",
+            "install" => "install",
+            "update" => "update",
+            "path" => "path",
+            _ => "other",
+        },
         Some("update") if args.iter().any(|arg| arg == "--apply") => "apply",
         Some("update") => "check_only",
         Some("channel") => match subcommand.unwrap_or("status") {
@@ -493,7 +510,7 @@ pub fn parse_command() -> Command {
             env!("CARGO_PKG_VERSION")
         );
         println!("Usage: cua-driver [SUBCOMMAND] [OPTIONS]");
-        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, revoke, status, config, telemetry, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, manifest, channel, cursor-theme, sessions, history");
+        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, revoke, status, config, telemetry, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, manifest, extension, channel, cursor-theme, sessions, history");
         println!();
         println!("permissions options (macOS):");
         println!("  cua-driver permissions status   Report Accessibility + Screen Recording status. Read-only (no prompt).");
@@ -533,6 +550,22 @@ pub fn parse_command() -> Command {
         println!("  cua-driver skills status        Report local install state + per-agent link state. Read-only.");
         println!("  cua-driver skills path          Print where the local skill pack lives.");
         println!("  --from main                     (install only) Fetch latest from main branch instead of the tagged release.");
+        println!();
+        println!("extension options (UNSIGNED, UNTRUSTED LOCAL CODE PROTOTYPE):");
+        println!("  Archive hashes are self-asserted by that same archive; they detect corruption");
+        println!("  after storage but do not authenticate a publisher or establish provenance.");
+        println!(
+            "  Mutating commands are unsupported on Windows. Uninstall is intentionally absent"
+        );
+        println!(
+            "  until descriptor-relative recursive deletion has a reviewed cross-platform design."
+        );
+        println!("  cua-driver extension list [--json]");
+        println!("  cua-driver extension info <name> [--json]");
+        println!("  cua-driver extension status [name] [--json]");
+        println!("  cua-driver extension install <name> --archive <extension.tar.gz>");
+        println!("  cua-driver extension update <name> --archive <extension.tar.gz>");
+        println!("  cua-driver extension path <name>");
         println!();
         println!("agent authorization (serve only):");
         println!("  --permission-mode <mode>        standard (default), bounded, or unrestricted.");
@@ -974,6 +1007,15 @@ pub fn parse_command() -> Command {
                 }
             }
             Command::Skills { subcommand, flags }
+        }
+        Some("extension") => {
+            let index = args
+                .iter()
+                .position(|value| value == "extension")
+                .expect("extension positional is present");
+            Command::Extension {
+                args: args[index + 1..].to_vec(),
+            }
         }
         Some("cursor-theme") => {
             let index = args
@@ -1956,7 +1998,15 @@ pub fn build_manifest() -> serde_json::Value {
               "args": [ { "name": "subcommand", "type": "positional-string", "description": "enable | disable | status | kick" } ] },
             { "name": "skills",
               "description": "Manage the cua-driver agent skill pack (install / update / uninstall / status / path).",
-              "args": [ { "name": "subcommand", "type": "positional-string", "description": "install | update | uninstall | status | path. Default: status." } ] }
+              "args": [ { "name": "subcommand", "type": "positional-string", "description": "install | update | uninstall | status | path. Default: status." } ] },
+            { "name": "extension",
+              "description": "Unsigned, untrusted local-code storage prototype. Hashes are self-asserted by the same archive and do not establish publisher or artifact provenance; mutation is unsupported on Windows and uninstall is intentionally unavailable.",
+              "args": [
+                  { "name": "subcommand", "type": "positional-string", "description": "list | info | status | install | update | path. Default: list." },
+                  { "name": "name", "type": "positional-string", "description": "Registry extension name." },
+                  { "name": "--archive", "type": "string", "description": "Store unsigned, untrusted local code from a tar.gz whose hashes are self-asserted." },
+                  { "name": "--json", "type": "flag", "description": "Emit machine-readable inspection output." }
+              ] }
         ]
     })
 }
@@ -4147,6 +4197,22 @@ fn cli_docs_json() -> serde_json::Value {
                     {"name":"uninstall","abstract":"Remove agent skill links.","discussion":"","arguments":[],"options":[],"flags":[{"name":"all","short_name":null,"help":"Also delete the local skill-pack copy.","default_value":false}],"subcommands":[]},
                     {"name":"status","abstract":"Report local skill-pack and per-agent link state.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]},
                     {"name":"path","abstract":"Print the local skill-pack path.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]}
+                ]
+            },
+            {
+                "name": "extension",
+                "abstract": "Inspect or store an unsigned, untrusted local extension prototype.",
+                "discussion": "Archive hashes are self-asserted by the same untrusted archive: they can detect later corruption but do not authenticate a publisher or establish artifact provenance. Mutation is unsupported on Windows. Uninstall is intentionally absent until descriptor-relative recursive deletion has a reviewed cross-platform design.",
+                "arguments": no_args,
+                "options": no_options,
+                "flags": no_flags,
+                "subcommands": [
+                    {"name":"list","abstract":"List registry-known extensions and local state.","discussion":"","arguments":[],"options":[],"flags":[{"name":"json","short_name":null,"help":"Emit machine-readable output.","default_value":false}],"subcommands":[]},
+                    {"name":"info","abstract":"Describe one registry-known extension.","discussion":"","arguments":[{"name":"name","help":"Registry extension name.","type":"String","is_optional":false}],"options":[],"flags":[{"name":"json","short_name":null,"help":"Emit machine-readable output.","default_value":false}],"subcommands":[]},
+                    {"name":"status","abstract":"Verify installed extension state; absence is healthy.","discussion":"","arguments":[{"name":"name","help":"Optional registry extension name.","type":"String","is_optional":true}],"options":[],"flags":[{"name":"json","short_name":null,"help":"Emit machine-readable output.","default_value":false}],"subcommands":[]},
+                    {"name":"install","abstract":"Store and activate unsigned, untrusted local code.","discussion":"Hashes are self-asserted and do not establish provenance. Unsupported on Windows.","arguments":[{"name":"name","help":"Registry extension name.","type":"String","is_optional":false}],"options":[{"name":"archive","short_name":null,"help":"Unsigned local tar.gz archive.","type":"String","default_value":null,"is_optional":false}],"flags":[],"subcommands":[]},
+                    {"name":"update","abstract":"Store and activate unsigned, untrusted local code.","discussion":"Hashes are self-asserted and do not establish provenance. Unsupported on Windows.","arguments":[{"name":"name","help":"Registry extension name.","type":"String","is_optional":false}],"options":[{"name":"archive","short_name":null,"help":"Unsigned local tar.gz archive.","type":"String","default_value":null,"is_optional":false}],"flags":[],"subcommands":[]},
+                    {"name":"path","abstract":"Print the exact active version directory.","discussion":"","arguments":[{"name":"name","help":"Registry extension name.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]}
                 ]
             },
             {

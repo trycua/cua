@@ -41,6 +41,11 @@ semver = "1"
 # dependency is easy to find).
 tar = { version = "0.4", default-features = false }
 flate2 = "1"
+sha2 = { workspace = true }
+fs2 = { workspace = true }
+cap-std = "4.0.3"
+cap-fs-ext = "4.0.3"
+rustix = { version = "1.1", features = ["fs", "process"] }
 
 # Used by crate::bundle::parent_is_not_launchd() for the TCC
 # auto-relaunch detection path on Unix (only the macOS heuristic

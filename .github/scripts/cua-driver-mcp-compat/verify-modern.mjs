@@ -43,8 +43,10 @@ const expectedFiles = [
   'MACOS.md',
   'README.md',
   'RECORDING.md',
+  'RUNTIME.md',
   'SKILL.md',
   'WINDOWS.md',
+  'WORKFLOW.md',
 ];
 const sourcePack = resolve(HERE, '../../../libs/cua-driver/rust/Skills/cua-driver');
 const driver = process.env.CUA_DRIVER_BINARY && resolve(process.env.CUA_DRIVER_BINARY);

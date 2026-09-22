@@ -19,6 +19,11 @@ try:
 except ImportError:
     cuaSandbox = None  # type: ignore[assignment,misc]
 
+try:
+    from cua_sandbox import Localhost as cuaLocalhost
+except ImportError:
+    cuaLocalhost = None  # type: ignore[assignment,misc]
+
 from .base import AsyncComputerHandler
 from .custom import CustomComputerHandler
 from .sandbox import SandboxComputerHandler
@@ -30,6 +35,7 @@ def is_agent_computer(computer):
         isinstance(computer, AsyncComputerHandler)
         or (cuaComputer is not None and isinstance(computer, cuaComputer))
         or (cuaSandbox is not None and isinstance(computer, cuaSandbox))
+        or (cuaLocalhost is not None and isinstance(computer, cuaLocalhost))
         or (isinstance(computer, dict))
     )  # and "screenshot" in computer)
 
@@ -40,7 +46,7 @@ async def make_computer_handler(computer):
 
     Args:
         computer: Either a ComputerHandler instance, Computer instance,
-                  Sandbox instance, or dict of functions
+                  Sandbox or Localhost instance, or dict of functions
 
     Returns:
         ComputerHandler: A computer handler instance
@@ -55,6 +61,8 @@ async def make_computer_handler(computer):
         await computer_handler._initialize()
         return computer_handler
     if cuaSandbox is not None and isinstance(computer, cuaSandbox):
+        return SandboxComputerHandler(computer)
+    if cuaLocalhost is not None and isinstance(computer, cuaLocalhost):
         return SandboxComputerHandler(computer)
     if isinstance(computer, dict):
         return CustomComputerHandler(computer)

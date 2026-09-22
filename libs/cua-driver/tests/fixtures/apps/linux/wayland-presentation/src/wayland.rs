@@ -46,9 +46,13 @@ use crate::Config;
 /// How long one poll waits before the loop re-checks feedback deadlines.
 const POLL_INTERVAL_MS: i32 = 25;
 
-/// Slots in the fixture's `wl_shm` pool. Two is the minimum that lets a new
-/// content update be drawn while the compositor still holds the previous one.
-const SLOTS: usize = 2;
+/// Slots in the fixture's `wl_shm` pool.
+///
+/// Three, not two: the compositor still holds the buffer it is displaying, and
+/// the `supersede` region submits two content updates back to back before
+/// either is released. Two slots starve that path and the second submit fails
+/// with no free slot.
+const SLOTS: usize = 3;
 
 const APP_ID: &str = "com.trycua.CuaTestHarness.WaylandPresentation";
 
@@ -1043,6 +1047,18 @@ impl Dispatch<XdgToplevel, ()> for App {
                             state.failure = Some(format!("resize failed: {error}"));
                         }
                     }
+                    // The region map moved with the surface, so republish it.
+                    // A runner that kept aiming at the startup map would click
+                    // the wrong pixels: the canonical Sway lane resizes this
+                    // window by title right after it maps.
+                    let record = state.journal.record(
+                        "layout",
+                        now_ns(),
+                        json!({"width": width, "height": height, "layout": state.layout}),
+                    );
+                    if let Err(error) = record {
+                        state.failure = Some(format!("layout record failed: {error}"));
+                    }
                 }
             }
             xdg_toplevel::Event::Close => state.closed = true,
@@ -1062,11 +1078,38 @@ impl Dispatch<WlSeat, ()> for App {
     ) {
         if let wl_seat::Event::Capabilities { capabilities } = event {
             let bits = capabilities.raw_bits();
-            if bits & wl_seat::Capability::Pointer.bits() != 0 && state.pointer.is_none() {
-                state.pointer = Some(seat.get_pointer(queue, ()));
+            // Capabilities come and go, and a device object does not survive
+            // its capability: once the seat drops the pointer, the existing
+            // `wl_pointer` is inert and delivers nothing, so it has to be
+            // released and re-created when the capability returns.
+            //
+            // This is the normal shape of a driven lane rather than an edge
+            // case. A Driver that injects through a virtual pointer creates
+            // the device for one action and destroys it afterwards, so the
+            // seat gains and loses the capability around every action. Holding
+            // the first object would mean only the first action is ever
+            // received.
+            let has_pointer = bits & wl_seat::Capability::Pointer.bits() != 0;
+            match (has_pointer, state.pointer.is_some()) {
+                (true, false) => state.pointer = Some(seat.get_pointer(queue, ())),
+                (false, true) => {
+                    if let Some(pointer) = state.pointer.take() {
+                        pointer.release();
+                    }
+                    // Pointer focus left with the device.
+                    state.pointer_position = (-1.0, -1.0);
+                }
+                _ => {}
             }
-            if bits & wl_seat::Capability::Keyboard.bits() != 0 && state.keyboard.is_none() {
-                state.keyboard = Some(seat.get_keyboard(queue, ()));
+            let has_keyboard = bits & wl_seat::Capability::Keyboard.bits() != 0;
+            match (has_keyboard, state.keyboard.is_some()) {
+                (true, false) => state.keyboard = Some(seat.get_keyboard(queue, ())),
+                (false, true) => {
+                    if let Some(keyboard) = state.keyboard.take() {
+                        keyboard.release();
+                    }
+                }
+                _ => {}
             }
         }
     }

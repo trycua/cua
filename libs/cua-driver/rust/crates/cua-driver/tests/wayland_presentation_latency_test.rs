@@ -332,15 +332,31 @@ struct Fixture {
     window_id: u64,
     journal: PathBuf,
     state: PathBuf,
-    layout: Value,
 }
 
 impl Fixture {
+    /// The region map the fixture is using now.
+    ///
+    /// The compositor may resize the window after it maps, and the canonical
+    /// Sway lane does exactly that: it resizes `CuaTestHarness` windows by
+    /// title. The fixture republishes its region map when that happens, so
+    /// measuring against the startup map would aim at pixels the regions no
+    /// longer occupy.
+    fn layout(&self) -> Value {
+        records(&self.journal)
+            .into_iter()
+            .rev()
+            .find(|record| record["kind"] == "layout" || record["kind"] == "startup")
+            .and_then(|record| record.get("layout").cloned())
+            .expect("fixture publishes its region map")
+    }
+
     /// The published center of one region, in the surface-local pixels the
     /// Driver's window-local click frame shares with this undecorated
     /// toplevel.
     fn center(&self, region: &str) -> (i64, i64) {
-        let rect = &self.layout[region];
+        let layout = self.layout();
+        let rect = &layout[region];
         let value = |key: &str| {
             rect[key]
                 .as_i64()
@@ -453,7 +469,6 @@ fn launch(driver: &mut McpDriver, directory: &Path) -> Fixture {
                         window_id,
                         journal,
                         state,
-                        layout: record["layout"].clone(),
                     };
                 }
             }
@@ -761,7 +776,10 @@ fn wayland_presentation_feedback_attributes_action_latency_across_the_boundary()
                         .collect()
                 })
                 .unwrap_or_default();
-            if titles.iter().any(|title| title == &expected) {
+            // Matched as a prefix, not for equality: the Linux Wayland backend
+            // folds the app id into the reported title (`"<title> [<app id>]"`)
+            // so that callers matching on either still match.
+            if titles.iter().any(|title| title.contains(&expected)) {
                 break;
             }
             assert!(

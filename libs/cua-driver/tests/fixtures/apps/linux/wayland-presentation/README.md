@@ -27,7 +27,11 @@ for accessibility and widget-tree behavior.
 ## Regions
 
 The fixture publishes its surface-local region map in its `startup` journal
-record, so the runner clicks published centers instead of guessing:
+record, so the runner clicks published centers instead of guessing. The map
+moves with the surface: when the compositor resizes the window the fixture
+re-lays-out and republishes it as a `layout` record, so a consumer must follow
+the most recent one. The canonical Sway lane makes this the normal case, since
+it resizes `CuaTestHarness` windows by title right after they map.
 
 | Region      | Behavior |
 | ----------- | -------- |
@@ -44,8 +48,9 @@ reported as a presented mutation. `supersede` exercises the compositor's
 
 Two channels, deliberately separate:
 
-- `--journal <path>` — JSONL. `startup`, `mapped`, `input`, `state`, `sample`,
-  and `shutdown` records. The `sample` records are the causal timing rows.
+- `--journal <path>` — JSONL. `startup`, `mapped`, `layout`, `input`, `state`,
+  `sample`, and `shutdown` records. The `sample` records are the causal timing
+  rows.
 - `--state <path>` — application-owned state only (counter, colour, last
   action), replaced atomically. The window title also mirrors the counter as
   `CuaTestHarness Presentation [n=<counter>]`, which the Driver can read back

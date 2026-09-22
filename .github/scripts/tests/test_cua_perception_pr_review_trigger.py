@@ -1,4 +1,4 @@
-"""Static security contracts for the labeled PR #3943 live review chain."""
+"""Static security contracts for the labeled candidate live review chain."""
 
 from pathlib import Path
 import re
@@ -7,7 +7,7 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
-TRIGGER = ROOT / ".github/workflows/review-cua-perception-pr3943.yml"
+TRIGGER = ROOT / ".github/workflows/review-cua-perception-candidates.yml"
 CANDIDATE = ROOT / ".github/workflows/cd-cua-perception-review-supplied-inputs.yml"
 LIVE = ROOT / ".github/workflows/authorized-live-jev-use-demo.yml"
 MACOS = ROOT / ".github/workflows/authorized-live-jev-macos-evidence.yml"
@@ -38,10 +38,10 @@ def test_trigger_is_only_labeled_pull_request() -> None:
 def test_unlabelled_and_unrelated_pull_requests_skip_before_any_runner() -> None:
     _, workflow = load_workflow(TRIGGER)
     condition = workflow["jobs"]["resolve"]["if"]
-    assert "github.event.pull_request.number == 3943" in condition
+    assert "github.event.pull_request.number == 3943" not in condition
+    assert "github.event.pull_request.draft == true" not in condition
     assert "github.event.pull_request.head.repo.full_name == github.repository" in condition
     assert "github.event.pull_request.state == 'open'" in condition
-    assert "github.event.pull_request.draft == true" in condition
     assert "github.event.label.name == 'cua-perception-live-review'" in condition
     assert "synchronize" not in condition
     assert workflow["concurrency"]["cancel-in-progress"] is True
@@ -50,27 +50,23 @@ def test_unlabelled_and_unrelated_pull_requests_skip_before_any_runner() -> None
     )
 
 
-def test_gate_revalidates_candidate_head_and_canonical_merged_jev_source() -> None:
+def test_gate_revalidates_the_current_labeled_head_for_any_pull_request() -> None:
     text, workflow = load_workflow(TRIGGER)
     gate = workflow["jobs"]["resolve"]["steps"][0]["run"]
     for contract in (
         '[[ "$GITHUB_REPOSITORY" == "trycua/cua" ]]',
-        '[[ "$EVENT_PR_NUMBER" == "3943" ]]',
+        '[[ "$EVENT_PR_NUMBER" =~ ^[1-9][0-9]*$ ]]',
         '[[ "$(jq -r .state <<<"$pr_json")" == "open" ]]',
-        '[[ "$(jq -r .draft <<<"$pr_json")" == "true" ]]',
         '[[ "$(jq -r .head.repo.full_name <<<"$pr_json")" == "$GITHUB_REPOSITORY" ]]',
         '[[ "$(jq -r .head.sha <<<"$pr_json")" == "$EVENT_HEAD_SHA" ]]',
         '.labels | any(.name == "cua-perception-live-review")',
-        'gh api "repos/$GITHUB_REPOSITORY/pulls/3916"',
-        '[[ "$(jq -r .state <<<"$jev_json")" == "closed" ]]',
-        '[[ "$(jq -r .merged <<<"$jev_json")" == "true" ]]',
-        '[[ "$(jq -r .head.repo.full_name <<<"$jev_json")" == "$GITHUB_REPOSITORY" ]]',
-        '[[ "$(jq -r .merge_commit_sha <<<"$jev_json")" == "$REVIEWED_JEV_SHA" ]]',
+        'echo "source_pr_number=$EVENT_PR_NUMBER" >> "$GITHUB_OUTPUT"',
     ):
         assert contract in gate
-    assert '[[ "$(jq -r .state <<<"$jev_json")" == "open" ]]' not in gate
-    assert '[[ "$(jq -r .head.sha <<<"$jev_json")" == "$REVIEWED_JEV_SHA" ]]' not in gate
-    assert 'echo "jev_source_sha=$REVIEWED_JEV_SHA" >> "$GITHUB_OUTPUT"' in gate
+    assert "3943" not in gate
+    assert "3916" not in gate
+    assert "jev" not in gate.lower()
+    assert '[[ "$(jq -r .draft <<<"$pr_json")" == "true" ]]' not in gate
     assert "secrets." not in text
     assert workflow["permissions"] == {
         "actions": "read",
@@ -82,11 +78,10 @@ def test_gate_revalidates_candidate_head_and_canonical_merged_jev_source() -> No
         "contents": "read",
         "pull-requests": "read",
     }
-    assert workflow["jobs"]["resolve"]["outputs"]["jev_source_sha"] == (
-        "${{ steps.resolve.outputs.jev_source_sha }}"
+    assert workflow["jobs"]["resolve"]["outputs"]["source_pr_number"] == (
+        "${{ steps.resolve.outputs.source_pr_number }}"
     )
-    resolve_env = workflow["jobs"]["resolve"]["steps"][0]["env"]
-    assert resolve_env["REVIEWED_JEV_SHA"] == "bdaf8c2570e35254f5e50a317781374efe7aa91a"
+    assert "jev_source_sha" not in text
 
 
 def test_review_candidate_executes_release_gates_instead_of_synthesizing_evidence() -> None:
@@ -125,11 +120,10 @@ def test_pr_review_produces_candidates_without_entering_the_protected_environmen
     trigger_text, workflow = load_workflow(TRIGGER)
     assert set(workflow["jobs"]) == {"resolve", "candidate"}
     candidate = workflow["jobs"]["candidate"]
-    assert candidate["uses"] == (
-        "./.github/workflows/cd-cua-perception-review-supplied-inputs.yml"
-    )
+    assert candidate["uses"] == ("./.github/workflows/cd-cua-perception-review-supplied-inputs.yml")
     assert candidate["permissions"]["contents"] == "read"
     assert candidate["with"] == {
+        "source_pr_number": "${{ needs.resolve.outputs.source_pr_number }}",
         "source_sha": "${{ needs.resolve.outputs.source_sha }}",
         "catalog_version": "${{ needs.resolve.outputs.catalog_version }}",
         "expires_unix": "${{ needs.resolve.outputs.expires_unix }}",
@@ -148,27 +142,27 @@ def test_protected_live_workflow_owns_secrets_and_environment() -> None:
     assert live_job["environment"] == "authorized-live-jev-use-demo"
     secret_steps = [step for step in live_job["steps"] if "${{ secrets." in str(step)]
     assert len(secret_steps) == 1
-    typesafe_step = next(step for step in secret_steps if "LIVE_TYPESAFE_API_KEY" in step.get("env", {}))
+    typesafe_step = next(
+        step for step in secret_steps if "LIVE_TYPESAFE_API_KEY" in step.get("env", {})
+    )
     assert typesafe_step["env"] == {
         "GH_TOKEN": "${{ github.token }}",
         "LIVE_TYPESAFE_API_KEY": "${{ secrets.TYPESAFE_API_KEY }}",
     }
     evidence_step = next(
-        step for step in live_job["steps"]
+        step
+        for step in live_job["steps"]
         if "CUA_PERCEPTION_EVIDENCE_RECIPIENT" in step.get("env", {})
     )
     assert evidence_step["env"] == {
-        "CUA_PERCEPTION_EVIDENCE_RECIPIENT": (
-            "${{ vars.EVIDENCE_ARCHIVE_RECIPIENT_PUBLIC_KEY }}"
-        ),
+        "CUA_PERCEPTION_EVIDENCE_RECIPIENT": ("${{ vars.EVIDENCE_ARCHIVE_RECIPIENT_PUBLIC_KEY }}"),
     }
     assert "EVIDENCE_ARCHIVE_KEY" not in live_text
     assert "TYPESAFE_API_KEY" not in "\n".join(
         str(job) for name, job in live_workflow["jobs"].items() if name != "live"
     )
     validation = next(
-        step["run"] for step in live_job["steps"]
-        if step.get("name", "").startswith("Fully decode")
+        step["run"] for step in live_job["steps"] if step.get("name", "").startswith("Fully decode")
     )
     assert 'chooser["mode"] == "live"' in validation
     assert 'chooser["provider"] == "typesafe"' in validation
@@ -182,10 +176,7 @@ def test_self_hosted_macos_evidence_is_manual_and_not_pr_event_chained() -> None
     entry_text, entry_workflow = load_workflow(MACOS_ENTRY)
     assert set(triggers(entry_workflow)) == {"workflow_dispatch"}
     assert "pull_request:" not in entry_text and "pull_request_target" not in entry_text
-    live = entry_workflow["jobs"]["live-jev-perception"]
-    assert live["if"] == "${{ inputs.live_jev_perception }}"
-    assert live["uses"] == "./.github/workflows/authorized-live-jev-macos-evidence.yml"
-    assert "secrets" not in live
+    assert "live-jev-perception" not in entry_workflow["jobs"]
     assert macos_workflow["jobs"]["evidence"]["environment"] == "authorized-live-jev-use-demo"
     assert macos_workflow["jobs"]["evidence"]["runs-on"] == [
         "self-hosted",

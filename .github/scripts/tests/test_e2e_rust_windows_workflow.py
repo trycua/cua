@@ -16,6 +16,23 @@ def matrix_summary_script() -> str:
     return next(step["run"] for step in steps if step.get("name") == "Publish matrix summary")
 
 
+def test_canonical_certification_is_fail_closed_and_github_hosted() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    certification = workflow.split("\n  certify:\n", 1)[1]
+
+    assert (
+        "if: success() && github.event_name == 'workflow_dispatch' && inputs.lane == 'all'"
+        in certification
+    )
+    assert "needs: [source, shared, native, capture, installer]" in certification
+    assert "windows-latest|windows-2022|windows-2025" in certification
+    assert "class=github-hosted" in certification
+    assert 'schema "cua-driver/e2e-certification/v1"' in certification
+    assert 'platform "windows"' in certification
+    assert "runner_policy_class: $runner_policy_class" in certification
+    assert "name: rust-windows-e2e-certification" in certification
+
+
 def test_matrix_summary_recovers_results_when_lane_summary_is_missing(tmp_path: Path) -> None:
     artifact = tmp_path / "artifacts/rust-windows-native"
     artifact.mkdir(parents=True)
@@ -44,7 +61,7 @@ def test_matrix_summary_recovers_results_when_lane_summary_is_missing(tmp_path: 
     gh = bin_dir / "gh"
     gh.write_text(
         "#!/usr/bin/env bash\n"
-        "printf '%s\\n' '{\"artifacts\":[{\"name\":\"rust-windows-native\",\"id\":1234}]}'\n",
+        'printf \'%s\\n\' \'{"artifacts":[{"name":"rust-windows-native","id":1234}]}\'\n',
         encoding="utf-8",
     )
     gh.chmod(0o755)

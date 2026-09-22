@@ -18,16 +18,11 @@ def test_macos_live_evidence_is_manual_exact_sha_and_protected() -> None:
     triggers = _triggers(path)
     assert set(triggers) == {"workflow_dispatch", "workflow_call"}
     assert triggers["workflow_dispatch"]["inputs"] == triggers["workflow_call"]["inputs"]
-    jev_description = (
-        "Canonical merged commit SHA bdaf8c2570e35254f5e50a317781374efe7aa91a of pull request #3916"
-    )
-    assert triggers["workflow_dispatch"]["inputs"]["jev_source_sha"]["description"] == (
-        jev_description
-    )
-    macos_entry = (ROOT / ".github/workflows/e2e-rust-macos.yml").read_text()
-    assert f'description: "{jev_description} (live lane only)"' in macos_entry
     assert "&macos_evidence_inputs" not in trigger and "*macos_evidence_inputs" not in trigger
-    assert trigger.count("source_sha:") == 4
+    assert trigger.count("source_sha:") >= 4
+    assert trigger.count("source_pr_number:") == 2
+    assert trigger.count("jev_pr_number:") == 2
+    assert trigger.count("macos_lume_e2e_run_id:") == 2
     assert trigger.count("signed_arm64_candidate_artifact_id:") == 2
     assert trigger.count("signed_candidate_run_id:") == 2
     assert "pull_request:" not in trigger and "push:" not in trigger
@@ -37,9 +32,9 @@ def test_macos_live_evidence_is_manual_exact_sha_and_protected() -> None:
     assert "permissions:\n  actions: read\n  contents: read\n  pull-requests: read\n" in workflow
     assert "runs-on: [self-hosted, macOS, ARM64, cua-lume-maintainer]" in workflow
     assert "environment: authorized-live-jev-use-demo" in workflow
-    assert "validate_pr_head 3943" in workflow
-    assert "validate_pr_head 3916" not in workflow
-    assert workflow.count("bdaf8c2570e35254f5e50a317781374efe7aa91a") == 3
+    assert 'validate_pr_head "$REQUESTED_SOURCE_PR"' in workflow
+    assert "3943" not in workflow and "3916" not in workflow
+    assert "bdaf8c2570e35254f5e50a317781374efe7aa91a" not in workflow
     assert '[[ "$(jq -r .state <<<"$jev_pr_json")" == closed ]]' in workflow
     assert '[[ "$(jq -r .merged <<<"$jev_pr_json")" == true ]]' in workflow
     assert (
@@ -54,7 +49,9 @@ def test_macos_live_evidence_is_manual_exact_sha_and_protected() -> None:
     assert "persist-credentials: false" in workflow
     assert '[[ "$run_id" == "$CANDIDATE_RUN_ID" ]]' in workflow
     assert "STAGING-cua-perception-review-candidates-$REQUESTED_SHA" in workflow
-    assert ".github/workflows/review-cua-perception-pr3943.yml" in workflow
+    assert ".github/workflows/review-cua-perception-candidates.yml" in workflow
+    assert ".github/workflows/e2e-rust-macos-lume.yml" in workflow
+    assert "cua-driver/macos-lume-certification@v1" in workflow
     assert '[[ "$(jq -r .event <<<"$run_json")" == pull_request ]]' in workflow
     assert "run-id: ${{ needs.resolve.outputs.candidate_run_id }}" in workflow
 
@@ -79,7 +76,14 @@ def test_macos_live_evidence_uses_canonical_lume_and_signed_arm64_candidate() ->
     assert 'echo "CUA_E2E_RECORDINGS_ROOT=$RUNNER_TEMP/cua-perception-recordings"' in workflow
     assert "CUA_PERCEPTION_EVIDENCE_DIR: ${{ github.workspace }}" not in workflow
     assert "CUA_E2E_RECORDINGS_ROOT: ${{ github.workspace }}" not in workflow
-    assert "libs/cua-driver/tests/runners/macos-lume/run-all.sh --standalone-browser" in workflow
+    assert (
+        "libs/cua-driver/tests/runners/macos-lume/run-all.sh --standalone-browser" not in workflow
+    )
+    lume_workflow = (ROOT / ".github/workflows/e2e-rust-macos-lume.yml").read_text()
+    assert (
+        "libs/cua-driver/tests/runners/macos-lume/run-all.sh --standalone-browser" in lume_workflow
+    )
+    assert "environment: authorized-live-jev-use-demo" in lume_workflow
     assert 'measured["target"] == "aarch64-apple-darwin"' in workflow
     assert 'codesign", "--verify", "--strict"' in workflow
     assert '("certificate leaf", "certificate root")' in workflow
@@ -106,23 +110,20 @@ def test_macos_live_evidence_uses_canonical_lume_and_signed_arm64_candidate() ->
         < workflow.index("Grant the exact review Driver path in this disposable Lume guest")
         < workflow.index("Install and measure the signed perception extension")
     )
-    assert "Preflight noninteractive Lume privileges, keychains, and browsers" in workflow
+    assert "Preflight noninteractive Lume privileges and keychains" in workflow
     assert "/usr/bin/sudo -n -v" in workflow
-    preflight = workflow.split(
-        "- name: Preflight noninteractive Lume privileges, keychains, and browsers", 1
-    )[1].split("- name:", 1)[0]
-    run_lume = workflow.split(
-        "- name: Run the canonical logged-in Lume matrix at the exact SHA", 1
-    )[1].split("- name:", 1)[0]
+    preflight = workflow.split("- name: Preflight noninteractive Lume privileges and keychains", 1)[
+        1
+    ].split("- name:", 1)[0]
     assert "secrets.CUA_E2E_SIGNING_KEYCHAIN_PASSWORD" not in workflow
     assert "export CUA_E2E_RUNNER_LIB_ONLY=1" in preflight
     assert "source libs/cua-driver/tests/runners/macos-lume/run-all.sh" in preflight
     assert "unset CUA_E2E_RUNNER_LIB_ONLY" in preflight
     assert "unlock_required_keychains" in preflight
     assert "security unlock-keychain" not in preflight
-    assert "CUA_E2E_SIGNING_KEYCHAIN_PASSWORD" not in run_lume
-    assert "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" in workflow
-    assert "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" in workflow
+    assert "CUA_E2E_SIGNING_KEYCHAIN_PASSWORD" not in lume_workflow
+    assert "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" in lume_workflow
+    assert "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" in lume_workflow
     assert "actions/setup-python@" not in workflow
     assert 'python-version: "3.12"' in workflow
     assert "uv python install 3.12" in workflow
@@ -275,7 +276,8 @@ def test_live_secret_is_cleared_even_when_the_command_fails() -> None:
     assert "unset LIVE_TYPESAFE_API_KEY" in live_step
     assert "trap clear_typesafe_key EXIT" in live_step
     assert "unset TYPESAFE_API_KEY" in live_step
-    assert "pulls/3943" in live_step and "pulls/3916" in live_step
+    assert "pulls/$CUA_E2E_SOURCE_PR_NUMBER" in live_step
+    assert "pulls/$CUA_JEV_PR_NUMBER" in live_step
     assert '[[ "$(jq -r .state <<<"$jev_pr_json")" == closed ]]' in live_step
     assert '[[ "$(jq -r .merged <<<"$jev_pr_json")" == true ]]' in live_step
     assert (
@@ -286,7 +288,7 @@ def test_live_secret_is_cleared_even_when_the_command_fails() -> None:
         '[[ "$(jq -r .merge_commit_sha <<<"$jev_pr_json")" == "$CUA_JEV_SOURCE_SHA" ]]' in live_step
     )
     assert '$(jq -r .head.sha <<<"$jev_pr_json")' not in live_step
-    assert "jq -e '.labels | any(.name == \"cua-perception-live-review\")'" in live_step
+    assert 'jq -e --arg label "$FIXED_SOURCE_LABEL"' in live_step
     assert "unset GH_TOKEN" in live_step
     command_with_secret = live_step.index('            "$CUA_LIVE_TEST_BINARY"')
     assert live_step.index("export TYPESAFE_API_KEY") < command_with_secret

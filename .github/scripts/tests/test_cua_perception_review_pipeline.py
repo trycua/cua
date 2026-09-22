@@ -78,9 +78,7 @@ def test_reviewed_model_broker_is_read_only_pinned_and_immutable() -> None:
     broker_text = str(broker)
     assert "actions/checkout" not in broker_text
     assert "libs/cua-driver" not in broker_text
-    assert broker["outputs"] == {
-        "source_asset_id": "${{ steps.verify.outputs.source_asset_id }}"
-    }
+    assert broker["outputs"] == {"source_asset_id": "${{ steps.verify.outputs.source_asset_id }}"}
     assert broker["permissions"] == {
         "actions": "read",
         "contents": "read",
@@ -94,13 +92,19 @@ def test_reviewed_model_broker_is_read_only_pinned_and_immutable() -> None:
     assert '"$workflow_path" == "$expected_workflow"@*' in broker_text
     assert '[[ "$(jq -r .conclusion <<<"$run_json")" == "success" ]]' in broker_text
     assert '[[ "$(jq -r .expired <<<"$artifact_json")" == "false" ]]' in broker_text
-    assert '[[ "$(jq -r .workflow_run.id <<<"$artifact_json")" == "$REVIEWED_RUN_ID" ]]' in broker_text
-    assert '[[ "$(jq -r .workflow_run.head_sha <<<"$artifact_json")" == "$REVIEWED_SOURCE_SHA" ]]' in broker_text
+    assert (
+        '[[ "$(jq -r .workflow_run.id <<<"$artifact_json")" == "$REVIEWED_RUN_ID" ]]' in broker_text
+    )
+    assert (
+        '[[ "$(jq -r .workflow_run.head_sha <<<"$artifact_json")" == "$REVIEWED_SOURCE_SHA" ]]'
+        in broker_text
+    )
     assert "omniparser-icon-detect-1280-opset17.onnx" in broker_text
     assert "d8a876bf7f9fb73d7da9432904ade7fa78e092e9a91674e5a2806b45562a9ab2" in broker_text
     assert "80_933_219" in broker_text
     producer_download = next(
-        step for step in broker["steps"]
+        step
+        for step in broker["steps"]
         if step.get("name") == "Download the exact reviewed producer artifact"
     )
     assert producer_download["with"] == {
@@ -116,7 +120,8 @@ def test_reviewed_model_broker_is_read_only_pinned_and_immutable() -> None:
     assert supplied["needs"] == "reviewed-model"
     assert any(
         step.get("uses", "").startswith("actions/download-artifact@")
-        and step["with"] == {
+        and step["with"]
+        == {
             "name": "reviewed-cua-perception-model",
             "path": "reviewed-inputs",
         }
@@ -137,18 +142,20 @@ def test_review_pipeline_binds_current_pr_head_and_authenticated_supplied_model(
     assert detector["size"] == 80_933_219
     assert detector["sha256"] == "d8a876bf7f9fb73d7da9432904ade7fa78e092e9a91674e5a2806b45562a9ab2"
     assert "digest != expected_sha256" in text
-    assert "refs/pull/3943/head" in text
-    assert 'pulls/3943' in text
-    assert 'actions/runs/$REVIEWED_RUN_ID' in text
-    assert 'actions/artifacts/$REVIEWED_ARTIFACT_ID' in text
+    assert "refs/pull/$REQUESTED_PR_NUMBER/head" in text
+    assert "pulls/$REQUESTED_PR_NUMBER" in text
+    assert "actions/runs/$REVIEWED_RUN_ID" in text
+    assert "actions/artifacts/$REVIEWED_ARTIFACT_ID" in text
     assert "browser_download_url" not in text
     assert text.index("differ from the reviewed size or SHA-256") < text.index(
         "Generate an ephemeral review trust root"
     )
     assert 'test "$EVENT_HEAD_SHA" = "$REQUESTED_SHA"' in text
     assert 'test "$GITHUB_SHA" = "$REQUESTED_SHA"' in text
+    assert 'test "$EVENT_PR_NUMBER" = "$REQUESTED_PR_NUMBER"' in text
     assert 'test "$EVENT_LABEL" = cua-perception-live-review' in text
     assert '"$GITHUB_EVENT_NAME" == pull_request' in text
+    assert '"$REQUESTED_PR_NUMBER" =~ ^[1-9][0-9]*$' in text
 
 
 def test_review_pipeline_builds_pending_trust_override_and_exact_artifact_contracts() -> None:
@@ -172,7 +179,7 @@ def test_review_pipeline_builds_pending_trust_override_and_exact_artifact_contra
         '("linux-x11", "x86_64-unknown-linux-gnu")',
         '("macos", "aarch64-apple-darwin")',
         "STAGING-cua-perception-review-candidates-",
-        'review_driver_relative_path: driverName',
+        "review_driver_relative_path: driverName",
         'review_driver_build_profile: "debug-review-trust-root"',
     ):
         assert value in text
@@ -235,7 +242,7 @@ def test_macos_review_candidate_uses_ephemeral_certificate_signing() -> None:
     assert "runner: macos-15" not in text
     assert "Match the production Driver build and hosted desktop E2E image" in text
     assert "bash .github/scripts/macos-review-codesign.sh" in text
-    assert 'code_signing: codeSigning' in text
+    assert "code_signing: codeSigning" in text
     for contract in (
         "mktemp -d",
         "security create-keychain",
@@ -246,18 +253,16 @@ def test_macos_review_candidate_uses_ephemeral_certificate_signing() -> None:
         'identity_selector="$identity_name"',
         'codesign --force --sign "$identity_selector" "$signing_probe"',
         'run_step driver-sign codesign --force --sign "$identity_selector"',
-        'run_step driver-verify codesign --verify --strict',
+        "run_step driver-verify codesign --verify --strict",
         "security delete-keychain",
-        'trap cleanup EXIT INT TERM',
+        "trap cleanup EXIT INT TERM",
         'requirement_output="$({ codesign -d -r- "$driver_path"; } 2>&1)"',
         '"identity": "ephemeral-self-signed-review-only"',
     ):
         assert contract in script
     assert "Developer ID" not in script
 
-    snapshot = script.index(
-        'previous_keychains_output="$(security list-keychains -d user)"'
-    )
+    snapshot = script.index('previous_keychains_output="$(security list-keychains -d user)"')
     default_snapshot = script.index(
         'previous_default_keychain="$(security default-keychain -d user |'
     )
@@ -267,20 +272,14 @@ def test_macos_review_candidate_uses_ephemeral_certificate_signing() -> None:
         'security list-keychains -d user -s "$keychain_path" "${previous_keychains[@]}"',
         unlock,
     )
-    default_set = script.index(
-        'security default-keychain -d user -s "$keychain_path"', prepend
-    )
+    default_set = script.index('security default-keychain -d user -s "$keychain_path"', prepend)
     identity_import = script.index('security import "$identity_path"')
     identity_lookup = script.index("run_step identity security find-identity")
     sudo_preflight = script.index("run_step sudo-preflight sudo -n -v")
     cleanup_flag = script.index("admin_trust_cleanup_needed=true", sudo_preflight)
     add_trust = script.index("run_step add-trust sudo -n security add-trusted-cert")
-    trusted_cert_present = script.index(
-        "run_step trusted-cert-present security find-certificate"
-    )
-    valid_identity = script.index(
-        "run_step valid-identity security find-identity -v"
-    )
+    trusted_cert_present = script.index("run_step trusted-cert-present security find-certificate")
+    valid_identity = script.index("run_step valid-identity security find-identity -v")
     partition_list = script.index("security set-key-partition-list")
     probe_sign = script.index('identity_selector="$identity_name"')
     driver_sign = script.index("run_step driver-sign codesign")
@@ -303,15 +302,12 @@ def test_macos_review_candidate_uses_ephemeral_certificate_signing() -> None:
         < driver_sign
     )
     assert script.count('previous_keychains_output="$(security list-keychains -d user)"') == 1
-    assert script.count(
-        'previous_default_keychain="$(security default-keychain -d user |'
-    ) == 1
+    assert script.count('previous_default_keychain="$(security default-keychain -d user |') == 1
     assert 'done <<< "$previous_keychains_output"' in script[snapshot:create]
     assert "search_list_snapshotted=true" in script[snapshot:create]
     assert 'if [[ "$search_list_snapshotted" == true ]]; then' in script
     assert (
-        'security list-keychains -d user -s "${previous_keychains[@]}" '
-        ">/dev/null 2>&1 || true"
+        'security list-keychains -d user -s "${previous_keychains[@]}" >/dev/null 2>&1 || true'
     ) in script
     assert (
         'security default-keychain -d user -s "$previous_default_keychain" '
@@ -341,7 +337,7 @@ def test_macos_review_candidate_uses_ephemeral_certificate_signing() -> None:
     trust_removal = script.index('security remove-trusted-cert -d "$certificate_path"')
     certificate_cleanup = script.index('rm -f "$private_key_path"')
     assert trust_removal < certificate_cleanup
-    assert 'grep -Eqi "certificate (leaf|root) = H\\\"$identity_hash\\\""' in script
+    assert 'grep -Eqi "certificate (leaf|root) = H\\"$identity_hash\\""' in script
     assert 'rmdir "$work_root"' in script
     assert 'rm -rf "$work_root"' not in script
 
@@ -362,13 +358,15 @@ def test_review_measurements_are_extracted_from_the_sealed_archive() -> None:
     ):
         assert member in text
     assert 'for role in ("icon-detect", "ocr-detect", "ocr-recognize")' in text
-    assert 'digest(sealed_bytes)' in text
+    assert "digest(sealed_bytes)" in text
     assert 'gates.get("self-test", {}).get("status") != "passed"' in text
     assert '"sealed_artifact_manifest_sha256": digest(artifact_bytes)' in text
     assert '"sealed_extension_manifest_sha256": digest(extension_bytes)' in text
     assert '"review_driver_version": match.group(0)' in text
-    assert 'modelLock.artifacts.find' in text  # download identity only; sealed values replace it below
-    assert text.index('measurements.update({') < text.rindex('signed-candidate-checksums.txt')
+    assert (
+        "modelLock.artifacts.find" in text
+    )  # download identity only; sealed values replace it below
+    assert text.index("measurements.update({") < text.rindex("signed-candidate-checksums.txt")
 
 
 def test_review_pipeline_native_driver_inspects_the_final_candidate_without_installing() -> None:
@@ -400,7 +398,10 @@ def test_review_pipeline_native_driver_inspects_the_final_candidate_without_inst
     assert 'preview["trust"] == "review-only-publisher-verified"' in inspection
     assert 'preview["publisher_signature_verified"] is True' in inspection
     assert 'preview["archive_sha256"] == measurements["archive_sha256"]' in inspection
-    assert 'hashlib.sha256(archive.read_bytes()).hexdigest() == preview["archive_sha256"]' in inspection
+    assert (
+        'hashlib.sha256(archive.read_bytes()).hexdigest() == preview["archive_sha256"]'
+        in inspection
+    )
     assert 'model["license_file"]' in inspection
     assert 'component["notice_file"]' in inspection
     assert 'source = preview["corresponding_source"]' in inspection

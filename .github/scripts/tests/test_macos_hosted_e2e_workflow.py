@@ -39,10 +39,8 @@ def test_hosted_macos_probe_is_manual_exact_sha_and_least_privilege() -> None:
     assert "cua-driver/macos-hosted-certification@v1" in workflow
     assert "workflow_ref: $workflow_ref" in workflow
     assert "workflow_sha: $workflow_sha" in workflow
-    assert "live-jev-perception:" in workflow
-    assert "if: ${{ inputs.live_jev_perception }}" in workflow
-    assert "uses: ./.github/workflows/authorized-live-jev-macos-evidence.yml" in workflow
-    assert "if: ${{ !inputs.live_jev_perception }}" in workflow
+    assert "live_jev_perception" not in workflow
+    assert "authorized-live-jev-macos-evidence.yml" not in workflow
     assert "secrets: inherit" not in workflow
 
     for action in ("actions/checkout", "actions/upload-artifact"):
@@ -50,6 +48,25 @@ def test_hosted_macos_probe_is_manual_exact_sha_and_least_privilege() -> None:
         revision = line.split("@", 1)[1].split()[0]
         assert len(revision) == 40
         assert all(character in "0123456789abcdef" for character in revision)
+
+
+def test_lume_certification_is_protected_exact_sha_and_fail_closed() -> None:
+    workflow = read(".github/workflows/e2e-rust-macos-lume.yml")
+
+    assert "workflow_dispatch:" in workflow
+    assert "source_sha:" in workflow
+    assert "runs-on: [self-hosted, macOS, ARM64, cua-lume-maintainer]" in workflow
+    assert "environment: authorized-live-jev-use-demo" in workflow
+    assert "source_sha must match the selected workflow ref tip" in workflow
+    assert "needs: lume" in workflow
+    assert 'schema "cua-driver/macos-lume-certification@v1"' in workflow
+    assert 'workflow_path ".github/workflows/e2e-rust-macos-lume.yml"' in workflow
+    assert 'passed: ($lume == "success")' in workflow
+    assert "jq -e '.passed == true' certification.json" in workflow
+    assert (
+        "name: rust-macos-lume-certification-${{ github.run_id }}-${{ github.run_attempt }}"
+        in workflow
+    )
 
 
 def test_hosted_macos_probe_fails_closed_before_gui_capture() -> None:
@@ -71,9 +88,7 @@ def test_hosted_macos_probe_fails_closed_before_gui_capture() -> None:
 
     assert "trap write_environment EXIT" in probe
     assert "AXIsProcessTrusted" in read("scripts/ci/macos/verify-hosted-window.swift")
-    assert "CGPreflightScreenCaptureAccess" in read(
-        "scripts/ci/macos/verify-hosted-window.swift"
-    )
+    assert "CGPreflightScreenCaptureAccess" in read("scripts/ci/macos/verify-hosted-window.swift")
 
 
 def test_hosted_macos_probe_proves_textedit_window_content() -> None:
@@ -95,13 +110,14 @@ def test_hosted_macos_probe_proves_textedit_window_content() -> None:
     assert "textedit-window.png" in probe
     assert "display.png" in probe
     assert "run_with_deadline 30 /usr/bin/killall TextEdit" in probe
-    assert 'pgrep -x TextEdit' in probe
+    assert "pgrep -x TextEdit" in probe
 
 
 def test_script_ci_runs_when_hosted_macos_contract_changes() -> None:
     workflow = read(".github/workflows/ci-test-scripts.yml")
 
     assert '      - ".github/workflows/e2e-rust-macos.yml"' in workflow
+    assert '      - ".github/workflows/e2e-rust-macos-lume.yml"' in workflow
     assert '      - "scripts/ci/macos/**"' in workflow
 
     guide = read("scripts/ci/README.md")
@@ -144,7 +160,7 @@ def test_hosted_macos_runner_is_strict_and_uses_the_canonical_matrix() -> None:
     assert "security verify-cert" not in runner
     assert "security set-key-partition-list" in runner
     assert "set-keychain-settings -lut 21600" in runner
-    assert 'security list-keychains -d user -s' in runner
+    assert "security list-keychains -d user -s" in runner
     assert '"${ORIGINAL_KEYCHAINS[@]}"' in runner
     assert "run_bounded 30 codesign" in runner
     assert "phase.txt" in runner
@@ -159,13 +175,13 @@ def test_hosted_macos_runner_is_strict_and_uses_the_canonical_matrix() -> None:
     assert "seed-tcc-guest.sh" in runner
     assert "--expected-client com.trycua.driver.local" in runner
     assert "--dangerously-bypass-approvals" in runner
-    assert ".direct_capture_status == \"not_checked\"" in runner
+    assert '.direct_capture_status == "not_checked"' in runner
     assert '.source.attribution == "driver-daemon"' in runner
     assert 'bash "${SCRIPT_DIR}/run-rust-e2e.sh"' in runner
     assert 'CUA_E2E_MACOS_DAEMON_SOCKET="${DAEMON_SOCKET}"' in runner
     assert '--socket "${DAEMON_SOCKET}"' in runner
-    assert 'trap \'exit 130\' INT' in runner
-    assert 'trap \'exit 143\' TERM' in runner
+    assert "trap 'exit 130' INT" in runner
+    assert "trap 'exit 143' TERM" in runner
     assert 'bash "${SCRIPT_DIR}/probe-hosted-runner.sh"' in runner
     assert "watch_daemon" in runner
     assert "daemon status probe failed; confirming before restart" in runner

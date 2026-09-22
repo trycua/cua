@@ -18,21 +18,19 @@ jobs:
     name: Require the labeled same-repository review heads
     if: >-
       github.event_name == 'pull_request' &&
-      github.event.pull_request.number == 3943 &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.state == 'open' &&
-      github.event.pull_request.draft == true &&
       github.event.action == 'labeled' &&
       github.event.label.name == 'cua-perception-live-review'
     runs-on: ubuntu-latest
     outputs:
+      source_pr_number: ${{ steps.resolve.outputs.source_pr_number }}
       source_sha: ${{ steps.resolve.outputs.source_sha }}
-      jev_source_sha: ${{ steps.resolve.outputs.jev_source_sha }}
       catalog_version: ${{ steps.resolve.outputs.catalog_version }}
       expires_unix: ${{ steps.resolve.outputs.expires_unix }}
     steps:
       - id: resolve
-        name: Revalidate current heads and label
+        name: Revalidate current head and label
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -41,31 +39,23 @@ jobs:
           EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           EVENT_LABEL: ${{ github.event.label.name }}
           EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
-          REVIEWED_JEV_SHA: bdaf8c2570e35254f5e50a317781374efe7aa91a
         run: |
           set -euo pipefail
           [[ "$GITHUB_REPOSITORY" == "trycua/cua" ]]
-          [[ "$EVENT_PR_NUMBER" == "3943" ]]
+          [[ "$EVENT_PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
           [[ "$EVENT_HEAD_REPOSITORY" == "$GITHUB_REPOSITORY" ]]
           [[ "$EVENT_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$EVENT_ACTION" == "labeled" ]]
           [[ "$EVENT_LABEL" == "cua-perception-live-review" ]]
 
-          pr_json="$(gh api "repos/$GITHUB_REPOSITORY/pulls/3943")"
+          pr_json="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$EVENT_PR_NUMBER")"
           [[ "$(jq -r .state <<<"$pr_json")" == "open" ]]
-          [[ "$(jq -r .draft <<<"$pr_json")" == "true" ]]
           [[ "$(jq -r .head.repo.full_name <<<"$pr_json")" == "$GITHUB_REPOSITORY" ]]
           [[ "$(jq -r .head.sha <<<"$pr_json")" == "$EVENT_HEAD_SHA" ]]
           jq -e '.labels | any(.name == "cua-perception-live-review")' <<<"$pr_json" >/dev/null
 
-          jev_json="$(gh api "repos/$GITHUB_REPOSITORY/pulls/3916")"
-          [[ "$(jq -r .state <<<"$jev_json")" == "closed" ]]
-          [[ "$(jq -r .merged <<<"$jev_json")" == "true" ]]
-          [[ "$(jq -r .head.repo.full_name <<<"$jev_json")" == "$GITHUB_REPOSITORY" ]]
-          [[ "$(jq -r .merge_commit_sha <<<"$jev_json")" == "$REVIEWED_JEV_SHA" ]]
-
+          echo "source_pr_number=$EVENT_PR_NUMBER" >> "$GITHUB_OUTPUT"
           echo "source_sha=$EVENT_HEAD_SHA" >> "$GITHUB_OUTPUT"
-          echo "jev_source_sha=$REVIEWED_JEV_SHA" >> "$GITHUB_OUTPUT"
           echo "catalog_version=$GITHUB_RUN_ID" >> "$GITHUB_OUTPUT"
           echo "expires_unix=$(( $(date +%s) + 604800 ))" >> "$GITHUB_OUTPUT"
 
@@ -78,6 +68,7 @@ jobs:
       pull-requests: read
     uses: ./.github/workflows/cd-cua-perception-review-supplied-inputs.yml
     with:
+      source_pr_number: ${{ needs.resolve.outputs.source_pr_number }}
       source_sha: ${{ needs.resolve.outputs.source_sha }}
       catalog_version: ${{ needs.resolve.outputs.catalog_version }}
       expires_unix: ${{ needs.resolve.outputs.expires_unix }}

@@ -3,8 +3,12 @@ name: "Review: Cua Perception supplied-input candidates"
 on:
   workflow_dispatch:
     inputs:
+      source_pr_number:
+        description: "Pull request number carrying the cua-perception-live-review label"
+        required: true
+        type: string
       source_sha:
-        description: "Exact current head SHA of pull request #3943"
+        description: "Exact current head SHA of the source pull request"
         required: true
         type: string
       catalog_version:
@@ -17,8 +21,12 @@ on:
         type: string
   workflow_call:
     inputs:
+      source_pr_number:
+        description: "Pull request number carrying the cua-perception-live-review label"
+        required: true
+        type: string
       source_sha:
-        description: "Exact current head SHA of pull request #3943"
+        description: "Exact current head SHA of the source pull request"
         required: true
         type: string
       catalog_version:
@@ -190,6 +198,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          REQUESTED_PR_NUMBER: ${{ inputs.source_pr_number }}
           REQUESTED_SHA: ${{ inputs.source_sha }}
           EVENT_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
           EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -198,10 +207,11 @@ jobs:
         run: |
           set -euo pipefail
           test "$GITHUB_REPOSITORY" = "trycua/cua"
+          [[ "$REQUESTED_PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
           [[ "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
           if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
-            test "$EVENT_PR_NUMBER" = 3943
+            test "$EVENT_PR_NUMBER" = "$REQUESTED_PR_NUMBER"
             test "$EVENT_HEAD_REPOSITORY" = "$GITHUB_REPOSITORY"
             test "$EVENT_HEAD_SHA" = "$REQUESTED_SHA"
             test "$EVENT_LABEL" = cua-perception-live-review
@@ -210,14 +220,14 @@ jobs:
             test "$GITHUB_SHA" = "$REQUESTED_SHA"
           fi
           IFS=$'\t' read -r state head_sha head_repo < <(
-            gh api "repos/$GITHUB_REPOSITORY/pulls/3943" \
+            gh api "repos/$GITHUB_REPOSITORY/pulls/$REQUESTED_PR_NUMBER" \
               --jq '[.state, .head.sha, .head.repo.full_name] | @tsv'
           )
           test "$state" = open
           test "$head_repo" = "$GITHUB_REPOSITORY"
           test "$head_sha" = "$REQUESTED_SHA"
-          git fetch --no-tags origin "+refs/pull/3943/head:refs/cua-reviewed/pr-3943"
-          test "$(git rev-parse refs/cua-reviewed/pr-3943)" = "$REQUESTED_SHA"
+          git fetch --no-tags origin "+refs/pull/$REQUESTED_PR_NUMBER/head:refs/cua-reviewed/pr-$REQUESTED_PR_NUMBER"
+          test "$(git rev-parse "refs/cua-reviewed/pr-$REQUESTED_PR_NUMBER")" = "$REQUESTED_SHA"
       - name: Download the immutable reviewed model handoff
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:

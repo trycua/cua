@@ -10,7 +10,6 @@ on:
       reviewed_ref:
         description: "Reviewed PR head or immutable candidate tag"
         required: true
-        default: "refs/pull/3943/head"
         type: string
       payload_run_id:
         description: "Run ID containing all three platform bundle inputs"

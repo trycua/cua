@@ -7,12 +7,20 @@ on:
         description: "Explicit acknowledgement that this invocation may use protected live credentials"
         required: true
         type: boolean
+      source_pr_number:
+        description: "Pull request number under live review; must be open with the fixed cua-perception-live-review label"
+        required: true
+        type: string
       source_sha:
-        description: "Exact reviewed head SHA of pull request #3943"
+        description: "Exact reviewed head SHA of source_pr_number"
+        required: true
+        type: string
+      jev_pr_number:
+        description: "Merged pull request number supplying the canonical Jev chooser recipe"
         required: true
         type: string
       jev_source_sha:
-        description: "Canonical merge commit SHA of merged pull request #3916"
+        description: "Exact canonical merge commit SHA of jev_pr_number"
         required: true
         type: string
       signed_candidate_artifact_id:
@@ -21,6 +29,14 @@ on:
         type: string
       signed_candidate_run_id:
         description: "Producer Actions run ID containing the signed review candidates"
+        required: true
+        type: string
+      windows_e2e_run_id:
+        description: "Actions run ID of an independent, already-completed canonical e2e-rust-windows.yml run at source_sha"
+        required: true
+        type: string
+      linux_e2e_run_id:
+        description: "Actions run ID of an independent, already-completed canonical e2e-rust-linux.yml run at source_sha"
         required: true
         type: string
   workflow_call:
@@ -29,12 +45,20 @@ on:
         description: "Explicit acknowledgement that this invocation may use protected live credentials"
         required: true
         type: boolean
+      source_pr_number:
+        description: "Pull request number under live review; must be open with the fixed cua-perception-live-review label"
+        required: true
+        type: string
       source_sha:
-        description: "Exact reviewed head SHA of pull request #3943"
+        description: "Exact reviewed head SHA of source_pr_number"
+        required: true
+        type: string
+      jev_pr_number:
+        description: "Merged pull request number supplying the canonical Jev chooser recipe"
         required: true
         type: string
       jev_source_sha:
-        description: "Canonical merge commit SHA of merged pull request #3916"
+        description: "Exact canonical merge commit SHA of jev_pr_number"
         required: true
         type: string
       signed_candidate_artifact_id:
@@ -43,6 +67,14 @@ on:
         type: string
       signed_candidate_run_id:
         description: "Producer Actions run ID containing the signed review candidates"
+        required: true
+        type: string
+      windows_e2e_run_id:
+        description: "Actions run ID of an independent, already-completed canonical e2e-rust-windows.yml run at source_sha"
+        required: true
+        type: string
+      linux_e2e_run_id:
+        description: "Actions run ID of an independent, already-completed canonical e2e-rust-linux.yml run at source_sha"
         required: true
         type: string
 
@@ -70,11 +102,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_LIVE_ACKNOWLEDGED: ${{ inputs.run_live }}
+          SOURCE_PR_NUMBER: ${{ inputs.source_pr_number }}
           REQUESTED_SHA: ${{ inputs.source_sha }}
+          JEV_PR_NUMBER: ${{ inputs.jev_pr_number }}
           REQUESTED_JEV_SHA: ${{ inputs.jev_source_sha }}
-          CANONICAL_JEV_MERGE_SHA: bdaf8c2570e35254f5e50a317781374efe7aa91a
           CANDIDATE_ARTIFACT_ID: ${{ inputs.signed_candidate_artifact_id }}
           CANDIDATE_RUN_ID: ${{ inputs.signed_candidate_run_id }}
+          WINDOWS_E2E_RUN_ID: ${{ inputs.windows_e2e_run_id }}
+          LINUX_E2E_RUN_ID: ${{ inputs.linux_e2e_run_id }}
           EVENT_ACTION: ${{ github.event.action }}
           EVENT_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
           EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -84,11 +119,14 @@ jobs:
           set -euo pipefail
           [[ "$GITHUB_REPOSITORY" == "trycua/cua" ]] || { echo "live demo runs only in trycua/cua" >&2; exit 2; }
           [[ "$RUN_LIVE_ACKNOWLEDGED" == true ]] || { echo "run_live must be explicitly acknowledged" >&2; exit 2; }
+          [[ "$SOURCE_PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo "source_pr_number must be numeric" >&2; exit 2; }
           [[ "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "source_sha must be exactly 40 lowercase hexadecimal characters" >&2; exit 2; }
+          [[ "$JEV_PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo "jev_pr_number must be numeric" >&2; exit 2; }
           [[ "$REQUESTED_JEV_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "jev_source_sha must be exactly 40 lowercase hexadecimal characters" >&2; exit 2; }
-          [[ "$REQUESTED_JEV_SHA" == "$CANONICAL_JEV_MERGE_SHA" ]] || { echo "jev_source_sha must be the canonical merge commit of PR #3916" >&2; exit 2; }
           [[ "$CANDIDATE_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]] || { echo "signed_candidate_artifact_id must be numeric" >&2; exit 2; }
           [[ "$CANDIDATE_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo "signed_candidate_run_id must be numeric" >&2; exit 2; }
+          [[ "$WINDOWS_E2E_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo "windows_e2e_run_id must be numeric" >&2; exit 2; }
+          [[ "$LINUX_E2E_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo "linux_e2e_run_id must be numeric" >&2; exit 2; }
           validate_pr_head() {
             local number="$1" requested="$2" label="$3" state head_sha head_repo
             IFS=$'\t' read -r state head_sha head_repo < <(
@@ -103,7 +141,7 @@ jobs:
             }
           }
           validate_merged_pr() {
-            local number="$1" requested="$2" expected="$3" label="$4" state merged head_repo merge_sha
+            local number="$1" requested="$2" label="$3" state merged head_repo merge_sha
             IFS=$'\t' read -r state merged head_repo merge_sha < <(
               gh api "repos/$GITHUB_REPOSITORY/pulls/$number" \
                 --jq '[.state, .merged, .head.repo.full_name, .merge_commit_sha] | @tsv'
@@ -111,12 +149,53 @@ jobs:
             [[ "$state" == closed && "$merged" == true && "$head_repo" == "$GITHUB_REPOSITORY" ]] || {
               echo "PR $number must be merged and closed with a head in $GITHUB_REPOSITORY" >&2; exit 2;
             }
-            [[ "$requested" == "$expected" && "$merge_sha" == "$expected" ]] || {
+            [[ -n "$merge_sha" && "$requested" == "$merge_sha" ]] || {
               echo "$label is not the exact canonical merge commit of PR $number" >&2; exit 2;
             }
           }
-          validate_pr_head 3943 "$REQUESTED_SHA" source_sha
-          validate_merged_pr 3916 "$REQUESTED_JEV_SHA" "$CANONICAL_JEV_MERGE_SHA" jev_source_sha
+          validate_e2e_run() {
+            local run_id="$1" expected_path="$2" expected_artifact="$3" expected_platform="$4" label="$5" run_json repo path event head_sha status conclusion artifacts_json artifact_id cert_dir cert_json
+            run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")"
+            repo="$(jq -r .repository.full_name <<<"$run_json")"
+            path="$(jq -r .path <<<"$run_json")"
+            event="$(jq -r .event <<<"$run_json")"
+            head_sha="$(jq -r .head_sha <<<"$run_json")"
+            status="$(jq -r .status <<<"$run_json")"
+            conclusion="$(jq -r .conclusion <<<"$run_json")"
+            [[ "$repo" == "$GITHUB_REPOSITORY" ]] || { echo "$label run is not in $GITHUB_REPOSITORY" >&2; exit 2; }
+            [[ "$path" == "$expected_path" ]] || { echo "$label run is not the canonical $expected_path workflow" >&2; exit 2; }
+            [[ "$event" == workflow_dispatch ]] || { echo "$label run is not a trusted workflow_dispatch run" >&2; exit 2; }
+            [[ "$head_sha" == "$REQUESTED_SHA" ]] || { echo "$label run head_sha does not match source_sha" >&2; exit 2; }
+            [[ "$status" == completed && "$conclusion" == success ]] || { echo "$label run did not complete successfully" >&2; exit 2; }
+            artifacts_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts?per_page=100")"
+            jq -e --arg name "$expected_artifact" \
+              '.artifacts[]? | select(.name == $name and (.expired | not))' <<<"$artifacts_json" >/dev/null || {
+              echo "$label run is missing the $expected_artifact certification artifact" >&2; exit 2;
+            }
+            artifact_id="$(jq -r --arg name "$expected_artifact" '.artifacts[] | select(.name == $name and (.expired | not)) | .id' <<<"$artifacts_json")"
+            [[ "$artifact_id" =~ ^[1-9][0-9]*$ ]] || { echo "$label certification artifact ID is invalid" >&2; exit 2; }
+            cert_dir="$(mktemp -d)"
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$cert_dir/certification.zip"
+            unzip -q "$cert_dir/certification.zip" -d "$cert_dir/unpacked"
+            [[ -f "$cert_dir/unpacked/certification.json" ]] || { echo "$label certification.json is missing" >&2; exit 2; }
+            cert_json="$(cat "$cert_dir/unpacked/certification.json")"
+            [[ "$(jq -r .schema <<<"$cert_json")" == "cua-driver/e2e-certification/v1" ]]
+            [[ "$(jq -r .repository <<<"$cert_json")" == "$GITHUB_REPOSITORY" ]]
+            [[ "$(jq -r .run_id <<<"$cert_json")" == "$run_id" ]]
+            [[ "$(jq -r .event_name <<<"$cert_json")" == workflow_dispatch ]]
+            [[ "$(jq -r .platform <<<"$cert_json")" == "$expected_platform" ]]
+            [[ "$(jq -r .lane <<<"$cert_json")" == all ]]
+            [[ "$(jq -r .canonical <<<"$cert_json")" == true ]]
+            [[ "$(jq -r .source_sha <<<"$cert_json")" == "$REQUESTED_SHA" ]]
+            [[ "$(jq -r '.required_jobs | all(.[]; . == "success")' <<<"$cert_json")" == true ]]
+            if [[ "$expected_platform" == windows ]]; then
+              [[ "$(jq -r .runner_policy_class <<<"$cert_json")" == github-hosted ]]
+            fi
+          }
+          validate_pr_head "$SOURCE_PR_NUMBER" "$REQUESTED_SHA" source_sha
+          validate_merged_pr "$JEV_PR_NUMBER" "$REQUESTED_JEV_SHA" jev_source_sha
+          validate_e2e_run "$WINDOWS_E2E_RUN_ID" ".github/workflows/e2e-rust-windows.yml" rust-windows-e2e-certification windows windows_e2e_run_id
+          validate_e2e_run "$LINUX_E2E_RUN_ID" ".github/workflows/e2e-rust-linux.yml" rust-linux-e2e-certification linux linux_e2e_run_id
           artifact_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$CANDIDATE_ARTIFACT_ID")"
           [[ "$(jq -r .name <<<"$artifact_json")" == "STAGING-cua-perception-review-candidates-$REQUESTED_SHA" ]] || { echo "candidate artifact has the wrong aggregate name" >&2; exit 2; }
           [[ "$(jq -r .expired <<<"$artifact_json")" == false ]] || { echo "candidate artifact is expired" >&2; exit 2; }
@@ -129,10 +208,10 @@ jobs:
           [[ "$(jq -r .head_sha <<<"$run_json")" == "$REQUESTED_SHA" ]] || {
             echo "candidate artifact workflow run is not bound to source_sha" >&2; exit 2;
           }
-          [[ "$(jq -r .path <<<"$run_json")" == ".github/workflows/review-cua-perception-pr3943.yml" ]] || { echo "candidate artifact was not produced by the PR review workflow" >&2; exit 2; }
+          [[ "$(jq -r .path <<<"$run_json")" == ".github/workflows/review-cua-perception-candidates.yml" ]] || { echo "candidate artifact was not produced by the PR review workflow" >&2; exit 2; }
           [[ "$(jq -r .event <<<"$run_json")" == pull_request ]] || { echo "candidate artifact producer was not a pull-request review run" >&2; exit 2; }
           if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
-            [[ "$EVENT_ACTION" == labeled && "$EVENT_PR_NUMBER" == 3943 ]] || { echo "same-run use requires the labeled PR #3943 caller" >&2; exit 2; }
+            [[ "$EVENT_ACTION" == labeled && "$EVENT_PR_NUMBER" == "$SOURCE_PR_NUMBER" ]] || { echo "same-run use requires the labeled source_pr_number caller" >&2; exit 2; }
             [[ "$EVENT_HEAD_REPOSITORY" == "$GITHUB_REPOSITORY" && "$EVENT_HEAD_SHA" == "$REQUESTED_SHA" ]] || { echo "same-run caller is not the exact same-repository source head" >&2; exit 2; }
             [[ "$EVENT_LABEL" == cua-perception-live-review && "$run_id" == "$GITHUB_RUN_ID" ]] || { echo "same-run caller lacks the exact review label or run ID" >&2; exit 2; }
             [[ "$(jq -r .status <<<"$run_json")" == in_progress && "$(jq -r .conclusion <<<"$run_json")" == null ]] || { echo "same-run candidate artifact is not from the active review run" >&2; exit 2; }
@@ -179,58 +258,9 @@ jobs:
           cargo test --manifest-path libs/cua-driver/rust/Cargo.toml -p cua-driver --test authorized_live_jev_use_demo_test --locked
           cargo test --manifest-path libs/cua-driver/rust/Cargo.toml -p cua-perception --locked
 
-  windows-preflight:
-    name: Windows canonical interactive-desktop preflight
-    needs: source
-    runs-on: windows-latest
-    timeout-minutes: 90
-    env:
-      CUA_E2E_SOURCE_SHA: ${{ needs.source.outputs.sha }}
-      CUA_E2E_INTERNAL_LANE: capture
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          ref: ${{ needs.source.outputs.sha }}
-          persist-credentials: false
-      - name: Ensure FFmpeg for canonical trajectory recording
-        shell: pwsh
-        run: .\scripts\ci\windows\setup-ffmpeg.ps1
-      - name: Run canonical Windows GUI harness
-        shell: pwsh
-        run: .\scripts\ci\windows\run-rust-e2e.ps1 -RequireGui
-
-  linux-x11-preflight:
-    name: Linux canonical X11 preflight
-    needs: source
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    env:
-      CUA_E2E_SOURCE_SHA: ${{ needs.source.outputs.sha }}
-      CUA_E2E_INTERNAL_LANE: capture
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          ref: ${{ needs.source.outputs.sha }}
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
-      - name: Install canonical Linux X11 harness dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            xvfb dbus-x11 at-spi2-core openbox picom python3-gi gir1.2-gtk-3.0 \
-            libgtk-3-dev clang pkg-config libdbus-1-dev libpipewire-0.3-dev \
-            libspa-0.2-dev libei-dev libx11-dev libxi-dev libxtst-dev libxext-dev \
-            libwebkit2gtk-4.1-dev libssl-dev libxdo-dev \
-            libayatana-appindicator3-dev librsvg2-dev ffmpeg jq
-      - name: Run canonical Linux X11 harness
-        shell: bash
-        run: |
-          xvfb-run -a --server-args="-screen 0 1920x1080x24" dbus-run-session -- bash -lc \
-            "openbox >/tmp/cua-openbox.log 2>&1 & picom --backend xrender --config /dev/null >/tmp/cua-picom.log 2>&1 & sleep 2; scripts/ci/linux/run-rust-e2e.sh"
-
   live:
     name: Live Jev (${{ matrix.platform }})
-    needs: [source, mock-preflight, windows-preflight, linux-x11-preflight]
+    needs: [source, mock-preflight]
     strategy:
       fail-fast: false
       matrix:
@@ -572,10 +602,12 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $key = $env:LIVE_TYPESAFE_API_KEY; Remove-Item Env:LIVE_TYPESAFE_API_KEY
           if ([string]::IsNullOrWhiteSpace($key)) { throw 'TYPESAFE_API_KEY environment secret is required' }
-          $review = gh api "repos/$env:GITHUB_REPOSITORY/pulls/3943" | ConvertFrom-Json
-          if ($review.state -ne 'open' -or $review.draft -ne $true -or $review.head.repo.full_name -ne $env:GITHUB_REPOSITORY -or $review.head.sha -ne '${{ needs.source.outputs.sha }}' -or 'cua-perception-live-review' -notin $review.labels.name) { throw 'PR #3943 is no longer the exact labeled draft under review' }
-          $jevReview = gh api "repos/$env:GITHUB_REPOSITORY/pulls/3916" | ConvertFrom-Json
-          if ($jevReview.state -ne 'closed' -or $jevReview.merged -ne $true -or $jevReview.head.repo.full_name -ne $env:GITHUB_REPOSITORY -or $jevReview.merge_commit_sha -ne 'bdaf8c2570e35254f5e50a317781374efe7aa91a' -or '${{ needs.source.outputs.jev_sha }}' -ne 'bdaf8c2570e35254f5e50a317781374efe7aa91a') { throw 'PR #3916 is no longer the exact canonical merged Jev recipe' }
+          $sourcePrNumber = '${{ inputs.source_pr_number }}'
+          $jevPrNumber = '${{ inputs.jev_pr_number }}'
+          $review = gh api "repos/$env:GITHUB_REPOSITORY/pulls/$sourcePrNumber" | ConvertFrom-Json
+          if ($review.state -ne 'open' -or $review.head.repo.full_name -ne $env:GITHUB_REPOSITORY -or $review.head.sha -ne '${{ needs.source.outputs.sha }}' -or 'cua-perception-live-review' -notin $review.labels.name) { throw "PR #$sourcePrNumber is no longer the exact labeled source under review" }
+          $jevReview = gh api "repos/$env:GITHUB_REPOSITORY/pulls/$jevPrNumber" | ConvertFrom-Json
+          if ($jevReview.state -ne 'closed' -or $jevReview.merged -ne $true -or $jevReview.head.repo.full_name -ne $env:GITHUB_REPOSITORY -or $jevReview.merge_commit_sha -ne '${{ needs.source.outputs.jev_sha }}') { throw "PR #$jevPrNumber is no longer the exact canonical merged Jev recipe" }
           Remove-Item Env:GH_TOKEN
           if ((git rev-parse HEAD).Trim() -ne '${{ needs.source.outputs.sha }}') { throw 'source changed after build' }
           if ((git -C (Join-Path $env:GITHUB_WORKSPACE 'jev-use-source') rev-parse HEAD).Trim() -ne '${{ needs.source.outputs.jev_sha }}') { throw 'chooser source changed after setup' }

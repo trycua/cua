@@ -7,26 +7,6 @@ on:
         description: "Full 40-character commit SHA to certify"
         required: true
         type: string
-      live_jev_perception:
-        description: "Run the protected self-hosted Lume Jev + perception evidence lane"
-        required: false
-        default: false
-        type: boolean
-      jev_source_sha:
-        description: "Canonical merged commit SHA bdaf8c2570e35254f5e50a317781374efe7aa91a of pull request #3916 (live lane only)"
-        required: false
-        default: ""
-        type: string
-      signed_arm64_candidate_artifact_id:
-        description: "Immutable signed review-candidate artifact ID (live lane only)"
-        required: false
-        default: ""
-        type: string
-      signed_candidate_run_id:
-        description: "Producer run ID for the signed review candidate (live lane only)"
-        required: false
-        default: ""
-        type: string
 
 permissions:
   actions: read
@@ -38,17 +18,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  live-jev-perception:
-    if: ${{ inputs.live_jev_perception }}
-    uses: ./.github/workflows/authorized-live-jev-macos-evidence.yml
-    with:
-      source_sha: ${{ inputs.source_sha }}
-      jev_source_sha: ${{ inputs.jev_source_sha }}
-      signed_arm64_candidate_artifact_id: ${{ inputs.signed_arm64_candidate_artifact_id }}
-      signed_candidate_run_id: ${{ inputs.signed_candidate_run_id }}
-
   probe:
-    if: ${{ !inputs.live_jev_perception }}
     name: hosted environment probe
     runs-on: macos-26
     timeout-minutes: 20
@@ -117,7 +87,6 @@ jobs:
           retention-days: 14
 
   matrix:
-    if: ${{ !inputs.live_jev_perception }}
     needs: probe
     name: hosted ${{ matrix.lane }} lane
     runs-on: macos-26
@@ -197,7 +166,7 @@ jobs:
           retention-days: 14
 
   certify:
-    if: ${{ always() && !inputs.live_jev_perception }}
+    if: ${{ always() }}
     needs: [probe, matrix]
     name: hosted certification result
     runs-on: ubuntu-latest

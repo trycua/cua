@@ -3,12 +3,20 @@ name: "Authorized: live Jev macOS evidence"
 on:
   workflow_dispatch:
     inputs:
+      source_pr_number:
+        description: "Pull request number carrying the exact reviewed source head"
+        required: true
+        type: string
       source_sha:
-        description: "Exact reviewed head SHA of pull request #3943"
+        description: "Exact reviewed head SHA of the source pull request"
+        required: true
+        type: string
+      jev_pr_number:
+        description: "Pull request number of the canonical merged Jev chooser"
         required: true
         type: string
       jev_source_sha:
-        description: "Canonical merged commit SHA bdaf8c2570e35254f5e50a317781374efe7aa91a of pull request #3916"
+        description: "Canonical merge commit SHA of the Jev pull request"
         required: true
         type: string
       signed_arm64_candidate_artifact_id:
@@ -17,16 +25,28 @@ on:
         type: string
       signed_candidate_run_id:
         description: "Producer Actions run ID containing the signed review candidate"
+        required: true
+        type: string
+      macos_lume_e2e_run_id:
+        description: "Actions run ID of the canonical e2e-rust-macos-lume.yml certification at source_sha"
         required: true
         type: string
   workflow_call:
     inputs:
+      source_pr_number:
+        description: "Pull request number carrying the exact reviewed source head"
+        required: true
+        type: string
       source_sha:
-        description: "Exact reviewed head SHA of pull request #3943"
+        description: "Exact reviewed head SHA of the source pull request"
+        required: true
+        type: string
+      jev_pr_number:
+        description: "Pull request number of the canonical merged Jev chooser"
         required: true
         type: string
       jev_source_sha:
-        description: "Canonical merged commit SHA bdaf8c2570e35254f5e50a317781374efe7aa91a of pull request #3916"
+        description: "Canonical merge commit SHA of the Jev pull request"
         required: true
         type: string
       signed_arm64_candidate_artifact_id:
@@ -35,6 +55,10 @@ on:
         type: string
       signed_candidate_run_id:
         description: "Producer Actions run ID containing the signed review candidate"
+        required: true
+        type: string
+      macos_lume_e2e_run_id:
+        description: "Actions run ID of the canonical e2e-rust-macos-lume.yml certification at source_sha"
         required: true
         type: string
 permissions:
@@ -51,27 +75,35 @@ jobs:
     name: Resolve exact reviewed sources and candidate
     runs-on: ubuntu-latest
     outputs:
+      source_pr_number: ${{ steps.resolve.outputs.source_pr_number }}
       source_sha: ${{ steps.resolve.outputs.source_sha }}
+      jev_pr_number: ${{ steps.resolve.outputs.jev_pr_number }}
       jev_source_sha: ${{ steps.resolve.outputs.jev_source_sha }}
       candidate_run_id: ${{ steps.resolve.outputs.candidate_run_id }}
     steps:
       - id: resolve
-        name: Require exact open candidate head, merged Jev commit, and immutable artifact
+        name: Require exact open candidate head, merged Jev commit, immutable artifact, and certified Lume run
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          REQUESTED_SOURCE_PR: ${{ inputs.source_pr_number }}
           REQUESTED_SHA: ${{ inputs.source_sha }}
+          REQUESTED_JEV_PR: ${{ inputs.jev_pr_number }}
           REQUESTED_JEV_SHA: ${{ inputs.jev_source_sha }}
           CANDIDATE_ARTIFACT_ID: ${{ inputs.signed_arm64_candidate_artifact_id }}
           CANDIDATE_RUN_ID: ${{ inputs.signed_candidate_run_id }}
+          LUME_RUN_ID: ${{ inputs.macos_lume_e2e_run_id }}
+          FIXED_SOURCE_LABEL: "cua-perception-live-review"
         run: |
           set -euo pipefail
           [[ "$GITHUB_REPOSITORY" == "trycua/cua" ]]
+          [[ "$REQUESTED_SOURCE_PR" =~ ^[1-9][0-9]*$ ]]
           [[ "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$REQUESTED_JEV_PR" =~ ^[1-9][0-9]*$ ]]
           [[ "$REQUESTED_JEV_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$REQUESTED_JEV_SHA" == "bdaf8c2570e35254f5e50a317781374efe7aa91a" ]]
           [[ "$CANDIDATE_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
           [[ "$CANDIDATE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$LUME_RUN_ID" =~ ^[1-9][0-9]*$ ]]
           validate_pr_head() {
             local number="$1" requested="$2" state head_sha head_repo
             IFS=$'\t' read -r state head_sha head_repo < <(
@@ -80,8 +112,10 @@ jobs:
             )
             [[ "$state" == open && "$head_repo" == "$GITHUB_REPOSITORY" && "$head_sha" == "$requested" ]]
           }
-          validate_pr_head 3943 "$REQUESTED_SHA"
-          jev_pr_json="$(gh api "repos/$GITHUB_REPOSITORY/pulls/3916")"
+          validate_pr_head "$REQUESTED_SOURCE_PR" "$REQUESTED_SHA"
+          source_pr_json="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$REQUESTED_SOURCE_PR")"
+          jq -e --arg label "$FIXED_SOURCE_LABEL" '.labels | any(.name == $label)' <<<"$source_pr_json" >/dev/null
+          jev_pr_json="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$REQUESTED_JEV_PR")"
           [[ "$(jq -r .state <<<"$jev_pr_json")" == closed ]]
           [[ "$(jq -r .merged <<<"$jev_pr_json")" == true ]]
           [[ "$(jq -r .head.repo.full_name <<<"$jev_pr_json")" == "$GITHUB_REPOSITORY" ]]
@@ -94,12 +128,39 @@ jobs:
           [[ "$run_id" == "$CANDIDATE_RUN_ID" ]]
           run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")"
           [[ "$(jq -r .head_sha <<<"$run_json")" == "$REQUESTED_SHA" ]]
-          [[ "$(jq -r .path <<<"$run_json")" == ".github/workflows/review-cua-perception-pr3943.yml" ]]
+          [[ "$(jq -r .path <<<"$run_json")" == ".github/workflows/review-cua-perception-candidates.yml" ]]
           [[ "$(jq -r .event <<<"$run_json")" == pull_request ]]
           [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]
           [[ "$(jq -r .status <<<"$run_json")" == completed ]]
           [[ "$(jq -r .conclusion <<<"$run_json")" == success ]]
+          lume_run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$LUME_RUN_ID")"
+          [[ "$(jq -r .head_repository.full_name <<<"$lume_run_json")" == "$GITHUB_REPOSITORY" ]]
+          [[ "$(jq -r .head_sha <<<"$lume_run_json")" == "$REQUESTED_SHA" ]]
+          [[ "$(jq -r .path <<<"$lume_run_json")" == ".github/workflows/e2e-rust-macos-lume.yml" ]]
+          [[ "$(jq -r .event <<<"$lume_run_json")" == workflow_dispatch ]]
+          [[ "$(jq -r .status <<<"$lume_run_json")" == completed ]]
+          [[ "$(jq -r .conclusion <<<"$lume_run_json")" == success ]]
+          lume_run_attempt="$(jq -r .run_attempt <<<"$lume_run_json")"
+          [[ "$lume_run_attempt" =~ ^[1-9][0-9]*$ ]]
+          lume_artifacts_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$LUME_RUN_ID/artifacts?per_page=100")"
+          lume_artifact_name="rust-macos-lume-certification-$LUME_RUN_ID-$lume_run_attempt"
+          lume_artifact_id="$(jq -r --arg name "$lume_artifact_name" '.artifacts[] | select(.name == $name and (.expired | not)) | .id' <<<"$lume_artifacts_json")"
+          [[ "$lume_artifact_id" =~ ^[1-9][0-9]*$ ]]
+          lume_cert_dir="$(mktemp -d)"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$lume_artifact_id/zip" > "$lume_cert_dir/certification.zip"
+          unzip -q "$lume_cert_dir/certification.zip" -d "$lume_cert_dir/unpacked"
+          [[ -f "$lume_cert_dir/unpacked/certification.json" ]]
+          lume_cert_json="$(cat "$lume_cert_dir/unpacked/certification.json")"
+          [[ "$(jq -r .schema <<<"$lume_cert_json")" == "cua-driver/macos-lume-certification@v1" ]]
+          [[ "$(jq -r .source_sha <<<"$lume_cert_json")" == "$REQUESTED_SHA" ]]
+          [[ "$(jq -r .github.repository <<<"$lume_cert_json")" == "$GITHUB_REPOSITORY" ]]
+          [[ "$(jq -r .github.run_id <<<"$lume_cert_json")" == "$LUME_RUN_ID" ]]
+          [[ "$(jq -r .github.workflow_path <<<"$lume_cert_json")" == ".github/workflows/e2e-rust-macos-lume.yml" ]]
+          [[ "$(jq -r .github.event <<<"$lume_cert_json")" == workflow_dispatch ]]
+          [[ "$(jq -r .passed <<<"$lume_cert_json")" == true ]]
+          echo "source_pr_number=$REQUESTED_SOURCE_PR" >> "$GITHUB_OUTPUT"
           echo "source_sha=$REQUESTED_SHA" >> "$GITHUB_OUTPUT"
+          echo "jev_pr_number=$REQUESTED_JEV_PR" >> "$GITHUB_OUTPUT"
           echo "jev_source_sha=$REQUESTED_JEV_SHA" >> "$GITHUB_OUTPUT"
           echo "candidate_run_id=$CANDIDATE_RUN_ID" >> "$GITHUB_OUTPUT"
 
@@ -110,7 +171,9 @@ jobs:
     timeout-minutes: 240
     environment: authorized-live-jev-use-demo
     env:
+      CUA_E2E_SOURCE_PR_NUMBER: ${{ needs.resolve.outputs.source_pr_number }}
       CUA_E2E_SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+      CUA_JEV_PR_NUMBER: ${{ needs.resolve.outputs.jev_pr_number }}
       CUA_JEV_SOURCE_SHA: ${{ needs.resolve.outputs.jev_source_sha }}
       CUA_E2E_UNRESTRICTED_GUI: "1"
       CUA_SESSION_LABEL: authorized-jev-choice-demo-macos
@@ -143,7 +206,7 @@ jobs:
           [[ "$(stat -f '%Su' /dev/console)" == "$(id -un)" ]]
           launchctl print "gui/$(id -u)" >/dev/null
 
-      - name: Preflight noninteractive Lume privileges, keychains, and browsers
+      - name: Preflight noninteractive Lume privileges and keychains
         shell: bash
         run: |
           set -euo pipefail
@@ -160,19 +223,6 @@ jobs:
           /usr/bin/security find-identity -v -p codesigning "$signing_keychain" | \
             /usr/bin/grep -F "CuaDriver Local Signing (cua-driver-rs)" >/dev/null || \
             fail "dedicated signing keychain lacks the required CuaDriver Local Signing identity"
-          browser_count=0
-          for browser in \
-            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"; do
-            if [[ -x "$browser" ]]; then
-              browser_count=$((browser_count + 1))
-            fi
-          done
-          ((browser_count > 0)) || fail "no supported standalone Chrome or Edge executable is installed in /Applications"
-
-      - name: Run the canonical logged-in Lume matrix at the exact SHA
-        shell: bash
-        run: libs/cua-driver/tests/runners/macos-lume/run-all.sh --standalone-browser
 
       - name: Check out the exact merged Jev chooser
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -507,6 +557,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           LIVE_TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+          FIXED_SOURCE_LABEL: "cua-perception-live-review"
         run: |
           set -euo pipefail
           typesafe_key="$LIVE_TYPESAFE_API_KEY"
@@ -539,13 +590,12 @@ jobs:
           }
           api_root="${GITHUB_API_URL:-https://api.github.com}"
           [[ "$api_root" == "https://api.github.com" ]]
-          pr_json="$(github_api "$api_root/repos/$GITHUB_REPOSITORY/pulls/3943")"
+          pr_json="$(github_api "$api_root/repos/$GITHUB_REPOSITORY/pulls/$CUA_E2E_SOURCE_PR_NUMBER")"
           [[ "$(jq -r .state <<<"$pr_json")" == open ]]
-          [[ "$(jq -r .draft <<<"$pr_json")" == true ]]
           [[ "$(jq -r .head.repo.full_name <<<"$pr_json")" == "$GITHUB_REPOSITORY" ]]
           [[ "$(jq -r .head.sha <<<"$pr_json")" == "$CUA_E2E_SOURCE_SHA" ]]
-          jq -e '.labels | any(.name == "cua-perception-live-review")' <<<"$pr_json" >/dev/null
-          jev_pr_json="$(github_api "$api_root/repos/$GITHUB_REPOSITORY/pulls/3916")"
+          jq -e --arg label "$FIXED_SOURCE_LABEL" '.labels | any(.name == $label)' <<<"$pr_json" >/dev/null
+          jev_pr_json="$(github_api "$api_root/repos/$GITHUB_REPOSITORY/pulls/$CUA_JEV_PR_NUMBER")"
           [[ "$(jq -r .state <<<"$jev_pr_json")" == closed ]]
           [[ "$(jq -r .merged <<<"$jev_pr_json")" == true ]]
           [[ "$(jq -r .head.repo.full_name <<<"$jev_pr_json")" == "$GITHUB_REPOSITORY" ]]

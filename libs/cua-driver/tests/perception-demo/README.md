@@ -1,9 +1,11 @@
 # Visual perception demo evidence
 
 This directory defines the review-only evidence boundary for the visual canvas
-demo. The GitHub workflow runs mock and static checks, then runs the canonical
-Windows and Linux X11 Driver harnesses without secrets. A protected job consumes
-an immutable review-candidate aggregate, runs the ignored visual-only test with
+demo. Independent exact-SHA workflows run and certify the canonical Windows,
+Linux X11, and logged-in macOS Lume Driver harnesses without live-provider
+secrets. The protected workflows verify those run IDs and their machine-readable
+certification artifacts instead of rerunning the broad matrices. A protected
+job consumes an immutable review-candidate aggregate, runs the ignored visual-only test with
 the measured review Driver, and makes the API key available only to the bounded
 Jev chooser process. After decode and schema validation, each review bundle is
 encrypted separately and the artifact upload contains only the resulting
@@ -105,9 +107,12 @@ directory and remove those exact directories in an `always()` step after the
 upload step.
 
 Native macOS live evidence remains separate from the Windows/Linux workflow.
-This proof uses the logged-in, TCC-authorized Lume runner and the canonical
-`libs/cua-driver/tests/runners/macos-lume/run-all.sh --standalone-browser`
-harness with the `macos` member of the same private review aggregate. The
+This proof uses the logged-in, TCC-authorized Lume runner. A maintainer first
+dispatches `.github/workflows/e2e-rust-macos-lume.yml`, whose exact-SHA gate runs
+`libs/cua-driver/tests/runners/macos-lume/run-all.sh --standalone-browser` and
+publishes a certification artifact without live-provider credentials. The
+protected evidence workflow then attests that run before using the `macos`
+member of the same private review aggregate. The
 labeled PR workflow produces the candidate and runs only on GitHub-hosted
 Linux, Windows, and macOS machines; the pull-request event never schedules the
 self-hosted Lume runner. After that producer run completes successfully, a

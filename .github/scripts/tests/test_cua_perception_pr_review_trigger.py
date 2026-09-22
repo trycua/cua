@@ -168,7 +168,7 @@ def test_protected_live_workflow_owns_secrets_and_environment() -> None:
     assert 'chooser["provider"] == "typesafe"' in validation
 
 
-def test_self_hosted_macos_evidence_is_manual_and_not_pr_event_chained() -> None:
+def test_macos_attestation_is_manual_and_not_pr_event_chained() -> None:
     _, workflow = load_workflow(TRIGGER)
     assert "macos" not in workflow["jobs"]
     _, macos_workflow = load_workflow(MACOS)
@@ -177,10 +177,7 @@ def test_self_hosted_macos_evidence_is_manual_and_not_pr_event_chained() -> None
     assert set(triggers(entry_workflow)) == {"workflow_dispatch"}
     assert "pull_request:" not in entry_text and "pull_request_target" not in entry_text
     assert "live-jev-perception" not in entry_workflow["jobs"]
-    assert macos_workflow["jobs"]["evidence"]["environment"] == "authorized-live-jev-use-demo"
-    assert macos_workflow["jobs"]["evidence"]["runs-on"] == [
-        "self-hosted",
-        "macOS",
-        "ARM64",
-        "cua-lume-maintainer",
-    ]
+    assert macos_workflow["jobs"]["attest"]["environment"] == "authorized-live-jev-use-demo"
+    assert macos_workflow["jobs"]["attest"]["runs-on"] == "ubuntu-latest"
+    assert "self-hosted" not in macos_workflow
+    assert "cua-lume-maintainer" not in macos_workflow

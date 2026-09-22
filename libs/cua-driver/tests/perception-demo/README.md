@@ -106,29 +106,24 @@ keep raw, mock, and validated plaintext evidence beneath the runner's temporary
 directory and remove those exact directories in an `always()` step after the
 upload step.
 
-Native macOS live evidence remains separate from the Windows/Linux workflow.
-This proof uses the logged-in, TCC-authorized Lume runner. A maintainer first
+Native macOS certification remains separate from the Windows/Linux live-provider
+workflow. This proof runs directly in a logged-in, TCC-authorized Lume guest. A maintainer first
 dispatches `.github/workflows/e2e-rust-macos.yml` in `lume` mode, whose exact-SHA gate runs
 `libs/cua-driver/tests/runners/macos-lume/run-all.sh --standalone-browser` and
 publishes a certification artifact without live-provider credentials. The
-protected evidence workflow then attests that run before using the `macos`
-member of the same private review aggregate. The
+protected attestation workflow validates that result and the signed macOS member
+of the private review aggregate on GitHub-hosted Ubuntu. The
 labeled PR workflow produces the candidate and runs only on GitHub-hosted
 Linux, Windows, and macOS machines; the pull-request event never schedules the
-self-hosted Lume runner. After that producer run completes successfully, a
+self-hosted macOS runner. After that producer run completes successfully, a
 maintainer manually dispatches `authorized-live-jev-macos-evidence.yml` with
-its immutable producer run and artifact IDs. This keeps public pull-request
-events from directly scheduling work on the self-hosted Lume runner. The manual
-path requires a protected,
-console-logged-in self-hosted Lume runner. It verifies the exact current source
-and Jev heads, producer run ID, aggregate artifact ID, the candidate Driver's
-certificate-backed arm64 signature and hash, aggregate checksums, the Ed25519
-catalog signature and measured public key, the signed extension identity, and
-the same redacted manifest contract;
-it fully decodes the recording before encrypting the two scope bundles and
-uploading only their `.cuae` envelopes. Recording, raw evidence, sanitizer
-inputs, and validated plaintext directories live beneath the runner's temporary
-directory and are removed by an `always()` cleanup step after the upload step.
+its immutable producer run and artifact IDs. That workflow does not execute
+macOS code, receive a live-provider secret, or upload macOS recordings. It emits
+a small attestation binding the exact source SHA, signed candidate, direct Lume
+run ID, and private evidence digest. macOS recordings remain private on the
+maintainer-controlled Lume host and are collected for review outside GitHub
+Actions. Windows and Linux continue to exercise the bounded live Jev chooser;
+the direct Lume matrix is the macOS platform acceptance gate.
 
 ## Derived reels
 

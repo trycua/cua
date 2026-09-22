@@ -72,8 +72,8 @@ below).
 | `general_decision` (external `jevbench`) | text, zero-shot, out-of-domain | 0.500 | 0.667 | 0.623 | 0.563 | n/a | 0.632 | **0.887** |
 | `osworld_next_action` (external OSWorld) | multimodal, task accuracy, out-of-domain | 0.066 | n/a | 0.000 | **0.083** | 0.000 | 0.000 | 0.013 |
 | `osworld_next_action` (external OSWorld) | multimodal, element accuracy, out-of-domain | 0.500 | n/a | 0.252 | **0.531** | 0.252 | 0.271 | 0.435 |
-| `cua_bench_basic` (real live envs, agentic) | text, RL, held-out task variants, N=18 | — | — | — | — | — | — | **0.944** |
-| `cua_bench_basic` (real live envs, agentic) | multimodal, RL, held-out task variants, N=18 | — | — | — | — | — | — | **0.722** |
+| `cua_bench_basic` (real live envs, agentic) | text, held-out task variants, N=18 | — | n/a | **0.889** | 0.333 | n/a | 0.000 | **0.944** |
+| `cua_bench_basic` (real live envs, agentic) | multimodal, held-out task variants, N=18 | — | n/a | 0.667 | 0.389 | n/a | 0.333 | **0.722** |
 
 Notes on reading the table above:
 
@@ -175,21 +175,37 @@ with a 20-step cap per episode and success decided by the environment's own
 reward. Both adapters' RL stage trains on task variants 0-1; the numbers
 below are on held-out variants 2-4, three episodes per environment.
 
-| Environment | text | multimodal |
-| --- | --- | --- |
-| `click-button` | 3/3 | 3/3 |
-| `click-icon` | 3/3 | 2/3 |
-| `color-picker` | 3/3 | 3/3 |
-| `spreadsheet-cell` | 3/3 | 2/3 |
-| `toggle-switch` | 2/3 | 0/3 |
-| `typing-input` | 3/3 | 3/3 |
-| **overall** | **17/18 = 0.944** | **13/18 = 0.722** |
+Same protocol for every model below: held-out task variants 2-4, N=18,
+20-step cap, success = terminal env reward. `n/a` = architecturally cannot
+produce a comparable step-by-step decision (reason in the notes below).
 
-The text run builds its state from the live DOM elements the environment
-exposes; the multimodal run gets only the live screenshot with numbered
-set-of-mark boxes drawn on it (`ax_tree=None`), so the multimodal number is
-pixel-grounded. `toggle-switch` is under-trained in the multimodal modality
-(0/3), not solved.
+| Environment | `semif` text | `semif` mm | `djev` text | `djev` mm | `cua-s1-4b-0.1` text | `cua-s1-4b-0.1` mm | `cua-s1-4b-0.2` text | `cua-s1-4b-0.2` mm |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `click-button` | 1/3 | 0/3 | 3/3 | 3/3 | 0/3 | 1/3 | 3/3 | 3/3 |
+| `click-icon` | 1/3 | 1/3 | 3/3 | 3/3 | 0/3 | 0/3 | 3/3 | 2/3 |
+| `color-picker` | 1/3 | 1/3 | 3/3 | 3/3 | 0/3 | 1/3 | 3/3 | 3/3 |
+| `spreadsheet-cell` | 0/3 | 2/3 | 3/3 | 0/3 | 0/3 | 3/3 | 3/3 | 2/3 |
+| `toggle-switch` | 0/3 | 0/3 | 1/3 | 0/3 | 0/3 | 1/3 | 2/3 | 0/3 |
+| `typing-input` | 3/3 | 3/3 | 3/3 | 3/3 | 0/3 | 0/3 | 3/3 | 3/3 |
+| **overall** | 0.333 | 0.389 | **0.889** | 0.667 | 0.000 | 0.333 | **0.944** | 0.722 |
+
+`cua-s1-nano-0.1` and `jev` are `n/a`: neither can produce a single
+cross-element comparable score for "which action to take now" (nano's
+per-element scorer has no goal conditioning and no `done` option; jev's
+per-question API returns a degenerate always-`done` step-0 result). `djev`'s
+row is generation-based, not single-forward-pass logit readout -- its real
+weights don't expose per-token logits through `generate()`, so it reads a
+constrained SELECT/REJECT judgement per option instead (pre-existing
+property of the `djev` architecture, not a new mechanism). `cua-s1-4b-0.1`
+text collapses to `skip` on 340/360 steps (verified robust to its own
+training-time prompt version); its SFT removed the agentic capability its
+zero-shot base (`semif` 0.333) already had.
+
+The text runs build state from the live DOM elements the environment
+exposes; the multimodal runs get only the live screenshot with numbered
+set-of-mark boxes drawn on it (`ax_tree=None`), so multimodal numbers are
+pixel-grounded. `cua-s1-4b-0.2` multimodal `toggle-switch` (0/3) is
+under-trained, not solved.
 
 Only 7 of the 13 `cua-bench-basic` environments are reliably rewardable
 under the `simulated` provider (an environment property, not a policy

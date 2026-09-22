@@ -284,7 +284,7 @@ background delivery is tested.
 Canonical runner: `libs/cua-driver/tests/runners/macos-lume/run-all.sh`
 
 Canonical Actions wrapper: manually dispatch
-`.github/workflows/e2e-rust-macos-lume.yml` at the exact source SHA. It runs the
+`.github/workflows/e2e-rust-macos.yml` in `lume` mode at the exact source SHA. It runs the
 logged-in Lume wrapper with `--standalone-browser` and emits the certification
 artifact consumed by protected evidence workflows.
 

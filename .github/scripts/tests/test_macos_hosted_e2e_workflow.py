@@ -51,7 +51,7 @@ def test_hosted_macos_probe_is_manual_exact_sha_and_least_privilege() -> None:
 
 
 def test_lume_certification_is_protected_exact_sha_and_fail_closed() -> None:
-    workflow = read(".github/workflows/e2e-rust-macos-lume.yml")
+    workflow = read(".github/workflows/e2e-rust-macos.yml")
 
     assert "workflow_dispatch:" in workflow
     assert "source_sha:" in workflow
@@ -60,7 +60,7 @@ def test_lume_certification_is_protected_exact_sha_and_fail_closed() -> None:
     assert "source_sha must match the selected workflow ref tip" in workflow
     assert "needs: lume" in workflow
     assert 'schema "cua-driver/macos-lume-certification@v1"' in workflow
-    assert 'workflow_path ".github/workflows/e2e-rust-macos-lume.yml"' in workflow
+    assert 'workflow_path ".github/workflows/e2e-rust-macos.yml"' in workflow
     assert 'passed: ($lume == "success")' in workflow
     assert "jq -e '.passed == true' certification.json" in workflow
     assert (
@@ -117,7 +117,6 @@ def test_script_ci_runs_when_hosted_macos_contract_changes() -> None:
     workflow = read(".github/workflows/ci-test-scripts.yml")
 
     assert '      - ".github/workflows/e2e-rust-macos.yml"' in workflow
-    assert '      - ".github/workflows/e2e-rust-macos-lume.yml"' in workflow
     assert '      - "scripts/ci/macos/**"' in workflow
 
     guide = read("scripts/ci/README.md")

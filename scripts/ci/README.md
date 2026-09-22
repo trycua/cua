@@ -134,7 +134,7 @@ Lume seed, installs the exact committed source, and then delegates to the thin
 the optional installed Chrome/Edge browser matrix after the canonical repo-local
 harness matrix.
 
-The manual `.github/workflows/e2e-rust-macos-lume.yml` workflow is the Actions
+The manual `.github/workflows/e2e-rust-macos.yml` workflow in `lume` mode is the Actions
 entry point for that canonical logged-in Lume gate. Dispatch it at the exact
 candidate SHA; it runs `run-all.sh --standalone-browser` on the protected
 maintainer runner and publishes a machine-readable certification artifact. It

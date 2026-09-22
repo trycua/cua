@@ -28,7 +28,7 @@ on:
         required: true
         type: string
       macos_lume_e2e_run_id:
-        description: "Actions run ID of the canonical e2e-rust-macos-lume.yml certification at source_sha"
+        description: "Actions run ID of the canonical e2e-rust-macos.yml Lume-mode certification at source_sha"
         required: true
         type: string
   workflow_call:
@@ -58,7 +58,7 @@ on:
         required: true
         type: string
       macos_lume_e2e_run_id:
-        description: "Actions run ID of the canonical e2e-rust-macos-lume.yml certification at source_sha"
+        description: "Actions run ID of the canonical e2e-rust-macos.yml Lume-mode certification at source_sha"
         required: true
         type: string
 permissions:
@@ -136,7 +136,7 @@ jobs:
           lume_run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$LUME_RUN_ID")"
           [[ "$(jq -r .head_repository.full_name <<<"$lume_run_json")" == "$GITHUB_REPOSITORY" ]]
           [[ "$(jq -r .head_sha <<<"$lume_run_json")" == "$REQUESTED_SHA" ]]
-          [[ "$(jq -r .path <<<"$lume_run_json")" == ".github/workflows/e2e-rust-macos-lume.yml" ]]
+          [[ "$(jq -r .path <<<"$lume_run_json")" == ".github/workflows/e2e-rust-macos.yml" ]]
           [[ "$(jq -r .event <<<"$lume_run_json")" == workflow_dispatch ]]
           [[ "$(jq -r .status <<<"$lume_run_json")" == completed ]]
           [[ "$(jq -r .conclusion <<<"$lume_run_json")" == success ]]
@@ -155,7 +155,7 @@ jobs:
           [[ "$(jq -r .source_sha <<<"$lume_cert_json")" == "$REQUESTED_SHA" ]]
           [[ "$(jq -r .github.repository <<<"$lume_cert_json")" == "$GITHUB_REPOSITORY" ]]
           [[ "$(jq -r .github.run_id <<<"$lume_cert_json")" == "$LUME_RUN_ID" ]]
-          [[ "$(jq -r .github.workflow_path <<<"$lume_cert_json")" == ".github/workflows/e2e-rust-macos-lume.yml" ]]
+          [[ "$(jq -r .github.workflow_path <<<"$lume_cert_json")" == ".github/workflows/e2e-rust-macos.yml" ]]
           [[ "$(jq -r .github.event <<<"$lume_cert_json")" == workflow_dispatch ]]
           [[ "$(jq -r .passed <<<"$lume_cert_json")" == true ]]
           echo "source_pr_number=$REQUESTED_SOURCE_PR" >> "$GITHUB_OUTPUT"

@@ -108,7 +108,7 @@ upload step.
 
 Native macOS live evidence remains separate from the Windows/Linux workflow.
 This proof uses the logged-in, TCC-authorized Lume runner. A maintainer first
-dispatches `.github/workflows/e2e-rust-macos-lume.yml`, whose exact-SHA gate runs
+dispatches `.github/workflows/e2e-rust-macos.yml` in `lume` mode, whose exact-SHA gate runs
 `libs/cua-driver/tests/runners/macos-lume/run-all.sh --standalone-browser` and
 publishes a certification artifact without live-provider credentials. The
 protected evidence workflow then attests that run before using the `macos`

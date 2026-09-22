@@ -2627,6 +2627,7 @@ impl BrowserEngine {
             .collect_semantic_session(&conn, &cdp_session, &document, local_tree.as_ref(), None)
             .await?;
         semantic.complete &= document_complete;
+        let title = semantic.document_title().unwrap_or(&tab.title).to_owned();
 
         let oopif = if local_tree.is_some() {
             match self.attached_iframe_children(&conn, &cdp_session).await {
@@ -2722,7 +2723,7 @@ impl BrowserEngine {
         let (outcome, refs) = self.semantic_outcome(
             snapshot_id,
             url.clone(),
-            tab.title.clone(),
+            title.clone(),
             page,
             semantic.complete,
             scope,
@@ -2733,6 +2734,8 @@ impl BrowserEngine {
         self.store
             .update_target(session, target_id, |stored_target| {
                 if let Some(stored_tab) = stored_target.tabs.get_mut(tab_id) {
+                    stored_tab.url = url.clone();
+                    stored_tab.title = title;
                     let mut continuations = HashMap::new();
                     if let (Some(token), Some(offset)) = (continuation_token, next_offset) {
                         continuations.insert(

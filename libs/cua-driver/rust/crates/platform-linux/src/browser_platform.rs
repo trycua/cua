@@ -3,14 +3,15 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use cua_driver_core::browser::existing_profile_setup_descriptor;
 use cua_driver_core::browser::platform::{
     select_isolated_browser_executable, BrowserConsentOutcome, BrowserConsentRequest,
-    BrowserPlatform, ExistingProfileSetupOutcome, ExistingProfileSetupRequest, PrepareAction,
-    PrepareOutcome, PrepareRequest,
+    BrowserPlatform, BrowserVisualAction, ExistingProfileSetupOutcome, ExistingProfileSetupRequest,
+    PrepareAction, PrepareOutcome, PrepareRequest,
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
@@ -20,8 +21,15 @@ use cua_driver_core::browser::types::{
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-#[derive(Debug, Default)]
-pub struct LinuxBrowserPlatform;
+pub struct LinuxBrowserPlatform {
+    cursor_registry: Arc<cursor_overlay::CursorRegistry>,
+}
+
+impl LinuxBrowserPlatform {
+    pub fn new(cursor_registry: Arc<cursor_overlay::CursorRegistry>) -> Self {
+        Self { cursor_registry }
+    }
+}
 
 fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
     BrowserRefusal::new(code, message)
@@ -444,6 +452,22 @@ fn process_identity(pid: i64) -> Result<(u64, Option<String>), BrowserRefusal> {
     Ok((started, executable))
 }
 
+pub(crate) async fn process_fingerprint(pid: i64) -> Result<ProcessFingerprint, BrowserRefusal> {
+    let (start_time, executable) = tokio::task::spawn_blocking(move || process_identity(pid))
+        .await
+        .map_err(|error| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("process fingerprint task failed: {error}"),
+            )
+        })??;
+    Ok(ProcessFingerprint {
+        pid,
+        start_time: Some(start_time),
+        executable,
+    })
+}
+
 async fn browser_websocket_url(port: u16) -> Option<String> {
     tokio::time::timeout(Duration::from_secs(2), async move {
         let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
@@ -507,6 +531,56 @@ impl BrowserPlatform for LinuxBrowserPlatform {
 
     fn standalone_trusted_input_background_limitation(&self) -> Option<&'static str> {
         Some("Chromium's trusted CDP Input route activates its standalone browser window on Linux")
+    }
+
+    async fn visualize_browser_action(&self, action: BrowserVisualAction) {
+        let cursor_enabled = self
+            .cursor_registry
+            .get_or_create(&action.session)
+            .config
+            .enabled;
+        for update in &action.visibility_updates {
+            let enabled = if update.session == action.session {
+                update.visible && cursor_enabled
+            } else {
+                update.visible
+                    && self
+                        .cursor_registry
+                        .get(&update.session)
+                        .is_some_and(|state| state.config.enabled)
+            };
+            crate::overlay::send_command_for(
+                update.session.clone(),
+                cursor_overlay::OverlayCommand::SetEnabled(enabled),
+            );
+        }
+        if !action.current_session_visible() || !cursor_enabled {
+            return;
+        }
+        let (Some(screen_x), Some(screen_y)) = (action.screen_x, action.screen_y) else {
+            return;
+        };
+        if !screen_x.is_finite() || !screen_y.is_finite() {
+            return;
+        }
+
+        crate::overlay::send_command_for(
+            action.session.clone(),
+            cursor_overlay::OverlayCommand::PinAbove(action.window_id),
+        );
+        crate::overlay::animate_cursor_to_for(action.session.clone(), screen_x, screen_y).await;
+        self.cursor_registry
+            .update_position(&action.session, screen_x, screen_y);
+
+        if action.kind.shows_click_pulse() {
+            crate::overlay::send_command_for(
+                action.session,
+                cursor_overlay::OverlayCommand::ClickPulse {
+                    x: screen_x,
+                    y: screen_y,
+                },
+            );
+        }
     }
 
     async fn classify_browser(&self, pid: i64) -> Result<BrowserClassification, BrowserRefusal> {
@@ -1233,19 +1307,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
     }
 
     async fn process_fingerprint(&self, pid: i64) -> Result<ProcessFingerprint, BrowserRefusal> {
-        let (start_time, executable) = tokio::task::spawn_blocking(move || process_identity(pid))
-            .await
-            .map_err(|error| {
-                refusal(
-                    BrowserRefusalCode::BrowserRouteUnavailable,
-                    format!("process fingerprint task failed: {error}"),
-                )
-            })??;
-        Ok(ProcessFingerprint {
-            pid,
-            start_time: Some(start_time),
-            executable,
-        })
+        process_fingerprint(pid).await
     }
 
     async fn prepare_endpoint(
@@ -1278,6 +1340,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cua_driver_core::browser::platform::{BrowserCursorVisibility, BrowserVisualActionKind};
 
     #[test]
     fn hyprland_browser_identity_requires_exact_pid_and_full_native_address() {
@@ -1325,6 +1388,57 @@ mod tests {
         .expect("cleanup worker");
 
         assert!(cleaned);
+    }
+
+    #[tokio::test]
+    async fn browser_visual_feedback_updates_the_declared_session_cursor() {
+        let registry = Arc::new(cursor_overlay::CursorRegistry::new());
+        let platform = LinuxBrowserPlatform::new(registry.clone());
+        platform
+            .visualize_browser_action(BrowserVisualAction {
+                session: "browser-cursor-test".to_owned(),
+                window_id: 77,
+                screen_x: Some(321.0),
+                screen_y: Some(456.0),
+                kind: BrowserVisualActionKind::Click,
+                visibility_updates: vec![BrowserCursorVisibility {
+                    session: "browser-cursor-test".to_owned(),
+                    visible: true,
+                }],
+            })
+            .await;
+
+        let state = registry
+            .get("browser-cursor-test")
+            .expect("browser action should materialize its session cursor");
+        assert_eq!((state.x, state.y), (Some(321.0), Some(456.0)));
+    }
+
+    #[tokio::test]
+    async fn inactive_tab_feedback_materializes_but_does_not_move_its_cursor() {
+        let registry = Arc::new(cursor_overlay::CursorRegistry::new());
+        let platform = LinuxBrowserPlatform::new(registry.clone());
+        platform
+            .visualize_browser_action(BrowserVisualAction {
+                session: "browser-cursor-hidden".to_owned(),
+                window_id: 77,
+                screen_x: Some(321.0),
+                screen_y: Some(456.0),
+                kind: BrowserVisualActionKind::Click,
+                visibility_updates: vec![BrowserCursorVisibility {
+                    session: "browser-cursor-hidden".to_owned(),
+                    visible: false,
+                }],
+            })
+            .await;
+
+        let state = registry
+            .get("browser-cursor-hidden")
+            .expect("browser action should establish its session-to-tab binding");
+        assert!(
+            state.x.is_none() && state.y.is_none(),
+            "an inactive tab must not animate or move its visible cursor"
+        );
     }
 
     #[test]

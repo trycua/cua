@@ -107,23 +107,17 @@ directory and remove those exact directories in an `always()` step after the
 upload step.
 
 Native macOS certification remains separate from the Windows/Linux live-provider
-workflow. This proof runs directly in a logged-in, TCC-authorized Lume guest. A maintainer first
+workflow. This proof runs directly in a logged-in, TCC-authorized Lume guest. A maintainer
 dispatches `.github/workflows/e2e-rust-macos.yml` in `lume` mode, whose exact-SHA gate runs
 `libs/cua-driver/tests/runners/macos-lume/run-all.sh --standalone-browser` and
 publishes a certification artifact without live-provider credentials. The
-protected attestation workflow validates that result and the signed macOS member
-of the private review aggregate on GitHub-hosted Ubuntu. The
-labeled PR workflow produces the candidate and runs only on GitHub-hosted
-Linux, Windows, and macOS machines; the pull-request event never schedules the
-self-hosted macOS runner. After that producer run completes successfully, a
-maintainer manually dispatches `authorized-live-jev-macos-evidence.yml` with
-its immutable producer run and artifact IDs. That workflow does not execute
-macOS code, receive a live-provider secret, or upload macOS recordings. It emits
-a small attestation binding the exact source SHA, signed candidate, direct Lume
-run ID, and private evidence digest. macOS recordings remain private on the
+candidate workflow does not schedule macOS execution, and no GitHub Actions
+workflow represents the macOS gate. macOS recordings remain private on the
 maintainer-controlled Lume host and are collected for review outside GitHub
-Actions. Windows and Linux continue to exercise the bounded live Jev chooser;
-the direct Lume matrix is the macOS platform acceptance gate.
+Actions. The exact SHA, direct run ID, result, and evidence digest are recorded
+in the private review bundle and final PR audit. Windows and Linux continue to
+exercise the bounded live Jev chooser; the direct Lume matrix is the macOS
+platform acceptance gate.
 
 ## Derived reels
 

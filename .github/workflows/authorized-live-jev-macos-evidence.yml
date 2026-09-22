@@ -69,7 +69,7 @@ jobs:
           [[ "$GITHUB_REPOSITORY" == "trycua/cua" ]]
           [[ "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$REQUESTED_JEV_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$REQUESTED_JEV_SHA" == "bdaf8c2570e35254f5e50a317781374efe7aa91a" ]]
+          [[ "$REQUESTED_JEV_SHA" == "bdaf8c2570e35254f5e50a317781374efe7aa91" ]]
           [[ "$CANDIDATE_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
           [[ "$CANDIDATE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
           validate_pr_head() {

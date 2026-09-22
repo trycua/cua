@@ -41,7 +41,7 @@ jobs:
           EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           EVENT_LABEL: ${{ github.event.label.name }}
           EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
-          REVIEWED_JEV_SHA: bdaf8c2570e35254f5e50a317781374efe7aa91a
+          REVIEWED_JEV_SHA: bdaf8c2570e35254f5e50a317781374efe7aa91
         run: |
           set -euo pipefail
           [[ "$GITHUB_REPOSITORY" == "trycua/cua" ]]

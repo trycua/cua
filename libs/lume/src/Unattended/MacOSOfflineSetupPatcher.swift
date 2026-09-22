@@ -34,7 +34,8 @@ final class MacOSOfflineSetupPatcher {
             cleanup(mount: mount)
         }
 
-        try patchMountedDataVolume(at: mount.mountPoint)
+        let guestVersion = readGuestSystemVersion(container: mount.container, session: mount.session)
+        try patchMountedDataVolume(at: mount.mountPoint, guestVersion: guestVersion)
 
         Logger.info("Offline macOS unattended setup completed", metadata: [
             "name": vm.name,
@@ -57,6 +58,9 @@ final class MacOSOfflineSetupPatcher {
     private struct MountedDataVolume {
         let session: DiskImageSession
         let mountPoint: URL
+        /// Kept so the System volume in the same container can be inspected
+        /// for the guest's real OS version while the image is attached.
+        let container: String
     }
 
     private func attachDataVolume(diskPath: String) throws -> MountedDataVolume {
@@ -65,10 +69,10 @@ final class MacOSOfflineSetupPatcher {
 
         do {
             let container = try session.apfsContainer(forMainPartitionOf: wholeDisk)
-            let dataDevice = try dataVolumeDevice(inContainer: container, session: session)
+            let dataDevice = try volumeDevice(role: "Data", inContainer: container, session: session)
             _ = try session.run("/usr/sbin/diskutil", ["mount", dataDevice])
             let mountPoint = try mountPoint(forDevice: dataDevice, session: session)
-            return MountedDataVolume(session: session, mountPoint: mountPoint)
+            return MountedDataVolume(session: session, mountPoint: mountPoint, container: container)
         } catch {
             session.unmountDiskIfMounted()
             session.detach()
@@ -76,7 +80,7 @@ final class MacOSOfflineSetupPatcher {
         }
     }
 
-    private func dataVolumeDevice(inContainer container: String, session: DiskImageSession) throws -> String {
+    private func volumeDevice(role: String, inContainer container: String, session: DiskImageSession) throws -> String {
         let plist = try session.runPlist("/usr/sbin/diskutil", ["apfs", "list", "-plist", container])
         guard let containers = plist["Containers"] as? [[String: Any]] else {
             throw UnattendedError.commandExecutionFailed("Could not parse APFS container list for \(container)")
@@ -86,13 +90,54 @@ final class MacOSOfflineSetupPatcher {
             guard let volumes = container["Volumes"] as? [[String: Any]] else { continue }
             for volume in volumes {
                 let roles = volume["Roles"] as? [String] ?? []
-                if roles.contains("Data"), let device = volume["DeviceIdentifier"] as? String {
+                if roles.contains(role), let device = volume["DeviceIdentifier"] as? String {
                     return device
                 }
             }
         }
 
-        throw UnattendedError.commandExecutionFailed("Could not find APFS Data volume in \(container)")
+        throw UnattendedError.commandExecutionFailed("Could not find APFS \(role) volume in \(container)")
+    }
+
+    /// The macOS release installed in the guest, read from its System volume.
+    private struct GuestSystemVersion {
+        /// e.g. "26A428"
+        let build: String
+        /// e.g. "27.0"
+        let product: String
+    }
+
+    /// Mounts the guest's System volume read-only just long enough to read
+    /// `SystemVersion.plist`.
+    ///
+    /// Returns nil rather than throwing: a guest whose version cannot be read
+    /// should still get the rest of the offline setup, just with the Setup
+    /// Assistant version stamp left alone.
+    private func readGuestSystemVersion(container: String, session: DiskImageSession) -> GuestSystemVersion? {
+        guard let device = try? volumeDevice(role: "System", inContainer: container, session: session) else {
+            Logger.info("No System volume found; leaving Setup Assistant version stamp unset")
+            return nil
+        }
+
+        guard (try? session.run("/usr/sbin/diskutil", ["mount", "readOnly", device])) != nil,
+              let systemMount = try? mountPoint(forDevice: device, session: session)
+        else {
+            Logger.info("Could not mount System volume read-only", metadata: ["device": device])
+            return nil
+        }
+        defer { _ = try? session.run("/usr/sbin/diskutil", ["unmount", systemMount.path]) }
+
+        let versionPlist = systemMount.appendingPath("System/Library/CoreServices/SystemVersion.plist")
+        guard let plist = try? readPlist(versionPlist),
+              let build = plist["ProductBuildVersion"] as? String,
+              let product = plist["ProductVersion"] as? String
+        else {
+            Logger.info("Could not read SystemVersion.plist", metadata: ["path": versionPlist.path])
+            return nil
+        }
+
+        Logger.info("Read guest macOS version", metadata: ["build": build, "product": product])
+        return GuestSystemVersion(build: build, product: product)
     }
 
     private func mountPoint(forDevice device: String, session: DiskImageSession) throws -> URL {
@@ -110,7 +155,7 @@ final class MacOSOfflineSetupPatcher {
 
     // MARK: - Guest Patching
 
-    private func patchMountedDataVolume(at mountPoint: URL) throws {
+    private func patchMountedDataVolume(at mountPoint: URL, guestVersion: GuestSystemVersion?) throws {
         let user = GuestUser(username: "lume", realName: "lume", password: "lume", uid: "501", gid: "20")
 
         try ensureDirectoryExecutable(mountPoint.appendingPath("private/var/db/dslocal/nodes/Default"))
@@ -119,7 +164,8 @@ final class MacOSOfflineSetupPatcher {
         let userUUID = try createOrUpdateUser(user, mountPoint: mountPoint)
         try addUserToGroups(user, uuid: userUUID, mountPoint: mountPoint)
         try createHomeAndUserPreferences(user, mountPoint: mountPoint)
-        try markSetupAssistantComplete(user, mountPoint: mountPoint)
+        try markSetupAssistantComplete(user, mountPoint: mountPoint, guestVersion: guestVersion)
+        try stampLastLoginVersion(user, mountPoint: mountPoint, guestVersion: guestVersion)
         try configureAutologin(user, mountPoint: mountPoint)
         try enableSSH(mountPoint: mountPoint)
         try configurePowerAndLockSettings(mountPoint: mountPoint)
@@ -247,7 +293,7 @@ final class MacOSOfflineSetupPatcher {
         }
     }
 
-    private func markSetupAssistantComplete(_ user: GuestUser, mountPoint: URL) throws {
+    private func markSetupAssistantComplete(_ user: GuestUser, mountPoint: URL, guestVersion: GuestSystemVersion?) throws {
         let marker = mountPoint.appendingPath("private/var/db/.AppleSetupDone")
         try createDirectory(marker.deletingLastPathComponent(), mode: 0o755)
         if !fileManager.fileExists(atPath: marker.path) {
@@ -255,16 +301,40 @@ final class MacOSOfflineSetupPatcher {
         }
         try setPermissions(marker, 0o644)
 
-        let setupPreferences: [String: Any] = [
+        // Every pane Setup Assistant can present has its own "did see" flag, and
+        // an absent flag reads as false. The list below is the full set a 27.0
+        // guest maintains; older guests simply ignore the keys they do not know.
+        var setupPreferences: [String: Any] = [
+            "DidSeeAccessibility": true,
+            "DidSeeActivationLock": true,
+            "DidSeeAppStore": true,
+            "DidSeeAppearance": true,
+            "DidSeeAppearanceSetup": true,
+            "DidSeeApplePaySetup": true,
+            "DidSeeAutoUpdatePrompt": true,
             "DidSeeCloudSetup": true,
+            "DidSeeLockdownMode": true,
             "DidSeePrivacy": true,
+            "DidSeeScreenTime": true,
             "DidSeeSiriSetup": true,
+            "DidSeeSyncSetup": true,
+            "DidSeeSyncSetup2": true,
+            "DidSeeTermsOfAddress": true,
             "DidSeeTouchIDSetup": true,
             "DidSeeTrueToneSetup": true,
+            "DidSeeiCloudLoginForStorageServices": true,
             "GestureMovieSeen": "none",
-            "LastSeenBuddyBuildVersion": "25F84",
-            "LastSeenCloudProductVersion": "26.5.2"
+            "MiniBuddyShouldLaunchToResumeSetup": false
         ]
+
+        // Stamp the guest's own release rather than a fixed one, so the
+        // "last seen" record matches whatever is being installed. Whether
+        // Setup Assistant runs at all is decided elsewhere; see
+        // stampLastLoginVersion.
+        if let guestVersion {
+            setupPreferences["LastSeenBuddyBuildVersion"] = guestVersion.build
+            setupPreferences["LastSeenCloudProductVersion"] = guestVersion.product
+        }
 
         let home = mountPoint.appendingPath(user.homeDirectory.trimmingCharacters(in: CharacterSet(charactersIn: "/")))
         try writePlist(setupPreferences, to: home.appendingPath("Library/Preferences/com.apple.SetupAssistant.plist"))
@@ -274,6 +344,67 @@ final class MacOSOfflineSetupPatcher {
             to: systemSetupAssistant,
             preserveExisting: fileManager.fileExists(atPath: systemSetupAssistant.path)
         )
+    }
+
+    /// Records the guest's own release as the last one this user logged in to.
+    ///
+    /// loginwindow keeps that record per user in `~/Library/Preferences/loginwindow.plist`
+    /// and hands it to UserAccountUpdater at login. A user with no record is treated as a
+    /// brand-new account (`UAU Session: -(-)->27.0(26A428)`), and the MiniBuddy plugin then
+    /// schedules Setup Assistant with launch reason 13 ("new user account"). That reason
+    /// always runs the Apple Account flow, whatever the `DidSee*` flags say, and the
+    /// resulting `MiniBuddyLaunch` preference stays set until someone clicks through it.
+    ///
+    /// An account created offline never gets the record, because its first graphical login
+    /// is the one that would write it. Writing it here makes that first login an ordinary
+    /// same-version login. Skipped when the guest version is unknown or its build string
+    /// has a form whose numeric encoding has not been verified.
+    private func stampLastLoginVersion(_ user: GuestUser, mountPoint: URL, guestVersion: GuestSystemVersion?) throws {
+        guard let guestVersion,
+              let buildNumber = Self.loginwindowBuildStamp(guestVersion.build),
+              let systemNumber = Self.loginwindowSystemStamp(guestVersion.product)
+        else {
+            Logger.info("Not stamping last-login version; guest version unknown or unrecognised")
+            return
+        }
+
+        let home = mountPoint.appendingPath(user.homeDirectory.trimmingCharacters(in: CharacterSet(charactersIn: "/")))
+        let path = home.appendingPath("Library/Preferences/loginwindow.plist")
+        var stamp = try readPlistIfPresent(path)
+        stamp["BuildVersionStampAsNumber"] = buildNumber
+        stamp["BuildVersionStampAsString"] = guestVersion.build
+        stamp["SystemVersionStampAsNumber"] = systemNumber
+        stamp["SystemVersionStampAsString"] = guestVersion.product
+        try writePlist(stamp, to: path)
+    }
+
+    /// loginwindow's numeric form of a build string: `major << 21 | train << 16 | daily << 5`.
+    /// Verified against a 27.0 guest, where "26A428" is stored as 54539648. Builds with a
+    /// trailing letter (e.g. "26A5288h") are rejected rather than guessed at.
+    nonisolated static func loginwindowBuildStamp(_ build: String) -> Int? {
+        let scalars = Array(build.unicodeScalars)
+        guard let trainIndex = scalars.firstIndex(where: { CharacterSet.uppercaseLetters.contains($0) }),
+              trainIndex > 0, trainIndex < scalars.count - 1,
+              let major = Int(String(String.UnicodeScalarView(scalars[..<trainIndex]))),
+              let daily = Int(String(String.UnicodeScalarView(scalars[(trainIndex + 1)...]))),
+              let train = Int(exactly: scalars[trainIndex].value), train >= 65
+        else {
+            return nil
+        }
+        let trainOffset = train - 65
+        guard major < 2048, trainOffset < 32, daily < 2048 else { return nil }
+        return major << 21 | trainOffset << 16 | daily << 5
+    }
+
+    /// loginwindow's numeric form of a product version: `major << 24 | minor << 16 | patch << 8`.
+    /// Verified against a 27.0 guest, where "27.0" is stored as 452984832.
+    nonisolated static func loginwindowSystemStamp(_ product: String) -> Int? {
+        let parts = product.split(separator: ".").map { Int($0) }
+        guard (1...3).contains(parts.count), parts.allSatisfy({ ($0 ?? -1) >= 0 && ($0 ?? 256) < 256 }) else {
+            return nil
+        }
+        let numbers = parts.compactMap { $0 } + Array(repeating: 0, count: 3 - parts.count)
+        return numbers[0] << 24 | numbers[1] << 16 | numbers[2] << 8
     }
 
     private func configureAutologin(_ user: GuestUser, mountPoint: URL) throws {

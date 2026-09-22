@@ -177,6 +177,7 @@ final class LumeMCPServer {
         - Disk grows dynamically (sparse files)
 
         ### Unattended Presets
+        - `goldengate`: macOS 27 (Golden Gate) with SSH enabled, user `lume`/`lume`
         - `tahoe`: macOS Tahoe with SSH enabled, user `lume`/`lume`
         - `sequoia`: macOS Sequoia with SSH enabled, user `lume`/`lume`
 
@@ -487,7 +488,7 @@ final class LumeMCPServer {
                         ]),
                         "unattended": .object([
                             "type": .string("string"),
-                            "description": .string("Unattended setup preset (e.g., 'tahoe', 'sequoia') for automatic macOS configuration")
+                            "description": .string("Unattended setup preset (e.g., 'goldengate', 'tahoe', 'sequoia') for automatic macOS configuration")
                         ]),
                         "cpu": .object([
                             "type": .string("integer"),

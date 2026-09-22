@@ -1,0 +1,20 @@
+# Offline macOS unattended setup preset for macOS 27 (Golden Gate).
+#
+# Lume patches the installed disk offline, creates the `lume` user, enables
+# autologin and SSH, disables sleep/screen locking, boots once to verify SSH,
+# then stops.
+#
+# Verified against macOS 27.0 (build 26A428).
+
+boot_wait: 0
+boot_commands: []
+
+health_check:
+  type: ssh
+  user: lume
+  password: lume
+  timeout: 5
+  # A first boot of a freshly installed 27.0 guest takes longer to reach sshd
+  # than Tahoe does, so allow 12 minutes instead of the shared 5.
+  retries: 144
+  retry_delay: 5

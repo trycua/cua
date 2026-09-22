@@ -392,22 +392,15 @@ fn click_at_xy_inner(
     })
 }
 
-/// Prepare a raw background pixel click by making the target AppKit-active
-/// without raising or restacking its window.
-///
-/// The Swift implementation ran this immediately before the stamped event
-/// stream. The original Rust port retained the SkyLight primitive but omitted
-/// this call while cursor-overlay repinning was incomplete. Callers should
-/// re-pin their overlay after this returns, then post the click sequence.
-///
-/// Returns whether the private focus-without-raise recipe succeeded. Event
-/// posting remains best-effort when the private APIs are unavailable.
-pub fn prepare_background_pixel_click(pid: i32, wid: u32) -> bool {
-    let activated = crate::input::skylight::activate_without_raise(pid as libc::pid_t, wid);
-    // Match Swift's settle interval so AppKit updates its active/key-window
-    // routing before the mouseMoved + primer + target stream arrives.
-    std::thread::sleep(std::time::Duration::from_millis(50));
-    activated
+/// Prepare only the target's event queue for a raw background pixel click.
+/// Keep the returned guard alive through the final mouse-up and delivery
+/// settle, then call `end_synthetic_target_focus`. Dropping it also cleans up
+/// on failure. A genuinely foreground target needs no synthetic activation.
+pub fn prepare_background_pixel_click(
+    pid: i32,
+    wid: u32,
+) -> anyhow::Result<Option<crate::input::skylight::SyntheticTargetFocusContext>> {
+    crate::input::skylight::begin_synthetic_target_focus(pid as libc::pid_t, wid)
 }
 
 /// Post the stamped event half of the Chromium-compatible left-click recipe

@@ -57,6 +57,19 @@ four-b-train = [
     "torchvision>=0.17,<1",
     "cua-bench-s1",
 ]
+four-b-rl = [
+    "transformers>=4.45,<5",
+    "peft>=0.13,<1",
+    "accelerate>=0.34,<2",
+    # The RL trainer renders its own set-of-mark screenshots (multimodal mode)
+    # and decodes them for the processor.
+    "pillow>=10,<12",
+    "cua-bench-s1",
+    # The live environment itself (the `cua_bench` package) is deliberately not
+    # declared here: it is the monorepo's own `libs/cua-bench`, imported lazily
+    # by `cua_bench_s1.agentic`, so everything short of an actual rollout works
+    # without it.
+]
 all = [
     "mcp>=1,<2",
     "pdfplumber>=0.11,<1",

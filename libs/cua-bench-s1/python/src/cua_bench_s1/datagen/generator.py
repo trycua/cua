@@ -22,7 +22,7 @@ from pathlib import Path
 
 from ..task import ContentDeduper, CuaTask, OptionSpec, stable_digest
 from . import render
-from .entities import CONCEPT_BY_KEY, CONCEPTS, person
+from .entities import CONCEPT_BY_KEY, CONCEPTS, GOAL_TEMPLATES, person
 from .specs import AppSpec, ElementSpec
 
 
@@ -476,7 +476,11 @@ def generate_task(app: AppSpec, seed: int, modality_available: tuple[str, ...],
     # colliding is `goal_in_state` below: it tells `goal_text` this task's state
     # already shows the goal, so a prompt builder does not print it a second
     # time.
-    goal = app.goal or None
+    # An app that states no goal of its own falls back to one of its family's
+    # phrasings, sampled per task (see entities.GOAL_TEMPLATES for why there
+    # are several rather than one fixed sentence per family).
+    _family_templates = GOAL_TEMPLATES.get(app.family)
+    goal = app.goal or (rng.choice(_family_templates).format(title=title) if _family_templates else None)
     shown_entities = entities if any(e.kind == "field" for e in screen) else None
     if "multimodal" in modality_available:
         img, elements_from_render = render.render_page(title, rows, entities=shown_entities, goal=goal)

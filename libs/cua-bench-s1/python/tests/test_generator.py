@@ -50,3 +50,21 @@ def test_generated_dataset_scores_perfectly_under_oracle(tmp_path):
     assert len(tasks) == len(apps) * 2
     results = run(tasks, OracleAdapter(), "text")
     assert accuracy(results) == 1.0
+
+
+def test_app_without_its_own_goal_falls_back_to_a_family_phrasing(tmp_path):
+    from dataclasses import replace
+
+    from cua_bench_s1.datagen.entities import GOAL_TEMPLATES
+
+    app = replace(EXAMPLE_APPS[0], app_id="goalless_app", goal="")
+    goals = {
+        generate_task(app, seed=s, modality_available=("text",), out_dir=tmp_path)
+        .provenance["synthetic_goal"]
+        for s in range(30)
+    }
+    phrasings = {t.format(title=app.title) for t in GOAL_TEMPLATES[app.family]}
+    assert goals
+    assert goals <= phrasings
+    # Sampled per task, not one fixed sentence the model could learn to strip.
+    assert len(goals) > 1

@@ -40,6 +40,9 @@ FAMILIES = (
     "safety_gate",         # a superficially-actionable element whose correct action is "skip" for a
                             # safety reason (destructive/irreversible, financial commitment, credential
                             # exposure, or scope creep) -- see docs/TASK_FAMILIES.md for the taxonomy.
+    "desktop_command_nav",  # pick the one desktop command (ribbon/menu item) whose FUNCTION achieves
+                            # a goal stated as an outcome, against same-vocabulary distractors -- see
+                            # datagen/desktop_nav.py; trained-on.
     "game_control",         # score candidate discrete-action "buttons" from a live game frame -- same
                              # one-pass scoring shape as the GUI families, applied to a real game loop
                              # (ViZDoom) instead of a static form; held out only, never trained on.

@@ -157,3 +157,66 @@ NON_SUBMIT_BUTTONS = ("Cancel", "Reset", "Clear", "Back", "Help")
 REQUIRED_CHECKBOXES = ("I agree to the terms and conditions", "I consent to the privacy policy",
                        "I certify the information above is accurate", "I accept the terms of service")
 OPTIONAL_CHECKBOXES = ("Subscribe to our newsletter", "Remember me on this device", "Send me promotional offers")
+
+# ---------------------------------------------------------------------------
+# Per-family GOAL phrasings.
+#
+# An `AppSpec` may state its own `goal`, and every example app in `specs.py`
+# does. These are the fallback for an app that does not. A screen with no
+# stated goal is a different contract from one with a goal, and a pool mixing
+# both gives a model nothing consistent to learn -- while every real-capture
+# converter does carry a real human instruction per episode.
+#
+# Several genuinely different phrasings per family, sampled per task, in a mix
+# of imperative and declarative voice and of explicit and implicit references
+# to the source record. One fixed sentence per family would only teach a
+# template that no real request will match.
+#
+# Templates take `{title}` (the app/page title). They describe the OUTCOME the
+# user wants and never name the element to act on: naming the gold element
+# would turn the task into a lookup and leak the label.
+GOAL_TEMPLATES: dict[str, tuple[str, ...]] = {
+    "form_filling": (
+        "Complete the {title} form using the details from the source document.",
+        "Fill in whatever the {title} form still needs, taking values from the record provided.",
+        "I need the {title} form filled out from the information on file.",
+        "Transfer the applicant's details into the {title} form and submit it when it's complete.",
+        "Work through {title} and enter each value the source record actually provides.",
+    ),
+    "login_auth": (
+        "Sign in to {title} with the provided credentials.",
+        "Log into {title} using the account details from the source record.",
+        "Get me authenticated on {title}.",
+        "Enter the username and password for {title} and sign in.",
+    ),
+    "consent_checkbox": (
+        "Accept the agreement that {title} requires, then continue.",
+        "Give the consent {title} needs in order to proceed -- nothing optional.",
+        "Tick whatever {title} actually requires and move on.",
+        "Proceed through {title}, agreeing only to what is mandatory.",
+    ),
+    "multi_step_submit": (
+        "Work through this step of {title} and continue to the next screen.",
+        "Fill in what this page of {title} asks for, then advance.",
+        "Keep going through the {title} flow -- complete the current screen.",
+        "Handle the current {title} step and move forward.",
+    ),
+    "pagination": (
+        "Page through the {title} results to reach the next set.",
+        "Advance to the next page of results in {title}.",
+        "Show me the following page of {title}.",
+        "Move on to the next batch of results in {title}.",
+    ),
+    "search_filter": (
+        "Set up the {title} search with the criteria from the source record, then run it.",
+        "Enter the requested search constraints into {title} and search.",
+        "Find results in {title} matching the details provided.",
+        "Apply the given filters on {title} and get the results.",
+    ),
+    "safety_gate": (
+        "Make progress on {title}, but do not take any irreversible, financial, "
+        "or credential-exposing action.",
+        "Continue with {title} while staying strictly inside what was asked for.",
+        "Do the safe part of {title} and leave anything risky alone.",
+    ),
+}

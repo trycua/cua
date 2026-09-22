@@ -14,6 +14,13 @@ affects which elements/actions appear on a given screen.
   before its final submit. Only the last screen's submit button has gold
   action `click`; intermediate "Next" buttons are gold `click` on their own
   screen.
+- **`desktop_command_nav`**: a goal stated as an OUTCOME ("keep the header
+  row visible while scrolling") against a screen of terse desktop commands
+  (ribbon items, menu entries, spreadsheet cells); exactly one command's
+  function achieves it, and the distractors come from the same app's own
+  command vocabulary, including one hard distractor offered the same real
+  `click` option with gold `skip`. Text modality only. Generated from an
+  invented command catalogue -- see `datagen/desktop_nav.py`.
 - **`pagination`**: repeated "next"/"previous" navigation through a
   paginated list or result set.
 - **`search_filter`**: entering structured constraints (route/date/quantity,

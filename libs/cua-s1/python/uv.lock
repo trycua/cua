@@ -303,6 +303,13 @@ four-b = [
     { name = "peft" },
     { name = "transformers" },
 ]
+four-b-rl = [
+    { name = "accelerate" },
+    { name = "cua-bench-s1" },
+    { name = "peft" },
+    { name = "pillow" },
+    { name = "transformers" },
+]
 four-b-train = [
     { name = "accelerate" },
     { name = "cua-bench-s1" },
@@ -333,7 +340,9 @@ test = [
 
 [package.metadata]
 requires-dist = [
+    { name = "accelerate", marker = "extra == 'four-b-rl'", specifier = ">=0.34,<2" },
     { name = "accelerate", marker = "extra == 'four-b-train'", specifier = ">=0.34,<2" },
+    { name = "cua-bench-s1", marker = "extra == 'four-b-rl'", editable = "../../cua-bench-s1/python" },
     { name = "cua-bench-s1", marker = "extra == 'four-b-train'", editable = "../../cua-bench-s1/python" },
     { name = "cua-bench-s1", marker = "extra == 'training'", editable = "../../cua-bench-s1/python" },
     { name = "mcp", marker = "extra == 'all'", specifier = ">=1,<2" },
@@ -343,18 +352,21 @@ requires-dist = [
     { name = "pdfplumber", marker = "extra == 'pdf'", specifier = ">=0.11,<1" },
     { name = "peft", marker = "extra == 'all'", specifier = ">=0.13,<1" },
     { name = "peft", marker = "extra == 'four-b'", specifier = ">=0.13,<1" },
+    { name = "peft", marker = "extra == 'four-b-rl'", specifier = ">=0.13,<1" },
     { name = "peft", marker = "extra == 'four-b-train'", specifier = ">=0.13,<1" },
     { name = "pillow", marker = "extra == 'all'", specifier = ">=10,<12" },
+    { name = "pillow", marker = "extra == 'four-b-rl'", specifier = ">=10,<12" },
     { name = "pillow", marker = "extra == 'nano-vision'", specifier = ">=10,<12" },
     { name = "safetensors", specifier = ">=0.4,<1" },
     { name = "torch", specifier = ">=2.2,<3" },
     { name = "torchvision", marker = "extra == 'four-b-train'", specifier = ">=0.17,<1" },
     { name = "transformers", marker = "extra == 'all'", specifier = ">=4.45,<5" },
     { name = "transformers", marker = "extra == 'four-b'", specifier = ">=4.45,<5" },
+    { name = "transformers", marker = "extra == 'four-b-rl'", specifier = ">=4.45,<5" },
     { name = "transformers", marker = "extra == 'four-b-train'", specifier = ">=4.45,<5" },
     { name = "transformers", marker = "extra == 'nano-vision'", specifier = ">=4.45,<5" },
 ]
-provides-extras = ["pdf", "mcp", "nano-vision", "four-b", "four-b-train", "all", "training"]
+provides-extras = ["pdf", "mcp", "nano-vision", "four-b", "four-b-train", "four-b-rl", "all", "training"]
 
 [package.metadata.requires-dev]
 test = [

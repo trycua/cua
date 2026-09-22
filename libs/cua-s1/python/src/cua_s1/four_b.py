@@ -114,8 +114,15 @@ def build_prompt(
     ax_tree: str | None = None,
     screenshot: str | Path | None = None,
     modality: str = "text",
+    goal: str | None = None,
 ) -> list[dict]:
     """Build chat-template messages for one screen state and option list.
+
+    `goal` is the user's stated objective for the episode, when the caller has
+    one that the state itself does not already show. It is printed above the
+    state description in both modalities. Callers whose state already carries
+    the goal (a synthetic page that renders it, an accessibility tree that
+    includes it) leave it unset, so the goal is never stated twice.
 
     `modality="text"` describes the state with `ax_tree` (an accessibility
     tree). `modality="multimodal"` instead references an attached
@@ -141,7 +148,8 @@ def build_prompt(
         for letter, option in zip(assignment.letters, assignment.options, strict=False)
     )
     state_desc = (
-        f"App: {app}\nTask family: {task_family}\n\n"
+        (f"Goal: {goal}\n\n" if goal else "")
+        + f"App: {app}\nTask family: {task_family}\n\n"
         + (
             f"Accessibility tree:\n{ax_tree}\n\n"
             if modality == "text"
@@ -333,10 +341,14 @@ class FourBModel:
         ax_tree: str | None = None,
         screenshot: str | Path | None = None,
         modality: str | None = None,
+        goal: str | None = None,
     ) -> list[OptionProbability]:
         """Score every option in one forward pass, returning a probability
         per option: softmax over just the option-letter token logits at the
-        final sequence position."""
+        final sequence position.
+
+        `goal` is passed straight through to `build_prompt`; see its docstring
+        for when a caller should supply one."""
         self._ensure_loaded()
         import torch
 
@@ -350,6 +362,7 @@ class FourBModel:
             ax_tree=ax_tree,
             screenshot=screenshot,
             modality=modality,
+            goal=goal,
         )
 
         if modality == "multimodal" and self._processor is not None:

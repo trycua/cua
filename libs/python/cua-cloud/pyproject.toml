@@ -1,7 +1,7 @@
 [project]
 name = "cua-cloud"
-version = "0.1.1"
-description = "Placeholder package for future Cua Cloud Python SDK."
+version = "0.1.2"
+description = "Cua Cloud Python client — control and data plane for Cua Cloud desktop VM pools"
 readme = "README.md"
 license = "MIT"
 authors = [
@@ -9,8 +9,10 @@ authors = [
 ]
 keywords = [
     "cua",
-    "cloud",
     "computer-use",
+    "cloud",
+    "vm",
+    "automation",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -24,7 +26,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
 ]
 requires-python = ">=3.11,<3.14"
-dependencies = []
+dependencies = ["httpx>=0.27.0"]
 
 [project.urls]
 Homepage = "https://github.com/trycua/cua"

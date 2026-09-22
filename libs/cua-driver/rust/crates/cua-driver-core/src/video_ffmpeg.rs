@@ -208,7 +208,9 @@ pub fn find_ffprobe() -> Option<PathBuf> {
     }
 }
 
-pub(crate) fn find_ffmpeg() -> Option<PathBuf> {
+/// Locate `ffmpeg`, preferring PATH and falling back to the winget install
+/// location on Windows. Shared by every subprocess-encoding video backend.
+pub fn find_ffmpeg() -> Option<PathBuf> {
     if Command::new("ffmpeg")
         .arg("-version")
         .stdout(Stdio::null())

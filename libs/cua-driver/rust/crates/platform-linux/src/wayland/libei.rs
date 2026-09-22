@@ -21,9 +21,9 @@
 //!    server.
 //!
 //! Persistence: ashpd `PersistMode::ExplicitlyRevoked` keeps the user's consent
-//! until they revoke it in desktop settings. The restore token is stored at
-//! `~/.config/cua-driver/libei-persistent.token` and reused across daemon
-//! restarts.
+//! until they revoke it in desktop settings. The restore token is stored via
+//! [`super::portal::RestoreToken::RemoteDesktopInput`] and reused across
+//! daemon restarts.
 //!
 //! Coordinates: ei_pointer_absolute uses LOGICAL PIXELS inside an
 //! announced ei_device.Region — collected between device creation and
@@ -31,12 +31,13 @@
 //! containing the target (x, y).
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::thread;
 
 use crossbeam_channel::{bounded, Receiver, Sender};
 use xkbcommon::xkb;
+
+use super::portal::RestoreToken;
 
 /// Buttons the public API exposes. Mapped to evdev codes in the worker
 /// thread so the libei surface only sees evdev integers.
@@ -161,53 +162,6 @@ fn wait_for_reply(rx: Receiver<anyhow::Result<()>>) -> anyhow::Result<()> {
                 anyhow::anyhow!("libei worker reply channel closed")
             }
         })?
-}
-
-fn restore_token_path() -> Option<PathBuf> {
-    let base = dirs::config_dir()?;
-    Some(base.join("cua-driver").join("libei-persistent.token"))
-}
-
-fn read_restore_token() -> Option<String> {
-    let path = restore_token_path()?;
-    std::fs::read_to_string(path)
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-}
-
-fn write_restore_token(token: &str) -> anyhow::Result<()> {
-    let path = restore_token_path()
-        .ok_or_else(|| anyhow::anyhow!("no config dir available for libei restore_token"))?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| {
-            anyhow::anyhow!(
-                "failed to create {} for restore_token: {e}",
-                parent.display()
-            )
-        })?;
-    }
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .mode(0o600)
-        .open(&path)
-        .map_err(|e| {
-            anyhow::anyhow!(
-                "failed to open libei restore_token at {}: {e}",
-                path.display()
-            )
-        })?;
-    file.write_all(token.as_bytes()).map_err(|e| {
-        anyhow::anyhow!(
-            "failed to write libei restore_token to {}: {e}",
-            path.display()
-        )
-    })
 }
 
 /// Spawn the libei worker thread (idempotent — safe to call from every
@@ -494,7 +448,7 @@ fn open_eis_context() -> anyhow::Result<(reis::ei::Context, PortalKeepAlive)> {
         let mut select_opts = SelectDevicesOptions::default()
             .set_devices(BitFlags::<DeviceType>::from(DeviceType::Keyboard) | DeviceType::Pointer)
             .set_persist_mode(PersistMode::ExplicitlyRevoked);
-        if let Some(tok) = read_restore_token() {
+        if let Some(tok) = RestoreToken::RemoteDesktopInput.read() {
             select_opts = select_opts.set_restore_token(Some(tok.as_str()));
         }
 
@@ -518,7 +472,7 @@ fn open_eis_context() -> anyhow::Result<(reis::ei::Context, PortalKeepAlive)> {
         // skip the dialog for the lifetime of the persistence grant
         // until the user explicitly revokes the grant in desktop settings.
         if let Some(tok) = started.restore_token() {
-            let _ = write_restore_token(tok);
+            let _ = RestoreToken::RemoteDesktopInput.write(tok);
         }
 
         let fd = proxy

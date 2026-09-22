@@ -1,28 +1,23 @@
-//! Per-window capture via `xdg-desktop-portal` ScreenCast + PipeWire.
+//! Compositor-agnostic capture via `xdg-desktop-portal` ScreenCast + PipeWire.
 //!
-//! Reaches GNOME/Mutter and KDE/KWin per-window selection — the
-//! cross-DE complement to wlroots `ext-image-copy-capture-v1`. Sequence:
+//! Reaches GNOME/Mutter and KDE/KWin, which expose no wlroots capture
+//! protocols to ordinary clients. Two primitives share one consent path:
 //!
-//! 1. ashpd ScreenCast::create_session.
-//! 2. select_sources with types=Window|Monitor, cursor_mode=Embedded,
-//!    persist_mode=Application (consent dialog fires ONCE per process,
-//!    cached for the lifetime of the requesting binary).
-//! 3. start(session, parent_window) — user picks the source window in
-//!    the portal's system dialog the first time; subsequent calls within
-//!    the same process reuse the cached choice.
-//! 4. open_pipe_wire_remote returns a Unix file descriptor; Streams
-//!    carries the published node ids.
-//! 5. Connect a pipewire client to the fd, open a Stream targeting the
-//!    advertised node id, negotiate Video/Raw format, dequeue one frame
-//!    with `STREAM_FLAG_MAP_BUFFERS`, copy pixels, PNG-encode, stop.
+//! - [`ScreencastSession`] owns the portal side: create the session, select
+//!   sources, wait for the user's consent (or reuse a persisted restore
+//!   token), start the cast, and hand out the PipeWire remote fd plus node id.
+//! - [`run_frame_stream`] owns the PipeWire side: connect to the remote,
+//!   negotiate a raw BGRx/BGRA/RGBx/RGBA format, and deliver dequeued frames
+//!   to a [`FrameSink`] on the calling thread until the sink asks to stop.
 //!
-//! The session + restore_token are persisted in a process-local
-//! `OnceLock<PortalScreencastSession>` so only the first call across the
-//! process lifetime triggers the consent dialog; later calls reuse the
-//! same PipeWire node id.
+//! [`screenshot_window_via_portal`] composes the two for one frame; the
+//! Wayland video backend composes them for a paced full-desktop recording.
 
-use std::os::fd::AsRawFd;
+use std::cell::RefCell;
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::rc::Rc;
 use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 use ashpd::desktop::screencast::{
     CursorMode, OpenPipeWireRemoteOptions, Screencast, SelectSourcesOptions, SourceType,
@@ -30,154 +25,247 @@ use ashpd::desktop::screencast::{
 };
 use ashpd::desktop::{CreateSessionOptions, PersistMode, Session};
 use ashpd::enumflags2::BitFlags;
+use libspa::param::video::VideoFormat;
 
-/// A live portal ScreenCast session held across calls. Expensive to
-/// create (system consent dialog) and cheap to reuse — the OnceLock
-/// keeps it alive until the requesting process exits.
-struct PortalScreencastSession {
-    _session: Session<Screencast>,
+use super::portal::RestoreToken;
+
+/// How long to wait for the user to answer the portal's consent dialog when no
+/// valid restore token skips it.
+pub const CONSENT_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// A live portal ScreenCast session. The portal tears the cast down when the
+/// owning D-Bus connection goes away, so the session keeps its own runtime
+/// alive (one worker thread keeps the zbus connection driven, see #2105).
+pub struct ScreencastSession {
+    runtime: tokio::runtime::Runtime,
+    session: Session<Screencast>,
     streams: Streams,
-    fd: std::os::fd::OwnedFd,
+    fd: OwnedFd,
 }
 
-unsafe impl Send for PortalScreencastSession {}
-unsafe impl Sync for PortalScreencastSession {}
+impl ScreencastSession {
+    /// Open a ScreenCast session for `sources`. When `restore` is given, the
+    /// persisted token is offered so the desktop can skip its consent dialog,
+    /// and the token the portal returns is persisted for the next session.
+    pub fn open(
+        sources: BitFlags<SourceType>,
+        restore: Option<RestoreToken>,
+        consent_timeout: Duration,
+    ) -> anyhow::Result<Self> {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .map_err(|e| anyhow::anyhow!("failed to build tokio runtime for ashpd: {e}"))?;
+        let (session, streams, fd) = runtime.block_on(async {
+            let connection = super::portal::fresh_session_connection().await?;
+            let proxy = Screencast::with_connection(connection).await.map_err(|e| {
+                anyhow::anyhow!(
+                    "portal ScreenCast proxy unreachable: {e}. Install \
+                     xdg-desktop-portal-gnome / xdg-desktop-portal-kde."
+                )
+            })?;
+            let session = proxy
+                .create_session(CreateSessionOptions::default())
+                .await
+                .map_err(|e| anyhow::anyhow!("portal create_session failed: {e}"))?;
 
-static SESSION: OnceLock<PortalScreencastSession> = OnceLock::new();
+            let mut select_opts = SelectSourcesOptions::default()
+                .set_sources(sources)
+                .set_multiple(false)
+                .set_cursor_mode(CursorMode::Embedded)
+                .set_persist_mode(PersistMode::ExplicitlyRevoked);
+            let saved_token = restore.and_then(RestoreToken::read);
+            if let Some(token) = saved_token.as_deref() {
+                select_opts = select_opts.set_restore_token(Some(token));
+            }
+            proxy
+                .select_sources(&session, select_opts)
+                .await
+                .map_err(|e| anyhow::anyhow!("portal select_sources failed: {e}"))?
+                .response()
+                .map_err(|e| anyhow::anyhow!("portal select_sources response error: {e}"))?;
 
-/// Capture the user-selected window via `xdg-desktop-portal` ScreenCast.
-/// On first invocation per process the portal dialog asks the user to
-/// pick a window or monitor; subsequent calls reuse the same node
-/// transparently. Returns PNG bytes of the latest frame on the stream.
-pub fn screenshot_window_via_portal() -> anyhow::Result<Vec<u8>> {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| anyhow::anyhow!("failed to build tokio runtime for ashpd: {e}"))?;
+            // `start` resolves only once the user answers the consent dialog
+            // (or the restore token skips it); bound that wait here.
+            let start = proxy.start(&session, None, StartCastOptions::default());
+            let streams = match tokio::time::timeout(consent_timeout, start).await {
+                Ok(request) => request
+                    .map_err(|e| anyhow::anyhow!("portal start failed: {e}"))?
+                    .response()
+                    .map_err(|e| {
+                        anyhow::anyhow!(
+                            "portal ScreenCast start was refused (consent denied or dialog dismissed): {e}"
+                        )
+                    })?,
+                Err(_) => {
+                    let _ = session.close().await;
+                    anyhow::bail!(
+                        "portal ScreenCast consent was not granted within {}s",
+                        consent_timeout.as_secs()
+                    );
+                }
+            };
+            if let (Some(restore), Some(token)) = (restore, streams.restore_token()) {
+                if saved_token.as_deref() != Some(token) {
+                    if let Err(error) = restore.write(token) {
+                        tracing::warn!("could not persist portal ScreenCast restore token: {error}");
+                    }
+                }
+            }
 
-    if SESSION.get().is_none() {
-        let sess = rt.block_on(create_portal_session())?;
-        let _ = SESSION.set(sess);
+            let fd = proxy
+                .open_pipe_wire_remote(&session, OpenPipeWireRemoteOptions::default())
+                .await
+                .map_err(|e| anyhow::anyhow!("portal open_pipe_wire_remote failed: {e}"))?;
+            anyhow::Ok((session, streams, fd))
+        })?;
+        Ok(Self {
+            runtime,
+            session,
+            streams,
+            fd,
+        })
     }
-    let session = SESSION
-        .get()
-        .ok_or_else(|| anyhow::anyhow!("portal ScreenCast session unavailable"))?;
 
-    let node_id = session
-        .streams
-        .streams()
-        .iter()
-        .next()
-        .map(|s| s.pipe_wire_node_id())
-        .ok_or_else(|| anyhow::anyhow!("portal advertised no streams"))?;
+    /// PipeWire node id of the first stream the portal published.
+    pub fn node_id(&self) -> anyhow::Result<u32> {
+        self.streams
+            .streams()
+            .first()
+            .map(|stream| stream.pipe_wire_node_id())
+            .ok_or_else(|| anyhow::anyhow!("portal advertised no ScreenCast streams"))
+    }
 
-    capture_one_frame(session.fd.as_raw_fd(), node_id)
+    /// An independently owned duplicate of the PipeWire remote fd, suitable for
+    /// `pipewire::context::Context::connect_fd`, which consumes its fd.
+    pub fn pipewire_fd(&self) -> anyhow::Result<OwnedFd> {
+        let dup_fd = unsafe { libc::dup(self.fd.as_raw_fd()) };
+        if dup_fd < 0 {
+            anyhow::bail!(
+                "dup of portal PipeWire fd failed: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+        Ok(unsafe { OwnedFd::from_raw_fd(dup_fd) })
+    }
+
+    /// End the cast. The compositor stops streaming as soon as the portal
+    /// session closes, so callers should stop consuming frames first.
+    pub fn close(self) {
+        let _ = self.runtime.block_on(self.session.close());
+    }
 }
 
-async fn create_portal_session() -> anyhow::Result<PortalScreencastSession> {
-    let proxy = Screencast::new()
-        .await
-        .map_err(|e| anyhow::anyhow!("portal ScreenCast proxy unreachable: {e}. Install xdg-desktop-portal-gnome / xdg-desktop-portal-kde."))?;
-
-    let session = proxy
-        .create_session(CreateSessionOptions::default())
-        .await
-        .map_err(|e| anyhow::anyhow!("portal create_session failed: {e}"))?;
-
-    let select_opts = SelectSourcesOptions::default()
-        .set_sources(BitFlags::<SourceType>::from(SourceType::Window) | SourceType::Monitor)
-        .set_cursor_mode(CursorMode::Embedded)
-        .set_persist_mode(PersistMode::Application);
-
-    proxy
-        .select_sources(&session, select_opts)
-        .await
-        .map_err(|e| anyhow::anyhow!("portal select_sources failed: {e}"))?
-        .response()
-        .map_err(|e| anyhow::anyhow!("portal select_sources response error: {e}"))?;
-
-    let streams = proxy
-        .start(&session, None, StartCastOptions::default())
-        .await
-        .map_err(|e| anyhow::anyhow!("portal start failed: {e}"))?
-        .response()
-        .map_err(|e| anyhow::anyhow!("portal start response error (user denied?): {e}"))?;
-
-    let fd = proxy
-        .open_pipe_wire_remote(&session, OpenPipeWireRemoteOptions::default())
-        .await
-        .map_err(|e| anyhow::anyhow!("portal open_pipe_wire_remote failed: {e}"))?;
-
-    Ok(PortalScreencastSession {
-        _session: session,
-        streams,
-        fd,
-    })
+/// One dequeued video frame. `pixels` covers exactly `stride * height` bytes
+/// in the negotiated `format`; rows may carry padding beyond `width * 4`.
+pub struct Frame<'a> {
+    pub width: u32,
+    pub height: u32,
+    pub stride: u32,
+    pub format: VideoFormat,
+    pub pixels: &'a [u8],
 }
 
-/// Pull one frame off the PipeWire stream advertised by the portal,
-/// encode it as PNG, and return the bytes.
+/// Whether [`run_frame_stream`] keeps pumping after a sink callback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameFlow {
+    Continue,
+    Stop,
+}
+
+/// Consumer of a PipeWire capture stream. Both hooks run on the thread that
+/// called [`run_frame_stream`]; an error from either ends the stream and is
+/// returned to that caller.
+pub trait FrameSink {
+    fn frame(&mut self, frame: Frame<'_>) -> anyhow::Result<FrameFlow>;
+
+    /// Periodic hook, called every [`run_frame_stream`] `tick_interval`.
+    fn tick(&mut self) -> anyhow::Result<FrameFlow> {
+        Ok(FrameFlow::Continue)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct StreamOptions {
+    /// Give up when the producer delivers no frame at all within this window
+    /// (for example when the user closed the consent dialog mid-cast).
+    pub first_frame_timeout: Duration,
+    pub tick_interval: Duration,
+}
+
+impl Default for StreamOptions {
+    fn default() -> Self {
+        Self {
+            first_frame_timeout: Duration::from_secs(10),
+            tick_interval: Duration::from_millis(100),
+        }
+    }
+}
+
+struct Pump<S> {
+    sink: S,
+    negotiated: libspa::param::video::VideoInfoRaw,
+    started_at: Instant,
+    saw_frame: bool,
+    outcome: Option<anyhow::Result<()>>,
+}
+
+impl<S: FrameSink> Pump<S> {
+    fn finish(&mut self, mainloop: &pipewire::main_loop::MainLoopRc, outcome: anyhow::Result<()>) {
+        if self.outcome.is_none() {
+            self.outcome = Some(outcome);
+        }
+        mainloop.quit();
+    }
+
+    fn apply(
+        &mut self,
+        mainloop: &pipewire::main_loop::MainLoopRc,
+        result: anyhow::Result<FrameFlow>,
+    ) {
+        match result {
+            Ok(FrameFlow::Continue) => {}
+            Ok(FrameFlow::Stop) => self.finish(mainloop, Ok(())),
+            Err(error) => self.finish(mainloop, Err(error)),
+        }
+    }
+}
+
+/// Connect to the PipeWire remote behind a portal ScreenCast and feed frames
+/// from `node_id` to `sink` until the sink stops, the sink or the stream
+/// errors, or no first frame arrives in time. Blocks the calling thread.
 ///
-/// Pipeline:
-/// 1. `pipewire::MainLoop` + `Context` + `Core::connect_fd(portal_fd)` —
-///    join the portal-published PipeWire remote on the same fd ashpd
-///    returned from `open_pipe_wire_remote`.
-/// 2. `Stream::new` with `media.type=Video, media.category=Capture,
-///    media.role=Screen` so PipeWire knows to route the cast properly.
-/// 3. Build an `EnumFormat` SPA pod listing the channel-orders we accept
-///    (BGRx, BGRA, RGBx, RGBA) at any size up to 8K — the compositor
-///    picks one and announces it via `param_changed`. We track w/h/fmt
-///    from that callback.
-/// 4. The `process` callback dequeues exactly one buffer, copies the
-///    pixels out into a shared `Arc<Mutex<...>>`, and quits the main
-///    loop. Subsequent buffers are dropped (queued back via Buffer::Drop)
-///    once `frame.is_some()`.
-/// 5. After `mainloop.run()` returns, channel-swap the captured bytes
-///    into RGBA and PNG-encode them via the `image` crate.
-fn capture_one_frame(pipewire_fd: i32, node_id: u32) -> anyhow::Result<Vec<u8>> {
-    use std::os::fd::FromRawFd;
-    use std::sync::{Arc, Mutex};
-
+/// Only raw shared-memory formats are offered (no DMA-BUF modifier
+/// negotiation) so the compositor falls back to memfd buffers that
+/// `MAP_BUFFERS` can expose as plain byte slices.
+pub fn run_frame_stream<S: FrameSink + 'static>(
+    fd: OwnedFd,
+    node_id: u32,
+    options: StreamOptions,
+    sink: S,
+) -> anyhow::Result<S> {
     use pipewire as pw;
     use pw::{properties::properties, spa};
     use spa::pod::Pod;
 
-    pw::init();
-
-    let mainloop = pw::main_loop::MainLoop::new(None)
+    let mainloop = pw::main_loop::MainLoopRc::new(None)
         .map_err(|e| anyhow::anyhow!("pipewire MainLoop::new failed: {e}"))?;
-    let context = pw::context::Context::new(&mainloop)
+    let context = pw::context::ContextRc::new(&mainloop, None)
         .map_err(|e| anyhow::anyhow!("pipewire Context::new failed: {e}"))?;
-
-    // dup the portal fd so the OwnedFd we hand to connect_fd has an
-    // independent lifecycle from the PortalScreencastSession's master copy.
-    let dup_fd = unsafe { libc::dup(pipewire_fd) };
-    if dup_fd < 0 {
-        anyhow::bail!(
-            "dup of portal PipeWire fd failed: {}",
-            std::io::Error::last_os_error()
-        );
-    }
-    let owned_fd = unsafe { std::os::fd::OwnedFd::from_raw_fd(dup_fd) };
     let core = context
-        .connect_fd(owned_fd, None)
+        .connect_fd_rc(fd, None)
         .map_err(|e| anyhow::anyhow!("pipewire connect_fd failed: {e}"))?;
 
-    // Shared state populated by the param_changed + process callbacks.
-    // FrameBuf carries the negotiated geometry alongside the pixel data so
-    // the PNG encoder picks the right stride / channel order on exit.
-    struct FrameBuf {
-        bytes: Vec<u8>,
-        width: u32,
-        height: u32,
-        stride: u32,
-        format: spa::param::video::VideoFormat,
-    }
-    let frame: Arc<Mutex<Option<FrameBuf>>> = Arc::new(Mutex::new(None));
-    let neg_format: Arc<Mutex<spa::param::video::VideoInfoRaw>> =
-        Arc::new(Mutex::new(Default::default()));
+    let pump = Rc::new(RefCell::new(Pump {
+        sink,
+        negotiated: Default::default(),
+        started_at: Instant::now(),
+        saw_frame: false,
+        outcome: None,
+    }));
 
-    let stream = pw::stream::Stream::new(
+    let stream = pw::stream::StreamBox::new(
         &core,
         "cua-driver-capture",
         properties! {
@@ -188,106 +276,103 @@ fn capture_one_frame(pipewire_fd: i32, node_id: u32) -> anyhow::Result<Vec<u8>> 
     )
     .map_err(|e| anyhow::anyhow!("pipewire Stream::new failed: {e}"))?;
 
-    let mainloop_for_process = mainloop.clone();
-    let neg_format_for_param = neg_format.clone();
-    let frame_for_process = frame.clone();
-    let neg_format_for_process = neg_format.clone();
-
-    let _listener = stream
+    let listener = stream
         .add_local_listener::<()>()
-        .param_changed(move |_stream, _user, id, param| {
-            // The compositor confirms the negotiated VideoInfoRaw via the
-            // Format param event right after stream.connect — capture it
-            // so the process callback knows the width/height/format.
-            let Some(param) = param else { return };
-            if id != spa::param::ParamType::Format.as_raw() {
-                return;
-            }
-            let (media_type, media_subtype) = match spa::param::format_utils::parse_format(param) {
-                Ok(v) => v,
-                Err(_) => return,
-            };
-            if media_type != spa::param::format::MediaType::Video
-                || media_subtype != spa::param::format::MediaSubtype::Raw
-            {
-                return;
-            }
-            let mut info = spa::param::video::VideoInfoRaw::default();
-            if info.parse(param).is_ok() {
-                if let Ok(mut g) = neg_format_for_param.lock() {
-                    *g = info;
+        .state_changed({
+            let pump = pump.clone();
+            let mainloop = mainloop.clone();
+            move |_stream, _user, _old, new| {
+                if let pw::stream::StreamState::Error(error) = new {
+                    pump.borrow_mut().finish(
+                        &mainloop,
+                        Err(anyhow::anyhow!("portal ScreenCast stream failed: {error}")),
+                    );
                 }
             }
         })
-        .process(move |stream, _user| {
-            // Already captured? Drop further buffers (they'll be queued
-            // back via Buffer::Drop) so the run loop can finish.
-            if frame_for_process
-                .lock()
-                .ok()
-                .map(|g| g.is_some())
-                .unwrap_or(false)
-            {
-                let _ = stream.dequeue_buffer();
-                return;
+        .param_changed({
+            let pump = pump.clone();
+            move |_stream, _user, id, param| {
+                let Some(param) = param else { return };
+                if id != spa::param::ParamType::Format.as_raw() {
+                    return;
+                }
+                let Ok((media_type, media_subtype)) = spa::param::format_utils::parse_format(param)
+                else {
+                    return;
+                };
+                if media_type != spa::param::format::MediaType::Video
+                    || media_subtype != spa::param::format::MediaSubtype::Raw
+                {
+                    return;
+                }
+                let mut info = spa::param::video::VideoInfoRaw::default();
+                if info.parse(param).is_ok() {
+                    pump.borrow_mut().negotiated = info;
+                }
             }
-            let mut buffer = match stream.dequeue_buffer() {
-                Some(b) => b,
-                None => return,
-            };
-            let datas = buffer.datas_mut();
-            if datas.is_empty() {
-                return;
-            }
-            let info = match neg_format_for_process.lock() {
-                Ok(g) => *g,
-                Err(_) => return,
-            };
-            let size_struct = info.size();
-            let width = size_struct.width;
-            let height = size_struct.height;
-            if width == 0 || height == 0 {
-                return;
-            }
-            let chunk_stride = datas[0].chunk().stride();
-            let chunk_size = datas[0].chunk().size();
-            // PipeWire sometimes leaves stride at 0 (when the producer
-            // doesn't fill it in); fall back to width*4 for the packed
-            // BGRx/BGRA/RGBx/RGBA formats we negotiate.
-            let stride = if chunk_stride > 0 {
-                chunk_stride as u32
-            } else if chunk_size > 0 && height > 0 {
-                chunk_size / height
-            } else {
-                width * 4
-            };
-            let payload = match datas[0].data() {
-                Some(p) => p,
-                None => return,
-            };
-            let payload_len = (stride as usize) * (height as usize);
-            if payload.len() < payload_len {
-                return;
-            }
-            let bytes = payload[..payload_len].to_vec();
-            if let Ok(mut g) = frame_for_process.lock() {
-                *g = Some(FrameBuf {
-                    bytes,
+        })
+        .process({
+            let pump = pump.clone();
+            let mainloop = mainloop.clone();
+            move |stream, _user| {
+                // Keep only the newest queued buffer; dropping a buffer
+                // requeues it to the producer.
+                let Some(mut buffer) = stream.dequeue_buffer() else {
+                    return;
+                };
+                while let Some(newer) = stream.dequeue_buffer() {
+                    buffer = newer;
+                }
+                let mut pump = pump.borrow_mut();
+                if pump.outcome.is_some() {
+                    return;
+                }
+                let info = pump.negotiated;
+                let size = info.size();
+                let (width, height) = (size.width, size.height);
+                if width == 0 || height == 0 {
+                    return;
+                }
+                let datas = buffer.datas_mut();
+                let Some(data) = datas.first_mut() else {
+                    return;
+                };
+                let chunk = data.chunk();
+                let (offset, chunk_size, chunk_stride) =
+                    (chunk.offset() as usize, chunk.size(), chunk.stride());
+                // Producers may leave stride unset; derive it for the packed
+                // 32-bit formats negotiated below.
+                let stride = if chunk_stride > 0 {
+                    chunk_stride as u32
+                } else if chunk_size > 0 {
+                    chunk_size / height
+                } else {
+                    width * 4
+                };
+                let payload_len = stride as usize * height as usize;
+                let Some(payload) = data
+                    .data()
+                    .and_then(|bytes| bytes.get(offset..offset + payload_len))
+                else {
+                    return;
+                };
+                pump.saw_frame = true;
+                let result = pump.sink.frame(Frame {
                     width,
                     height,
                     stride,
                     format: info.format(),
+                    pixels: payload,
                 });
+                pump.apply(&mainloop, result);
             }
-            // Quit the main loop so the caller can encode + return.
-            mainloop_for_process.quit();
         })
         .register()
         .map_err(|e| anyhow::anyhow!("pipewire stream listener register failed: {e}"))?;
 
-    // Build an EnumFormat SPA pod listing the formats + sizes we accept.
-    // Compositors typically pick BGRx/BGRA on Linux desktops; we list a
-    // few alternates so negotiation succeeds on more sources.
+    // Compositors typically pick BGRx/BGRA on Linux desktops; the alternates
+    // let negotiation succeed on more sources.
     let obj = pw::spa::pod::object!(
         pw::spa::utils::SpaTypes::ObjectParamFormat,
         pw::spa::param::ParamType::EnumFormat,
@@ -306,11 +391,11 @@ fn capture_one_frame(pipewire_fd: i32, node_id: u32) -> anyhow::Result<Vec<u8>> 
             Choice,
             Enum,
             Id,
-            pw::spa::param::video::VideoFormat::BGRx,
-            pw::spa::param::video::VideoFormat::BGRx,
-            pw::spa::param::video::VideoFormat::BGRA,
-            pw::spa::param::video::VideoFormat::RGBx,
-            pw::spa::param::video::VideoFormat::RGBA,
+            VideoFormat::BGRx,
+            VideoFormat::BGRx,
+            VideoFormat::BGRA,
+            VideoFormat::RGBx,
+            VideoFormat::RGBA,
         ),
         pw::spa::pod::property!(
             pw::spa::param::format::FormatProperties::VideoSize,
@@ -362,65 +447,71 @@ fn capture_one_frame(pipewire_fd: i32, node_id: u32) -> anyhow::Result<Vec<u8>> 
         )
         .map_err(|e| anyhow::anyhow!("pipewire stream.connect failed: {e}"))?;
 
-    // Install a 10-second timeout source so a producer that never delivers
-    // a frame (eg the user closed the consent dialog mid-cast) doesn't
-    // hang the main loop forever.
-    let timeout_loop = mainloop.clone();
-    let _timeout_source = mainloop
-        .loop_()
-        .add_timer(move |_expirations: u64| timeout_loop.quit());
-    _timeout_source
-        .update_timer(Some(std::time::Duration::from_secs(10)), None)
+    let ticker = mainloop.loop_().add_timer({
+        let pump = pump.clone();
+        let mainloop = mainloop.clone();
+        move |_expirations| {
+            let mut pump = pump.borrow_mut();
+            if pump.outcome.is_some() {
+                return;
+            }
+            if !pump.saw_frame && pump.started_at.elapsed() >= options.first_frame_timeout {
+                pump.finish(
+                    &mainloop,
+                    Err(anyhow::anyhow!(
+                        "portal ScreenCast delivered no frame within {}s",
+                        options.first_frame_timeout.as_secs()
+                    )),
+                );
+                return;
+            }
+            let result = pump.sink.tick();
+            pump.apply(&mainloop, result);
+        }
+    });
+    ticker
+        .update_timer(Some(options.tick_interval), Some(options.tick_interval))
         .into_result()
-        .map_err(|e| anyhow::anyhow!("pipewire timeout source failed: {e:?}"))?;
+        .map_err(|e| anyhow::anyhow!("pipewire timer source failed: {e:?}"))?;
 
     mainloop.run();
 
-    // Tear down the stream before we read the frame, so the producer
-    // can't keep mutating the buffer underneath us.
-    drop(_listener);
+    // Tear the stream down before handing the sink back so the producer
+    // cannot touch buffers the sink may still reference.
+    drop(ticker);
+    drop(listener);
     drop(stream);
+    drop(core);
+    drop(context);
 
-    let frame = frame
-        .lock()
-        .map_err(|_| anyhow::anyhow!("frame mutex poisoned"))?
-        .take()
-        .ok_or_else(|| anyhow::anyhow!("portal ScreenCast: no frame arrived within timeout"))?;
-
-    encode_frame_to_png(
-        &frame.bytes,
-        frame.width,
-        frame.height,
-        frame.stride,
-        frame.format,
-    )
+    let pump = Rc::try_unwrap(pump)
+        .map_err(|_| anyhow::anyhow!("pipewire callbacks outlived the capture loop"))?
+        .into_inner();
+    match pump.outcome {
+        Some(Ok(())) | None => Ok(pump.sink),
+        Some(Err(error)) => Err(error),
+    }
 }
 
 /// Channel-swap a PipeWire video frame into RGBA8888 and PNG-encode it.
 ///
-/// Mirrors `ext_screencopy::encode_buffer_to_png` — the input layout
-/// depends on the negotiated VideoFormat: BGRx/BGRA are little-endian
-/// BGRA (so swap R↔B), RGBx/RGBA are already RGBA in memory.
-fn encode_frame_to_png(
-    pixels: &[u8],
-    width: u32,
-    height: u32,
-    stride: u32,
-    fmt: libspa::param::video::VideoFormat,
-) -> anyhow::Result<Vec<u8>> {
-    use libspa::param::video::VideoFormat;
+/// Mirrors `ext_screencopy::encode_buffer_to_png`: BGRx/BGRA are
+/// little-endian BGRA (so swap R and B), RGBx/RGBA are already RGBA in memory.
+pub fn encode_frame_to_png(frame: &Frame<'_>) -> anyhow::Result<Vec<u8>> {
+    let (width, height, stride) = (frame.width, frame.height, frame.stride as usize);
+    let pixels = frame.pixels;
     let mut rgba: Vec<u8> = Vec::with_capacity((width as usize) * (height as usize) * 4);
     for y in 0..(height as usize) {
-        let row_start = y * (stride as usize);
+        let row_start = y * stride;
         for x in 0..(width as usize) {
             let i = row_start + x * 4;
-            let (r, g, b, a) = match fmt {
+            let (r, g, b, a) = match frame.format {
                 VideoFormat::BGRx => (pixels[i + 2], pixels[i + 1], pixels[i], 0xFF),
                 VideoFormat::BGRA => (pixels[i + 2], pixels[i + 1], pixels[i], pixels[i + 3]),
                 VideoFormat::RGBx => (pixels[i], pixels[i + 1], pixels[i + 2], 0xFF),
                 VideoFormat::RGBA => (pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]),
-                // Fall through: treat unknown formats as BGRA (the most
-                // common compositor output on Linux).
+                // Treat unknown formats as BGRA, the most common compositor
+                // output on Linux.
                 _ => (pixels[i + 2], pixels[i + 1], pixels[i], pixels[i + 3]),
             };
             rgba.extend_from_slice(&[r, g, b, a]);
@@ -437,6 +528,45 @@ fn encode_frame_to_png(
         image::ExtendedColorType::Rgba8,
     )?;
     Ok(out)
+}
+
+/// Consent is expensive (system dialog) and reuse is cheap, so the window
+/// screenshot session lives for the rest of the process.
+static WINDOW_SESSION: OnceLock<ScreencastSession> = OnceLock::new();
+
+struct FirstFramePng(Option<anyhow::Result<Vec<u8>>>);
+
+impl FrameSink for FirstFramePng {
+    fn frame(&mut self, frame: Frame<'_>) -> anyhow::Result<FrameFlow> {
+        self.0 = Some(encode_frame_to_png(&frame));
+        Ok(FrameFlow::Stop)
+    }
+}
+
+/// Capture the user-selected window or monitor via `xdg-desktop-portal`
+/// ScreenCast. On first invocation per process the portal dialog asks the
+/// user to pick a source; subsequent calls reuse the same node
+/// transparently. Returns PNG bytes of the latest frame on the stream.
+pub fn screenshot_window_via_portal() -> anyhow::Result<Vec<u8>> {
+    if WINDOW_SESSION.get().is_none() {
+        let session = ScreencastSession::open(
+            BitFlags::<SourceType>::from(SourceType::Window) | SourceType::Monitor,
+            None,
+            CONSENT_TIMEOUT,
+        )?;
+        let _ = WINDOW_SESSION.set(session);
+    }
+    let session = WINDOW_SESSION
+        .get()
+        .ok_or_else(|| anyhow::anyhow!("portal ScreenCast session unavailable"))?;
+    let sink = run_frame_stream(
+        session.pipewire_fd()?,
+        session.node_id()?,
+        StreamOptions::default(),
+        FirstFramePng(None),
+    )?;
+    sink.0
+        .ok_or_else(|| anyhow::anyhow!("portal ScreenCast: no frame arrived within timeout"))?
 }
 
 /// Probe whether the portal ScreenCast interface is reachable on the

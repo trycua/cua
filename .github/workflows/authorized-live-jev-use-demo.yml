@@ -72,7 +72,7 @@ jobs:
           RUN_LIVE_ACKNOWLEDGED: ${{ inputs.run_live }}
           REQUESTED_SHA: ${{ inputs.source_sha }}
           REQUESTED_JEV_SHA: ${{ inputs.jev_source_sha }}
-          CANONICAL_JEV_MERGE_SHA: bdaf8c2570e35254f5e50a317781374efe7aa91
+          CANONICAL_JEV_MERGE_SHA: bdaf8c2570e35254f5e50a317781374efe7aa91a
           CANDIDATE_ARTIFACT_ID: ${{ inputs.signed_candidate_artifact_id }}
           CANDIDATE_RUN_ID: ${{ inputs.signed_candidate_run_id }}
           EVENT_ACTION: ${{ github.event.action }}

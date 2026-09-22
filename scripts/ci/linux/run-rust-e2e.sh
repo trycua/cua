@@ -313,53 +313,59 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
         --ignored --exact wayland_overlay_quiesces_and_recovers_after_capture_and_cursor_activity \
         --nocapture --test-threads=1
 
-    # Presentation-timestamp latency evidence. The fixture probe commits one
-    # content update and waits for the compositor to complete its feedback, so
-    # a lane that cannot attribute a presentation records a typed limitation
-    # instead of reporting a missing measurement as a fast action. Advertising
-    # wp_presentation is not enough on its own: a headless wlroots 0.15 session
-    # advertises the protocol and completes no feedback, because no output ever
-    # reaches a real presentation. wlroots 0.17 (the hosted lane's sway 1.9)
-    # completes it in CLOCK_MONOTONIC.
-    presentation_fixture="${CUA_TEST_APPS_ROOT}/harness-wayland-presentation/CuaTestHarness.WaylandPresentation"
-    presentation_probe="${ARTIFACT_DIR}/wayland-presentation-probe.jsonl"
-    rm -f "${presentation_probe}"
-    set +e
-    "${presentation_fixture}" --journal "${presentation_probe}" --probe \
-      > "${ARTIFACT_DIR}/wayland-presentation-probe.log" 2>&1
-    presentation_probe_status=$?
-    set -e
-    if [[ "${presentation_probe_status}" == 0 ]]; then
-      run_test wayland-presentation-latency \
-        cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
-          --test wayland_presentation_latency_test -- \
-          --ignored --nocapture --test-threads=1
-    elif [[ "${presentation_probe_status}" == 3 ]]; then
-      presentation_supported="$(jq -r 'select(.kind == "probe") | .presentation_supported // false' \
-        "${presentation_probe}" 2>/dev/null | tail -1)"
-      if [[ "${presentation_supported}" == true ]]; then
-        limitation="Compositor advertises wp_presentation but completed no feedback for a committed content update; presentation-timestamp latency evidence is unavailable in this lane."
+    # Native Wayland only, matching the condition under which this
+    # fixture is built and required above. The XWayland lane exports
+    # both DISPLAY and WAYLAND_DISPLAY and never stages this binary, so
+    # probing it there would exec a missing file and fail the lane.
+    if [[ -z "${DISPLAY:-}" ]]; then
+      # Presentation-timestamp latency evidence. The fixture probe commits one
+      # content update and waits for the compositor to complete its feedback, so
+      # a lane that cannot attribute a presentation records a typed limitation
+      # instead of reporting a missing measurement as a fast action. Advertising
+      # wp_presentation is not enough on its own: a headless wlroots 0.15 session
+      # advertises the protocol and completes no feedback, because no output ever
+      # reaches a real presentation. wlroots 0.17 (the hosted lane's sway 1.9)
+      # completes it in CLOCK_MONOTONIC.
+      presentation_fixture="${CUA_TEST_APPS_ROOT}/harness-wayland-presentation/CuaTestHarness.WaylandPresentation"
+      presentation_probe="${ARTIFACT_DIR}/wayland-presentation-probe.jsonl"
+      rm -f "${presentation_probe}"
+      set +e
+      "${presentation_fixture}" --journal "${presentation_probe}" --probe \
+        > "${ARTIFACT_DIR}/wayland-presentation-probe.log" 2>&1
+      presentation_probe_status=$?
+      set -e
+      if [[ "${presentation_probe_status}" == 0 ]]; then
+        run_test wayland-presentation-latency \
+          cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+            --test wayland_presentation_latency_test -- \
+            --ignored --nocapture --test-threads=1
+      elif [[ "${presentation_probe_status}" == 3 ]]; then
+        presentation_supported="$(jq -r 'select(.kind == "probe") | .presentation_supported // false' \
+          "${presentation_probe}" 2>/dev/null | tail -1)"
+        if [[ "${presentation_supported}" == true ]]; then
+          limitation="Compositor advertises wp_presentation but completed no feedback for a committed content update; presentation-timestamp latency evidence is unavailable in this lane."
+        else
+          limitation="Compositor does not implement stable wp_presentation; presentation-timestamp latency evidence is unavailable in this lane."
+        fi
+        jq -n \
+          --arg reason "${limitation}" \
+          --slurpfile probe "${presentation_probe}" \
+          '{
+            schema: "cua-e2e-limitation-v1",
+            platform: "linux",
+            display_server: "wayland",
+            harness: "wayland-presentation",
+            test: "wayland-presentation-latency",
+            status: "not_applicable",
+            reason: $reason,
+            probe: ($probe | map(select(.kind == "probe")) | last)
+          }' > "${ARTIFACT_DIR}/wayland-presentation-latency-limitation.json"
+        echo "[LIMITATION] wayland-presentation-latency: ${limitation}"
       else
-        limitation="Compositor does not implement stable wp_presentation; presentation-timestamp latency evidence is unavailable in this lane."
+        echo "wayland presentation fixture probe failed with status ${presentation_probe_status}" >&2
+        cat "${ARTIFACT_DIR}/wayland-presentation-probe.log" >&2
+        FAILURE_COUNT=$((FAILURE_COUNT + 1))
       fi
-      jq -n \
-        --arg reason "${limitation}" \
-        --slurpfile probe "${presentation_probe}" \
-        '{
-          schema: "cua-e2e-limitation-v1",
-          platform: "linux",
-          display_server: "wayland",
-          harness: "wayland-presentation",
-          test: "wayland-presentation-latency",
-          status: "not_applicable",
-          reason: $reason,
-          probe: ($probe | map(select(.kind == "probe")) | last)
-        }' > "${ARTIFACT_DIR}/wayland-presentation-latency-limitation.json"
-      echo "[LIMITATION] wayland-presentation-latency: ${limitation}"
-    else
-      echo "wayland presentation fixture probe failed with status ${presentation_probe_status}" >&2
-      cat "${ARTIFACT_DIR}/wayland-presentation-probe.log" >&2
-      FAILURE_COUNT=$((FAILURE_COUNT + 1))
     fi
   else
     # X11 never starts the Wayland layer-shell overlay thread, so its absence

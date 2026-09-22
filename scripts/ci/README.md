@@ -134,9 +134,10 @@ For desktop behavior, use a diagnostic lane only to narrow a failure. The
 complete Linux, Windows, and macOS runs at the stable exact candidate SHA
 remain the certification gate described below and in the test harnesses guide.
 The Linux and Windows E2E workflows cache Rust dependencies/build products
-per OS and lane, and cache npm downloads for the Electron fixture on exact-`main`
-dispatches. A dispatch against a reviewed SHA may restore a Rust cache but only
-a dispatch on `main` building `main`'s own SHA may save it. No fixture `node_modules`,
+per OS and lane, and cache npm downloads for the Electron fixture on exact-ref
+dispatches. A dispatch against a different reviewed SHA may restore a Rust
+cache but cannot save it. Exact-ref branch dispatches save only in that branch's
+GitHub cache scope; Windows RDP parity replays cannot save a cache. No fixture `node_modules`,
 recording, result, or certification artifact is cached.
 
 To measure the change, compare the wall time of each job and its build/test

@@ -393,25 +393,24 @@ mod portal_video {
     use std::sync::Arc;
 
     pub(super) const FPS: u32 = 10;
-    const TICK: Duration = Duration::from_millis(1000 / FPS as u64);
+    pub(super) const TICK: Duration = Duration::from_millis(1000 / FPS as u64);
     const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(10);
     /// Encoder must survive this long after its first frame before the
     /// backend reports a successful start; ffmpeg rejects bad arguments or
     /// missing codecs within milliseconds.
     const ENCODER_PROBE: Duration = Duration::from_millis(1500);
     const ENCODER_SHUTDOWN: Duration = Duration::from_secs(10);
-    /// An encoder that accepts no frame bytes for this long while frames are
-    /// owed is treated as wedged rather than slow.
-    pub(super) const ENCODER_STALL: Duration = Duration::from_secs(5);
-    /// Upper bound on the time one tick spends pushing bytes into the
-    /// encoder pipe, so the PipeWire loop stays responsive to stop requests.
-    const WRITE_BUDGET: Duration = Duration::from_millis(1000 / FPS as u64 / 2);
+    /// Every frame a tick owes must be accepted by the encoder within this
+    /// window. A consumer that cannot keep up fails the recording explicitly
+    /// instead of quietly shortening the timeline, and a wedged one cannot
+    /// park the PipeWire loop for longer than this.
+    pub(super) const FEED_DEADLINE: Duration = Duration::from_secs(5);
 
     pub(super) struct PortalVideoBackend {
         stop: Arc<AtomicBool>,
-        worker: std::thread::JoinHandle<anyhow::Result<()>>,
+        /// Resolves to the number of frames the encoder accepted.
+        worker: std::thread::JoinHandle<anyhow::Result<u64>>,
         output_path: PathBuf,
-        started_at: Instant,
     }
 
     impl PortalVideoBackend {
@@ -421,10 +420,7 @@ mod portal_video {
 
             let output_path = output_path.to_path_buf();
             let stop = Arc::new(AtomicBool::new(false));
-            // Success carries the instant the encoded timeline began, so the
-            // reported duration matches the frames on disk rather than the
-            // consent wait that preceded them.
-            let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<Instant, String>>(1);
+            let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<(), String>>(1);
             let worker = std::thread::spawn({
                 let output_path = output_path.clone();
                 let stop = stop.clone();
@@ -461,11 +457,10 @@ mod portal_video {
             });
             let start_deadline = CONSENT_TIMEOUT + FIRST_FRAME_TIMEOUT + ENCODER_PROBE * 2;
             match ready_rx.recv_timeout(start_deadline) {
-                Ok(Ok(started_at)) => Ok(Self {
+                Ok(Ok(())) => Ok(Self {
                     stop,
                     worker,
                     output_path,
-                    started_at,
                 }),
                 Ok(Err(error)) => {
                     let _ = worker.join();
@@ -485,15 +480,17 @@ mod portal_video {
 
     impl VideoBackend for PortalVideoBackend {
         fn stop(self: Box<Self>) -> anyhow::Result<VideoMetadata> {
-            let elapsed = self.started_at.elapsed();
             self.stop.store(true, Ordering::SeqCst);
-            match self.worker.join() {
+            let delivered = match self.worker.join() {
                 Ok(result) => result?,
                 Err(_) => anyhow::bail!("portal ScreenCast video worker panicked"),
-            }
+            };
+            // The artifact is a constant-rate stream of exactly `delivered`
+            // frames, so its duration is derived from them rather than from
+            // the wall clock the pacer was chasing.
             Ok(VideoMetadata {
                 path: self.output_path,
-                duration_ms: elapsed.as_millis() as u64,
+                duration_ms: delivered * 1000 / u64::from(FPS),
                 finalized: true,
             })
         }
@@ -528,86 +525,57 @@ mod portal_video {
         Ok(())
     }
 
-    /// Frames owed to the encoder that have not been fully written yet.
-    ///
-    /// Writes go to a non-blocking pipe and resume where they left off, so a
-    /// consumer that stops reading can never park the PipeWire loop; it shows
-    /// up as a stall instead.
-    pub(super) struct Outbox {
-        /// Snapshot of the frame currently being written, so a newer capture
-        /// arriving mid-write cannot tear it.
-        frame: Vec<u8>,
-        written: usize,
-        owed: u64,
-        pub(super) delivered: u64,
-        last_progress: Instant,
+    /// Write one whole frame to a non-blocking pipe, sleeping in `poll` for
+    /// writable readiness between partial writes. A consumer that stops
+    /// reading surfaces as `TimedOut` at `deadline` instead of parking the
+    /// calling thread.
+    pub(super) fn write_frame(
+        dst: &mut (impl Write + AsRawFd),
+        frame: &[u8],
+        deadline: Instant,
+    ) -> std::io::Result<()> {
+        let mut written = 0;
+        while written < frame.len() {
+            match dst.write(&frame[written..]) {
+                Ok(0) => return Err(ErrorKind::WriteZero.into()),
+                Ok(n) => written += n,
+                Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                    await_writable(dst, deadline)?
+                }
+                Err(error) if error.kind() == ErrorKind::Interrupted => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
     }
 
-    impl Outbox {
-        pub(super) fn new(now: Instant) -> Self {
-            Self {
-                frame: Vec::new(),
-                written: 0,
-                owed: 0,
-                delivered: 0,
-                last_progress: now,
+    fn await_writable(fd: &impl AsRawFd, deadline: Instant) -> std::io::Result<()> {
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(ErrorKind::TimedOut.into());
             }
-        }
-
-        pub(super) fn owe(&mut self, frames: u64, now: Instant) {
-            if frames == 0 {
-                return;
-            }
-            if self.owed == 0 {
-                self.last_progress = now;
-            }
-            self.owed += frames;
-        }
-
-        /// Push owed copies of `latest` into `dst` until it would block, the
-        /// backlog is drained, or `budget` has elapsed since `now`.
-        pub(super) fn deliver(
-            &mut self,
-            dst: &mut impl Write,
-            latest: &[u8],
-            now: Instant,
-            budget: Duration,
-        ) -> std::io::Result<()> {
-            let deadline = now + budget;
-            while self.owed > 0 {
-                if self.written == 0 {
-                    self.frame.clear();
-                    self.frame.extend_from_slice(latest);
-                }
-                match dst.write(&self.frame[self.written..]) {
-                    Ok(0) => return Err(ErrorKind::WriteZero.into()),
-                    Ok(n) => {
-                        self.written += n;
-                        self.last_progress = now;
-                        if self.written == self.frame.len() {
-                            self.written = 0;
-                            self.owed -= 1;
-                            self.delivered += 1;
-                        }
+            let mut pollfd = libc::pollfd {
+                fd: fd.as_raw_fd(),
+                events: libc::POLLOUT,
+                revents: 0,
+            };
+            let timeout_ms = i32::try_from(remaining.as_millis())
+                .unwrap_or(i32::MAX)
+                .max(1);
+            match unsafe { libc::poll(&mut pollfd, 1, timeout_ms) } {
+                // The kernel may wake slightly before the millisecond it was
+                // given; the deadline check above decides whether time is up.
+                0 => {}
+                // POLLERR/POLLHUP also count: the next write reports them.
+                n if n > 0 => return Ok(()),
+                _ => {
+                    let error = std::io::Error::last_os_error();
+                    if error.kind() != ErrorKind::Interrupted {
+                        return Err(error);
                     }
-                    Err(error) if error.kind() == ErrorKind::WouldBlock => break,
-                    Err(error) if error.kind() == ErrorKind::Interrupted => {}
-                    Err(error) => return Err(error),
-                }
-                if Instant::now() >= deadline {
-                    break;
                 }
             }
-            Ok(())
-        }
-
-        /// Frames are owed but none of their bytes were accepted for `limit`.
-        pub(super) fn stalled(&self, now: Instant, limit: Duration) -> bool {
-            self.owed > 0 && now.saturating_duration_since(self.last_progress) >= limit
-        }
-
-        pub(super) fn backlog(&self) -> u64 {
-            self.owed
         }
     }
 
@@ -618,7 +586,8 @@ mod portal_video {
         geometry: Geometry,
         spawned_at: Instant,
         pacer: FramePacer,
-        outbox: Outbox,
+        /// Frames ffmpeg has accepted in full; the artifact's length.
+        delivered: u64,
     }
 
     impl Encoder {
@@ -658,7 +627,7 @@ mod portal_video {
                 geometry,
                 spawned_at: now,
                 pacer: FramePacer::new(FPS, now),
-                outbox: Outbox::new(now),
+                delivered: 0,
             })
         }
 
@@ -679,26 +648,64 @@ mod portal_video {
             Ok(())
         }
 
-        /// Close stdin so ffmpeg writes the moov atom, then wait for it.
-        /// Frames still owed at this point are dropped, so an encoder that
-        /// fell behind real time yields a proportionally shorter video.
-        fn finish(mut self) -> anyhow::Result<()> {
-            drop(self.stdin.take());
-            let deadline = Instant::now() + ENCODER_SHUTDOWN;
-            let status = loop {
+        /// Hand one frame to ffmpeg in full, or explain why that was not
+        /// possible within `deadline`.
+        fn feed(&mut self, frame: &[u8], deadline: Instant) -> anyhow::Result<()> {
+            let stdin = self
+                .stdin
+                .as_mut()
+                .ok_or_else(|| anyhow::anyhow!("FFmpeg encoder exposed no stdin"))?;
+            match write_frame(stdin, frame, deadline) {
+                Ok(()) => {
+                    self.delivered += 1;
+                    Ok(())
+                }
+                Err(error) if error.kind() == ErrorKind::TimedOut => anyhow::bail!(
+                    "FFmpeg encoder stopped accepting {}x{} frames within the {}s feed window; \
+                     it is not keeping up with {FPS} fps",
+                    self.geometry.width,
+                    self.geometry.height,
+                    FEED_DEADLINE.as_secs()
+                ),
+                Err(error) if error.kind() == ErrorKind::BrokenPipe => {
+                    let status = self.reap(Instant::now() + Duration::from_secs(2))?;
+                    let tail = self.stderr_tail();
+                    match status {
+                        Some(status) => anyhow::bail!(
+                            "FFmpeg encoder exited during recording ({status}): {tail}"
+                        ),
+                        None => anyhow::bail!(
+                            "FFmpeg encoder closed its input during recording: {tail}"
+                        ),
+                    }
+                }
+                Err(error) => anyhow::bail!("failed to feed FFmpeg encoder: {error}"),
+            }
+        }
+
+        /// Wait for ffmpeg to exit until `deadline`, then kill it. `None`
+        /// means it had to be killed.
+        fn reap(&mut self, deadline: Instant) -> std::io::Result<Option<std::process::ExitStatus>> {
+            loop {
                 if let Some(status) = self.child.try_wait()? {
-                    break Some(status);
+                    return Ok(Some(status));
                 }
                 if Instant::now() >= deadline {
                     let _ = self.child.kill();
                     let _ = self.child.wait();
-                    break None;
+                    return Ok(None);
                 }
                 std::thread::sleep(Duration::from_millis(80));
-            };
+            }
+        }
+
+        /// Close stdin so ffmpeg writes the moov atom, then wait for it.
+        fn finish(mut self) -> anyhow::Result<u64> {
+            drop(self.stdin.take());
+            let status = self.reap(Instant::now() + ENCODER_SHUTDOWN)?;
             let tail = self.stderr_tail();
             match status {
-                Some(status) if status.success() => Ok(()),
+                Some(status) if status.success() => Ok(self.delivered),
                 Some(status) => anyhow::bail!("FFmpeg encoder exited with {status}: {tail}"),
                 None => anyhow::bail!(
                     "FFmpeg encoder did not finalize within {}s: {tail}",
@@ -714,36 +721,28 @@ mod portal_video {
             // encoder through `finish`. Closing stdin lets ffmpeg finalize a
             // playable partial artifact before we reap it.
             drop(self.stdin.take());
-            let deadline = Instant::now() + ENCODER_SHUTDOWN;
-            while self.child.try_wait().ok().flatten().is_none() {
-                if Instant::now() >= deadline {
-                    let _ = self.child.kill();
-                    let _ = self.child.wait();
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(80));
-            }
+            let _ = self.reap(Instant::now() + ENCODER_SHUTDOWN);
         }
     }
 
     /// Feeds paced raw frames from the portal stream into an FFmpeg encoder
     /// that is spawned lazily with the first frame's negotiated geometry.
-    struct RawVideoEncoder {
+    pub(super) struct RawVideoEncoder {
         ffmpeg: PathBuf,
         output_path: PathBuf,
         stop: Arc<AtomicBool>,
-        ready: Option<mpsc::SyncSender<Result<Instant, String>>>,
+        ready: Option<mpsc::SyncSender<Result<(), String>>>,
         encoder: Option<Encoder>,
         /// Latest frame, tightly packed at `width * 4` bytes per row.
         latest: Vec<u8>,
     }
 
     impl RawVideoEncoder {
-        fn new(
+        pub(super) fn new(
             ffmpeg: PathBuf,
             output_path: PathBuf,
             stop: Arc<AtomicBool>,
-            ready: mpsc::SyncSender<Result<Instant, String>>,
+            ready: mpsc::SyncSender<Result<(), String>>,
         ) -> Self {
             Self {
                 ffmpeg,
@@ -755,11 +754,12 @@ mod portal_video {
             }
         }
 
-        fn finish(mut self) -> anyhow::Result<()> {
+        /// Finalize the artifact and return the number of frames it holds.
+        pub(super) fn finish(mut self) -> anyhow::Result<u64> {
             let Some(encoder) = self.encoder.take() else {
                 anyhow::bail!("portal ScreenCast delivered no frame before recording stopped");
             };
-            encoder.finish()?;
+            let delivered = encoder.finish()?;
             if self
                 .output_path
                 .metadata()
@@ -769,7 +769,14 @@ mod portal_video {
             {
                 anyhow::bail!("FFmpeg encoder produced an empty artifact");
             }
-            Ok(())
+            Ok(delivered)
+        }
+
+        /// Process id of the live ffmpeg child, for tests that need to wedge
+        /// a real consumer.
+        #[cfg(test)]
+        pub(super) fn encoder_pid(&self) -> Option<u32> {
+            self.encoder.as_ref().map(|encoder| encoder.child.id())
         }
     }
 
@@ -812,29 +819,22 @@ mod portal_video {
             encoder.ensure_alive()?;
             let now = Instant::now();
             let due = encoder.pacer.due(now);
-            encoder.outbox.owe(due, now);
-            let stdin = encoder
-                .stdin
-                .as_mut()
-                .ok_or_else(|| anyhow::anyhow!("FFmpeg encoder exposed no stdin"))?;
-            encoder
-                .outbox
-                .deliver(stdin, &self.latest, now, WRITE_BUDGET)
-                .map_err(|error| anyhow::anyhow!("failed to feed FFmpeg encoder: {error}"))?;
-            if encoder.outbox.stalled(now, ENCODER_STALL) {
-                anyhow::bail!(
-                    "FFmpeg encoder accepted no frame data for {}s with {} frames waiting",
-                    ENCODER_STALL.as_secs(),
-                    encoder.outbox.backlog()
-                );
+            let deadline = now + FEED_DEADLINE;
+            for written in 0..due {
+                // A stop request lands between frames, so the frame in flight
+                // is always whole; frames never handed over are not counted.
+                if written > 0 && self.stop.load(Ordering::SeqCst) {
+                    return Ok(FrameFlow::Stop);
+                }
+                encoder.feed(&self.latest, deadline)?;
             }
             if self.ready.is_some()
-                && encoder.outbox.delivered > 0
+                && encoder.delivered > 0
                 && encoder.spawned_at.elapsed() >= ENCODER_PROBE
             {
                 encoder.ensure_alive()?;
                 if let Some(ready) = self.ready.take() {
-                    let _ = ready.send(Ok(encoder.pacer.started_at));
+                    let _ = ready.send(Ok(()));
                 }
             }
             Ok(FrameFlow::Continue)
@@ -916,10 +916,10 @@ mod tests {
         assert_eq!(portal_video::ffmpeg_pix_fmt(RawFormat::RGBA), "rgba");
     }
 
-    /// A non-blocking pipe whose reader never drains it unless asked: the
-    /// shape of a wedged encoder.
+    /// A non-blocking pipe; the test decides whether and how fast its reader
+    /// drains it.
     #[cfg(feature = "portal-capture")]
-    fn stuck_pipe() -> (std::fs::File, std::fs::File) {
+    fn nonblocking_pipe() -> (std::fs::File, std::fs::File) {
         use std::os::fd::FromRawFd;
         let mut fds = [0i32; 2];
         assert_eq!(
@@ -936,74 +936,48 @@ mod tests {
         }
     }
 
+    /// A slow but healthy reader forces many partial writes and `poll` waits;
+    /// the frame must still arrive whole and in order.
     #[cfg(feature = "portal-capture")]
     #[test]
-    fn outbox_never_blocks_on_a_consumer_that_stopped_reading() {
-        use portal_video::{Outbox, ENCODER_STALL};
+    fn write_frame_completes_a_frame_across_partial_writes_to_a_reading_consumer() {
+        use portal_video::write_frame;
         // Larger than any Linux pipe capacity the kernel hands out by default.
-        let frame = vec![0xABu8; 2 << 20];
-        let (_reader, mut writer) = stuck_pipe();
-        let now = Instant::now();
-        let mut outbox = Outbox::new(now);
-        outbox.owe(3, now);
-
-        let began = Instant::now();
-        outbox
-            .deliver(&mut writer, &frame, now, Duration::from_millis(50))
-            .expect("a full pipe is back-pressure, not an error");
-        assert!(
-            began.elapsed() < Duration::from_secs(1),
-            "delivery must return once the pipe is full"
-        );
-        assert_eq!(outbox.delivered, 0);
-        assert_eq!(outbox.backlog(), 3);
-        assert!(!outbox.stalled(now, ENCODER_STALL));
-        assert!(outbox.stalled(now + ENCODER_STALL, ENCODER_STALL));
-    }
-
-    #[cfg(feature = "portal-capture")]
-    #[test]
-    fn outbox_resumes_partial_frames_and_counts_only_complete_ones() {
-        use portal_video::{Outbox, ENCODER_STALL};
         let frame: Vec<u8> = (0..(2u32 << 20)).map(|i| (i % 251) as u8).collect();
-        let (mut reader, mut writer) = stuck_pipe();
-        let now = Instant::now();
-        let mut outbox = Outbox::new(now);
-        outbox.owe(2, now);
-
-        let mut received = Vec::new();
-        let mut scratch = vec![0u8; 1 << 16];
-        let mut later = now;
-        while outbox.backlog() > 0 {
-            later += Duration::from_millis(100);
-            outbox
-                .deliver(&mut writer, &frame, later, Duration::from_millis(50))
-                .unwrap();
-            loop {
+        let (mut reader, mut writer) = nonblocking_pipe();
+        let expected = frame.clone();
+        let drain = std::thread::spawn(move || {
+            let mut received = Vec::new();
+            let mut scratch = vec![0u8; 1 << 16];
+            while received.len() < expected.len() {
                 match reader.read(&mut scratch) {
                     Ok(0) => break,
                     Ok(n) => received.extend_from_slice(&scratch[..n]),
-                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
                     Err(error) => panic!("{error}"),
                 }
             }
-            assert!(
-                !outbox.stalled(later, ENCODER_STALL),
-                "a draining consumer keeps making progress"
-            );
-        }
-        assert_eq!(outbox.delivered, 2);
-        assert_eq!(received.len(), frame.len() * 2);
-        assert_eq!(&received[..frame.len()], &frame[..]);
-        assert_eq!(&received[frame.len()..], &frame[..]);
+            received
+        });
+        write_frame(
+            &mut writer,
+            &frame,
+            Instant::now() + Duration::from_secs(10),
+        )
+        .expect("a draining consumer accepts the whole frame");
+        drop(writer);
+        assert_eq!(drain.join().unwrap(), frame);
     }
 
-    /// The encoder is a child process holding the read end of a pipe; a
-    /// child that never reads must not park delivery on the PipeWire thread.
+    /// The encoder is a child process holding the read end of a pipe; one
+    /// that never reads must surface as a timeout at the deadline, not park
+    /// the PipeWire thread.
     #[cfg(feature = "portal-capture")]
     #[test]
-    fn a_child_that_never_reads_its_stdin_cannot_park_delivery() {
-        use portal_video::{set_nonblocking, Outbox};
+    fn write_frame_times_out_on_a_child_that_never_reads() {
+        use portal_video::{set_nonblocking, write_frame};
         let mut child = Command::new("sleep")
             .arg("30")
             .stdin(Stdio::piped())
@@ -1014,36 +988,193 @@ mod tests {
         let mut stdin = child.stdin.take().unwrap();
         set_nonblocking(&stdin).unwrap();
 
-        let (done_tx, done_rx) = mpsc::channel();
-        std::thread::spawn(move || {
-            let frame = vec![0xCDu8; 2 << 20];
-            let now = Instant::now();
-            let mut outbox = Outbox::new(now);
-            outbox.owe(1, now);
-            let result = outbox.deliver(&mut stdin, &frame, now, Duration::from_millis(50));
-            let _ = done_tx.send(result.map(|()| outbox.backlog()));
-        });
-        let outcome = done_rx.recv_timeout(Duration::from_secs(3));
+        let frame = vec![0xCDu8; 2 << 20];
+        let began = Instant::now();
+        let result = write_frame(&mut stdin, &frame, began + Duration::from_millis(300));
+        let waited = began.elapsed();
         let _ = child.kill();
         let _ = child.wait();
-        match outcome {
-            Ok(Ok(backlog)) => assert_eq!(backlog, 1, "the unread frame stays owed"),
-            Ok(Err(error)) => panic!("back-pressure surfaced as an error: {error}"),
-            Err(_) => panic!("delivery blocked on a child that never reads"),
-        }
+        let error = result.expect_err("a full pipe with no reader cannot take a whole frame");
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut, "{error}");
+        assert!(
+            waited >= Duration::from_millis(300) && waited < Duration::from_secs(2),
+            "waited {waited:?}: the deadline, not the pipe, must end the wait"
+        );
     }
 
+    /// `nb_read_frames` and container duration of a finished artifact.
+    #[cfg(feature = "portal-capture")]
+    fn probe_video(path: &Path) -> Option<(u64, f64)> {
+        let output = Command::new("ffprobe")
+            .args(["-v", "error", "-select_streams", "v:0", "-count_frames"])
+            .args(["-show_entries", "stream=nb_read_frames:format=duration"])
+            .args(["-of", "default=noprint_wrappers=1"])
+            .arg(path)
+            .output()
+            .ok()?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let text = String::from_utf8_lossy(&output.stdout);
+        let field = |key: &str| {
+            text.lines()
+                .find_map(|line| {
+                    line.strip_prefix(key)
+                        .and_then(|rest| rest.strip_prefix('='))
+                })
+                .unwrap_or_else(|| panic!("ffprobe output lacks {key}: {text}"))
+                .trim()
+                .to_owned()
+        };
+        Some((
+            field("nb_read_frames").parse().unwrap(),
+            field("duration").parse().unwrap(),
+        ))
+    }
+
+    /// Drive the production sink exactly as the PipeWire timer does, at the
+    /// resolution the parent recorded natively, and hold the finished
+    /// artifact to the wall clock it was paced against.
     #[cfg(feature = "portal-capture")]
     #[test]
-    fn outbox_measures_stalls_from_when_frames_became_owed() {
-        use portal_video::{Outbox, ENCODER_STALL};
-        let start = Instant::now();
-        let mut outbox = Outbox::new(start);
-        // Idle time before anything is owed must not count as a stall.
-        let later = start + ENCODER_STALL * 3;
-        outbox.owe(1, later);
-        assert!(!outbox.stalled(later, ENCODER_STALL));
-        assert!(!outbox.stalled(later + ENCODER_STALL / 2, ENCODER_STALL));
-        assert!(outbox.stalled(later + ENCODER_STALL, ENCODER_STALL));
+    fn a_healthy_encoder_receives_every_paced_frame_at_desktop_resolution() {
+        use crate::wayland::portal_screencast::{Frame, FrameFlow, FrameSink};
+        use libspa::param::video::VideoFormat;
+        use portal_video::{RawVideoEncoder, FPS, TICK};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        let Some(ffmpeg) = find_ffmpeg() else {
+            eprintln!("skipping: ffmpeg is not on PATH");
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("paced.mp4");
+        let stop = Arc::new(AtomicBool::new(false));
+        let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+        let mut sink = RawVideoEncoder::new(ffmpeg, output.clone(), stop.clone(), ready_tx);
+
+        let (width, height) = (1920u32, 1200u32);
+        let pixels = vec![0x40u8; (width * height * 4) as usize];
+        let frame = Frame::new(width, height, width * 4, VideoFormat::BGRx, &pixels).unwrap();
+        assert_eq!(sink.frame(frame).unwrap(), FrameFlow::Continue);
+        let spawned = Instant::now();
+
+        let run_for = Duration::from_secs(3);
+        let mut next_tick = spawned;
+        let paced = loop {
+            next_tick += TICK;
+            std::thread::sleep(next_tick.saturating_duration_since(Instant::now()));
+            if spawned.elapsed() >= run_for {
+                stop.store(true, Ordering::SeqCst);
+            }
+            match sink.tick().unwrap() {
+                FrameFlow::Continue => {}
+                FrameFlow::Stop => break spawned.elapsed(),
+            }
+        };
+        assert!(
+            ready_rx.try_recv().unwrap().is_ok(),
+            "a live encoder must report readiness after the probe window"
+        );
+        let delivered = sink.finish().unwrap();
+
+        let one_frame = 1.0 / f64::from(FPS);
+        let paced = paced.as_secs_f64();
+        let reported = delivered as f64 * one_frame;
+        assert!(
+            (reported - paced).abs() <= one_frame + 0.15,
+            "{delivered} frames were reported ({reported:.3}s) but the pacer ran for {paced:.3}s"
+        );
+        let Some((frames, duration)) = probe_video(&output) else {
+            eprintln!("skipping artifact probe: ffprobe is not on PATH");
+            return;
+        };
+        eprintln!(
+            "paced {paced:.3}s, reported {delivered} frames, ffprobe {frames} frames / {duration:.3}s"
+        );
+        assert_eq!(
+            frames, delivered,
+            "the artifact must hold exactly the frames that were reported"
+        );
+        assert!(
+            (duration - paced).abs() <= one_frame + 0.15,
+            "artifact covers {duration:.3}s but the pacer ran for {paced:.3}s ({frames} frames)"
+        );
+    }
+
+    /// Freeze the real encoder mid-recording: the tick must fail within the
+    /// feed window with a diagnostic instead of parking, and the partial
+    /// artifact must still be finalized on the error path.
+    #[cfg(feature = "portal-capture")]
+    #[test]
+    fn a_wedged_encoder_fails_the_tick_within_the_feed_window() {
+        use crate::wayland::portal_screencast::{Frame, FrameFlow, FrameSink};
+        use libspa::param::video::VideoFormat;
+        use portal_video::{RawVideoEncoder, FEED_DEADLINE, TICK};
+        use std::sync::atomic::AtomicBool;
+        use std::sync::Arc;
+
+        let Some(ffmpeg) = find_ffmpeg() else {
+            eprintln!("skipping: ffmpeg is not on PATH");
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("wedged.mp4");
+        let (ready_tx, _ready_rx) = mpsc::sync_channel(1);
+        let mut sink = RawVideoEncoder::new(
+            ffmpeg,
+            output.clone(),
+            Arc::new(AtomicBool::new(false)),
+            ready_tx,
+        );
+        let (width, height) = (1920u32, 1200u32);
+        let pixels = vec![0x40u8; (width * height * 4) as usize];
+        let frame = Frame::new(width, height, width * 4, VideoFormat::BGRx, &pixels).unwrap();
+        assert_eq!(sink.frame(frame).unwrap(), FrameFlow::Continue);
+        for _ in 0..5 {
+            std::thread::sleep(TICK);
+            assert_eq!(sink.tick().unwrap(), FrameFlow::Continue);
+        }
+
+        let pid = sink
+            .encoder_pid()
+            .expect("encoder spawned with the first frame") as i32;
+        assert_eq!(unsafe { libc::kill(pid, libc::SIGSTOP) }, 0);
+        let frozen = Instant::now();
+        let error = loop {
+            std::thread::sleep(TICK);
+            match sink.tick() {
+                Ok(FrameFlow::Continue) => assert!(
+                    frozen.elapsed() < FEED_DEADLINE + Duration::from_secs(2),
+                    "ticks kept succeeding against a frozen encoder"
+                ),
+                Ok(FrameFlow::Stop) => panic!("no stop was requested"),
+                Err(error) => break error,
+            }
+        };
+        let failed_after = frozen.elapsed();
+        assert_eq!(unsafe { libc::kill(pid, libc::SIGCONT) }, 0);
+        assert!(
+            error.to_string().contains("not keeping up"),
+            "unexpected diagnostic: {error}"
+        );
+        assert!(
+            failed_after >= FEED_DEADLINE && failed_after < FEED_DEADLINE + Duration::from_secs(2),
+            "failed after {failed_after:?}; the feed window must bound the wait"
+        );
+        // Error path: dropping the sink closes ffmpeg's input and reaps it,
+        // leaving a finalized partial artifact.
+        drop(sink);
+        assert!(output
+            .metadata()
+            .map(|meta| meta.len() > 0)
+            .unwrap_or(false));
+        assert!(
+            unsafe { libc::kill(pid, 0) } != 0,
+            "ffmpeg must have been reaped"
+        );
     }
 }

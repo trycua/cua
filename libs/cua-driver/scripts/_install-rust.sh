@@ -178,6 +178,24 @@ TMP_DIR=$(mktemp -d)
 log() { printf '==> %s\n' "$*"; }
 err() { printf 'error: %s\n' "$*" >&2; }
 
+print_path_hint() {
+    log "WARNING: $BIN_DIR is not on PATH."
+    echo "Add it for your shell with:"
+    case "${SHELL:-}" in
+        */fish)
+            printf '  fish_add_path "%s"\n' "$BIN_DIR"
+            ;;
+        */nu|*/nushell)
+            printf '  $env.PATH = ($env.PATH | prepend "%s")\n' "$BIN_DIR"
+            ;;
+        *)
+            printf '  export PATH="%s:$PATH"\n' "$BIN_DIR"
+            ;;
+    esac
+    echo "Or run the installed binary directly:"
+    printf '  %s --version\n' "$BIN_LINK"
+}
+
 # Return the source form of an app's designated code-signing requirement.
 macos_designated_requirement() {
     codesign -d -r- "$1" 2>/dev/null \
@@ -1345,22 +1363,22 @@ CUA_DRIVER_RELEASE_VERSION="$VERSION" \
     "$BIN_LINK" telemetry install-event >/dev/null 2>&1 &
 disown 2>/dev/null || true
 
-# Auto-extend PATH for users whose shell doesn't already include BIN_DIR.
-if [[ "$NO_MODIFY_PATH" != "1" ]] && [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
+# Auto-extend PATH for supported shells, but always print a copyable command
+# when the install directory is not visible in the current environment.
+if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
     SHELL_RC=""
     case "${SHELL:-}" in
         */zsh)  SHELL_RC="$HOME/.zshrc"  ;;
         */bash) SHELL_RC="$HOME/.bashrc" ;;
     esac
-    if [[ -n "$SHELL_RC" ]]; then
+    if [[ "$NO_MODIFY_PATH" != "1" ]] && [[ -n "$SHELL_RC" ]]; then
         {
             printf '\n# Added by cua-driver-rs installer — see https://github.com/trycua/cua\n'
             printf 'export PATH="%s:$PATH"\n' "$BIN_DIR"
         } >> "$SHELL_RC"
         log "appended PATH update to $SHELL_RC — open a new shell or run \`source $SHELL_RC\`"
-    else
-        log "WARNING: $BIN_DIR is not on PATH; add it manually."
     fi
+    print_path_hint
 fi
 
 echo ""

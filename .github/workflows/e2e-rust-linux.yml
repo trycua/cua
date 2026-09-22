@@ -62,6 +62,16 @@ jobs:
         with:
           ref: ${{ needs.source.outputs.sha }}
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: "libs/cua-driver/rust -> target"
+          key: e2e-shared
+          save-if: ${{ github.ref == 'refs/heads/main' && needs.source.outputs.sha == github.sha }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: libs/cua-driver/tests/fixtures/apps/cross-platform/electron/package-lock.json
       - name: Install GUI and Rust build dependencies
         run: |
           sudo apt-get update
@@ -101,6 +111,16 @@ jobs:
         with:
           ref: ${{ needs.source.outputs.sha }}
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: "libs/cua-driver/rust -> target"
+          key: e2e-native
+          save-if: ${{ github.ref == 'refs/heads/main' && needs.source.outputs.sha == github.sha }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: libs/cua-driver/tests/fixtures/apps/cross-platform/electron/package-lock.json
       - name: Install GUI and Rust build dependencies
         run: |
           sudo apt-get update
@@ -141,6 +161,16 @@ jobs:
         with:
           ref: ${{ needs.source.outputs.sha }}
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: "libs/cua-driver/rust -> target"
+          key: e2e-capture
+          save-if: ${{ github.ref == 'refs/heads/main' && needs.source.outputs.sha == github.sha }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: libs/cua-driver/tests/fixtures/apps/cross-platform/electron/package-lock.json
       - name: Install GUI and Rust build dependencies
         run: |
           sudo apt-get update
@@ -180,6 +210,11 @@ jobs:
         with:
           ref: ${{ needs.source.outputs.sha }}
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: "libs/cua-driver/rust -> target"
+          key: e2e-installer
+          save-if: ${{ github.ref == 'refs/heads/main' && needs.source.outputs.sha == github.sha }}
       - name: Install Rust build dependencies
         run: |
           sudo apt-get update

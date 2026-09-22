@@ -459,6 +459,28 @@ impl<T> ApplicationSelection<T> {
     }
 }
 
+/// Run an application-level accessibility probe before inspecting its tree.
+///
+/// Chromium-family embeddings lazily build the renderer accessibility tree on
+/// Linux. Reading `Accessible.GetAttributes` is one of the ATK calls Chromium
+/// treats as evidence that a real assistive technology is inspecting the
+/// process. The follow-up child read must therefore happen strictly after that
+/// probe. Browser processes that publish no application child at all still need
+/// their documented `--force-renderer-accessibility` launch precondition.
+async fn prime_application_then<Prime, PrimeFuture, Check, CheckFuture, T>(
+    prime: Prime,
+    check: Check,
+) -> T
+where
+    Prime: FnOnce() -> PrimeFuture,
+    PrimeFuture: std::future::Future,
+    Check: FnOnce() -> CheckFuture,
+    CheckFuture: std::future::Future<Output = T>,
+{
+    let _ = prime().await;
+    check().await
+}
+
 /// Locate the application accessible whose backing process is `pid`.
 async fn app_for_pid<'a>(
     conn: &'a AccessibilityConnection,
@@ -528,7 +550,10 @@ async fn app_for_pid<'a>(
                 continue;
             }
         };
-        let has_children = match call(app.get_children()).await {
+        let children =
+            prime_application_then(|| call(app.get_attributes()), || call(app.get_children()))
+                .await;
+        let has_children = match children {
             Some(Ok(children)) => !children.is_empty(),
             Some(Err(error)) => {
                 dlog!("  get_children failed for pid {pid}: {error:#}");
@@ -3817,9 +3842,9 @@ mod coord_tests {
         activation_index, before_snapshot_deadline, combine_wayland_content_offsets,
         hyprland_document_top_inset, is_activation_action, is_enabled_state,
         is_indexable_capabilities, is_passive_role, is_web_process_bus,
-        prefer_authoritative_wayland_origin, project_screen_extents, rebase_renderer_window_offset,
-        scoped_component_nodes, screen_extent_rebase, select_click_target, select_web_document,
-        ApplicationSelection,
+        prefer_authoritative_wayland_origin, prime_application_then, project_screen_extents,
+        rebase_renderer_window_offset, scoped_component_nodes, screen_extent_rebase,
+        select_click_target, select_web_document, ApplicationSelection,
     };
     use atspi::{State, StateSet};
     use std::time::Duration;
@@ -3876,6 +3901,28 @@ mod coord_tests {
         selection.consider_matching("second-live-tree", true);
 
         assert_eq!(selection.into_selected(), Err(2));
+    }
+
+    #[tokio::test]
+    async fn application_probe_primes_lazy_renderer_before_checking_children() {
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
+
+        let primed = Arc::new(AtomicBool::new(false));
+        let primed_by_probe = Arc::clone(&primed);
+        let primed_seen_by_children = Arc::clone(&primed);
+
+        let has_children = prime_application_then(
+            move || async move {
+                primed_by_probe.store(true, Ordering::SeqCst);
+            },
+            move || async move { primed_seen_by_children.load(Ordering::SeqCst) },
+        )
+        .await;
+
+        assert!(has_children);
     }
 
     #[tokio::test(start_paused = true)]

@@ -1,0 +1,124 @@
+name: "Fuzz: Cua Driver tool-call boundary"
+
+# Coverage-guided fuzzing of the transport-free MCP tool-call boundary in
+# cua-driver-core. The target bodies live in cua_driver_testkit::boundary_fuzz
+# and also run as bounded smoke tests in the ordinary Rust CI; this workflow
+# gives libFuzzer a real time budget and surfaces any crash as a failed job
+# with the reproducing input attached. See libs/cua-driver/rust/fuzz/README.md.
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua-driver/rust/Cargo.toml"
+      - "libs/cua-driver/rust/Cargo.lock"
+      - "libs/cua-driver/rust/crates/cua-driver-contract/**"
+      - "libs/cua-driver/rust/crates/cua-driver-core/**"
+      - "libs/cua-driver/rust/crates/cua-driver-testkit/**"
+      - "libs/cua-driver/rust/fuzz/**"
+      - ".github/workflows/fuzz-cua-driver.yml"
+  schedule:
+    # Nightly long run against main.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      max_total_time:
+        description: "Seconds of fuzzing per target"
+        default: "600"
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-cua-driver-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    name: ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - mcp_request
+          - tool_arguments
+          - typed_input_json
+          - registry_invoke
+    env:
+      # Pull requests get a short budget so the check stays fast; the nightly
+      # schedule and manual dispatch run longer.
+      MAX_TOTAL_TIME: >-
+        ${{ github.event_name == 'pull_request' && '120'
+          || github.event_name == 'workflow_dispatch' && inputs.max_total_time
+          || '900' }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: |
+            libs/cua-driver/rust -> target
+            libs/cua-driver/rust/fuzz -> target
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Build fuzz target
+        working-directory: libs/cua-driver/rust
+        # The workspace pins a stable toolchain; sanitizers need nightly, but
+        # libFuzzer's coverage instrumentation does not.
+        run: cargo fuzz build --fuzz-dir fuzz --sanitizer none ${{ matrix.target }}
+
+      - name: Run libFuzzer
+        id: run
+        working-directory: libs/cua-driver/rust
+        run: |
+          set -o pipefail
+          mkdir -p "fuzz/work/${{ matrix.target }}"
+          cargo fuzz run --fuzz-dir fuzz --sanitizer none ${{ matrix.target }} \
+            "fuzz/work/${{ matrix.target }}" "fuzz/corpus/${{ matrix.target }}" \
+            -- -max_total_time="$MAX_TOTAL_TIME" -max_len=4096 -print_final_stats=1 \
+            2>&1 | tee "fuzz/${{ matrix.target }}.log"
+
+      - name: Summarise result
+        if: always()
+        working-directory: libs/cua-driver/rust
+        env:
+          OUTCOME: ${{ steps.run.outcome }}
+        run: |
+          {
+            echo "## ${{ matrix.target }}: $OUTCOME"
+            echo
+            if [[ -f "fuzz/${{ matrix.target }}.log" ]]; then
+              echo '```text'
+              grep -E "^#[0-9]+\s+DONE|Done [0-9]+ runs|stat::" "fuzz/${{ matrix.target }}.log" | tail -n 8 || true
+              echo '```'
+            fi
+            if [[ "$OUTCOME" != "success" ]]; then
+              echo
+              echo "### Finding"
+              echo
+              echo '```text'
+              grep -E -A 2 "panicked at|ERROR: libFuzzer|Test unit written to" "fuzz/${{ matrix.target }}.log" | head -n 40 || true
+              echo '```'
+              echo
+              echo "Reproduce locally with the crash file from the uploaded artifact:"
+              echo
+              echo '```bash'
+              echo "cd libs/cua-driver/rust"
+              echo "cargo fuzz run --fuzz-dir fuzz --sanitizer none ${{ matrix.target }} fuzz/artifacts/${{ matrix.target }}/<crash-file>"
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fuzz-${{ matrix.target }}-artifacts
+          path: |
+            libs/cua-driver/rust/fuzz/artifacts/${{ matrix.target }}/
+            libs/cua-driver/rust/fuzz/${{ matrix.target }}.log
+          if-no-files-found: warn
+          retention-days: 14

@@ -88,7 +88,7 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Preview Sandbox releases offline
+      - name: Preview component release behavior offline
         env:
           NPM_CONFIG_IGNORE_SCRIPTS: "true"
         run: |
@@ -99,6 +99,8 @@ jobs:
             --ignore-scripts --no-audit --no-fund release-please@17.3.0
           NODE_PATH="$RUNNER_TEMP/sandbox-release-preview/node_modules" \
             node .github/scripts/tests/release_please_sandbox_preview.cjs
+          NODE_PATH="$RUNNER_TEMP/sandbox-release-preview/node_modules" \
+            node .github/scripts/tests/release_please_perception_preview.cjs
 
       - name: Validate historical release backfill
         run: python3 .github/scripts/release_backfill.py validate

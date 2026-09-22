@@ -44,8 +44,12 @@ assuming the convenience command supports every raw-tool argument.
   responsible runtime's grant. Permission status is not proof of live capture.
 - Windows video uses ffmpeg `gdigrab`; the runtime must be in the interactive
   desktop session.
-- Linux X11 video uses ffmpeg `x11grab`. Native Wayland needs a supported
-  compositor-specific recorder and any portal grant; see [LINUX.md](LINUX.md).
+- Linux X11 video uses ffmpeg `x11grab`. Native Wayland routes by compositor:
+  GNOME uses the trusted Shell helper frames, wlroots compositors use
+  `wf-recorder`, and compositors without wlr-screencopy (KDE/KWin) use the
+  xdg-desktop-portal ScreenCast after a one-time monitor grant in the portal
+  dialog; the released binaries carry that route and need the system PipeWire
+  client library. See [LINUX.md](LINUX.md).
   A successful desktop PNG does not establish video availability.
 
 ## What each turn folder contains

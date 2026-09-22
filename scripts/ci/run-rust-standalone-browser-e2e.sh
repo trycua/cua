@@ -30,10 +30,11 @@ export RUST_BACKTRACE="${RUST_BACKTRACE:-1}"
 HOST_OS="$(uname -s)"
 CARGO_DRIVER_FEATURE_ARGS=()
 if [[ "${HOST_OS}" == Linux ]]; then
-  # Published Linux artifacts include the portal/libei route. Compile the
-  # browser matrix with the same feature set so GNOME/KDE setup cannot be
-  # misclassified from a default-feature test binary that falls back to wtype.
-  CARGO_DRIVER_FEATURE_ARGS=(--features portal-input)
+  # Published Linux artifacts include the portal/libei input route and the
+  # portal ScreenCast recorder. Compile the browser matrix with the same
+  # feature set so GNOME/KDE setup cannot be misclassified from a
+  # default-feature test binary that falls back to wtype.
+  CARGO_DRIVER_FEATURE_ARGS=(--features portal-input,portal-capture)
 fi
 if [[ "${HOST_OS}" == Linux ]] \
     && [[ "${XDG_SESSION_TYPE:-}" == wayland ]] \

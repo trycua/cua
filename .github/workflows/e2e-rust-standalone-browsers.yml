@@ -129,7 +129,7 @@ jobs:
       - name: Build source driver on Linux
         if: runner.os == 'Linux'
         shell: bash
-        run: cargo build --release -p cua-driver --features portal-input --manifest-path libs/cua-driver/rust/Cargo.toml
+        run: cargo build --release -p cua-driver --features portal-input,portal-capture --manifest-path libs/cua-driver/rust/Cargo.toml
       - name: Run standalone browsers on Linux X11
         if: runner.os == 'Linux'
         shell: bash

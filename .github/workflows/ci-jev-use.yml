@@ -185,7 +185,7 @@ jobs:
           SH
       - name: Build the exact candidate Driver
         working-directory: ${{ github.workspace }}
-        run: cargo build --locked --release -p cua-driver --features portal-input --manifest-path libs/cua-driver/rust/Cargo.toml
+        run: cargo build --locked --release -p cua-driver --features portal-input,portal-capture --manifest-path libs/cua-driver/rust/Cargo.toml
       - name: Install locked example dependencies
         run: |
           uv sync --frozen

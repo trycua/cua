@@ -70,7 +70,7 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "$RUNNER_OS" == Linux ]]; then
-            cargo build --locked -p cua-driver -p cursor-theme-cli --features cua-driver/portal-input
+            cargo build --locked -p cua-driver -p cursor-theme-cli --features cua-driver/portal-input,cua-driver/portal-capture
           else
             cargo build --locked -p cua-driver -p cursor-theme-cli -p cua-driver-uia
           fi
@@ -97,7 +97,7 @@ jobs:
               "source_sha": source,
               "runner_os": os.environ["RUNNER_OS"],
               "profile": "dev, debug=0",
-              "features": ["cua-driver/portal-input"] if not windows else [],
+              "features": ["cua-driver/portal-input", "cua-driver/portal-capture"] if not windows else [],
               "rustc": subprocess.check_output(["rustc", "--version"], text=True).strip(),
               "version": subprocess.check_output([str(binaries[0].resolve()), "--version"], text=True).strip(),
               "files": {path.name: hashlib.file_digest(path.open("rb"), "sha256").hexdigest() for path in binaries},

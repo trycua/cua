@@ -680,7 +680,7 @@ fn configure_linux_runtime(prepare_desktop_environment: bool) {
     });
     if platform_linux::wayland::is_wayland() {
         cua_driver_core::video::set_video_backend_factory(Box::new(
-            platform_linux::video_wayland::WfRecorderVideoBackendFactory,
+            platform_linux::video_wayland::WaylandVideoBackendFactory,
         ));
     } else {
         cua_driver_core::video::set_video_backend_factory(Box::new(

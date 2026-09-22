@@ -72,12 +72,20 @@ impl Tool for StartRecordingTool {
                 SCRecordingOutput) so video inherits the daemon's Screen \
                 Recording grant — no extra TCC prompt, no ffmpeg subprocess. \
                 Requires macOS 15.0+.\n\n\
-                **Windows + Linux use an ffmpeg subprocess** (`gdigrab` / \
+                **Windows + Linux X11 use an ffmpeg subprocess** (`gdigrab` / \
                 `x11grab` + libx264). Requires ffmpeg on PATH (winget install \
                 Gyan.FFmpeg / apt install ffmpeg); when ffmpeg is missing or \
                 fails on startup the per-turn capture (screenshots + \
                 action.json) still runs and the session's `last_error` field \
                 carries the diagnostic.\n\n\
+                **Linux Wayland routes by compositor**: GNOME uses the trusted \
+                Shell helper's frames, wlroots compositors use `wf-recorder`, \
+                and compositors without wlr-screencopy (KDE/KWin) record the \
+                monitor the user grants through the xdg-desktop-portal \
+                ScreenCast (one consent dialog per install; needs the system \
+                PipeWire client library and ffmpeg on PATH). \
+                Unsupported combinations report the exact limitation in \
+                `last_error`.\n\n\
                 State persists for the life of the daemon; a restart \
                 resets to disabled with no on-disk state. Call `stop_recording` to \
                 disable + finalize the mp4."

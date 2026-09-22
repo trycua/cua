@@ -179,21 +179,32 @@ jobs:
           # Freeze bullseye indexes and packages together: the live security
           # mirror can advertise packages it no longer serves. HTTP bootstraps
           # ca-certificates; APT still verifies Debian signatures and hashes.
+          # bullseye-backports is already retired from snapshot.debian.org and
+          # lives on the immutable archive.debian.org mirror.
           cat > /etc/apt/sources.list <<'EOF'
           deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://snapshot.debian.org/archive/debian/20260901T000000Z/ bullseye main
           deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://snapshot.debian.org/archive/debian/20260901T000000Z/ bullseye-updates main
           deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://snapshot.debian.org/archive/debian-security/20260901T000000Z/ bullseye-security main
+          deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://archive.debian.org/debian/ bullseye-backports main
           EOF
           # Ignore any additional image-provided sources for this bootstrap.
           apt-get -o Dir::Etc::sourceparts=- update
-          # PipeWire ScreenCast capture remains Nix/modern-build only because
-          # bullseye's 0.3.19 headers are too old for libspa-sys 0.8. Portal
-          # RemoteDesktop/libei input is pure Rust plus libxkbcommon and ships
-          # in these portable release binaries.
+          # Portal RemoteDesktop/libei input is pure Rust plus libxkbcommon.
+          # libclang-11-dev is bindgen's parser for the PipeWire bindings.
           apt-get -o Dir::Etc::sourceparts=- install -y --no-install-recommends \
             git ca-certificates curl python3 build-essential pkg-config \
             libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev \
-            libxkbcommon-dev
+            libxkbcommon-dev libclang-11-dev
+          # PipeWire ScreenCast capture (portal-capture) needs the SPA
+          # type-info headers that libspa-sys's C shims reference; bullseye's
+          # stock 0.3.19 headers predate them, so the headers come from the
+          # bullseye-backports 0.3.65 build. libspa is header-only and
+          # libpipewire-0.3 has no symbol versioning, so the binary still only
+          # imports base 0.3 entry points and runs against any distro
+          # libpipewire-0.3.so.0 (a new runtime dependency, mirrored in the
+          # distro-compat matrix).
+          apt-get -o Dir::Etc::sourceparts=- install -y --no-install-recommends \
+            -t bullseye-backports libpipewire-0.3-dev libspa-0.2-dev
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.source_ref || github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
@@ -231,7 +242,7 @@ jobs:
             rust-cua-driver-rs-linux-${{ matrix.arch }}-
       - name: Build (release)
         working-directory: libs/cua-driver/rust
-        run: cargo build --locked -p cua-driver -p cursor-theme-cli -p cua-driver-sdk --release --features cua-driver/portal-input --target ${{ matrix.target }}
+        run: cargo build --locked -p cua-driver -p cursor-theme-cli -p cua-driver-sdk --release --features cua-driver/portal-input,cua-driver/portal-capture --target ${{ matrix.target }}
       - name: Build Electron-compatible Node runtime
         working-directory: libs/cua-driver
         run: |

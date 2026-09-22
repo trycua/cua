@@ -151,9 +151,17 @@ driver selects a backend from compositor capabilities:
   explicitly for controlled automation. GNOME and KDE never switch into it.
 
 Sway recording works through the wlroots recorder path and is exercised by the
-canonical harness runner. Portal-backed GNOME recording is still an evidence
-gap. Capture and recording availability therefore depend on the compositor,
-installed helpers, and portal grant.
+canonical harness runner. Compositors that expose no wlr-screencopy protocol,
+including KDE/KWin, record through the xdg-desktop-portal ScreenCast: the
+first `start_recording` with `record_video:true` opens the desktop's screen
+share dialog, the granted monitor is remembered through a restore token, and
+frames are encoded with ffmpeg. The released Linux binaries and the Nix
+package carry that route (`portal-capture`) and therefore link the system
+PipeWire client library, `libpipewire-0.3.so.0`; builds without the feature
+report it in `last_error` instead of failing silently. Portal-backed GNOME
+recording is still an evidence gap. Capture and recording availability
+therefore depend on the compositor, installed helpers, build features, and
+portal grant.
 
 Standard Wayland has no general client protocol for raw input to an arbitrary
 occluded surface. Background AX actions can still deliver through AT-SPI, and
@@ -282,7 +290,7 @@ ask the user.
 | Sway/wlroots            | AT-SPI, native discovery, full-display and cropped-window screencopy, foreground input, semantic background actions, and video | Raw background pointer and keyboard input remains focus-bound                                                                                                                                                  |
 | Hyprland/Omarchy        | Experimental source candidate with separate discovery-foundation and bounded two-seat app evidence                             | Default plugin is discovery-only; raw background v3 qualification is limited to the exact native Calc/Inkscape packages and a private agent US keymap; user Caps-to-Ctrl/Super remaps do not alter agent semantics; complete native harness and release acceptance are separate gates |
 | GNOME/Mutter            | AT-SPI, WinRects geometry and activation, capture, and portal/libei foreground input                                           | Requires the helper and portal grant; portal video parity remains open                                                                                                                                         |
-| KDE/KWin                | AT-SPI and generic discovery where exposed                                                                                     | Target-specific activation and behavioral coverage remain experimental                                                                                                                                         |
+| KDE/KWin                | AT-SPI and generic discovery where exposed                                                                                     | Target-specific activation and behavioral coverage remain experimental; video records through the portal ScreenCast after a one-time monitor grant                                                                        |
 | Nested `cua-compositor` | Versioned direct per-surface input, native GTK 31/31, capture/scope 5/5, and partial Electron coverage                         | The complete shared matrix remains experimental; do not infer standard-Wayland support                                                                                                                         |
 
 See [WORKFLOW.md](WORKFLOW.md) for exact targeting and verification and `RECORDING.md` for session

@@ -64,7 +64,7 @@ jobs:
       - name: Install Arch build and test dependencies
         run: |
           pacman -Syu --noconfirm --needed git rust clang pkgconf jq \
-            dbus libx11 libxi libxtst libxext libxkbcommon wayland \
+            dbus libx11 libxi libxtst libxext libxkbcommon wayland libpipewire \
             xorg-server-xvfb xorg-xauth at-spi2-core
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -78,7 +78,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo test -p cua-driver --test release_channel_cli_test --no-run \
-            --locked --features portal-input --message-format=json > pacman-build.jsonl
+            --locked --features portal-input,portal-capture --message-format=json > pacman-build.jsonl
           test_binary=$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "release_channel_cli_test" and .executable != null) | .executable' pacman-build.jsonl)
           test -x "$test_binary"
           echo "PACMAN_TEST_BINARY=$test_binary" >> "$GITHUB_ENV"
@@ -208,6 +208,6 @@ jobs:
           test -c /dev/uinput
           sudo chmod a+rw /dev/uinput
           cargo test -p platform-linux real_uinput_accepts_normalized_overlong_multibyte_name --locked -- --ignored --nocapture
-      - name: Compile portable GNOME/KDE portal input
+      - name: Compile the released Linux feature shape (portal input + capture)
         working-directory: libs/cua-driver/rust
-        run: cargo check -p cua-driver --features portal-input --locked
+        run: cargo check -p cua-driver --features portal-input,portal-capture --locked

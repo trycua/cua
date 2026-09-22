@@ -53,7 +53,8 @@ jobs:
             test "$(dpkg --print-architecture)" = "$EXPECTED_ARCH"
             uname -m
             sh -e -s
-            dpkg-query -W git ca-certificates curl python3 build-essential pkg-config libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev libxkbcommon-dev
+            dpkg-query -W git ca-certificates curl python3 build-essential pkg-config libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev libxkbcommon-dev libclang-11-dev libpipewire-0.3-dev libspa-0.2-dev
+            test "$(pkg-config --modversion libpipewire-0.3)" = "0.3.65"
             ldd --version
             test "$(getconf GNU_LIBC_VERSION)" = "glibc 2.31"
           ' < "$RUNNER_TEMP/driver-bootstrap.sh"

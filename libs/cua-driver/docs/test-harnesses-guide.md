@@ -362,6 +362,7 @@ Runner: `scripts/ci/linux/run-rust-e2e.sh`
 | Native controls   | `harness_gtk3_test.rs`            | Repo-local GTK3 app       |
 | Capture contract  | `capture_contract_test.rs`        | Linux capture backend     |
 | Desktop scope     | `desktop_scope_linux_test.rs`     | X11/Wayland desktop scope |
+| Presentation latency | `wayland_presentation_latency_test.rs` | Repo-local raw Wayland client |
 
 Linux has separate X11 and Wayland concerns. Nix supplies the reproducible
 build and desktop environment, but the E2E test still needs an actual X11 or
@@ -381,6 +382,37 @@ occlusion, sentinel input isolation, liveness, and fixture-state oracles remain
 mandatory. [Issue #2194](https://github.com/trycua/cua/issues/2194) tracks
 compositor, portal/libei, sentinel, and capture-based ways to add a proven
 cursor observer where the environment supports one.
+
+#### Presentation-timestamp latency evidence
+
+The native Wayland lane also runs one latency-attribution cell against
+`tests/fixtures/apps/linux/wayland-presentation`, a repository-owned raw
+Wayland client. It owns its own `wl_surface`, so one Driver action maps to
+exactly one content update, and `wp_presentation.feedback` is requested for
+that update alone. The cell joins the Driver's own request/return stamps with
+the fixture's input, state-change, commit, and compositor-presented stamps in
+one `CLOCK_MONOTONIC` domain, and retains every raw row under
+`artifacts/cua-driver/linux/wayland-presentation/`.
+
+This exists to say which side of the presentation boundary owns a wait, not to
+publish a performance number. Read it accordingly:
+
+- only a `verified` row proves a presented mutation. `discarded`, `timeout`,
+  `clock_mismatch`, `implausible`, and `no_mutation` rows are retained and
+  never counted as presented;
+- a compositor advertising a presentation clock other than `CLOCK_MONOTONIC`
+  yields `clock_mismatch` rows with presentation deltas withheld rather than
+  compared across clock domains;
+- `post_present_wait_ns` is signed on purpose. A negative value means the
+  Driver returned before the compositor presented the update;
+- summaries report every sample, median, max, and deadline misses. They report
+  no percentiles: one fixture run cannot support them;
+- a compositor without stable presentation-time records a typed limitation
+  (`wayland-presentation-latency-limitation.json`) instead of a missing
+  measurement. The runner decides this from the fixture's own `--probe` mode.
+
+One lane's rows are not a cross-compositor performance claim, and this cell
+changes no desktop action semantics or public Driver contract.
 
 ## AX, PX, and Delivery
 

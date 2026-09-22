@@ -121,7 +121,7 @@ jobs:
           [[ "$(jq -r .head.repo.full_name <<<"$jev_pr_json")" == "$GITHUB_REPOSITORY" ]]
           [[ "$(jq -r .merge_commit_sha <<<"$jev_pr_json")" == "$REQUESTED_JEV_SHA" ]]
           artifact_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$CANDIDATE_ARTIFACT_ID")"
-          [[ "$(jq -r .name <<<"$artifact_json")" == "STAGING-cua-perception-review-candidates-$REQUESTED_SHA" ]]
+          [[ "$(jq -r .name <<<"$artifact_json")" == "review-cua-perception-macos-$REQUESTED_SHA" ]]
           [[ "$(jq -r .expired <<<"$artifact_json")" == false ]]
           [[ "$(jq -r .workflow_run.head_sha <<<"$artifact_json")" == "$REQUESTED_SHA" ]]
           run_id="$(jq -r .workflow_run.id <<<"$artifact_json")"

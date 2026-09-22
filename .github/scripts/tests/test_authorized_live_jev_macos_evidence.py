@@ -48,7 +48,7 @@ def test_macos_live_evidence_is_manual_exact_sha_and_protected() -> None:
     assert "ref: ${{ needs.resolve.outputs.jev_source_sha }}" in workflow
     assert "persist-credentials: false" in workflow
     assert '[[ "$run_id" == "$CANDIDATE_RUN_ID" ]]' in workflow
-    assert "STAGING-cua-perception-review-candidates-$REQUESTED_SHA" in workflow
+    assert "review-cua-perception-macos-$REQUESTED_SHA" in workflow
     assert ".github/workflows/review-cua-perception-candidates.yml" in workflow
     assert ".github/workflows/e2e-rust-macos.yml" in workflow
     assert "cua-driver/macos-lume-certification@v1" in workflow

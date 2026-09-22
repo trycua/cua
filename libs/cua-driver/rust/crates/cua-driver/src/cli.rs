@@ -3246,24 +3246,30 @@ fn run_permissions_status(json: bool) {
         None
     };
 
-    let Some(mut structured) = daemon_status else {
+    let Some(structured) = daemon_status else {
         // No reliable answer. Emit NO accessibility/screen_recording booleans —
         // nothing downstream can misread a false `granted: true`.
+        let reason = if is_listening {
+            format!("{app_name} daemon is listening, but its real TCC status is not yet available.")
+        } else {
+            format!(
+                "No {app_name} daemon is running under the driver's own identity ({bundle_id}), \
+                 so its real TCC status can't be read from this process."
+            )
+        };
+        let next_step = if is_listening {
+            format!("Run `{cli_name} permissions grant` to grant + verify and re-run this command.")
+        } else {
+            format!(
+                "Run `{cli_name} permissions grant` to grant + verify, or start the daemon \
+                 (`open -n -g -a {app_name} --args serve`) and re-run this command."
+            )
+        };
         if json {
-            let reason = if is_listening {
-                format!("{app_name} daemon is listening, but its real TCC status is not yet available. \
-                         Run `{cli_name} permissions grant` to grant + verify.")
-            } else {
-                format!(
-                    "no {app_name} daemon is running under the driver's own identity \
-                         ({bundle_id}), so its real TCC status can't be read from this \
-                         process. Run `{cli_name} permissions grant` to grant + verify."
-                )
-            };
             let payload = serde_json::json!({
                 "daemon_running": is_listening,
                 "status": "unknown",
-                "reason": reason,
+                "reason": format!("{reason} {next_step}"),
             });
             println!(
                 "{}",
@@ -3273,34 +3279,12 @@ fn run_permissions_status(json: bool) {
         }
         println!("Accessibility:    ❓ unknown");
         println!("Screen Recording: ❓ unknown");
-        if is_listening {
-            println!(
-                "{app_name} daemon is running, but its real TCC status is pending or not yet verified."
-            );
-            println!(
-                "  → Run `{cli_name} permissions grant` to grant + verify and re-run this command."
-            );
-        } else {
-            println!(
-                "No {app_name} daemon is running under the driver's own identity ({bundle_id}), \
-                 so its real TCC status can't be read."
-            );
-            println!(
-                "(A status check from this terminal would report the terminal's grants, not the \
-                 driver's.)"
-            );
-            println!(
-                "  → Run `{cli_name} permissions grant` to grant + verify, or start the daemon"
-            );
-            println!("    (`open -n -g -a {app_name} --args serve`) and re-run this command.");
-        }
+        println!("{reason}");
+        println!("  → {next_step}");
         return;
     };
 
     if json {
-        if let Some(map) = structured.as_object_mut() {
-            map.insert("daemon_running".into(), serde_json::json!(true));
-        }
         println!(
             "{}",
             serde_json::to_string_pretty(&structured).unwrap_or_else(|_| structured.to_string())

@@ -50,19 +50,31 @@ def test_hosted_macos_probe_is_manual_exact_sha_and_least_privilege() -> None:
         assert all(character in "0123456789abcdef" for character in revision)
 
 
-def test_lume_certification_is_protected_exact_sha_and_fail_closed() -> None:
+def test_lume_certification_registers_a_direct_console_run_without_a_self_hosted_runner() -> None:
     workflow = read(".github/workflows/e2e-rust-macos.yml")
+    runner = read("libs/cua-driver/tests/runners/macos-lume/run-all.sh")
 
     assert "workflow_dispatch:" in workflow
     assert "source_sha:" in workflow
-    assert "runs-on: [self-hosted, macOS, ARM64, cua-lume-maintainer]" in workflow
+    assert "direct_lume_run_id:" in workflow
+    assert "direct_lume_evidence_sha256:" in workflow
+    assert "direct_lume_result_base64:" in workflow
+    assert "name: Register direct Lume certification" in workflow
+    assert "runs-on: [self-hosted, macOS, ARM64, cua-lume-maintainer]" not in workflow
+    assert "runs-on: ubuntu-latest" in workflow
     assert "environment: authorized-live-jev-use-demo" in workflow
     assert "source_sha must match the selected workflow ref tip" in workflow
-    assert "needs: lume" in workflow
-    assert 'schema "cua-driver/macos-lume-certification@v1"' in workflow
+    assert "cua-driver/macos-lume-direct-result@v1" in workflow
+    assert 'schema "cua-driver/macos-lume-certification@v2"' in workflow
     assert 'workflow_path ".github/workflows/e2e-rust-macos.yml"' in workflow
-    assert 'passed: ($lume == "success")' in workflow
+    assert 'kind: "direct-lume-console"' in workflow
+    assert "direct-result.json" in workflow
+    assert "libs/cua-driver/tests/runners/macos-lume/run-all.sh --standalone-browser" not in workflow
     assert "jq -e '.passed == true' certification.json" in workflow
+    assert '"${ARTIFACT_DIR}/run-id.txt"' in runner
+    assert "cua-driver/macos-lume-direct-result@v1" in runner
+    assert '"${ARTIFACT_DIR}/direct-result.json"' in runner
+    assert runner.index("BROWSER_STATUS") < runner.index("macos-lume-direct-result@v1")
     assert (
         "name: rust-macos-lume-certification-${{ github.run_id }}-${{ github.run_attempt }}"
         in workflow
@@ -123,6 +135,8 @@ def test_script_ci_runs_when_hosted_macos_contract_changes() -> None:
     assert "e2e-rust-macos.yml" in guide
     assert "temporary certificate-backed identity" in " ".join(guide.split())
     assert "supplemental" in guide
+    assert "do not install or register a GitHub Actions runner" in guide
+    assert "direct result" in guide
 
 
 def test_hosted_macos_runner_is_strict_and_uses_the_canonical_matrix() -> None:

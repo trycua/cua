@@ -51,7 +51,9 @@ def test_macos_live_evidence_is_manual_exact_sha_and_protected() -> None:
     assert "review-cua-perception-macos-$REQUESTED_SHA" in workflow
     assert ".github/workflows/review-cua-perception-candidates.yml" in workflow
     assert ".github/workflows/e2e-rust-macos.yml" in workflow
-    assert "cua-driver/macos-lume-certification@v1" in workflow
+    assert "cua-driver/macos-lume-certification@v2" in workflow
+    assert "cua-driver/macos-lume-direct-result@v1" in workflow
+    assert "direct-lume-console" in workflow
     assert '[[ "$(jq -r .event <<<"$run_json")" == pull_request ]]' in workflow
     assert "run-id: ${{ needs.resolve.outputs.candidate_run_id }}" in workflow
 
@@ -81,7 +83,8 @@ def test_macos_live_evidence_uses_canonical_lume_and_signed_arm64_candidate() ->
     )
     lume_workflow = (ROOT / ".github/workflows/e2e-rust-macos.yml").read_text()
     assert (
-        "libs/cua-driver/tests/runners/macos-lume/run-all.sh --standalone-browser" in lume_workflow
+        "libs/cua-driver/tests/runners/macos-lume/run-all.sh --standalone-browser"
+        not in lume_workflow
     )
     assert "environment: authorized-live-jev-use-demo" in lume_workflow
     assert 'measured["target"] == "aarch64-apple-darwin"' in workflow
@@ -122,8 +125,7 @@ def test_macos_live_evidence_uses_canonical_lume_and_signed_arm64_candidate() ->
     assert "unlock_required_keychains" in preflight
     assert "security unlock-keychain" not in preflight
     assert "CUA_E2E_SIGNING_KEYCHAIN_PASSWORD" not in lume_workflow
-    assert "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" in lume_workflow
-    assert "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" in lume_workflow
+    assert "runs-on: [self-hosted, macOS, ARM64, cua-lume-maintainer]" not in lume_workflow
     assert "actions/setup-python@" not in workflow
     assert 'python-version: "3.12"' in workflow
     assert "uv python install 3.12" in workflow

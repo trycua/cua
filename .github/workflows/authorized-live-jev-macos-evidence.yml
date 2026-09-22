@@ -28,7 +28,7 @@ on:
         required: true
         type: string
       macos_lume_e2e_run_id:
-        description: "Actions run ID of the canonical e2e-rust-macos.yml Lume-mode certification at source_sha"
+        description: "Actions run ID registering the direct Lume console certification at source_sha"
         required: true
         type: string
   workflow_call:
@@ -58,7 +58,7 @@ on:
         required: true
         type: string
       macos_lume_e2e_run_id:
-        description: "Actions run ID of the canonical e2e-rust-macos.yml Lume-mode certification at source_sha"
+        description: "Actions run ID registering the direct Lume console certification at source_sha"
         required: true
         type: string
 permissions:
@@ -151,12 +151,20 @@ jobs:
           unzip -q "$lume_cert_dir/certification.zip" -d "$lume_cert_dir/unpacked"
           [[ -f "$lume_cert_dir/unpacked/certification.json" ]]
           lume_cert_json="$(cat "$lume_cert_dir/unpacked/certification.json")"
-          [[ "$(jq -r .schema <<<"$lume_cert_json")" == "cua-driver/macos-lume-certification@v1" ]]
+          [[ "$(jq -r .schema <<<"$lume_cert_json")" == "cua-driver/macos-lume-certification@v2" ]]
           [[ "$(jq -r .source_sha <<<"$lume_cert_json")" == "$REQUESTED_SHA" ]]
           [[ "$(jq -r .github.repository <<<"$lume_cert_json")" == "$GITHUB_REPOSITORY" ]]
           [[ "$(jq -r .github.run_id <<<"$lume_cert_json")" == "$LUME_RUN_ID" ]]
           [[ "$(jq -r .github.workflow_path <<<"$lume_cert_json")" == ".github/workflows/e2e-rust-macos.yml" ]]
           [[ "$(jq -r .github.event <<<"$lume_cert_json")" == workflow_dispatch ]]
+          [[ "$(jq -r .execution.kind <<<"$lume_cert_json")" == direct-lume-console ]]
+          [[ "$(jq -r .execution.run_id <<<"$lume_cert_json")" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]
+          [[ "$(jq -r .execution.evidence_sha256 <<<"$lume_cert_json")" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$(jq -r .execution.result.schema <<<"$lume_cert_json")" == cua-driver/macos-lume-direct-result@v1 ]]
+          [[ "$(jq -r .execution.result.source_sha <<<"$lume_cert_json")" == "$REQUESTED_SHA" ]]
+          [[ "$(jq -r .execution.result.run_id <<<"$lume_cert_json")" == "$(jq -r .execution.run_id <<<"$lume_cert_json")" ]]
+          [[ "$(jq -r .execution.result.standalone_browser <<<"$lume_cert_json")" == true ]]
+          [[ "$(jq -r .execution.result.passed <<<"$lume_cert_json")" == true ]]
           [[ "$(jq -r .passed <<<"$lume_cert_json")" == true ]]
           echo "source_pr_number=$REQUESTED_SOURCE_PR" >> "$GITHUB_OUTPUT"
           echo "source_sha=$REQUESTED_SHA" >> "$GITHUB_OUTPUT"

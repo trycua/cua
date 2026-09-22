@@ -8,13 +8,25 @@ on:
         required: true
         type: string
       mode:
-        description: "Supplemental GitHub-hosted matrix or canonical protected Lume matrix"
+        description: "Supplemental GitHub-hosted matrix or registration of a direct Lume console run"
         required: false
         type: choice
         default: hosted
         options:
           - hosted
           - lume
+      direct_lume_run_id:
+        description: "Run ID printed by the direct Lume console harness (required for mode=lume)"
+        required: false
+        type: string
+      direct_lume_evidence_sha256:
+        description: "SHA-256 of the private direct Lume evidence bundle (required for mode=lume)"
+        required: false
+        type: string
+      direct_lume_result_base64:
+        description: "Base64-encoded direct-result.json from the Lume harness (required for mode=lume)"
+        required: false
+        type: string
 
 permissions:
   actions: read
@@ -218,17 +230,20 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  lume:
+  register-lume:
     if: inputs.mode == 'lume'
-    name: Canonical Lume matrix
-    runs-on: [self-hosted, macOS, ARM64, cua-lume-maintainer]
+    name: Register direct Lume certification
+    runs-on: ubuntu-latest
     environment: authorized-live-jev-use-demo
-    timeout-minutes: 240
+    timeout-minutes: 10
     env:
       CUA_E2E_SOURCE_SHA: ${{ inputs.source_sha }}
       CUA_E2E_WORKFLOW_SHA: ${{ github.sha }}
+      DIRECT_LUME_RUN_ID: ${{ inputs.direct_lume_run_id }}
+      DIRECT_LUME_EVIDENCE_SHA256: ${{ inputs.direct_lume_evidence_sha256 }}
+      DIRECT_LUME_RESULT_BASE64: ${{ inputs.direct_lume_result_base64 }}
     steps:
-      - name: Validate requested source SHA matches the dispatched workflow ref
+      - name: Register the exact direct Lume console result
         shell: bash
         run: |
           set -euo pipefail
@@ -242,89 +257,47 @@ jobs:
             echo "source_sha must match the selected workflow ref tip (${CUA_E2E_WORKFLOW_SHA})" >&2
             exit 2
           fi
-
-      - name: Check out exact source
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-        with:
-          ref: ${{ inputs.source_sha }}
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Verify exact clean arm64 logged-in GUI checkout
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "$(git rev-parse HEAD)" == "$CUA_E2E_SOURCE_SHA" ]]
-          [[ -z "$(git status --porcelain --untracked-files=normal)" ]]
-          [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]]
-          [[ -z "${SSH_CONNECTION:-}" && -z "${SSH_TTY:-}" ]]
-          [[ "$(stat -f '%Su' /dev/console)" == "$(id -un)" ]]
-          launchctl print "gui/$(id -u)" >/dev/null
-
-      - name: Preflight noninteractive Lume privileges, keychains, and browsers
-        shell: bash
-        run: |
-          set -euo pipefail
-          fail() { echo "Lume preflight failed: $*" >&2; exit 1; }
-          /usr/bin/sudo -n -v 2>/dev/null || fail "passwordless sudo is required to seed the disposable guest TCC database"
-          signing_keychain="$HOME/Library/Keychains/cua-driver-signing.keychain-db"
-          login_keychain="$HOME/Library/Keychains/login.keychain-db"
-          [[ -f "$signing_keychain" ]] || fail "dedicated signing keychain is missing: $signing_keychain"
-          [[ -f "$login_keychain" ]] || fail "console login keychain is missing: $login_keychain"
-          export CUA_E2E_RUNNER_LIB_ONLY=1
-          source libs/cua-driver/tests/runners/macos-lume/run-all.sh
-          unset CUA_E2E_RUNNER_LIB_ONLY
-          unlock_required_keychains
-          /usr/bin/security find-identity -v -p codesigning "$signing_keychain" | \
-            /usr/bin/grep -F "CuaDriver Local Signing (cua-driver-rs)" >/dev/null || \
-            fail "dedicated signing keychain lacks the required CuaDriver Local Signing identity"
-          browser_count=0
-          for browser in \
-            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"; do
-            if [[ -x "$browser" ]]; then
-              browser_count=$((browser_count + 1))
-            fi
-          done
-          ((browser_count > 0)) || fail "no supported standalone Chrome or Edge executable is installed in /Applications"
-
-      - name: Run the canonical logged-in Lume matrix plus standalone browsers at the exact SHA
-        shell: bash
-        run: libs/cua-driver/tests/runners/macos-lume/run-all.sh --standalone-browser
-
-  certify-lume:
-    if: ${{ always() && inputs.mode == 'lume' }}
-    needs: lume
-    name: Lume certification result
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    env:
-      SOURCE_SHA: ${{ inputs.source_sha }}
-      LUME_RESULT: ${{ needs.lume.result }}
-      WORKFLOW_REF: ${{ github.workflow_ref }}
-      WORKFLOW_SHA: ${{ github.sha }}
-    steps:
-      - name: Record complete Lume result
-        shell: bash
-        run: |
-          set -euo pipefail
+          [[ "$DIRECT_LUME_RUN_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || {
+            echo "direct_lume_run_id is missing or invalid" >&2
+            exit 2
+          }
+          [[ "$DIRECT_LUME_EVIDENCE_SHA256" =~ ^[0-9a-f]{64}$ ]] || {
+            echo "direct_lume_evidence_sha256 must be a lowercase SHA-256 digest" >&2
+            exit 2
+          }
+          [[ -n "$DIRECT_LUME_RESULT_BASE64" ]] || {
+            echo "direct_lume_result_base64 is required" >&2
+            exit 2
+          }
+          printf '%s' "$DIRECT_LUME_RESULT_BASE64" | base64 --decode > direct-result.json
+          jq -e \
+            --arg source_sha "$source_sha_lower" \
+            --arg run_id "$DIRECT_LUME_RUN_ID" \
+            '.schema == "cua-driver/macos-lume-direct-result@v1"
+             and .source_sha == $source_sha
+             and .run_id == $run_id
+             and .standalone_browser == true
+             and .passed == true' direct-result.json >/dev/null
           jq -n \
-            --arg schema "cua-driver/macos-lume-certification@v1" \
-            --arg source_sha "${SOURCE_SHA}" \
+            --arg schema "cua-driver/macos-lume-certification@v2" \
+            --arg source_sha "${CUA_E2E_SOURCE_SHA}" \
             --arg run_id "${GITHUB_RUN_ID}" \
             --arg run_attempt "${GITHUB_RUN_ATTEMPT}" \
             --arg repository "${GITHUB_REPOSITORY}" \
             --arg workflow_path ".github/workflows/e2e-rust-macos.yml" \
-            --arg workflow_ref "${WORKFLOW_REF}" \
-            --arg workflow_sha "${WORKFLOW_SHA}" \
+            --arg workflow_ref "${GITHUB_WORKFLOW_REF}" \
+            --arg workflow_sha "${CUA_E2E_WORKFLOW_SHA}" \
             --arg event "${GITHUB_EVENT_NAME}" \
-            --arg lume "${LUME_RESULT}" \
+            --arg direct_run_id "${DIRECT_LUME_RUN_ID}" \
+            --arg evidence_sha256 "${DIRECT_LUME_EVIDENCE_SHA256}" \
+            --slurpfile direct_result direct-result.json \
             '{schema: $schema, source_sha: $source_sha,
               github: {repository: $repository, run_id: $run_id, run_attempt: $run_attempt,
                 workflow_path: $workflow_path, workflow_ref: $workflow_ref, workflow_sha: $workflow_sha,
                 event: $event},
-              jobs: {lume: $lume},
-              passed: ($lume == "success")}' \
+              execution: {kind: "direct-lume-console", run_id: $direct_run_id,
+                evidence_sha256: $evidence_sha256, result: $direct_result[0]},
+              passed: true}' \
             | tee certification.json
           jq -e '.passed == true' certification.json >/dev/null
 

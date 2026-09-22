@@ -974,6 +974,7 @@ export CUA_E2E_FRESH_FIXTURE_STATE=1
 preserve_previous_artifacts "${RUN_ID}"
 printf '%s\n' "${SIP_STATUS}" > "${ARTIFACT_DIR}/sip-status.txt"
 printf '%s\n' "${SOURCE_SHA}" > "${ARTIFACT_DIR}/requested-source-sha.txt"
+printf '%s\n' "${RUN_ID}" > "${ARTIFACT_DIR}/run-id.txt"
 {
   sw_vers
   printf 'console_user:\t%s\n' "${CONSOLE_USER}"
@@ -1123,3 +1124,15 @@ if [[ "${RUN_STANDALONE_BROWSER}" == 1 ]]; then
     exit "${BROWSER_STATUS}"
   fi
 fi
+
+jq -n \
+  --arg schema 'cua-driver/macos-lume-direct-result@v1' \
+  --arg source_sha "${SOURCE_SHA}" \
+  --arg run_id "${RUN_ID}" \
+  --arg completed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --argjson standalone_browser "${RUN_STANDALONE_BROWSER}" \
+  '{schema: $schema, source_sha: $source_sha, run_id: $run_id,
+    completed_at: $completed_at, standalone_browser: ($standalone_browser == 1),
+    passed: true}' > "${ARTIFACT_DIR}/direct-result.json"
+
+echo "macOS direct Lume run passed: ${RUN_ID}"

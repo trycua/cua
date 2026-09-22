@@ -32,8 +32,10 @@ mod wayland;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-/// Exit code used when the compositor does not implement the stable
-/// presentation-time protocol. It is a typed environment limitation, not a
+/// Exit code used when this compositor cannot attribute a content update to a
+/// presentation: it does not implement stable presentation-time, or it
+/// advertises the protocol but completes no feedback (a headless wlroots
+/// session does the latter). It is a typed environment limitation, not a
 /// measurement result, so the runner can record it as such instead of reading
 /// a missing row as a fast action.
 pub const EXIT_NO_PRESENTATION: u8 = 3;
@@ -149,11 +151,9 @@ fn main() -> ExitCode {
     {
         match wayland::run(&config) {
             Ok(()) => ExitCode::SUCCESS,
-            Err(wayland::RunError::NoPresentationSupport) => {
-                eprintln!(
-                    "compositor does not implement wp_presentation; \
-                     recorded as an environment limitation"
-                );
+            Err(error @ wayland::RunError::NoPresentationSupport)
+            | Err(error @ wayland::RunError::NoPresentationFeedback) => {
+                eprintln!("{error}; recorded as an environment limitation");
                 ExitCode::from(EXIT_NO_PRESENTATION)
             }
             Err(error) => {

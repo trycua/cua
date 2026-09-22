@@ -56,6 +56,10 @@ const APP_ID: &str = "com.trycua.CuaTestHarness.WaylandPresentation";
 pub enum RunError {
     /// The compositor does not implement stable presentation-time.
     NoPresentationSupport,
+    /// The compositor advertises `wp_presentation` but never completed feedback
+    /// for a committed content update. A headless wlroots session does this: no
+    /// output ever reaches a real presentation, so nothing is ever attributed.
+    NoPresentationFeedback,
     Missing(&'static str),
     Protocol(String),
     Io(io::Error),
@@ -65,6 +69,11 @@ impl std::fmt::Display for RunError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NoPresentationSupport => write!(formatter, "wp_presentation is unavailable"),
+            Self::NoPresentationFeedback => write!(
+                formatter,
+                "wp_presentation is advertised but the compositor completed no \
+                 feedback for a committed content update"
+            ),
             Self::Missing(global) => write!(formatter, "required global is unavailable: {global}"),
             Self::Protocol(message) => write!(formatter, "{message}"),
             Self::Io(error) => write!(formatter, "{error}"),
@@ -256,6 +265,11 @@ struct App {
     sequence: u64,
     accounted: u64,
     presented: u64,
+    /// Whether the compositor has ever delivered a `wp_presentation_feedback`
+    /// completion. A compositor can advertise `wp_presentation` and still never
+    /// complete feedback for its outputs, so advertisement alone does not make
+    /// the measurement available; only an observed event does.
+    feedback_seen: bool,
     pointer_position: (f64, f64),
     pending: BTreeMap<u64, Pending>,
     journal: Journal,
@@ -487,8 +501,7 @@ impl App {
             toplevel.set_title(title);
         }
         let index = self.paint()?;
-        let sequence = self.sequence;
-        self.sequence += 1;
+        let sequence = self.next_sequence();
         let surface_commit_ns =
             self.attach_and_commit(index, Some(sequence), connection, queue)?;
         self.pending.insert(
@@ -556,12 +569,19 @@ impl App {
         }
     }
 
+    /// The next content-update sequence. It labels the feedback object so a
+    /// completion can only ever be attributed to the update that requested it.
+    fn next_sequence(&mut self) -> u64 {
+        let sequence = self.sequence;
+        self.sequence += 1;
+        sequence
+    }
+
     /// A real delivered input that intentionally changes nothing. It is
     /// retained as a typed row so the run can prove the Driver reached the
     /// fixture without a presented mutation being invented for it.
     fn record_inert(&mut self, action: &str, input_ns: u64) {
-        let sequence = self.sequence;
-        self.sequence += 1;
+        let sequence = self.next_sequence();
         let pending = Pending {
             action: action.to_owned(),
             sequence,
@@ -649,6 +669,7 @@ pub fn run(config: &Config) -> Result<()> {
         sequence: 0,
         accounted: 0,
         presented: 0,
+        feedback_seen: false,
         pointer_position: (-1.0, -1.0),
         pending: BTreeMap::new(),
         journal,
@@ -682,26 +703,6 @@ pub fn run(config: &Config) -> Result<()> {
     let _seat = globals
         .bind::<WlSeat, _, _>(&handle, 3..=7, ())
         .map_err(|_| RunError::Missing("wl_seat"))?;
-
-    if config.probe {
-        // Support answered without mapping a window. Binding wp_presentation
-        // above already failed with NoPresentationSupport when the compositor
-        // does not implement it, so reaching here means the protocol is there.
-        queue
-            .roundtrip(&mut app)
-            .map_err(|error| RunError::Protocol(format!("probe roundtrip failed: {error}")))?;
-        app.journal.record(
-            "probe",
-            now_ns(),
-            json!({
-                "presentation_supported": true,
-                "presentation_clock_id": app.presentation_clock_id,
-                "presentation_clock_comparable":
-                    app.presentation_clock_id == Some(CLOCK_MONOTONIC_ID),
-            }),
-        )?;
-        return Ok(());
-    }
 
     let compositor = app
         .compositor
@@ -772,6 +773,10 @@ pub fn run(config: &Config) -> Result<()> {
         json!({"width": app.width, "height": app.height}),
     )?;
 
+    if config.probe {
+        return probe(&mut app, &mut queue, &connection, &handle);
+    }
+
     while !app.finished() {
         queue
             .dispatch_pending(&mut app)
@@ -780,41 +785,7 @@ pub fn run(config: &Config) -> Result<()> {
         if app.finished() {
             break;
         }
-        queue
-            .flush()
-            .map_err(|error| RunError::Protocol(format!("flush failed: {error}")))?;
-        let Some(guard) = queue.prepare_read() else {
-            // Events are already queued; dispatch them on the next turn.
-            continue;
-        };
-        let mut poll_fd = libc::pollfd {
-            fd: guard.connection_fd().as_raw_fd(),
-            events: libc::POLLIN,
-            revents: 0,
-        };
-        // SAFETY: one initialized pollfd describing the connection descriptor.
-        let ready = unsafe { libc::poll(&mut poll_fd, 1, POLL_INTERVAL_MS) };
-        if ready < 0 {
-            let error = io::Error::last_os_error();
-            if error.kind() == io::ErrorKind::Interrupted {
-                continue;
-            }
-            return Err(RunError::Io(error));
-        }
-        if ready == 0 {
-            // A quiet tick. The loop re-checks feedback deadlines.
-            continue;
-        }
-        match guard.read() {
-            Ok(_) => {}
-            Err(wayland_client::backend::WaylandError::Io(error))
-                if error.kind() == io::ErrorKind::WouldBlock => {}
-            Err(error) => {
-                return Err(RunError::Protocol(format!(
-                    "reading events failed: {error}"
-                )))
-            }
-        }
+        pump(&mut queue, POLL_INTERVAL_MS)?;
     }
 
     let stop_ns = now_ns();
@@ -872,6 +843,106 @@ impl Dispatch<WpPresentation, ()> for App {
     }
 }
 
+/// Flush pending requests and wait up to `timeout_ms` for readable events.
+///
+/// Queued events are left for the caller's next `dispatch_pending`, which is
+/// why this never dispatches: the caller decides when state may change.
+fn pump(queue: &mut EventQueue<App>, timeout_ms: i32) -> Result<()> {
+    queue
+        .flush()
+        .map_err(|error| RunError::Protocol(format!("flush failed: {error}")))?;
+    let Some(guard) = queue.prepare_read() else {
+        // Events are already queued; dispatch them on the next turn.
+        return Ok(());
+    };
+    let mut poll_fd = libc::pollfd {
+        fd: guard.connection_fd().as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    // SAFETY: one initialized pollfd describing the connection descriptor.
+    let ready = unsafe { libc::poll(&mut poll_fd, 1, timeout_ms) };
+    if ready < 0 {
+        let error = io::Error::last_os_error();
+        if error.kind() == io::ErrorKind::Interrupted {
+            return Ok(());
+        }
+        return Err(RunError::Io(error));
+    }
+    if ready == 0 {
+        // A quiet tick. The caller re-checks its deadlines.
+        return Ok(());
+    }
+    match guard.read() {
+        Ok(_) => Ok(()),
+        Err(wayland_client::backend::WaylandError::Io(error))
+            if error.kind() == io::ErrorKind::WouldBlock =>
+        {
+            Ok(())
+        }
+        Err(error) => Err(RunError::Protocol(format!(
+            "reading events failed: {error}"
+        ))),
+    }
+}
+
+/// Answer whether this compositor can actually attribute a content update to a
+/// presentation, and exit without measuring anything.
+///
+/// Binding `wp_presentation` is not that answer. A compositor can advertise the
+/// global and never complete feedback for its outputs: a headless wlroots
+/// session does exactly that, because no output ever reaches a real
+/// presentation. Advertisement alone would let a lane report every action as an
+/// unpresented timeout, which reads as a slow Driver rather than as a lane that
+/// cannot see presentation at all.
+///
+/// So commit one content update with feedback requested and wait for the
+/// compositor to complete it. `presented` and `discarded` both count: either is
+/// the compositor attributing that update. Only silence is the limitation.
+fn probe(
+    app: &mut App,
+    queue: &mut EventQueue<App>,
+    connection: &Connection,
+    handle: &QueueHandle<App>,
+) -> Result<()> {
+    let sequence = app.next_sequence();
+    let index = app.paint()?;
+    app.attach_and_commit(index, Some(sequence), connection, handle)?;
+
+    let deadline_ns = now_ns().saturating_add(app.deadline_ns);
+    while !app.feedback_seen && now_ns() < deadline_ns {
+        queue
+            .dispatch_pending(app)
+            .map_err(|error| RunError::Protocol(format!("probe dispatch failed: {error}")))?;
+        if app.feedback_seen {
+            break;
+        }
+        pump(queue, POLL_INTERVAL_MS)?;
+    }
+    queue
+        .dispatch_pending(app)
+        .map_err(|error| RunError::Protocol(format!("probe dispatch failed: {error}")))?;
+
+    let observed = app.feedback_seen;
+    app.journal.record(
+        "probe",
+        now_ns(),
+        json!({
+            "presentation_supported": true,
+            "presentation_feedback_observed": observed,
+            "presentation_clock_id": app.presentation_clock_id,
+            "presentation_clock_comparable":
+                app.presentation_clock_id == Some(CLOCK_MONOTONIC_ID),
+            "probe_deadline_ns": app.deadline_ns,
+        }),
+    )?;
+    if observed {
+        Ok(())
+    } else {
+        Err(RunError::NoPresentationFeedback)
+    }
+}
+
 impl Dispatch<WpPresentationFeedback, u64> for App {
     fn event(
         state: &mut Self,
@@ -896,6 +967,7 @@ impl Dispatch<WpPresentationFeedback, u64> for App {
                     .saturating_mul(1_000_000_000)
                     .saturating_add(u64::from(tv_nsec));
                 let clock_id = state.presentation_clock_id;
+                state.feedback_seen = true;
                 state.complete(
                     *sequence,
                     Feedback::Presented {
@@ -908,6 +980,7 @@ impl Dispatch<WpPresentationFeedback, u64> for App {
                 );
             }
             wp_presentation_feedback::Event::Discarded => {
+                state.feedback_seen = true;
                 state.complete(*sequence, Feedback::Discarded);
             }
             // `sync_output` names an output; it is not a completion event.

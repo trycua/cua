@@ -20,6 +20,7 @@ use crate::sample::{Sample, JOURNAL_SCHEMA};
 
 /// One JSONL evidence file. Created exclusively: a stale journal is an error
 /// rather than something to append to.
+#[derive(Debug)]
 pub struct Journal {
     file: File,
 }

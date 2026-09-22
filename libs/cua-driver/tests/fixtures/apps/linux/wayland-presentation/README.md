@@ -77,6 +77,14 @@ computed across clock domains.
 
 Only `verified` counts as a presented mutation.
 
+`discarded` is ordinary compositor behaviour rather than a fault: when a later
+commit supersedes an earlier one within the same refresh, the earlier update is
+dropped and never shown. Such a row is retained as evidence but measures no
+presentation, so the runner repeats the action rather than counting it. Driving
+the fixture with five key events inside one frame reproduces this directly:
+state reaches `n=5` and every update is accounted for, while only the updates
+the compositor actually showed carry presentation deltas.
+
 ## Building
 
 `cargo` alone is enough: `wayland-client`'s default backend is the pure-Rust
@@ -99,15 +107,33 @@ CuaTestHarness.WaylandPresentation \
 Options: `--journal` (required), `--state`, `--title`, `--deadline-ms`,
 `--width`, `--height`, `--exit-after`, `--probe`.
 
-`--probe` answers protocol support without mapping a window, so a runner can
-decide between measuring and recording a limitation:
+`--probe` answers whether this compositor can attribute a content update to a
+presentation at all, so a runner can decide between measuring and recording a
+limitation:
 
 ```bash
 CuaTestHarness.WaylandPresentation --journal /tmp/probe.jsonl --probe
 ```
 
-Exit codes: `0` normal, `2` bad arguments or non-Linux host, `3`
-`wp_presentation` unavailable (a typed environment limitation, not a
+The probe commits one content update with feedback requested and waits for the
+compositor to complete it. Binding `wp_presentation` is deliberately not the
+answer, because advertising the global does not mean feedback ever arrives:
+
+| Compositor                        | Advertises | Completes feedback | Clock |
+| --------------------------------- | ---------- | ------------------ | ----- |
+| sway 1.9 / wlroots 0.17, headless | yes        | yes                | `CLOCK_MONOTONIC` |
+| sway 1.7 / wlroots 0.15, headless | yes        | **no**             | `CLOCK_MONOTONIC` |
+| sway nested on a parent compositor | yes       | yes                | parent's clock |
+
+A headless wlroots 0.15 output never reaches a real presentation, so every
+action would time out and read as a slow Driver rather than as a lane that
+cannot see presentation. The probe reports that as a limitation instead. The
+hosted lane's sway 1.9 completes feedback in `CLOCK_MONOTONIC`, so its rows are
+directly comparable with the fixture's own stamps.
+
+Exit codes: `0` normal, `2` bad arguments or non-Linux host, `3` this
+compositor cannot attribute a presentation — either `wp_presentation` is
+unavailable or it completed no feedback (a typed environment limitation, not a
 measurement), `1` any other failure.
 
 ## Statistics

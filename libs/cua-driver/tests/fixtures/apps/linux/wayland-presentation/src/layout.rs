@@ -27,6 +27,10 @@ impl Rect {
             && y < f64::from(self.y + self.height)
     }
 
+    /// Part of the published region map rather than of the paint path: the
+    /// runner reads the layout out of the startup record and clicks region
+    /// centres, so this is exercised by the tests and by JSON consumers.
+    #[allow(dead_code)]
     pub fn center(&self) -> (i32, i32) {
         (self.x + self.width / 2, self.y + self.height / 2)
     }
@@ -88,6 +92,9 @@ impl Layout {
         }
     }
 
+    /// Region lookup for callers holding a `Region`; see `center` on why this
+    /// is not reached from the fixture's own paint path.
+    #[allow(dead_code)]
     pub fn rect(&self, region: Region) -> Rect {
         match region {
             Region::Active => self.active,

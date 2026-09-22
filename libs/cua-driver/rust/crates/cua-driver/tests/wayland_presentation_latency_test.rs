@@ -48,6 +48,12 @@ const DEADLINE_MS: u64 = 1_000;
 /// observations would be misleading.
 const REPEATS: usize = 5;
 
+/// How many actions may be issued to collect [`REPEATS`] presented samples. A
+/// discarded update is legitimate and retained, but it measures no
+/// presentation, so it is repeated rather than counted. The cap keeps a lane
+/// that never presents from looping instead of reporting that plainly.
+const MAX_ATTEMPTS: usize = REPEATS * 4;
+
 /// `CLOCK_MONOTONIC`, the same clock the fixture stamps its rows with.
 fn monotonic_ns() -> u64 {
     let mut stamp = libc::timespec {
@@ -347,6 +353,49 @@ impl Fixture {
     }
 }
 
+/// The window's Driver-reported bounds, or `None` while it is not listed.
+fn bounds(driver: &mut McpDriver, window_id: u64) -> Option<(i64, i64, i64, i64)> {
+    let response = driver.call("list_windows", json!({}));
+    let windows = response.structured()["windows"].as_array()?.clone();
+    let window = windows
+        .iter()
+        .find(|window| window["window_id"].as_u64() == Some(window_id))?;
+    let read = |key: &str| window[key].as_i64().unwrap_or(0);
+    Some((read("x"), read("y"), read("width"), read("height")))
+}
+
+/// Wait until the compositor has finished placing the window.
+///
+/// A tiling compositor maps the surface, then moves and resizes it. During that
+/// transaction the Driver can read the container's new origin while the surface
+/// is still drawn at the old one, so a window-local click is translated against
+/// an origin the surface does not have yet and lands in the wrong region. The
+/// measurement would then be of the wrong pixels.
+///
+/// `click_region` asserts the two frames agree and would fail loudly, but that
+/// is a guard against a real defect, not a reason to measure during a move.
+/// Wait for two consecutive identical reads before returning.
+fn settle_window(driver: &mut McpDriver, window_id: u64) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut previous = bounds(driver, window_id);
+    loop {
+        std::thread::sleep(Duration::from_millis(250));
+        let current = bounds(driver, window_id);
+        if current.is_some() && current == previous {
+            break;
+        }
+        previous = current;
+        assert!(
+            Instant::now() < deadline,
+            "fixture window bounds never stopped changing; the compositor did \
+             not finish placing the window"
+        );
+    }
+    // The bounds are stable; give the compositor the same brief grace the other
+    // Linux harness cells use before the first measured action.
+    std::thread::sleep(Duration::from_millis(500));
+}
+
 fn launch(driver: &mut McpDriver, directory: &Path) -> Fixture {
     let path = harness_app(
         "harness-wayland-presentation",
@@ -398,6 +447,7 @@ fn launch(driver: &mut McpDriver, directory: &Path) -> Fixture {
                         Some(u64::from(pid)),
                         "the listed window must belong to the fixture process"
                     );
+                    settle_window(driver, window_id);
                     return Fixture {
                         pid,
                         window_id,
@@ -568,24 +618,56 @@ fn wayland_presentation_feedback_attributes_action_latency_across_the_boundary()
         let mut rows = Vec::new();
 
         // 1. The measured action: one click, one content update, presented.
-        for repeat in 0..REPEATS {
+        //
+        //    A compositor may legitimately never show an update: when a later
+        //    commit supersedes it within the same refresh, the earlier one is
+        //    discarded. That is correct compositor behaviour and it is retained
+        //    as evidence, but it is not a presentation-latency sample, so it
+        //    does not count towards the measured set. Only failing to gather
+        //    the samples at all is a failure of the lane.
+        let mut verified = 0usize;
+        let mut attempt = 0usize;
+        while verified < REPEATS {
+            attempt += 1;
+            assert!(
+                attempt <= MAX_ATTEMPTS,
+                "only {verified} of {REPEATS} actions reached a presented content \
+                 update within {MAX_ATTEMPTS} attempts; this lane cannot attribute \
+                 a presentation to an action"
+            );
             let counter_before = state_counter(&fixture.state).expect("fixture state");
             let measured = click_region(&mut driver, &fixture, "active", 1);
             let row = measured.into_iter().next().expect("one row");
-            assert!(
-                row.presented_mutation(),
-                "repeat {repeat}: the content update carrying the mutation must be \
-                 presented, got {:?}: {row:?}",
-                row.fixture_outcome
+            // Independently readable application state, on a channel the timing
+            // rows do not write. It advances for every delivered action,
+            // whether or not the compositor went on to present that update.
+            assert_eq!(
+                state_counter(&fixture.state),
+                Some(counter_before + 1),
+                "attempt {attempt}: one Driver action must change fixture state exactly once"
             );
+            if !row.presented_mutation() {
+                assert_eq!(
+                    row.fixture_outcome, "discarded",
+                    "attempt {attempt}: an update that was not presented must be typed \
+                     as discarded, never reported as a presented mutation: {row:?}"
+                );
+                assert!(
+                    row.presented_ns.is_none() && row.derived.commit_to_present_ns.is_none(),
+                    "attempt {attempt}: a discarded update must carry no presentation \
+                     time: {row:?}"
+                );
+                rows.push(row);
+                continue;
+            }
             assert!(
                 row.presented_ns.is_some() && row.surface_commit_ns.is_some(),
-                "repeat {repeat}: a verified row must carry both its commit and its \
+                "attempt {attempt}: a verified row must carry both its commit and its \
                  presentation timestamp: {row:?}"
             );
             assert!(
                 row.derived.commit_to_present_ns.unwrap_or(-1) >= 0,
-                "repeat {repeat}: presentation cannot precede its own commit: {row:?}"
+                "attempt {attempt}: presentation cannot precede its own commit: {row:?}"
             );
             let presentation = row
                 .presentation
@@ -594,22 +676,16 @@ fn wayland_presentation_feedback_attributes_action_latency_across_the_boundary()
             assert_eq!(
                 presentation["clock_id"].as_u64(),
                 Some(1),
-                "repeat {repeat}: presentation clock domain must be retained"
+                "attempt {attempt}: presentation clock domain must be retained"
             );
             assert!(
                 presentation.get("refresh_ns").is_some()
                     && presentation.get("sequence").is_some()
                     && presentation.get("vsync").is_some(),
-                "repeat {repeat}: refresh interval, sequence, and flags must be \
+                "attempt {attempt}: refresh interval, sequence, and flags must be \
                  retained when supplied: {presentation}"
             );
-            // Independently readable application state, on a channel the
-            // timing rows do not write.
-            assert_eq!(
-                state_counter(&fixture.state),
-                Some(counter_before + 1),
-                "repeat {repeat}: one Driver action must change fixture state exactly once"
-            );
+            verified += 1;
             rows.push(row);
         }
 

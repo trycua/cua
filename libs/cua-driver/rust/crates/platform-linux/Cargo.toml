@@ -122,10 +122,10 @@ dirs = "5"
 [features]
 default = []
 linux-example = []
-# GNOME/KDE input is pure Rust plus libxkbcommon, which is available in the
-# Debian 11 release container. Ashpd's RemoteDesktop API exposes ScreenCast
-# stream metadata, so its lightweight screencast module is required here too.
-# The PipeWire frame reader remains isolated in portal-capture below.
+# GNOME/KDE input is pure Rust plus libxkbcommon. Ashpd's RemoteDesktop API
+# exposes ScreenCast stream metadata, so its lightweight screencast module is
+# required here too. The PipeWire frame reader stays isolated in
+# portal-capture below so input-only builds need no PipeWire headers.
 portal-input = [
     "ashpd/remote_desktop",
     "ashpd/screencast",
@@ -136,8 +136,10 @@ portal-input = [
 ]
 # PipeWire-backed ScreenCast capture (portal window screenshots and the
 # full-desktop video route for KDE/KWin and other compositors without
-# wlr-screencopy) keeps its newer system-header requirement and remains
-# enabled by Nix/modern desktop builds.
+# wlr-screencopy). Linux release artifacts and the Nix package enable it
+# together with portal-input. libspa-sys's C shims need SPA headers newer
+# than Debian 11's stock 0.3.19 (the release container takes the 0.3.65
+# backport), and the binary links libpipewire-0.3.so.0 at run time.
 portal-capture = [
     "ashpd/screencast",
     "dep:pipewire",

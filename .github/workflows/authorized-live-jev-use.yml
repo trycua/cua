@@ -102,7 +102,7 @@ jobs:
       - name: Build candidate and install locked clients
         working-directory: ${{ github.workspace }}
         run: |
-          cargo build --locked --release -p cua-driver --features portal-input --manifest-path libs/cua-driver/rust/Cargo.toml
+          cargo build --locked --release -p cua-driver --features portal-input,portal-capture --manifest-path libs/cua-driver/rust/Cargo.toml
           cd libs/cua-driver/examples/jev-use
           uv sync --frozen
           npm ci --ignore-scripts

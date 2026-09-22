@@ -82,8 +82,8 @@ impl Tool for StartRecordingTool {
                 Shell helper's frames, wlroots compositors use `wf-recorder`, \
                 and compositors without wlr-screencopy (KDE/KWin) record the \
                 monitor the user grants through the xdg-desktop-portal \
-                ScreenCast (one consent dialog per install; requires a build \
-                with the `portal-capture` feature and ffmpeg on PATH). \
+                ScreenCast (one consent dialog per install; needs the system \
+                PipeWire client library and ffmpeg on PATH). \
                 Unsupported combinations report the exact limitation in \
                 `last_error`.\n\n\
                 State persists for the life of the daemon; a restart \

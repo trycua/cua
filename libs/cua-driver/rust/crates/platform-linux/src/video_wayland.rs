@@ -67,8 +67,9 @@ fn start_portal_video(_output_path: &Path) -> anyhow::Result<Box<dyn VideoBacken
     anyhow::bail!(
         "this compositor does not expose wlr-screencopy, and this cua-driver build was compiled \
          without the `portal-capture` feature, so xdg-desktop-portal ScreenCast video is \
-         unavailable. Use a build with `--features portal-capture` (the Nix package enables it) \
-         to record on KDE/KWin and other portal-only compositors."
+         unavailable. Use a build with `--features portal-capture` (the released Linux \
+         binaries and the Nix package enable it) to record on KDE/KWin and other portal-only \
+         compositors."
     )
 }
 

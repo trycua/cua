@@ -95,9 +95,10 @@ CARGO_DRIVER_FEATURE_ARGS=()
 if [[ ",${CUA_E2E_INPUT_BACKENDS}," == *,libei-portal,* ]]; then
   # GNOME and KDE retain DISPLAY for XWayland while the product route remains
   # native Wayland. Their representative lanes require the release-shipped
-  # RemoteDesktop/libei adapter, so every cua-driver build/test in this runner
-  # must compile the same portal-input feature instead of falling back to wtype.
-  CARGO_DRIVER_FEATURE_ARGS=(--features portal-input)
+  # RemoteDesktop/libei adapter and portal ScreenCast recorder, so every
+  # cua-driver build/test in this runner must compile the same released
+  # feature shape instead of falling back to wtype.
+  CARGO_DRIVER_FEATURE_ARGS=(--features portal-input,portal-capture)
 fi
 if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
   export CUA_ATSPI_DEBUG=1

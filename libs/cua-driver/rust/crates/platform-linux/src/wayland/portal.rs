@@ -24,14 +24,21 @@ pub(crate) async fn fresh_session_connection() -> anyhow::Result<zbus::Connectio
 /// process. Each portal purpose owns one token because the portal binds the
 /// token to the exact sources or devices that were selected.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(
+    not(all(feature = "portal-input", feature = "portal-capture")),
+    allow(dead_code)
+)]
 pub enum RestoreToken {
     /// RemoteDesktop keyboard + pointer for the libei input backend.
     RemoteDesktopInput,
     /// ScreenCast monitor stream for full-desktop video recording.
-    #[cfg_attr(not(feature = "portal-capture"), allow(dead_code))]
     ScreencastVideo,
 }
 
+#[cfg_attr(
+    not(any(feature = "portal-input", feature = "portal-capture")),
+    allow(dead_code)
+)]
 impl RestoreToken {
     fn file_name(self) -> &'static str {
         match self {

@@ -72,9 +72,9 @@ shrink. Use `CUA_E2E_BROWSER_BIN` with `CUA_E2E_BROWSER_NAME` only for a
 single-product diagnostic run. Every launched product also appends its
 CDP-reported product, version, protocol version, user agent, and exact source
 SHA to `browser-provenance.jsonl` beside the matrix report.
-On Linux the runner compiles `cua-driver` with `portal-input`, matching the
-published artifact so representative GNOME/KDE runs exercise the libei
-fallback instead of a default-feature `wtype` refusal.
+On Linux the runner compiles `cua-driver` with `portal-input,portal-capture`,
+matching the published artifact so representative GNOME/KDE runs exercise the
+libei fallback instead of a default-feature `wtype` refusal.
 
 For the test layout and the distinction between unit tests, shared harnesses,
 and native harnesses, see
@@ -91,7 +91,8 @@ on `PATH` must not change either result. The job removes only its fixture
 package and retains source, binary, toolchain, and test evidence.
 
 To reproduce it, build `cua-driver` and `release_channel_cli_test` with
-`--locked --features portal-input` in a disposable Arch guest/container. Run
+`--locked --features portal-input,portal-capture` in a disposable Arch
+guest/container (the `libpipewire` package provides the PipeWire headers). Run
 as root with Xvfb and a session bus:
 
 ```bash

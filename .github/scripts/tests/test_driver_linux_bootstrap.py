@@ -35,23 +35,32 @@ class TestDriverLinuxBootstrap(unittest.TestCase):
         )
         self.assertIsNotNone(sources)
         lines = sources[1].splitlines()
-        self.assertEqual(len(lines), 3)
+        self.assertEqual(len(lines), 4)
         suites = set()
         for line in lines:
             source = re.fullmatch(
                 r"deb \[check-valid-until=no "
                 r"signed-by=/usr/share/keyrings/debian-archive-keyring.gpg\] "
-                r"http://snapshot.debian.org/archive/(debian|debian-security)/"
-                r"20260901T000000Z/ (bullseye(?:-updates|-security)?) main",
+                r"http://(?:snapshot.debian.org/archive/(debian|debian-security)/"
+                r"20260901T000000Z|archive.debian.org/(debian))/ "
+                r"(bullseye(?:-updates|-security|-backports)?) main",
                 line,
             )
             self.assertIsNotNone(source, line)
-            archive, suite = source.groups()
-            self.assertEqual(
-                archive, "debian-security" if suite == "bullseye-security" else "debian"
-            )
+            snapshot_archive, retired_archive, suite = source.groups()
+            if suite == "bullseye-backports":
+                # Retired from the snapshot mirror; only the immutable archive serves it.
+                self.assertEqual(retired_archive, "debian")
+            else:
+                self.assertEqual(
+                    snapshot_archive,
+                    "debian-security" if suite == "bullseye-security" else "debian",
+                )
             suites.add(suite)
-        self.assertEqual(suites, {"bullseye", "bullseye-updates", "bullseye-security"})
+        self.assertEqual(
+            suites,
+            {"bullseye", "bullseye-updates", "bullseye-security", "bullseye-backports"},
+        )
         remaining = self.bootstrap.replace(sources[1], "")
         self.assertNotRegex(remaining.lower(), r"check-valid-until|check-date")
         self.assertNotRegex(
@@ -71,15 +80,26 @@ class TestDriverLinuxBootstrap(unittest.TestCase):
             commands[1][:6],
             ["apt-get", "-o", "Dir::Etc::sourceparts=-", "install", "-y", "--no-install-recommends"],
         )
-        self.assertEqual(len(commands), 2)
+        self.assertEqual(len(commands), 3)
         self.assertEqual(
             set(commands[1][6:]),
             {
                 "git", "ca-certificates", "curl", "python3", "build-essential", "pkg-config",
                 "libx11-dev", "libxi-dev", "libxtst-dev", "libxext-dev", "libwayland-dev",
-                "libxkbcommon-dev",
+                "libxkbcommon-dev", "libclang-11-dev",
             },
         )
+        # PipeWire headers must come from backports explicitly: bullseye's own
+        # 0.3.19 headers do not compile libspa-sys, and backports has a lower
+        # APT priority than the release suite.
+        self.assertEqual(
+            commands[2][:8],
+            [
+                "apt-get", "-o", "Dir::Etc::sourceparts=-", "install", "-y",
+                "--no-install-recommends", "-t", "bullseye-backports",
+            ],
+        )
+        self.assertEqual(set(commands[2][8:]), {"libpipewire-0.3-dev", "libspa-0.2-dev"})
         self.assertLess(self.bootstrap.index("\nEOF\n"), self.bootstrap.index("apt-get "))
 
 

@@ -53,7 +53,7 @@ jobs:
             libx11-dev libxi-dev libxtst-dev libxext-dev
       - name: Build cua-driver
         working-directory: libs/cua-driver/rust
-        run: cargo build --locked -p cua-driver --features cua-driver/portal-input
+        run: cargo build --locked -p cua-driver --features cua-driver/portal-input,cua-driver/portal-capture
       - name: Run server E2E under Memcheck
         env:
           CUA_DRIVER_RS_TELEMETRY_ENABLED: "false"

@@ -238,8 +238,8 @@ impl Tool for DragTool {
 
         // from_zoom: translate from last zoom crop context.
         if from_zoom {
-            match self.state.zoom_registry.get(pid) {
-                Some(ctx) => {
+            match super::zoom_context(&self.state, &args, pid, window_id) {
+                Ok(ctx) => {
                     let (wx, wy) = ctx.zoom_to_window(from_x, from_y);
                     let (wx2, wy2) = ctx.zoom_to_window(to_x, to_y);
                     from_x = wx;
@@ -247,13 +247,13 @@ impl Tool for DragTool {
                     to_x = wx2;
                     to_y = wy2;
                 }
-                None => {
-                    return ToolResult::error(format!(
-                        "from_zoom=true but no zoom context for pid {pid}. Call zoom first."
-                    ))
-                }
+                Err(refusal) => return refusal,
             }
-        } else if let Some(ratio) = self.state.resize_registry.ratio(pid, window_id) {
+        } else {
+            let ratio = match super::screenshot_scale(&self.state, &args, pid, window_id) {
+                Ok(ratio) => ratio,
+                Err(refusal) => return refusal,
+            };
             from_x *= ratio;
             from_y *= ratio;
             to_x *= ratio;

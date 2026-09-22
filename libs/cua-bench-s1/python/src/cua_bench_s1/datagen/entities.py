@@ -48,6 +48,20 @@ def gen_date(rng: random.Random, start: int = 2026, end: int = 2027) -> str:
     return rng.choice((f"{m:02d}/{d:02d}/{y}", f"{y}-{m:02d}-{d:02d}"))
 
 
+def gen_trip_dates(rng: random.Random) -> tuple[str, str]:
+    """A departure and a return that form a real trip: same format for both, and
+    a return strictly AFTER the departure. Drawing the two dates independently
+    yields records like "Departure: 2027-08-05 / Return: 2026-05-04" -- a return
+    before the outbound flight, which is not a trip anyone could book, so a
+    solver cannot treat the record as coherent."""
+    import datetime
+    start = datetime.date(2026, 1, 1) + datetime.timedelta(days=rng.randint(0, 540))
+    end = start + datetime.timedelta(days=rng.randint(2, 21))
+    iso = rng.random() < 0.5   # one format for BOTH dates, as a real record would use
+    fmt = (lambda d: d.isoformat()) if iso else (lambda d: f"{d.month:02d}/{d.day:02d}/{d.year}")
+    return fmt(start), fmt(end)
+
+
 def gen_money(rng: random.Random) -> str:
     return f"${rng.randint(30, 900)}"
 
@@ -78,13 +92,23 @@ def person(rng: random.Random) -> dict:
         "street": f"{rng.randint(10, 9999)} {rng.choice(STREETS)} {rng.choice(STREET_TYPES)}",
         "city": city, "state": state, "zip": zipc,
         "employer": rng.choice(COMPANIES), "policy": f"POL-{_digits(rng, 8)}",
+        "order_number": f"ORD-{_digits(rng, 7)}",
         "username": f"{first.lower()}{rng.randint(1, 999)}",
         "password": _alnum(rng, 10),
         "dep_code": dep[0], "dep_city": dep[1], "arr_code": arr[0], "arr_city": arr[1],
-        "depart_date": gen_date(rng), "return_date": gen_date(rng),
+        **dict(zip(("depart_date", "return_date"), gen_trip_dates(rng))),
         "passengers": str(rng.randint(1, 4)), "cabin": rng.choice(("Economy", "Premium", "Business")),
-        "search_query": rng.choice(("wireless headphones", "running shoes", "coffee maker", "desk lamp")),
-        "category": rng.choice(PRODUCT_CATS), "max_price": gen_money(rng),
+        # Query and category are drawn TOGETHER so the record is internally coherent:
+        # a "coffee maker" search filed under "Books" reads as generator noise rather
+        # than as something a shopper would actually have typed, which makes the
+        # record's own plausibility -- not just the option set -- part of the task.
+        **dict(zip(("search_query", "category"), rng.choice((
+            ("wireless headphones", "Electronics"), ("running shoes", "Sporting Goods"),
+            ("coffee maker", "Home & Kitchen"), ("desk lamp", "Home & Kitchen"),
+            ("paperback thriller", "Books"), ("winter jacket", "Clothing"),
+            ("building blocks set", "Toys"), ("noise cancelling earbuds", "Electronics"),
+        )))),
+        "max_price": gen_money(rng),
     }
 
 
@@ -100,7 +124,19 @@ CONCEPTS: list[Concept] = [
     C("state", ("State",), ("State",), lambda r, p: p["state"], group="address"),
     C("zip", ("ZIP code", "Postal code"), ("ZIP", "Postal code"), lambda r, p: p["zip"], group="address"),
     C("employer", ("Employer", "Company"), ("Employer", "Company"), lambda r, p: p["employer"], group="employment"),
+    # A vendor's/business's OWN name, distinct from `employer` (a PERSON's employer).
+    # Binding a "Company name" field to `employer` makes the source record read
+    # "Employer: Initech" for the supplier being onboarded, which conflates a vendor
+    # record with a personal-employment record and leaves the field genuinely ambiguous.
+    C("company", ("Company name", "Business name"), ("Company", "Business name"),
+      lambda r, p: p["employer"], group="employment"),
     C("policy", ("Policy number", "Policy #"), ("Policy", "Policy number"), lambda r, p: p["policy"], group="insurance"),
+    # An order/reference number, distinct from an INSURANCE policy number. Binding an
+    # "Order number" field to `policy` makes the record read "Policy: POL-1234" for an
+    # order-status lookup; a policy number is not an order number, so the correct
+    # behavior there is to refuse to fill -- which the gold label then scores as wrong.
+    C("order_number", ("Order number", "Order #", "Reference number"),
+      ("Order", "Order number"), lambda r, p: p["order_number"], group="commerce"),
     C("username", ("Username", "User ID", "Login"), ("Username", "Account"), lambda r, p: p["username"], group="auth"),
     C("password", ("Password",), ("Password",), lambda r, p: p["password"], group="auth"),
     C("dep_city", ("From", "Departure city", "Origin"), ("Origin", "From"), lambda r, p: p["dep_city"], group="travel"),

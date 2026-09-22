@@ -29,10 +29,11 @@ CORE_FAMILIES = [
 # Text, hard cross-dataset split (615 tasks total, GUI-360 held out).
 CORE_TEXT_HARD = {
     "jev": [0.000, 0.576, 0.083, 0.034, 0.000, 0.021],
-    "djev": [0.500, 0.939, 0.250, 0.412, 0.714, 0.271],
-    "semif": [0.250, 0.212, 0.167, 0.270, 0.286, 0.292],
-    "cua-s1-nano-0.1": [0.000, 0.273, 0.250, 0.256, 0.286, 0.208],
+    "djev": [0.750, 0.606, 0.833, 0.696, 0.000, 0.604],
+    "semif": [0.417, 0.273, 0.167, 0.340, 0.286, 0.354],
+    "cua-s1-nano-0.1": [0.000, 0.000, 0.000, 0.000, 0.000, 0.000],
     "cua-s1-4b-0.1": [0.250, 0.455, 0.167, 0.322, 0.571, 0.271],
+    "cua-s1-4b-0.2": [0.833, 0.939, 1.000, 0.867, 0.429, 0.958],
 }
 COLORS = {
     "jev": "#8C8C8C",
@@ -40,6 +41,7 @@ COLORS = {
     "semif": "#DD8452",
     "cua-s1-nano-0.1": "#4C72B0",
     "cua-s1-4b-0.1": "#C44E52",
+    "cua-s1-4b-0.2": "#8172B3",
 }
 
 GENERAL_DECISION = {
@@ -49,22 +51,24 @@ GENERAL_DECISION = {
     "cua-s1-4b-0.1": 0.632,
 }
 
-# Multimodal, same-distribution split (86 tasks total, per-family N=9-20).
+# Multimodal, hard cross-dataset split (GUI-360 held out, per-family N=1-133).
 CORE_MULTIMODAL = {
-    "djev": [0.071, 0.000, 0.000, 0.750, 0.444, 0.429],
-    "semif": [0.357, 0.100, 0.235, 0.167, 0.000, 0.214],
-    "cua-s1-nano-0.1": [1.000, 1.000, 1.000, 1.000, 1.000, 1.000],
-    "cua-s1-4b-0.1": [1.000, 1.000, 1.000, 1.000, 1.000, 1.000],
+    "djev": [0.750, 0.750, 0.750, 0.586, 0.000, 0.571],
+    "semif": [0.250, 0.083, 0.250, 0.263, 0.000, 0.214],
+    "cua-s1-nano-0.1": [0.000, 0.000, 0.000, 0.000, 0.000, 0.000],
+    "cua-s1-4b-0.1": [0.250, 0.583, 0.250, 0.226, 0.000, 0.214],
+    "cua-s1-4b-0.2": [0.750, 1.000, 1.000, 0.917, 1.000, 1.000],
 }
 
 # Mean per-task inference latency (seconds), one entry per row of the
 # "### Latency" table in the README, `None` where a model was not measured.
 LATENCY_ROWS = {
-    "jev": [0.556, None, 0.553, None, 0.534, None, None, 0.597],
-    "djev": [0.770, 1.195, 3.061, 3.389, 3.168, 3.450, 1.172, 0.858],
-    "semif": [0.120, 0.293, 1.078, 1.557, 1.117, 1.151, 0.300, 0.157],
-    "cua-s1-nano-0.1": [0.003, 0.222, 0.0145, None, 0.015, 0.739, 0.206, None],
-    "cua-s1-4b-0.1": [0.1245, 0.345, 1.096, None, 1.274, 1.355, 0.343, 0.203],
+    "jev": [0.556, None, None, 0.553, None, 0.534, None, None, 0.597, None],
+    "djev": [0.809, 1.195, 1.017, 3.061, 3.389, 3.168, 3.450, 1.172, 0.858, 1.029],
+    "semif": [0.121, 0.293, 0.283, 1.078, 1.557, 1.117, 1.151, 0.300, 0.157, 0.496],
+    "cua-s1-nano-0.1": [0.003, 0.222, 0.667, 0.0145, None, 0.015, 0.739, 0.206, None, 0.306],
+    "cua-s1-4b-0.1": [0.1245, 0.345, 0.301, 1.096, None, 1.274, 1.355, 0.343, 0.203, 0.445],
+    "cua-s1-4b-0.2": [0.141, None, 0.282, None, None, None, None, None, None, None],
 }
 
 
@@ -81,9 +85,12 @@ def render() -> Path:
     ax_core.set_xticks(x)
     ax_core.set_xticklabels(CORE_FAMILIES, rotation=30, ha="right")
     ax_core.set_ylabel("Task accuracy")
-    ax_core.set_ylim(0, 1)
+    # Headroom above 1.0 so the legend cannot sit on top of a 1.000 bar.
+    ax_core.set_ylim(0, 1.22)
+    ax_core.set_yticks(np.arange(0, 1.01, 0.2))
     ax_core.set_title("6 core GUI families -- text, hard cross-dataset split (N=615)")
-    ax_core.legend(fontsize=8)
+    ax_core.legend(fontsize=8, loc="upper center", ncol=6, columnspacing=0.8,
+                   handlelength=1.2, frameon=False)
     ax_core.grid(axis="y", alpha=0.3)
 
     gd_models = list(GENERAL_DECISION.keys())
@@ -109,9 +116,11 @@ def render() -> Path:
     ax_mm.set_xticks(x)
     ax_mm.set_xticklabels(CORE_FAMILIES, rotation=30, ha="right")
     ax_mm.set_ylabel("Task accuracy")
-    ax_mm.set_ylim(0, 1.05)
-    ax_mm.set_title("6 core GUI families -- multimodal, same-distribution split (N=86)")
-    ax_mm.legend(fontsize=8)
+    ax_mm.set_ylim(0, 1.22)
+    ax_mm.set_yticks(np.arange(0, 1.01, 0.2))
+    ax_mm.set_title("6 core GUI families -- multimodal, hard cross-dataset split (GUI-360 held out)")
+    ax_mm.legend(fontsize=8, loc="upper center", ncol=5, columnspacing=0.8,
+                 handlelength=1.2, frameon=False)
     ax_mm.grid(axis="y", alpha=0.3)
 
     lat_models = list(LATENCY_ROWS.keys())

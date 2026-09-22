@@ -76,7 +76,7 @@ import random
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..task import ACTIONS, CuaTask, OptionSpec
+from ..task import ACTIONS, CuaTask, OptionSpec, stable_digest
 from .androidcontrol import assign_family
 
 # Functions with no equivalent action in this benchmark, or no reliable
@@ -390,7 +390,12 @@ def convert_episode(
                 episode_id=episode_id, step_idx=rec.get("step_id", 0), request=request, subtask=subtask,
                 screenshot_path=screenshot_path, uia_controls_info=uia_controls_info, action=action,
                 out_dir=out_dir, modality_available=modality_available,
-                seed=hash((episode_id, rec.get("step_id", 0))) & 0xFFFFFFFF, app_domain=app_domain,
+                # `stable_digest`, not the built-in `hash()`: string hashing is
+                # salted per process, so this drew a different per-step seed --
+                # and therefore a different hard-distractor decoy -- on every
+                # conversion run of the same source episode. See
+                # task.stable_digest.
+                seed=stable_digest(episode_id, rec.get("step_id", 0)) & 0xFFFFFFFF, app_domain=app_domain,
                 hard_distractor=hard_distractor,
             )
             tasks.append(task)

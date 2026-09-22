@@ -25,7 +25,10 @@ positions after a reflow -- is structurally impossible here:
   the single fixed-height line its row already reserves. If a future task
   family adds a real multi-line/textarea role, this fixed-row-height
   assumption must be revisited for that role specifically -- don't silently
-  extend it.
+  extend it. The optional source-record panel (`_source_lines`) shifts every
+  form row down by one constant offset computed *before* any drawing, from the
+  wrapped source-line COUNT alone, so this contract holds with the panel too:
+  no row's geometry ever depends on another row's content.
 - **Frames are computed once, from the same geometry that is drawn, and
   returned verbatim** -- `render_page` never draws from one set of
   coordinates and reports another. There is no separate "detector" pass and
@@ -93,25 +96,127 @@ def _fit_text(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont, m
     return text[:lo] + ELLIPSIS
 
 
-def render_page(title: str, rows: list[dict]) -> tuple[Image.Image, list[dict]]:
+SOURCE_LINE_H = 20
+SOURCE_PAD = 12
+
+
+def _source_lines(goal: str | None, entities: list[dict] | None) -> list[str]:
+    """The human-visible "what am I working from" panel: the user's goal plus the
+    source record the form is to be filled from.
+
+    Why this exists: `entities` otherwise live only inside the task JSON, and the
+    candidate options refer to them as opaque pointers (`fill (with entity
+    'ent_2')`), so nothing a model can actually see says what `ent_2` is. A solver
+    can then tell that some field has a fillable value but not *which* value, which
+    makes choosing between two plausible fill targets a guess rather than a
+    decision. A real user always has the source (an email, a PDF, a record on
+    another screen) in front of them; rendering it is what makes the fill decision
+    determinable. It does NOT make the task easier in the shortcut sense: the
+    hard-distractor decoys point at the SAME entity as the genuine field, so seeing
+    the value still does not tell you which slot it belongs in.
+    """
+    lines: list[str] = []
+    if goal:
+        # Turn semantics. Without this line the task is genuinely ill-posed: nothing
+        # says whether an element's label means "what should eventually happen here"
+        # or "what do you do right now", so a solver that fills the form AND clicks
+        # Submit in the same pass is being scored against an unstated convention.
+        # Stating the interaction policy costs no real difficulty: which entity
+        # belongs in which slot, which checkbox is actually required, and which
+        # buttons are unsafe are all untouched by it.
+        lines.append(
+            "This is ONE turn. Judge every element against the screen's CURRENT state as shown "
+            "below, NOT against the state it would be in after your other choices this turn. "
+            "So: do not submit or advance while ANY field on this screen is still empty and has a "
+            "value available in the source record, or a required box is still unticked -- even if "
+            "you are also choosing to fill or tick it in this same turn; advancing comes on a later "
+            "turn. An empty field the record has no value for is not fillable and never blocks "
+            "advancing. Only fill a field when the record holds a value that genuinely belongs in "
+            "THAT field: never repurpose a value that belongs to a different field, a different "
+            "person, or a different point in time.")
+        lines.append(f"Goal: {goal}")
+    if entities:
+        # A screen with nothing to fill (a pure pager) gets no source record: a
+        # "Source record: State: MA" header above two paging buttons is noise no real
+        # app would show, and the caller passes entities=None for that case.
+        lines.append("Source record:")
+        for e in entities:
+            lines.append(f"  [{e['id']}] {e['label']}: {e['value']}")
+    return lines
+
+
+_MEASURE = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+
+
+def _wrap_lines(lines: list[str], max_width: float) -> list[str]:
+    """Word-wrap each source-panel line to `max_width` px, preserving its leading
+    indent on continuation lines. Deterministic and content-only (no layout state)."""
+    out: list[str] = []
+    for line in lines:
+        indent = line[:len(line) - len(line.lstrip())]
+        words = line.split()
+        if not words:
+            out.append(line)
+            continue
+        cur = indent + words[0]
+        for w in words[1:]:
+            cand = f"{cur} {w}"
+            if _MEASURE.textlength(cand, font=FONT_LABEL) <= max_width:
+                cur = cand
+            else:
+                out.append(cur)
+                cur = indent + "  " + w
+        out.append(cur)
+    return out
+
+
+def render_page(title: str, rows: list[dict], entities: list[dict] | None = None,
+                goal: str | None = None) -> tuple[Image.Image, list[dict]]:
     """rows: [{"id","role","label","value","checked"}, ...] in display order.
     Returns (PIL image, elements) where elements carries pixel `frame` boxes
     (x1,y1,x2,y2) matching the rendered layout -- these become CuaTask.elements
     and are what a real visual element detector would also need to recover
     for a real screenshot, so keeping this layout simple/deterministic is
     deliberate.
+
+    `goal`/`entities`, when given, draw a source-record panel between the title
+    bar and the first form row (see `_source_lines`). The panel's height is a
+    pure function of the NUMBER of (wrapped) source lines -- computed before
+    anything is drawn -- so the module's "layout never depends on content
+    length" contract still holds exactly: form-row frames shift by a constant,
+    known offset.
     """
-    height = TITLE_H + MARGIN * 2 + len(rows) * ROW_H
+    src = _source_lines(goal, entities)
+    # Wrap, never truncate: the goal and the turn-semantics line are long, and
+    # ellipsizing them would silently cut the instruction off mid-sentence in the
+    # SCREENSHOT while the text modality saw it in full -- a modality-specific
+    # context-insufficiency asymmetry that would make the multimodal split harder
+    # for a reason that has nothing to do with perception. Wrapping happens before
+    # any drawing, so the fixed-row-height layout contract still holds (the panel's
+    # height is a pure function of the wrapped line COUNT, known up front).
+    src = _wrap_lines(src, PAGE_W - 2 * MARGIN)
+    src_h = (SOURCE_PAD * 2 + len(src) * SOURCE_LINE_H) if src else 0
+    height = TITLE_H + src_h + MARGIN * 2 + len(rows) * ROW_H
     img = Image.new("RGB", (PAGE_W, height), "white")
     draw = ImageDraw.Draw(img)
     draw.rectangle((0, 0, PAGE_W, TITLE_H), fill=(245, 245, 248))
     draw.text((MARGIN, 12), title, font=FONT_TITLE, fill=(20, 20, 20))
 
+    if src:
+        draw.rectangle((0, TITLE_H, PAGE_W, TITLE_H + src_h), fill=(252, 250, 235))
+        draw.line((0, TITLE_H + src_h, PAGE_W, TITLE_H + src_h), fill=(220, 216, 190), width=1)
+        sy = TITLE_H + SOURCE_PAD
+        for line in src:
+            draw.text((MARGIN, sy), _fit_text(draw, line, FONT_LABEL, PAGE_W - 2 * MARGIN),
+                      font=FONT_LABEL, fill=(70, 62, 30))
+            sy += SOURCE_LINE_H
+
     elements = []
-    y = TITLE_H + MARGIN
+    y = TITLE_H + src_h + MARGIN
     for row in rows:
         role, label = row["role"], row["label"]
         if role == "Edit" or role == "Select":
+            label = f"{label} *" if row.get("required") else f"{label} (optional)"
             label_fit = _fit_text(draw, label, FONT_LABEL, PAGE_W - 2 * MARGIN)
             draw.text((MARGIN, y), label_fit, font=FONT_LABEL, fill=(60, 60, 60))
             box = (MARGIN, y + LABEL_DY + 18, PAGE_W - MARGIN, y + LABEL_DY + 18 + BOX_H)
@@ -129,6 +234,7 @@ def render_page(title: str, rows: list[dict]) -> tuple[Image.Image, list[dict]]:
             if row.get("checked"):
                 draw.line((box[0] + 3, box[1] + 9, box[0] + 7, box[3] - 3), fill="white", width=2)
                 draw.line((box[0] + 7, box[3] - 3, box[2] - 2, box[1] + 2), fill="white", width=2)
+            label = f"{label} *" if row.get("required") else label
             label_fit = _fit_text(draw, label, FONT_LABEL, (PAGE_W - MARGIN) - (box[2] + 8))
             draw.text((box[2] + 8, y + (ROW_H - 16) // 2), label_fit, font=FONT_LABEL, fill=(30, 30, 30))
             frame = (box[0], box[1], PAGE_W - MARGIN, box[3])
@@ -147,16 +253,26 @@ def render_page(title: str, rows: list[dict]) -> tuple[Image.Image, list[dict]]:
     return img, elements
 
 
-def render_ax_tree(title: str, rows: list[dict]) -> str:
+def render_ax_tree(title: str, rows: list[dict], entities: list[dict] | None = None,
+                   goal: str | None = None) -> str:
     """A markdown-style synthetic accessibility tree -- same information a real
-    ax-tree capture would carry (role, name, value/checked state)."""
+    ax-tree capture would carry (role, name, value/checked state).
+
+    `goal`/`entities` prepend the user goal and source record (see
+    `_source_lines`) so the `fill (with entity 'ent_N')` options in the candidate
+    set are actually resolvable from the context a model is shown."""
     lines = [f"# {title}", ""]
+    src = _source_lines(goal, entities)
+    if src:
+        lines += src + [""]
     for row in rows:
         role, label = row["role"], row["label"]
         if role in ("Edit", "Select"):
-            lines.append(f"- [{row['id']}] {role} \"{label}\" value=\"{row.get('value', '')}\"")
+            lines.append(f"- [{row['id']}] {role} \"{label}\" value=\"{row.get('value', '')}\""
+                         f" required={bool(row.get('required', False))}")
         elif role == "CheckBox":
-            lines.append(f"- [{row['id']}] {role} \"{label}\" checked={row.get('checked', False)}")
+            lines.append(f"- [{row['id']}] {role} \"{label}\" checked={row.get('checked', False)}"
+                         f" required={bool(row.get('required', False))}")
         else:
             lines.append(f"- [{row['id']}] {role} \"{label}\"")
     return "\n".join(lines)

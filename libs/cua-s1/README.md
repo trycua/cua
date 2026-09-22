@@ -1,19 +1,25 @@
 # Cua-S1
 
 Cua-S1 is a research project for studying small, specialist computer-use
-models. The project is intentionally scoped around models that perform a
-defined class of interface tasks rather than a generally capable computer-use
-agent.
+models, scoped around a defined class of interface tasks rather than a
+generally capable computer-use agent.
 
-The project family currently has three checkpoints:
+The project family currently has four checkpoints:
 
 - `cua-s1-form-v0`, a finetuned, text-only variant of `cua-s1-nano-0.1`
-  specialized for research on form-oriented user-interface tasks;
+  specialized for form-oriented user-interface tasks;
 - `cua-s1-nano-0.1`, a from-scratch, ~855K-parameter option-attention
   classifier that scores every candidate (element, action) option for a
-  screen state in a single forward pass; and
+  screen state in a single forward pass;
 - `cua-s1-4b-0.1`, a LoRA fine-tune on top of the frozen, open-weight
-  `Qwen/Qwen3.5-4B` model for general computer-use element/action decisions.
+  `Qwen/Qwen3.5-4B` model for general computer-use element/action decisions;
+  and
+- `cua-s1-4b-0.2`, a separately trained pair of LoRA adapters on the same
+  frozen `Qwen/Qwen3.5-4B` base, covering both the text and the multimodal
+  modality, each with its own supervised stage and its own reinforcement
+  learning stage against live GUI environments.
+
+`cua-s1-4b-0.2` does not replace `cua-s1-4b-0.1`; both remain published.
 
 None should be treated as a general-purpose assistant or as evidence of
 reliable performance outside its evaluated task and environment boundaries.
@@ -23,8 +29,7 @@ reliable performance outside its evaluated task and environment boundaries.
 Cua-S1 is at an early research stage. This component includes Python model,
 synthetic-data, training, evaluation, and optional Cua Driver integration code.
 It does not include or download model weights, datasets, demo binaries, or
-recordings. No checkpoint performance claim is established by this source-only
-release.
+recordings.
 
 Before evaluating or using a checkpoint, read [`MODEL_CARD.md`](MODEL_CARD.md)
 for its intended scope and limitations and [`SECURITY.md`](SECURITY.md) for
@@ -32,9 +37,7 @@ deployment guidance.
 
 The source code in this component is available under the repository's MIT
 license. That license does not apply to future official model weights,
-datasets, hosted services, or Cua trademarks. A future checkpoint may permit
-research and evaluation while requiring a separate agreement for commercial
-production use; its release must state those artifact-specific terms clearly.
+datasets, hosted services, or Cua trademarks.
 
 ## Python package
 
@@ -58,16 +61,16 @@ print(cua_s1.__version__)
 
 Loading a `tiny`/`tinyx` checkpoint (e.g. `cua-s1-form-v0`) requires a local
 `safetensors` file and matching JSON configuration. Pickle-based PyTorch
-checkpoints are rejected. `cua-s1-4b-0.1` is a LoRA adapter and uses the
-standard PEFT on-disk layout instead (`adapter_config.json` plus
-`adapter_model.safetensors`); see [`cua_s1/four_b.py`](python/src/cua_s1/four_b.py)
-for why that is a different, and still safetensors-only, shape.
+checkpoints are rejected. `cua-s1-4b-0.1` and `cua-s1-4b-0.2` are LoRA
+adapters and use the standard PEFT on-disk layout instead
+(`adapter_config.json` plus `adapter_model.safetensors`, one pair per
+modality under a `text/` and a `multimodal/` subdirectory).
 
 `cua_s1.nano` (the `cua-s1-nano-0.1` architecture) supports a text-only
 context modality with no extra dependencies, and an optional multimodal
 context modality backed by a frozen vision backbone (`smolvlm` or `siglip`,
-selected explicitly via a config field, never an environment variable).
-Install the `nano-vision` extra to use a vision backbone:
+selected explicitly via a config field). Install the `nano-vision` extra to
+use a vision backbone:
 
 ```bash
 uv sync --project libs/cua-s1/python --extra nano-vision
@@ -85,8 +88,7 @@ dedicated, least-privilege directory.
 
 Submission is deliberately narrow: `submit=true` permits at most one
 high-confidence `Button` or `AXButton` whose normalized label is exactly
-`Submit` or `Submit Form`. Other click decisions are omitted. Inspect the
-dry-run plan before enabling both execution flags.
+`Submit` or `Submit Form`.
 
 ## Optional MCP server
 
@@ -125,19 +127,17 @@ entry.
 | `cua-s1-form-v0` | Form-oriented computer-use research (finetuned, text-only variant of `cua-s1-nano-0.1`) | Profile defined; weights not distributed |
 | `cua-s1-nano-0.1` | General closed-option GUI decision research (element + action selection) | Profile defined; weights at [`cua-ai/cua-s1-nano-0.1`](https://huggingface.co/cua-ai/cua-s1-nano-0.1) |
 | `cua-s1-4b-0.1` | General computer-use element/action decisions (LoRA on frozen `Qwen/Qwen3.5-4B`), text and multimodal (screenshot) input | Profile defined; adapter weights at [`cua-ai/cua-s1-4b-0.1`](https://huggingface.co/cua-ai/cua-s1-4b-0.1) |
+| `cua-s1-4b-0.2` | General computer-use element/action decisions (LoRA on frozen `Qwen/Qwen3.5-4B`), text and multimodal (screenshot) input, plus agentic multi-step rollouts in live GUI environments | Profile defined; adapter weights at [`cua-ai/cua-s1-4b-0.2`](https://huggingface.co/cua-ai/cua-s1-4b-0.2) |
 
-Checkpoint-specific release materials should document the exact artifact,
-runtime requirements, evaluation setup, results, and applicable terms. Do not
-assume that results transfer across applications, operating systems, languages,
-layouts, accessibility settings, or task distributions.
+Do not assume that results transfer across applications, operating systems,
+languages, layouts, accessibility settings, or task distributions.
 
 ## Evaluation
 
 The included offline metrics distinguish accuracy, abstention, coverage, wrong
 actions, wrong targets, and actions taken when the expected behavior was to
 abstain. Synthetic train, validation, and test splits are separated by form
-signature. A future checkpoint release must add an untouched holdout, artifact
-hashes, exact environment details, and independently reproducible results.
+signature.
 
 ## Responsible use
 

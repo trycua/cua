@@ -313,10 +313,14 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
         --ignored --exact wayland_overlay_quiesces_and_recovers_after_capture_and_cursor_activity \
         --nocapture --test-threads=1
 
-    # Presentation-timestamp latency evidence. The fixture answers protocol
-    # support without mapping a window first, so a compositor without stable
-    # presentation-time records a typed limitation instead of reporting a
-    # missing measurement as a fast action.
+    # Presentation-timestamp latency evidence. The fixture probe commits one
+    # content update and waits for the compositor to complete its feedback, so
+    # a lane that cannot attribute a presentation records a typed limitation
+    # instead of reporting a missing measurement as a fast action. Advertising
+    # wp_presentation is not enough on its own: a headless wlroots 0.15 session
+    # advertises the protocol and completes no feedback, because no output ever
+    # reaches a real presentation. wlroots 0.17 (the hosted lane's sway 1.9)
+    # completes it in CLOCK_MONOTONIC.
     presentation_fixture="${CUA_TEST_APPS_ROOT}/harness-wayland-presentation/CuaTestHarness.WaylandPresentation"
     presentation_probe="${ARTIFACT_DIR}/wayland-presentation-probe.jsonl"
     rm -f "${presentation_probe}"
@@ -331,9 +335,16 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
           --test wayland_presentation_latency_test -- \
           --ignored --nocapture --test-threads=1
     elif [[ "${presentation_probe_status}" == 3 ]]; then
-      limitation="Compositor does not implement stable wp_presentation; presentation-timestamp latency evidence is unavailable in this lane."
+      presentation_supported="$(jq -r 'select(.kind == "probe") | .presentation_supported // false' \
+        "${presentation_probe}" 2>/dev/null | tail -1)"
+      if [[ "${presentation_supported}" == true ]]; then
+        limitation="Compositor advertises wp_presentation but completed no feedback for a committed content update; presentation-timestamp latency evidence is unavailable in this lane."
+      else
+        limitation="Compositor does not implement stable wp_presentation; presentation-timestamp latency evidence is unavailable in this lane."
+      fi
       jq -n \
         --arg reason "${limitation}" \
+        --slurpfile probe "${presentation_probe}" \
         '{
           schema: "cua-e2e-limitation-v1",
           platform: "linux",
@@ -341,7 +352,8 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
           harness: "wayland-presentation",
           test: "wayland-presentation-latency",
           status: "not_applicable",
-          reason: $reason
+          reason: $reason,
+          probe: ($probe | map(select(.kind == "probe")) | last)
         }' > "${ARTIFACT_DIR}/wayland-presentation-latency-limitation.json"
       echo "[LIMITATION] wayland-presentation-latency: ${limitation}"
     else

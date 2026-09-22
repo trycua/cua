@@ -407,9 +407,20 @@ publish a performance number. Read it accordingly:
   Driver returned before the compositor presented the update;
 - summaries report every sample, median, max, and deadline misses. They report
   no percentiles: one fixture run cannot support them;
-- a compositor without stable presentation-time records a typed limitation
+- a `discarded` row is ordinary compositor behaviour, not a fault: an update
+  superseded within the same refresh is never shown. It is retained as evidence
+  but measures no presentation, so the cell repeats that action instead of
+  counting it, and fails only if it cannot gather its samples at all;
+- a compositor that cannot attribute a presentation records a typed limitation
   (`wayland-presentation-latency-limitation.json`) instead of a missing
-  measurement. The runner decides this from the fixture's own `--probe` mode.
+  measurement. The runner decides this from the fixture's own `--probe` mode,
+  which commits one content update and waits for feedback rather than trusting
+  that the global is advertised. That distinction is load-bearing: a headless
+  wlroots 0.15 session (sway 1.7) advertises `wp_presentation` and completes no
+  feedback, because no output ever reaches a real presentation, so every action
+  would otherwise time out and read as a slow Driver. The hosted lane's sway
+  1.9 (wlroots 0.17) completes feedback in `CLOCK_MONOTONIC`, which is what
+  makes its rows comparable with the fixture's own stamps.
 
 One lane's rows are not a cross-compositor performance claim, and this cell
 changes no desktop action semantics or public Driver contract.

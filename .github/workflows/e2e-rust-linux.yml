@@ -314,3 +314,67 @@ jobs:
           name: rust-linux-matrix-summary
           path: matrix-summary.md
           if-no-files-found: error
+
+  certify:
+    # success() requires every job this one depends on to have succeeded;
+    # combined with the lane=='all' check this keeps certification fail-closed
+    # against both lane failures and diagnostic-lane dispatches.
+    if: success() && github.event_name == 'workflow_dispatch' && inputs.lane == 'all'
+    needs: [source, shared, native, capture, installer]
+    name: "Linux / canonical certification"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Emit canonical certification record
+        shell: bash
+        env:
+          CUA_E2E_REQUESTED_REF: ${{ inputs.ref }}
+          CUA_E2E_SOURCE_SHA: ${{ needs.source.outputs.sha }}
+          CUA_E2E_HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          certified_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          jq -n \
+            --arg schema "cua-driver/e2e-certification/v1" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg workflow "$GITHUB_WORKFLOW" \
+            --arg workflow_ref "$GITHUB_WORKFLOW_REF" \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg event_name "$GITHUB_EVENT_NAME" \
+            --arg platform "linux" \
+            --arg lane "all" \
+            --argjson canonical true \
+            --arg requested_ref "$CUA_E2E_REQUESTED_REF" \
+            --arg source_sha "$CUA_E2E_SOURCE_SHA" \
+            --arg head_sha "$CUA_E2E_HEAD_SHA" \
+            --arg certified_at "$certified_at" \
+            '{
+              schema: $schema,
+              repository: $repository,
+              workflow: $workflow,
+              workflow_ref: $workflow_ref,
+              run_id: $run_id,
+              run_attempt: $run_attempt,
+              event_name: $event_name,
+              platform: $platform,
+              lane: $lane,
+              canonical: $canonical,
+              requested_ref: $requested_ref,
+              source_sha: $source_sha,
+              head_sha: $head_sha,
+              required_jobs: {
+                shared: "success",
+                native: "success",
+                capture: "success",
+                installer: "success"
+              },
+              certified_at: $certified_at
+            }' | tee certification.json
+      - name: Upload canonical certification
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: rust-linux-e2e-certification
+          path: certification.json
+          if-no-files-found: error
+          retention-days: 90

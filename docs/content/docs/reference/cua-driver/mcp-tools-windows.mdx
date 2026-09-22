@@ -16,7 +16,7 @@ This reference describes the **Windows** native tool registry.
 Other platforms: [macOS MCP tools](/reference/cua-driver/mcp-tools), [Linux MCP tools](/reference/cua-driver/mcp-tools-linux).
 See [MCP tool notes](/reference/cua-driver/mcp-tool-notes) for shared guidance.
 
-`cua-driver` exposes 57 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
+`cua-driver` exposes 59 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
 
 Tool names are `snake_case`. Responses are MCP `CallTool.Result` envelopes: a text content block prefixed with a `✅` summary (or the error reason on failure), plus optional image or structured-content blocks on tools that produce them. See the [CLI reference](/reference/cua-driver/cli-reference) for CLI-specific options like `--socket` and `--screenshot-out-file`.
 
@@ -81,7 +81,7 @@ Set `query` to a case-insensitive substring to project BOTH `tree_markdown` and 
 
 Always returns BOTH the element tree AND a screenshot — ground on both and cross-check (the tree lies on some surfaces). Choose the modality at ACTION time: an element ax action (element_index/element_token → accessibility rung) or an element px action (x,y → pixel rung off this screenshot). capture_mode is deprecated and ignored.
 
-The mirror image: pass `include_accessibility_tree:false` to SKIP the UIA walk entirely and return just the screenshot plus window metadata (window_bounds, app_name, window_title) — the capture-only path for a live window preview / picture-in-picture. Setting BOTH `include_accessibility_tree:false` and `include_screenshot:false` is an error. Optional `max_dimension` caps the returned screenshot's long edge in pixels for a cheap thumbnail.
+The mirror image: pass `include_accessibility_tree:false` to SKIP the UIA walk entirely and return just the screenshot plus window metadata (window_bounds, app_name, window_title) — the capture-only path for a live window preview / picture-in-picture. Setting BOTH `include_accessibility_tree:false` and `include_screenshot:false` is an error. Optional `max_image_dimension` overrides the configured screenshot long-edge limit for this call; pass 0 for native resolution. Legacy `max_dimension` remains a cap on the configured limit.
 
 Uses `IUIAutomationCacheRequest` to batch-fetch all element properties in a single COM call (Chrome's ~5000-element tree returns in ~2-3s instead of timing out at 4s with per-property RPCs).
 
@@ -97,8 +97,9 @@ Windows requires no special permissions.
 - `include_accessibility_tree` (boolean, optional): Default true — walk the UIA tree and return `elements` + `tree_markdown` alongside the screenshot. Set false to SKIP the UIA walk entirely and return just the screenshot plus window metadata (window_bounds, app_name, window_title) — the capture-only path for a live window preview / picture-in-picture. Mirrors include_screenshot. Setting BOTH include_accessibility_tree:false AND include_screenshot:false is an error (nothing to return).
 - `include_screenshot` (boolean, optional): Default true — returns a grounding screenshot alongside the tree. Set false to skip the grab and return tree only (the cheap path for re-indexing before an element ax action).
 - `max_depth` (integer, optional): Cap on the UIA-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower for deep menu / Electron trees. range: 1–unbounded
-- `max_dimension` (integer, optional): Optional cap on the returned screenshot's long edge, in pixels (aspect ratio preserved) — the cheap path for a small preview. Applied on top of the configured max_image_dimension ceiling; the tighter wins. Omit for the configured default. range: 1–unbounded
+- `max_dimension` (integer, optional): Legacy optional cap on the returned screenshot's long edge, in pixels (aspect ratio preserved). Applied on top of the configured max_image_dimension ceiling when max_image_dimension is omitted; the tighter wins. range: 1–unbounded
 - `max_elements` (integer, optional): Cap on the total number of UIA nodes walked. Truncates depth-first; markdown and structured elements truncate together. Omit for the default (5 000). Lower for Electron / large web apps that produce 10k+ element trees. range: 1–unbounded
+- `max_image_dimension` (integer, optional): Per-call long-edge limit for the returned screenshot, in pixels (aspect ratio preserved). Explicit values override configured behavior; 0 returns native resolution. Omit to preserve the configured default. range: 0–unbounded
 - `pid` (integer, required): Process ID from `list_apps`.
 - `query` (string, optional): Optional case-insensitive substring. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count.
 - `screenshot_out_file` (string, optional): When set, write the PNG to this file path instead of embedding base64 in the response. The structured output will contain `screenshot_file_path` instead.
@@ -275,6 +276,7 @@ Windows-only convenience: `button: "left"|"right"|"middle"` switches the mouse b
 **Arguments:**
 
 - `button` (string, optional): Mouse button. Default "left".
+- `capture_id` (string, optional): Optional ID from get_window_state or get_desktop_state. When present, x and y are admitted against that exact capture and the ID is consumed before native dispatch.
 - `count` (integer, optional): Click count — 1 (single), 2 (double), 3 (triple). Default 1. range: 1–3
 - `delivery_mode` (string, optional): Input delivery mode. 'background' (default) never swaps foreground: it routes through UIA Invoke / PostMessage and the window is never raised. For targets whose input stack silently drops posted events (Chromium/Electron content, GTK buttons, VCL/LibreOffice accelerators) the tool returns a structured background_unavailable error rather than fronting. 'foreground' is the explicit escalation: a brief SetForegroundWindow swap + SendInput, restoring the prior foreground afterward. IMPORTANT: 'background' is not a hint to weigh — it is the mandatory first attempt. Do NOT pass 'foreground' preemptively because a target 'looks like' GTK/Chromium/Electron; the DRIVER decides when background is impossible and tells you so via a background_unavailable error (or a verified no-op). Only THEN re-issue the same action with 'foreground'. The lists above are the driver's detectors, not a checklist for you to front on a guess — fronting up-front needlessly steals the user's focus and is a bug, not a shortcut. Matches the macOS delivery_mode surface.
 - `element_index` (integer, optional): Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
@@ -571,13 +573,13 @@ Coordinates `x1, y1, x2, y2` are in the same pixel space as the screenshot retur
 
 A 20% padding is automatically added on every side of the requested region so the target remains visible even if the caller's coordinates are slightly off.
 
-After a zoom, pass `from_zoom=true` to click/type_text to auto-translate coordinates back to full-window space.
+After a zoom, pass `from_zoom=true` to click/type_text to auto-translate coordinates back to full-window space. Coordinate actions return `screenshot_context_missing` when the latest snapshot does not contain a screenshot owned by this session. `from_zoom` actions return `zoom_context_missing` when the zoom was never created or was replaced; call `get_window_state`, then `zoom`, again on the same connection.
 
-Windows-specific: `window_id` is the canonical addressing field (HWND). `pid` is also required (used to scope the zoom translation registry, matching Swift's per-pid zoom context).
+Windows-specific: `window_id` is the canonical addressing field (HWND). `pid` is preferred when available; otherwise the driver resolves the unique current snapshot owned by this session and window.
 
 **Arguments:**
 
-- `pid` (integer, optional): Target process ID. Validated in code (an explicit "Missing required integer field pid" error when absent); kept out of `required` to match the shared cross-platform zoom contract.
+- `pid` (integer, optional): Optional target process ID. When omitted, the unique current snapshot for this session and HWND is used.
 - `window_id` (integer, required): HWND of the target window.
 - `x1` (number, required): Left edge of the region (resized-image pixels).
 - `x2` (number, required): Right edge of the region (resized-image pixels).
@@ -1124,3 +1126,29 @@ Deprecated compatibility alias that reads a live legacy session's capture policy
 
 - `session` (string, optional): Optional public label. When omitted, inspect the caller's attached
 implicit session.
+
+### `install_extension`
+
+Preview or install one Driver-managed optional extension. The first call without confirm returns the exact signed artifact, destination, license, source, and trust plan without mutation. Re-call with confirm=true to perform that exact verified installation.
+
+**Arguments:**
+
+- `confirm` (boolean, optional): Install the previewed extension. Omit or false for a read-only plan.
+- `name` (string, required)
+
+```json
+{"name":"perception"}
+```
+
+### `parse_visual_regions`
+
+Parse one immutable registered capture into model-neutral text and icon regions.
+
+**Arguments:**
+
+- `capture_id` (string, required)
+- `options` (object, optional): Optional, model-neutral controls for one bounded parse. default: `{}`
+
+```json
+{"capture_id":"example"}
+```

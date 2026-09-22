@@ -837,6 +837,33 @@ fi
             workflow,
         )
 
+    def test_full_archive_packaging_requires_repository_license(self) -> None:
+        workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
+        self.assertTrue((REPO_ROOT / "LICENSE.md").is_file())
+
+        job_boundaries = (
+            ("build-linux", "build-windows"),
+            ("build-windows", "verify-windows-node-runtime"),
+            ("build-macos-universal", "build-hyprland-plugin-source"),
+        )
+        expected_copies = (
+            'cp ../../../LICENSE.md "release/${STAGE}/LICENSE"',
+            'Copy-Item "../../../LICENSE.md" "release/$stage/LICENSE" -ErrorAction Stop',
+            'cp ../../../LICENSE.md "release/${STAGE}/LICENSE"',
+        )
+        for (job, next_job), expected_copy in zip(job_boundaries, expected_copies):
+            with self.subTest(job=job):
+                job_block = workflow.split(f"  {job}:\n", 1)[1].split(
+                    f"\n  {next_job}:\n", 1
+                )[0]
+                package_block = job_block.split("      - name: Package\n", 1)[1].split(
+                    "\n      - uses: actions/upload-artifact", 1
+                )[0]
+                self.assertIn(expected_copy, package_block)
+                self.assertNotIn("2>/dev/null", package_block)
+                self.assertNotIn("|| true", package_block)
+                self.assertNotIn("Test-Path", package_block)
+
     def test_driver_release_blocks_on_packaged_mcp_client_discovery(self) -> None:
         workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
         ci_workflow = self.read(
@@ -887,10 +914,10 @@ fi
         self.assertEqual(
             len(expected["baseTools"]), len(set(expected["baseTools"]))
         )
-        self.assertEqual(len(expected["baseTools"]), 56)
+        self.assertEqual(len(expected["baseTools"]), 58)
         self.assertEqual(
             expected["outputSchemaCountByPlatform"],
-            {"darwin": 34, "linux": 38, "win32": 34},
+            {"darwin": 35, "linux": 39, "win32": 35},
         )
         self.assertEqual(
             expected["platformTools"],

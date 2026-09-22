@@ -9,6 +9,32 @@
     ".github/workflows/nightly-component-plan.yml"
   ],
   "components": {
+    "cua-perception": {
+      "releasePleasePath": "libs/cua-driver/rust/crates/cua-perception",
+      "displayName": "Cua Perception",
+      "stableTagPrefix": "cua-perception-v",
+      "nightlyTagPrefix": "nightly-cua-perception-v",
+      "versionAuthorityFile": "libs/cua-driver/rust/crates/cua-perception/VERSION",
+      "changelog": "libs/cua-driver/rust/crates/cua-perception/CHANGELOG.md",
+      "builderWorkflow": ".github/workflows/cd-cua-perception-candidate.yml",
+      "changeDetectionPaths": [
+        "libs/cua-driver/rust/crates/cua-perception",
+        ".github/releases/cua-perception",
+        ".github/scripts/perception_release.py",
+        ".github/workflows/cd-cua-perception-candidate.yml"
+      ],
+      "buildVersionSites": [
+        {
+          "kind": "plain",
+          "path": "libs/cua-driver/rust/crates/cua-perception/VERSION"
+        }
+      ],
+      "candidateOnly": true,
+      "channels": {
+        "nightly": false,
+        "registries": []
+      }
+    },
     "cua-driver-rs": {
       "releasePleasePath": "libs/cua-driver",
       "displayName": "Cua Driver",
@@ -22,6 +48,15 @@
         ".github/scripts/verify_cua_driver_release_archives.py",
         ".github/workflows/cd-rust-cua-driver.yml",
         ".github/workflows/nightly-cua-driver.yml"
+      ],
+      "changeDetectionExcludePaths": [
+        "libs/cua-driver/examples",
+        "libs/cua-driver/rust/crates/cua-perception",
+        "libs/cua-driver/experiments/cua-perception-inference"
+      ],
+      "changeDetectionCompanionPaths": [
+        "libs/cua-driver/rust/Cargo.toml",
+        "libs/cua-driver/rust/Cargo.lock"
       ],
       "buildVersionSites": [
         {

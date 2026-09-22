@@ -29,10 +29,10 @@ def choose_bounded_with_typesafe(
     from typesafe_sdk import Choice
 
     response = client.system_one(
-        state={"goal": goal, "observation": dict(observation)},
+        state={"observation": dict(observation)},
         questions={
             "candidate": Choice(
-                instructions="Select exactly one supplied candidate ID.",
+                instructions=goal,
                 criteria=dict(criteria),
             )
         },

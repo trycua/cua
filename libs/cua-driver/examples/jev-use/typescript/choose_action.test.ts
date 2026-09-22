@@ -54,6 +54,8 @@ test('bounded chooser uses the SDK and preserves provider model identity', async
     new Set(Object.keys(sent?.questions.candidate.criteria)),
     new Set(['submit-form', 'reobserve', 'abstain'])
   );
+  assert.equal(sent?.questions.candidate.instructions, request().goal);
+  assert.deepEqual(Object.keys(sent?.state ?? {}), ['observation']);
   const observation = JSON.parse(sent?.state.observation);
   assert.equal(observation.capture_id, 'capture-fixture-1');
   assert.equal(observation.regions[0].id, 'submit-text');

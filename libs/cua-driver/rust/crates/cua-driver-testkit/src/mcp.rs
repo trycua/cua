@@ -25,6 +25,7 @@ use crate::CALL_TIMEOUT;
 pub struct McpDriver {
     reaper: ChildReaper,
     _daemon: Option<TestDaemon>,
+    socket: String,
     stdin: ChildStdin,
     rx: Receiver<String>,
     next_id: u32,
@@ -45,6 +46,11 @@ impl McpDriver {
     /// caller's test should early-return so an un-built binary skips, not fails.
     pub fn spawn() -> Option<Self> {
         Self::spawn_internal(&[], &[], None, false, true)
+    }
+
+    /// Spawn through the exact binary selected by the caller.
+    pub fn spawn_with_binary(bin: impl Into<PathBuf>) -> Option<Self> {
+        Self::spawn_internal_with_binary(bin.into(), &[], &[], None, false, true)
     }
 
     /// Spawn the driver with a stable recording label for artifact naming.
@@ -97,12 +103,34 @@ impl McpDriver {
         Self::spawn_internal(&[], &["mcp", "--socket", socket], None, false, false)
     }
 
+    pub fn spawn_peer_unrecorded(&self) -> Option<Self> {
+        Self::spawn_daemon_proxy_unrecorded(&self.socket)
+    }
+
     /// Spawn the driver with extra environment variables set on the child.
     pub fn spawn_with_env(env: &[(&str, &str)]) -> Option<Self> {
         Self::spawn_internal(env, &[], None, false, true)
     }
 
     fn spawn_internal(
+        env: &[(&str, &str)],
+        args: &[&str],
+        recording_label: Option<&str>,
+        overlay_enabled: bool,
+        prepare_recording: bool,
+    ) -> Option<Self> {
+        Self::spawn_internal_with_binary(
+            driver_binary(),
+            env,
+            args,
+            recording_label,
+            overlay_enabled,
+            prepare_recording,
+        )
+    }
+
+    fn spawn_internal_with_binary(
+        bin: PathBuf,
         env: &[(&str, &str)],
         args: &[&str],
         recording_label: Option<&str>,
@@ -124,7 +152,6 @@ impl McpDriver {
                 ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
             ]);
         }
-        let bin = driver_binary();
         if !bin.exists() {
             eprintln!("[testkit] driver binary not built at {bin:?} — skipping");
             return None;
@@ -188,9 +215,18 @@ impl McpDriver {
             }
         });
 
+        let socket = daemon
+            .as_ref()
+            .map(|daemon| daemon.socket.clone())
+            .or_else(|| {
+                args.windows(2)
+                    .find(|pair| pair[0] == "--socket")
+                    .map(|pair| pair[1].to_owned())
+            })?;
         let mut d = McpDriver {
             reaper,
             _daemon: daemon,
+            socket,
             stdin,
             rx,
             next_id: 2,

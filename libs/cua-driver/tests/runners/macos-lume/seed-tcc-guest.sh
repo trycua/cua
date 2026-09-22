@@ -154,8 +154,14 @@ if ! REQUIREMENT_INFO="$(/usr/bin/codesign -d -r- "${SIGN_TARGET}" 2>&1)"; then
 fi
 REQUIREMENT="$(/usr/bin/awk -F 'designated => ' '/^(# )?designated =>/ { print $2; exit }' <<< "${REQUIREMENT_INFO}")"
 [[ -n "${REQUIREMENT}" ]] || fail "could not read designated requirement from ${SIGN_TARGET}"
-if [[ "${ALLOW_ADHOC}" != 1 && "${REQUIREMENT}" != *"certificate leaf"* ]]; then
-  fail "${SIGN_TARGET} is not signed with a certificate-backed identity; rerun install-local with --require-stable-signing or pass --allow-adhoc for a one-build-only grant"
+if [[ "${ALLOW_ADHOC}" != 1 ]]; then
+  if printf '%s\n' "${CODESIGN_INFO}" | /usr/bin/grep -q '^Signature=adhoc$'; then
+    fail "${SIGN_TARGET} has an ad hoc signature; rerun install-local with --require-stable-signing, or use --allow-adhoc only for an explicitly authorized one-build grant"
+  fi
+  if ! printf '%s\n' "${REQUIREMENT}" |
+    /usr/bin/grep -Eq 'certificate (leaf|root) = H"[[:xdigit:]]{40}"'; then
+    fail "${SIGN_TARGET} is not signed with a certificate-backed identity; expected its designated requirement to bind a certificate leaf or root hash"
+  fi
 fi
 
 CSREQ_TMPDIR="$(/usr/bin/mktemp -d /tmp/cua-driver-tcc-csreq.XXXXXX)"
@@ -179,7 +185,7 @@ if [[ "$(/usr/bin/id -u)" -ne 0 ]]; then
     fi
     printf '%s\n' "${SUDO_PASSWORD_CACHE}" | /usr/bin/sudo -S -p '' -v >/dev/null
   else
-    fail "sudo is required to write ${TCC_DB}; pass the password through the host wrapper or run as root"
+    fail "non-interactive sudo preflight failed (no active sudo timestamp or NOPASSWD rule); pass the password through the host wrapper, configure narrowly scoped NOPASSWD sudo for this disposable guest, or run as root"
   fi
 fi
 

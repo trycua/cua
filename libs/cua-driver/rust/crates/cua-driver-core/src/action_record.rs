@@ -1854,6 +1854,22 @@ mod tests {
     }
 
     #[test]
+    fn foreground_macos_drag_path_uses_hid_transport() {
+        let record = ActionExecutionRecord::from_legacy(
+            "drag",
+            &serde_json::json!({"delivery_mode": "foreground"}),
+            &serde_json::json!({
+                "path": "cgevent_hid",
+                "effect": "unverifiable",
+            }),
+        )
+        .expect("foreground macOS drag should normalize");
+
+        assert_eq!(record.transport, ActionTransport::MacosCgEventHid);
+        assert_eq!(record.actual_delivery, Some(ActualDelivery::Foreground));
+    }
+
+    #[test]
     fn every_legacy_text_only_action_is_conservatively_unverifiable() {
         let tools = [
             "click",

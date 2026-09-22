@@ -49,7 +49,7 @@ struct PendingCapture<R> {
     bytes: Vec<u8>,
 }
 
-impl PendingCapture<ToolResponse> {
+impl PendingCapture<(ToolResponse, McpDriver)> {
     fn start(directory: &Path, pid: u32, window: u64, response_path: PathBuf) -> Self {
         let path = directory.join("pending.png.pipe");
         let reader = fifo_reader(&path);
@@ -73,7 +73,7 @@ impl PendingCapture<ToolResponse> {
                 serde_json::to_vec_pretty(&response.raw).unwrap(),
             )
             .unwrap();
-            response
+            (response, driver)
         });
         Self {
             reader: Some(reader),
@@ -312,7 +312,7 @@ fn harness_appkit_pending_snapshot_cannot_retarget_token() {
             serde_json::to_vec_pretty(&after_old).unwrap(),
         )
         .unwrap();
-        let second = capture.finish(&output.join("snapshot-pending.png"));
+        let (second, _publication_driver) = capture.finish(&output.join("snapshot-pending.png"));
         assert!(
             !second.is_error(),
             "replacement native snapshot: {}",

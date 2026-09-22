@@ -1821,11 +1821,58 @@ fn deepest_child_at_point(
     Ok((window, local_x, local_y))
 }
 
-fn resolve_event_target(conn: &RustConnection, xid: u64, x: i32, y: i32) -> Result<EventTarget> {
+fn window_path_at_point(
+    conn: &RustConnection,
+    window: Window,
+    local_x: i32,
+    local_y: i32,
+) -> Result<Vec<(Window, i32, i32, EventMask)>> {
+    let attributes = conn.get_window_attributes(window)?.reply()?;
+    let mut path = vec![(window, local_x, local_y, attributes.all_event_masks)];
+    let tree = conn.query_tree(window)?.reply()?;
+    for child in tree.children.iter().rev() {
+        let Ok(geom) = conn.get_geometry(*child)?.reply() else {
+            continue;
+        };
+        if !point_in_rect(local_x, local_y, &geom) {
+            continue;
+        }
+        let child_x = local_x - geom.x as i32;
+        let child_y = local_y - geom.y as i32;
+        path.extend(window_path_at_point(conn, *child, child_x, child_y)?);
+        break;
+    }
+    Ok(path)
+}
+
+fn deepest_event_target(
+    path: &[(Window, i32, i32, EventMask)],
+    required_masks: EventMask,
+) -> (Window, i32, i32) {
+    path.iter()
+        .rev()
+        .find(|(_, _, _, selected)| selected.contains(required_masks))
+        .or_else(|| path.last())
+        .map(|&(window, x, y, _)| (window, x, y))
+        .expect("window path always contains its toplevel")
+}
+
+fn click_event_target(path: &[(Window, i32, i32, EventMask)]) -> (Window, i32, i32) {
+    deepest_event_target(path, EventMask::BUTTON_PRESS)
+}
+
+fn build_event_target(
+    conn: &RustConnection,
+    xid: u64,
+    x: i32,
+    y: i32,
+    window: Window,
+    local_x: i32,
+    local_y: i32,
+) -> Result<EventTarget> {
     let top = xid as Window;
     let root = conn.setup().roots[0].root;
     let root_pos = conn.translate_coordinates(top, root, 0, 0)?.reply()?;
-    let (window, local_x, local_y) = deepest_child_at_point(conn, top, x, y)?;
     Ok(EventTarget {
         window,
         local_x: local_x as i16,
@@ -1833,6 +1880,28 @@ fn resolve_event_target(conn: &RustConnection, xid: u64, x: i32, y: i32) -> Resu
         root_x: (root_pos.dst_x as i32 + x) as i16,
         root_y: (root_pos.dst_y as i32 + y) as i16,
     })
+}
+
+fn resolve_event_target(conn: &RustConnection, xid: u64, x: i32, y: i32) -> Result<EventTarget> {
+    let top = xid as Window;
+    let (window, local_x, local_y) = deepest_child_at_point(conn, top, x, y)?;
+    build_event_target(conn, xid, x, y, window, local_x, local_y)
+}
+
+fn resolve_click_event_target(
+    conn: &RustConnection,
+    xid: u64,
+    x: i32,
+    y: i32,
+) -> Result<EventTarget> {
+    let top = xid as Window;
+    let path = window_path_at_point(conn, top, x, y)?;
+    // Button bindings commonly select only ButtonPress (Tk's <Button-1> is one
+    // example). Route the complete synthetic click to that same client-owned
+    // window: splitting release onto a different geometric leaf does not form a
+    // coherent toolkit click sequence.
+    let target = click_event_target(&path);
+    build_event_target(conn, xid, x, y, target.0, target.1, target.2)
 }
 
 fn button_state_mask(button: u8) -> KeyButMask {
@@ -1923,7 +1992,7 @@ pub fn send_click_with_modifiers(
     let modifier_state = modifiers_to_state(modifiers);
 
     for _ in 0..count {
-        let target = resolve_event_target(&conn, xid, x, y)?;
+        let target = resolve_click_event_target(&conn, xid, x, y)?;
         let press = ButtonPressEvent {
             response_type: BUTTON_PRESS_EVENT,
             detail: button,
@@ -1958,10 +2027,14 @@ pub fn send_click_with_modifiers(
             same_screen: true,
         };
 
-        conn.send_event(false, target.window, EventMask::BUTTON_PRESS, &press)?;
+        // The event mask selects recipients independently of the payload type.
+        // Select the press client for both payloads so a press-only toolkit
+        // binding (such as Tk's <Button-1>) receives one coherent click.
+        conn.send_event(false, target.window, EventMask::BUTTON_PRESS, &press)?
+            .check()?;
         sleep(Duration::from_millis(CLICK_DELAY_MS));
-        conn.send_event(false, target.window, EventMask::BUTTON_RELEASE, &release)?;
-        conn.flush()?;
+        conn.send_event(false, target.window, EventMask::BUTTON_PRESS, &release)?
+            .check()?;
 
         if count > 1 {
             sleep(Duration::from_millis(80));
@@ -2967,13 +3040,61 @@ exit 0"#,
 #[cfg(test)]
 mod path_tests {
     use super::{
-        create_uinput_pointer, ensure_master_pointer_for_session, guarded_uinput_creation,
-        is_uinput_unavailable, kde_x11_uinput_hotplug_is_unsafe, master_pointer_name,
-        modifiers_to_state, normalize_uinput_device_name, path_cumulative, point_on_path,
-        real_pointer_capabilities_available, sample_function, slave_pointer_name,
+        click_event_target, create_uinput_pointer, ensure_master_pointer_for_session,
+        guarded_uinput_creation, is_uinput_unavailable, kde_x11_uinput_hotplug_is_unsafe,
+        master_pointer_name, modifiers_to_state, normalize_uinput_device_name, path_cumulative,
+        point_on_path, real_pointer_capabilities_available, sample_function, slave_pointer_name,
         EVDEV_UINPUT_NAME_MAX_BYTES, UINPUT_POINTER_SUFFIX,
     };
-    use x11rb::protocol::xproto::KeyButMask;
+    use x11rb::protocol::xproto::{EventMask, KeyButMask};
+
+    #[test]
+    fn synthetic_click_keeps_release_on_press_recipient() {
+        let path = [
+            (
+                10,
+                394,
+                220,
+                EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE,
+            ),
+            (11, 24, 30, EventMask::BUTTON_PRESS),
+            (12, 6, 8, EventMask::BUTTON_RELEASE),
+        ];
+
+        assert_eq!(click_event_target(&path), (11, 24, 30));
+    }
+
+    #[test]
+    fn synthetic_click_uses_deepest_common_target_for_both_events() {
+        let path = [
+            (
+                10,
+                394,
+                220,
+                EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE,
+            ),
+            (
+                11,
+                24,
+                30,
+                EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE,
+            ),
+            (12, 6, 8, EventMask::NO_EVENT),
+        ];
+
+        assert_eq!(click_event_target(&path), (11, 24, 30));
+    }
+
+    #[test]
+    fn synthetic_click_preserves_recipient_local_coordinates_and_event_fallback() {
+        let path = [
+            (10, 394, 220, EventMask::BUTTON_PRESS),
+            (11, 24, 30, EventMask::NO_EVENT),
+            (12, 6, 8, EventMask::NO_EVENT),
+        ];
+
+        assert_eq!(click_event_target(&path), (10, 394, 220));
+    }
 
     #[test]
     fn click_modifier_state_combines_canonical_names_and_aliases() {

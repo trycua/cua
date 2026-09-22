@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 from pathlib import Path
 
 
@@ -11,6 +12,15 @@ PACKAGE_ROOT = Path(__file__).parents[1]
 FIXTURE = (
     PACKAGE_ROOT.parent / "compat-fixtures" / "python-package.json"
 )
+
+# UniFFI tags ClickPosition by declaration order. cua-driver-rs-v0.28.2 released
+# 1=COORDINATES and 2=ELEMENT; new variants may only be appended. The generated
+# binding check in CI ties this list back to the Rust declaration order.
+RELEASED_CLICK_POSITION_ORDINALS = [
+    (1, "COORDINATES"),
+    (2, "ELEMENT"),
+    (3, "CAPTURED_COORDINATES"),
+]
 
 
 def _module(path: Path) -> ast.Module:
@@ -77,6 +87,26 @@ def test_current_native_window_methods_have_typed_outputs() -> None:
             f"async {name}(self, input: cua_driver._native_contract.{input_type})"
             f" -> cua_driver._native_contract.{output_type}"
         )
+
+
+def test_click_position_preserves_released_uniffi_ordinals() -> None:
+    generated = (
+        PACKAGE_ROOT / "src" / "cua_driver" / "_native_contract.py"
+    ).read_text(encoding="utf-8")
+    converter = re.search(
+        r"class _UniffiFfiConverterTypeClickPosition\b.*?def check_lower",
+        generated,
+        re.S,
+    )
+    assert converter, "ClickPosition converter missing from the generated bindings"
+    observed = [
+        (int(ordinal), variant)
+        for ordinal, variant in re.findall(
+            r"if variant == (\d+):\s*return ClickPosition\.(\w+)\(",
+            converter.group(0),
+        )
+    ]
+    assert observed == RELEASED_CLICK_POSITION_ORDINALS
 
 
 def test_released_python_exports_and_signatures_remain_available() -> None:

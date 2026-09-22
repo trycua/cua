@@ -167,11 +167,11 @@ pub fn would_be_silently_dropped(hwnd: u64, kind: EventKind) -> bool {
         return wpf_drops_event(kind, target_is_foreground(hwnd));
     }
     if is_tk_target_window(hwnd) {
-        // Tk's Windows event loop does not treat posted WM_CHAR/WM_KEYDOWN as
-        // genuine keyboard input for the focused widget. The messages can be
-        // accepted by PostMessage while the Entry receives nothing, so refuse
-        // instead of reporting a false background success.
-        return matches!(kind, Keystroke | KeyCombo | TextInput);
+        // Tk derives button transitions from GetKeyState rather than trusting
+        // a posted WM_*BUTTON message. PostMessage therefore reports success
+        // without producing a Tk ButtonPress, just as posted key messages can
+        // be accepted without reaching the focused widget.
+        return tk_drops_event(kind);
     }
     // NB: WinUI3 (`WinUIDesktopWin32WindowClass`) is deliberately NOT flagged
     // here. It looks WPF-like, but its composition input-site does NOT consume
@@ -210,6 +210,13 @@ pub fn would_be_silently_dropped(hwnd: u64, kind: EventKind) -> bool {
 fn wpf_drops_event(kind: EventKind, target_is_foreground: bool) -> bool {
     matches!(kind, EventKind::MouseClick | EventKind::MouseMove)
         || (!target_is_foreground && matches!(kind, EventKind::Keystroke | EventKind::KeyCombo))
+}
+
+fn tk_drops_event(kind: EventKind) -> bool {
+    matches!(
+        kind,
+        EventKind::MouseClick | EventKind::Keystroke | EventKind::KeyCombo | EventKind::TextInput
+    )
 }
 
 fn target_is_foreground(hwnd: u64) -> bool {
@@ -414,6 +421,17 @@ mod tests {
         assert!(!wpf_drops_event(EventKind::TextInput, false));
         assert!(!wpf_drops_event(EventKind::MouseScroll, false));
     }
+
+    #[test]
+    fn tk_refuses_posted_clicks_and_keyboard_events() {
+        assert!(tk_drops_event(EventKind::MouseClick));
+        assert!(tk_drops_event(EventKind::Keystroke));
+        assert!(tk_drops_event(EventKind::KeyCombo));
+        assert!(tk_drops_event(EventKind::TextInput));
+        assert!(!tk_drops_event(EventKind::MouseMove));
+        assert!(!tk_drops_event(EventKind::MouseScroll));
+    }
+
     #[test]
     fn delivery_mode_parses_known_values() {
         let j = |s: &str| serde_json::json!({"delivery_mode": s});

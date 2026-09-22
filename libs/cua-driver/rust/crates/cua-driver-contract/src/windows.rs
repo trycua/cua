@@ -19,6 +19,9 @@ fn pid_schema(_: &mut SchemaGenerator) -> Schema {
 fn positive_integer_schema(_: &mut SchemaGenerator) -> Schema {
     json_schema!({"type":"integer", "minimum":1})
 }
+fn nonnegative_integer_schema(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({"type":"integer", "minimum":0})
+}
 
 fn nullable_pid_schema(_: &mut SchemaGenerator) -> Schema {
     json_schema!({"type":["integer","null"], "minimum":0, "maximum":4294967295_u64})
@@ -89,6 +92,11 @@ pub struct GetWindowStateInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "positive_integer_schema")]
     pub max_dimension: Option<u32>,
+    /// Optional per-call long-edge ceiling. Zero requests native resolution;
+    /// omit it to preserve the configured session or global behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "nonnegative_integer_schema")]
+    pub max_image_dimension: Option<u32>,
 }
 
 impl ToolInput for GetWindowStateInput {
@@ -398,6 +406,21 @@ mod tests {
             GetWindowStateInput::input_schema()["properties"]["max_elements"]["minimum"],
             1
         );
+        assert_eq!(
+            GetWindowStateInput::input_schema()["properties"]["max_image_dimension"]["minimum"],
+            0
+        );
+        assert_eq!(
+            GetWindowStateInput::input_schema()["properties"]["max_dimension"]["minimum"],
+            1
+        );
+        let native_resolution: GetWindowStateInput = serde_json::from_value(json!({
+            "pid": 7,
+            "window_id": 9,
+            "max_image_dimension": 0
+        }))
+        .unwrap();
+        native_resolution.validate().unwrap();
         assert_eq!(ListAppsInput::input_schema()["properties"], json!({}));
     }
 

@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cua.ai/schemas/visual-perception-derived-reel-v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "identity", "sources", "edit_operations", "recording", "artifacts"],
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "sha40": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "safeId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$"},
+    "range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start_ms", "end_ms"],
+      "properties": {
+        "start_ms": {"type": "integer", "minimum": 0},
+        "end_ms": {"type": "integer", "minimum": 1}
+      }
+    }
+  },
+  "properties": {
+    "schema": {"const": "cua-visual-perception-derived-reel/v1"},
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_sha", "jev_source_sha", "fixture", "chooser_provider"],
+      "properties": {
+        "source_sha": {"$ref": "#/$defs/sha40"},
+        "jev_source_sha": {"$ref": "#/$defs/sha40"},
+        "fixture": {"const": "visual-only-canvas/v1"},
+        "chooser_provider": {"const": "typesafe"}
+      }
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "platform", "evidence_manifest_sha256", "recording_sha256", "duration_ms", "used_ranges", "removed_wait_ranges"],
+        "properties": {
+          "id": {"$ref": "#/$defs/safeId"},
+          "platform": {"enum": ["windows", "linux-x11", "macos"]},
+          "evidence_manifest_sha256": {"$ref": "#/$defs/sha256"},
+          "recording_sha256": {"$ref": "#/$defs/sha256"},
+          "duration_ms": {"type": "integer", "minimum": 1},
+          "used_ranges": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/range"}},
+          "removed_wait_ranges": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["start_ms", "end_ms", "disclosure"],
+              "properties": {
+                "start_ms": {"type": "integer", "minimum": 0},
+                "end_ms": {"type": "integer", "minimum": 1},
+                "disclosure": {"const": "wait-only interval removed; no action or result omitted"}
+              }
+            }
+          }
+        }
+      }
+    },
+    "edit_operations": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["operation", "source_id", "source_start_ms", "source_end_ms", "reel_start_ms", "reel_end_ms", "speed"],
+            "properties": {
+              "operation": {"const": "trim"},
+              "source_id": {"$ref": "#/$defs/safeId"},
+              "source_start_ms": {"type": "integer", "minimum": 0},
+              "source_end_ms": {"type": "integer", "minimum": 1},
+              "reel_start_ms": {"type": "integer", "minimum": 0},
+              "reel_end_ms": {"type": "integer", "minimum": 1},
+              "speed": {"const": "1x"}
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["operation", "shot_count"],
+            "properties": {
+              "operation": {"const": "concatenate"},
+              "shot_count": {"type": "integer", "minimum": 2}
+            }
+          }
+        ]
+      }
+    },
+    "recording": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expected_duration_ms", "decoded_duration_ms", "fully_decoded", "final_sha256", "size_bytes"],
+      "properties": {
+        "expected_duration_ms": {"type": "integer", "minimum": 1},
+        "decoded_duration_ms": {"type": "integer", "minimum": 1},
+        "fully_decoded": {"const": true},
+        "final_sha256": {"$ref": "#/$defs/sha256"},
+        "size_bytes": {"type": "integer", "minimum": 1, "maximum": 104857600}
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "path", "sha256", "size_bytes"],
+        "properties": {
+          "kind": {"const": "video"},
+          "path": {"const": "reel.mp4"},
+          "sha256": {"$ref": "#/$defs/sha256"},
+          "size_bytes": {"type": "integer", "minimum": 1, "maximum": 104857600}
+        }
+      }
+    }
+  }
+}

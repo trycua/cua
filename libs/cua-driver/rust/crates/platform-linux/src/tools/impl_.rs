@@ -1987,6 +1987,13 @@ fn spawn_launch_command(cmd: &str, additional_arguments: &[String]) -> std::io::
     let mut launch = std::process::Command::new(prog);
     launch
         .args(&rest)
+        // The child must not inherit the driver's stdio: in private-worker mode
+        // stdout is the JSON-RPC stream to the SDK, and a chatty app (Chromium's
+        // zygote logs, GTK warnings) writing there corrupts a response and shuts
+        // the worker down.
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         // Enable accessibility for this child without toggling GNOME's global
         // ScreenReaderEnabled setting (which can launch Orca). Native
         // toolkits ignore these when they do not need them.

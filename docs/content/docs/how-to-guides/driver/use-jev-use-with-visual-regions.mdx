@@ -1,0 +1,52 @@
+---
+title: 'Use jev-use with visual regions'
+description: 'Connect an external bounded action chooser without giving it Cua Driver authority.'
+---
+
+Use this boundary when an external `jev-use` recipe should select the next
+action while Cua Driver retains capture and input authority. Provider setup,
+credentials, billing, and request construction belong to the external recipe;
+this guide defines only the Driver-facing contract.
+
+## Build candidates locally
+
+Keep one persistent Driver MCP connection or typed SDK runtime. Capture the
+exact native window with `get_window_state`, parse its `capture_id` with
+`parse_visual_regions`, and validate the result against the returned source,
+PNG dimensions, and coordinate mapping.
+
+Construct a small immutable candidate table locally. Each executable candidate
+contains an opaque ID and one complete Driver action. A visual pixel candidate
+must include `x`, `y`, the exact target, `delivery_mode`, and the same
+`capture_id`. Include `reobserve` and `abstain` IDs when the observation can be
+ambiguous or stale. Prefer a current accessibility element or typed browser ref
+when it identifies the same control.
+
+Send the external chooser only the task context and bounded candidate IDs and
+descriptions that the workflow permits. Do not give it a Driver tool name,
+free-form arguments, credentials, or permission to invent coordinates.
+
+## Dispatch one selected ID
+
+Accept exactly one returned candidate ID. Reject an unknown, duplicated, or
+malformed choice. For an executable ID, dispatch the prebuilt Driver action
+unchanged. Never reconstruct it from provider prose, and never remove the
+capture ID after a stale or mismatched-capture refusal.
+
+At most one action may derive from a capture. Reobserve after every action
+attempt, timeout, unknown result, or refusal, then rebuild the candidate table
+from fresh state. Verify completion from current semantic or application state;
+a provider choice or delivered click is not proof of the postcondition.
+
+## Preserve delivery limits
+
+Window perception does not grant background input support. A
+`background_unavailable` result is a refusal, not permission to retry in the
+foreground. Foreground delivery and desktop input can take focus or move the
+system cursor and require the workflow's existing authorization.
+
+If `parse_visual_regions` is absent or returns `not_installed`, continue with
+semantic evidence, reobserve, or abstain. Do not install the extension as a
+side effect of a chooser request. See [Parse visual regions with Cua
+Driver](/how-to-guides/driver/parse-visual-regions) for the explicit extension
+lifecycle and artifact obligations.

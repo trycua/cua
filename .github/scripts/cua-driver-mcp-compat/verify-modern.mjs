@@ -45,6 +45,7 @@ const expectedFiles = [
   'RECORDING.md',
   'RUNTIME.md',
   'SKILL.md',
+  'VISUAL.md',
   'WINDOWS.md',
   'WORKFLOW.md',
 ];

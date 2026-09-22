@@ -507,7 +507,7 @@ fn is_windowless_desktop_action(args: &serde_json::Value) -> bool {
     has_num("x") && has_num("y")
 }
 
-// ── DriverConfig + ResizeRegistry + ZoomRegistry ─────────────────────────────
+// ── DriverConfig + ZoomRegistry ─────────────────────────────────────────────
 
 #[derive(Clone)]
 pub struct DriverConfig {
@@ -547,83 +547,67 @@ pub fn load_driver_config() -> DriverConfig {
     cfg
 }
 
-pub struct ResizeRegistry {
-    ratios: std::sync::Mutex<std::collections::HashMap<u32, f64>>,
-}
-
-impl ResizeRegistry {
-    pub fn new() -> Self {
-        Self {
-            ratios: std::sync::Mutex::new(Default::default()),
-        }
-    }
-    pub fn set_ratio(&self, pid: u32, ratio: f64) {
-        self.ratios.lock().unwrap().insert(pid, ratio);
-    }
-    pub fn clear_ratio(&self, pid: u32) {
-        self.ratios.lock().unwrap().remove(&pid);
-    }
-    pub fn ratio(&self, pid: u32) -> Option<f64> {
-        self.ratios.lock().unwrap().get(&pid).copied()
-    }
-}
-
-/// Per-process zoom context — stores padded crop origin and resize scale from
-/// the most recent `zoom` call so `click(from_zoom=true)` can translate
-/// zoom-image pixel coordinates back to full-window coordinates.
-#[derive(Clone, Copy, Debug)]
-pub struct ZoomContext {
-    pub origin_x: f64,
-    pub origin_y: f64,
-    /// Inverse resize scale: `cw / out_w` (1.0 = no downscale).
-    pub scale_inv: f64,
-}
-
-impl ZoomContext {
-    pub fn zoom_to_window(&self, px: f64, py: f64) -> (f64, f64) {
-        (
-            self.origin_x + px * self.scale_inv,
-            self.origin_y + py * self.scale_inv,
-        )
-    }
-}
-
-pub struct ZoomRegistry {
-    inner: std::sync::Mutex<std::collections::HashMap<u32, ZoomContext>>,
-}
-
-impl ZoomRegistry {
-    pub fn new() -> Self {
-        Self {
-            inner: std::sync::Mutex::new(Default::default()),
-        }
-    }
-    pub fn set(&self, pid: u32, ctx: ZoomContext) {
-        self.inner.lock().unwrap().insert(pid, ctx);
-    }
-    pub fn get(&self, pid: u32) -> Option<ZoomContext> {
-        self.inner.lock().unwrap().get(&pid).copied()
-    }
-}
+use cua_driver_core::element_cache::{
+    SnapshotBoundZoomContext as ZoomContext, SnapshotBoundZoomRegistry as ZoomRegistry,
+};
 
 pub struct ToolState {
     pub element_cache: Arc<ElementCache>,
     pub cursor_registry: Arc<CursorRegistry>,
-    pub resize_registry: Arc<ResizeRegistry>,
     pub zoom_registry: Arc<ZoomRegistry>,
     pub config: Arc<RwLock<DriverConfig>>,
+    capture_bridge: Option<Arc<crate::capture_admission::WindowsCaptureBridge>>,
 }
 
 impl ToolState {
-    pub fn new() -> Arc<Self> {
+    pub fn new(
+        capture_service: Option<Arc<cua_driver_core::capture_runtime::CaptureService>>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             element_cache: Arc::new(ElementCache::new()),
             cursor_registry: Arc::new(CursorRegistry::new()),
-            resize_registry: Arc::new(ResizeRegistry::new()),
             zoom_registry: Arc::new(ZoomRegistry::new()),
             config: Arc::new(RwLock::new(load_driver_config())),
+            capture_bridge: capture_service
+                .map(crate::capture_admission::WindowsCaptureBridge::new),
         })
     }
+
+    fn zoom_context(
+        &self,
+        args: &Value,
+        pid: u32,
+        window_id: Option<u64>,
+    ) -> Result<ZoomContext, ToolResult> {
+        self.zoom_registry.resolve(
+            &self.element_cache,
+            pid as i32,
+            window_id,
+            args.get("_session_id").and_then(Value::as_str),
+        )
+    }
+}
+
+fn screenshot_scale(
+    state: &ToolState,
+    args: &Value,
+    pid: u32,
+    window_id: Option<u64>,
+) -> Result<f64, ToolResult> {
+    state.element_cache.screenshot_scale_or_refusal(
+        pid as i32,
+        window_id,
+        args.get("_session_id").and_then(Value::as_str),
+    )
+}
+
+fn capture_admission_refusal(error: anyhow::Error) -> ToolResult {
+    let code = crate::capture_admission::admission_error_code(&error);
+    ToolResult::error(format!("Capture-bound click refused: {error}")).with_structured(json!({
+        "code": code,
+        "effect": "refused",
+        "detail": error.to_string(),
+    }))
 }
 
 // ── list_apps ────────────────────────────────────────────────────────────────
@@ -1118,6 +1102,17 @@ fn fold_max_dimension(ceiling: u32, per_call: Option<u32>) -> u32 {
     }
 }
 
+/// Resolve the screenshot size limit. The canonical per-call override wins
+/// outright, including `0` for native resolution. When omitted, preserve the
+/// configured ceiling and legacy `max_dimension` folding behavior.
+fn resolve_max_image_dimension(
+    configured: u32,
+    max_image_dimension: Option<u32>,
+    legacy_max_dimension: Option<u32>,
+) -> u32 {
+    max_image_dimension.unwrap_or_else(|| fold_max_dimension(configured, legacy_max_dimension))
+}
+
 /// Build a single structured element entry for `get_window_state`.
 /// Returns `None` when the node has no `element_index` (non-actionable rows).
 fn build_element_entry(
@@ -1183,6 +1178,41 @@ pub struct GetWindowStateTool {
 
 static GWS_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
+#[cfg(test)]
+mod get_window_state_max_image_dimension_tests {
+    use super::{resolve_max_image_dimension, GetWindowStateTool, ToolState};
+    use cua_driver_core::tool::Tool;
+
+    #[test]
+    fn canonical_override_wins_and_zero_requests_native_resolution() {
+        assert_eq!(resolve_max_image_dimension(1568, None, None), 1568);
+        assert_eq!(resolve_max_image_dimension(1568, Some(800), None), 800);
+        assert_eq!(resolve_max_image_dimension(800, Some(1568), None), 1568);
+        assert_eq!(resolve_max_image_dimension(1568, Some(0), None), 0);
+        assert_eq!(
+            resolve_max_image_dimension(1568, Some(1200), Some(400)),
+            1200
+        );
+    }
+
+    #[test]
+    fn omitted_canonical_override_preserves_legacy_folding() {
+        assert_eq!(resolve_max_image_dimension(1568, None, Some(800)), 800);
+        assert_eq!(resolve_max_image_dimension(800, None, Some(1568)), 800);
+        assert_eq!(resolve_max_image_dimension(0, None, Some(800)), 800);
+    }
+
+    #[test]
+    fn schema_advertises_canonical_override_and_native_resolution() {
+        let tool = GetWindowStateTool {
+            state: ToolState::new(None),
+        };
+        let property = &tool.def().input_schema["properties"]["max_image_dimension"];
+        assert_eq!(property["type"], "integer");
+        assert_eq!(property["minimum"], 0);
+    }
+}
+
 #[async_trait]
 impl Tool for GetWindowStateTool {
     fn def(&self) -> &ToolDef {
@@ -1227,8 +1257,9 @@ impl Tool for GetWindowStateTool {
                 (window_bounds, app_name, window_title) — the capture-only path for a \
                 live window preview / picture-in-picture. Setting BOTH \
                 `include_accessibility_tree:false` and `include_screenshot:false` is an \
-                error. Optional `max_dimension` caps the returned screenshot's long edge \
-                in pixels for a cheap thumbnail.\n\n\
+                error. Optional `max_image_dimension` overrides the configured screenshot \
+                long-edge limit for this call; pass 0 for native resolution. Legacy \
+                `max_dimension` remains a cap on the configured limit.\n\n\
                 Uses `IUIAutomationCacheRequest` to batch-fetch all element properties in a \
                 single COM call (Chrome's ~5000-element tree returns in ~2-3s instead of \
                 timing out at 4s with per-property RPCs).\n\n\
@@ -1257,7 +1288,8 @@ impl Tool for GetWindowStateTool {
                 "query":{"type":"string","description":"Optional case-insensitive substring. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count."},
                 "max_elements":{"type":"integer","minimum":1,"description":"Cap on the total number of UIA nodes walked. Truncates depth-first; markdown and structured elements truncate together. Omit for the default (5 000). Lower for Electron / large web apps that produce 10k+ element trees."},
                 "max_depth":{"type":"integer","minimum":1,"description":"Cap on the UIA-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower for deep menu / Electron trees."},
-                "max_dimension":{"type":"integer","minimum":1,"description":"Optional cap on the returned screenshot's long edge, in pixels (aspect ratio preserved) — the cheap path for a small preview. Applied on top of the configured max_image_dimension ceiling; the tighter wins. Omit for the configured default."}
+                "max_image_dimension":{"type":"integer","minimum":0,"description":"Per-call long-edge limit for the returned screenshot, in pixels (aspect ratio preserved). Explicit values override configured behavior; 0 returns native resolution. Omit to preserve the configured default."},
+                "max_dimension":{"type":"integer","minimum":1,"description":"Legacy optional cap on the returned screenshot's long edge, in pixels (aspect ratio preserved). Applied on top of the configured max_image_dimension ceiling when max_image_dimension is omitted; the tighter wins."}
             },"additionalProperties":false}),
             // Swift annotation: idempotent: false (each call is a fresh snapshot).
             read_only: true, destructive: false, idempotent: false, open_world: false,
@@ -1318,15 +1350,28 @@ impl Tool for GetWindowStateTool {
         .ok()
         .flatten();
         use cua_driver_core::tool_args::ArgsExt;
-        // Optional per-call cap on the returned screenshot's long edge, folded
-        // with the configured ceiling (the tighter wins).
+        // The canonical per-call value overrides all configured limits,
+        // including `0` for native resolution. The legacy field retains its
+        // previous cap-folding behavior when the canonical field is omitted.
+        let max_image_dimension = match args.get("max_image_dimension") {
+            Some(value) => match value.as_u64().and_then(|v| u32::try_from(v).ok()) {
+                Some(value) => Some(value),
+                None => {
+                    return ToolResult::error(
+                        "max_image_dimension must be an integer between 0 and 4294967295.",
+                    )
+                }
+            },
+            None => None,
+        };
         let max_dimension = args
             .get("max_dimension")
             .and_then(|v| v.as_u64())
-            .map(|v| v.max(1) as u32);
+            .and_then(|v| u32::try_from(v).ok())
+            .map(|v| v.max(1));
         let max_dim = {
             let cfg = self.state.config.read().unwrap();
-            fold_max_dimension(cfg.max_image_dimension, max_dimension)
+            resolve_max_image_dimension(cfg.max_image_dimension, max_image_dimension, max_dimension)
         };
         // `capture_mode` is DEPRECATED and ignored — get_window_state always
         // returns BOTH the UIA tree and a screenshot now, so the agent grounds on
@@ -1336,6 +1381,7 @@ impl Tool for GetWindowStateTool {
         // We don't read the arg; it stays in the schema only so old callers don't
         // trip additionalProperties:false.
         let query = args.opt_str("query");
+        let session_id = args.opt_str("_session_id");
         let screenshot_out_file = args.opt_str("screenshot_out_file");
         // Optional caps — when omitted, fall back to the walker's built-in
         // defaults (#22865). minimum:1 enforced in the schema, but defend
@@ -1412,21 +1458,24 @@ impl Tool for GetWindowStateTool {
             let (screenshot, screenshot_err) = if do_shot {
                 match crate::capture::screenshot_window_bytes(hwnd) {
                     Ok(raw) => {
-                        let orig_w = crate::capture::png_dimensions_pub(&raw)
-                            .map(|(w, _)| w)
-                            .unwrap_or(0);
+                        let (native_w, native_h) = crate::capture::png_dimensions_pub(&raw)?;
                         let png = crate::capture::resize_png_if_needed(&raw, max_dim)?;
                         let (w, h) = crate::capture::png_dimensions_pub(&png)?;
-                        let original_w = if w < orig_w { Some(orig_w) } else { None };
                         // `screenshot_out_file` set (any mode) → write to disk and
                         // surface the path, never embed bytes. Otherwise (vision,
                         // no out_file) → embed base64.
                         if let Some(ref path) = out_file {
                             std::fs::write(path, &png)?;
-                            (Some((None, Some(path.clone()), w, h, original_w)), None)
+                            (
+                                Some((None, Some(path.clone()), w, h, native_w, native_h, png)),
+                                None,
+                            )
                         } else {
                             use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
-                            (Some((Some(B64.encode(&png)), None, w, h, original_w)), None)
+                            (
+                                Some((Some(B64.encode(&png)), None, w, h, native_w, native_h, png)),
+                                None,
+                            )
                         }
                     }
                     Err(e) => (None, Some(format!("{e}"))),
@@ -1466,6 +1515,10 @@ impl Tool for GetWindowStateTool {
             Ok((tree_opt, screenshot_opt, screenshot_err)) => {
                 let mut content = Vec::new();
                 let mut structured = json!({ "window_id": hwnd, "pid": pid });
+                let screenshot_scale = screenshot_opt
+                    .as_ref()
+                    .map(|(_, _, w, _, native_w, _, _)| *native_w as f64 / *w as f64);
+                let mut published_snapshot = false;
 
                 if let Some((tr, payload)) = tree_opt {
                     let is_msaa = tr.nodes.iter().any(|node| node.msaa_role.is_some());
@@ -1486,7 +1539,22 @@ impl Tool for GetWindowStateTool {
                     structured["tree_markdown"] = json!(tr.tree_markdown);
 
                     let snapshot_id = (!observation_only)
-                        .then(|| state.element_cache.publish(pid as i32, hwnd, payload));
+                        .then(|| {
+                            state.element_cache.publish_for_session(
+                                pid as i32,
+                                hwnd,
+                                payload,
+                                session_id.as_deref(),
+                                screenshot_scale,
+                            )
+                        })
+                        .flatten();
+                    published_snapshot = snapshot_id.is_some();
+                    if let Some(snapshot_id) = snapshot_id {
+                        state
+                            .zoom_registry
+                            .retire_replaced(pid as i32, hwnd, snapshot_id);
+                    }
 
                     // Structured `elements` array — preferred consumption
                     // path. Shape matches the cross-platform spec:
@@ -1553,16 +1621,59 @@ impl Tool for GetWindowStateTool {
                     }
                 }
 
-                if let Some((b64_opt, file_path, w, h, orig_w)) = screenshot_opt {
-                    if !observation_only {
-                        if let Some(ow) = orig_w {
-                            if w > 0 {
-                                state.resize_registry.set_ratio(pid, ow as f64 / w as f64);
+                if !observation_only && !published_snapshot && screenshot_scale.is_some() {
+                    let payload = crate::uia::cache::CachedSnapshot::from_nodes(
+                        &[],
+                        crate::uia::cache::SnapshotKind::Uia,
+                    );
+                    if let Some(snapshot_id) = state.element_cache.publish_for_session(
+                        pid as i32,
+                        hwnd,
+                        payload,
+                        session_id.as_deref(),
+                        screenshot_scale,
+                    ) {
+                        state
+                            .zoom_registry
+                            .retire_replaced(pid as i32, hwnd, snapshot_id);
+                    }
+                }
+
+                if let Some((b64_opt, file_path, w, h, native_w, native_h, png)) = screenshot_opt {
+                    let capture_id = if !observation_only {
+                        if let Some(bridge) = &state.capture_bridge {
+                            let geometry = match crate::capture_admission::CaptureGeometry::new(
+                                w, h, native_w, native_h,
+                            ) {
+                                Ok(geometry) => geometry,
+                                Err(error) => {
+                                    return ToolResult::error(format!(
+                                        "Window capture geometry is invalid: {error}"
+                                    ))
+                                }
+                            };
+                            match bridge.publish(
+                                &args,
+                                png,
+                                crate::capture_admission::WindowsCaptureTarget::Window {
+                                    pid,
+                                    window_id: hwnd,
+                                },
+                                geometry,
+                            ) {
+                                Ok(capture_id) => capture_id,
+                                Err(error) => {
+                                    return ToolResult::error(format!(
+                                        "Window capture publication failed: {error}"
+                                    ))
+                                }
                             }
                         } else {
-                            state.resize_registry.clear_ratio(pid);
+                            None
                         }
-                    }
+                    } else {
+                        None
+                    };
                     // base64 is embedded only when no out_file was given (vision
                     // path). With `screenshot_out_file` the bytes went to disk and
                     // we surface the path instead — never both. Keep a text content
@@ -1581,6 +1692,9 @@ impl Tool for GetWindowStateTool {
                     // the structured payload so consumers don't have to sniff
                     // magic bytes off the base64 to know the format.
                     structured["screenshot_mime_type"] = json!("image/png");
+                    if let Some(capture_id) = capture_id {
+                        structured["capture_id"] = json!(capture_id);
+                    }
                     if let Some(fp) = file_path {
                         structured["screenshot_file_path"] = json!(fp);
                     }
@@ -3112,6 +3226,7 @@ impl Tool for ClickTool {
                     "element_index": cua_driver_core::tool_schema::element_index_schema(),
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
                     "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
+                    "capture_id":{"type":"string","minLength":1,"description":"Optional ID from get_window_state or get_desktop_state. When present, x and y are admitted against that exact capture and the ID is consumed before native dispatch."},
                     "x":{"type":"number","description":"X in window-local screenshot pixels — same space as the PNG get_window_state returns. Must be provided together with y."},
                     "y":{"type":"number","description":"Y in window-local screenshot pixels. Must be provided together with x."},
                     "button": cua_driver_core::tool_schema::button_schema(),
@@ -3166,8 +3281,32 @@ impl Tool for ClickTool {
                     .with_structured(json!({ "code": "invalid_arguments" }));
             }
             let modifiers: Vec<String> = args.str_array("modifier");
-            let sx = input.x as i32;
-            let sy = input.y as i32;
+            let capture_point = match self.state.capture_bridge.as_ref() {
+                Some(bridge) => match bridge.admit_click(
+                    &args,
+                    crate::capture_admission::WindowsCaptureTarget::PrimaryDesktop,
+                    input.x,
+                    input.y,
+                ) {
+                    Ok(point) => point,
+                    Err(error) => return capture_admission_refusal(error),
+                },
+                None if args.get("capture_id").is_some() => {
+                    return capture_admission_refusal(anyhow::anyhow!(
+                        "capture service is unavailable"
+                    ))
+                }
+                None => None,
+            };
+            let (sx, sy) = match capture_point {
+                Some((action_x, action_y)) => {
+                    match crate::capture_admission::round_action_point(action_x, action_y) {
+                        Ok(point) => point,
+                        Err(error) => return capture_admission_refusal(error),
+                    }
+                }
+                None => (input.x as i32, input.y as i32),
+            };
 
             // Resolve the application window before moving the agent cursor.
             // WindowFromPoint can return a transparent layered overlay, and the
@@ -3286,19 +3425,6 @@ impl Tool for ClickTool {
                 }
             }));
         }
-        // For every non-foreground click, mark the target window
-        // non-activatable (WS_EX_NOACTIVATE) for the duration so a target that
-        // self-activates in its UIA-Invoke / click handler (WPF
-        // `UIElement.Focus()`, XAML, Tauri/WebView2) CANNOT steal the user's
-        // foreground — the window still receives the click. Held for the whole
-        // invoke; a no-op for delivery_mode:"foreground" (which wants the swap) and
-        // when no window_id was given.
-        let _noact = match (delivery != DeliveryMode::Foreground, hwnd_opt) {
-            (true, Some(h)) => Some(crate::input::NoActivateGuard::arm(
-                windows::Win32::Foundation::HWND(h as *mut _),
-            )),
-            _ => None,
-        };
         // Optional `action` arg picks among the actions exposed in the
         // accessibility tree. Today this only changes behavior for MSAA
         // BUTTONDROPDOWN: `"expand"` clicks the right-edge (dropdown arrow
@@ -3332,6 +3458,47 @@ impl Tool for ClickTool {
                     }
                 }
             }
+        };
+        let capture_point = if args.get("capture_id").is_some() {
+            if elem_idx.is_some()
+                || x.is_none()
+                || y.is_none()
+                || hwnd_opt.is_none()
+                || args.get("from_zoom").and_then(Value::as_bool) == Some(true)
+            {
+                return capture_admission_refusal(anyhow::anyhow!(
+                    "capture_id requires x, y, and an exact window_id; element and zoom coordinates are not capture-bound"
+                ));
+            }
+            let Some(bridge) = &self.state.capture_bridge else {
+                return capture_admission_refusal(anyhow::anyhow!(
+                    "capture service is unavailable"
+                ));
+            };
+            match bridge.admit_click(
+                &args,
+                crate::capture_admission::WindowsCaptureTarget::Window {
+                    pid,
+                    window_id: hwnd,
+                },
+                x.unwrap(),
+                y.unwrap(),
+            ) {
+                Ok(Some(point)) => Some(point),
+                Ok(None) => unreachable!("capture_id was present"),
+                Err(error) => return capture_admission_refusal(error),
+            }
+        } else {
+            None
+        };
+
+        // Arm this only after capture admission so stale or mismatched IDs have
+        // no native side effect before the click is refused.
+        let _noact = match (delivery != DeliveryMode::Foreground, hwnd_opt) {
+            (true, Some(h)) => Some(crate::input::NoActivateGuard::arm(
+                windows::Win32::Foundation::HWND(h as *mut _),
+            )),
+            _ => None,
         };
 
         if let Some(idx) = elem_idx {
@@ -3856,20 +4023,28 @@ impl Tool for ClickTool {
                 .get("from_zoom")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
-            if from_zoom {
-                match self.state.zoom_registry.get(pid) {
-                    Some(ctx) => {
+            if let Some((mapped_x, mapped_y)) = capture_point {
+                let (mapped_x, mapped_y) =
+                    match crate::capture_admission::round_action_point(mapped_x, mapped_y) {
+                        Ok(point) => point,
+                        Err(error) => return capture_admission_refusal(error),
+                    };
+                px = f64::from(mapped_x);
+                py = f64::from(mapped_y);
+            } else if from_zoom {
+                match self.state.zoom_context(&args, pid, Some(hwnd)) {
+                    Ok(ctx) => {
                         let (wx, wy) = ctx.zoom_to_window(px, py);
                         px = wx;
                         py = wy;
                     }
-                    None => {
-                        return ToolResult::error(format!(
-                            "from_zoom=true but no zoom context for pid {pid}. Call zoom first."
-                        ))
-                    }
+                    Err(refusal) => return refusal,
                 }
-            } else if let Some(ratio) = self.state.resize_registry.ratio(pid) {
+            } else if !args.bool_or("_native_coordinates", false) {
+                let ratio = match screenshot_scale(&self.state, &args, pid, Some(hwnd)) {
+                    Ok(ratio) => ratio,
+                    Err(refusal) => return refusal,
+                };
                 px *= ratio;
                 py *= ratio;
             }
@@ -4342,8 +4517,7 @@ mod background_element_click_record_tests {
 /// on the same pixel a px-click would. `Ok(())` on success; `Err(ToolResult)`
 /// short-circuits the caller. Mirrors macOS `tools::focus_by_pixel`.
 #[allow(clippy::too_many_arguments)]
-async fn focus_by_pixel(
-    state: &Arc<ToolState>,
+fn focus_by_pixel_click_args(
     pid: u32,
     window_id: Option<u64>,
     x: f64,
@@ -4352,7 +4526,8 @@ async fn focus_by_pixel(
     session: Option<String>,
     session_id: Option<String>,
     from_zoom: bool,
-) -> Result<(), ToolResult> {
+    native_coordinates: bool,
+) -> Value {
     let mut click_args = json!({
         "pid": pid, "x": x, "y": y,
         "delivery_mode": if foreground { "foreground" } else { "background" },
@@ -4369,6 +4544,36 @@ async fn focus_by_pixel(
     if from_zoom {
         click_args["from_zoom"] = json!(true);
     }
+    if native_coordinates {
+        click_args["_native_coordinates"] = json!(true);
+    }
+    click_args
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn focus_by_pixel(
+    state: &Arc<ToolState>,
+    pid: u32,
+    window_id: Option<u64>,
+    x: f64,
+    y: f64,
+    foreground: bool,
+    session: Option<String>,
+    session_id: Option<String>,
+    from_zoom: bool,
+    native_coordinates: bool,
+) -> Result<(), ToolResult> {
+    let click_args = focus_by_pixel_click_args(
+        pid,
+        window_id,
+        x,
+        y,
+        foreground,
+        session,
+        session_id,
+        from_zoom,
+        native_coordinates,
+    );
     let focus = ClickTool {
         state: state.clone(),
     }
@@ -4603,6 +4808,7 @@ impl Tool for TypeTextTool {
                     args.opt_str("session"),
                     args.opt_str("_session_id"),
                     from_zoom,
+                    false,
                 )
                 .await
                 {
@@ -5361,6 +5567,7 @@ impl Tool for PressKeyTool {
                     args.opt_str("session"),
                     args.opt_str("_session_id"),
                     from_zoom,
+                    false,
                 )
                 .await
                 {
@@ -5441,11 +5648,7 @@ impl Tool for PressKeyTool {
                 Ok(point) => point,
                 Err(result) => return result,
             };
-            let (mut px, mut py) = screen_to_bitmap(hwnd, cx, cy);
-            if let Some(ratio) = self.state.resize_registry.ratio(pid) {
-                px = (px as f64 / ratio).round() as i32;
-                py = (py as f64 / ratio).round() as i32;
-            }
+            let (px, py) = screen_to_bitmap(hwnd, cx, cy);
             // Release the outer guard before the shared pixel helper. ClickTool
             // owns a guard around the click itself, then releases it before its
             // renderer settle period. This is the exact route already proven by
@@ -5461,6 +5664,7 @@ impl Tool for PressKeyTool {
                 args.opt_str("session"),
                 args.opt_str("_session_id"),
                 false,
+                true,
             )
             .await
             {
@@ -5798,6 +6002,7 @@ impl Tool for HotkeyTool {
                     args.opt_str("session"),
                     args.opt_str("_session_id"),
                     from_zoom,
+                    false,
                 )
                 .await
                 {
@@ -6964,19 +7169,19 @@ impl Tool for DoubleClickTool {
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
             if from_zoom {
-                match self.state.zoom_registry.get(pid) {
-                    Some(ctx) => {
+                match self.state.zoom_context(&args, pid, Some(hwnd)) {
+                    Ok(ctx) => {
                         let (wx, wy) = ctx.zoom_to_window(px, py);
                         px = wx;
                         py = wy;
                     }
-                    None => {
-                        return ToolResult::error(format!(
-                            "from_zoom=true but no zoom context for pid {pid}. Call zoom first."
-                        ))
-                    }
+                    Err(refusal) => return refusal,
                 }
-            } else if let Some(ratio) = self.state.resize_registry.ratio(pid) {
+            } else {
+                let ratio = match screenshot_scale(&self.state, &args, pid, Some(hwnd)) {
+                    Ok(ratio) => ratio,
+                    Err(refusal) => return refusal,
+                };
                 px *= ratio;
                 py *= ratio;
             }
@@ -7332,19 +7537,19 @@ impl Tool for RightClickTool {
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
             if from_zoom {
-                match self.state.zoom_registry.get(pid) {
-                    Some(ctx) => {
+                match self.state.zoom_context(&args, pid, Some(hwnd)) {
+                    Ok(ctx) => {
                         let (wx, wy) = ctx.zoom_to_window(px, py);
                         px = wx;
                         py = wy;
                     }
-                    None => {
-                        return ToolResult::error(format!(
-                            "from_zoom=true but no zoom context for pid {pid}. Call zoom first."
-                        ))
-                    }
+                    Err(refusal) => return refusal,
                 }
-            } else if let Some(ratio) = self.state.resize_registry.ratio(pid) {
+            } else {
+                let ratio = match screenshot_scale(&self.state, &args, pid, Some(hwnd)) {
+                    Ok(ratio) => ratio,
+                    Err(refusal) => return refusal,
+                };
                 px *= ratio;
                 py *= ratio;
             }
@@ -7580,8 +7785,8 @@ impl Tool for DragTool {
         let from_zoom = args.bool_or("from_zoom", false);
 
         if from_zoom {
-            match self.state.zoom_registry.get(pid) {
-                Some(ctx) => {
+            match self.state.zoom_context(&args, pid, hwnd_opt) {
+                Ok(ctx) => {
                     let (wx, wy) = ctx.zoom_to_window(from_x, from_y);
                     let (wx2, wy2) = ctx.zoom_to_window(to_x, to_y);
                     from_x = wx;
@@ -7589,13 +7794,13 @@ impl Tool for DragTool {
                     to_x = wx2;
                     to_y = wy2;
                 }
-                None => {
-                    return ToolResult::error(format!(
-                        "from_zoom=true but no zoom context for pid {pid}. Call zoom first."
-                    ))
-                }
+                Err(refusal) => return refusal,
             }
-        } else if let Some(ratio) = self.state.resize_registry.ratio(pid) {
+        } else {
+            let ratio = match screenshot_scale(&self.state, &args, pid, hwnd_opt) {
+                Ok(ratio) => ratio,
+                Err(refusal) => return refusal,
+            };
             from_x *= ratio;
             from_y *= ratio;
             to_x *= ratio;
@@ -7894,7 +8099,9 @@ impl Tool for GetScreenSizeTool {
 /// Mirrors the `get_window_state` vision branch's ToolResult shape: an
 /// `image_png` content part (or a written-out file path), a text summary line,
 /// and a `structuredContent` object.
-pub struct GetDesktopStateTool;
+pub struct GetDesktopStateTool {
+    state: Arc<ToolState>,
+}
 static GDS_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
 #[async_trait]
@@ -7920,6 +8127,7 @@ impl Tool for GetDesktopStateTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::protocol::Content;
+        let binding_args = args.clone();
         let input = match parse_typed_input::<GetDesktopStateInput>("get_desktop_state", args) {
             Ok(input) => input,
             Err(error) => return error,
@@ -7933,21 +8141,21 @@ impl Tool for GetDesktopStateTool {
         // blocking GDI capture off the async runtime.
         let out_file = screenshot_out_file.clone();
         let res = tokio::task::spawn_blocking(
-            move || -> anyhow::Result<(Option<String>, Option<String>, u32, u32)> {
+            move || -> anyhow::Result<(Option<String>, Option<String>, u32, u32, Vec<u8>)> {
                 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
                 let png = crate::capture::screenshot_display_bytes()?;
                 let (w, h) = crate::capture::png_dimensions_pub(&png)?;
                 if let Some(ref path) = out_file {
                     std::fs::write(path, &png)?;
-                    Ok((None, Some(path.clone()), w, h))
+                    Ok((None, Some(path.clone()), w, h, png))
                 } else {
-                    Ok((Some(BASE64.encode(&png)), None, w, h))
+                    Ok((Some(BASE64.encode(&png)), None, w, h, png))
                 }
             },
         )
         .await;
 
-        let (b64_opt, file_path, screenshot_width, screenshot_height) = match res {
+        let (b64_opt, file_path, screenshot_width, screenshot_height, png) = match res {
             Ok(Ok(v)) => v,
             Ok(Err(e)) => return ToolResult::error(format!("Desktop screenshot failed: {e}")),
             Err(e) => return ToolResult::error(format!("Desktop screenshot task error: {e}")),
@@ -7976,6 +8184,35 @@ impl Tool for GetDesktopStateTool {
             },
             "screenshot_mime_type": "image/png",
         });
+        if let Some(bridge) = &self.state.capture_bridge {
+            let geometry = match crate::capture_admission::CaptureGeometry::new(
+                screenshot_width,
+                screenshot_height,
+                screenshot_width,
+                screenshot_height,
+            ) {
+                Ok(geometry) => geometry,
+                Err(error) => {
+                    return ToolResult::error(format!(
+                        "Desktop capture geometry is invalid: {error}"
+                    ))
+                }
+            };
+            match bridge.publish(
+                &binding_args,
+                png,
+                crate::capture_admission::WindowsCaptureTarget::PrimaryDesktop,
+                geometry,
+            ) {
+                Ok(Some(capture_id)) => structured["capture_id"] = json!(capture_id),
+                Ok(None) => {}
+                Err(error) => {
+                    return ToolResult::error(format!(
+                        "Desktop capture publication failed: {error}"
+                    ))
+                }
+            }
+        }
         if let Some(ref fp) = file_path {
             structured["screenshot_file_path"] = json!(fp);
         }
@@ -8837,13 +9074,17 @@ impl Tool for ZoomTool {
                 A 20% padding is automatically added on every side of the requested region so \
                 the target remains visible even if the caller's coordinates are slightly off.\n\n\
                 After a zoom, pass `from_zoom=true` to click/type_text to auto-translate \
-                coordinates back to full-window space.\n\n\
+                coordinates back to full-window space. Coordinate actions return \
+                `screenshot_context_missing` when the latest snapshot does not contain a \
+                screenshot owned by this session. `from_zoom` actions return \
+                `zoom_context_missing` when the zoom was never created or was replaced; call \
+                `get_window_state`, then `zoom`, again on the same connection.\n\n\
                 Windows-specific: `window_id` is the canonical addressing field (HWND). \
-                `pid` is also required (used to scope the zoom translation registry, matching \
-                Swift's per-pid zoom context).".into(),
+                `pid` is preferred when available; otherwise the driver resolves the unique \
+                current snapshot owned by this session and window.".into(),
             input_schema: json!({
                 "type":"object","required":["window_id","x1","y1","x2","y2"],"properties":{
-                    "pid":{"type":"integer","description":"Target process ID. Validated in code (an explicit \"Missing required integer field pid\" error when absent); kept out of `required` to match the shared cross-platform zoom contract."},
+                    "pid":{"type":"integer","description":"Optional target process ID. When omitted, the unique current snapshot for this session and HWND is used."},
                     "window_id":{"type":"integer","description":"HWND of the target window."},
                     "x1":{"type":"number","description":"Left edge of the region (resized-image pixels)."},
                     "y1":{"type":"number","description":"Top edge of the region (resized-image pixels)."},
@@ -8857,11 +9098,13 @@ impl Tool for ZoomTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let raw_pid = match args.get("pid").and_then(|v| v.as_i64()) {
-            Some(p) => p,
-            None => return ToolResult::error("Missing required integer field pid."),
+        let requested_pid = match args.get("pid") {
+            None => None,
+            Some(value) => match value.as_i64().and_then(|pid| i32::try_from(pid).ok()) {
+                Some(pid) => Some(pid),
+                None => return ToolResult::error("pid must be a 32-bit integer"),
+            },
         };
-        let pid = Some(raw_pid as u32);
         let hwnd = match args.get("window_id").and_then(|v| v.as_u64()) {
             Some(v) => v,
             None => return ToolResult::error("Missing required integer field window_id."),
@@ -8890,12 +9133,21 @@ impl Tool for ZoomTool {
         // runs on a fresh native-resolution capture. Scale by the stored resize
         // ratio so the crop lands on the intended region; the zoom context then
         // holds native-pixel values, which is what `from_zoom` clicks expect.
-        let ratio = self
-            .state
-            .resize_registry
-            .ratio(raw_pid as u32)
-            .unwrap_or(1.0);
-        let (nx1, ny1, nx2, ny2) = (x1 * ratio, y1 * ratio, x2 * ratio, y2 * ratio);
+        let session_id = args.opt_str("_session_id");
+        let (pid, screenshot) = match self.state.element_cache.screenshot_context_for_zoom(
+            requested_pid,
+            hwnd,
+            session_id.as_deref(),
+        ) {
+            Ok(context) => context,
+            Err(refusal) => return refusal,
+        };
+        let (nx1, ny1, nx2, ny2) = (
+            x1 * screenshot.scale,
+            y1 * screenshot.scale,
+            x2 * screenshot.scale,
+            y2 * screenshot.scale,
+        );
 
         let state = self.state.clone();
         let result = tokio::task::spawn_blocking(move || {
@@ -8906,15 +9158,18 @@ impl Tool for ZoomTool {
 
         match result {
             Ok(Ok(crop)) => {
-                if let Some(p) = pid {
-                    state.zoom_registry.set(
-                        p,
-                        ZoomContext {
-                            origin_x: crop.origin_x,
-                            origin_y: crop.origin_y,
-                            scale_inv: crop.scale_inv,
-                        },
-                    );
+                if let Err(refusal) = state.zoom_registry.set_if_current(
+                    &state.element_cache,
+                    pid,
+                    session_id.as_deref(),
+                    ZoomContext {
+                        screenshot,
+                        origin_x: crop.origin_x,
+                        origin_y: crop.origin_y,
+                        scale_inv: crop.scale_inv,
+                    },
+                ) {
+                    return refusal;
                 }
                 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
                 let b64 = B64.encode(&crop.jpeg_bytes);
@@ -10038,7 +10293,8 @@ pub fn build_registry_with_provider(
     compat: bool,
     provider: Option<std::sync::Arc<dyn cua_driver_core::consent::ProtectedConsentProvider>>,
 ) -> ToolRegistry {
-    let state = ToolState::new();
+    let mut r = ToolRegistry::new_with_protected_consent_provider(provider);
+    let state = ToolState::new(Some(r.capture_service()));
     let cursor_outcome_reader = {
         let cursor_registry = state.cursor_registry.clone();
         cua_driver_core::session::register_scoped_cursor_outcome_reader(std::sync::Arc::new(
@@ -10087,8 +10343,12 @@ pub fn build_registry_with_provider(
     // deregisters when that runtime's registry is dropped. Mirrors the macOS
     // `register_all` session_end hook (platform-macos/src/tools/mod.rs).
     let cursor_registry = state.cursor_registry.clone();
+    let element_cache = state.element_cache.clone();
+    let zoom_registry = state.zoom_registry.clone();
     let session_end_hook =
         cua_driver_core::session::register_scoped_session_end_hook(move |session_id| {
+            zoom_registry.retire_session(session_id);
+            element_cache.retire_session_screenshots(session_id);
             cursor_registry.remove(session_id);
             crate::overlay::remove_cursor(session_id.to_owned());
         });
@@ -10097,7 +10357,6 @@ pub fn build_registry_with_provider(
             crate::overlay::revive_cursor(session_id.to_owned());
         });
 
-    let mut r = ToolRegistry::new_with_protected_consent_provider(provider);
     r.retain_cursor_outcome_reader(cursor_outcome_reader);
     r.retain_session_end_hook(session_end_hook);
     r.retain_session_revive_hook(session_revive_hook);
@@ -10214,7 +10473,9 @@ pub fn build_registry_with_provider(
     // depend on them via `Tool` trait reflection.
     let _ = compat; // formerly drove the ScreenshotCompatTool branch
     r.register(Box::new(GetScreenSizeTool));
-    r.register(Box::new(GetDesktopStateTool));
+    r.register(Box::new(GetDesktopStateTool {
+        state: state.clone(),
+    }));
     r.register(Box::new(GetCursorPositionTool));
     r.register(Box::new(MoveCursorTool {
         state: state.clone(),
@@ -10596,7 +10857,7 @@ mod click_button_schema_tests {
     #[test]
     fn schema_advertises_button_enum() {
         let tool = ClickTool {
-            state: super::ToolState::new(),
+            state: super::ToolState::new(None),
         };
         let d = tool.def();
         let props = d.input_schema.get("properties").expect("properties");
@@ -10612,6 +10873,82 @@ mod click_button_schema_tests {
         for need in ["left", "right", "middle"] {
             assert!(enum_vals.contains(&need), "missing {need} in button.enum");
         }
+        let capture_id = props.get("capture_id").expect("capture_id field present");
+        assert_eq!(capture_id["type"], "string");
+        assert_eq!(capture_id["minLength"], 1);
+    }
+}
+
+#[cfg(test)]
+mod snapshot_coordinate_tests {
+    use super::{focus_by_pixel_click_args, ToolState, ZoomTool};
+    use crate::uia::cache::{CachedSnapshot, SnapshotKind};
+    use cua_driver_core::tool::Tool;
+
+    #[test]
+    fn schema_keeps_pid_optional_for_window_owned_lookup() {
+        let tool = ZoomTool {
+            state: ToolState::new(None),
+        };
+        let required = tool.def().input_schema["required"].as_array().unwrap();
+        assert!(!required.iter().any(|field| field == "pid"));
+        assert!(tool.def().input_schema["properties"].get("pid").is_some());
+
+        tool.state.element_cache.publish_for_session(
+            42,
+            7,
+            CachedSnapshot::from_nodes(&[], SnapshotKind::Uia),
+            Some("zoom-optional-pid-windows"),
+            Some(2.0),
+        );
+        let (pid, context) = tool
+            .state
+            .element_cache
+            .screenshot_context_for_zoom(None, 7, Some("zoom-optional-pid-windows"))
+            .unwrap();
+        assert_eq!(pid, 42);
+        assert_eq!(context.window_id, 7);
+        tool.state.element_cache.publish_for_session(
+            43,
+            7,
+            CachedSnapshot::from_nodes(&[], SnapshotKind::Uia),
+            Some("zoom-optional-pid-windows"),
+            Some(1.0),
+        );
+        assert!(tool
+            .state
+            .element_cache
+            .screenshot_context_for_zoom(None, 7, Some("zoom-optional-pid-windows"))
+            .is_err());
+    }
+
+    #[test]
+    fn press_key_native_element_focus_skips_second_screenshot_scaling() {
+        let native = focus_by_pixel_click_args(
+            42,
+            Some(7),
+            120.0,
+            80.0,
+            false,
+            None,
+            Some("client-a".to_owned()),
+            false,
+            true,
+        );
+        assert_eq!(native["_native_coordinates"], true);
+
+        let screenshot = focus_by_pixel_click_args(
+            42,
+            Some(7),
+            60.0,
+            40.0,
+            false,
+            None,
+            Some("client-a".to_owned()),
+            false,
+            false,
+        );
+        assert!(screenshot.get("_native_coordinates").is_none());
     }
 }
 
@@ -10710,7 +11047,10 @@ mod desktop_scope_tests {
 
     #[test]
     fn get_desktop_state_schema_shape() {
-        let d = GetDesktopStateTool.def();
+        let tool = GetDesktopStateTool {
+            state: super::ToolState::new(None),
+        };
+        let d = tool.def();
         assert!(d.read_only, "get_desktop_state must be read_only");
         let props = d.input_schema["properties"].as_object().unwrap();
         assert!(!props.contains_key("pid"), "must not accept pid");

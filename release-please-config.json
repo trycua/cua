@@ -6,6 +6,22 @@
   "draft": true,
   "force-tag-creation": true,
   "packages": {
+    "libs/cua-driver/rust/crates/cua-perception": {
+      "release-type": "simple",
+      "component": "cua-perception",
+      "package-name": "cua-perception",
+      "bump-minor-pre-major": true,
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md",
+      "skip-github-release": true,
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "Cargo.toml",
+          "jsonpath": "$.package.version"
+        }
+      ]
+    },
     "libs/cua-driver": {
       "release-type": "simple",
       "component": "cua-driver-rs",
@@ -15,8 +31,11 @@
       "changelog-path": "rust/CHANGELOG.md",
       "exclude-paths": [
         "libs/cua-driver/docs",
+        "libs/cua-driver/examples",
         "libs/cua-driver/python",
-        "libs/cua-driver/tests"
+        "libs/cua-driver/tests",
+        "libs/cua-driver/rust/crates/cua-perception",
+        "libs/cua-driver/experiments/cua-perception-inference"
       ],
       "extra-files": [
         {

@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "component": "cua-perception",
+  "repository": "https://github.com/trycua/cua",
+  "revision": "REPLACE_WITH_EXACT_40_CHARACTER_COMMIT",
+  "archive": {
+    "path": "source/cua-perception-source.tar.gz",
+    "sha256": "REPLACE_WITH_ARCHIVE_SHA256",
+    "size": 0
+  },
+  "included_paths": [
+    "LICENSE.md",
+    "libs/cua-driver/rust/Cargo.lock",
+    "libs/cua-driver/rust/Cargo.toml",
+    "libs/cua-driver/rust/crates/cua-perception"
+  ],
+  "source_offer": "SOURCE_OFFER.md",
+  "bundled_upstream_sources": [
+    {
+      "component": "OmniParser icon detector source",
+      "path": "source/upstream/omniparser-icon-detect-model.pt",
+      "url": "https://huggingface.co/microsoft/OmniParser-v2.0/resolve/6600256cb0f1b07651e3bc86166196307bad7e2d/icon_detect/model.pt",
+      "sha256": "dab3d4351ad00b035db829909a4db98354d5a90f6990e4ac00222a9a95d4bf57"
+    },
+    {
+      "component": "Pinned exporter sources",
+      "path": "source/exporter/",
+      "url": "See scripts/artifacts.lock.json",
+      "sha256": "See scripts/artifacts.lock.json"
+    }
+  ],
+  "immutable_external_coordinates": [
+    { "component": "ONNX Runtime and redistributed OCR inputs", "url": "See scripts/artifacts.lock.json", "sha256": "See scripts/artifacts.lock.json" }
+  ],
+  "review_status": "license-review-required"
+}

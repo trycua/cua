@@ -7,7 +7,8 @@ CLI or MCP server.
 
 It covers the canonical snapshot-action-verify loop, exact window addressing,
 accessibility and pixel actions, background/foreground delivery, typed browser
-automation, session recording, and platform-specific limitations. The skill
+automation, optional visual-region parsing, session recording, and
+platform-specific limitations. The skill
 defaults to background delivery and requires structured refusal or observed
 failure before a caller escalates to foreground input.
 
@@ -66,6 +67,8 @@ Use `--all-platforms` when the agent assists users across operating systems.
   accessibility, input delivery, permissions, and refusal boundaries.
 - `BROWSER.md`: exact browser-window binding, explicit profile preparation,
   page refs, trust-classified click/type/navigation, and native fallbacks.
+- `VISUAL.md`: optional model-neutral parsing of one retained screenshot into
+  capture-bound text and icon regions.
 - `RECORDING.md`: trajectory evidence, MP4 capture, and replay.
 - `EMBEDDING.md`: embedding the driver into another host application.
 

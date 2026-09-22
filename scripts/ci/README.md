@@ -134,6 +134,17 @@ Lume seed, installs the exact committed source, and then delegates to the thin
 the optional installed Chrome/Edge browser matrix after the canonical repo-local
 harness matrix.
 
+Run the canonical logged-in Lume gate directly from Terminal in the disposable
+guest; do not install or register a GitHub Actions runner in that guest. After a
+successful `run-all.sh --standalone-browser` invocation, bundle the private
+artifact directories, calculate their SHA-256 digest, and dispatch
+`.github/workflows/e2e-rust-macos.yml` in `lume` mode at the exact candidate SHA
+with the harness run ID and digest. That protected `ubuntu-latest` job only
+registers the direct result as a machine-readable certification artifact. It
+does not execute macOS code or receive the live Jev credential. The separate
+protected evidence workflow verifies that exact-SHA registration before exposing
+its bounded credential.
+
 The manual `.github/workflows/e2e-rust-macos.yml` workflow first probes a fresh
 GitHub-hosted macOS 26 runner. It records the image, SIP state, desktop session,
 display geometry, and OCR-verified TextEdit window and display captures for one

@@ -6,6 +6,46 @@ tag namespaces, build-time version sites, builder workflow, and change paths.
 It intentionally does not describe signing, packaging, or registry publishing;
 those remain owned by each component workflow.
 
+## cua-perception candidates
+
+`cua-perception` has an independent version and changelog beside its Rust crate
+in `libs/cua-driver/rust/crates/cua-perception`. Keeping the Release Please root
+at that crate scopes its commits without unsupported path traversal. The
+`.github/releases/cua-perception` directory remains the authority for schemas,
+trust, and candidate controls. Release Please may open version PRs for the
+component, while `skip-github-release` keeps the stream candidate-only and does
+not create GitHub releases. The workflow creates an idempotent lightweight
+`cua-perception-v<semver>` git tag on the exact main commit carrying each version
+so later candidate changelogs have an immutable range anchor.
+
+The candidate workflow accepts prebuilt payloads. It does not download model
+weights or compile product code. Every supplied worker, runtime, model, notice,
+and source file must be declared with its exact size, SHA-256, license source,
+target, and protocol version as applicable. Models and bundled source also need
+complete ledgers. The workflow emits a deterministic archive, SPDX SBOM, signed
+catalog, redacted provenance, and checksums as retained CI artifacts only.
+
+Candidate catalogs use the same Ed25519 envelope consumed by Cua Driver's
+extension manager: `{ "payload": <compact catalog payload>,
+"signature_algorithm": "ed25519", "signature": <base64> }`. The active public
+key and rotation window are recorded in `cua-perception/trust-root.json`; the
+matching private key is never generated,
+stored, or uploaded by this repository. Candidate jobs receive it from an
+external reviewed secret as base64-encoded PKCS#8 PEM and refuse keys whose
+derived public key differs from the active trust root.
+
+Candidate evidence is artifact-scoped. A passing metadata check is not a claim
+that a future hosted or Fleet distribution satisfies a source-offer obligation.
+Those distribution paths need their own review of the exact archive, durable
+corresponding-source location, notices, and delivery behavior before any
+compliance claim is made.
+
+Cua Driver continues to exclude Perception paths from release attribution and
+change detection. Shared Cargo manifest and lockfile changes are treated as
+companions only when a commit otherwise contains Perception-owned changes. The
+candidate tests also reject Driver archives containing Perception binaries,
+model directories, or common model-weight formats.
+
 To add a component, add one descriptor, keep its stable prefix identical to its
 Release Please component tag, choose a unique `nightly-` prefix, declare only
 version sites that affect built nightly artifacts, and add focused tests to

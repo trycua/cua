@@ -190,7 +190,7 @@ impl Tool for SetValueTool {
             pid,
             Some((element_ptr, Some(element_index))),
             Some(window_id),
-        );
+        ) != Some(false);
 
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
         // AXValue writes on popups / sliders can cause reflex activations

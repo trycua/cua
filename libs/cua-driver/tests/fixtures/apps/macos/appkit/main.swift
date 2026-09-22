@@ -656,6 +656,14 @@ struct CuaAppKitHarness {
             withExtendedLifetime(fixture) {}
             return
         }
+        if let directory = ProcessInfo.processInfo.environment["CUA_APPKIT_TEXT_OUTCOMES_DIR"] {
+            let fixture = TextOutcomesFixture(directory: URL(fileURLWithPath: directory))
+            fixture.show()
+            app.activate(ignoringOtherApps: true)
+            app.run()
+            withExtendedLifetime(fixture) {}
+            return
+        }
         let controller = HarnessWindowController()
         installMenuBar(target: controller)
         controller.show()

@@ -69,31 +69,18 @@ instead marks the next-best score.
 | `game_control` | multimodal, element accuracy | 6.0 | n/a | 0.333 | 0.333 | 0.333 | 0.333 |
 | `general_decision` (external `jevbench`) | text, zero-shot, out-of-domain | 4.7 | **0.667** | 0.623 | 0.563 | n/a | 0.632 |
 
-**`cua-s1-4b-0.1` could not do multimodal inference at all as originally
-published, and this has since been fixed.** Its published LoRA was a
-text-only adapter that failed to load onto the multimodal model class; an
-earlier version of this table conflated it with a different, never-published
-multimodal-trained adapter and wrongly reported 1.000 on its behalf, then a
-later revision correctly caught the conflation and marked every
-`cua-s1-4b-0.1` multimodal cell `blocked`. Both are now resolved: the real,
-working multimodal LoRA has been packaged and published to
-`cua-ai/cua-s1-4b-0.1` alongside the existing text adapter (`text/` and
-`multimodal/` subdirectories), `cua_s1.four_b.FourBModel` now loads the
-correct one for the requested modality, and every number above is a fresh
-measurement through that fixed, public code path -- not carried over from
-the earlier internal-only eval. The 6-core-families multimodal 1.000 holds
-up under this real path (same-distribution data the adapter was actually
-trained on). Chess and game_control multimodal both come back nearly
-identical to `cua-s1-nano-0.1`'s and `djev`'s numbers, because the
+`cua-s1-4b-0.1` ships two independently trained LoRA adapters,
+`text/` and `multimodal/`, published together at `cua-ai/cua-s1-4b-0.1`;
+`cua_s1.four_b.FourBModel` loads the correct one for the requested modality.
+The 6-core-families multimodal 1.000 reflects the multimodal adapter's own
+training distribution. Chess and game_control multimodal both come back
+nearly identical to `cua-s1-nano-0.1`'s and `djev`'s numbers, because the
 multimodal LoRA was only ever trained on the 6-core-families synthetic
-distribution and does not generalize to these out-of-distribution families
--- an honest result, not a remaining bug.
+distribution and does not generalize to these out-of-distribution families.
 
 `chess` uses a real Stockfish-backed, freshly generated 800-position dataset
-where every legal move is scored as its own real click-vs-skip decision (a
-prior version of this table reported a since-withdrawn 1.000 on a task
-construction that let every non-gold move auto-score as correct). Since
-`cua-s1-4b-0.1`'s letter-based decoding contract caps it at 26 options per
+where every legal move is scored as its own real click-vs-skip decision.
+Since `cua-s1-4b-0.1`'s letter-based decoding contract caps it at 26 options per
 task, and most of the 800 positions exceed that, **every model in the chess
 rows above is scored on the same identical 15-position subset** (options
 <=26) rather than comparing mismatched sample sizes -- the nerf that one
@@ -241,7 +228,7 @@ safety taxonomy behind `safety_gate`.
 - **ViZDoom `game_control`** (`datagen/vizdoom_gym.py`): MIT-licensed. Drives
   real, live ViZDoom episodes and derives gold actions from the engine's own
   ground-truth object-label buffer via a disclosed, local aim heuristic.
-  Multimodal only -- there is no honest text representation of a Doom frame.
+  Multimodal only -- there is no text representation of a Doom frame.
   Held out only.
 - **External benchmark import** (`datagen/external_bench_import.py`):
   converts the public dataset from
@@ -251,16 +238,12 @@ safety taxonomy behind `safety_gate`.
   probe of whether a GUI-trained model's decision skill transfers to a
   domain with no screen at all.
 
-A hard-negative/hard-distractor design note, honestly stated: an early decoy
-design gave every non-gold "trap" element only a `skip`-only option set,
-which a model could defeat by shallow text-matching (does this element's
-label textually resemble a present source value) without ever having to
-choose between two *plausible* candidate actions. The hard-distractor variant
-(enabled per-generator/per-converter) closes that gap by giving a same-role,
-lexically-similar decoy a real, present non-`skip` option that targets the
-same entity or role as the genuine gold element elsewhere on the same screen
--- so a model must identify the correct *slot* for an action, not just that
-the action is plausible somewhere on the page.
+Hard distractors (enabled per-generator/per-converter): every non-gold "trap"
+element gets a same-role, lexically-similar decoy with a real, present
+non-`skip` option that targets the same entity or role as the genuine gold
+element elsewhere on the same screen -- so a model must identify the correct
+*slot* for an action, not just that the action is plausible somewhere on the
+page.
 
 ## Running an evaluation
 

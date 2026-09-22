@@ -53,8 +53,7 @@ the caller supplies.
 
 Both `chess` and `game_control` are used only for evaluation in this
 package's own intended workflow -- never mixed into a training split.
-This is a deliberate train/eval separation, stated honestly here rather than
-implied: it lets a benchmark user measure whether a model trained on GUI
+This is a deliberate train/eval separation: it lets a benchmark user measure whether a model trained on GUI
 form/login/consent/pagination/search tasks generalizes to a structurally
 different decision domain (real chess positions; a live first-person game
 loop), rather than only measuring in-distribution accuracy.

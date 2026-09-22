@@ -184,10 +184,12 @@ mod tests {
                 vec![(0, 0), (1919, 1079), (960, 540), (1, 1)],
             ),
             (
-                // HiDPI secondary. cua-driver runs Per-Monitor-V2 DPI-aware (see
-                // win32 manifest), so GetSystemMetrics returns PIXEL extents
-                // regardless of DPI scaling — the normalization math is identical
-                // to the same-resolution case. We exercise a larger secondary
+                // HiDPI secondary. Cua Driver runs Per-Monitor-V2 DPI-aware:
+                // standalone mode uses the win32 manifest, while embedded mode
+                // initializes its owned SDK threads. GetSystemMetrics therefore
+                // returns PIXEL extents regardless of DPI scaling — the
+                // normalization math is identical to the same-resolution case.
+                // We exercise a larger secondary
                 // (e.g. 2560x1440) to the left of a 1920x1080 primary to confirm
                 // there's no implicit DPI assumption in the helper.
                 //

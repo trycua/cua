@@ -440,7 +440,7 @@ impl Tool for ExactPidWindowTargetGuard {
                         }));
                 };
                 let owner_pid =
-                    tokio::task::spawn_blocking(move || crate::win32::window_owner_pid(window_id))
+                    crate::dpi::spawn_blocking(move || crate::win32::window_owner_pid(window_id))
                         .await
                         .ok()
                         .flatten();
@@ -684,7 +684,7 @@ impl Tool for ListAppsTool {
         //    that launch_path. Remaining installed entries are emitted with
         //    running=false, pid=0. Remaining running pids (no installed-app
         //    match) are emitted as running=true with launch_path=null.
-        let apps = tokio::task::spawn_blocking(|| -> Vec<serde_json::Value> {
+        let apps = crate::dpi::spawn_blocking(|| -> Vec<serde_json::Value> {
             use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
             use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
 
@@ -898,7 +898,7 @@ impl Tool for ListWindowsTool {
         use cua_driver_core::tool_args::ArgsExt;
         let filter_pid = args.opt_u64("pid").map(|v| v as u32);
         let on_screen_only = args.bool_or("on_screen_only", false);
-        let (mut windows, pid_to_name) = tokio::task::spawn_blocking(move || {
+        let (mut windows, pid_to_name) = crate::dpi::spawn_blocking(move || {
             let wins = crate::win32::list_windows(filter_pid);
             let procs = crate::win32::list_processes();
             let map: std::collections::HashMap<u32, String> =
@@ -1280,12 +1280,12 @@ impl Tool for GetWindowStateTool {
             };
         // Validate window belongs to pid — Swift's hard error.
         let windows_for_pid =
-            tokio::task::spawn_blocking(move || crate::win32::list_windows(Some(pid)))
+            crate::dpi::spawn_blocking(move || crate::win32::list_windows(Some(pid)))
                 .await
                 .unwrap_or_default();
         if !windows_for_pid.iter().any(|w| w.hwnd == hwnd) {
             // Check if the window exists under a different pid.
-            let all = tokio::task::spawn_blocking(|| crate::win32::list_windows(None))
+            let all = crate::dpi::spawn_blocking(|| crate::win32::list_windows(None))
                 .await
                 .unwrap_or_default();
             if let Some(w) = all.iter().find(|w| w.hwnd == hwnd) {
@@ -1308,7 +1308,7 @@ impl Tool for GetWindowStateTool {
             .iter()
             .find(|w| w.hwnd == hwnd)
             .map(|w| (w.title.clone(), w.x, w.y, w.width, w.height));
-        let app_name = tokio::task::spawn_blocking(move || {
+        let app_name = crate::dpi::spawn_blocking(move || {
             crate::win32::list_processes()
                 .into_iter()
                 .find(|p| p.pid == pid)
@@ -1382,7 +1382,7 @@ impl Tool for GetWindowStateTool {
         let state = self.state.clone();
         let q = query.clone();
         let out_file = screenshot_out_file.clone();
-        let blocking = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+        let blocking = crate::dpi::spawn_blocking(move || -> anyhow::Result<_> {
             let tree_result = if do_tree {
                 Some(crate::uia::walk_tree_bounded(
                     hwnd,
@@ -1904,7 +1904,7 @@ async fn restore_foreground_polling_best_effort(prior_foreground_addr: usize, sp
         // antivirus filters tolerate better than QUERY_INFORMATION.
         // OpenProcess result is also `!Send` (HANDLE), so do the open +
         // wait + close in one blocking task.
-        let _ = tokio::task::spawn_blocking(move || unsafe {
+        let _ = crate::dpi::spawn_blocking(move || unsafe {
             if let Ok(handle) = OpenProcess(
                 PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
                 false,
@@ -2354,7 +2354,7 @@ impl Tool for LaunchAppTool {
         let pid = if let Some(aumid) = aumid_for_uwp.clone() {
             let aumid_clone = aumid.clone();
             let args_clone = extra_joined.clone();
-            let activation = tokio::task::spawn_blocking(move || {
+            let activation = crate::dpi::spawn_blocking(move || {
                 crate::launch_uwp::launch_uwp(&aumid_clone, &args_clone)
             })
             .await;
@@ -2391,7 +2391,7 @@ impl Tool for LaunchAppTool {
             // UI so that case fails fast with an error code; the timeout is the
             // backstop for any *other* blocking broker dialog (SmartScreen, an
             // elevation/consent surface) so a bad target can't hang the daemon.
-            let launch = tokio::task::spawn_blocking(move || -> anyhow::Result<u32> {
+            let launch = crate::dpi::spawn_blocking(move || -> anyhow::Result<u32> {
                 use windows::core::{PCWSTR, PWSTR};
                 use windows::Win32::Foundation::CloseHandle;
                 use windows::Win32::System::Threading::{
@@ -2546,7 +2546,7 @@ impl Tool for LaunchAppTool {
         if aumid_for_uwp.is_none() && restore_foreground {
             let spawned_pid_for_restore = pid;
             let target_foreground_addr = foreground_before_addr;
-            tokio::spawn(async move {
+            crate::dpi::spawn(async move {
                 restore_foreground_polling_best_effort(
                     target_foreground_addr,
                     spawned_pid_for_restore,
@@ -2561,7 +2561,7 @@ impl Tool for LaunchAppTool {
         if aumid_for_uwp.is_some() && !urls.is_empty() {
             let urls_clone = urls.clone();
             let n_show_for_urls = n_show;
-            let _ = tokio::task::spawn_blocking(move || {
+            let _ = crate::dpi::spawn_blocking(move || {
                 use windows::core::PCWSTR;
                 use windows::Win32::UI::Shell::{ShellExecuteExW, SHELLEXECUTEINFOW};
                 fn to_wide(s: &str) -> Vec<u16> {
@@ -2615,7 +2615,7 @@ impl Tool for LaunchAppTool {
         if aumid_for_uwp.is_some() {
             for _ in 0..10 {
                 let host =
-                    tokio::task::spawn_blocking(move || crate::win32::resolve_uwp_host_window(pid))
+                    crate::dpi::spawn_blocking(move || crate::win32::resolve_uwp_host_window(pid))
                         .await
                         .unwrap_or(None);
                 if let Some(w) = host {
@@ -2640,7 +2640,7 @@ impl Tool for LaunchAppTool {
             if !windows_json.is_empty() {
                 break;
             }
-            let wins = tokio::task::spawn_blocking(move || crate::win32::list_windows(Some(pid)))
+            let wins = crate::dpi::spawn_blocking(move || crate::win32::list_windows(Some(pid)))
                 .await
                 .unwrap_or_default();
             if !wins.is_empty() {
@@ -2679,7 +2679,7 @@ impl Tool for LaunchAppTool {
             let max_candidate_attempts: usize = if is_slow_launcher { 30 } else { 3 };
 
             let basename_clone = basename_for_match.clone();
-            let candidates_initial = tokio::task::spawn_blocking(move || {
+            let candidates_initial = crate::dpi::spawn_blocking(move || {
                 crate::win32::related_processes(pid, &basename_clone)
             })
             .await
@@ -2699,7 +2699,7 @@ impl Tool for LaunchAppTool {
                 while let Some(candidate_pid) = candidate_queue.pop() {
                     for _ in 0..max_candidate_attempts {
                         total_attempts += 1;
-                        let wins = tokio::task::spawn_blocking(move || {
+                        let wins = crate::dpi::spawn_blocking(move || {
                             crate::win32::list_windows(Some(candidate_pid))
                         })
                         .await
@@ -2729,7 +2729,7 @@ impl Tool for LaunchAppTool {
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 total_attempts += 3; // count the 500ms wait as 3 attempts
                 let basename_rescan = basename_for_match.clone();
-                let fresh = tokio::task::spawn_blocking(move || {
+                let fresh = crate::dpi::spawn_blocking(move || {
                     crate::win32::related_processes(pid, &basename_rescan)
                 })
                 .await
@@ -2785,7 +2785,7 @@ impl Tool for LaunchAppTool {
             // poll window.
             let parent_pid = pid;
             let immediate_hwnds_for_poll = immediate_hwnds.clone();
-            let _ = tokio::task::spawn_blocking(move || {
+            let _ = crate::dpi::spawn_blocking(move || {
                 use windows::Win32::Foundation::HWND;
                 use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_SHOWMINNOACTIVE};
                 for h in immediate_hwnds {
@@ -2834,7 +2834,7 @@ impl Tool for LaunchAppTool {
                     // Build the family pid set fresh each tick — both
                     // descendant graph and name-relatives can grow as
                     // launcher-stub chains spawn deeper children.
-                    let family_new_pids: Vec<u32> = tokio::task::spawn_blocking(move || {
+                    let family_new_pids: Vec<u32> = crate::dpi::spawn_blocking(move || {
                         let related: std::collections::HashSet<u32> =
                             crate::win32::related_processes(parent_pid, &basename_clone)
                                 .into_iter()
@@ -2852,7 +2852,7 @@ impl Tool for LaunchAppTool {
                     .unwrap_or_default();
                     let mut tick_hits: usize = 0;
                     for cpid in family_new_pids {
-                        let wins = tokio::task::spawn_blocking(move || {
+                        let wins = crate::dpi::spawn_blocking(move || {
                             crate::win32::list_windows(Some(cpid))
                         })
                         .await
@@ -2863,7 +2863,7 @@ impl Tool for LaunchAppTool {
                                 hit_count_total += 1;
                             }
                             let hwnd_iso = w.hwnd as usize;
-                            let restored = tokio::task::spawn_blocking(move || unsafe {
+                            let restored = crate::dpi::spawn_blocking(move || unsafe {
                                 let hwnd = HWND(hwnd_iso as *mut _);
                                 if IsIconic(hwnd).as_bool() {
                                     false
@@ -3203,7 +3203,7 @@ impl Tool for ClickTool {
             // Click the HWND that owned the pixel before the driver overlay
             // moved there. The active SendInput path performs the foreground
             // swap and UIPI checks needed for Chromium and retained-mode apps.
-            let send_result = tokio::task::spawn_blocking(move || -> anyhow::Result<u64> {
+            let send_result = crate::dpi::spawn_blocking(move || -> anyhow::Result<u64> {
                 let mod_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
                 crate::input::send_click_synthesized_active_mods(
                     hwnd_u, sx, sy, count, &button, &mod_refs,
@@ -3314,7 +3314,7 @@ impl Tool for ClickTool {
         let hwnd = match hwnd_opt {
             Some(h) => h,
             None => {
-                let windows = tokio::task::spawn_blocking({
+                let windows = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -3413,7 +3413,7 @@ impl Tool for ClickTool {
                 };
                 let mods_owned = modifiers.clone();
                 let activate = delivery == DeliveryMode::Foreground;
-                let send_result = tokio::task::spawn_blocking({
+                let send_result = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -3430,7 +3430,7 @@ impl Tool for ClickTool {
                     }
                 })
                 .await;
-                tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
+                crate::dpi::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
                 let half = if want_expand { "dropdown" } else { "press" };
                 return match send_result {
                     Ok(Ok(())) => ToolResult::text(format!(
@@ -3478,7 +3478,7 @@ impl Tool for ClickTool {
             // WPF/WinUI menus and tree nodes whose visual click target is
             // transient or scroll-adjusted.
             if action_req.as_deref() == Some("expand") {
-                let expand = tokio::task::spawn_blocking({
+                let expand = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || -> anyhow::Result<()> {
                         let _admission = &admitted;
@@ -3577,7 +3577,7 @@ impl Tool for ClickTool {
                 let prev_fg_addr = unsafe {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
                 };
-                let send_result = tokio::task::spawn_blocking({
+                let send_result = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -3588,7 +3588,7 @@ impl Tool for ClickTool {
                     }
                 })
                 .await;
-                tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
+                crate::dpi::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
                 return match send_result {
                     Ok(Ok(())) => ToolResult::text(format!(
                         "✅ Performed SendInput click on [{idx}] at screen ({cx},{cy}) (delivery_mode:foreground)."
@@ -3627,7 +3627,7 @@ impl Tool for ClickTool {
                 && count == 1
                 && crate::input::is_chromium_target_window(hwnd)
             {
-                let posted = tokio::task::spawn_blocking({
+                let posted = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -3659,7 +3659,7 @@ impl Tool for ClickTool {
             //   - count > 1 (double-click semantics aren't an Invoke
             //     concept — PostMessage produces the actual WM_LBUTTONDBLCLK)
             let use_uia_invoke = (btn == "left" || btn == "middle") && count == 1;
-            let result = tokio::task::spawn_blocking({ let admitted = admitted.clone(); move || -> anyhow::Result<BackgroundElementClick> {
+            let result = crate::dpi::spawn_blocking({ let admitted = admitted.clone(); move || -> anyhow::Result<BackgroundElementClick> {
                 let _admission = &admitted;
                 let mut failed_calls = Vec::new();
                 // Direct Chromium UIA Invoke can return S_OK without firing a
@@ -3816,7 +3816,7 @@ impl Tool for ClickTool {
             } else {
                 "PostMessage click"
             };
-            let sent = tokio::task::spawn_blocking({
+            let sent = crate::dpi::spawn_blocking({
                 let admitted = admitted.clone();
                 move || {
                     let _admission = &admitted;
@@ -3923,7 +3923,7 @@ impl Tool for ClickTool {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
                 };
                 let mods_owned = modifiers.clone();
-                let send_result = tokio::task::spawn_blocking({
+                let send_result = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -3934,7 +3934,7 @@ impl Tool for ClickTool {
                     }
                 })
                 .await;
-                tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
+                crate::dpi::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
                 return match send_result {
                     Ok(Ok(())) => {
                         let click_word = match count {
@@ -3973,7 +3973,7 @@ impl Tool for ClickTool {
                 && count == 1
                 && crate::input::is_chromium_target_window(hwnd)
             {
-                let posted = tokio::task::spawn_blocking({
+                let posted = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -4002,7 +4002,7 @@ impl Tool for ClickTool {
             if delivery == DeliveryMode::Background && crate::input::is_chromium_target_window(hwnd)
             {
                 let btn2 = btn.clone();
-                let inj = tokio::task::spawn_blocking({
+                let inj = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -4025,7 +4025,7 @@ impl Tool for ClickTool {
             }
             let use_uia = (btn == "left" || btn == "middle") && count == 1;
             if use_uia {
-                let outcome = tokio::task::spawn_blocking({
+                let outcome = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -4049,7 +4049,7 @@ impl Tool for ClickTool {
                 && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
                 let btn2 = btn.clone();
-                let inj = tokio::task::spawn_blocking({
+                let inj = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -4080,7 +4080,7 @@ impl Tool for ClickTool {
 
             // bitmap pixels -> screen (DWM-frame origin + inset). Use
             // post_click_screen so we don't double-ClientToScreen.
-            let result = tokio::task::spawn_blocking({
+            let result = crate::dpi::spawn_blocking({
                 let admitted = admitted.clone();
                 move || {
                     let _admission = &admitted;
@@ -4527,7 +4527,7 @@ impl Tool for TypeTextTool {
                 Err(error) => return ToolResult::error(error.to_string()),
             };
             let text_len = text.chars().count();
-            return match tokio::task::spawn_blocking(move || {
+            return match crate::dpi::spawn_blocking(move || {
                 crate::input::send_text_synthesized(hwnd, &text)
             })
             .await
@@ -4635,7 +4635,7 @@ impl Tool for TypeTextTool {
         let hwnd = match hwnd_opt {
             Some(h) => h,
             None => {
-                let windows = tokio::task::spawn_blocking({
+                let windows = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -4729,7 +4729,7 @@ impl Tool for TypeTextTool {
                 None
             };
             let text_fg = text.clone();
-            let r = tokio::task::spawn_blocking({
+            let r = crate::dpi::spawn_blocking({
                 let admitted = admitted.clone();
                 move || {
                     let _admission = &admitted;
@@ -4796,7 +4796,7 @@ impl Tool for TypeTextTool {
         //    (most legacy Win32 EDITs consume WM_CHAR fine without focus steal).
         if let Some(idx) = elem_idx {
             let text_for_uia = text.clone();
-            let set_result = tokio::task::spawn_blocking({
+            let set_result = crate::dpi::spawn_blocking({
                 let admitted = admitted.clone();
                 move || {
                     let _admission = &admitted;
@@ -4847,7 +4847,7 @@ impl Tool for TypeTextTool {
                 // (works regardless of which window is foreground), proving the
                 // a11y write actually took rather than trusting SetValue's
                 // return alone.
-                let verify = tokio::task::spawn_blocking({
+                let verify = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -4946,7 +4946,7 @@ impl Tool for TypeTextTool {
         let text_for_post = text.clone();
         let verify_pid = pid;
         let verify_idx = elem_idx.map(|i| i as usize);
-        let result = tokio::task::spawn_blocking({
+        let result = crate::dpi::spawn_blocking({
             let admitted = admitted.clone();
             move || {
                 let _admission = &admitted;
@@ -5282,7 +5282,7 @@ impl Tool for PressKeyTool {
                 Err(error) => return ToolResult::error(error.to_string()),
             };
             let key_display = key.clone();
-            return match tokio::task::spawn_blocking(move || {
+            return match crate::dpi::spawn_blocking(move || {
                 let modifiers: Vec<&str> = mods.iter().map(String::as_str).collect();
                 crate::input::send_key_synthesized(hwnd, &key, &modifiers)
             })
@@ -5375,7 +5375,7 @@ impl Tool for PressKeyTool {
         let hwnd = match hwnd_opt {
             Some(h) => h,
             None => {
-                let windows = tokio::task::spawn_blocking({
+                let windows = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -5467,7 +5467,7 @@ impl Tool for PressKeyTool {
                 return error;
             }
         } else if elem_idx.is_some() && delivery != DeliveryMode::Foreground {
-            let focused = tokio::task::spawn_blocking({
+            let focused = crate::dpi::spawn_blocking({
                 let admitted = admitted.clone();
                 move || {
                     let _admission = &admitted;
@@ -5502,7 +5502,7 @@ impl Tool for PressKeyTool {
                 let point = admitted.as_ref().map(|element| element.center);
                 (idx as usize, point)
             });
-            let send_result = tokio::task::spawn_blocking({
+            let send_result = crate::dpi::spawn_blocking({
                 let admitted = admitted.clone();
                 move || {
                     let _admission = &admitted;
@@ -5524,7 +5524,7 @@ impl Tool for PressKeyTool {
                 Err(e)     => ToolResult::error(format!("Task error: {e}")),
             };
         }
-        let result = tokio::task::spawn_blocking({
+        let result = crate::dpi::spawn_blocking({
             let admitted = admitted.clone();
             move || {
                 let _admission = &admitted;
@@ -5662,7 +5662,7 @@ impl Tool for HotkeyTool {
                 Err(error) => return ToolResult::error(error.to_string()),
             };
             let key_display = full_keys.join("+");
-            return match tokio::task::spawn_blocking(move || {
+            return match crate::dpi::spawn_blocking(move || {
                 let modifiers: Vec<&str> = mods.iter().map(String::as_str).collect();
                 crate::input::send_key_synthesized(hwnd, &key, &modifiers)
             })
@@ -5746,7 +5746,7 @@ impl Tool for HotkeyTool {
             Some(h) => h,
             None => {
                 let pid2 = pid;
-                let windows = tokio::task::spawn_blocking({
+                let windows = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -5818,7 +5818,7 @@ impl Tool for HotkeyTool {
             // bound the call so a hung provider returns an error instead of
             // blocking the daemon indefinitely. 4 s matches the budget the
             // rest of this file uses for similar UIA scans.
-            let result = tokio::task::spawn_blocking({
+            let result = crate::dpi::spawn_blocking({
                 let admitted = admitted.clone();
                 move || {
                     let _admission = &admitted;
@@ -5913,7 +5913,7 @@ impl Tool for HotkeyTool {
             let point = admitted.as_ref().map(|element| element.center);
             (idx, point)
         });
-        let result = tokio::task::spawn_blocking({
+        let result = crate::dpi::spawn_blocking({
             let admitted = admitted.clone();
             move || {
                 let _admission = &admitted;
@@ -6058,7 +6058,7 @@ impl Tool for SetValueTool {
             );
         }
 
-        let result = tokio::task::spawn_blocking({
+        let result = crate::dpi::spawn_blocking({
             move || -> anyhow::Result<String> {
                 let _noact = _noact;
                 let ptr = admitted.as_ptr();
@@ -6215,7 +6215,7 @@ impl Tool for ScrollTool {
             };
             let ticks = sign * amount as i32;
             let dir_disp = direction.as_str();
-            let result = tokio::task::spawn_blocking(move || {
+            let result = crate::dpi::spawn_blocking(move || {
                 crate::input::send_wheel_synthesized(sx, sy, ticks, horizontal)
             })
             .await;
@@ -6270,7 +6270,7 @@ impl Tool for ScrollTool {
         let hwnd = match hwnd_opt {
             Some(h) => h,
             None => {
-                let windows = tokio::task::spawn_blocking({
+                let windows = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -6316,7 +6316,7 @@ impl Tool for ScrollTool {
                 None
             };
             let direction_for_uia = direction.clone();
-            let uia_result = tokio::task::spawn_blocking({
+            let uia_result = crate::dpi::spawn_blocking({
                 let admitted = admitted.clone();
                 move || {
                     let _admission = &admitted;
@@ -6429,7 +6429,7 @@ impl Tool for ScrollTool {
             let center = if let (Some(x), Some(y)) = (px, py) {
                 Some(bitmap_to_screen(hwnd, x as i32, y as i32))
             } else {
-                tokio::task::spawn_blocking({
+                crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -6455,7 +6455,7 @@ impl Tool for ScrollTool {
             };
             let dir_disp = direction.clone();
             let tick_disp = ticks.abs();
-            let result = tokio::task::spawn_blocking({
+            let result = crate::dpi::spawn_blocking({
                 let admitted = admitted.clone();
                 move || {
                     let _admission = &admitted;
@@ -6473,7 +6473,7 @@ impl Tool for ScrollTool {
             };
         }
 
-        let result = tokio::task::spawn_blocking({
+        let result = crate::dpi::spawn_blocking({
             let admitted = admitted.clone();
             move || -> anyhow::Result<()> {
                 let _admission = &admitted;
@@ -6561,7 +6561,7 @@ async fn chromium_click_short_circuit(
     gesture: &str,
 ) -> Option<ToolResult> {
     let is_chromium =
-        tokio::task::spawn_blocking(move || crate::input::is_chromium_target_window(hwnd))
+        crate::dpi::spawn_blocking(move || crate::input::is_chromium_target_window(hwnd))
             .await
             .unwrap_or(false);
     if !is_chromium {
@@ -6573,11 +6573,11 @@ async fn chromium_click_short_circuit(
     let prev_fg_addr =
         unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize };
     let button_owned = button.to_string();
-    let send_result = tokio::task::spawn_blocking(move || {
+    let send_result = crate::dpi::spawn_blocking(move || {
         crate::input::send_click_synthesized(hwnd, sx, sy, count, &button_owned)
     })
     .await;
-    tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
+    crate::dpi::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
     Some(match send_result {
         Ok(Ok(())) => ToolResult::text(format!(
             "✅ Sent {gesture} via SendInput to pid {pid} at screen ({sx},{sy}) (Chromium target)."
@@ -6673,7 +6673,7 @@ async fn winui3_background_gesture(
     count: usize,
     button: &str,
 ) -> Option<ToolResult> {
-    let is_w = tokio::task::spawn_blocking({
+    let is_w = crate::dpi::spawn_blocking({
         let admitted = admitted.clone();
         move || {
             let _admission = &admitted;
@@ -6687,7 +6687,7 @@ async fn winui3_background_gesture(
     }
     if count >= 2 && button == "left" {
         if let Some(idx) = idx {
-            let uia = tokio::task::spawn_blocking({
+            let uia = crate::dpi::spawn_blocking({
                 let admitted = admitted.clone();
                 move || {
                     let _admission = &admitted;
@@ -6809,7 +6809,7 @@ impl Tool for DoubleClickTool {
         let hwnd = match hwnd_opt {
             Some(h) => h,
             None => {
-                let windows = tokio::task::spawn_blocking({
+                let windows = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -6885,7 +6885,7 @@ impl Tool for DoubleClickTool {
             if delivery == DeliveryMode::Background
                 && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
-                let inj = tokio::task::spawn_blocking({
+                let inj = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -6910,7 +6910,7 @@ impl Tool for DoubleClickTool {
                 let prev_fg_addr = unsafe {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
                 };
-                let send_result = tokio::task::spawn_blocking({
+                let send_result = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -6925,7 +6925,7 @@ impl Tool for DoubleClickTool {
                     }
                 })
                 .await;
-                tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
+                crate::dpi::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
                 return match send_result {
                     Ok(Ok(())) => ToolResult::text(format!(
                         "✅ Sent double-click via SendInput on [{idx}] at screen ({cx},{cy}) (delivery_mode:foreground)."
@@ -6940,7 +6940,7 @@ impl Tool for DoubleClickTool {
             {
                 return r;
             }
-            let result = tokio::task::spawn_blocking({
+            let result = crate::dpi::spawn_blocking({
                 let admitted = admitted.clone();
                 move || -> anyhow::Result<String> {
                     let _admission = &admitted;
@@ -7006,7 +7006,7 @@ impl Tool for DoubleClickTool {
             if delivery == DeliveryMode::Background
                 && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
-                let inj = tokio::task::spawn_blocking({
+                let inj = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -7031,7 +7031,7 @@ impl Tool for DoubleClickTool {
                 let prev_fg_addr = unsafe {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
                 };
-                let send_result = tokio::task::spawn_blocking({
+                let send_result = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -7046,7 +7046,7 @@ impl Tool for DoubleClickTool {
                     }
                 })
                 .await;
-                tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
+                crate::dpi::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
                 return match send_result {
                     Ok(Ok(())) => ToolResult::text(format!(
                         "✅ Sent double-click via SendInput to pid {pid} at screen ({sx_i},{sy_i}) (delivery_mode:foreground)."
@@ -7062,7 +7062,7 @@ impl Tool for DoubleClickTool {
             {
                 return r;
             }
-            let result = tokio::task::spawn_blocking({
+            let result = crate::dpi::spawn_blocking({
                 let admitted = admitted.clone();
                 move || {
                     let _admission = &admitted;
@@ -7184,7 +7184,7 @@ impl Tool for RightClickTool {
         let hwnd = match hwnd_opt {
             Some(h) => h,
             None => {
-                let windows = tokio::task::spawn_blocking({
+                let windows = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -7255,7 +7255,7 @@ impl Tool for RightClickTool {
             if delivery == DeliveryMode::Background
                 && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
-                let inj = tokio::task::spawn_blocking({
+                let inj = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -7279,7 +7279,7 @@ impl Tool for RightClickTool {
                 let prev_fg_addr = unsafe {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
                 };
-                let send_result = tokio::task::spawn_blocking({
+                let send_result = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -7294,7 +7294,7 @@ impl Tool for RightClickTool {
                     }
                 })
                 .await;
-                tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
+                crate::dpi::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
                 return match send_result {
                     Ok(Ok(())) => ToolResult::text(format!(
                         "✅ Sent right-click via SendInput on [{idx}] at screen ({cx},{cy}) (delivery_mode:foreground)."
@@ -7309,7 +7309,7 @@ impl Tool for RightClickTool {
             {
                 return r;
             }
-            let result = tokio::task::spawn_blocking({
+            let result = crate::dpi::spawn_blocking({
                 let admitted = admitted.clone();
                 move || -> anyhow::Result<String> {
                     let _admission = &admitted;
@@ -7373,7 +7373,7 @@ impl Tool for RightClickTool {
             if delivery == DeliveryMode::Background
                 && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
-                let inj = tokio::task::spawn_blocking({
+                let inj = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -7397,7 +7397,7 @@ impl Tool for RightClickTool {
                 let prev_fg_addr = unsafe {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
                 };
-                let send_result = tokio::task::spawn_blocking({
+                let send_result = crate::dpi::spawn_blocking({
                     let admitted = admitted.clone();
                     move || {
                         let _admission = &admitted;
@@ -7412,7 +7412,7 @@ impl Tool for RightClickTool {
                     }
                 })
                 .await;
-                tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
+                crate::dpi::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
                 return match send_result {
                     Ok(Ok(())) => ToolResult::text(format!(
                         "✅ Sent right-click via SendInput to pid {pid} at screen ({sx_i},{sy_i}) (delivery_mode:foreground)."
@@ -7428,7 +7428,7 @@ impl Tool for RightClickTool {
             {
                 return r;
             }
-            let result = tokio::task::spawn_blocking({
+            let result = crate::dpi::spawn_blocking({
                 let admitted = admitted.clone();
                 move || {
                     let _admission = &admitted;
@@ -7513,7 +7513,7 @@ impl Tool for DragTool {
                 Ok(hwnd) => hwnd,
                 Err(error) => return ToolResult::error(error.to_string()),
             };
-            let native_drag = tokio::task::spawn_blocking(move || {
+            let native_drag = crate::dpi::spawn_blocking(move || {
                 crate::input::mouse::send_drag_synthesized(
                     hwnd,
                     from_x,
@@ -7606,7 +7606,7 @@ impl Tool for DragTool {
             Some(h) => h,
             None => {
                 let windows =
-                    tokio::task::spawn_blocking(move || crate::win32::list_windows(Some(pid)))
+                    crate::dpi::spawn_blocking(move || crate::win32::list_windows(Some(pid)))
                         .await
                         .unwrap_or_default();
                 match windows.first() {
@@ -7660,7 +7660,7 @@ impl Tool for DragTool {
                     y: sy_from as f64,
                 },
             );
-            let inj = tokio::task::spawn_blocking(move || {
+            let inj = crate::dpi::spawn_blocking(move || {
                 crate::input::inject::inject_drag_screen(
                     target,
                     sx_from,
@@ -7705,7 +7705,7 @@ impl Tool for DragTool {
             let prev_fg_addr = unsafe {
                 windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
             };
-            let send_result = tokio::task::spawn_blocking(move || {
+            let send_result = crate::dpi::spawn_blocking(move || {
                 crate::input::mouse::send_drag_synthesized(
                     hwnd,
                     sx_from,
@@ -7725,7 +7725,7 @@ impl Tool for DragTool {
                 steps,
             );
             let (send_result, ()) = tokio::join!(send_result, visual_drag);
-            tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
+            crate::dpi::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
             let button_suffix = if button == "left" {
                 String::new()
             } else {
@@ -7750,7 +7750,7 @@ impl Tool for DragTool {
         // structured background_unavailable error so callers escalate to
         // delivery_mode:"foreground" per the documented ladder instead of
         // trusting a drag that did nothing.
-        let nc_hit = tokio::task::spawn_blocking(move || {
+        let nc_hit = crate::dpi::spawn_blocking(move || {
             crate::input::mouse::non_client_move_resize_hit(hwnd, sx_from, sy_from)
         })
         .await
@@ -7788,7 +7788,7 @@ impl Tool for DragTool {
         );
 
         let button_c = button.clone();
-        let result = tokio::task::spawn_blocking(move || {
+        let result = crate::dpi::spawn_blocking(move || {
             // Screen-coord, deepest-child variant: routes the gesture to the
             // child control under the start point (e.g. a WinForms Panel),
             // not the top-level frame that would ignore it.
@@ -7932,7 +7932,7 @@ impl Tool for GetDesktopStateTool {
         // Capture the FULL display at native size — no resize. Run the
         // blocking GDI capture off the async runtime.
         let out_file = screenshot_out_file.clone();
-        let res = tokio::task::spawn_blocking(
+        let res = crate::dpi::spawn_blocking(
             move || -> anyhow::Result<(Option<String>, Option<String>, u32, u32)> {
                 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
                 let png = crate::capture::screenshot_display_bytes()?;
@@ -8768,7 +8768,7 @@ impl Tool for GetAccessibilityTreeTool {
         })
     }
     async fn invoke(&self, _args: Value) -> ToolResult {
-        let (procs, windows) = tokio::task::spawn_blocking(|| {
+        let (procs, windows) = crate::dpi::spawn_blocking(|| {
             (
                 crate::win32::list_processes(),
                 crate::win32::list_windows(None),
@@ -8898,7 +8898,7 @@ impl Tool for ZoomTool {
         let (nx1, ny1, nx2, ny2) = (x1 * ratio, y1 * ratio, x2 * ratio, y2 * ratio);
 
         let state = self.state.clone();
-        let result = tokio::task::spawn_blocking(move || {
+        let result = crate::dpi::spawn_blocking(move || {
             let png = crate::capture::screenshot_window_bytes(hwnd)?;
             cursor_overlay::capture_utils::crop_png_to_jpeg(&png, nx1, ny1, nx2, ny2, 500)
         })
@@ -8991,7 +8991,7 @@ impl Tool for TypeTextCharsTool {
             Some(h) => h,
             None => {
                 let windows =
-                    tokio::task::spawn_blocking(move || crate::win32::list_windows(Some(pid)))
+                    crate::dpi::spawn_blocking(move || crate::win32::list_windows(Some(pid)))
                         .await
                         .unwrap_or_default();
                 match windows.first() {
@@ -9005,7 +9005,7 @@ impl Tool for TypeTextCharsTool {
             }
         };
         let text_len = text.chars().count();
-        let result = tokio::task::spawn_blocking(move || {
+        let result = crate::dpi::spawn_blocking(move || {
             crate::input::post_type_text_with_delay(hwnd, &text, delay_ms)
         })
         .await;
@@ -9126,7 +9126,7 @@ impl Tool for InvokeMenuTool {
             return menu_refusal("invoke_menu: window_id does not belong to pid".into());
         }
 
-        let outcome = tokio::task::spawn_blocking(move || {
+        let outcome = crate::dpi::spawn_blocking(move || {
             // `HWND` wraps a raw pointer and is intentionally not `Send`.
             // Move the integer handle into the blocking worker and rebuild the
             // process-local wrapper there instead of carrying it across threads.
@@ -9250,7 +9250,7 @@ impl Tool for SetWindowFrameTool {
                 Ok(input) => input,
                 Err(result) => return result,
             };
-        let outcome = tokio::task::spawn_blocking(move || {
+        let outcome = crate::dpi::spawn_blocking(move || {
             use windows::Win32::{
                 Foundation::{HWND, RECT},
                 Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS},
@@ -9472,7 +9472,7 @@ impl Tool for BringToFrontTool {
             Some(h) => h,
             None => {
                 let windows =
-                    tokio::task::spawn_blocking(move || crate::win32::list_windows(Some(pid)))
+                    crate::dpi::spawn_blocking(move || crate::win32::list_windows(Some(pid)))
                         .await
                         .unwrap_or_default();
                 match windows.first() {
@@ -9491,7 +9491,7 @@ impl Tool for BringToFrontTool {
         // and is validated by `flash-repro/16-edge-launch-fg.ps1` for the
         // Edge launch focus-steal recovery case.
         let outcome =
-            tokio::task::spawn_blocking(move || -> Result<(u64, u64, bool, bool), String> {
+            crate::dpi::spawn_blocking(move || -> Result<(u64, u64, bool, bool), String> {
                 use windows::Win32::Foundation::HWND;
                 use windows::Win32::Graphics::Dwm::DwmFlush;
                 use windows::Win32::UI::WindowsAndMessaging::{
@@ -9707,7 +9707,7 @@ impl Tool for KillAppTool {
         // Run the syscalls on a blocking thread — TerminateProcess + the
         // WaitForSingleObject confirmation are both blocking, and we don't
         // want to stall the tokio reactor.
-        let outcome = tokio::task::spawn_blocking(move || -> Result<(), String> {
+        let outcome = crate::dpi::spawn_blocking(move || -> Result<(), String> {
             use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
             use windows::Win32::System::Threading::{
                 OpenProcess, TerminateProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
@@ -9819,7 +9819,7 @@ impl Tool for DebugWindowInfoTool {
             }
         };
 
-        let outcome = tokio::task::spawn_blocking(move || -> serde_json::Value {
+        let outcome = crate::dpi::spawn_blocking(move || -> serde_json::Value {
             use std::collections::HashSet;
             use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, BOOL, TRUE};
             use windows::Win32::System::Com::{

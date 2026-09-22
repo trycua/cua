@@ -888,8 +888,21 @@ def _convert_completion_to_responses_items(
                                     )
                                 )
                             elif action_type in ["left_click_drag", "drag"]:
-                                start_coord = tool_input.get("start_coordinate", [0, 0])
-                                end_coord = tool_input.get("end_coordinate", [0, 0])
+                                # computer_20250124 "drag" uses "path" (list of {x,y} dicts),
+                                # while older "left_click_drag" uses "start_coordinate"/"end_coordinate"
+                                path = tool_input.get("path", [])
+                                if path and isinstance(path, list) and len(path) >= 2:
+                                    start_coord = [
+                                        int(path[0].get("x", 0)),
+                                        int(path[0].get("y", 0)),
+                                    ]
+                                    end_coord = [
+                                        int(path[-1].get("x", start_coord[0])),
+                                        int(path[-1].get("y", start_coord[1])),
+                                    ]
+                                else:
+                                    start_coord = tool_input.get("start_coordinate", [0, 0])
+                                    end_coord = tool_input.get("end_coordinate", [0, 0])
                                 responses_items.append(
                                     make_drag_item(
                                         path=[
@@ -1286,15 +1299,17 @@ def _convert_completion_to_responses_items(
                             coordinate = args.get("coordinate", [0, 0])
                             direction = args.get("scroll_direction", "down")
                             amount = args.get("scroll_amount", 3)
+                            # scroll_x: positive=right, negative=left
+                            # scroll_y: positive=down, negative=up
                             scroll_x = (
                                 amount
-                                if direction == "left"
-                                else -amount if direction == "right" else 0
+                                if direction == "right"
+                                else -amount if direction == "left" else 0
                             )
                             scroll_y = (
                                 amount
-                                if direction == "up"
-                                else -amount if direction == "down" else 0
+                                if direction == "down"
+                                else -amount if direction == "up" else 0
                             )
                             responses_items.append(
                                 make_scroll_item(
@@ -1340,8 +1355,23 @@ def _convert_completion_to_responses_items(
                             #         ]
                             #     }
                             # }
-                            start_coord = args.get("start_coordinate", [0, 0])
-                            end_coord = args.get("end_coordinate", [0, 0])
+                            # computer_20250124 "drag" uses "path" (list of {x,y} dicts),
+                            # while older "left_click_drag" uses "start_coordinate"/"end_coordinate".
+                            # Mirror the tool_use branch above so an Anthropic tool_call carrying
+                            # a path payload doesn't degrade to a [0,0] -> [0,0] no-op.
+                            path = args.get("path", [])
+                            if path and isinstance(path, list) and len(path) >= 2:
+                                start_coord = [
+                                    int(path[0].get("x", 0)),
+                                    int(path[0].get("y", 0)),
+                                ]
+                                end_coord = [
+                                    int(path[-1].get("x", start_coord[0])),
+                                    int(path[-1].get("y", start_coord[1])),
+                                ]
+                            else:
+                                start_coord = args.get("start_coordinate", [0, 0])
+                                end_coord = args.get("end_coordinate", [0, 0])
                             responses_items.append(
                                 make_drag_item(
                                     path=[

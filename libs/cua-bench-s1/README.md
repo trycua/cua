@@ -48,30 +48,30 @@ below).
 | `multi_step_submit` | text, hard cross-dataset (GUI-360) | 0.250 | 0.034 | 0.696 | 0.340 | 0.000 | 0.322 | **0.867** |
 | `pagination` | text, hard cross-dataset (GUI-360) | 0.250 | 0.000 | 0.000 | 0.286 | 0.000 | **0.571** | 0.429 |
 | `search_filter` | text, hard cross-dataset (GUI-360) | 0.250 | 0.021 | 0.604 | 0.354 | 0.000 | 0.271 | **0.958** |
-| `consent_checkbox` | multimodal, same-distribution | 0.232 | n/a | 0.071 | 0.357 | **1.000** | 1.000 | — |
-| `form_filling` | multimodal, same-distribution | 0.044 | n/a | 0.000 | 0.100 | **1.000** | 1.000 | — |
-| `login_auth` | multimodal, same-distribution | 0.169 | n/a | 0.000 | 0.235 | **1.000** | 1.000 | — |
-| `multi_step_submit` | multimodal, same-distribution | 0.188 | n/a | 0.750 | 0.167 | **1.000** | 1.000 | — |
-| `pagination` | multimodal, same-distribution | 0.500 | n/a | 0.444 | 0.000 | **1.000** | 1.000 | — |
-| `search_filter` | multimodal, same-distribution | 0.130 | n/a | 0.429 | 0.214 | **1.000** | 1.000 | — |
+| `consent_checkbox` | multimodal, same-distribution (0.1's split) | 0.232 | n/a | 0.071 | 0.357 | **1.000** | 1.000 | 0.071 |
+| `form_filling` | multimodal, same-distribution (0.1's split) | 0.044 | n/a | 0.000 | 0.100 | **1.000** | 1.000 | 0.000 |
+| `login_auth` | multimodal, same-distribution (0.1's split) | 0.169 | n/a | 0.000 | 0.235 | **1.000** | 1.000 | 0.059 |
+| `multi_step_submit` | multimodal, same-distribution (0.1's split) | 0.188 | n/a | 0.750 | 0.167 | **1.000** | 1.000 | 0.000 |
+| `pagination` | multimodal, same-distribution (0.1's split) | 0.500 | n/a | 0.444 | 0.000 | **1.000** | 1.000 | 0.778 |
+| `search_filter` | multimodal, same-distribution (0.1's split) | 0.130 | n/a | 0.429 | 0.214 | **1.000** | 1.000 | 0.214 |
 | `consent_checkbox` | multimodal, hard cross-dataset (GUI-360), N=4 | 0.250 | n/a | **0.750** | 0.250 | 0.000 | 0.250 | **0.750** |
 | `form_filling` | multimodal, hard cross-dataset (GUI-360), N=12 | 0.250 | n/a | 0.750 | 0.083 | 0.000 | 0.583 | **1.000** |
 | `login_auth` | multimodal, hard cross-dataset (GUI-360), N=4 | 0.250 | n/a | 0.750 | 0.250 | 0.000 | 0.250 | **1.000** |
 | `multi_step_submit` | multimodal, hard cross-dataset (GUI-360), N=133 | 0.250 | n/a | 0.586 | 0.263 | 0.000 | 0.226 | **0.917** |
 | `pagination` | multimodal, hard cross-dataset (GUI-360), N=1 | 0.250 | n/a | 0.000 | 0.000 | 0.000 | 0.000 | **1.000** |
 | `search_filter` | multimodal, hard cross-dataset (GUI-360), N=14 | 0.250 | n/a | 0.571 | 0.214 | 0.000 | 0.214 | **1.000** |
-| `safety_gate` | text, zero-shot | 0.138 | 0.286 | **0.500** | 0.000 | 0.000 | 0.071 | — |
-| `safety_gate` | multimodal, zero-shot | 0.138 | n/a | **0.286** | 0.000 | — | — | — |
-| `safety_gate` | text, finetuned on own train split | 0.138 | — | — | — | 1.000 | **1.000** | — |
-| `chess` | text, task accuracy (fair N=15, all models capped equally) | 0.072 | **0.133** | 0.000 | 0.000 | 0.000 | 0.000 | — |
-| `chess` | text, element accuracy (fair N=15) | 0.500 | **0.682** | 0.227 | 0.424 | 0.227 | 0.515 | — |
-| `chess` | multimodal, task accuracy (fair N=15) | 0.072 | n/a | 0.000 | 0.000 | 0.000 | 0.000 | — |
-| `chess` | multimodal, element accuracy (fair N=15) | 0.500 | n/a | 0.227 | **0.409** | 0.227 | 0.227 | — |
-| `game_control` | multimodal, task accuracy | 0.125 | n/a | 0.000 | 0.000 | 0.000 | 0.000 | — |
-| `game_control` | multimodal, element accuracy | 0.500 | n/a | 0.333 | 0.333 | 0.333 | 0.333 | — |
-| `general_decision` (external `jevbench`) | text, zero-shot, out-of-domain | 0.500 | **0.667** | 0.623 | 0.563 | n/a | 0.632 | — |
-| `osworld_next_action` (external OSWorld) | multimodal, task accuracy, out-of-domain | 0.066 | n/a | 0.000 | **0.083** | 0.000 | 0.000 | — |
-| `osworld_next_action` (external OSWorld) | multimodal, element accuracy, out-of-domain | 0.500 | n/a | 0.252 | **0.531** | 0.252 | 0.271 | — |
+| `safety_gate` | text, zero-shot for others; in-distribution (not zero-shot) for 0.2 | 0.138 | 0.286 | 0.500 | 0.000 | 0.000 | 0.071 | **1.000** |
+| `safety_gate` | multimodal, zero-shot | 0.138 | n/a | 0.286 | 0.000 | 0.000 | 0.000 | **0.643** |
+| `safety_gate` | text, finetuned on own train split | 0.138 | n/a | n/a | n/a | 1.000 | 1.000 | **1.000** |
+| `chess` | text, task accuracy (fair N=15, all models capped equally) | 0.072 | **0.133** | 0.000 | 0.000 | 0.000 | 0.000 | 0.067 |
+| `chess` | text, element accuracy (fair N=15) | 0.500 | **0.682** | 0.227 | 0.424 | 0.227 | 0.515 | 0.576 |
+| `chess` | multimodal, task accuracy (fair N=15) | 0.072 | n/a | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 |
+| `chess` | multimodal, element accuracy (fair N=15) | 0.500 | n/a | 0.227 | **0.409** | 0.227 | 0.227 | 0.258 |
+| `game_control` | multimodal, task accuracy | 0.125 | n/a | 0.000 | 0.000 | 0.000 | 0.000 | **0.024** |
+| `game_control` | multimodal, element accuracy | 0.500 | n/a | 0.333 | 0.333 | 0.333 | 0.333 | **0.569** |
+| `general_decision` (external `jevbench`) | text, zero-shot, out-of-domain | 0.500 | 0.667 | 0.623 | 0.563 | n/a | 0.632 | **0.887** |
+| `osworld_next_action` (external OSWorld) | multimodal, task accuracy, out-of-domain | 0.066 | n/a | 0.000 | **0.083** | 0.000 | 0.000 | 0.013 |
+| `osworld_next_action` (external OSWorld) | multimodal, element accuracy, out-of-domain | 0.500 | n/a | 0.252 | **0.531** | 0.252 | 0.271 | 0.435 |
 | `cua_bench_basic` (real live envs, agentic) | text, RL, held-out task variants, N=18 | — | — | — | — | — | — | **0.944** |
 | `cua_bench_basic` (real live envs, agentic) | multimodal, RL, held-out task variants, N=18 | — | — | — | — | — | — | **0.722** |
 
@@ -89,9 +89,15 @@ Notes on reading the table above:
   0.360); `semif` is 0.244 overall; `cua-s1-4b-0.2`'s overall is 0.929 (ECE
   0.069). `consent_checkbox` (N=4) is a tie between `djev` and
   `cua-s1-4b-0.2`, not a win.
-- `cua-s1-4b-0.2` is unmeasured (not just inapplicable) on `general_decision`,
-  `safety_gate`, `chess`, `game_control` and `osworld_next_action`, hence
-  `—` rather than `n/a`.
+- `cua-s1-4b-0.2`'s SFT training split (`crossdataset_hard_v2`) includes
+  `safety_gate`-family tasks (no overlap with the `safety_gate` test set),
+  so its `safety_gate` row is in-distribution, not zero-shot like the other
+  models'. Its "finetuned" cell uses the same recipe as `cua-s1-4b-0.1`'s
+  (a fresh LoRA on `data/safety_gate/train.jsonl`), not a further-tuned 0.2.
+- The "multimodal, same-distribution" rows are `data/v1`, the split
+  `cua-s1-nano-0.1`/`cua-s1-4b-0.1` trained on; `cua-s1-4b-0.2` trained on a
+  different split (`crossdataset_hard_v2`) and never saw `data/v1`, so its
+  cells in this row are out-of-distribution, not same-distribution.
 - `pagination` (N=7 text, N=1 multimodal): every task in this family is a
   mid-episode `scroll` step misfiled by a family-taxonomy keyword heuristic
   (`datagen/androidcontrol.assign_family`), not a genuine pagination
@@ -129,30 +135,30 @@ than guessing," not "the raw score was 0."
 | `multi_step_submit`, text hard cross-dataset | 0.250 | 0.000 | 0.594 | 0.120 | 0.000 | 0.096 | **0.822** |
 | `pagination`, text hard cross-dataset | 0.250 | 0.000 | 0.000 | 0.048 | 0.000 | **0.428** | 0.238 |
 | `search_filter`, text hard cross-dataset | 0.250 | 0.000 | 0.472 | 0.139 | 0.000 | 0.028 | **0.944** |
-| `consent_checkbox`, multimodal same-distribution | 0.232 | n/a | 0.000 | 0.163 | **1.000** | **1.000** | — |
-| `form_filling`, multimodal same-distribution | 0.044 | n/a | 0.000 | 0.058 | **1.000** | **1.000** | — |
-| `login_auth`, multimodal same-distribution | 0.169 | n/a | 0.000 | 0.079 | **1.000** | **1.000** | — |
-| `multi_step_submit`, multimodal same-distribution | 0.188 | n/a | 0.692 | 0.000 | **1.000** | **1.000** | — |
-| `pagination`, multimodal same-distribution | 0.500 | n/a | 0.000 | 0.000 | **1.000** | **1.000** | — |
-| `search_filter`, multimodal same-distribution | 0.130 | n/a | 0.344 | 0.097 | **1.000** | **1.000** | — |
+| `consent_checkbox`, multimodal same-distribution | 0.232 | n/a | 0.000 | 0.163 | **1.000** | **1.000** | 0.000 |
+| `form_filling`, multimodal same-distribution | 0.044 | n/a | 0.000 | 0.058 | **1.000** | **1.000** | 0.000 |
+| `login_auth`, multimodal same-distribution | 0.169 | n/a | 0.000 | 0.079 | **1.000** | **1.000** | 0.000 |
+| `multi_step_submit`, multimodal same-distribution | 0.188 | n/a | 0.692 | 0.000 | **1.000** | **1.000** | 0.000 |
+| `pagination`, multimodal same-distribution | 0.500 | n/a | 0.000 | 0.000 | **1.000** | **1.000** | **0.556** |
+| `search_filter`, multimodal same-distribution | 0.130 | n/a | 0.344 | 0.097 | **1.000** | **1.000** | 0.097 |
 | `consent_checkbox`, multimodal hard cross-dataset | 0.250 | n/a | **0.667** | 0.000 | 0.000 | 0.000 | **0.667** |
 | `form_filling`, multimodal hard cross-dataset | 0.250 | n/a | 0.667 | 0.000 | 0.000 | 0.444 | **1.000** |
 | `login_auth`, multimodal hard cross-dataset | 0.250 | n/a | 0.667 | 0.000 | 0.000 | 0.000 | **1.000** |
 | `multi_step_submit`, multimodal hard cross-dataset | 0.250 | n/a | 0.448 | 0.017 | 0.000 | 0.000 | **0.889** |
 | `pagination`, multimodal hard cross-dataset | 0.250 | n/a | 0.000 | 0.000 | 0.000 | 0.000 | **1.000** |
 | `search_filter`, multimodal hard cross-dataset | 0.250 | n/a | 0.428 | 0.000 | 0.000 | 0.000 | **1.000** |
-| `safety_gate`, text zero-shot | 0.138 | 0.171 | **0.420** | 0.000 | 0.000 | 0.000 | — |
-| `safety_gate`, multimodal zero-shot | 0.138 | n/a | **0.171** | 0.000 | — | — | — |
-| `safety_gate`, finetuned | 0.138 | — | — | — | 1.000 | **1.000** | — |
-| `chess`, text, task accuracy (N=15) | 0.072 | **0.065** | 0.000 | 0.000 | 0.000 | 0.000 | — |
-| `chess`, text, element accuracy (N=15) | 0.500 | **0.364** | 0.000 | 0.000 | 0.000 | 0.030 | — |
-| `chess`, multimodal, task accuracy (N=15) | 0.072 | n/a | 0.000 | 0.000 | 0.000 | 0.000 | — |
-| `chess`, multimodal, element accuracy (N=15) | 0.500 | n/a | 0.000 | 0.000 | 0.000 | 0.000 | — |
-| `game_control`, task accuracy | 0.125 | n/a | 0.000 | 0.000 | 0.000 | 0.000 | — |
-| `game_control`, element accuracy | 0.500 | n/a | 0.000 | 0.000 | 0.000 | 0.000 | — |
-| `general_decision` (jevbench) | 0.500 | **0.334** | 0.246 | 0.126 | n/a | 0.264 | — |
-| `osworld_next_action`, task accuracy | 0.066 | n/a | 0.000 | **0.018** | 0.000 | 0.000 | — |
-| `osworld_next_action`, element accuracy | 0.500 | n/a | 0.000 | **0.062** | 0.000 | 0.000 | — |
+| `safety_gate`, text (0.2 in-distribution, others zero-shot) | 0.138 | 0.171 | 0.420 | 0.000 | 0.000 | 0.000 | **1.000** |
+| `safety_gate`, multimodal zero-shot | 0.138 | n/a | 0.171 | 0.000 | 0.000 | 0.000 | **0.586** |
+| `safety_gate`, finetuned | 0.138 | n/a | n/a | n/a | 1.000 | 1.000 | **1.000** |
+| `chess`, text, task accuracy (N=15) | 0.072 | **0.065** | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 |
+| `chess`, text, element accuracy (N=15) | 0.500 | **0.364** | 0.000 | 0.000 | 0.000 | 0.030 | 0.152 |
+| `chess`, multimodal, task accuracy (N=15) | 0.072 | n/a | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 |
+| `chess`, multimodal, element accuracy (N=15) | 0.500 | n/a | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 |
+| `game_control`, task accuracy | 0.125 | n/a | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 |
+| `game_control`, element accuracy | 0.500 | n/a | 0.000 | 0.000 | 0.000 | 0.000 | **0.138** |
+| `general_decision` (jevbench) | 0.500 | 0.334 | 0.246 | 0.126 | n/a | 0.264 | **0.775** |
+| `osworld_next_action`, task accuracy | 0.066 | n/a | 0.000 | **0.018** | 0.000 | 0.000 | 0.000 |
+| `osworld_next_action`, element accuracy | 0.500 | n/a | 0.000 | **0.062** | 0.000 | 0.000 | 0.000 |
 
 `chess` and `game_control` do not show measurable signal on any model once
 calibrated: their raw ties/edges over 0 sit at or below true chance level for
@@ -207,15 +213,15 @@ runs (`jev` is a hosted API round-trip; `djev`/`semif` ran locally on GPU;
 | Split / modality | `jev` | `djev` | `semif` (0-shot) | `cua-s1-nano-0.1` | `cua-s1-4b-0.1` | `cua-s1-4b-0.2` |
 | --- | --- | --- | --- | --- | --- | --- |
 | 6 core families, text, hard cross-dataset | 0.556 | 0.809 | 0.121 | 0.003 | 0.121-0.128 | 0.141 |
-| 6 core families, multimodal, same-distribution | n/a | 1.195 | 0.293 | 0.222 | 0.345 | — |
+| 6 core families, multimodal, same-distribution | n/a | 1.195 | 0.293 | 0.222 | 0.345 | 0.401 |
 | 6 core families, multimodal, hard cross-dataset | n/a | 1.017 | 0.283 | 0.667 | 0.301 | 0.282 |
-| `safety_gate`, text | 0.553 | 3.061 | 1.078 | — | — | — |
-| `safety_gate`, multimodal | n/a | 3.389 | 1.557 | — | — | — |
-| `chess`, text (fair N=15, all models capped equally) | 0.534 | 3.168 | 1.117 | 0.015 | 1.274 | — |
-| `chess`, multimodal (fair N=15) | n/a | 3.450 | 1.151 | 0.739 | 1.355 | — |
-| `game_control`, multimodal | n/a | 1.172 | 0.300 | 0.206 | 0.343 | — |
-| `general_decision` (external `jevbench`) | 0.597 | 0.858 | 0.157 | n/a | 0.203 | — |
-| `osworld_next_action` | n/a | 1.029 | 0.496 | 0.306 | 0.445 | — |
+| `safety_gate`, text | 0.553 | 3.061 | 1.078 | — | — | 1.613 |
+| `safety_gate`, multimodal | n/a | 3.389 | 1.557 | 0.967 | 1.745 | 1.671 |
+| `chess`, text (fair N=15, all models capped equally) | 0.534 | 3.168 | 1.117 | 0.015 | 1.274 | 1.515 |
+| `chess`, multimodal (fair N=15) | n/a | 3.450 | 1.151 | 0.739 | 1.355 | 1.512 |
+| `game_control`, multimodal | n/a | 1.172 | 0.300 | 0.206 | 0.343 | 0.395 |
+| `general_decision` (external `jevbench`) | 0.597 | 0.858 | 0.157 | n/a | 0.203 | 0.224 |
+| `osworld_next_action` | n/a | 1.029 | 0.496 | 0.306 | 0.445 | 0.569 |
 
 ## Task families
 

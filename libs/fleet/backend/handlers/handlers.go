@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"time"
 
+	"cyclops-cs-backend/accountlookup"
 	"cyclops-cs-backend/auth"
 	"cyclops-cs-backend/chat"
 	"cyclops-cs-backend/config"
@@ -37,6 +38,7 @@ type SignedServiceURLService interface {
 }
 
 type Handlers struct {
+	AccountLookup            *accountlookup.Service
 	Admin                    *keycloak.Admin
 	GatewayCfg               config.GatewayConfiguration
 	AuthCfg                  config.AuthConfiguration
@@ -76,6 +78,9 @@ type Handlers struct {
 	WorkloadAdmin    *keycloak.Admin
 	WorkloadAudience string
 	WorkloadTokenURL string
+
+	ImageUploads config.ImageUploadConfiguration
+	ImageObjects ImageObjectStore
 }
 
 func New(admin *keycloak.Admin, cfg *config.Configuration) Handlers {
@@ -88,6 +93,7 @@ func New(admin *keycloak.Admin, cfg *config.Configuration) Handlers {
 		KC:           cfg.Keycloak,
 		Stripe:       cfg.Stripe,
 		Analytics:    productanalytics.Nop(),
+		ImageUploads: cfg.ImageUploads,
 		chatLocks:    newConversationLockRegistry(),
 	}
 }

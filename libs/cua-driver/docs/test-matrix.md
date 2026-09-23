@@ -127,6 +127,12 @@ background delivery and attach desktop-side-effect oracles.
 | Installed-app launch/focus | `installed_app_launch_macos_test.rs` | Real Calculator/TextEdit launch and focus behavior in the canonical logged-in lane |
 | Installed-app text | `installed_app_textedit_macos_test.rs` | Real TextEdit AX background write and verification in the canonical logged-in lane |
 
+The AppKit `snapshot_publication` regression holds a fixture PNG write with FIFO
+backpressure while replacing a button at the same AX index. It exercises the
+built-in `get_window_state` and `click` tools and uses an independent fixture
+activation journal to reject wrong-target activation and verify fresh-token
+recovery. The macOS runner includes this regression.
+
 macOS uses the installed ScreenCaptureKit/AX permissions for GUI runs. Its
 maintainer acceptance gate runs in a disposable clone of the stopped Lume
 SIP-off golden image described in the [macOS Lume runner

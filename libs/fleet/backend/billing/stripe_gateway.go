@@ -167,6 +167,7 @@ func setupSessionParams(request SetupSessionRequest) *stripe.CheckoutSessionCrea
 	setupIntentData.AddMetadata(MetadataSetupGeneration, request.SetupGeneration)
 	setupIntentData.AddMetadata(MetadataSubject, request.Subject)
 	setupIntentData.AddMetadata(MetadataSetupSource, request.Source)
+	setupIntentData.AddMetadata(MetadataIdentityClass, request.IdentityClass)
 	return &stripe.CheckoutSessionCreateParams{
 		Mode:               stripe.String(string(stripe.CheckoutSessionModeSetup)),
 		Customer:           stripe.String(request.CustomerID),
@@ -183,6 +184,41 @@ func (g *StripeGateway) CreateSetupSession(ctx context.Context, request SetupSes
 		return "", err
 	}
 	return session.URL, nil
+}
+
+func setupSessionRetrieveParams() *stripe.CheckoutSessionRetrieveParams {
+	params := &stripe.CheckoutSessionRetrieveParams{}
+	params.AddExpand("setup_intent")
+	return params
+}
+
+func (g *StripeGateway) RetrieveSetupSession(ctx context.Context, sessionID string) (SetupSession, error) {
+	session, err := g.client.V1CheckoutSessions.Retrieve(ctx, sessionID, setupSessionRetrieveParams())
+	if err != nil {
+		var stripeErr *stripe.Error
+		if errors.As(err, &stripeErr) && stripeErr.Code == stripe.ErrorCodeResourceMissing {
+			return SetupSession{}, errors.Join(ErrSetupSessionNotFound, err)
+		}
+		return SetupSession{}, err
+	}
+	result := SetupSession{
+		ID: session.ID, Mode: string(session.Mode), Status: string(session.Status),
+	}
+	if session.Customer != nil {
+		result.CustomerID = session.Customer.ID
+	}
+	if session.SetupIntent != nil {
+		result.SetupIntentID = session.SetupIntent.ID
+		result.SetupIntentStatus = string(session.SetupIntent.Status)
+		result.Metadata = session.SetupIntent.Metadata
+		if session.SetupIntent.Customer != nil {
+			result.SetupIntentCustomerID = session.SetupIntent.Customer.ID
+		}
+		if session.SetupIntent.PaymentMethod != nil {
+			result.PaymentMethodID = session.SetupIntent.PaymentMethod.ID
+		}
+	}
+	return result, nil
 }
 
 func (g *StripeGateway) CreatePortalSession(ctx context.Context, request PortalSessionRequest) (string, error) {

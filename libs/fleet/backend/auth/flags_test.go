@@ -23,6 +23,32 @@ func resetFlagsCache() {
 	flagsSF.Forget("flags")
 }
 
+func TestAdminSubjectMembershipRequiresResolvedTrustedList(t *testing.T) {
+	original := computeFlagsDataFn
+	t.Cleanup(func() { computeFlagsDataFn = original; resetFlagsCache() })
+	for _, tc := range []struct {
+		name             string
+		flags            map[string]interface{}
+		member, resolved bool
+	}{
+		{"member", map[string]interface{}{"admin_subs": []interface{}{"owner"}}, true, true},
+		{"non-member", map[string]interface{}{"admin_subs": []interface{}{"another"}}, false, true},
+		{"empty resolved set", map[string]interface{}{"admin_subs": []interface{}{}}, false, true},
+		{"unavailable", map[string]interface{}{}, false, false},
+		{"malformed", map[string]interface{}{"admin_subs": "owner"}, false, false},
+		{"malformed entry after match", map[string]interface{}{"admin_subs": []interface{}{"owner", 42}}, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			computeFlagsDataFn = func(context.Context) map[string]interface{} { return tc.flags }
+			resetFlagsCache()
+			member, resolved := AdminSubjectMembership("owner")
+			if member != tc.member || resolved != tc.resolved {
+				t.Fatalf("membership = %v, %v; want %v, %v", member, resolved, tc.member, tc.resolved)
+			}
+		})
+	}
+}
+
 func unsetEnv(t *testing.T, key string) {
 	t.Helper()
 	value, present := os.LookupEnv(key)

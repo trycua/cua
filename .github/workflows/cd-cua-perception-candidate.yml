@@ -1,0 +1,235 @@
+name: "CD: Cua Perception candidate"
+
+on:
+  workflow_call:
+    inputs:
+      payload_artifact:
+        description: "Platform input artifact containing release-input.json and payload files"
+        required: true
+        type: string
+      payload_run_id:
+        description: "Run ID that produced the platform input artifact"
+        required: true
+        type: number
+      source_ref:
+        description: "Exact trusted source commit represented by the candidate"
+        required: true
+        type: string
+      reviewed_ref:
+        description: "Explicitly reviewed ref whose current tip must equal source_ref"
+        required: true
+        type: string
+      target_os:
+        description: "linux, macos, or windows"
+        required: true
+        type: string
+      target_triple:
+        description: "Exact target triple expected in release-input.json"
+        required: true
+        type: string
+      catalog_version:
+        description: "Monotonic extension catalog version"
+        required: true
+        type: number
+      expires_unix:
+        description: "Catalog expiration as Unix seconds"
+        required: true
+        type: number
+    secrets:
+      PERCEPTION_ED25519_PRIVATE_KEY_BASE64:
+        required: true
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: cua-perception-candidate-${{ inputs.source_ref }}-${{ inputs.target_triple }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: verify and package ${{ inputs.target_triple }}
+    runs-on: ${{ inputs.target_os == 'windows' && 'windows-latest' || inputs.target_os == 'macos' && 'macos-15' || inputs.target_os == 'linux' && 'ubuntu-latest' || 'invalid-runner' }}
+    steps:
+      - name: Check out exact candidate source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.source_ref }}
+          path: source
+          persist-credentials: false
+      - name: Check out trusted release tooling
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: release-control
+          persist-credentials: false
+      - name: Verify immutable trusted source input
+        shell: bash
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+          REVIEWED_REF: ${{ inputs.reviewed_ref }}
+          TARGET_OS: ${{ inputs.target_os }}
+          TARGET_TRIPLE: ${{ inputs.target_triple }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "trycua/cua"
+          [[ "$SOURCE_REF" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$REVIEWED_REF" =~ ^refs/(pull/[0-9]+/head|tags/[A-Za-z0-9._/-]+)$ ]]
+          test "$SOURCE_REF" = "$(git -C source rev-parse HEAD)"
+          git -C source fetch --no-tags origin "+$REVIEWED_REF:refs/cua-reviewed/source"
+          test "$SOURCE_REF" = "$(git -C source rev-parse refs/cua-reviewed/source)"
+          case "$TARGET_OS:$TARGET_TRIPLE" in
+            linux:x86_64-unknown-linux-gnu|macos:aarch64-apple-darwin|windows:x86_64-pc-windows-msvc) ;;
+            *) echo "unsupported target mapping: $TARGET_OS:$TARGET_TRIPLE" >&2; exit 1 ;;
+          esac
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.11"
+      - name: Download platform bundle input
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.payload_run_id }}
+          name: ${{ inputs.payload_artifact }}
+          path: perception-input
+      - name: Bind corresponding source to the exact revision
+        shell: bash
+        run: |
+          python3 release-control/.github/scripts/perception_release.py bind-source \
+            --manifest perception-input/release-input.json \
+            --payload-root perception-input \
+            --repository-root source
+      - name: Verify hashes, licenses, target, protocol, and model manifest
+        shell: bash
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+          TARGET_OS: ${{ inputs.target_os }}
+          TARGET_TRIPLE: ${{ inputs.target_triple }}
+        run: |
+          set -euo pipefail
+          python3 - "$SOURCE_REF" "$TARGET_OS" "$TARGET_TRIPLE" <<'PY'
+          import json, pathlib, sys
+          value = json.loads(pathlib.Path("perception-input/release-input.json").read_text())
+          assert value["sourceSha"] == sys.argv[1]
+          assert value["target"]["os"] == sys.argv[2]
+          assert value["target"]["triple"] == sys.argv[3]
+          PY
+          python3 release-control/.github/scripts/perception_release.py validate \
+            --manifest perception-input/release-input.json \
+            --payload-root perception-input
+      - name: Execute target worker release gates
+        shell: bash
+        run: |
+          python3 release-control/.github/scripts/perception_release.py run-gates \
+            --manifest perception-input/release-input.json \
+            --payload-root perception-input \
+            --evidence executed-verification.json
+      - name: Build deterministic unsigned candidate
+        shell: bash
+        env:
+          CATALOG_VERSION: ${{ inputs.catalog_version }}
+          EXPIRES_UNIX: ${{ inputs.expires_unix }}
+        run: |
+          python3 release-control/.github/scripts/perception_release.py package \
+            --manifest perception-input/release-input.json \
+            --payload-root perception-input \
+            --executed-evidence executed-verification.json \
+            --output perception-candidate \
+            --key-id cua-extension-ed25519-2026-01 \
+            --catalog-version "$CATALOG_VERSION" \
+            --expires-unix "$EXPIRES_UNIX"
+          python3 release-control/.github/scripts/perception_release.py \
+            verify-checksums perception-candidate/checksums.txt
+      - name: Preserve unsigned input for isolated signing
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: UNSIGNED-cua-perception-${{ inputs.target_triple }}-${{ inputs.source_ref }}
+          path: perception-candidate/
+          if-no-files-found: error
+          retention-days: 1
+
+  sign:
+    name: sign verified ${{ inputs.target_triple }} catalog
+    needs: package
+    runs-on: ubuntu-latest
+    environment: cua-perception-candidate-signing
+    steps:
+      - name: Check out trusted release tooling
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: release-control
+          persist-credentials: false
+      - name: Download verified unsigned candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: UNSIGNED-cua-perception-${{ inputs.target_triple }}-${{ inputs.source_ref }}
+          path: perception-candidate
+      - name: Verify package checksums before exposing the signing key
+        run: python3 release-control/.github/scripts/perception_release.py verify-checksums perception-candidate/checksums.txt
+      - name: Sign extension-manager catalog with trusted Ed25519 key
+        env:
+          PRIVATE_KEY_BASE64: ${{ secrets.PERCEPTION_ED25519_PRIVATE_KEY_BASE64 }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+          TARGET_TRIPLE: ${{ inputs.target_triple }}
+        working-directory: perception-candidate
+        run: |
+          node <<'JS'
+          const crypto = require("node:crypto");
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const encodedKey = process.env.PRIVATE_KEY_BASE64;
+          if (!encodedKey || Buffer.from(encodedKey, "base64").toString("base64") !== encodedKey) {
+            throw new Error("private signing key is not canonical base64");
+          }
+          const privateKey = crypto.createPrivateKey(Buffer.from(encodedKey, "base64"));
+          if (privateKey.asymmetricKeyType !== "ed25519") throw new Error("signing key is not Ed25519");
+          const publicKey = crypto.createPublicKey(privateKey);
+          const publicDer = publicKey.export({format: "der", type: "spki"});
+          const trust = JSON.parse(fs.readFileSync(path.join(
+            process.env.GITHUB_WORKSPACE,
+            "release-control/.github/releases/cua-perception/trust-root.json",
+          )));
+          const active = trust.keys.filter((key) =>
+            key.keyId === trust.activeKeyId && key.algorithm === "Ed25519" && key.status === "active"
+          );
+          if (active.length !== 1 || publicDer.subarray(-32).toString("base64") !== active[0].publicKeyBase64) {
+            throw new Error("private signing key does not match the active trust root");
+          }
+          const payloadBytes = fs.readFileSync("catalog-payload.json");
+          const payload = JSON.parse(payloadBytes);
+          if (payload.corresponding_source_revision !== process.env.SOURCE_REF ||
+              payload.target !== process.env.TARGET_TRIPLE || payload.key_id !== trust.activeKeyId) {
+            throw new Error("catalog identity differs from trusted workflow inputs");
+          }
+          const archive = path.basename(payload.archive);
+          if (archive !== payload.archive) throw new Error("catalog archive path is not canonical");
+          const archiveBytes = fs.readFileSync(archive);
+          if (archiveBytes.length !== payload.archive_size ||
+              crypto.createHash("sha256").update(archiveBytes).digest("hex") !== payload.archive_sha256) {
+            throw new Error("catalog archive binding is invalid");
+          }
+          const signature = crypto.sign(null, payloadBytes, privateKey);
+          if (signature.length !== 64 || !crypto.verify(null, payloadBytes, publicKey, signature)) {
+            throw new Error("Ed25519 catalog signature verification failed");
+          }
+          fs.writeFileSync("catalog.signature", signature);
+          fs.writeFileSync("signed-catalog.json", JSON.stringify({
+            payload,
+            signature_algorithm: "ed25519",
+            signature: signature.toString("base64"),
+          }) + "\n");
+          const signed = ["signed-catalog.json", "catalog-payload.json", "catalog.signature"];
+          fs.writeFileSync("signed-candidate-checksums.txt", signed.map((name) =>
+            `${crypto.createHash("sha256").update(fs.readFileSync(name)).digest("hex")}  ${name}\n`
+          ).join(""));
+          JS
+      - name: Preserve signed candidate without publishing
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: STAGING-cua-perception-candidate-${{ inputs.target_triple }}-${{ inputs.source_ref }}
+          path: perception-candidate/
+          if-no-files-found: error
+          retention-days: 30

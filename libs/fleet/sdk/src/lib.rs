@@ -1,6 +1,9 @@
 mod claims;
 mod client;
 mod error;
+mod fleets;
+mod image_uploads;
+mod images;
 mod namespaces;
 mod pools;
 mod routes;
@@ -13,9 +16,17 @@ mod types;
 mod user_keys;
 
 pub use client::CyclopsClient;
+pub use cyclops_sdk_schema::PreservedJson;
 pub use error::{
     AccessTokenProviderError, HttpError, MAX_STATUS_BODY_BYTES, SdkBuildError, SdkError,
     bounded_body,
+};
+pub use fleets::{
+    FLEET_LABEL_KEY, FleetClaims, FleetPoolRequest, MAX_FLEET_CLAIMS, fleet_label_key,
+};
+pub use image_uploads::{
+    ImageUploadFileRequest, ImageUploadInstruction, ImageUploadRequest, ImageUploadResponse,
+    PresignedPut,
 };
 pub use routes::validate_dns_label;
 pub use status::{
@@ -30,7 +41,8 @@ pub use types::{
     CreateUserApiKeyRequestBuilder, CyclopsConfiguration, CyclopsCredentials,
     CyclopsTokenProviderConfiguration, CyclopsTokenProviderConfigurationBuilder, HttpHeader,
     HttpRequest, HttpRequestBuilder, HttpResponse, Namespace, NewUserApiKey, Pool,
-    ResourceMetadata, Sandbox, SignedServiceUrl, Template, TemplateBuilder, UserApiKey,
+    ResourceMetadata, Sandbox, ServiceStreamTarget, SignedServiceUrl, Template, TemplateBuilder,
+    UserApiKey,
 };
 
 uniffi::setup_scaffolding!("fleet_sdk");

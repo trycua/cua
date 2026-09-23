@@ -1,17 +1,25 @@
+import json
 from pathlib import Path
 import re
 import shutil
 
 import pytest
 
-from validate_release_versions import VersionError, validate
+from validate_release_versions import VersionError, main, validate
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def copy_release_sources(destination: Path) -> None:
+    config = "scripts/docs-generators/config.json"
+    (destination / config).parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(REPO_ROOT / config, destination / config)
     shutil.copy(REPO_ROOT / ".release-please-manifest.json", destination)
+    for filename in ("VERSION", "pyproject.toml", "uv.lock", "cua_sandbox/__init__.py"):
+        relative = Path("libs/python/cua-sandbox") / filename
+        (destination / relative).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(REPO_ROOT / relative, destination / relative)
     release_state = ".github/release-state/cua-driver-rs-published-version"
     (destination / release_state).parent.mkdir(parents=True, exist_ok=True)
     shutil.copy(REPO_ROOT / release_state, destination / release_state)
@@ -31,6 +39,85 @@ def copy_release_sources(destination: Path) -> None:
 
 def test_current_release_versions_agree():
     validate(REPO_ROOT, "all")
+
+
+def test_sandbox_product_cli_accepts_current_versions():
+    assert main(["--repo-root", str(REPO_ROOT), "--product", "sandbox"]) == 0
+
+
+def test_perception_product_cli_accepts_current_versions():
+    assert main(["--repo-root", str(REPO_ROOT), "--product", "perception"]) == 0
+
+
+@pytest.mark.parametrize("product", ["perception", "all"])
+def test_perception_versions_use_independent_authority(tmp_path: Path, product: str):
+    copy_release_sources(tmp_path)
+    base = tmp_path / "libs/cua-driver/rust/crates/cua-perception"
+    (base / "VERSION").write_text("0.1.0\n")
+
+    validate(tmp_path, product)
+
+
+@pytest.mark.parametrize("product", ["perception", "all"])
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("VERSION", "Cua Perception expects 9.9.9"),
+        ("Cargo.toml", "Cargo.toml=9.9.9"),
+        ("Cargo.lock", "Cargo.lock:cua-perception=9.9.9"),
+        (".release-please-manifest.json", ".release-please-manifest.json=9.9.9"),
+    ],
+)
+def test_perception_version_drift_fails(
+    tmp_path: Path, product: str, source: str, expected: str
+):
+    copy_release_sources(tmp_path)
+    base = tmp_path / "libs/cua-driver/rust/crates/cua-perception"
+    (base / "VERSION").write_text("0.1.0\n")
+    if source == ".release-please-manifest.json":
+        path = tmp_path / source
+        manifest = json.loads(path.read_text())
+        manifest["libs/cua-driver/rust/crates/cua-perception"] = "9.9.9"
+        path.write_text(json.dumps(manifest))
+    elif source == "Cargo.lock":
+        path = tmp_path / "libs/cua-driver/rust/Cargo.lock"
+        path.write_text(
+            re.sub(
+                r'(\[\[package\]\]\nname = "cua-perception"\nversion = ")0\.1\.0("\n)',
+                r"\g<1>9.9.9\2",
+                path.read_text(),
+                count=1,
+            )
+        )
+    else:
+        path = base / source
+        path.write_text(path.read_text().replace("0.1.0", "9.9.9", 1))
+
+    with pytest.raises(VersionError, match=re.escape(expected)):
+        validate(tmp_path, product)
+
+
+@pytest.mark.parametrize("product", ["sandbox", "all"])
+@pytest.mark.parametrize(
+    "source",
+    ["VERSION", "pyproject.toml", "uv.lock", "cua_sandbox/__init__.py", ".release-please-manifest.json"],
+)
+def test_sandbox_version_drift_fails(tmp_path: Path, product: str, source: str):
+    copy_release_sources(tmp_path)
+    base = tmp_path / "libs/python/cua-sandbox"
+    current = (base / "VERSION").read_text().strip()
+    if source == ".release-please-manifest.json":
+        path = tmp_path / source
+        manifest = json.loads(path.read_text())
+        manifest["libs/python/cua-sandbox"] = "9.9.9"
+        path.write_text(json.dumps(manifest))
+    else:
+        path = base / source
+        path.write_text(path.read_text().replace(current, "9.9.9"))
+
+    expected = "Sandbox expects 9.9.9" if source == "VERSION" else f"{source}=9.9.9"
+    with pytest.raises(VersionError, match=re.escape(expected)):
+        validate(tmp_path, product)
 
 
 def test_version_drift_fails_with_the_source_name(tmp_path: Path):

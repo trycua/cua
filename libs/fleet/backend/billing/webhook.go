@@ -14,6 +14,7 @@ type WebhookEvent struct {
 	Purpose         string
 	Subject         string
 	Source          string
+	IdentityClass   string
 	CustomerID      string
 	PaymentMethodID string
 	SetupGeneration string
@@ -54,6 +55,10 @@ func (StripeWebhookVerifier) Verify(payload []byte, signature, secret string) (W
 	if subject := setupIntent.Metadata[MetadataSubject]; subject != "" && (source == productanalytics.SourceSPA || source == productanalytics.SourceUserKey) {
 		event.Subject = subject
 		event.Source = source
+	}
+	identityClass := productanalytics.IdentityClass(setupIntent.Metadata[MetadataIdentityClass])
+	if identityClass == productanalytics.IdentityExternal || identityClass == productanalytics.IdentityInternal || identityClass == productanalytics.IdentityUnknown {
+		event.IdentityClass = string(identityClass)
 	}
 	if setupIntent.Customer != nil {
 		event.CustomerID = setupIntent.Customer.ID

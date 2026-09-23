@@ -8,11 +8,13 @@
 use cua_driver_contract::{
     ActionResult, ClickInput, ClipboardReadInput, ClipboardWriteInput, DragInput, EndSessionInput,
     EndSessionOutput, EscalateSessionInput, GetAgentCursorStateInput, GetCursorPositionInput,
-    GetDesktopStateInput, GetScreenSizeInput, GetSessionInput, GetSessionStateInput, HotkeyInput,
-    InvokeMenuInput, ListSessionsInput, ListSessionsOutput, MoveCursorInput, PressKeyInput,
-    ScrollInput, SessionOutput, SessionStateOutput, SetAgentCursorEnabledInput,
-    SetAgentCursorMotionInput, SetAgentCursorThemeInput, SetWindowFrameInput, StartSessionInput,
-    StartSessionOutput, ToolInput, TypeTextInput, VerifyStateInput, VerifyStateOutput,
+    GetDesktopStateInput, GetScreenSizeInput, GetSessionInput, GetSessionStateInput,
+    GetWindowStateInput, HotkeyInput, InvokeMenuInput, ListAppsInput, ListAppsOutput,
+    ListSessionsInput, ListSessionsOutput, ListWindowsInput, ListWindowsOutput, MoveCursorInput,
+    ParseVisualRegionsInput, PressKeyInput, ScrollInput, SessionOutput, SessionStateOutput,
+    SetAgentCursorEnabledInput, SetAgentCursorMotionInput, SetAgentCursorThemeInput,
+    SetWindowFrameInput, SnapshotImage, StartSessionInput, StartSessionOutput, ToolInput,
+    ToolOutput, TypeTextInput, VerifyStateInput, VerifyStateOutput, WindowStateOutput,
 };
 use cua_driver_core::daemon::{
     is_daemon_listening, request_daemon_metadata, send_request, socket_path_for_namespace,
@@ -20,7 +22,7 @@ use cua_driver_core::daemon::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use thiserror::Error;
 
 mod abi;
@@ -28,6 +30,9 @@ mod activity_observer;
 mod authorization_host;
 mod embedded;
 pub mod remote;
+pub mod remote_foreign;
+pub mod remote_mcp;
+pub mod remote_receiver;
 mod runtime;
 mod service_session;
 #[doc(hidden)]
@@ -40,9 +45,31 @@ pub use authorization_host::{
 };
 pub use embedded::*;
 use remote::{DriverEnvelopeChannel, RemoteBoundSession, RemoteDriverClient};
+pub use remote_mcp::{
+    open_mcp_driver_channel, DriverServiceHeader, DriverServiceRequest, DriverServiceResponse,
+    DriverServiceTransport, DriverServiceTransportError, McpDriverChannel,
+};
 use runtime::RuntimeOptions;
 use service_session::ServiceSessionClient;
 use worker::{ActionCompletion, PrivateWorkerClient};
+
+type PerceptionClientProvider = fn() -> cua_driver_core::perception_client::PerceptionClient;
+static PERCEPTION_CLIENT_PROVIDER: OnceLock<PerceptionClientProvider> = OnceLock::new();
+
+/// Configure the binary-owned resolver for optional installed perception.
+/// Language SDKs without a binary host retain the typed unavailable tool.
+#[doc(hidden)]
+pub fn configure_perception_client_provider(provider: PerceptionClientProvider) {
+    let _ = PERCEPTION_CLIENT_PROVIDER.set(provider);
+}
+
+pub(crate) fn configured_perception_client() -> cua_driver_core::perception_client::PerceptionClient
+{
+    PERCEPTION_CLIENT_PROVIDER
+        .get()
+        .map(|provider| provider())
+        .unwrap_or_else(cua_driver_core::perception_client::PerceptionClient::unavailable)
+}
 
 fn host_sessions_json_for_prefix(runtime_prefix: &str) -> Value {
     let sessions = cua_driver_core::session::list_session_snapshots_with_prefix(
@@ -632,10 +659,10 @@ macro_rules! desktop_tool_methods {
             get_screen_size: GetScreenSizeInput,
             get_cursor_position: GetCursorPositionInput,
             verify_state: VerifyStateInput,
+            parse_visual_regions: ParseVisualRegionsInput,
             move_cursor: MoveCursorInput,
             set_window_frame: SetWindowFrameInput,
             invoke_menu: InvokeMenuInput,
-            click: ClickInput,
             drag: DragInput,
             scroll: ScrollInput,
             clipboard_read: ClipboardReadInput,
@@ -687,12 +714,59 @@ macro_rules! define_exported_tool_names {
             <ListSessionsInput as ToolInput>::TOOL_NAME,
             <GetSessionStateInput as ToolInput>::TOOL_NAME,
             <EndSessionInput as ToolInput>::TOOL_NAME,
+            <ListAppsInput as ToolInput>::TOOL_NAME,
+            <ListWindowsInput as ToolInput>::TOOL_NAME,
+            <GetWindowStateInput as ToolInput>::TOOL_NAME,
+            <ClickInput as ToolInput>::TOOL_NAME,
             $(<$input as ToolInput>::TOOL_NAME,)*
         ];
     };
 }
 
 desktop_tool_methods!(define_exported_tool_names);
+
+macro_rules! define_native_window_methods {
+    ($driver:ty) => {
+        #[uniffi::export(async_runtime = "tokio")]
+        impl $driver {
+            pub async fn list_apps(
+                &self,
+                input: ListAppsInput,
+            ) -> Result<ListAppsOutput, DriverError> {
+                self.invoke_typed(ListAppsInput::TOOL_NAME, input)
+                    .await?
+                    .typed_success(ListAppsInput::TOOL_NAME)
+            }
+
+            pub async fn list_windows(
+                &self,
+                input: ListWindowsInput,
+            ) -> Result<ListWindowsOutput, DriverError> {
+                self.invoke_typed(ListWindowsInput::TOOL_NAME, input)
+                    .await?
+                    .typed_success(ListWindowsInput::TOOL_NAME)
+            }
+
+            pub async fn get_window_state(
+                &self,
+                input: GetWindowStateInput,
+            ) -> Result<WindowStateOutput, DriverError> {
+                self.invoke_typed(GetWindowStateInput::TOOL_NAME, input)
+                    .await?
+                    .window_state_success()
+            }
+
+            pub async fn click(&self, input: ClickInput) -> Result<ActionResult, DriverError> {
+                self.invoke_typed(ClickInput::TOOL_NAME, input)
+                    .await?
+                    .typed_success(ClickInput::TOOL_NAME)
+            }
+        }
+    };
+}
+
+define_native_window_methods!(CuaDriver);
+define_native_window_methods!(CuaDriverSession);
 
 #[uniffi::export]
 impl CuaDriver {
@@ -1540,11 +1614,17 @@ impl CuaDriverSession {
 }
 
 impl CuaDriverSession {
-    async fn invoke_typed<T: Serialize>(
+    async fn invoke_typed<T: ToolInput>(
         &self,
         name: &str,
         input: T,
     ) -> Result<ToolResult, DriverError> {
+        input
+            .validate()
+            .map_err(|reason| DriverError::InvalidArguments {
+                tool: name.into(),
+                reason,
+            })?;
         let arguments =
             serde_json::to_value(input).map_err(|error| DriverError::InvalidArguments {
                 tool: name.into(),
@@ -1617,11 +1697,17 @@ impl CuaDriver {
         self.invoke(name, arguments).await
     }
 
-    async fn invoke_typed<T: Serialize>(
+    async fn invoke_typed<T: ToolInput>(
         &self,
         name: &str,
         input: T,
     ) -> Result<ToolResult, DriverError> {
+        input
+            .validate()
+            .map_err(|reason| DriverError::InvalidArguments {
+                tool: name.into(),
+                reason,
+            })?;
         let arguments =
             serde_json::to_value(input).map_err(|error| DriverError::InvalidArguments {
                 tool: name.into(),
@@ -1696,20 +1782,103 @@ impl ToolResult {
         self.verification.as_ref()
     }
 
-    fn typed_success<T: serde::de::DeserializeOwned>(self, tool: &str) -> Result<T, DriverError> {
+    fn typed_success<T: ToolOutput>(self, tool: &str) -> Result<T, DriverError> {
         if self.is_error {
             return Err(DriverError::Tool {
                 tool: tool.into(),
-                message: self.text,
+                message: self.refusal_message(),
                 error_code: self.error_code.unwrap_or_default(),
             });
         }
         let structured = self.structured_json.ok_or_else(|| DriverError::Protocol {
             reason: format!("{tool} response omitted structuredContent"),
         })?;
-        serde_json::from_str(&structured).map_err(|error| DriverError::Protocol {
-            reason: format!("{tool} returned an invalid typed result: {error}"),
-        })
+        let output: T =
+            serde_json::from_str(&structured).map_err(|error| DriverError::Protocol {
+                reason: format!("{tool} returned an invalid typed result: {error}"),
+            })?;
+        output.validate().map_err(|reason| DriverError::Protocol {
+            reason: format!("{tool} returned an invalid typed result: {reason}"),
+        })?;
+        Ok(output)
+    }
+
+    fn refusal_message(&self) -> String {
+        self.structured_json
+            .as_deref()
+            .and_then(|json| serde_json::from_str::<Value>(json).ok())
+            .and_then(|value| {
+                value
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .or_else(|| value.get("refusal")?.get("message")?.as_str())
+                    .map(str::to_owned)
+            })
+            .unwrap_or_else(|| self.text.clone())
+    }
+
+    fn window_state_success(mut self) -> Result<WindowStateOutput, DriverError> {
+        if !self.is_error {
+            // Normalization preserves open-ended results; this typed boundary must
+            // not silently discard a malformed image part from a snapshot.
+            let raw: Value =
+                serde_json::from_str(&self.raw_json).map_err(|error| DriverError::Protocol {
+                    reason: format!("get_window_state returned an invalid envelope: {error}"),
+                })?;
+            if let Some(content) = raw.get("content") {
+                let content = content.as_array().ok_or_else(|| DriverError::Protocol {
+                    reason: "get_window_state content must be an array".into(),
+                })?;
+                for part in content {
+                    if part.get("type").and_then(Value::as_str) == Some("image") {
+                        let valid = part
+                            .get("mimeType")
+                            .and_then(Value::as_str)
+                            .is_some_and(|mime| mime.starts_with("image/") && mime.len() > 6)
+                            && part
+                                .get("data")
+                                .and_then(Value::as_str)
+                                .is_some_and(|data| !data.is_empty());
+                        if !valid {
+                            return Err(DriverError::Protocol {
+                                reason: "get_window_state returned a malformed image part".into(),
+                            });
+                        }
+                    }
+                }
+            }
+            if !self.images.is_empty() {
+                let metadata = &raw["structuredContent"];
+                for dimension in ["screenshot_width", "screenshot_height"] {
+                    if !metadata[dimension].as_u64().is_some_and(|value| value > 0) {
+                        return Err(DriverError::Protocol {
+                            reason: format!("get_window_state image omitted valid {dimension}"),
+                        });
+                    }
+                }
+                if let Some(mime) = metadata["screenshot_mime_type"].as_str() {
+                    if self.images.iter().any(|image| image.mime_type != mime) {
+                        return Err(DriverError::Protocol {
+                            reason: "get_window_state image MIME type disagrees with metadata"
+                                .into(),
+                        });
+                    }
+                }
+            }
+        }
+        let images = std::mem::take(&mut self.images);
+        let mut output: WindowStateOutput = self.typed_success(GetWindowStateInput::TOOL_NAME)?;
+        output.images = images
+            .into_iter()
+            .map(|image| SnapshotImage {
+                mime_type: image.mime_type,
+                data_base64: image.data_base64,
+            })
+            .collect();
+        output.validate().map_err(|reason| DriverError::Protocol {
+            reason: format!("get_window_state returned an invalid typed result: {reason}"),
+        })?;
+        Ok(output)
     }
 }
 
@@ -1826,8 +1995,13 @@ fn normalize_result(tool: &str, raw: Value) -> Result<ToolResult, DriverError> {
 uniffi::setup_scaffolding!("cua_driver_sdk");
 
 #[cfg(test)]
+mod snapshot_lifecycle_tests;
+
+#[cfg(test)]
 mod tests {
+    mod native_windows;
     use super::*;
+    use cua_driver_contract::{ParseVisualRegionsOutput, VisualParseError};
     #[cfg(unix)]
     use std::io::{BufRead, BufReader, Write};
     #[cfg(unix)]
@@ -2629,6 +2803,75 @@ mod tests {
         assert_eq!(request["args"], serde_json::json!({"session": "run-1"}));
         assert_eq!(request["observation_origin"], "direct");
         assert_eq!(request["client_kind"], "python_sdk");
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn visual_parse_call_preserves_success_and_error_dtos() {
+        let mut output: Value = serde_json::from_str(include_str!(
+            "../../cua-driver-contract/tests/fixtures/parse-visual-regions-output-full-v1.json"
+        ))
+        .unwrap();
+        output["capture"]["capture_id"] = "capture-123".into();
+        let response = serde_json::json!({
+            "ok": true,
+            "result": {
+                "content": [{"type": "text", "text": "parsed"}],
+                "structuredContent": output,
+                "isError": false
+            }
+        });
+        let (_directory, socket, server) = serve_once(response);
+        let driver =
+            CuaDriver::connect_with_client_kind(Some(socket), SdkClientKind::Typescript).unwrap();
+        let result = driver
+            .parse_visual_regions(ParseVisualRegionsInput {
+                capture_id: "capture-123".into(),
+                options: cua_driver_contract::ParseVisualRegionsOptions::default(),
+            })
+            .await
+            .unwrap();
+        let structured = result.structured_json.as_deref().unwrap();
+        let decoded: ParseVisualRegionsOutput = serde_json::from_str(structured).unwrap();
+        decoded.validate().unwrap();
+        assert_eq!(decoded.schema, "cua.visual_regions_v1");
+        assert_eq!(decoded.capture.capture_id, "capture-123");
+        let request = server.join().unwrap();
+        assert_eq!(request["name"], "parse_visual_regions");
+        assert_eq!(
+            request["args"],
+            serde_json::json!({"capture_id": "capture-123", "options": {}})
+        );
+        assert_eq!(request["client_kind"], "typescript_sdk");
+
+        let response = serde_json::json!({
+            "ok": true,
+            "result": {
+                "content": [{"type": "text", "text": "not installed"}],
+                "structuredContent": {
+                    "code": "not_installed",
+                    "message": "the optional cua-perception extension is not installed",
+                    "retryable": false
+                },
+                "isError": true
+            }
+        });
+        let (_directory, socket, server) = serve_once(response);
+        let driver = CuaDriver::connect(Some(socket)).unwrap();
+        let result = driver
+            .parse_visual_regions(ParseVisualRegionsInput {
+                capture_id: "capture-123".into(),
+                options: cua_driver_contract::ParseVisualRegionsOptions::default(),
+            })
+            .await
+            .unwrap();
+        assert!(result.is_error);
+        assert_eq!(result.error_code.as_deref(), Some("not_installed"));
+        let error: VisualParseError =
+            serde_json::from_str(result.structured_json.as_deref().unwrap()).unwrap();
+        error.validate().unwrap();
+        assert!(!error.retryable);
+        assert_eq!(server.join().unwrap()["name"], "parse_visual_regions");
     }
 
     #[test]

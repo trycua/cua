@@ -140,6 +140,14 @@ fn active_proxy_sessions() -> &'static Mutex<HashSet<String>> {
     ACTIVE_PROXY_SESSIONS.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
+fn release_active_proxy_sessions() {
+    if let Some(sessions) = ACTIVE_PROXY_SESSIONS.get() {
+        let mut sessions = sessions.lock().unwrap();
+        sessions.clear();
+        sessions.shrink_to_fit();
+    }
+}
+
 fn is_active_proxy_session(session: Option<&str>) -> bool {
     session.is_some_and(|session| active_proxy_sessions().lock().unwrap().contains(session))
 }
@@ -962,6 +970,9 @@ pub async fn run_serve(
 
     cua_driver_core::authorization::validate_startup_authorization()?;
 
+    #[cfg(target_os = "linux")]
+    platform_linux::recover_orphaned_mpx_devices();
+
     // Create parent directory.
     if let Some(dir) = std::path::Path::new(socket_path).parent() {
         std::fs::create_dir_all(dir)?;
@@ -992,6 +1003,7 @@ pub async fn run_serve(
     let shutdown_tx = std::sync::Arc::new(tokio::sync::Mutex::new(Some(shutdown_tx)));
     let trusted_resume_registry: TrustedResumeRegistry =
         std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+    let mut connection_tasks = tokio::task::JoinSet::new();
     let parent_liveness = async {
         if cua_driver_core::parent_liveness_stdin_enabled() {
             wait_for_parent_stdin_eof().await;
@@ -1006,6 +1018,11 @@ pub async fn run_serve(
     if let Some(port) = crate::mcp_http::configured_port()? {
         crate::mcp_http::spawn(sdk.clone(), port)?;
     }
+
+    let _envelope_http = match crate::driver_service_http::configured_port()? {
+        Some(port) => Some(crate::driver_service_http::start(sdk.clone(), port).await?),
+        None => None,
+    };
 
     loop {
         tokio::select! {
@@ -1022,7 +1039,7 @@ pub async fn run_serve(
                 let shutdown_tx2 = shutdown_tx.clone();
                 let trusted_resume_registry = trusted_resume_registry.clone();
 
-                tokio::spawn(async move {
+                connection_tasks.spawn(async move {
                     let (reader, mut writer) = stream.into_split();
                     let mut lines = BufReader::new(reader).lines();
 
@@ -1055,6 +1072,12 @@ pub async fn run_serve(
                         ).await;
 
                         match req.method.as_str() {
+                            "mcp_envelope_stream" if control_session_id.is_none() && trusted_session.is_none() => {
+                                // Existing local-peer authentication already passed.
+                                // Registry and session lifetime belong to this stream.
+                                let _ = crate::mcp_envelope::accept(reg.clone(), lines.into_inner(), writer).await;
+                                return;
+                            }
                             "metadata" => {
                                 let resp = daemon_metadata_response();
                                 let _ = writer.write_all(
@@ -1395,6 +1418,11 @@ pub async fn run_serve(
         }
     }
 
+    // Accepted connections may still own SDK/session state after the listener
+    // stops. Abort and join them before tearing down the SDK runtime.
+    connection_tasks.shutdown().await;
+    release_active_proxy_sessions();
+
     // Do not unlink a replacement socket created after this listener was bound.
     remove_owned_socket(socket_path, bound_socket);
     if let Some(pid_path) = pid_file_path {
@@ -1714,6 +1742,11 @@ pub async fn run_serve(
         crate::mcp_http::spawn(sdk.clone(), port)?;
     }
 
+    let _envelope_http = match crate::driver_service_http::configured_port()? {
+        Some(port) => Some(crate::driver_service_http::start(sdk.clone(), port).await?),
+        None => None,
+    };
+
     let mut first_pipe = true;
     loop {
         // All daemons use the current-user descriptor. Embedded daemons also
@@ -1798,6 +1831,11 @@ pub async fn run_serve(
                         ).await;
 
                         match req.method.as_str() {
+                            "mcp_envelope_stream" if control_session_id.is_none() && trusted_session.is_none() => {
+                                // Same transport-owned receiver as the Unix branch.
+                                let _ = crate::mcp_envelope::accept(reg.clone(), lines.into_inner(), writer).await;
+                                return;
+                            }
                             "metadata" => {
                                 let resp = daemon_metadata_response();
                                 let _ = writer.write_all(
@@ -2212,7 +2250,11 @@ pub fn run_serve_cmd(
             std::process::exit(1);
         }
     };
-    if let Err(e) = rt.block_on(run_serve(sdk, &socket_path, pid_file_path.as_deref())) {
+    let result = rt.block_on(run_serve(sdk, &socket_path, pid_file_path.as_deref()));
+    rt.shutdown_timeout(std::time::Duration::from_secs(30));
+    cua_driver_core::session_authorization::release_configured_registry_for_shutdown();
+    cua_driver_core::session::release_process_state_for_shutdown();
+    if let Err(e) = result {
         eprintln!("cua-driver serve error: {e}");
         std::process::exit(1);
     }

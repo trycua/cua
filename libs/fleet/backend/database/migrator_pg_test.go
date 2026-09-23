@@ -28,6 +28,7 @@ var staticMigrationRoles = []string{
 	"cyclops_app",
 	"cyclops_usage_reader",
 	"cyclops_meter_writer",
+	"cyclops_submitter",
 	"k8s_state_owner",
 	"k8s_state_writer",
 	"k8s_state_exporter",
@@ -91,8 +92,8 @@ func TestInitialMigrationBuildsCompleteDatabase(t *testing.T) {
 	firstSummary := captureRunSummary(t, func() error {
 		return Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials})
 	})
-	if firstSummary.Pending != 11 || firstSummary.Applied != 11 {
-		t.Fatalf("initial migration summary = %+v, want pending=11 applied=11", firstSummary)
+	if firstSummary.Pending != 13 || firstSummary.Applied != 13 {
+		t.Fatalf("initial migration summary = %+v, want pending=13 applied=13", firstSummary)
 	}
 	before := migrationLedgerRows(t, ctx, migrationURL)
 	secondSummary := captureRunSummary(t, func() error {
@@ -136,6 +137,7 @@ func TestInitialMigrationBuildsCompleteDatabase(t *testing.T) {
 	assertUsageReaderBoundary(t, ctx, inspectionURL, credentials.Usage)
 	assertApplicationBoundary(t, ctx, credentials.Application)
 	assertChatConversationStore(t, ctx, credentials.Application)
+	assertAccountLookupContract(t, ctx, migrationURL, credentials.Application, credentials.Metabase, tenantURL)
 }
 
 func assertChatConversationStore(t *testing.T, ctx context.Context, applicationURL string) {
@@ -200,14 +202,14 @@ func TestRunUpgradesVersionOneAndThenNoOps(t *testing.T) {
 	upgrade := captureRunSummary(t, func() error {
 		return Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials})
 	})
-	if upgrade.Current != 1 || upgrade.Target != 11 || upgrade.Pending != 10 || upgrade.Applied != 10 || upgrade.Skipped != 1 || upgrade.Result != "success" {
+	if upgrade.Current != 1 || upgrade.Target != 13 || upgrade.Pending != 12 || upgrade.Applied != 12 || upgrade.Skipped != 1 || upgrade.Result != "success" {
 		t.Fatalf("version-one upgrade summary = %+v", upgrade)
 	}
 
 	noOp := captureRunSummary(t, func() error {
 		return Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials})
 	})
-	if noOp.Current != 11 || noOp.Target != 11 || noOp.Pending != 0 || noOp.Applied != 0 || noOp.Skipped != 11 || noOp.Result != "success" {
+	if noOp.Current != 13 || noOp.Target != 13 || noOp.Pending != 0 || noOp.Applied != 0 || noOp.Skipped != 13 || noOp.Result != "success" {
 		t.Fatalf("post-upgrade no-op summary = %+v", noOp)
 	}
 }
@@ -1571,6 +1573,7 @@ func testCredentialURLs(t *testing.T, adminURL string) CredentialURLs {
 		Metabase:    withRole("k8s_metabase"),
 		Usage:       withRole("cyclops_usage_reader"),
 		Meter:       withRole("cyclops_meter_writer"),
+		Submitter:   withRole("cyclops_submitter"),
 	}
 }
 
@@ -1603,8 +1606,8 @@ func migrationLedgerRows(t *testing.T, ctx context.Context, adminURL string) []l
 	if err := rows.Err(); err != nil {
 		t.Fatal("iterate migration ledger")
 	}
-	if len(ledger) != 11 {
-		t.Fatalf("migration ledger row count = %d, want 11", len(ledger))
+	if len(ledger) != 13 {
+		t.Fatalf("migration ledger row count = %d, want 13", len(ledger))
 	}
 	for index, want := range []struct {
 		version  int64
@@ -1621,6 +1624,8 @@ func migrationLedgerRows(t *testing.T, ctx context.Context, adminURL string) []l
 		{9, "000009_extend_metabase_revenue_tenant_exclusions.sql"},
 		{10, "000010_grant_metabase_billing_meter_access.sql"},
 		{11, "000011_signed_service_urls.sql"},
+		{12, "000012_private_account_lookup.sql"},
+		{13, "000013_stripe_usage_submission.sql"},
 	} {
 		if ledger[index].Version != want.version || ledger[index].ApplicationOrder != int64(index+1) || ledger[index].Filename != want.filename {
 			t.Fatalf("migration ledger row %d = version:%d order:%d filename:%q", index, ledger[index].Version, ledger[index].ApplicationOrder, ledger[index].Filename)
@@ -1759,6 +1764,7 @@ func assertRoleContract(t *testing.T, ctx context.Context, adminURL string) {
 		"k8s_metabase":         {true, false, false},
 		"cyclops_usage_reader": {true, false, false},
 		"cyclops_meter_writer": {true, false, false},
+		"cyclops_submitter":    {true, false, false},
 	}
 	for role, want := range expected {
 		var login, inherit, createRole, super, createDB, replication, bypassRLS bool
@@ -2092,7 +2098,7 @@ func assertRuntimeLedgerAccess(t *testing.T, ctx context.Context, credentials Cr
 		var count int
 		err := connection.QueryRow(ctx, `select count(*) from cyclops_migrations.applied_migrations`).Scan(&count)
 		connection.Close(ctx)
-		if err != nil || count != 11 {
+		if err != nil || count != 13 {
 			t.Errorf("%s ledger select = count:%d err:%v", role, count, err)
 		}
 		assertStatementFails(t, ctx, databaseURL, `insert into cyclops_migrations.applied_migrations (version, filename, sha256) values (99, 'invalid.sql', 'invalid')`)
@@ -2588,6 +2594,8 @@ func assertExactReportingACLContract(t *testing.T, ctx context.Context, connecti
 				('relation:billing_meter.reservation_hour_fact', 'SELECT', 'k8s_metabase', 'billing_meter_owner', false),
 				('relation:billing_meter.reservation_hour_current', 'SELECT', 'k8s_metabase', 'billing_meter_owner', false),
 				('relation:billing_meter.reservation_hour_collection_current', 'SELECT', 'k8s_metabase', 'billing_meter_owner', false),
+				('relation:billing_meter.stripe_submission_batch', 'SELECT', 'k8s_metabase', 'billing_meter_owner', false),
+				('relation:billing_meter.stripe_submission', 'SELECT', 'k8s_metabase', 'billing_meter_owner', false),
 				('schema:k8s_reporting', 'USAGE', 'k8s_metabase', 'k8s_reporting_owner', false),
 				('relation:k8s_reporting.current_resources', 'SELECT', 'k8s_metabase', 'k8s_reporting_owner', false),
 				('relation:k8s_reporting.hourly_reservation_usage', 'SELECT', 'k8s_metabase', 'k8s_reporting_owner', false),

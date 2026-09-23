@@ -45,6 +45,35 @@ import (
 
 type auditWiringLock struct{}
 
+func TestInitializeAccountLookupOptionalAndLazy(t *testing.T) {
+	for _, test := range []struct {
+		name, databaseURL, identityKey string
+		wantService, wantError         bool
+	}{
+		{name: "disabled without database", identityKey: "test-key"},
+		{name: "disabled without identity key", databaseURL: "invalid"},
+		{name: "invalid configuration", databaseURL: "postgres://sensitive:value@localhost/db?port=invalid", identityKey: "test-key", wantError: true},
+		{name: "unreachable database remains lazy", databaseURL: "postgres://test:test@127.0.0.1:1/test?connect_timeout=1", identityKey: "test-key", wantService: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := &config.Configuration{}
+			cfg.Database.URL = test.databaseURL
+			cfg.ProductAnalytics.IdentityKey = test.identityKey
+			service, closeLookup, err := initializeAccountLookup(context.Background(), cfg, nil)
+			if closeLookup == nil {
+				t.Fatal("missing cleanup function")
+			}
+			defer closeLookup()
+			if (service != nil) != test.wantService || (err != nil) != test.wantError {
+				t.Fatalf("service present=%v, error=%v", service != nil, err)
+			}
+			if err != nil && (errors.Unwrap(err) == nil || strings.Contains(err.Error(), "sensitive")) {
+				t.Fatal("initialization error must preserve its cause without rendering credentials")
+			}
+		})
+	}
+}
+
 func (auditWiringLock) WithLock(ctx context.Context, callback func(context.Context) error) error {
 	return callback(ctx)
 }
@@ -127,6 +156,13 @@ func TestFeatureFlagAdminSwaggerDocumentsReachableResponses(t *testing.T) {
 	}
 }
 
+func TestNewImageObjectStoreDisabledWithoutBucket(t *testing.T) {
+	store, err := newImageObjectStore(context.Background(), config.ImageUploadConfiguration{})
+	if err != nil || store != nil {
+		t.Fatalf("newImageObjectStore() = %v, %v, want nil, nil", store, err)
+	}
+}
+
 func TestGatewayRoutesAreRemoved(t *testing.T) {
 	router := setupRouter(handlers.Handlers{})
 
@@ -205,6 +241,9 @@ func TestSwaggerUsesBillingSetupSessionRoute(t *testing.T) {
 	}
 	if _, ok := spec.Paths["/api/billing/setup-session"]; !ok {
 		t.Fatal("swagger.json missing /api/billing/setup-session")
+	}
+	if _, ok := spec.Paths["/api/billing/setup-session/complete"]; !ok {
+		t.Fatal("swagger.json missing /api/billing/setup-session/complete")
 	}
 	if _, ok := spec.Paths["/api/billing/usage"]; !ok {
 		t.Fatal("swagger.json missing /api/billing/usage")
@@ -459,6 +498,10 @@ func (routerBillingService) CreatePortalSession(context.Context, string, string)
 	return "https://billing.stripe.test/session", nil
 }
 
+func (routerBillingService) CompleteSetupSession(context.Context, string, string, string, string) (billing.SetupCompletion, error) {
+	return billing.SetupCompletion{Applied: true, SetupIntentID: "seti_router"}, nil
+}
+
 func (routerBillingService) SetDefaultPaymentMethodForSetupGeneration(context.Context, string, string, string) (bool, error) {
 	return true, nil
 }
@@ -505,6 +548,7 @@ func TestBillingRouterAuthorizationBoundaries(t *testing.T) {
 		path string
 	}{
 		{name: "setup", path: "/api/billing/setup-session"},
+		{name: "setup completion", path: "/api/billing/setup-session/complete"},
 		{name: "portal", path: "/api/billing/portal-session"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

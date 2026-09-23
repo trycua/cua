@@ -18,8 +18,10 @@ import (
 
 type SvcQualifier func(context.Context, *http.Request, int) bool
 type SvcQualificationResult struct {
-	Qualifies bool
-	Reason    string
+	Qualifies        bool
+	Reason           string
+	LookupStage      string
+	LookupErrorClass string
 }
 type SvcQualification func(context.Context, *http.Request, int) SvcQualificationResult
 
@@ -147,31 +149,7 @@ func routeObserver(route string, capturer Capturer, spaClientID string, qualifie
 					ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 250*time.Millisecond)
 					defer cancel()
 					result := qualifier(ctx, r, status)
-					if !result.Qualifies {
-						if result.Reason != "" {
-							capturer.Capture(Event{Name: EventQualificationRejected, DistinctID: user.ID, InsertID: traceID + ":qualification-rejected", Properties: map[string]any{
-								"outcome": OutcomeFailure, "source": source, "principal_type": user.PrincipalType, "status_code": status,
-								"error_class": errorClass(status), "identity_class": IdentityExternal, "reason": result.Reason,
-							}})
-						}
-						return
-					}
-					properties := map[string]any{
-						"outcome": OutcomeSuccess, "source": source, "principal_type": user.PrincipalType,
-						"status_code": status, "error_class": "", "identity_class": IdentityExternal,
-					}
-					capturer.Capture(Event{
-						Name: EventQualifyingWorkload, DistinctID: user.ID, InsertID: traceID,
-						Properties: properties,
-					})
-					capturer.Capture(Event{
-						// This marker is emitted for every qualifying request. Activation
-						// queries must take each identity's earliest timestamp until the
-						// backend has durable once-per-user state.
-						Name: EventFleetActivation, DistinctID: user.ID,
-						SetOnce:    map[string]any{firstActivationProperty: time.Now().UTC().Format(time.RFC3339)},
-						Properties: properties,
-					})
+					captureSvcQualification(capturer, result, user, source, status, traceID)
 				}()
 			}
 			// Current pool creation finishes with the template request. Keep an
@@ -204,6 +182,42 @@ func routeObserver(route string, capturer Capturer, spaClientID string, qualifie
 			}
 		})
 	}
+}
+
+// captureSvcQualification emits a verdict synchronously so all events from a
+// result can be validated together. The caller keeps fact reads off the request
+// path and invokes this only for external-classified users.
+func captureSvcQualification(capturer Capturer, result SvcQualificationResult, user *auth.User, source string, status int, traceID string) {
+	if !result.Qualifies {
+		if result.Reason != "" {
+			properties := map[string]any{
+				"outcome": OutcomeFailure, "source": source, "principal_type": user.PrincipalType, "status_code": status,
+				"error_class": errorClass(status), "identity_class": IdentityExternal, "reason": result.Reason,
+			}
+			if result.LookupStage != "" || result.LookupErrorClass != "" {
+				properties["qualification_lookup_stage"] = result.LookupStage
+				properties["qualification_error_class"] = result.LookupErrorClass
+			}
+			capturer.Capture(Event{Name: EventQualificationRejected, DistinctID: user.ID, InsertID: traceID + ":qualification-rejected", Properties: properties})
+		}
+		return
+	}
+	properties := map[string]any{
+		"outcome": OutcomeSuccess, "source": source, "principal_type": user.PrincipalType,
+		"status_code": status, "error_class": "", "identity_class": IdentityExternal,
+	}
+	capturer.Capture(Event{
+		Name: EventQualifyingWorkload, DistinctID: user.ID, InsertID: traceID,
+		Properties: properties,
+	})
+	capturer.Capture(Event{
+		// This marker is emitted for every qualifying request. Activation
+		// queries must take each identity's earliest timestamp until the
+		// backend has durable once-per-user state.
+		Name: EventFleetActivation, DistinctID: user.ID,
+		SetOnce:    map[string]any{firstActivationProperty: time.Now().UTC().Format(time.RFC3339)},
+		Properties: properties,
+	})
 }
 
 type activationTarget struct {

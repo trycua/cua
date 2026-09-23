@@ -1,0 +1,178 @@
+{
+  "schema_version": 1,
+  "onnx_runtime": {
+    "version": "1.26.0",
+    "license": "MIT",
+    "targets": {
+      "aarch64-apple-darwin": {
+        "os": "macos",
+        "arch": "aarch64",
+        "archive_url": "https://github.com/microsoft/onnxruntime/releases/download/v1.26.0/onnxruntime-osx-arm64-1.26.0.tgz",
+        "archive_sha256": "7a1280bbb1701ea514f71828765237e7896e0f2e1cd332f1f70dbd5c3e33aca3",
+        "archive_format": "tar.gz",
+        "archive_member": "./onnxruntime-osx-arm64-1.26.0/lib/libonnxruntime.dylib",
+        "filename": "libonnxruntime.dylib",
+        "sha256": "cb0462c3fd35ad722e8772313030a33c182f3d4c6b33f4e5e1fcb2ce3199b86c",
+        "size": 37310032,
+        "worker_filename": "cua-perception"
+      },
+      "x86_64-pc-windows-msvc": {
+        "os": "windows",
+        "arch": "x86_64",
+        "archive_url": "https://github.com/microsoft/onnxruntime/releases/download/v1.26.0/onnxruntime-win-x64-1.26.0.zip",
+        "archive_sha256": "6ebe99b5564bf4d029b6e93eac9ff423682b6212eade769e9ca3f685eaf500b4",
+        "archive_format": "zip",
+        "archive_member": "onnxruntime-win-x64-1.26.0/lib/onnxruntime.dll",
+        "filename": "onnxruntime.dll",
+        "sha256": "b2ba7ca16e0e4fe71ad5148744ab885a2f5809e52a0c3de4d9ba3853a03977f9",
+        "size": 14897976,
+        "worker_filename": "cua-perception.exe"
+      },
+      "x86_64-unknown-linux-gnu": {
+        "os": "linux",
+        "arch": "x86_64",
+        "archive_url": "https://github.com/microsoft/onnxruntime/releases/download/v1.26.0/onnxruntime-linux-x64-1.26.0.tgz",
+        "archive_sha256": "1254da24fb389cf39dc0ff3451ab48301740ffbfcbaf646849df92f80ee92c57",
+        "archive_format": "tar.gz",
+        "archive_member": "onnxruntime-linux-x64-1.26.0/lib/libonnxruntime.so.1.26.0",
+        "filename": "libonnxruntime.so",
+        "sha256": "5bd5bedf736fc501692435d0ec4f6e8b2bdf48cd30af8e6d00d61b3ddc9a7ab8",
+        "size": 23023576,
+        "worker_filename": "cua-perception"
+      }
+    }
+  },
+  "corresponding_source": [
+    {
+      "content_kind": "model-source-input",
+      "filename": "omniparser-icon-detect-model.pt",
+      "bundle_path": "source/upstream/omniparser-icon-detect-model.pt",
+      "url": "https://huggingface.co/microsoft/OmniParser-v2.0/resolve/6600256cb0f1b07651e3bc86166196307bad7e2d/icon_detect/model.pt",
+      "sha256": "dab3d4351ad00b035db829909a4db98354d5a90f6990e4ac00222a9a95d4bf57",
+      "size": 40623819,
+      "repository": "https://huggingface.co/microsoft/OmniParser-v2.0",
+      "revision": "6600256cb0f1b07651e3bc86166196307bad7e2d",
+      "license": "AGPL-3.0-only",
+      "format": "file",
+      "source_offer_status": "bundled-review-only"
+    },
+    {
+      "content_kind": "exporter-source",
+      "filename": "ultralytics-8f7fe171f0db13e5c2eff55eee3443f8903e5068.tar.gz",
+      "bundle_path": "source/exporter/ultralytics-8f7fe171f0db13e5c2eff55eee3443f8903e5068.tar.gz",
+      "url": "https://codeload.github.com/ultralytics/ultralytics/tar.gz/8f7fe171f0db13e5c2eff55eee3443f8903e5068",
+      "sha256": "6c289215a5ce593a872111b87e58ffff6949d235c2af720e8f01704375f7bf44",
+      "size": 1872606,
+      "repository": "https://github.com/ultralytics/ultralytics",
+      "revision": "8f7fe171f0db13e5c2eff55eee3443f8903e5068",
+      "license": "AGPL-3.0-only",
+      "format": "tar.gz",
+      "required_paths": ["ultralytics/engine/exporter.py", "pyproject.toml"],
+      "source_offer_status": "bundled-review-only"
+    },
+    {
+      "content_kind": "exporter-source",
+      "filename": "pytorch-ba56102387ef21a3b04b357e5b183d48f0afefc7.tar.gz",
+      "bundle_path": "source/exporter/pytorch-ba56102387ef21a3b04b357e5b183d48f0afefc7.tar.gz",
+      "url": "https://codeload.github.com/pytorch/pytorch/tar.gz/ba56102387ef21a3b04b357e5b183d48f0afefc7",
+      "sha256": "a9623012b046e9cc87c919f178782860bcee9fbf014ad5c24a2655b517d0881b",
+      "size": 56595340,
+      "repository": "https://github.com/pytorch/pytorch",
+      "revision": "ba56102387ef21a3b04b357e5b183d48f0afefc7",
+      "license": "BSD-3-Clause",
+      "format": "tar.gz",
+      "required_paths": ["torch/onnx", "torch/_dynamo", "setup.py"],
+      "source_offer_status": "bundled-review-only"
+    },
+    {
+      "content_kind": "exporter-source",
+      "filename": "torchvision-824e8c8726b65fd9d5abdc9702f81c2b0c4c0dc8.tar.gz",
+      "bundle_path": "source/exporter/torchvision-824e8c8726b65fd9d5abdc9702f81c2b0c4c0dc8.tar.gz",
+      "url": "https://codeload.github.com/pytorch/vision/tar.gz/824e8c8726b65fd9d5abdc9702f81c2b0c4c0dc8",
+      "sha256": "8e44b7705c901b9af76113393fe675b02ceeb43b1c688db50e0d8ff8a9dcef03",
+      "size": 14499056,
+      "repository": "https://github.com/pytorch/vision",
+      "revision": "824e8c8726b65fd9d5abdc9702f81c2b0c4c0dc8",
+      "license": "BSD-3-Clause",
+      "format": "tar.gz",
+      "required_paths": ["torchvision", "setup.py"],
+      "source_offer_status": "bundled-review-only"
+    },
+    {
+      "content_kind": "exporter-source",
+      "filename": "onnx-57b9c6a4f6eebb09ae1b34cfb632078518f72832.tar.gz",
+      "bundle_path": "source/exporter/onnx-57b9c6a4f6eebb09ae1b34cfb632078518f72832.tar.gz",
+      "url": "https://codeload.github.com/onnx/onnx/tar.gz/57b9c6a4f6eebb09ae1b34cfb632078518f72832",
+      "sha256": "a1a9c44e20ea1f9cf0c094e0f82001113b36e0867e04c06966475c46e3c75739",
+      "size": 13109973,
+      "repository": "https://github.com/onnx/onnx",
+      "revision": "57b9c6a4f6eebb09ae1b34cfb632078518f72832",
+      "license": "Apache-2.0",
+      "format": "tar.gz",
+      "required_paths": ["onnx", "pyproject.toml"],
+      "source_offer_status": "bundled-review-only"
+    },
+    {
+      "content_kind": "exporter-source",
+      "filename": "onnxslim-0.1.68.tar.gz",
+      "bundle_path": "source/exporter/onnxslim-0.1.68.tar.gz",
+      "url": "https://files.pythonhosted.org/packages/f3/03/7eecb5b187b7b3e11d066f19211b1850a8b4e5cc79f5e3c78875a676a1c8/onnxslim-0.1.68.tar.gz",
+      "sha256": "ff1ec2bf61ff10b75e33990b2046c446dec522ba7f0a12b2f984547ff43f9138",
+      "size": 141502,
+      "repository": "https://github.com/inisis/OnnxSlim",
+      "revision": "0.1.68",
+      "license": "Apache-2.0",
+      "format": "tar.gz",
+      "required_paths": ["onnxslim", "VERSION"],
+      "source_offer_status": "bundled-review-only"
+    }
+  ],
+  "artifacts": [
+    {
+      "role": "icon-detect",
+      "filename": "omniparser-icon-detect-1280-opset17.onnx",
+      "sha256": "d8a876bf7f9fb73d7da9432904ade7fa78e092e9a91674e5a2806b45562a9ab2",
+      "size": 80933219,
+      "url": null,
+      "origin": "https://huggingface.co/microsoft/OmniParser-v2.0",
+      "revision": "6600256cb0f1b07651e3bc86166196307bad7e2d",
+      "source_path": "icon_detect/model.pt",
+      "source_sha256": "dab3d4351ad00b035db829909a4db98354d5a90f6990e4ac00222a9a95d4bf57",
+      "license": "AGPL-3.0-only",
+      "verification_status": "license-review-required"
+    },
+    {
+      "role": "ocr-detect",
+      "filename": "ppocrv5-mobile-det.onnx",
+      "sha256": "a431985659dc921974177a95adcfbb90fd9e51989a5e04d70d0b75f597b6e61d",
+      "size": 4826518,
+      "url": "https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_det_onnx/resolve/e6f4fa85f00e168c862bc462aebca69eef9b3d3d/inference.onnx",
+      "origin": "https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_det_onnx",
+      "revision": "e6f4fa85f00e168c862bc462aebca69eef9b3d3d",
+      "license": "Apache-2.0",
+      "verification_status": "release-verified"
+    },
+    {
+      "role": "ocr-recognize",
+      "filename": "ppocrv5-mobile-rec-en.onnx",
+      "sha256": "b5f833dfc5d0eb71da397b4efa06ebeee9b431b690a47d6af40d77d8eabc557f",
+      "size": 7848423,
+      "url": "https://huggingface.co/PaddlePaddle/en_PP-OCRv5_mobile_rec_onnx/resolve/3fafbc3b5dcf93dd72add9f48368be8a3a2cd33b/inference.onnx",
+      "origin": "https://huggingface.co/PaddlePaddle/en_PP-OCRv5_mobile_rec_onnx",
+      "revision": "3fafbc3b5dcf93dd72add9f48368be8a3a2cd33b",
+      "license": "Apache-2.0",
+      "verification_status": "release-verified"
+    },
+    {
+      "role": "ocr-dictionary",
+      "filename": "ppocrv5-mobile-rec-en-inference.yml",
+      "sha256": "27e91d0582f40168aa218303c76e184bc78fa7a5d105aad0cfbad8458b441067",
+      "size": 3964,
+      "url": "https://huggingface.co/PaddlePaddle/en_PP-OCRv5_mobile_rec_onnx/resolve/3fafbc3b5dcf93dd72add9f48368be8a3a2cd33b/inference.yml",
+      "origin": "https://huggingface.co/PaddlePaddle/en_PP-OCRv5_mobile_rec_onnx",
+      "revision": "3fafbc3b5dcf93dd72add9f48368be8a3a2cd33b",
+      "license": "Apache-2.0",
+      "verification_status": "release-verified"
+    }
+  ]
+}

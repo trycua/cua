@@ -37,7 +37,7 @@ const KEY_PRESSED: u32 = 1;
 
 #[derive(Default)]
 struct State {
-    seat: Option<WlSeat>,
+    seats: super::primary_seat::Seats<WlSeat>,
     manager: Option<ZwpVirtualKeyboardManagerV1>,
 }
 
@@ -57,7 +57,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
         } = event
         {
             if interface == WlSeat::interface().name {
-                state.seat = Some(registry.bind(name, version.min(7), qh, ()));
+                state.seats.add(registry.bind(name, version.min(7), qh, ()));
             } else if interface == ZwpVirtualKeyboardManagerV1::interface().name {
                 state.manager = Some(registry.bind(name, version.min(1), qh, ()));
             }
@@ -67,13 +67,16 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
 
 impl Dispatch<WlSeat, ()> for State {
     fn event(
-        _: &mut Self,
-        _: &WlSeat,
-        _: <WlSeat as Proxy>::Event,
+        state: &mut Self,
+        seat: &WlSeat,
+        event: <WlSeat as Proxy>::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        if let wayland_client::protocol::wl_seat::Event::Name { name } = event {
+            state.seats.name(seat, name);
+        }
     }
 }
 
@@ -112,8 +115,8 @@ pub(super) fn hotkey(modifiers: &[String], key: &str) -> anyhow::Result<()> {
     queue.roundtrip(&mut state)?;
 
     let seat = state
-        .seat
-        .clone()
+        .seats
+        .selected()
         .ok_or_else(|| anyhow::anyhow!("compositor exposes no wl_seat"))?;
     let manager = state
         .manager

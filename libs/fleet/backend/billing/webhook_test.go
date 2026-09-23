@@ -26,7 +26,7 @@ func TestVerifyParsesFleetSetupIntentSucceeded(t *testing.T) {
 	    "object":"setup_intent",
 	    "customer":"cus_owned",
 	    "payment_method":"pm_card",
-	    "metadata":{"purpose":"fleet_default_card","fleet_subject":"subject-1","fleet_source":"spa"}
+	    "metadata":{"purpose":"fleet_default_card","fleet_subject":"subject-1","fleet_source":"spa","fleet_identity_class":"external"}
 	  }}
 	}`)
 	signature := billingStripeSignature(payload, secret, time.Now().Unix())
@@ -37,7 +37,7 @@ func TestVerifyParsesFleetSetupIntentSucceeded(t *testing.T) {
 	}
 	want := WebhookEvent{
 		ID: "evt_setup", Type: "setup_intent.succeeded",
-		Purpose: SetupPurpose, Subject: "subject-1", Source: "spa", CustomerID: "cus_owned", PaymentMethodID: "pm_card",
+		Purpose: SetupPurpose, Subject: "subject-1", Source: "spa", IdentityClass: "external", CustomerID: "cus_owned", PaymentMethodID: "pm_card",
 	}
 	if event != want {
 		t.Fatalf("event = %#v, want %#v", event, want)

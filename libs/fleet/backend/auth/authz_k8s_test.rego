@@ -869,3 +869,86 @@ watch_admin_subs(admin) := ["admin-1"] if {
 watch_admin_subs(admin) := [] if {
 	not admin
 }
+
+# ── Bound-sandbox service exposure ──────────────────────────────────────────
+#
+# PATCH on a Sandbox item is the one write clients get on osgymsandboxes, so a
+# claim holder can expose an extra service port on a running sandbox by
+# appending to spec.vmTemplate.services. The body restriction (only that field
+# may move) is sandbox_services_admission.rego's job and is tested there; these
+# cases pin the route-authorization half.
+
+test_sandbox_item_patch_allowed if {
+	route_allow with input as spa_request("PATCH", "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxes/sandbox-1")
+}
+
+test_sandbox_item_patch_allowed_for_user_key if {
+	request := object.union(
+		spa_request("PATCH", "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxes/sandbox-1"),
+		{"user": {"sub": "user-1", "azp": "ukey-abc", "namespace": "", "email": ""}},
+	)
+
+	route_allow with input as request
+}
+
+# The item verb matrix stays otherwise closed: PATCH is the only write, and the
+# collection takes no writes at all.
+test_sandbox_write_matrix_stays_closed if {
+	not route_allow with input as spa_request("PATCH", "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxes")
+	not route_allow with input as spa_request("PUT", "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxes/sandbox-1")
+	not route_allow with input as spa_request("POST", "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxes")
+	not route_allow with input as spa_request("DELETE", "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxes/sandbox-1")
+	not route_allow with input as spa_request("PATCH", "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxes/sandbox-1/status")
+}
+
+# An empty namespace or name segment must not satisfy the item shape.
+test_sandbox_patch_needs_namespace_and_name if {
+	not route_allow with input as spa_request("PATCH", "apis/osgym.cua.ai/v1alpha1/namespaces//osgymsandboxes/sandbox-1")
+	not route_allow with input as spa_request("PATCH", "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxes/")
+}
+
+# GitHub OIDC principals keep their own enumerated grant, which does not
+# include sandboxes at all.
+test_sandbox_patch_denied_for_github_oidc if {
+	request := object.union(
+		spa_request("PATCH", "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxes/sandbox-1"),
+		{"user": {
+			"sub": "repo:trycua/cloud",
+			"azp": "github-oidc",
+			"principal_type": "github_oidc",
+			"allowed_namespaces": ["ns-a"],
+		}},
+	)
+
+	not route_allow with input as request
+}
+
+# ── The service-write guidance query ────────────────────────────────────────
+#
+# not_direct_service_write is the Because(...) conjunct K8sRoutePolicy runs
+# before the allow leaf: it must deny exactly the core-Services writes (so the
+# 403 carries the guidance message) and allow everything else (so it never
+# shadows another rule's verdict or reason).
+
+test_direct_service_write_guidance_denies_writes if {
+	every method in ["POST", "PUT", "PATCH", "DELETE"] {
+		not authz_k8s.not_direct_service_write with input as spa_request(method, "api/v1/namespaces/ns-a/services")
+		not authz_k8s.not_direct_service_write with input as spa_request(method, "api/v1/namespaces/ns-a/services/sandbox-1-source-mcp")
+	}
+}
+
+test_direct_service_write_guidance_passes_everything_else if {
+	authz_k8s.not_direct_service_write with input as spa_request("GET", "api/v1/namespaces/ns-a/services")
+	authz_k8s.not_direct_service_write with input as spa_request("GET", "api/v1/namespaces/ns-a/services/sandbox-1")
+	authz_k8s.not_direct_service_write with input as spa_request("POST", "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxclaims")
+	authz_k8s.not_direct_service_write with input as spa_request("POST", "api/v1/namespaces/ns-a/pods")
+	authz_k8s.not_direct_service_write with input as spa_request("PATCH", "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxes/sandbox-1")
+}
+
+# The denial the guidance annotates is real with or without the annotation:
+# the allowlist itself never admits a core-Services write. This is the exact
+# request shape from the field report — POST a ClusterIP Service selecting the
+# sandbox — and it must stay denied by both conjuncts.
+test_direct_service_create_denied if {
+	not route_allow with input as spa_request("POST", "api/v1/namespaces/ns-a/services")
+}

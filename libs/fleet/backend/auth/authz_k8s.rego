@@ -179,6 +179,44 @@ native_fleet_resources := {
 
 k8s_request_allowed {
 	parts := split(input.params.path, "/")
+	image_request(parts)
+}
+
+image_request(parts) {
+	apis_namespaced_group(parts, "images.cua.ai", "v1alpha1")
+	authz.valid_dns_label(parts[4])
+	parts[5] == "images"
+	image_crud_shape(parts)
+}
+
+image_crud_shape(parts) {
+	apis_collection(parts)
+	input.method == "GET"
+}
+
+image_crud_shape(parts) {
+	image_item(parts)
+	input.method == "GET"
+}
+
+image_crud_shape(parts) {
+	apis_collection(parts)
+	input.method == "POST"
+}
+
+image_crud_shape(parts) {
+	image_item(parts)
+	{"PATCH", "DELETE"}[input.method]
+}
+
+image_item(parts) {
+	apis_item(parts)
+	count(parts[6]) <= 253
+	regex.match(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`, parts[6])
+}
+
+k8s_request_allowed {
+	parts := split(input.params.path, "/")
 	apis_namespaced_group(parts, "osgym.cua.ai", "v1alpha1")
 	native_fleet_resources[parts[5]]
 	fleet_crud_shape(parts)
@@ -192,6 +230,24 @@ k8s_request_allowed {
 	parts[5] == "osgymsandboxes"
 	apis_read_shape(parts)
 	input.method == "GET"
+}
+
+# The one write clients get on a Sandbox: PATCH on an item, so a claim holder
+# can expose an extra service port on a RUNNING sandbox by appending to
+# spec.vmTemplate.services (the pool-operator creates the matching per-sandbox
+# Service; the VMI forwards all guest ports, so no restart is needed). This is
+# a reviewed product decision (Fleet dynamic service exposure), not observed
+# traffic. The body is NOT free-form: sandbox_services_admission.rego runs as
+# a conjunct on this surface (see K8sRoutePolicy) and rejects any PATCH that
+# touches more than spec.vmTemplate.services, so image, sizing and runtime
+# stay operator-owned. Capsule scopes the caller to their own namespaces, the
+# same as every other namespaced path here.
+k8s_request_allowed {
+	parts := split(input.params.path, "/")
+	apis_namespaced_group(parts, "osgym.cua.ai", "v1alpha1")
+	parts[5] == "osgymsandboxes"
+	apis_item(parts)
+	input.method == "PATCH"
 }
 
 # ── Fleet CRDs, legacy group ────────────────────────────────────────────────
@@ -237,6 +293,43 @@ k8s_request_allowed {
 	core_namespaced_resource(parts, "services")
 	core_read_shape(parts)
 	input.method == "GET"
+}
+
+# ── Direct Service writes: denied with guidance ─────────────────────────────
+#
+# Nothing below admits a write to core Services, so a client that POSTs one —
+# the obvious way to try to expose a new port on a sandbox — is denied either
+# way. What this query adds is the reason: K8sRoutePolicy evaluates it wrapped
+# in Because(...) BEFORE the allow leaf, so exactly these requests 403 with a
+# message naming the supported alternative (spec.vmTemplate.services) instead
+# of the generic "k8s request is not allowed". It changes no verdict: every
+# request it denies, the allowlist denies too.
+default not_direct_service_write = false
+
+not_direct_service_write {
+	not is_direct_service_write
+}
+
+is_direct_service_write {
+	parts := split(input.params.path, "/")
+	core_namespaced_resource(parts, "services")
+	is_write_method
+}
+
+is_write_method {
+	input.method == "POST"
+}
+
+is_write_method {
+	input.method == "PUT"
+}
+
+is_write_method {
+	input.method == "PATCH"
+}
+
+is_write_method {
+	input.method == "DELETE"
 }
 
 # ── Pod metrics ─────────────────────────────────────────────────────────────
@@ -532,6 +625,12 @@ is_infra_literal(path) {
 	parts[1] == "capsule.clastix.io"
 	parts[2] != ""
 	parts[3] == "tenants"
+}
+
+github_k8s_request_allowed {
+	parts := split(input.params.path, "/")
+	image_request(parts)
+	github_namespace_allowed(parts[4])
 }
 
 github_k8s_request_allowed {

@@ -15,6 +15,7 @@ from release_attribution import (
     _change_contributors,
     build_manifest,
     changelog_references_change,
+    is_perception_only_diff,
     linked_issue_numbers,
     login_from_email,
     merge_contributors,
@@ -115,6 +116,22 @@ def test_release_tracked_changes_require_a_releasing_title_or_explicit_opt_out()
         "style(cua-driver): apply deterministic formatting",
         require_release=True,
         allow_non_release=True,
+    )
+
+
+def test_perception_diff_scope_includes_crate_and_release_controls():
+    assert is_perception_only_diff(
+        [
+            "libs/cua-driver/rust/crates/cua-perception/VERSION",
+            "libs/cua-driver/rust/crates/cua-perception/CHANGELOG.md",
+            ".github/releases/cua-perception/artifact-manifest.schema.json",
+        ]
+    )
+    assert not is_perception_only_diff(
+        [
+            "libs/cua-driver/rust/crates/cua-perception/VERSION",
+            ".github/releases/components.json",
+        ]
     )
 
 

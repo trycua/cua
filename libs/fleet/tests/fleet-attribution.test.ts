@@ -62,6 +62,62 @@ test("first touch survives a Keycloak round trip and only binds validated public
   ])
 })
 
+test("GitHub README CTA preserves all four fields through a simulated Keycloak bind", async () => {
+  const cta = "https://run.cua.ai/?utm_source=github&utm_medium=referral&utm_campaign=fleet_activation&content_id=repo_readme"
+  const firstTouch = 1_700_000_000_000
+  const expected = {
+    version: 1,
+    capturedAt: firstTouch,
+    values: {
+      content_id: "repo_readme",
+      utm_source: "github",
+      utm_medium: "referral",
+      utm_campaign: "fleet_activation",
+    },
+  }
+
+  for (const href of [cta, `${cta}&email=person%40example.test&identity=raw-subject&url=https%3A%2F%2Fexample.test`]) {
+    const storage = memoryStorage()
+    captureFleetAttribution(href, { storage, now: () => firstTouch })
+    assert.deepEqual(JSON.parse(storage.getItem(ATTRIBUTION_STORAGE_KEY) ?? "null"), expected)
+
+    captureFleetAttribution(
+      "https://run.cua.ai/?code=oidc-code&state=opaque&utm_source=overwrite&content_id=overwrite",
+      { storage, now: () => firstTouch + 1_000 },
+    )
+    assert.deepEqual(JSON.parse(storage.getItem(ATTRIBUTION_STORAGE_KEY) ?? "null"), expected)
+
+    const bound: unknown[] = []
+    await bindStoredFleetAttribution({
+      bind: async (record, accessToken) => {
+        assert.equal(accessToken, "access-token")
+        bound.push(record)
+      },
+    }, {
+      storage,
+      now: () => firstTouch + 2_000,
+      getAccessToken: async () => "access-token",
+    })
+
+    // Exact records exclude the raw URL, email, identity, and unknown keys.
+    assert.deepEqual(bound, [expected])
+    assert.equal(storage.getItem(ATTRIBUTION_STORAGE_KEY), null)
+  }
+})
+
+test("standard utm_content is stored under canonical content_id without loss", () => {
+  for (const href of [
+    "https://run.cua.ai/?utm_source=x&utm_medium=organic-social&utm_campaign=cursor-cloud-fleets&utm_content=thread-post-5",
+    "https://run.cua.ai/?utm_content=thread-post-5&content_id=thread-post-5",
+  ]) {
+    const storage = memoryStorage()
+    captureFleetAttribution(href, { storage, now: () => 50 })
+    const record = JSON.parse(storage.getItem(ATTRIBUTION_STORAGE_KEY) ?? "null")
+    assert.equal(record.values.content_id, "thread-post-5")
+    assert.equal(record.values.utm_content, undefined)
+  }
+})
+
 test("invalid, malformed, empty, oversized, and expired records never reach a binder", async () => {
   const now = 1_700_000_000_000
   const invalidStoredRecords = [
@@ -87,6 +143,8 @@ test("capture rejects repeated, empty, invalid, and oversized values without tru
   const invalidQueries = [
     "?campaign_id=",
     "?campaign_id=one&campaign_id=two",
+    "?utm_content=one&utm_content=two",
+    "?content_id=legacy&utm_content=standard",
     "?campaign_id=has%20space",
     `?campaign_id=${"x".repeat(ATTRIBUTION_MAX_VALUE_LENGTH + 1)}`,
   ]

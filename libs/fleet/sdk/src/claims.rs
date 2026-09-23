@@ -69,7 +69,7 @@ impl CyclopsClient {
             metadata: ResourceMetadata {
                 namespace: pool.metadata.namespace.clone(),
                 name,
-                labels: None,
+                labels: request.labels.filter(|labels| !labels.is_empty()),
                 creation_timestamp: None,
             },
             spec,
@@ -283,6 +283,7 @@ fn json_request(method: &str, url: Url, body: Option<Vec<u8>>) -> HttpRequest {
         ],
         body,
         timeout_secs: None,
+        max_response_bytes: None,
     }
 }
 

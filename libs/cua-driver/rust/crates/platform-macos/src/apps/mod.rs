@@ -276,7 +276,7 @@ struct FinderFolderRequest {
     tx: SyncSender<Result<(), String>>,
 }
 
-#[link(name = "dispatch", kind = "dylib")]
+#[link(name = "System", kind = "framework")]
 extern "C" {
     static _dispatch_main_q: u8;
     fn dispatch_async_f(

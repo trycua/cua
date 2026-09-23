@@ -62,6 +62,7 @@ fn contract<I: ToolInput, O: ToolOutput>(
         cursor_semantics: None,
         input_schema: I::input_schema(),
         success_output_schema: Some(O::output_schema()),
+        error_output_schema: None,
         output_validator: crate::validate_typed_output::<O>,
     }
 }

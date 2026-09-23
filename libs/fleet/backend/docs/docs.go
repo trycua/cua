@@ -496,6 +496,108 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/billing/setup-session/complete": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Reconciles an authenticated subject's completed Stripe Checkout Session and configures its card as the default payment method.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Complete Stripe card setup Session",
+                "parameters": [
+                    {
+                        "description": "Completed Checkout Session",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.BillingSetupCompletionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.BillingSetupCompletionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/billing/summary": {
             "get": {
                 "security": [
@@ -1027,7 +1129,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Forwards requests to http://127.0.0.1:8001 (the kubectl-proxy sidecar) so the caller can read K8s resources via the pod ServiceAccount. SPA-only; OPA-gated. The policy is an allowlist: only enumerated group/version/resource/method combinations are proxied (the osgym.cua.ai and cua.ai fleet CRDs, namespaced pod/service reads, pod logs and metrics, KubeVirt reads, and API discovery). Anything else, including Kubernetes events and any cluster-scoped path, is denied and never reaches the sidecar.",
+                "description": "Forwards requests to http://127.0.0.1:8001 (the kubectl-proxy sidecar) so the caller can read K8s resources via the pod ServiceAccount. SPA-only; OPA-gated. The policy is an allowlist: only enumerated group/version/resource/method combinations are proxied (the osgym.cua.ai and cua.ai fleet CRDs, namespaced pod/service reads, a PATCH on osgymsandboxes items whose body touches only spec.vmTemplate.services, pod logs and metrics, KubeVirt reads, and API discovery). Anything else, including Kubernetes events and any cluster-scoped path, is denied and never reaches the sidecar.",
                 "tags": [
                     "passthrough"
                 ],
@@ -2159,6 +2261,22 @@ const docTemplate = `{
             "properties": {
                 "url": {
                     "type": "string"
+                }
+            }
+        },
+        "handlers.BillingSetupCompletionRequest": {
+            "type": "object",
+            "properties": {
+                "session_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.BillingSetupCompletionResponse": {
+            "type": "object",
+            "properties": {
+                "applied": {
+                    "type": "boolean"
                 }
             }
         },

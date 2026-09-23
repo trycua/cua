@@ -383,6 +383,25 @@ async def test_auto_scope_escalation_is_explicit_and_typed(sdk, fallback):
     assert request.detail == "the window ladder found no target"
 
 
+def test_session_state_accepts_the_released_driver_contract():
+    import cua_driver
+
+    state = cua_driver.SessionStateOutput(
+        session="released-contract",
+        capture_scope=cua_driver.CaptureScope.AUTO,
+        effective_scope=cua_driver.EffectiveScope.WINDOW,
+        desktop_unlocked=False,
+        escalation_reason=None,
+        escalation_detail=None,
+    )
+    result = CuaDriverAutomationHandler._session_state(state)
+    assert result["session"] == "released-contract"
+    assert result["effective_scope"] == "window"
+    assert result["desktop_unlocked"] is False
+    # Do not invent a capture-authority value absent from the released SDK.
+    assert "desktop_capture_authorized" not in result
+
+
 @pytest.mark.asyncio
 async def test_invalid_escalation_reason_is_rejected_without_calling_driver(sdk, fallback):
     driver = _Driver()

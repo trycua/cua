@@ -34,6 +34,7 @@ async fn creates_pending_demand_immediately_for_a_nonzero_unavailable_pool() {
                 pool: unavailable_pool,
                 spec: Some(spec.clone()),
                 name: None,
+                labels: None,
             })
             .await
             .unwrap(),
@@ -62,6 +63,7 @@ async fn create_claim_defaults_missing_bind_deadline_to_900_seconds() {
                 spec
             }),
             name: None,
+            labels: None,
         })
         .await
         .unwrap();
@@ -87,6 +89,7 @@ async fn create_claim_preserves_explicit_bind_deadline() {
             pool: pool(1),
             spec: Some(spec),
             name: None,
+            labels: None,
         })
         .await
         .unwrap();
@@ -111,6 +114,7 @@ async fn zero_and_nonzero_pools_post_a_single_claim_create() {
                 pool: pool(replicas),
                 spec: None,
                 name: None,
+                labels: None,
             })
             .await
             .unwrap();
@@ -216,6 +220,7 @@ async fn create_claim_uses_a_client_supplied_name_verbatim() {
             pool: pool(1),
             spec: Some(spec.clone()),
             name: Some("claim-1".into()),
+            labels: None,
         })
         .await
         .unwrap();
@@ -237,6 +242,7 @@ async fn create_claim_rejects_an_invalid_client_supplied_name_before_any_request
                 pool: pool(1),
                 spec: None,
                 name: Some("Not A DNS Label".into()),
+                labels: None,
             })
             .await,
         Err(SdkError::InvalidResourceName { .. })
@@ -335,11 +341,13 @@ async fn generated_claim_names_are_unique_under_concurrency_and_fit_dns_labels()
             pool: pool.clone(),
             spec: Some(claim_spec("short-template")),
             name: None,
+            labels: None,
         }),
         client.create_claim(CreateClaimRequest {
             pool,
             spec: Some(claim_spec("short-template")),
             name: None,
+            labels: None,
         }),
     );
     assert!(first.is_ok());
@@ -379,6 +387,7 @@ async fn validation_and_malformed_responses_fail_without_unexpected_http() {
                 pool: invalid_pool,
                 spec: None,
                 name: None,
+                labels: None,
             })
             .await,
         Err(SdkError::InvalidResourceName { .. })
@@ -586,6 +595,7 @@ async fn default_template_ref_for_a_63_byte_pool_passes_through_without_dns_vali
             pool,
             spec: None,
             name: None,
+            labels: None,
         })
         .await
         .unwrap();
@@ -612,6 +622,7 @@ async fn explicit_non_dns_template_ref_passes_through_but_empty_ref_is_rejected_
             pool: pool(0),
             spec: Some(claim_spec(template_name)),
             name: None,
+            labels: None,
         })
         .await
         .unwrap();
@@ -627,6 +638,7 @@ async fn explicit_non_dns_template_ref_passes_through_but_empty_ref_is_rejected_
                 pool: pool(0),
                 spec: Some(claim_spec("")),
                 name: None,
+                labels: None,
             })
             .await,
         Err(SdkError::Configuration { .. })

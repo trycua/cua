@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -29,7 +30,10 @@ func (h Handlers) FleetAttributionQualification() productanalytics.SvcQualificat
 	reader := fleetAttributionFactsReader{handlers: h}
 	return func(ctx context.Context, r *http.Request, status int) productanalytics.SvcQualificationResult {
 		result := QualifySvcRequestResult(ctx, r, status, reader)
-		return productanalytics.SvcQualificationResult{Qualifies: result.Qualifies, Reason: result.Reason}
+		return productanalytics.SvcQualificationResult{
+			Qualifies: result.Qualifies, Reason: result.Reason,
+			LookupStage: result.LookupStage, LookupErrorClass: result.LookupErrorClass,
+		}
 	}
 }
 
@@ -46,16 +50,16 @@ func (reader fleetAttributionFactsReader) userSubject(ctx context.Context) (stri
 func (reader fleetAttributionFactsReader) ReadBoundClaimForSandbox(ctx context.Context, namespace, sandbox string) (BoundClaim, error) {
 	subject, err := reader.userSubject(ctx)
 	if err != nil {
-		return BoundClaim{}, err
+		return BoundClaim{}, errors.Join(err, attributionLookupError{stage: "sandbox", class: "missing_identity"})
 	}
 	sandboxPath := fmt.Sprintf("/apis/osgym.cua.ai/v1alpha1/namespaces/%s/osgymsandboxes/%s", url.PathEscape(namespace), url.PathEscape(sandbox))
 	response, err := reader.handlers.k8sImpersonate(ctx, http.MethodGet, sandboxPath, nil, subject)
 	if err != nil {
-		return BoundClaim{}, err
+		return BoundClaim{}, errors.Join(err, classifyAttributionLookupError("sandbox", err, "request_failed"))
 	}
-	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return BoundClaim{}, fmt.Errorf("sandbox lookup returned HTTP %d", response.StatusCode)
+		defer closeAttributionResponse(response.Body)
+		return BoundClaim{}, attributionLookupStatusError("sandbox", response.StatusCode)
 	}
 	var sandboxPayload struct {
 		Metadata struct {
@@ -68,8 +72,8 @@ func (reader fleetAttributionFactsReader) ReadBoundClaimForSandbox(ctx context.C
 			} `json:"ownerReferences"`
 		} `json:"metadata"`
 	}
-	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&sandboxPayload); err != nil {
-		return BoundClaim{}, err
+	if err := decodeAttributionResponse(response.Body, &sandboxPayload); err != nil {
+		return BoundClaim{}, errors.Join(err, classifyAttributionLookupError("sandbox", err, "invalid_response"))
 	}
 	var ownerName, ownerUID string
 	for _, owner := range sandboxPayload.Metadata.OwnerReferences {
@@ -77,7 +81,7 @@ func (reader fleetAttributionFactsReader) ReadBoundClaimForSandbox(ctx context.C
 			continue
 		}
 		if ownerName != "" {
-			return BoundClaim{}, fmt.Errorf("sandbox has multiple claim controller owners")
+			return BoundClaim{}, attributionLookupError{stage: "sandbox", class: "invalid_binding"}
 		}
 		ownerName, ownerUID = owner.Name, owner.UID
 	}
@@ -88,11 +92,11 @@ func (reader fleetAttributionFactsReader) ReadBoundClaimForSandbox(ctx context.C
 	claimPath := fmt.Sprintf("/apis/osgym.cua.ai/v1alpha1/namespaces/%s/osgymsandboxclaims/%s", url.PathEscape(namespace), url.PathEscape(ownerName))
 	response, err = reader.handlers.k8sImpersonate(ctx, http.MethodGet, claimPath, nil, subject)
 	if err != nil {
-		return BoundClaim{}, err
+		return BoundClaim{}, errors.Join(err, classifyAttributionLookupError("claim", err, "request_failed"))
 	}
-	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return BoundClaim{}, fmt.Errorf("claim lookup returned HTTP %d", response.StatusCode)
+		defer closeAttributionResponse(response.Body)
+		return BoundClaim{}, attributionLookupStatusError("claim", response.StatusCode)
 	}
 	var payload struct {
 		Metadata struct {
@@ -106,8 +110,8 @@ func (reader fleetAttributionFactsReader) ReadBoundClaimForSandbox(ctx context.C
 			} `json:"sandbox"`
 		} `json:"status"`
 	}
-	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&payload); err != nil {
-		return BoundClaim{}, err
+	if err := decodeAttributionResponse(response.Body, &payload); err != nil {
+		return BoundClaim{}, errors.Join(err, classifyAttributionLookupError("claim", err, "invalid_response"))
 	}
 	return BoundClaim{
 		Claim:        payload.Metadata.Name,
@@ -120,26 +124,43 @@ func (reader fleetAttributionFactsReader) ReadBoundClaimForSandbox(ctx context.C
 func (reader fleetAttributionFactsReader) PoolExists(ctx context.Context, namespace, pool string) (bool, error) {
 	subject, err := reader.userSubject(ctx)
 	if err != nil {
-		return false, err
+		return false, errors.Join(err, attributionLookupError{stage: "pool", class: "missing_identity"})
 	}
 	if pool == "" {
-		return false, fmt.Errorf("missing pool")
+		return false, attributionLookupError{stage: "pool", class: "invalid_request"}
 	}
 	// Fleet SDK pools are native OSGymSandboxWarmPool resources. Keep the
 	// qualification lookup aligned with the resource the SDK actually creates.
 	path := fmt.Sprintf("/apis/osgym.cua.ai/v1alpha1/namespaces/%s/osgymsandboxwarmpools/%s", url.PathEscape(namespace), url.PathEscape(pool))
 	response, err := reader.handlers.k8sImpersonate(ctx, http.MethodGet, path, nil, subject)
 	if err != nil {
-		return false, err
+		return false, errors.Join(err, classifyAttributionLookupError("pool", err, "request_failed"))
 	}
-	defer response.Body.Close()
+	defer closeAttributionResponse(response.Body)
 	if response.StatusCode == http.StatusNotFound {
 		return false, nil
 	}
 	if response.StatusCode != http.StatusOK {
-		return false, fmt.Errorf("pool lookup returned HTTP %d", response.StatusCode)
+		return false, attributionLookupStatusError("pool", response.StatusCode)
 	}
 	return true, nil
+}
+
+// decodeAttributionResponse releases each response before the next fact read.
+// Keeping a partially read sandbox response open through the claim lookup, or
+// closing an unread pool response, prevents HTTP/1 connection reuse.
+func decodeAttributionResponse(body io.ReadCloser, payload any) error {
+	defer closeAttributionResponse(body)
+	return json.NewDecoder(io.LimitReader(body, 1<<20)).Decode(payload)
+}
+
+func closeAttributionResponse(body io.ReadCloser) {
+	// Consume only a bounded remainder so small Kubernetes responses reach EOF
+	// and their connections can be reused. The existing request context also
+	// bounds a slow body by the shared qualification deadline. Cleanup errors
+	// do not replace a decoded result or an authoritative HTTP status.
+	_, _ = io.Copy(io.Discard, io.LimitReader(body, k8sResponseBodyLimit))
+	_ = body.Close()
 }
 
 func QualifySvcRequest(ctx context.Context, r *http.Request, status int, reader AttributionFactsReader) bool {
@@ -147,8 +168,10 @@ func QualifySvcRequest(ctx context.Context, r *http.Request, status int, reader 
 }
 
 type QualificationResult struct {
-	Qualifies bool
-	Reason    string
+	Qualifies        bool
+	Reason           string
+	LookupStage      string
+	LookupErrorClass string
 }
 
 func QualifySvcRequestResult(ctx context.Context, r *http.Request, status int, reader AttributionFactsReader) QualificationResult {
@@ -178,7 +201,7 @@ func QualifySvcRequestResult(ctx context.Context, r *http.Request, status int, r
 	}
 	bound, err := reader.ReadBoundClaimForSandbox(ctx, ns, sandbox)
 	if err != nil {
-		return QualificationResult{Reason: "binding_lookup_failed"}
+		return attributionLookupRejection("binding_lookup_failed", "unknown", err)
 	}
 	if bound.Claim == "" {
 		return QualificationResult{Reason: "claim_missing"}
@@ -197,7 +220,7 @@ func QualifySvcRequestResult(ctx context.Context, r *http.Request, status int, r
 	}
 	pool, err := reader.PoolExists(ctx, ns, ns)
 	if err != nil {
-		return QualificationResult{Reason: "pool_lookup_failed"}
+		return attributionLookupRejection("pool_lookup_failed", "pool", err)
 	}
 	if !pool {
 		return QualificationResult{Reason: "pool_missing"}

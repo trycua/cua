@@ -87,9 +87,9 @@ impl Tool for DoubleClickTool {
         // Surface 6: token / index precedence — see click.rs for the
         // canonical comment.
         let element_token_arg = args.opt_str("element_token");
-        let window_id_arg = args.opt_u64("window_id").map(|v| v as u32);
+        let window_id_arg = args.opt_u64("window_id");
         let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match cua_driver_core::element_token::resolve_element_args(
+        let resolved = match self.state.element_cache.resolve_element_args(
             pid,
             element_index_arg,
             element_token_arg.as_deref(),
@@ -100,35 +100,25 @@ impl Tool for DoubleClickTool {
             Ok(r) => r,
             Err(e) => return e,
         };
-        let (element_index, window_id) = match resolved {
-            cua_driver_core::element_token::ResolvedElement::None => (None, window_id_arg),
-            cua_driver_core::element_token::ResolvedElement::Element {
-                window_id: wid,
-                element_index: idx,
-                via_token: _,
-            } => (Some(idx), wid),
+        let (element_index, window_id, element_guard) = resolved.into_parts(window_id_arg);
+        let window_id = match super::native_window_id(window_id) {
+            Ok(window_id) => window_id,
+            Err(error) => return error,
         };
 
         // ── AX element path ──────────────────────────────────────────────────
-        if let (Some(idx), Some(wid)) = (element_index, window_id) {
-            // Retain out of the cache so a concurrent get_window_state can't
-            // free the element mid-action (use-after-free → daemon crash).
-            let element_guard = match self.state.element_cache.get_element_retained(pid, wid, idx) {
-                Some(e) => e,
-                None => {
-                    return ToolResult::error(format!(
-                        "Element index {idx} not found. Call get_window_state first."
-                    ))
-                }
-            };
+        if let (Some(idx), Some(wid), Some(element_guard)) =
+            (element_index, window_id, element_guard)
+        {
             let element_ptr = element_guard.as_ptr();
 
             // Choose one background actuator before dispatch. An element that
             // advertises AXOpen uses the exact semantic route; all other
             // elements require the stricter routed-pointer proof. Do not let a
             // failed AXOpen silently cross into an ungated pointer fallback.
+            let probe_guard = element_guard.clone();
             let has_ax_open = tokio::task::spawn_blocking(move || unsafe {
-                copy_action_names(element_ptr as AXUIElementRef)
+                copy_action_names(probe_guard.as_ptr() as AXUIElementRef)
                     .iter()
                     .any(|action| action == "AXOpen")
             })
@@ -153,7 +143,7 @@ impl Tool for DoubleClickTool {
                 ax_double_click(
                     pid,
                     wid,
-                    element_ptr,
+                    element_guard.as_ptr(),
                     idx,
                     &ck,
                     has_ax_open,
@@ -184,10 +174,12 @@ impl Tool for DoubleClickTool {
         };
 
         // Scale back from downscaled-image space to native pixels when needed.
-        if let Some(ratio) = self.state.resize_registry.ratio(pid, window_id) {
-            cx *= ratio;
-            cy *= ratio;
-        }
+        let ratio = match super::screenshot_scale(&self.state, &args, pid, window_id) {
+            Ok(ratio) => ratio,
+            Err(refusal) => return refusal,
+        };
+        cx *= ratio;
+        cy *= ratio;
 
         // Window-local → screen coordinate translation + win-local logical coords
         // for CGEventSetWindowLocation (shared with click.rs via px_frame, which
@@ -267,6 +259,7 @@ impl Tool for DoubleClickTool {
                         wid,
                         2,
                         &[],
+                        crate::input::mouse::WindowClickDelivery::from_foreground(fg),
                     )
                 } else {
                     crate::input::mouse::click_at_xy(pid, screen_x, screen_y, 2, &[])
@@ -312,7 +305,7 @@ fn ax_double_click(
     idx: usize,
     cursor_key: &str,
     has_ax_open: bool,
-    allow_pointer_fallback: bool,
+    foreground: bool,
 ) -> anyhow::Result<String> {
     let element = element_ptr as AXUIElementRef;
 
@@ -322,7 +315,7 @@ fn ax_double_click(
         if err == kAXErrorSuccess {
             return Ok(format!("AXOpen performed on element [{idx}]."));
         }
-        if !allow_pointer_fallback {
+        if !foreground {
             anyhow::bail!(
                 "AXOpen returned {err} for element [{idx}]; background delivery will not \
                  improvise a pointer fallback after choosing the semantic route"
@@ -359,7 +352,17 @@ fn ax_double_click(
              screen coordinates as window-local for element [{idx}]."
             )
         })?;
-    crate::input::mouse::click_at_xy_with_window_local(pid, cx, cy, wx, wy, wid, 2, &[])?;
+    crate::input::mouse::click_at_xy_with_window_local(
+        pid,
+        cx,
+        cy,
+        wx,
+        wy,
+        wid,
+        2,
+        &[],
+        crate::input::mouse::WindowClickDelivery::from_foreground(foreground),
+    )?;
     Ok(format!(
         "✅ Double-clicked element [{idx}] at ({cx:.1}, {cy:.1})."
     ))

@@ -8,6 +8,7 @@
 //!   cua-driver describe <tool>              → print tool schema
 //!   cua-driver call <tool> [json-args]      → invoke tool, print result
 //!   cua-driver <tool> [json-args]           → shorthand for call (snake_case names)
+//!   cua-driver perception parse ...         → parse a local PNG without action authority
 //!
 //! Cursor-overlay flags (--cursor-theme, --no-overlay, etc.) are consumed by
 //! `CursorConfig::from_args()` and are ignored here.
@@ -50,6 +51,7 @@ pub enum Command {
     },
     Serve {
         socket: Option<String>,
+        pid_file: Option<String>,
         /// Immutable agent-authorization mode selected at trusted daemon
         /// startup. This is distinct from the macOS OS-permissions gate.
         permission_mode: Option<String>,
@@ -190,6 +192,14 @@ pub enum Command {
         subcommand: String,
         flags: Vec<String>,
     },
+    /// Authenticated lifecycle for optional target-specific extensions.
+    Extension {
+        args: Vec<String>,
+    },
+    /// Local-file-only visual parsing through the installed extension.
+    Perception {
+        args: Vec<String>,
+    },
     /// Trusted local cursor-theme authoring and installation workflow. The
     /// actual parser/compiler is a separate short-lived executable so Lottie,
     /// ZIP, and JSON are not linked into the privileged daemon.
@@ -232,6 +242,9 @@ const VALUE_FLAGS: &[&str] = &[
     "--session",
     "--profile-mode",
     "--profile-name",
+    "--archive",
+    "--image",
+    "--capture",
     // Experimental PiP preview — value flag for the optional geometry
     // override (--experimental-pip itself is a bare flag and doesn't
     // need to be listed here).
@@ -319,6 +332,8 @@ fn finite_command_name_from_args(args: &[String]) -> Option<&'static str> {
         Some("permissions") => Some("permissions"),
         Some("autostart") => Some("autostart"),
         Some("skills") => Some("skills"),
+        Some("extension") => Some("extension"),
+        Some("perception") => Some("perception"),
         Some("cursor-theme") => Some("cursor_theme"),
         Some("config") => Some("config"),
         Some(_) => Some("call"),
@@ -417,6 +432,19 @@ fn finite_operation_from_args(args: &[String]) -> &'static str {
             "path" => "path",
             _ => "other",
         },
+        Some("extension") => match subcommand.unwrap_or("list") {
+            "list" => "list",
+            "info" => "info",
+            "status" => "status",
+            "install" => "install",
+            "update" => "update",
+            "path" => "path",
+            _ => "other",
+        },
+        Some("perception") => match subcommand.unwrap_or("") {
+            "parse" => "parse",
+            _ => "other",
+        },
         Some("update") if args.iter().any(|arg| arg == "--apply") => "apply",
         Some("update") => "check_only",
         Some("channel") => match subcommand.unwrap_or("status") {
@@ -493,7 +521,7 @@ pub fn parse_command() -> Command {
             env!("CARGO_PKG_VERSION")
         );
         println!("Usage: cua-driver [SUBCOMMAND] [OPTIONS]");
-        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, revoke, status, config, telemetry, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, manifest, channel, cursor-theme, sessions, history");
+        println!("Subcommands: mcp, list-tools, describe, call, serve, stop, revoke, status, config, telemetry, recording, update, check-update, doctor, diagnose, permissions, autostart, skills, manifest, extension, perception, channel, cursor-theme, sessions, history");
         println!();
         println!("permissions options (macOS):");
         println!("  cua-driver permissions status   Report Accessibility + Screen Recording status. Read-only (no prompt).");
@@ -533,6 +561,33 @@ pub fn parse_command() -> Command {
         println!("  cua-driver skills status        Report local install state + per-agent link state. Read-only.");
         println!("  cua-driver skills path          Print where the local skill pack lives.");
         println!("  --from main                     (install only) Fetch latest from main branch instead of the tagged release.");
+        println!();
+        println!("extension options (SIGNED TARGET-SPECIFIC CATALOGS):");
+        println!(
+            "  Verified installs check publisher identity plus exact catalog, archive, manifest,"
+        );
+        println!(
+            "  file, original/converted model hashes, component notices, and source revisions."
+        );
+        println!(
+            "  Ed25519 key validity windows and publisher-signed key rotation prevent rollback."
+        );
+        println!("  Inspect previews license, corresponding source, and provenance first.");
+        println!("  Install, update, and remove support macOS, Linux, and Windows.");
+        println!("  cua-driver extension list [--json]");
+        println!("  cua-driver extension inspect <name> --catalog <catalog.json> [--json]");
+        println!("  cua-driver extension status [name] [--self-test] [--json]");
+        println!("  cua-driver extension install <name> --catalog <catalog.json>");
+        println!("  cua-driver extension update <name> --catalog <catalog.json>");
+        println!("  cua-driver extension remove <name>");
+        println!(
+            "  Developer only: replace --catalog with --archive <tar.gz> --allow-unsigned-local"
+        );
+        println!("  Compatibility aliases: extension info <name>; extension path <name>");
+        println!();
+        println!("local perception (read-only, no Driver action authority):");
+        println!("  cua-driver perception parse --image <png> --capture <capture.json> --json");
+        println!("  The capture file supplies source metadata only; the image is never registered as a reusable capture.");
         println!();
         println!("agent authorization (serve only):");
         println!("  --permission-mode <mode>        standard (default), bounded, or unrestricted.");
@@ -753,6 +808,7 @@ pub fn parse_command() -> Command {
         Some("mcp-config") => Command::McpConfig { client: mcp_client },
         Some("serve") => Command::Serve {
             socket,
+            pid_file: flag_value(&args, "--pid-file"),
             permission_mode: flag_value(&args, "--permission-mode"),
             dangerously_bypass_approvals: args
                 .iter()
@@ -974,6 +1030,24 @@ pub fn parse_command() -> Command {
                 }
             }
             Command::Skills { subcommand, flags }
+        }
+        Some("extension") => {
+            let index = args
+                .iter()
+                .position(|value| value == "extension")
+                .expect("extension positional is present");
+            Command::Extension {
+                args: args[index + 1..].to_vec(),
+            }
+        }
+        Some("perception") => {
+            let index = args
+                .iter()
+                .position(|value| value == "perception")
+                .expect("perception positional is present");
+            Command::Perception {
+                args: args[index + 1..].to_vec(),
+            }
         }
         Some("cursor-theme") => {
             let index = args
@@ -1726,11 +1800,21 @@ where
         on_startup(daemon, true);
     }
 
+    run_mcp_runtime(crate::proxy::run_proxy(socket_path))
+}
+
+pub(crate) fn run_mcp_runtime<T>(future: impl std::future::Future<Output = T>) -> T {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("tokio runtime");
-    rt.block_on(crate::proxy::run_proxy(socket_path))
+    let result = rt.block_on(future);
+    // Tokio stdin uses an uncancellable blocking read. After control loss the
+    // MCP client can still hold stdin open; waiting for that read during Drop
+    // would keep the failed proxy process alive and prevent client recovery.
+    // run_proxy has already dropped its scoped daemon control connection.
+    rt.shutdown_background();
+    result
 }
 
 /// Emit a stable, machine-readable JSON description of the cua-driver CLI
@@ -1946,7 +2030,26 @@ pub fn build_manifest() -> serde_json::Value {
               "args": [ { "name": "subcommand", "type": "positional-string", "description": "enable | disable | status | kick" } ] },
             { "name": "skills",
               "description": "Manage the cua-driver agent skill pack (install / update / uninstall / status / path).",
-              "args": [ { "name": "subcommand", "type": "positional-string", "description": "install | update | uninstall | status | path. Default: status." } ] }
+              "args": [ { "name": "subcommand", "type": "positional-string", "description": "install | update | uninstall | status | path. Default: status." } ] },
+            { "name": "extension",
+              "description": "Inspect and manage signed, target-specific optional extensions on macOS, Linux, and Windows. Verified installs bind publisher identity, Ed25519 key validity and signed rotation metadata, provenance, component licenses/notices, corresponding-source revisions, and exact catalog, archive, manifest, file, original-model, and converted-model hashes.",
+              "args": [
+                  { "name": "subcommand", "type": "positional-string", "description": "list | inspect | status | install | update | remove. Default: list." },
+                  { "name": "name", "type": "positional-string", "description": "Registry extension name." },
+                  { "name": "--catalog", "type": "string", "description": "Signed local catalog; its target-specific archive path is resolved relative to this file." },
+                  { "name": "--archive", "type": "string", "description": "Developer-only unsigned local archive; requires --allow-unsigned-local and cannot claim verified identity." },
+                  { "name": "--allow-unsigned-local", "type": "flag", "description": "Explicitly opt into an unverified developer install." },
+                  { "name": "--self-test", "type": "flag", "description": "Run the installed extension self-test during status." },
+                  { "name": "--json", "type": "flag", "description": "Emit machine-readable inspection output." }
+              ] },
+            { "name": "perception",
+              "description": "Parse a local PNG through the installed optional perception extension without creating Driver capture or action authority.",
+              "args": [
+                  { "name": "subcommand", "type": "positional-string", "description": "Only: parse." },
+                  { "name": "--image", "type": "string", "description": "Local PNG path." },
+                  { "name": "--capture", "type": "string", "description": "Local capture source metadata JSON path." },
+                  { "name": "--json", "type": "flag", "description": "Required; emit canonical visual-regions JSON with local-input provenance." }
+              ] }
         ]
     })
 }
@@ -2324,6 +2427,10 @@ pub fn run_call(
             Ok(resp) => {
                 if resp.ok {
                     if let Some(result) = resp.result {
+                        let is_error = result
+                            .get("isError")
+                            .and_then(serde_json::Value::as_bool)
+                            .unwrap_or(false);
                         // Walk the content array once: pick up any Image
                         // payloads (either to write to --screenshot-out-file
                         // or to merge into structuredContent below).
@@ -2402,6 +2509,9 @@ pub fn run_call(
                                     }
                                 }
                             }
+                        }
+                        if is_error {
+                            process::exit(1);
                         }
                     }
                 } else {
@@ -2984,6 +3094,13 @@ fn run_recording_render(args: &[String]) {
 /// installer script — see [`crate::updater`] for why we go through the script
 /// instead of re-implementing the asset resolution + atomic swap + GC in Rust.
 pub fn run_update_cmd(apply: bool, json: bool) {
+    if crate::updater::is_pacman_managed() {
+        print_check_update_state(
+            crate::version_check::check_update_state_with_ownership(false, true),
+            json,
+        );
+        return;
+    }
     if apply && crate::bundle::is_local_installation() {
         eprintln!(
             "cua-driver-local is managed by scripts/install-local.sh (or install-local.ps1); \
@@ -3198,7 +3315,8 @@ fn run_permissions_status(json: bool) {
     // Only a listening daemon can answer for com.trycua.driver. A failed/!ok
     // response (e.g. daemon still inside its first-launch permission gate) is
     // treated the same as "no daemon" → unknown.
-    let daemon_status: Option<serde_json::Value> = if crate::serve::is_daemon_listening(&socket) {
+    let is_listening = crate::serve::is_daemon_listening(&socket);
+    let daemon_status: Option<serde_json::Value> = if is_listening {
         let req = crate::serve::DaemonRequest {
             method: "call".into(),
             name: Some("check_permissions".into()),
@@ -3231,13 +3349,24 @@ fn run_permissions_status(json: bool) {
     let Some(structured) = daemon_status else {
         // No reliable answer. Emit NO accessibility/screen_recording booleans —
         // nothing downstream can misread a false `granted: true`.
+        let message = if is_listening {
+            format!(
+                "{app_name} daemon is listening, but its real TCC status is not yet available. \
+                 Run `{cli_name} permissions grant` to grant + verify and re-run this command."
+            )
+        } else {
+            format!(
+                "No {app_name} daemon is running under the driver's own identity ({bundle_id}), \
+                 so its real TCC status can't be read from this process. \
+                 Run `{cli_name} permissions grant` to grant + verify, or start the daemon \
+                 (`open -n -g -a {app_name} --args serve`) and re-run this command."
+            )
+        };
         if json {
             let payload = serde_json::json!({
-                "daemon_running": false,
+                "daemon_running": is_listening,
                 "status": "unknown",
-                "reason": format!("no {app_name} daemon is running under the driver's own identity \
-                           ({bundle_id}), so its real TCC status can't be read from this \
-                           process. Run `{cli_name} permissions grant` to grant + verify."),
+                "reason": message,
             });
             println!(
                 "{}",
@@ -3247,16 +3376,7 @@ fn run_permissions_status(json: bool) {
         }
         println!("Accessibility:    ❓ unknown");
         println!("Screen Recording: ❓ unknown");
-        println!(
-            "No {app_name} daemon is running under the driver's own identity ({bundle_id}), \
-             so its real TCC status can't be read."
-        );
-        println!(
-            "(A status check from this terminal would report the terminal's grants, not the \
-             driver's.)"
-        );
-        println!("  → Run `{cli_name} permissions grant` to grant + verify, or start the daemon");
-        println!("    (`open -n -g -a {app_name} --args serve`) and re-run this command.");
+        println!("{message}");
         return;
     };
 
@@ -3723,6 +3843,10 @@ fn run_permissions_grant() {
 /// the payload.
 pub fn run_check_update_cmd(json: bool, no_cache: bool) {
     let state = crate::version_check::check_update_state(no_cache);
+    print_check_update_state(state, json);
+}
+
+fn print_check_update_state(state: crate::version_check::UpdateState, json: bool) {
     crate::version_check::capture_update_state(&state, crate::telemetry::UpdateCheckSource::Cli);
 
     if json {
@@ -3748,7 +3872,7 @@ pub fn run_check_update_cmd(json: bool, no_cache: bool) {
             (None, Some(err)) => {
                 println!("Latest:  <unavailable>");
                 println!();
-                println!("Could not reach GitHub: {err}");
+                println!("Update check unavailable: {err}");
             }
             (None, None) => {
                 // Network failed AND no cache existed — `error` should be set;
@@ -3766,6 +3890,24 @@ pub fn run_check_update_cmd(json: bool, no_cache: bool) {
 /// Inspect or persist the release channel. Selection never installs by itself;
 /// replacement remains explicit through `cua-driver update --apply`.
 pub fn run_channel_cmd(subcommand: &str, value: Option<&str>, json: bool) {
+    if crate::updater::is_pacman_managed() {
+        if json {
+            let current =
+                crate::release_channel::ReleaseChannel::from_version(env!("CARGO_PKG_VERSION"));
+            println!(
+                "{}",
+                serde_json::json!({
+                    "selected_channel": null,
+                    "current_channel": current.map(|channel| channel.as_str()),
+                    "current_version": env!("CARGO_PKG_VERSION"),
+                    "error": crate::updater::PACMAN_UPDATE_GUIDANCE,
+                })
+            );
+        } else {
+            eprintln!("{}", crate::updater::PACMAN_UPDATE_GUIDANCE);
+        }
+        process::exit(1);
+    }
     let result = match subcommand {
         "status" => crate::release_channel::selected(),
         "set" => {
@@ -4105,6 +4247,35 @@ fn cli_docs_json() -> serde_json::Value {
                     {"name":"uninstall","abstract":"Remove agent skill links.","discussion":"","arguments":[],"options":[],"flags":[{"name":"all","short_name":null,"help":"Also delete the local skill-pack copy.","default_value":false}],"subcommands":[]},
                     {"name":"status","abstract":"Report local skill-pack and per-agent link state.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]},
                     {"name":"path","abstract":"Print the local skill-pack path.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]}
+                ]
+            },
+            {
+                "name": "extension",
+                "abstract": "Inspect and manage signed, target-specific optional extensions.",
+                "discussion": "Verified installs bind a pinned publisher identity and Ed25519 key validity/rotation state to exact catalog, archive, manifest, file, original-model, and converted-model hashes plus component licenses/notices and corresponding-source revisions. Inspect previews license, source, and provenance before mutation. Explicit developer-only unsigned installs remain visibly unverified. Install, update, and remove use platform-specific ownership and link/reparse-point checks on macOS, Linux, and Windows.",
+                "arguments": no_args,
+                "options": no_options,
+                "flags": no_flags,
+                "subcommands": [
+                    {"name":"list","abstract":"List registry-known extensions and local state.","discussion":"","arguments":[],"options":[],"flags":[{"name":"json","short_name":null,"help":"Emit machine-readable output.","default_value":false}],"subcommands":[]},
+                    {"name":"info","abstract":"Compatibility alias for installed extension status.","discussion":"","arguments":[{"name":"name","help":"Registry extension name.","type":"String","is_optional":false}],"options":[],"flags":[{"name":"json","short_name":null,"help":"Emit machine-readable output.","default_value":false}],"subcommands":[]},
+                    {"name":"inspect","abstract":"Verify and preview license, source, provenance, and hashes without mutation.","discussion":"","arguments":[{"name":"name","help":"Registry extension name.","type":"String","is_optional":false}],"options":[{"name":"catalog","short_name":null,"help":"Signed local catalog.","type":"String","default_value":null,"is_optional":true},{"name":"archive","short_name":null,"help":"Developer-only unsigned local archive.","type":"String","default_value":null,"is_optional":true}],"flags":[{"name":"allow-unsigned-local","short_name":null,"help":"Explicitly select developer-only unverified mode.","default_value":false},{"name":"json","short_name":null,"help":"Emit machine-readable output.","default_value":false}],"subcommands":[]},
+                    {"name":"status","abstract":"Verify installed integrity and optionally run the self-test hook.","discussion":"","arguments":[{"name":"name","help":"Optional registry extension name.","type":"String","is_optional":true}],"options":[],"flags":[{"name":"self-test","short_name":null,"help":"Run the extension self-test hook.","default_value":false},{"name":"json","short_name":null,"help":"Emit machine-readable output.","default_value":false}],"subcommands":[]},
+                    {"name":"install","abstract":"Verify, stage, and durably activate an extension.","discussion":"Supported on macOS, Linux, and Windows with platform ownership and link/reparse-point checks.","arguments":[{"name":"name","help":"Registry extension name.","type":"String","is_optional":false}],"options":[{"name":"catalog","short_name":null,"help":"Signed local catalog.","type":"String","default_value":null,"is_optional":true},{"name":"archive","short_name":null,"help":"Developer-only unsigned local archive.","type":"String","default_value":null,"is_optional":true}],"flags":[{"name":"allow-unsigned-local","short_name":null,"help":"Explicitly select developer-only unverified mode.","default_value":false}],"subcommands":[]},
+                    {"name":"update","abstract":"Verify and atomically activate a newer extension version.","discussion":"Supported on macOS, Linux, and Windows with platform ownership and link/reparse-point checks.","arguments":[{"name":"name","help":"Registry extension name.","type":"String","is_optional":false}],"options":[{"name":"catalog","short_name":null,"help":"Signed local catalog.","type":"String","default_value":null,"is_optional":true},{"name":"archive","short_name":null,"help":"Developer-only unsigned local archive.","type":"String","default_value":null,"is_optional":true}],"flags":[{"name":"allow-unsigned-local","short_name":null,"help":"Explicitly select developer-only unverified mode.","default_value":false}],"subcommands":[]},
+                    {"name":"remove","abstract":"Remove only a fully validated, manager-owned extension tree.","discussion":"Supported on macOS, Linux, and Windows with platform ownership and link/reparse-point checks.","arguments":[{"name":"name","help":"Registry extension name.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
+                    {"name":"path","abstract":"Compatibility command that prints the exact active version directory.","discussion":"","arguments":[{"name":"name","help":"Registry extension name.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]}
+                ]
+            },
+            {
+                "name": "perception",
+                "abstract": "Parse a local PNG with the installed optional perception extension.",
+                "discussion": "This read-only local-input mode does not create a Driver capture. Its visual-regions JSON marks the result ineligible for Driver action authority.",
+                "arguments": no_args,
+                "options": no_options,
+                "flags": no_flags,
+                "subcommands": [
+                    {"name":"parse","abstract":"Parse one local PNG into canonical visual regions.","discussion":"Requires --json. The capture file supplies source metadata only.","arguments":[],"options":[{"name":"image","short_name":null,"help":"Local PNG path.","type":"String","default_value":null,"is_optional":false},{"name":"capture","short_name":null,"help":"Local capture source metadata JSON path.","type":"String","default_value":null,"is_optional":false}],"flags":[{"name":"json","short_name":null,"help":"Emit canonical visual-regions JSON with local-input provenance.","default_value":false}],"subcommands":[]}
                 ]
             },
             {
@@ -4822,6 +4993,20 @@ mod tests {
     fn expected_pid_does_not_shadow_other_subcommands() {
         let argv = args(&["--expected-pid", "42", "status"]);
         assert_eq!(positional_args(&argv), vec!["status"]);
+    }
+
+    #[test]
+    fn pid_file_is_parsed_for_serve_before_or_after_the_subcommand() {
+        for argv in [
+            args(&["serve", "--pid-file", "/tmp/cua-driver.pid"]),
+            args(&["--pid-file=/tmp/cua-driver.pid", "serve"]),
+        ] {
+            assert_eq!(positional_args(&argv), vec!["serve"]);
+            assert_eq!(
+                flag_value(&argv, "--pid-file"),
+                Some("/tmp/cua-driver.pid".to_owned())
+            );
+        }
     }
 
     #[test]

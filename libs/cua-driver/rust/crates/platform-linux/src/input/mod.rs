@@ -14,6 +14,7 @@
 /// Shared `delivery_mode` contract (background|foreground) — mirrors macOS
 /// `tools::DeliveryMode` and Windows `input::delivery`.
 pub mod delivery;
+mod mpx_owner;
 
 use anyhow::{anyhow, bail, Context, Result};
 use evdev::uinput::VirtualDevice;
@@ -149,6 +150,11 @@ fn uinput_pointers() -> &'static Mutex<HashMap<String, Arc<Mutex<VirtualDevice>>
 
 fn master_pointer_name(cursor_id: &str) -> String {
     let nonce = MPX_NAME_COUNTER.fetch_add(1, Ordering::Relaxed);
+    if let Ok(owner) = mpx_owner::Owner::current() {
+        return owner.master_name(nonce);
+    }
+    // Unknown procfs identity cannot safely participate in automatic recovery.
+    // Preserve ordinary operation, with the legacy name and cleanup behavior.
     let prefix = "CUA ";
     let suffix = format!(" mp-{}-{nonce}", std::process::id());
     let max_cursor_bytes = EVDEV_UINPUT_NAME_MAX_BYTES
@@ -610,11 +616,12 @@ pub fn forget_master_pointer(cursor_id: &str) {
     let Ok(display) = open_display() else {
         return;
     };
+    let _ = remove_master_pointer(display, ids.pointer_id);
+    unsafe { x11::xlib::XCloseDisplay(display) };
+}
 
-    let Ok(devices) = xi2_query_devices(display) else {
-        unsafe { x11::xlib::XCloseDisplay(display) };
-        return;
-    };
+fn remove_master_pointer(display: *mut x11::xlib::Display, pointer_id: i32) -> Result<()> {
+    let devices = xi2_query_devices(display)?;
 
     let mut virtual_core_pointer = None;
     let mut virtual_core_keyboard = None;
@@ -629,21 +636,66 @@ pub fn forget_master_pointer(cursor_id: &str) {
     let (Some(return_pointer), Some(return_keyboard)) =
         (virtual_core_pointer, virtual_core_keyboard)
     else {
-        unsafe { x11::xlib::XCloseDisplay(display) };
-        return;
+        bail!("cannot remove MPX master without its virtual core return devices");
     };
 
     let mut change = x11::xinput2::XIAnyHierarchyChangeInfo::default();
     unsafe {
         let remove = change.remove();
         (*remove)._type = x11::xinput2::XIRemoveMaster;
-        (*remove).deviceid = ids.pointer_id;
+        (*remove).deviceid = pointer_id;
         (*remove).return_mode = x11::xinput2::XIAttachToMaster;
         (*remove).return_pointer = return_pointer;
         (*remove).return_keyboard = return_keyboard;
-        let _ = x11::xinput2::XIChangeHierarchy(display, &mut change, 1);
+        let rc = x11::xinput2::XIChangeHierarchy(display, &mut change, 1);
+        x11::xlib::XSync(display, 0);
+        if rc != 0 {
+            bail!("XIChangeHierarchy(XIRemoveMaster) failed with status {rc}");
+        }
+    }
+    Ok(())
+}
+
+/// Recover only versioned masters whose local owner is provably gone. A PID
+/// alone cannot identify an owner on a shared/remote X server or across restarts.
+pub(crate) fn reap_orphaned_master_pointers() {
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        return;
+    }
+    let Ok(owner) = mpx_owner::Owner::current() else {
+        return;
+    };
+    let Ok(display) = open_display() else {
+        return;
+    };
+    // Prevent an ID from being removed/reused by another X client between our
+    // enumeration and removal. No network or arbitrary filesystem reads occur
+    // under this grab: owner checks inspect local procfs and kill(pid, 0).
+    unsafe {
+        x11::xlib::XGrabServer(display);
+    }
+    let result = (|| -> Result<()> {
+        for (id, use_, name) in xi2_query_devices(display)? {
+            if use_ != x11::xinput2::XIMasterPointer {
+                continue;
+            }
+            let Some(candidate) = mpx_owner::Owner::from_pointer_name(&name) else {
+                continue;
+            };
+            if candidate.stale_in(&owner) {
+                remove_master_pointer(display, id)?;
+                tracing::info!(device_id = id, "removed orphaned Cua MPX master pair");
+            }
+        }
+        Ok(())
+    })();
+    unsafe {
+        x11::xlib::XUngrabServer(display);
         x11::xlib::XSync(display, 0);
         x11::xlib::XCloseDisplay(display);
+    }
+    if let Err(error) = result {
+        tracing::warn!("MPX orphan recovery incomplete: {error}");
     }
 }
 
@@ -1769,11 +1821,58 @@ fn deepest_child_at_point(
     Ok((window, local_x, local_y))
 }
 
-fn resolve_event_target(conn: &RustConnection, xid: u64, x: i32, y: i32) -> Result<EventTarget> {
+fn window_path_at_point(
+    conn: &RustConnection,
+    window: Window,
+    local_x: i32,
+    local_y: i32,
+) -> Result<Vec<(Window, i32, i32, EventMask)>> {
+    let attributes = conn.get_window_attributes(window)?.reply()?;
+    let mut path = vec![(window, local_x, local_y, attributes.all_event_masks)];
+    let tree = conn.query_tree(window)?.reply()?;
+    for child in tree.children.iter().rev() {
+        let Ok(geom) = conn.get_geometry(*child)?.reply() else {
+            continue;
+        };
+        if !point_in_rect(local_x, local_y, &geom) {
+            continue;
+        }
+        let child_x = local_x - geom.x as i32;
+        let child_y = local_y - geom.y as i32;
+        path.extend(window_path_at_point(conn, *child, child_x, child_y)?);
+        break;
+    }
+    Ok(path)
+}
+
+fn deepest_event_target(
+    path: &[(Window, i32, i32, EventMask)],
+    required_masks: EventMask,
+) -> (Window, i32, i32) {
+    path.iter()
+        .rev()
+        .find(|(_, _, _, selected)| selected.contains(required_masks))
+        .or_else(|| path.last())
+        .map(|&(window, x, y, _)| (window, x, y))
+        .expect("window path always contains its toplevel")
+}
+
+fn click_event_target(path: &[(Window, i32, i32, EventMask)]) -> (Window, i32, i32) {
+    deepest_event_target(path, EventMask::BUTTON_PRESS)
+}
+
+fn build_event_target(
+    conn: &RustConnection,
+    xid: u64,
+    x: i32,
+    y: i32,
+    window: Window,
+    local_x: i32,
+    local_y: i32,
+) -> Result<EventTarget> {
     let top = xid as Window;
     let root = conn.setup().roots[0].root;
     let root_pos = conn.translate_coordinates(top, root, 0, 0)?.reply()?;
-    let (window, local_x, local_y) = deepest_child_at_point(conn, top, x, y)?;
     Ok(EventTarget {
         window,
         local_x: local_x as i16,
@@ -1781,6 +1880,28 @@ fn resolve_event_target(conn: &RustConnection, xid: u64, x: i32, y: i32) -> Resu
         root_x: (root_pos.dst_x as i32 + x) as i16,
         root_y: (root_pos.dst_y as i32 + y) as i16,
     })
+}
+
+fn resolve_event_target(conn: &RustConnection, xid: u64, x: i32, y: i32) -> Result<EventTarget> {
+    let top = xid as Window;
+    let (window, local_x, local_y) = deepest_child_at_point(conn, top, x, y)?;
+    build_event_target(conn, xid, x, y, window, local_x, local_y)
+}
+
+fn resolve_click_event_target(
+    conn: &RustConnection,
+    xid: u64,
+    x: i32,
+    y: i32,
+) -> Result<EventTarget> {
+    let top = xid as Window;
+    let path = window_path_at_point(conn, top, x, y)?;
+    // Button bindings commonly select only ButtonPress (Tk's <Button-1> is one
+    // example). Route the complete synthetic click to that same client-owned
+    // window: splitting release onto a different geometric leaf does not form a
+    // coherent toolkit click sequence.
+    let target = click_event_target(&path);
+    build_event_target(conn, xid, x, y, target.0, target.1, target.2)
 }
 
 fn button_state_mask(button: u8) -> KeyButMask {
@@ -1871,7 +1992,7 @@ pub fn send_click_with_modifiers(
     let modifier_state = modifiers_to_state(modifiers);
 
     for _ in 0..count {
-        let target = resolve_event_target(&conn, xid, x, y)?;
+        let target = resolve_click_event_target(&conn, xid, x, y)?;
         let press = ButtonPressEvent {
             response_type: BUTTON_PRESS_EVENT,
             detail: button,
@@ -1906,10 +2027,14 @@ pub fn send_click_with_modifiers(
             same_screen: true,
         };
 
-        conn.send_event(false, target.window, EventMask::BUTTON_PRESS, &press)?;
+        // The event mask selects recipients independently of the payload type.
+        // Select the press client for both payloads so a press-only toolkit
+        // binding (such as Tk's <Button-1>) receives one coherent click.
+        conn.send_event(false, target.window, EventMask::BUTTON_PRESS, &press)?
+            .check()?;
         sleep(Duration::from_millis(CLICK_DELAY_MS));
-        conn.send_event(false, target.window, EventMask::BUTTON_RELEASE, &release)?;
-        conn.flush()?;
+        conn.send_event(false, target.window, EventMask::BUTTON_PRESS, &release)?
+            .check()?;
 
         if count > 1 {
             sleep(Duration::from_millis(80));
@@ -2149,6 +2274,8 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
         };
 
         conn.send_event(false, window, EventMask::KEY_PRESS, &press)?;
+        // Start the hold interval after sending the press, not while it is buffered.
+        conn.flush()?;
         sleep(Duration::from_millis(KEY_DELAY_MS));
         conn.send_event(false, window, EventMask::KEY_RELEASE, &release)?;
         conn.flush()?;
@@ -2156,6 +2283,8 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
             sleep(Duration::from_millis(inter_char_ms));
         }
     }
+    // Deliver the final release before this short-lived connection closes.
+    conn.get_input_focus()?.reply()?;
     Ok(())
 }
 
@@ -2279,6 +2408,8 @@ pub fn send_key_xtest(key: &str, modifiers: &[&str]) -> Result<()> {
         conn.xtest_fake_input(KEY_PRESS_EVENT, sk, 0, x11rb::NONE, 0, 0, 0)?;
     }
     conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
+    // Flush modifiers and key-down before measuring the delivered hold interval.
+    conn.flush()?;
     sleep(Duration::from_millis(KEY_DELAY_MS));
     conn.xtest_fake_input(KEY_RELEASE_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
     if let Some(sk) = auto_shift_kc {
@@ -2581,6 +2712,8 @@ fn send_key_to_target(
     }
     let state = KeyButMask::from(state_bits);
     send_key_event(KEY_PRESS_EVENT, keycode, state, EventMask::KEY_PRESS)?;
+    // Otherwise X11 receives both transitions together after the sleep.
+    conn.flush()?;
     sleep(Duration::from_millis(KEY_DELAY_MS));
     send_key_event(KEY_RELEASE_EVENT, keycode, state, EventMask::KEY_RELEASE)?;
     for &(modifier_keycode, modifier_mask) in modifier_keycodes.iter().rev() {
@@ -2592,7 +2725,8 @@ fn send_key_to_target(
         )?;
         state_bits &= !u16::from(modifier_mask);
     }
-    conn.flush()?;
+    // Deliver releases before closing the connection, even without a key remap.
+    conn.get_input_focus()?.reply()?;
 
     // If we borrowed a spare keycode for this keysym, give the target client a
     // moment to translate the synthetic event under the temporary mapping before
@@ -2601,7 +2735,6 @@ fn send_key_to_target(
     // our queued requests have been processed) plus a short settle keeps that
     // race closed; the guard then reinstates the original keysyms on drop.
     if remap_guard.is_some() || !remap_guards.is_empty() {
-        let _ = conn.get_input_focus()?.reply();
         sleep(Duration::from_millis(KEY_DELAY_MS));
     }
     drop(remap_guard);
@@ -2907,13 +3040,61 @@ exit 0"#,
 #[cfg(test)]
 mod path_tests {
     use super::{
-        create_uinput_pointer, ensure_master_pointer_for_session, guarded_uinput_creation,
-        is_uinput_unavailable, kde_x11_uinput_hotplug_is_unsafe, master_pointer_name,
-        modifiers_to_state, normalize_uinput_device_name, path_cumulative, point_on_path,
-        real_pointer_capabilities_available, sample_function, slave_pointer_name,
+        click_event_target, create_uinput_pointer, ensure_master_pointer_for_session,
+        guarded_uinput_creation, is_uinput_unavailable, kde_x11_uinput_hotplug_is_unsafe,
+        master_pointer_name, modifiers_to_state, normalize_uinput_device_name, path_cumulative,
+        point_on_path, real_pointer_capabilities_available, sample_function, slave_pointer_name,
         EVDEV_UINPUT_NAME_MAX_BYTES, UINPUT_POINTER_SUFFIX,
     };
-    use x11rb::protocol::xproto::KeyButMask;
+    use x11rb::protocol::xproto::{EventMask, KeyButMask};
+
+    #[test]
+    fn synthetic_click_keeps_release_on_press_recipient() {
+        let path = [
+            (
+                10,
+                394,
+                220,
+                EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE,
+            ),
+            (11, 24, 30, EventMask::BUTTON_PRESS),
+            (12, 6, 8, EventMask::BUTTON_RELEASE),
+        ];
+
+        assert_eq!(click_event_target(&path), (11, 24, 30));
+    }
+
+    #[test]
+    fn synthetic_click_uses_deepest_common_target_for_both_events() {
+        let path = [
+            (
+                10,
+                394,
+                220,
+                EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE,
+            ),
+            (
+                11,
+                24,
+                30,
+                EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE,
+            ),
+            (12, 6, 8, EventMask::NO_EVENT),
+        ];
+
+        assert_eq!(click_event_target(&path), (11, 24, 30));
+    }
+
+    #[test]
+    fn synthetic_click_preserves_recipient_local_coordinates_and_event_fallback() {
+        let path = [
+            (10, 394, 220, EventMask::BUTTON_PRESS),
+            (11, 24, 30, EventMask::NO_EVENT),
+            (12, 6, 8, EventMask::NO_EVENT),
+        ];
+
+        assert_eq!(click_event_target(&path), (10, 394, 220));
+    }
 
     #[test]
     fn click_modifier_state_combines_canonical_names_and_aliases() {

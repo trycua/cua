@@ -119,6 +119,9 @@ func capturePaymentSetup(capturer productanalytics.Capturer, event billing.Webho
 	properties := map[string]any{
 		"outcome": outcome, "source": event.Source, "principal_type": principalType,
 	}
+	if event.IdentityClass != "" {
+		properties["identity_class"] = productanalytics.IdentityClass(event.IdentityClass)
+	}
 	if errorClass != "" {
 		properties["error_class"] = errorClass
 	}

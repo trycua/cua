@@ -8,6 +8,8 @@
     "macos-permissions",
     "embedding",
     "mcp-tools",
+    "mcp-tools-linux",
+    "mcp-tools-windows",
     "mcp-tool-notes",
     "browser-profile-attachment",
     "browser-semantic-snapshots",

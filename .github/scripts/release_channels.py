@@ -105,10 +105,30 @@ def load_registry(
         for site in sites:
             if not repository_path(root, str(site["path"])).is_file():
                 raise ChannelError(f"component {name} version site does not exist: {site['path']}")
-        channels = component["channels"]
-        if channels != {"nightly": True, "registries": []}:
+        exclude_paths = component.get("changeDetectionExcludePaths", [])
+        if not isinstance(exclude_paths, list) or not all(
+            isinstance(value, str) for value in exclude_paths
+        ):
             raise ChannelError(
-                f"component {name} v1 channels must enable nightly and declare no registries"
+                f"component {name} changeDetectionExcludePaths must be a list of paths"
+            )
+        for excluded_path in exclude_paths:
+            repository_path(root, excluded_path)
+        companion_paths = component.get("changeDetectionCompanionPaths", [])
+        if not isinstance(companion_paths, list) or not all(
+            isinstance(value, str) for value in companion_paths
+        ):
+            raise ChannelError(
+                f"component {name} changeDetectionCompanionPaths must be a list of paths"
+            )
+        for companion_path in companion_paths:
+            repository_path(root, companion_path)
+        channels = component["channels"]
+        expected_nightly = not bool(component.get("candidateOnly", False))
+        if channels != {"nightly": expected_nightly, "registries": []}:
+            raise ChannelError(
+                f"component {name} channels must set nightly={expected_nightly} "
+                "and declare no registries"
             )
 
     release_config = read_json(root / "release-please-config.json")
@@ -412,12 +432,21 @@ def nightly_attribution_preflight(
     previous_tag: str | None,
     source_ref: str,
     paths: Sequence[str],
+    exclude_paths: Sequence[str],
+    exclude_companion_paths: Sequence[str],
     config_path: Path,
 ) -> list[dict[str, str]]:
     """Find unresolved squash-generated coauthors before an expensive build."""
     try:
         config = read_json(config_path)
-        commits = release_attribution.commits_in_range(root, previous_tag, source_ref, paths)
+        commits = release_attribution.commits_in_range(
+            root,
+            previous_tag,
+            source_ref,
+            paths,
+            exclude_paths,
+            exclude_companion_paths,
+        )
         return release_attribution.unresolved_coauthor_identities(commits, config)
     except release_attribution.ReleaseError as error:
         raise ChannelError(f"nightly attribution preflight failed: {error}") from error
@@ -438,6 +467,8 @@ def plan_nightly(
     if not SHA_RE.fullmatch(source_sha):
         raise ChannelError(f"source SHA must be 40 lowercase hex characters: {source_sha!r}")
     component = component_descriptor(name, registry_path, root=root)
+    if not component["channels"]["nightly"]:
+        raise ChannelError(f"component {name} does not enable nightly publication")
     base = (
         repository_path(root, component["versionAuthorityFile"]).read_text(encoding="utf-8").strip()
     )
@@ -466,14 +497,43 @@ def plan_nightly(
     paths = list(component["changeDetectionPaths"])
     paths.extend(load_registry(registry_path, root=root)["sharedChangePaths"])
     paths = sorted(set(str(path) for path in paths))
+    exclude_paths = sorted(
+        set(str(path) for path in component.get("changeDetectionExcludePaths", []))
+    )
+    exclude_companion_paths = sorted(
+        set(str(path) for path in component.get("changeDetectionCompanionPaths", []))
+    )
     if force:
         should_build, reason = True, "forced"
+    elif previous_sha is None and exclude_companion_paths:
+        commits = release_attribution.commits_in_range(
+            root,
+            attribution_base_tag,
+            source_sha,
+            paths,
+            exclude_paths,
+            exclude_companion_paths,
+        )
+        should_build = bool(commits)
+        reason = "first-nightly" if should_build else "component-unchanged"
     elif previous_sha is None:
         should_build, reason = True, "first-nightly"
     elif previous_sha == source_sha:
         should_build, reason = False, "source-unchanged"
+    elif exclude_companion_paths:
+        commits = release_attribution.commits_in_range(
+            root,
+            previous_tag,
+            source_sha,
+            paths,
+            exclude_paths,
+            exclude_companion_paths,
+        )
+        should_build = bool(commits)
+        reason = "relevant-changes" if should_build else "component-unchanged"
     else:
-        changed = _git(root, "diff", "--name-only", previous_sha, source_sha, "--", *paths)
+        pathspecs = [*paths, *(f":(exclude){path}" for path in exclude_paths)]
+        changed = _git(root, "diff", "--name-only", previous_sha, source_sha, "--", *pathspecs)
         should_build = bool(changed)
         reason = "relevant-changes" if should_build else "component-unchanged"
     attribution_issues: list[dict[str, str]] = []
@@ -483,6 +543,8 @@ def plan_nightly(
             previous_tag=attribution_base_tag,
             source_ref=source_sha,
             paths=paths,
+            exclude_paths=exclude_paths,
+            exclude_companion_paths=exclude_companion_paths,
             config_path=attribution_config_path,
         )
         if attribution_issues:
@@ -541,6 +603,12 @@ def build_manifest(
             *(str(path) for path in registry["sharedChangePaths"]),
         }
     )
+    exclude_paths = sorted(
+        set(str(path) for path in component.get("changeDetectionExcludePaths", []))
+    )
+    exclude_companion_paths = sorted(
+        set(str(path) for path in component.get("changeDetectionCompanionPaths", []))
+    )
     config_path = attribution_config_path or root / ".github/release-attribution-config.json"
     client = github or release_attribution.GitHubClient(
         os.environ.get("GH_TOKEN", ""),
@@ -557,6 +625,8 @@ def build_manifest(
             previous_tag=previous_tag,
             expected_sha=source_sha,
             paths=paths,
+            exclude_paths=exclude_paths,
+            exclude_companion_paths=exclude_companion_paths,
             changelog_path=repository_path(root, component["changelog"]),
             attribution_config=read_json(config_path),
             github=client,

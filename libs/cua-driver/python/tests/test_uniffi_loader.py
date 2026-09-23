@@ -25,6 +25,146 @@ LIBRARY = Path(__file__).parents[1] / "src" / "cua_driver" / _library_name()
 
 @unittest.skipUnless(LIBRARY.exists(), "host-native UniFFI library is not staged")
 class GeneratedOptionsTests(unittest.TestCase):
+    def test_visual_contract_dtos_construct_and_round_trip_through_uniffi(self) -> None:
+        from cua_driver import _native_contract as contract
+
+        def round_trip(converter, value):
+            return converter.lift(converter.lower(value))
+
+        request = contract.ParseVisualRegionsInput(
+            capture_id="capture-1",
+            options=contract.ParseVisualRegionsOptions(
+                kinds=[contract.VisualRegionKind.TEXT, contract.VisualRegionKind.ICON],
+                min_confidence=0.25,
+                max_regions=200,
+            ),
+        )
+        self.assertEqual(
+            round_trip(contract._UniffiFfiConverterTypeParseVisualRegionsInput, request),
+            request,
+        )
+
+        coordinate_space = contract.VisualActionCoordinateSpace.AFFINE(
+            m11=0.5,
+            m12=0.25,
+            m21=-0.5,
+            m22=2.0,
+            tx=-1920.0,
+            ty=10.0,
+        )
+        output = contract.ParseVisualRegionsOutput(
+            schema="cua.visual_regions_v1",
+            capture=contract.VisualCaptureProvenance(
+                capture_id="capture-1",
+                source=contract.VisualCaptureSource.PRIMARY_DESKTOP("primary"),
+                screenshot=contract.VisualScreenshotReference(
+                    reference="png-1",
+                    width=1920,
+                    height=1080,
+                    mime_type="image/png",
+                    sha256=None,
+                ),
+                action_coordinate_space=coordinate_space,
+                captured_at="2026-09-17T12:00:00Z",
+            ),
+            parser=contract.VisualParserMetadata(
+                extension_id="visual-parser",
+                extension_version="1.0.0",
+                model_id="default",
+                model_version="1",
+                runtime="cpu",
+                backend="onnx_runtime_cpu",
+                model_source_revision="revision-1",
+                model_manifest_sha256="a" * 64,
+                onnx_runtime_version="1.26.0",
+                onnx_runtime_library_sha256="b" * 64,
+                fixture_sha256=None,
+            ),
+            regions=[
+                contract.VisualRegion(
+                    id="text-1",
+                    kind=contract.VisualRegionKind.TEXT,
+                    bounds=contract.VisualRegionBounds(x=11, y=20, width=101, height=21),
+                    text="Apply",
+                    label=None,
+                    confidence=0.95,
+                    interactive=True,
+                    parent_id=None,
+                    group_id=None,
+                    reading_order=1,
+                )
+            ],
+            warnings=[
+                contract.VisualParseWarning(
+                    code="low_contrast",
+                    message="contrast was low",
+                    detail="text-1",
+                )
+            ],
+            timing=contract.VisualParseTiming(
+                duration_ms=18,
+                preprocess_ms=3,
+                inference_ms=12,
+            ),
+            request_id="parse-1",
+        )
+        lifted = round_trip(contract._UniffiFfiConverterTypeParseVisualRegionsOutput, output)
+        self.assertEqual(lifted, output)
+        self.assertEqual(
+            lifted.capture.action_coordinate_space.m11,
+            0.5,
+        )
+
+        error = contract.VisualParseError(
+            code=contract.VisualParseErrorCode.CAPTURE_NOT_FOUND,
+            message="capture was not found",
+            retryable=True,
+            detail=None,
+        )
+        self.assertEqual(
+            round_trip(contract._UniffiFfiConverterTypeVisualParseError, error),
+            error,
+        )
+
+    def test_action_target_is_public_and_uses_the_generated_contract(self) -> None:
+        import cua_driver
+        from cua_driver import (
+            ActionTarget, ClickButton, ClickInput, ClickPosition, InputDeliveryMode,
+        )
+        from cua_driver._native_contract import ActionTarget as GeneratedActionTarget
+
+        self.assertIn("ActionTarget", cua_driver.__all__)
+        self.assertIs(ActionTarget, GeneratedActionTarget)
+        target = ActionTarget.DESKTOP(display_id="primary")
+        click = ClickInput(
+            position=ClickPosition.COORDINATES(x=10.0, y=20.0), target=target,
+            delivery_mode=InputDeliveryMode.FOREGROUND, session=None,
+            button=ClickButton.LEFT, count=1,
+        )
+        self.assertIs(click.target, target)
+        captured = ClickInput(
+            position=ClickPosition.CAPTURED_COORDINATES(
+                x=10.0, y=20.0, capture_id="capture-1"
+            ),
+            target=target, delivery_mode=InputDeliveryMode.FOREGROUND,
+            session=None, button=ClickButton.LEFT, count=1,
+        )
+        self.assertEqual(captured.position.capture_id, "capture-1")
+        self.assertTrue(ActionTarget.WINDOW(pid=1, window_id=2).is_WINDOW())
+        with self.assertRaises(TypeError):
+            ClickInput(x=10.0, y=20.0)
+        for name in (
+            "AppInfo", "ClickPosition", "ElementFrame", "GetWindowStateInput",
+            "InputDeliveryMode", "ListAppsInput", "ListAppsOutput", "ListWindowsInput",
+            "ListWindowsOutput", "SnapshotImage", "WindowBounds", "WindowElement",
+            "WindowInfo", "WindowStateOutput",
+            "ParseVisualRegionsInput", "ParseVisualRegionsOptions",
+            "ParseVisualRegionsOutput", "VisualCaptureProvenance",
+            "VisualParseError", "VisualParseErrorCode", "VisualRegion",
+        ):
+            self.assertIn(name, cua_driver.__all__)
+            self.assertIsNotNone(getattr(cua_driver, name))
+
     def test_embedded_overlay_option_defaults_false_and_accepts_true(self) -> None:
         from cua_driver import EmbeddedDriverHostOptions
 
@@ -83,7 +223,7 @@ while True:
             if request["method"] == "metadata":
                 result = {
                     "driver_version": "0.10.0",
-                    "contract_version": "0.7.0",
+                    "contract_version": "0.8.0",
                     "tools_list_schema_version": "1",
                     "capability_version": "1",
                     "mcp_protocol_version": "2025-06-18",
@@ -131,13 +271,17 @@ except FileNotFoundError:
         from cua_driver import (
             ActionEffect,
             ActionRoute,
+            ActionTarget,
+            ClickPosition,
+            InputDeliveryMode,
             ClickButton,
             ClickInput,
             CuaDriver,
-            DesktopScope,
             EffectiveScope,
             StatePredicate,
             StartSessionOutput,
+            ParseVisualRegionsInput,
+            ParseVisualRegionsOptions,
             VerificationStatus,
             VerifyStateInput,
             WindowPredicate,
@@ -159,7 +303,7 @@ except FileNotFoundError:
             captured: list[dict[str, object]] = []
 
             def serve() -> None:
-                while len(captured) < 2:
+                while len(captured) < 3:
                     connection, _ = listener.accept()
                     with connection:
                         line = connection.makefile("r", encoding="utf-8").readline()
@@ -167,7 +311,7 @@ except FileNotFoundError:
                         if request["method"] == "metadata":
                             result = {
                                 "driver_version": "0.12.6",
-                                "contract_version": "0.7.0",
+                                "contract_version": "0.8.0",
                                 "tools_list_schema_version": "1",
                                 "capability_version": "1",
                                 "mcp_protocol_version": "2025-06-18",
@@ -183,6 +327,31 @@ except FileNotFoundError:
                                     "elapsed_ms": 12,
                                     "samples": 2,
                                     "predicates": [],
+                                }
+                            elif request["name"] == "parse_visual_regions":
+                                structured = {
+                                    "schema": "cua.visual_regions_v1",
+                                    "capture": {
+                                        "capture_id": "capture-123",
+                                        "source": {"kind": "primary_desktop", "display_id": "primary"},
+                                        "screenshot": {
+                                            "reference": "sha256:abc",
+                                            "width": 2,
+                                            "height": 2,
+                                            "mime_type": "image/png",
+                                            "sha256": "abc",
+                                        },
+                                        "action_coordinate_space": {"kind": "identity"},
+                                    },
+                                    "parser": {
+                                        "extension_id": "cua-perception",
+                                        "extension_version": "1.0.0",
+                                        "model_id": "fixture",
+                                        "model_version": "1",
+                                        "runtime": "fixture",
+                                    },
+                                    "regions": [],
+                                    "timing": {"duration_ms": 1},
                                 }
                             else:
                                 structured = {
@@ -226,6 +395,7 @@ except FileNotFoundError:
                 "press_key",
                 "hotkey",
                 "verify_state",
+                "parse_visual_regions",
             }
             self.assertTrue(all(hasattr(driver, name) for name in expected_methods))
             verification_result = asyncio.run(
@@ -249,13 +419,22 @@ except FileNotFoundError:
             action_result = asyncio.run(
                 driver.click(
                     ClickInput(
-                        x=12.0,
-                        y=34.0,
-                        target=None,
-                        scope=DesktopScope.DESKTOP,
+                        position=ClickPosition.COORDINATES(x=12.0, y=34.0),
+                        target=ActionTarget.DESKTOP(display_id="primary"),
+                        delivery_mode=InputDeliveryMode.FOREGROUND,
                         session="python-run",
                         button=ClickButton.LEFT,
                         count=1,
+                    )
+                )
+            )
+            visual_result = asyncio.run(
+                driver.parse_visual_regions(
+                    ParseVisualRegionsInput(
+                        capture_id="capture-123",
+                        options=ParseVisualRegionsOptions(
+                            kinds=None, min_confidence=None, max_regions=None
+                        ),
                     )
                 )
             )
@@ -268,10 +447,13 @@ except FileNotFoundError:
         self.assertEqual(
             verification_result.verification.status, VerificationStatus.SATISFIED
         )
-        self.assertIsNone(action_result.verification)
-        self.assertEqual(action_result.action.effect, ActionEffect.UNVERIFIABLE)
-        self.assertEqual(action_result.action.route, ActionRoute.GLOBAL_INPUT)
+        self.assertEqual(action_result.effect, ActionEffect.UNVERIFIABLE)
+        self.assertEqual(action_result.route, ActionRoute.GLOBAL_INPUT)
         self.assertFalse(hasattr(action_result, "verified"))
+        self.assertEqual(
+            json.loads(visual_result.structured_json)["schema"],
+            "cua.visual_regions_v1",
+        )
         self.assertEqual(captured[0]["name"], "verify_state")
         self.assertEqual(
             captured[0]["args"],
@@ -292,11 +474,17 @@ except FileNotFoundError:
             {
                 "x": 12.0,
                 "y": 34.0,
-                "scope": "desktop",
+                "target": {"kind": "desktop", "display_id": "primary"},
+                "delivery_mode": "foreground",
                 "session": "python-run",
                 "button": "left",
                 "count": 1,
             },
+        )
+        self.assertEqual(captured[2]["name"], "parse_visual_regions")
+        self.assertEqual(
+            captured[2]["args"],
+            {"capture_id": "capture-123", "options": {}},
         )
 
     def test_generated_python_sdk_can_own_the_runtime_in_process(self) -> None:

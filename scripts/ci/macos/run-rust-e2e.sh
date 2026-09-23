@@ -123,9 +123,10 @@ write_failure_record() {
 
 run_test() {
   local name="$1"; shift
+  local log_name="${name//[^a-zA-Z0-9._-]/_}"
   echo "[RUN] ${name}"
   set +e
-  (cd "${RUST_ROOT}" && "$@") 2>&1 | tee "${ARTIFACT_DIR}/${name}.log"
+  (cd "${RUST_ROOT}" && "$@") 2>&1 | tee "${ARTIFACT_DIR}/${log_name}.log"
   local exit_code=${PIPESTATUS[0]}
   set -e
   if [[ "${exit_code}" != 0 ]]; then
@@ -345,6 +346,7 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
     harness_appkit_smoke \
     harness_appkit_query_projects_structured_elements \
     harness_appkit_stale_element_token_fails_closed \
+    snapshot_publication::harness_appkit_pending_snapshot_cannot_retarget_token \
     harness_appkit_invoke_menu_live_path \
     harness_appkit_text_input \
     harness_appkit_element_foreground_press_key_commits_edit \
@@ -354,6 +356,9 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
     harness_appkit_scroll_background \
     harness_appkit_counter \
     harness_appkit_counter_px_background \
+    harness_appkit_exact_activation_with_agent_cursor \
+    harness_appkit_exact_activation_refuses_competing_window \
+    harness_appkit_foreground_single_click_has_one_ordered_native_pair \
     harness_appkit_right_click_px_foreground \
     harness_appkit_right_click_px_background \
     harness_appkit_double_click_px_foreground \
@@ -394,6 +399,9 @@ EOF
 fi
 if [[ "${SUITE}" == capture || "${SUITE}" == all ]]; then
   run_test capture-contract cargo test -p cua-driver --test capture_contract_test -- \
+    --ignored --nocapture --test-threads=1
+  run_test capture-environment env CUA_TEST_DRIVER_BIN="${MACOS_DAEMON_BIN}" \
+    cargo test -p cua-driver --test macos_capture_environment_test -- \
     --ignored --nocapture --test-threads=1
   run_test desktop-scope cargo test -p cua-driver --test desktop_scope_macos_test -- \
     --ignored --nocapture --test-threads=1

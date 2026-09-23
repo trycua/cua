@@ -1797,6 +1797,7 @@ pub(crate) fn capture_cli_completed(
         "permissions" => "permissions",
         "autostart" => "autostart",
         "skills" => "skills",
+        "extension" => "extension",
         "config" => "config",
         _ => "other",
     };
@@ -1952,6 +1953,7 @@ fn fixed_cli_command(command: &str) -> &'static str {
         "permissions" => "permissions",
         "autostart" => "autostart",
         "skills" => "skills",
+        "extension" => "extension",
         "config" => "config",
         _ => "other",
     }
@@ -2017,6 +2019,16 @@ fn fixed_cli_operation(command: &str, operation: &str) -> &'static str {
             "update" => "update",
             "uninstall" => "uninstall",
             "status" => "status",
+            "path" => "path",
+            _ => "other",
+        },
+        "extension" => match operation {
+            "list" => "list",
+            "info" => "info",
+            "status" => "status",
+            "install" => "install",
+            "update" => "update",
+            "uninstall" => "uninstall",
             "path" => "path",
             _ => "other",
         },

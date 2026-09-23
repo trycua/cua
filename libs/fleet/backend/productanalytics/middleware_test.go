@@ -4,10 +4,12 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -121,6 +123,9 @@ func TestLoginObserverIgnoresBrowserAndNonInteractivePrincipals(t *testing.T) {
 }
 
 func TestRouteObserverEmitsActivationForAuthenticatedNonInternalIdentity(t *testing.T) {
+	t.Setenv("CYCLOPS_CS_ADMIN_SUBS", `["admin-owner"]`)
+	auth.InvalidateFeatureFlags()
+	t.Cleanup(auth.InvalidateFeatureFlags)
 	users := []struct {
 		name string
 		user *auth.User
@@ -131,6 +136,9 @@ func TestRouteObserverEmitsActivationForAuthenticatedNonInternalIdentity(t *test
 		{name: "missing email user key", user: &auth.User{ID: "external-3", AZP: "ukey-proof", PrincipalType: auth.PrincipalTypeUserKey}, want: 3},
 		{name: "unverified internal-looking email", user: &auth.User{ID: "external-4", Email: "person@trycua.com", AZP: "cyclops-cs-spa", PrincipalType: auth.PrincipalTypeUser}, want: 3},
 		{name: "internal", user: &auth.User{ID: "internal-1", Email: "person@trycua.com", EmailVerified: true, AZP: "cyclops-cs-spa", PrincipalType: auth.PrincipalTypeUser}, want: 1},
+		{name: "admin SPA without email", user: &auth.User{ID: "admin-owner", AZP: "cyclops-cs-spa", PrincipalType: auth.PrincipalTypeUser}, want: 1},
+		{name: "admin CLI without email", user: &auth.User{ID: "admin-owner", AZP: "cua-cli", PrincipalType: auth.PrincipalTypeUser}, want: 1},
+		{name: "admin SDK owner without email", user: &auth.User{ID: "admin-owner", AZP: "ukey-proof", PrincipalType: auth.PrincipalTypeUserKey}, want: 1},
 	}
 	for _, test := range users {
 		t.Run(test.name, func(t *testing.T) {
@@ -163,8 +171,40 @@ func TestRouteObserverEmitsActivationForAuthenticatedNonInternalIdentity(t *test
 				if activation == nil || activation.InsertID != "" || activation.SetOnce[firstActivationProperty] == nil {
 					t.Fatalf("activation event = %#v", activation)
 				}
+			} else {
+				if events[0].Name != EventHTTPProxyRequest || events[0].Properties["identity_class"] != IdentityInternal {
+					t.Fatalf("internal traffic must remain diagnostic only: %#v", events)
+				}
+				select {
+				case event := <-sink:
+					t.Fatalf("internal traffic emitted activation/workload: %#v", event)
+				case <-time.After(30 * time.Millisecond):
+				}
 			}
 		})
+	}
+}
+
+func TestUnresolvedAdminMembershipNeverStartsWorkloadQualification(t *testing.T) {
+	t.Setenv("CYCLOPS_CS_ADMIN_SUBS", `invalid`)
+	auth.InvalidateFeatureFlags()
+	t.Cleanup(auth.InvalidateFeatureFlags)
+	sink := make(eventChannel, 3)
+	started := make(chan struct{}, 1)
+	handler := RouteObserver("/api/svc/{namespace}/{service}/{path...}", sink, "cyclops-cs-spa", func(context.Context, *http.Request, int) bool {
+		started <- struct{}{}
+		return true
+	})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	user := &auth.User{ID: "owner", AZP: "cua-cli", PrincipalType: auth.PrincipalTypeUser}
+	handler.ServeHTTP(httptest.NewRecorder(), observedRequest(http.MethodPost, "/api/svc/{namespace}/{service}/{path...}", "tools", user))
+	event := <-sink
+	if event.Name != EventHTTPProxyRequest || event.Properties["identity_class"] != IdentityUnknown {
+		t.Fatalf("unresolved identity counted as external: %#v", event)
+	}
+	select {
+	case <-started:
+		t.Fatal("unresolved identity started qualification")
+	case <-time.After(30 * time.Millisecond):
 	}
 }
 
@@ -348,23 +388,105 @@ func TestRouteObserverClassifiesPaymentRequiredWithoutChangingResponse(t *testin
 }
 
 func TestRouteObserverEmitsBoundedQualificationRejectionForExternalUsers(t *testing.T) {
-	sink := make(eventChannel, 2)
-	handler := RouteObserverWithQualification("/api/svc/{namespace}/{service}/{path...}", sink, "cyclops-cs-spa", func(context.Context, *http.Request, int) SvcQualificationResult {
-		return SvcQualificationResult{Reason: "claim_mismatch"}
-	})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
-	user := &auth.User{ID: "external-1", Email: "person@example.test", EmailVerified: true, AZP: "cyclops-cs-spa", PrincipalType: auth.PrincipalTypeUser}
-	handler.ServeHTTP(httptest.NewRecorder(), observedRequest(http.MethodGet, "/api/svc/{namespace}/{service}/{path...}", "tools", user))
-	var events []Event
-	deadline := time.After(time.Second)
-	for len(events) < 2 {
-		select {
-		case event := <-sink:
-			events = append(events, event)
-		case <-deadline:
-			t.Fatalf("events = %#v", events)
+	for _, result := range []SvcQualificationResult{
+		{Reason: "claim_mismatch"},
+		{Reason: "binding_lookup_failed", LookupStage: "claim", LookupErrorClass: "deadline_exceeded"},
+		{Reason: "pool_lookup_failed", LookupStage: "pool", LookupErrorClass: "forbidden"},
+	} {
+		t.Run(result.Reason, func(t *testing.T) {
+			sink := make(eventChannel, 4)
+			handler := RouteObserverWithQualification("/api/svc/{namespace}/{service}/{path...}", sink, "cyclops-cs-spa", func(context.Context, *http.Request, int) SvcQualificationResult {
+				return result
+			})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+			user := &auth.User{ID: "external-1", Email: "person@example.test", EmailVerified: true, AZP: "cyclops-cs-spa", PrincipalType: auth.PrincipalTypeUser}
+			handler.ServeHTTP(httptest.NewRecorder(), observedRequest(http.MethodGet, "/api/svc/{namespace}/{service}/{path...}", "tools", user))
+			events := map[string]Event{}
+			deadline := time.After(time.Second)
+			for i := 0; i < 2; i++ {
+				select {
+				case event := <-sink:
+					events[event.Name] = event
+				case <-deadline:
+					t.Fatalf("events = %#v", events)
+				}
+			}
+			rejected, ok := events[EventQualificationRejected]
+			if !ok || rejected.Properties["reason"] != result.Reason || rejected.DistinctID != user.ID || events[EventHTTPProxyRequest].Properties["outcome"] != OutcomeSuccess {
+				t.Fatalf("events = %#v", events)
+			}
+			stage, hasStage := rejected.Properties["qualification_lookup_stage"]
+			class, hasClass := rejected.Properties["qualification_error_class"]
+			if result.LookupStage == "" {
+				if hasStage || hasClass {
+					t.Fatal("non-lookup rejection acquired lookup diagnostics")
+				}
+			} else if stage != result.LookupStage || class != result.LookupErrorClass {
+				t.Fatalf("lookup diagnostics lost: %#v", rejected.Properties)
+			}
+			if err := ValidateEvent(rejected); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestLookupDiagnosticDeliveryIsPrivateAndNeverEmitsActivation(t *testing.T) {
+	var mu sync.Mutex
+	var payloads []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Error(err)
+		}
+		mu.Lock()
+		payloads = append(payloads, payload)
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+	client := New(Config{
+		Enabled: true, Host: server.URL, ProjectToken: "phc_test", IdentityKey: "synthetic-key", Environment: "production",
+		QueueSize: 4, BatchSize: 1, FlushInterval: time.Hour, RequestTimeout: time.Second,
+	})
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if err := client.Shutdown(ctx); err != nil {
+			t.Error(err)
+		}
+	})
+	user := &auth.User{ID: "raw-synthetic-subject", Email: "person@example.test", AZP: "cyclops-cs-spa", PrincipalType: auth.PrincipalTypeUser}
+	result := SvcQualificationResult{Reason: "pool_lookup_failed", LookupStage: "pool", LookupErrorClass: "deadline_exceeded"}
+	// Complete the synchronous producer, then flush before inspecting the whole
+	// collection. A test reading only the first events can miss extra activations.
+	captureSvcQualification(client, result, user, SourceSPA, http.StatusOK, "synthetic-trace")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := client.Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	seen := map[string]int{}
+	for _, payload := range payloads {
+		encoded, _ := json.Marshal(payload)
+		if bytes.Contains(encoded, []byte(user.ID)) || bytes.Contains(encoded, []byte(user.Email)) {
+			t.Fatal("analytics payload exposed raw identity")
+		}
+		event := payload["batch"].([]any)[0].(map[string]any)
+		name := event["event"].(string)
+		seen[name]++
+		if event["distinct_id"] != PseudonymForUserID(user.ID, "synthetic-key") {
+			t.Fatal("analytics identity was not pseudonymized")
+		}
+		if name == EventQualificationRejected {
+			properties := event["properties"].(map[string]any)
+			if properties["status_code"] != float64(200) || properties["error_class"] != "" || properties["qualification_lookup_stage"] != "pool" || properties["qualification_error_class"] != "deadline_exceeded" {
+				t.Fatalf("workload status or diagnostic changed: %#v", properties)
+			}
 		}
 	}
-	if events[1].Name != EventQualificationRejected || events[1].Properties["reason"] != "claim_mismatch" || events[1].DistinctID != user.ID {
-		t.Fatalf("event = %#v", events[1])
+	if seen[EventQualificationRejected] != 1 || len(seen) != 1 {
+		t.Fatalf("lookup failure must not emit workload success or activation: %#v", seen)
 	}
 }

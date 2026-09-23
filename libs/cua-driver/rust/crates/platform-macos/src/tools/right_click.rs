@@ -169,10 +169,12 @@ impl Tool for RightClickTool {
         // ── Pixel path ───────────────────────────────────────────────────────
         let (mut cx, mut cy) = (x.unwrap(), y.unwrap());
         // Scale back from downscaled-image space to native pixels when needed.
-        if let Some(ratio) = self.state.resize_registry.ratio(pid, window_id) {
-            cx *= ratio;
-            cy *= ratio;
-        }
+        let ratio = match super::screenshot_scale(&self.state, &args, pid, window_id) {
+            Ok(ratio) => ratio,
+            Err(refusal) => return refusal,
+        };
+        cx *= ratio;
+        cy *= ratio;
 
         // Window-local → screen coordinate translation + win-local logical coords
         // for CGEventSetWindowLocation (shared with click.rs via px_frame, which

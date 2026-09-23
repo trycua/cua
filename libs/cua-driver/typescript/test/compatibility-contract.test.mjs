@@ -14,6 +14,15 @@ const fixture = JSON.parse(
 
 const normalize = (value) => value.replace(/\s+/g, " ").trim()
 
+// UniFFI tags ClickPosition by declaration order. cua-driver-rs-v0.28.2 released
+// 1=Coordinates and 2=Element; new variants may only be appended. The generated
+// binding check in CI ties this list back to the Rust declaration order.
+const RELEASED_CLICK_POSITION_ORDINALS = [
+  [1, "Coordinates"],
+  [2, "Element"],
+  [3, "CapturedCoordinates"],
+]
+
 test("current native-window methods return typed outputs", () => {
   const declarations = normalize(fs.readFileSync(
     path.join(packageRoot, "dist", "native", "cua_driver_sdk.d.ts"), "utf8",
@@ -26,6 +35,16 @@ test("current native-window methods return typed outputs", () => {
   ]) {
     assert.ok(declarations.includes(`${method}(input: ${input}, asyncOpts_?: { signal: AbortSignal; }): Promise<${output}>;`), method)
   }
+})
+
+test("ClickPosition preserves released UniFFI ordinals", () => {
+  const generated = fs.readFileSync(
+    path.join(packageRoot, "src", "native", "cua_driver_contract.ts"), "utf8",
+  )
+  const observed = [
+    ...generated.matchAll(/case (\d+): return new ClickPosition\.(\w+)\(/g),
+  ].map(([, ordinal, variant]) => [Number(ordinal), variant])
+  assert.deepEqual(observed, RELEASED_CLICK_POSITION_ORDINALS)
 })
 
 test("released package exports and declarations remain available", () => {

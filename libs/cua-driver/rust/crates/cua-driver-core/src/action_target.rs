@@ -121,16 +121,35 @@ fn normalize_desktop_frame_for_window(
         ));
     }
     object.remove("scope");
-    object.insert(
-        "coordinate_frame".into(),
-        Value::String("desktop".into()),
-    );
+    object.insert("coordinate_frame".into(), Value::String("desktop".into()));
     Ok(())
 }
 
 /// Which backends translate desktop-frame pixels for a window target.
 pub fn desktop_frame_for_window_supported() -> bool {
     cfg!(target_os = "linux")
+}
+
+/// Reject the delivery combination that cannot preserve background posture.
+/// Call this only after delivery aliases and typed targets have been normalized.
+pub fn enforce_delivery_target(tool_name: &str, args: &Value) -> Result<(), ToolResult> {
+    if tool_name != "click"
+        || args.get("scope").and_then(Value::as_str) != Some("desktop")
+        || args.get("delivery_mode").and_then(Value::as_str) != Some("background")
+    {
+        return Ok(());
+    }
+
+    let message = cua_driver_contract::ClickInput::DESKTOP_BACKGROUND_MESSAGE;
+    Err(ToolResult::error(message).with_structured(json!({
+        "code": "background_unavailable",
+        "effect": "refused",
+        "suggestion": "Retry this action with delivery_mode:\"foreground\".",
+        "escalation": {
+            "recommended": "foreground",
+            "reason": message,
+        },
+    })))
 }
 
 #[cfg(test)]
@@ -205,12 +224,54 @@ mod tests {
         let mut args = json!({"scope": "desktop", "pid": 7, "x": 1, "y": 2});
         let result = normalize_action_target("click", &mut args);
         if cfg!(target_os = "linux") {
-            assert!(result.is_ok(), "Linux maps desktop-frame points into the window");
+            assert!(
+                result.is_ok(),
+                "Linux maps desktop-frame points into the window"
+            );
             assert!(args.get("scope").is_none());
             assert_eq!(args["coordinate_frame"], "desktop");
             assert_eq!(args["pid"], 7);
         } else {
             assert!(result.is_err());
+        }
+    }
+
+    #[test]
+    fn desktop_background_guard_is_click_specific() {
+        let desktop_background = json!({
+            "scope": "desktop",
+            "delivery_mode": "background"
+        });
+        let refusal = enforce_delivery_target("click", &desktop_background).unwrap_err();
+        assert_eq!(refusal.is_error, Some(true));
+        assert_eq!(
+            refusal.structured_content,
+            Some(json!({
+                "code": "background_unavailable",
+                "effect": "refused",
+                "suggestion": "Retry this action with delivery_mode:\"foreground\".",
+                "escalation": {
+                    "recommended": "foreground",
+                    "reason": cua_driver_contract::ClickInput::DESKTOP_BACKGROUND_MESSAGE,
+                },
+            }))
+        );
+
+        for (tool, args) in [
+            (
+                "click",
+                json!({"scope": "desktop", "delivery_mode": "foreground"}),
+            ),
+            (
+                "click",
+                json!({"scope": "window", "delivery_mode": "background"}),
+            ),
+            ("drag", desktop_background),
+        ] {
+            assert!(
+                enforce_delivery_target(tool, &args).is_ok(),
+                "{tool}: {args}"
+            );
         }
     }
 }

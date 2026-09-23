@@ -774,9 +774,13 @@ public protocol CreateClaimRequestBuilderProtocol: AnyObject, Sendable {
 
     func build() throws  -> CreateClaimRequest
 
+    func labels(value: [String: String])  -> CreateClaimRequestBuilder
+
     func name(value: String)  -> CreateClaimRequestBuilder
 
     func pool(value: Pool)  -> CreateClaimRequestBuilder
+
+    func secretFiles(value: [String: String])  -> CreateClaimRequestBuilder
 
     func spec(value: ClaimSpec)  -> CreateClaimRequestBuilder
 
@@ -849,6 +853,15 @@ open func build()throws  -> CreateClaimRequest  {
 })
 }
 
+open func labels(value: [String: String]) -> CreateClaimRequestBuilder  {
+    return try!  FfiConverterTypeCreateClaimRequestBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_labels(
+            self.uniffiCloneHandle(),
+        FfiConverterDictionaryStringString.lower(value),$0
+    )
+})
+}
+
 open func name(value: String) -> CreateClaimRequestBuilder  {
     return try!  FfiConverterTypeCreateClaimRequestBuilder_lift(try! rustCall() {
     uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_name(
@@ -863,6 +876,15 @@ open func pool(value: Pool) -> CreateClaimRequestBuilder  {
     uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_pool(
             self.uniffiCloneHandle(),
         FfiConverterTypePool_lower(value),$0
+    )
+})
+}
+
+open func secretFiles(value: [String: String]) -> CreateClaimRequestBuilder  {
+    return try!  FfiConverterTypeCreateClaimRequestBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_secret_files(
+            self.uniffiCloneHandle(),
+        FfiConverterDictionaryStringString.lower(value),$0
     )
 })
 }
@@ -1543,6 +1565,11 @@ public protocol CyclopsClientProtocol: AnyObject, Sendable {
 
     func createClaim(request: CreateClaimRequest) async throws  -> Claim
 
+    /**
+     * Delete the claim and, when it references a claim-scoped Secret
+     * (`secret_files`), that Secret too. The pool-operator also owner-refs
+     * the Secret to the claim, so garbage collection is the backstop.
+     */
     func deleteClaim(claim: Claim) async throws
 
     func getClaim(claim: Claim) async throws  -> Claim
@@ -1560,6 +1587,33 @@ public protocol CyclopsClientProtocol: AnyObject, Sendable {
     func renewClaim(claim: Claim, shutdownTime: String) async throws  -> Claim
 
     func waitClaim(claim: Claim) async throws  -> Sandbox
+
+    /**
+     * The bearer this client would send on its next authenticated request,
+     * for callers that open their own connection to the gateway (for example
+     * a native WebSocket). `force_refresh` bypasses any cached token; a
+     * static access token is returned as-is. The value is a raw token — the
+     * caller attaches it as `authorization: Bearer <token>`.
+     */
+    func accessToken(forceRefresh: Bool) async throws  -> String
+
+    /**
+     * Fan out `create_claim` calls across the requested warm pools, tagging
+     * every claim with `cua.ai/fleet=<fleet_id>` so the group can be listed
+     * back later. Duplicate pool entries are aggregated before any network
+     * call. Claims are created sequentially; if one creation fails the error
+     * is returned immediately and claims already created keep their fleet
+     * label, so `list_fleet_claims` still finds them for retry or cleanup.
+     */
+    func createFleetClaims(fleetId: String, requests: [FleetPoolRequest]) async throws  -> FleetClaims
+
+    /**
+     * The fleet's claims within one namespace: enumerate the namespace's
+     * claims and keep those labeled `cua.ai/fleet=<fleet_id>`. A fleet that
+     * spans several pools spans that many namespaces (one pool per
+     * namespace), so call this once per member pool.
+     */
+    func listFleetClaims(namespace: String, fleetId: String) async throws  -> FleetClaims
 
     func presignImageUploads(request: ImageUploadRequest) async throws  -> ImageUploadResponse
 
@@ -1599,6 +1653,15 @@ public protocol CyclopsClientProtocol: AnyObject, Sendable {
     func updatePool(pool: Pool) async throws  -> Pool
 
     func serviceRequest(sandbox: Sandbox, service: String, path: String, request: HttpRequest) async throws  -> HttpResponse
+
+    /**
+     * Where a native client opens its own WebSocket to a sandbox service:
+     * the gateway's `/api/svc` proxy forwards the HTTP upgrade, so the
+     * returned `ws(s)://` URL plus the returned bearer header are all a
+     * Rust or Swift caller needs to dial the socket directly.
+     * `service_request` stays the path for unary requests.
+     */
+    func serviceWebsocketUrl(sandbox: Sandbox, service: String, path: String) async throws  -> ServiceStreamTarget
 
     func createSignedServiceUrl(request: CreateSignedServiceUrlRequest) async throws  -> SignedServiceUrl
 
@@ -1759,6 +1822,11 @@ open func createClaim(request: CreateClaimRequest)async throws  -> Claim  {
         )
 }
 
+    /**
+     * Delete the claim and, when it references a claim-scoped Secret
+     * (`secret_files`), that Secret too. The pool-operator also owner-refs
+     * the Secret to the claim, so garbage collection is the backstop.
+     */
 open func deleteClaim(claim: Claim)async throws   {
     return
         try  await uniffiRustCallAsync(
@@ -1848,6 +1916,78 @@ open func waitClaim(claim: Claim)async throws  -> Sandbox  {
             completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeSandbox_lift,
+            errorHandler: FfiConverterTypeSdkError_lift
+        )
+}
+
+    /**
+     * The bearer this client would send on its next authenticated request,
+     * for callers that open their own connection to the gateway (for example
+     * a native WebSocket). `force_refresh` bypasses any cached token; a
+     * static access token is returned as-is. The value is a raw token — the
+     * caller attaches it as `authorization: Bearer <token>`.
+     */
+open func accessToken(forceRefresh: Bool)async throws  -> String  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_cyclopsclient_access_token(
+                    self.uniffiCloneHandle(),
+                    FfiConverterBool.lower(forceRefresh)
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterString.lift,
+            errorHandler: FfiConverterTypeSdkError_lift
+        )
+}
+
+    /**
+     * Fan out `create_claim` calls across the requested warm pools, tagging
+     * every claim with `cua.ai/fleet=<fleet_id>` so the group can be listed
+     * back later. Duplicate pool entries are aggregated before any network
+     * call. Claims are created sequentially; if one creation fails the error
+     * is returned immediately and claims already created keep their fleet
+     * label, so `list_fleet_claims` still finds them for retry or cleanup.
+     */
+open func createFleetClaims(fleetId: String, requests: [FleetPoolRequest])async throws  -> FleetClaims  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_cyclopsclient_create_fleet_claims(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(fleetId),FfiConverterSequenceTypeFleetPoolRequest.lower(requests)
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeFleetClaims_lift,
+            errorHandler: FfiConverterTypeSdkError_lift
+        )
+}
+
+    /**
+     * The fleet's claims within one namespace: enumerate the namespace's
+     * claims and keep those labeled `cua.ai/fleet=<fleet_id>`. A fleet that
+     * spans several pools spans that many namespaces (one pool per
+     * namespace), so call this once per member pool.
+     */
+open func listFleetClaims(namespace: String, fleetId: String)async throws  -> FleetClaims  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_cyclopsclient_list_fleet_claims(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(namespace),FfiConverterString.lower(fleetId)
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeFleetClaims_lift,
             errorHandler: FfiConverterTypeSdkError_lift
         )
 }
@@ -2142,6 +2282,30 @@ open func serviceRequest(sandbox: Sandbox, service: String, path: String, reques
             completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeHttpResponse_lift,
+            errorHandler: FfiConverterTypeSdkError_lift
+        )
+}
+
+    /**
+     * Where a native client opens its own WebSocket to a sandbox service:
+     * the gateway's `/api/svc` proxy forwards the HTTP upgrade, so the
+     * returned `ws(s)://` URL plus the returned bearer header are all a
+     * Rust or Swift caller needs to dial the socket directly.
+     * `service_request` stays the path for unary requests.
+     */
+open func serviceWebsocketUrl(sandbox: Sandbox, service: String, path: String)async throws  -> ServiceStreamTarget  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cyclops_sdk_fn_method_cyclopsclient_service_websocket_url(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeSandbox_lower(sandbox),FfiConverterString.lower(service),FfiConverterString.lower(path)
+                )
+            },
+            pollFunc: ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeServiceStreamTarget_lift,
             errorHandler: FfiConverterTypeSdkError_lift
         )
 }
@@ -3350,6 +3514,22 @@ public struct CreateClaimRequest: Equatable, Hashable {
      * `claim-<petname>` so concurrent leases and retries cannot collide.
      */
     public var name: String?
+    /**
+     * Labels stamped onto the created claim's metadata verbatim. Grouping
+     * helpers (for example fleet fan-out) rely on this to tag related claims
+     * so they can be listed back by label within a namespace.
+     */
+    public var labels: [String: String]?
+    /**
+     * Files delivered into the bound sandbox under `/run/cua/<key>` (mode
+     * 0600) once the claim binds, without restarting it. The key
+     * `claim_env_token_key()` (`env-token`) carries the cua-env-driver token.
+     * The client stores them in a claim-scoped `cua-claim-<claim>` Secret
+     * that the claim references by `spec.secretRef`; `delete_claim` removes
+     * it. The pool's template must set `vmTemplate.claimSecrets`. Values are
+     * never serialized with the request nor printed by `Debug`.
+     */
+    public var secretFiles: [String: String]?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -3358,10 +3538,26 @@ public struct CreateClaimRequest: Equatable, Hashable {
          * Explicit claim name. A client-supplied name is used verbatim (after
          * DNS-label validation); left unset, the client generates a random
          * `claim-<petname>` so concurrent leases and retries cannot collide.
-         */name: String? = nil) {
+         */name: String? = nil,
+        /**
+         * Labels stamped onto the created claim's metadata verbatim. Grouping
+         * helpers (for example fleet fan-out) rely on this to tag related claims
+         * so they can be listed back by label within a namespace.
+         */labels: [String: String]? = nil,
+        /**
+         * Files delivered into the bound sandbox under `/run/cua/<key>` (mode
+         * 0600) once the claim binds, without restarting it. The key
+         * `claim_env_token_key()` (`env-token`) carries the cua-env-driver token.
+         * The client stores them in a claim-scoped `cua-claim-<claim>` Secret
+         * that the claim references by `spec.secretRef`; `delete_claim` removes
+         * it. The pool's template must set `vmTemplate.claimSecrets`. Values are
+         * never serialized with the request nor printed by `Debug`.
+         */secretFiles: [String: String]? = nil) {
         self.pool = pool
         self.spec = spec
         self.name = name
+        self.labels = labels
+        self.secretFiles = secretFiles
     }
 
 
@@ -3382,7 +3578,9 @@ public struct FfiConverterTypeCreateClaimRequest: FfiConverterRustBuffer {
             try CreateClaimRequest(
                 pool: FfiConverterTypePool.read(from: &buf),
                 spec: FfiConverterOptionTypeClaimSpec.read(from: &buf),
-                name: FfiConverterOptionString.read(from: &buf)
+                name: FfiConverterOptionString.read(from: &buf),
+                labels: FfiConverterOptionDictionaryStringString.read(from: &buf),
+                secretFiles: FfiConverterOptionDictionaryStringString.read(from: &buf)
         )
     }
 
@@ -3390,6 +3588,8 @@ public struct FfiConverterTypeCreateClaimRequest: FfiConverterRustBuffer {
         FfiConverterTypePool.write(value.pool, into: &buf)
         FfiConverterOptionTypeClaimSpec.write(value.spec, into: &buf)
         FfiConverterOptionString.write(value.name, into: &buf)
+        FfiConverterOptionDictionaryStringString.write(value.labels, into: &buf)
+        FfiConverterOptionDictionaryStringString.write(value.secretFiles, into: &buf)
     }
 }
 
@@ -3774,6 +3974,121 @@ public func FfiConverterTypeCyclopsTokenProviderConfiguration_lift(_ buf: RustBu
 #endif
 public func FfiConverterTypeCyclopsTokenProviderConfiguration_lower(_ value: CyclopsTokenProviderConfiguration) -> RustBuffer {
     return FfiConverterTypeCyclopsTokenProviderConfiguration.lower(value)
+}
+
+
+/**
+ * A fleet's identity plus the claims currently known to belong to it.
+ */
+public struct FleetClaims: Equatable, Hashable {
+    public var fleetId: String
+    public var claims: [Claim]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(fleetId: String, claims: [Claim]) {
+        self.fleetId = fleetId
+        self.claims = claims
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FleetClaims: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFleetClaims: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FleetClaims {
+        return
+            try FleetClaims(
+                fleetId: FfiConverterString.read(from: &buf),
+                claims: FfiConverterSequenceTypeClaim.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FleetClaims, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.fleetId, into: &buf)
+        FfiConverterSequenceTypeClaim.write(value.claims, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFleetClaims_lift(_ buf: RustBuffer) throws -> FleetClaims {
+    return try FfiConverterTypeFleetClaims.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFleetClaims_lower(_ value: FleetClaims) -> RustBuffer {
+    return FfiConverterTypeFleetClaims.lower(value)
+}
+
+
+/**
+ * One pool's share of a fleet: claim `replicas` sandboxes from the warm pool
+ * named `pool`. On this platform the pool name is also its namespace.
+ */
+public struct FleetPoolRequest: Equatable, Hashable {
+    public var pool: String
+    public var replicas: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(pool: String, replicas: UInt32) {
+        self.pool = pool
+        self.replicas = replicas
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FleetPoolRequest: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFleetPoolRequest: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FleetPoolRequest {
+        return
+            try FleetPoolRequest(
+                pool: FfiConverterString.read(from: &buf),
+                replicas: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FleetPoolRequest, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.pool, into: &buf)
+        FfiConverterUInt32.write(value.replicas, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFleetPoolRequest_lift(_ buf: RustBuffer) throws -> FleetPoolRequest {
+    return try FfiConverterTypeFleetPoolRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFleetPoolRequest_lower(_ value: FleetPoolRequest) -> RustBuffer {
+    return FfiConverterTypeFleetPoolRequest.lower(value)
 }
 
 
@@ -4641,6 +4956,71 @@ public func FfiConverterTypeSandbox_lift(_ buf: RustBuffer) throws -> Sandbox {
 #endif
 public func FfiConverterTypeSandbox_lower(_ value: Sandbox) -> RustBuffer {
     return FfiConverterTypeSandbox.lower(value)
+}
+
+
+/**
+ * Where a native client opens its own WebSocket to a sandbox service through
+ * the gateway's `/api/svc` proxy. `url` is the `ws(s)://` endpoint;
+ * `auth_header_name`/`auth_header_value` carry the bearer the socket's HTTP
+ * upgrade request must send. Deliberately not serde-serializable: the value
+ * holds a live credential and must not be logged or persisted.
+ */
+public struct ServiceStreamTarget: Equatable, Hashable {
+    public var url: String
+    public var authHeaderName: String
+    public var authHeaderValue: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(url: String, authHeaderName: String, authHeaderValue: String) {
+        self.url = url
+        self.authHeaderName = authHeaderName
+        self.authHeaderValue = authHeaderValue
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ServiceStreamTarget: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeServiceStreamTarget: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ServiceStreamTarget {
+        return
+            try ServiceStreamTarget(
+                url: FfiConverterString.read(from: &buf),
+                authHeaderName: FfiConverterString.read(from: &buf),
+                authHeaderValue: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ServiceStreamTarget, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.url, into: &buf)
+        FfiConverterString.write(value.authHeaderName, into: &buf)
+        FfiConverterString.write(value.authHeaderValue, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeServiceStreamTarget_lift(_ buf: RustBuffer) throws -> ServiceStreamTarget {
+    return try FfiConverterTypeServiceStreamTarget.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeServiceStreamTarget_lower(_ value: ServiceStreamTarget) -> RustBuffer {
+    return FfiConverterTypeServiceStreamTarget.lower(value)
 }
 
 
@@ -5633,6 +6013,31 @@ fileprivate struct FfiConverterSequenceTypeClaim: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeFleetPoolRequest: FfiConverterRustBuffer {
+    typealias SwiftType = [FleetPoolRequest]
+
+    public static func write(_ value: [FleetPoolRequest], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFleetPoolRequest.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FleetPoolRequest] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FleetPoolRequest]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFleetPoolRequest.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeHttpHeader: FfiConverterRustBuffer {
     typealias SwiftType = [HttpHeader]
 
@@ -5993,6 +6398,26 @@ private func uniffiForeignFutureDroppedCallback(handle: UInt64) {
 public func uniffiForeignFutureHandleCountFleetSdk() -> Int {
     UNIFFI_FOREIGN_FUTURE_HANDLE_MAP.count
 }
+/**
+ * The `secret_files` key (and in-guest file name, `/run/cua/env-token`)
+ * that carries the cua-env-driver token for a claimed sandbox.
+ */
+public func claimEnvTokenKey() -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_func_claim_env_token_key($0
+    )
+})
+}
+/**
+ * The label key a fleet's claims share, for callers that filter or clean up
+ * with raw Kubernetes tooling instead of `list_fleet_claims`.
+ */
+public func fleetLabelKey() -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_func_fleet_label_key($0
+    )
+})
+}
 public func healthyPoolDisplayStatus() -> PoolDisplayStatus  {
     return try!  FfiConverterTypePoolDisplayStatus_lift(try! rustCall() {
     uniffi_cyclops_sdk_fn_func_healthy_pool_display_status($0
@@ -6040,6 +6465,12 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
+    if (uniffi_cyclops_sdk_checksum_func_claim_env_token_key() != 8887) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_func_fleet_label_key() != 5219) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status() != 3094) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -6058,7 +6489,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim() != 23330) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim() != 20460) {
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim() != 52233) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim() != 17760) {
@@ -6071,6 +6502,15 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim() != 18984) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_access_token() != 4889) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_fleet_claims() != 11135) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_fleet_claims() != 14544) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_presign_image_uploads() != 53280) {
@@ -6124,6 +6564,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request() != 46699) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_websocket_url() != 47537) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_signed_service_url() != 17810) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -6169,10 +6612,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_build() != 10518) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_labels() != 9576) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_name() != 19762) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_pool() != 7405) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_secret_files() != 54115) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_spec() != 28263) {

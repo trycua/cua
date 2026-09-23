@@ -367,7 +367,11 @@ mod tests {
             pid,
             77,
             &nodes,
-            &[(0, 0, 0, 500, 500), (1, 100, 100, 50, 20), (2, 105, 102, 40, 16)],
+            &[
+                (0, 0, 0, 500, 500),
+                (1, 100, 100, 50, 20),
+                (2, 105, 102, 40, 16),
+            ],
         );
         assert_eq!(snapshot.retain(1).unwrap().bounds, Some((100, 100, 50, 20)));
         let (idx, element) = hit_test(pid, 77, 110, 110).expect("hit");

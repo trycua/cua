@@ -878,7 +878,10 @@ mod tests {
         });
         let refusal = serde_json::from_value::<ActionResult>(refusal).expect("refusal");
         assert_eq!(refusal.validate_invariants(), Ok(()));
-        assert_eq!(refusal.error.as_ref().map(|error| error.code.as_str()), Some("point_outside_window"));
+        assert_eq!(
+            refusal.error.as_ref().map(|error| error.code.as_str()),
+            Some("point_outside_window")
+        );
         let mut error_extension = serde_json::to_value(&refusal).expect("serialize");
         error_extension["error"]["detail"] = json!({"x": 1});
         assert!(serde_json::from_value::<ActionResult>(error_extension).is_err());

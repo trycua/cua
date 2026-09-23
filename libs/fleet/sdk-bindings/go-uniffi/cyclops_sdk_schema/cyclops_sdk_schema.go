@@ -724,12 +724,55 @@ func (_ FfiDestroyerClaimLifecycle) Destroy(value ClaimLifecycle) {
 	value.Destroy()
 }
 
+// Reference to a claim-scoped Secret delivered into the bound sandbox. See
+// [`CLAIM_SECRET_NAME_PREFIX`].
+type ClaimSecretRef struct {
+	Name string
+}
+
+func (r *ClaimSecretRef) Destroy() {
+	FfiDestroyerString{}.Destroy(r.Name)
+}
+
+type FfiConverterClaimSecretRef struct{}
+
+var FfiConverterClaimSecretRefINSTANCE = FfiConverterClaimSecretRef{}
+
+func (c FfiConverterClaimSecretRef) Lift(rb RustBufferI) ClaimSecretRef {
+	return LiftFromRustBuffer[ClaimSecretRef](c, rb)
+}
+
+func (c FfiConverterClaimSecretRef) Read(reader io.Reader) ClaimSecretRef {
+	return ClaimSecretRef{
+		FfiConverterStringINSTANCE.Read(reader),
+	}
+}
+
+func (c FfiConverterClaimSecretRef) Lower(value ClaimSecretRef) C.RustBuffer {
+	return LowerIntoRustBuffer[ClaimSecretRef](c, value)
+}
+
+func (c FfiConverterClaimSecretRef) LowerExternal(value ClaimSecretRef) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[ClaimSecretRef](c, value))
+}
+
+func (c FfiConverterClaimSecretRef) Write(writer io.Writer, value ClaimSecretRef) {
+	FfiConverterStringINSTANCE.Write(writer, value.Name)
+}
+
+type FfiDestroyerClaimSecretRef struct{}
+
+func (_ FfiDestroyerClaimSecretRef) Destroy(value ClaimSecretRef) {
+	value.Destroy()
+}
+
 type ClaimSpec struct {
 	SandboxTemplateRef     SandboxTemplateRef
 	Warmpool               *string
 	BindDeadline           *uint32
 	Lifecycle              *ClaimLifecycle
 	TtlSecondsAfterCreated *uint32
+	SecretRef              *ClaimSecretRef
 }
 
 func (r *ClaimSpec) Destroy() {
@@ -738,6 +781,7 @@ func (r *ClaimSpec) Destroy() {
 	FfiDestroyerOptionalUint32{}.Destroy(r.BindDeadline)
 	FfiDestroyerOptionalClaimLifecycle{}.Destroy(r.Lifecycle)
 	FfiDestroyerOptionalUint32{}.Destroy(r.TtlSecondsAfterCreated)
+	FfiDestroyerOptionalClaimSecretRef{}.Destroy(r.SecretRef)
 }
 
 type FfiConverterClaimSpec struct{}
@@ -755,6 +799,7 @@ func (c FfiConverterClaimSpec) Read(reader io.Reader) ClaimSpec {
 		FfiConverterOptionalUint32INSTANCE.Read(reader),
 		FfiConverterOptionalClaimLifecycleINSTANCE.Read(reader),
 		FfiConverterOptionalUint32INSTANCE.Read(reader),
+		FfiConverterOptionalClaimSecretRefINSTANCE.Read(reader),
 	}
 }
 
@@ -772,6 +817,7 @@ func (c FfiConverterClaimSpec) Write(writer io.Writer, value ClaimSpec) {
 	FfiConverterOptionalUint32INSTANCE.Write(writer, value.BindDeadline)
 	FfiConverterOptionalClaimLifecycleINSTANCE.Write(writer, value.Lifecycle)
 	FfiConverterOptionalUint32INSTANCE.Write(writer, value.TtlSecondsAfterCreated)
+	FfiConverterOptionalClaimSecretRefINSTANCE.Write(writer, value.SecretRef)
 }
 
 type FfiDestroyerClaimSpec struct{}
@@ -1336,6 +1382,7 @@ type VmTemplate struct {
 	Probes               **PreservedJson
 	Services             *[]SandboxService
 	Oidc                 *OidcConfig
+	ClaimSecrets         *bool
 }
 
 func (r *VmTemplate) Destroy() {
@@ -1354,6 +1401,7 @@ func (r *VmTemplate) Destroy() {
 	FfiDestroyerOptionalPreservedJson{}.Destroy(r.Probes)
 	FfiDestroyerOptionalSequenceSandboxService{}.Destroy(r.Services)
 	FfiDestroyerOptionalOidcConfig{}.Destroy(r.Oidc)
+	FfiDestroyerOptionalBool{}.Destroy(r.ClaimSecrets)
 }
 
 type FfiConverterVmTemplate struct{}
@@ -1381,6 +1429,7 @@ func (c FfiConverterVmTemplate) Read(reader io.Reader) VmTemplate {
 		FfiConverterOptionalPreservedJsonINSTANCE.Read(reader),
 		FfiConverterOptionalSequenceSandboxServiceINSTANCE.Read(reader),
 		FfiConverterOptionalOidcConfigINSTANCE.Read(reader),
+		FfiConverterOptionalBoolINSTANCE.Read(reader),
 	}
 }
 
@@ -1408,6 +1457,7 @@ func (c FfiConverterVmTemplate) Write(writer io.Writer, value VmTemplate) {
 	FfiConverterOptionalPreservedJsonINSTANCE.Write(writer, value.Probes)
 	FfiConverterOptionalSequenceSandboxServiceINSTANCE.Write(writer, value.Services)
 	FfiConverterOptionalOidcConfigINSTANCE.Write(writer, value.Oidc)
+	FfiConverterOptionalBoolINSTANCE.Write(writer, value.ClaimSecrets)
 }
 
 type FfiDestroyerVmTemplate struct{}
@@ -2033,6 +2083,47 @@ type FfiDestroyerOptionalClaimLifecycle struct{}
 func (_ FfiDestroyerOptionalClaimLifecycle) Destroy(value *ClaimLifecycle) {
 	if value != nil {
 		FfiDestroyerClaimLifecycle{}.Destroy(*value)
+	}
+}
+
+type FfiConverterOptionalClaimSecretRef struct{}
+
+var FfiConverterOptionalClaimSecretRefINSTANCE = FfiConverterOptionalClaimSecretRef{}
+
+func (c FfiConverterOptionalClaimSecretRef) Lift(rb RustBufferI) *ClaimSecretRef {
+	return LiftFromRustBuffer[*ClaimSecretRef](c, rb)
+}
+
+func (_ FfiConverterOptionalClaimSecretRef) Read(reader io.Reader) *ClaimSecretRef {
+	if readInt8(reader) == 0 {
+		return nil
+	}
+	temp := FfiConverterClaimSecretRefINSTANCE.Read(reader)
+	return &temp
+}
+
+func (c FfiConverterOptionalClaimSecretRef) Lower(value *ClaimSecretRef) C.RustBuffer {
+	return LowerIntoRustBuffer[*ClaimSecretRef](c, value)
+}
+
+func (c FfiConverterOptionalClaimSecretRef) LowerExternal(value *ClaimSecretRef) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[*ClaimSecretRef](c, value))
+}
+
+func (_ FfiConverterOptionalClaimSecretRef) Write(writer io.Writer, value *ClaimSecretRef) {
+	if value == nil {
+		writeInt8(writer, 0)
+	} else {
+		writeInt8(writer, 1)
+		FfiConverterClaimSecretRefINSTANCE.Write(writer, *value)
+	}
+}
+
+type FfiDestroyerOptionalClaimSecretRef struct{}
+
+func (_ FfiDestroyerOptionalClaimSecretRef) Destroy(value *ClaimSecretRef) {
+	if value != nil {
+		FfiDestroyerClaimSecretRef{}.Destroy(*value)
 	}
 }
 

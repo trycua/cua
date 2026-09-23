@@ -438,6 +438,11 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
+    "uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_claim_secrets": {
+      args: [FfiType.Handle, FfiType.Int8],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
     "uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_command": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -648,6 +653,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_claim_secrets": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_command": {
       args: [],
       ret: FfiType.UInt16,
@@ -853,6 +863,7 @@ interface NativeModuleInterface {
     uniffi_cyclops_sdk_schema_fn_method_sandboxtemplaterefbuilder_name(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_schema_fn_constructor_vmtemplatebuilder_new(uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_build(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_claim_secrets(uniffiSelf: bigint, value: number, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_command(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_container_disk_image(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_cpu_cores(uniffiSelf: bigint, value: number, uniffi_out_err: UniffiRustCallStatus): bigint;
@@ -895,6 +906,7 @@ interface NativeModuleInterface {
     uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_name(): number;
     uniffi_cyclops_sdk_schema_checksum_constructor_vmtemplatebuilder_new(): number;
     uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_claim_secrets(): number;
     uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_command(): number;
     uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_container_disk_image(): number;
     uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_cpu_cores(): number;

@@ -397,12 +397,8 @@ impl X11 {
 
     fn activate(&self, target: Window, prior: Window) -> Result<()> {
         let time = self.server_time();
-        let event = ClientMessageEvent::new(
-            32,
-            target,
-            self.net_active_window,
-            [2, time, prior, 0, 0],
-        );
+        let event =
+            ClientMessageEvent::new(32, target, self.net_active_window, [2, time, prior, 0, 0]);
         debug_assert_eq!(event.response_type, CLIENT_MESSAGE_EVENT);
         self.conn.send_event(
             false,
@@ -414,9 +410,9 @@ impl X11 {
         // does): WMs with focus-stealing prevention honour `_NET_ACTIVE_WINDOW`
         // as raise-only. BadMatch on a not-yet-viewable window is expected and
         // ignored; the confirmation loop decides.
-        if let Ok(cookie) = self
-            .conn
-            .set_input_focus(InputFocus::PARENT, target, x11rb::CURRENT_TIME)
+        if let Ok(cookie) =
+            self.conn
+                .set_input_focus(InputFocus::PARENT, target, x11rb::CURRENT_TIME)
         {
             let _ = cookie.check();
         }
@@ -548,7 +544,11 @@ fn confirm_phase(target: Window, settle: Duration) -> Result<ConfirmOutcome> {
 /// focus inside any of them is `SamePid` even when neither the target nor
 /// the focused window carries `_NET_WM_PID` (a VCL popup menu closed by the
 /// click, the popup that the click opened).
-fn post_check(target: Window, target_pid: Option<u32>, pid_windows: &[(u64, String)]) -> FocusAfter {
+fn post_check(
+    target: Window,
+    target_pid: Option<u32>,
+    pid_windows: &[(u64, String)],
+) -> FocusAfter {
     let Ok(x) = X11::open() else {
         return FocusAfter::Unknown;
     };
@@ -574,7 +574,10 @@ fn post_check(target: Window, target_pid: Option<u32>, pid_windows: &[(u64, Stri
     // The body may have closed the target itself (Escape on a dialog, alt+F4,
     // a popup item click): its pid was read (or named by the caller) before
     // the body, so the comparison still works once the window is gone.
-    match (target_pid.or_else(|| x.owning_pid(target)), x.owning_pid(focused)) {
+    match (
+        target_pid.or_else(|| x.owning_pid(target)),
+        x.owning_pid(focused),
+    ) {
         (Some(a), Some(b)) if a == b => FocusAfter::SamePid,
         _ => FocusAfter::Elsewhere,
     }
@@ -684,7 +687,10 @@ mod tests {
     #[test]
     fn options_carry_the_caller_resolved_pid() {
         assert_eq!(ForegroundOptions::pointer().target_pid, None);
-        assert_eq!(ForegroundOptions::keyboard().for_pid(42).target_pid, Some(42));
+        assert_eq!(
+            ForegroundOptions::keyboard().for_pid(42).target_pid,
+            Some(42)
+        );
         assert!(!ForegroundOptions::from_settle_hint(80).for_pid(1).keyboard);
     }
 
@@ -701,14 +707,23 @@ mod tests {
         assert_eq!(json["activated"], false);
         assert_eq!(json["focus_after"], "same_pid");
         assert_eq!(json["confirm_ms"], 3);
-        assert_eq!(json["window_change"], "appeared: popup window 7 (200x300 at 1,2)");
+        assert_eq!(
+            json["window_change"],
+            "appeared: popup window 7 (200x300 at 1,2)"
+        );
         assert!(report.focus_kept());
     }
 
     #[test]
     fn window_change_diff_names_appeared_and_closed() {
-        let before = vec![(1u64, "window 1 \"GIMP\"".to_string()), (2, "window 2".to_string())];
-        let after = vec![(1u64, "window 1 \"GIMP\"".to_string()), (9, "popup window 9".to_string())];
+        let before = vec![
+            (1u64, "window 1 \"GIMP\"".to_string()),
+            (2, "window 2".to_string()),
+        ];
+        let after = vec![
+            (1u64, "window 1 \"GIMP\"".to_string()),
+            (9, "popup window 9".to_string()),
+        ];
         assert_eq!(
             describe_window_change(&before, &after).as_deref(),
             Some("appeared: popup window 9; closed: window 2")

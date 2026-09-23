@@ -185,7 +185,9 @@ fn mpx_last_use() -> &'static Mutex<HashMap<String, std::time::Instant>> {
 /// use, and make sure the idle reaper is running. Hold the guard for the
 /// whole operation.
 fn mpx_op_guard(cursor_id: &str) -> std::sync::MutexGuard<'static, ()> {
-    let guard = MPX_OP_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let guard = MPX_OP_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     mpx_last_use()
         .lock()
         .unwrap()
@@ -195,7 +197,9 @@ fn mpx_op_guard(cursor_id: &str) -> std::sync::MutexGuard<'static, ()> {
             .name("cua-mpx-idle-reaper".into())
             .spawn(|| loop {
                 sleep(MPX_IDLE_REAPER_PERIOD);
-                let _op = MPX_OP_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                let _op = MPX_OP_LOCK
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 let stale = {
                     let last_use = mpx_last_use().lock().unwrap();
                     stale_cursor_ids(&last_use, std::time::Instant::now(), MPX_IDLE_TTL)
@@ -1418,7 +1422,12 @@ fn emit_scroll(device: &mut VirtualDevice, horizontal: bool, value: i32) -> Resu
 }
 
 pub fn send_parallel_virtual_pointer_drags(drags: &[(String, VirtualPointerDrag)]) -> Result<()> {
-    let _op = mpx_op_guard(drags.first().map(|(id, _)| id.as_str()).unwrap_or("default"));
+    let _op = mpx_op_guard(
+        drags
+            .first()
+            .map(|(id, _)| id.as_str())
+            .unwrap_or("default"),
+    );
     {
         let mut last_use = mpx_last_use().lock().unwrap();
         for (cursor_id, _) in drags {
@@ -1735,7 +1744,14 @@ fn window_screen_bounds(
     let (mut width, mut height, mut border, mut depth) = (0u32, 0u32, 0u32, 0u32);
     let rc = unsafe {
         x11::xlib::XGetGeometry(
-            display, window, &mut root, &mut gx, &mut gy, &mut width, &mut height, &mut border,
+            display,
+            window,
+            &mut root,
+            &mut gx,
+            &mut gy,
+            &mut width,
+            &mut height,
+            &mut border,
             &mut depth,
         )
     };
@@ -1744,7 +1760,9 @@ fn window_screen_bounds(
         let (mut dx, mut dy) = (0i32, 0i32);
         let mut child: x11::xlib::Window = 0;
         let ok = unsafe {
-            x11::xlib::XTranslateCoordinates(display, window, root, 0, 0, &mut dx, &mut dy, &mut child)
+            x11::xlib::XTranslateCoordinates(
+                display, window, root, 0, 0, &mut dx, &mut dy, &mut child,
+            )
         };
         if ok != 0 {
             result = Some((dx, dy, width, height));
@@ -1924,7 +1942,8 @@ pub fn core_focus_owner_pid() -> Option<u32> {
     let mut owner = None;
     let mut current = focus;
     for _ in 0..8 {
-        if current == 0 || current == root || current == x11::xlib::PointerRoot as x11::xlib::Window {
+        if current == 0 || current == root || current == x11::xlib::PointerRoot as x11::xlib::Window
+        {
             break;
         }
         if let Some(pid) = crate::x11::window_pid(current as u64) {
@@ -1937,7 +1956,14 @@ pub fn core_focus_owner_pid() -> Option<u32> {
         let mut n: std::os::raw::c_uint = 0;
         let previous_handler = unsafe { x11::xlib::XSetErrorHandler(Some(ignore_x_error)) };
         let rc = unsafe {
-            x11::xlib::XQueryTree(display, current, &mut qroot, &mut parent, &mut children, &mut n)
+            x11::xlib::XQueryTree(
+                display,
+                current,
+                &mut qroot,
+                &mut parent,
+                &mut children,
+                &mut n,
+            )
         };
         unsafe {
             x11::xlib::XSync(display, 0);
@@ -2128,7 +2154,11 @@ impl ForeignWindowEffect {
 
 /// The topmost managed toplevel under the screen point that belongs to a
 /// pid other than `target_pid`, with that pid's toplevels at this moment.
-fn foreign_toplevel_under(target_pid: Option<u32>, x: i32, y: i32) -> Option<(crate::x11::WindowInfo, Vec<u64>)> {
+fn foreign_toplevel_under(
+    target_pid: Option<u32>,
+    x: i32,
+    y: i32,
+) -> Option<(crate::x11::WindowInfo, Vec<u64>)> {
     let windows = crate::x11::list_windows(None);
     let hit = windows
         .iter()
@@ -2156,7 +2186,9 @@ fn foreign_toplevel_under(target_pid: Option<u32>, x: i32, y: i32) -> Option<(cr
 }
 
 /// Re-read the foreign toplevel after the action.
-fn foreign_window_effect(before: Option<(crate::x11::WindowInfo, Vec<u64>)>) -> Option<ForeignWindowEffect> {
+fn foreign_window_effect(
+    before: Option<(crate::x11::WindowInfo, Vec<u64>)>,
+) -> Option<ForeignWindowEffect> {
     let (hit, owned) = before?;
     let pid = hit.pid?;
     let title_after = crate::x11::window_info(hit.xid)
@@ -2546,8 +2578,11 @@ pub fn send_virtual_pointer_click(
         thaw_device(display, ids.pointer_id);
         warp_master_pointer(display, ids, click.x, click.y)?;
         let popups_before = mapped_popups(display);
-        let foreign_before =
-            foreign_toplevel_under(crate::x11::window_pid(click.target_window), click.x, click.y);
+        let foreign_before = foreign_toplevel_under(
+            crate::x11::window_pid(click.target_window),
+            click.x,
+            click.y,
+        );
         let before = root_region_pixels(click.x, click.y);
         let (press_ms, gap_ms) = click_cadence();
         let train = (|| -> Result<()> {
@@ -2574,8 +2609,15 @@ pub fn send_virtual_pointer_click(
         // later virtual-keyboard chord would open Orca's preferences.
         release_button_best_effort(&device, click.button);
         train?;
-        let mut effect =
-            pointer_effect(display, &saved_focus, before, &popups_before, foreign_before, click.x, click.y);
+        let mut effect = pointer_effect(
+            display,
+            &saved_focus,
+            before,
+            &popups_before,
+            foreign_before,
+            click.x,
+            click.y,
+        );
         effect.retargeted_to = retargeted_to;
         Ok(effect)
     })();
@@ -2673,7 +2715,15 @@ pub fn send_virtual_pointer_drag(
         // Release on every exit path (see `send_virtual_pointer_click`).
         release_button_best_effort(&device, drag.button);
         gesture?;
-        let mut effect = pointer_effect(display, &saved_focus, before, &popups_before, foreign_before, end.0, end.1);
+        let mut effect = pointer_effect(
+            display,
+            &saved_focus,
+            before,
+            &popups_before,
+            foreign_before,
+            end.0,
+            end.1,
+        );
         effect.retargeted_to = retargeted_to;
         Ok(effect)
     })();
@@ -2910,11 +2960,58 @@ fn deepest_child_at_point(
     Ok((window, local_x, local_y))
 }
 
-fn resolve_event_target(conn: &RustConnection, xid: u64, x: i32, y: i32) -> Result<EventTarget> {
+fn window_path_at_point(
+    conn: &RustConnection,
+    window: Window,
+    local_x: i32,
+    local_y: i32,
+) -> Result<Vec<(Window, i32, i32, EventMask)>> {
+    let attributes = conn.get_window_attributes(window)?.reply()?;
+    let mut path = vec![(window, local_x, local_y, attributes.all_event_masks)];
+    let tree = conn.query_tree(window)?.reply()?;
+    for child in tree.children.iter().rev() {
+        let Ok(geom) = conn.get_geometry(*child)?.reply() else {
+            continue;
+        };
+        if !point_in_rect(local_x, local_y, &geom) {
+            continue;
+        }
+        let child_x = local_x - geom.x as i32;
+        let child_y = local_y - geom.y as i32;
+        path.extend(window_path_at_point(conn, *child, child_x, child_y)?);
+        break;
+    }
+    Ok(path)
+}
+
+fn deepest_event_target(
+    path: &[(Window, i32, i32, EventMask)],
+    required_masks: EventMask,
+) -> (Window, i32, i32) {
+    path.iter()
+        .rev()
+        .find(|(_, _, _, selected)| selected.contains(required_masks))
+        .or_else(|| path.last())
+        .map(|&(window, x, y, _)| (window, x, y))
+        .expect("window path always contains its toplevel")
+}
+
+fn click_event_target(path: &[(Window, i32, i32, EventMask)]) -> (Window, i32, i32) {
+    deepest_event_target(path, EventMask::BUTTON_PRESS)
+}
+
+fn build_event_target(
+    conn: &RustConnection,
+    xid: u64,
+    x: i32,
+    y: i32,
+    window: Window,
+    local_x: i32,
+    local_y: i32,
+) -> Result<EventTarget> {
     let top = xid as Window;
     let root = conn.setup().roots[0].root;
     let root_pos = conn.translate_coordinates(top, root, 0, 0)?.reply()?;
-    let (window, local_x, local_y) = deepest_child_at_point(conn, top, x, y)?;
     Ok(EventTarget {
         window,
         local_x: local_x as i16,
@@ -2922,6 +3019,28 @@ fn resolve_event_target(conn: &RustConnection, xid: u64, x: i32, y: i32) -> Resu
         root_x: (root_pos.dst_x as i32 + x) as i16,
         root_y: (root_pos.dst_y as i32 + y) as i16,
     })
+}
+
+fn resolve_event_target(conn: &RustConnection, xid: u64, x: i32, y: i32) -> Result<EventTarget> {
+    let top = xid as Window;
+    let (window, local_x, local_y) = deepest_child_at_point(conn, top, x, y)?;
+    build_event_target(conn, xid, x, y, window, local_x, local_y)
+}
+
+fn resolve_click_event_target(
+    conn: &RustConnection,
+    xid: u64,
+    x: i32,
+    y: i32,
+) -> Result<EventTarget> {
+    let top = xid as Window;
+    let path = window_path_at_point(conn, top, x, y)?;
+    // Button bindings commonly select only ButtonPress (Tk's <Button-1> is one
+    // example). Route the complete synthetic click to that same client-owned
+    // window: splitting release onto a different geometric leaf does not form a
+    // coherent toolkit click sequence.
+    let target = click_event_target(&path);
+    build_event_target(conn, xid, x, y, target.0, target.1, target.2)
 }
 
 fn button_state_mask(button: u8) -> KeyButMask {
@@ -3012,7 +3131,7 @@ pub fn send_click_with_modifiers(
     let modifier_state = modifiers_to_state(modifiers);
 
     for _ in 0..count {
-        let target = resolve_event_target(&conn, xid, x, y)?;
+        let target = resolve_click_event_target(&conn, xid, x, y)?;
         let press = ButtonPressEvent {
             response_type: BUTTON_PRESS_EVENT,
             detail: button,
@@ -3047,10 +3166,14 @@ pub fn send_click_with_modifiers(
             same_screen: true,
         };
 
-        conn.send_event(false, target.window, EventMask::BUTTON_PRESS, &press)?;
+        // The event mask selects recipients independently of the payload type.
+        // Select the press client for both payloads so a press-only toolkit
+        // binding (such as Tk's <Button-1>) receives one coherent click.
+        conn.send_event(false, target.window, EventMask::BUTTON_PRESS, &press)?
+            .check()?;
         sleep(Duration::from_millis(CLICK_DELAY_MS));
-        conn.send_event(false, target.window, EventMask::BUTTON_RELEASE, &release)?;
-        conn.flush()?;
+        conn.send_event(false, target.window, EventMask::BUTTON_PRESS, &release)?
+            .check()?;
 
         if count > 1 {
             sleep(Duration::from_millis(80));
@@ -3254,16 +3377,22 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
         // Resolve the keycode and whether Shift must be held — without it,
         // uppercase and shifted symbols would otherwise type their unshifted
         // form (e.g. "A" arriving as "a").
-        let (keycode, needs_shift) = match char_to_keycode_shift(&mapping, mpx_keyboard::keysym_for_char(ch)) {
-            Some(found) => found,
-            None => match keycode_for_keysym(&conn, &mapping, mpx_keyboard::keysym_for_char(ch), &ch.to_string()) {
-                Ok((keycode, guard)) => {
-                    remap_guards.extend(guard);
-                    (keycode, false)
-                }
-                Err(_) => continue,
-            },
-        };
+        let (keycode, needs_shift) =
+            match char_to_keycode_shift(&mapping, mpx_keyboard::keysym_for_char(ch)) {
+                Some(found) => found,
+                None => match keycode_for_keysym(
+                    &conn,
+                    &mapping,
+                    mpx_keyboard::keysym_for_char(ch),
+                    &ch.to_string(),
+                ) {
+                    Ok((keycode, guard)) => {
+                        remap_guards.extend(guard);
+                        (keycode, false)
+                    }
+                    Err(_) => continue,
+                },
+            };
         let state = if needs_shift {
             KeyButMask::SHIFT
         } else {
@@ -4103,12 +4232,13 @@ exit 0"#,
 #[cfg(test)]
 mod path_tests {
     use super::{
-        create_uinput_pointer, ensure_master_pointer_for_session, guarded_uinput_creation,
-        is_uinput_unavailable, kde_x11_uinput_hotplug_is_unsafe, master_pointer_name,
-        mpx_op_guard, modifiers_to_state, normalize_uinput_device_name, path_cumulative,
-        point_on_path, real_pointer_capabilities_available, sample_function, slave_pointer_name,
-        EVDEV_UINPUT_NAME_MAX_BYTES, UINPUT_POINTER_SUFFIX,
+        click_event_target, create_uinput_pointer, ensure_master_pointer_for_session,
+        guarded_uinput_creation, is_uinput_unavailable, kde_x11_uinput_hotplug_is_unsafe,
+        master_pointer_name, modifiers_to_state, mpx_op_guard, normalize_uinput_device_name,
+        path_cumulative, point_on_path, real_pointer_capabilities_available, sample_function,
+        slave_pointer_name, EVDEV_UINPUT_NAME_MAX_BYTES, UINPUT_POINTER_SUFFIX,
     };
+    use x11rb::protocol::xproto::{EventMask, KeyButMask};
 
     /// Regression for the `XSetErrorHandler` swap race: every caller that
     /// could swap the process-global X11 error handler while an MPX
@@ -4133,12 +4263,62 @@ mod path_tests {
         // The second guard cannot have been acquired yet — it is blocked on
         // the lock we are still holding.
         std::thread::sleep(std::time::Duration::from_millis(50));
-        assert!(!entered_second.load(Ordering::SeqCst), "second guard acquired while the first was still held");
+        assert!(
+            !entered_second.load(Ordering::SeqCst),
+            "second guard acquired while the first was still held"
+        );
         drop(first);
         handle.join().unwrap();
         assert!(entered_second.load(Ordering::SeqCst));
     }
-    use x11rb::protocol::xproto::KeyButMask;
+
+    #[test]
+    fn synthetic_click_keeps_release_on_press_recipient() {
+        let path = [
+            (
+                10,
+                394,
+                220,
+                EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE,
+            ),
+            (11, 24, 30, EventMask::BUTTON_PRESS),
+            (12, 6, 8, EventMask::BUTTON_RELEASE),
+        ];
+
+        assert_eq!(click_event_target(&path), (11, 24, 30));
+    }
+
+    #[test]
+    fn synthetic_click_uses_deepest_common_target_for_both_events() {
+        let path = [
+            (
+                10,
+                394,
+                220,
+                EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE,
+            ),
+            (
+                11,
+                24,
+                30,
+                EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE,
+            ),
+            (12, 6, 8, EventMask::NO_EVENT),
+        ];
+
+        assert_eq!(click_event_target(&path), (11, 24, 30));
+    }
+
+    #[test]
+    fn synthetic_click_preserves_recipient_local_coordinates_and_event_fallback() {
+        let path = [
+            (10, 394, 220, EventMask::BUTTON_PRESS),
+            (11, 24, 30, EventMask::NO_EVENT),
+            (12, 6, 8, EventMask::NO_EVENT),
+        ];
+
+        assert_eq!(click_event_target(&path), (10, 394, 220));
+    }
 
     #[test]
     fn click_modifier_state_combines_canonical_names_and_aliases() {

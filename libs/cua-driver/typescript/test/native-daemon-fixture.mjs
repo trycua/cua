@@ -49,6 +49,18 @@ const server = net.createServer((connection) => {
     if (request.name === "list_apps") structuredContent = { apps: [{ pid: 42, name: "Editor", running: true, active: false }] }
     if (request.name === "list_windows") structuredContent = { windows: [{ pid: 42, window_id: 123, app_name: "Editor", title: "Document", bounds: { x: 0, y: 0, width: 800, height: 600 }, is_on_screen: true, z_index: null }] }
     if (request.name === "get_window_state") structuredContent = { pid: 42, window_id: 123, snapshot_id: "snapshot-1", screenshot_width: 800, screenshot_height: 600, elements: [{ element_index: 0, role: "button", depth: 0, element_token: "fresh-token", label: "Save" }] }
+    if (request.name === "parse_visual_regions") structuredContent = {
+      schema: "cua.visual_regions_v1",
+      capture: {
+        capture_id: "capture-123",
+        source: { kind: "primary_desktop", display_id: "primary" },
+        screenshot: { reference: "sha256:abc", width: 2, height: 2, mime_type: "image/png", sha256: "abc" },
+        action_coordinate_space: { kind: "identity" },
+      },
+      parser: { extension_id: "cua-perception", extension_version: "1.0.0", model_id: "fixture", model_version: "1", runtime: "fixture" },
+      regions: [],
+      timing: { duration_ms: 1 },
+    }
     if (request.name === "click" && (request.args.element_token === "stale-token" || request.args.target?.window_id === 124)) {
       isError = true
       structuredContent = { code: request.args.element_token === "stale-token" ? "stale_element_token" : "element_target_mismatch" }
@@ -67,7 +79,7 @@ const server = net.createServer((connection) => {
       })}\n`,
     )
     completedCalls += 1
-    if (completedCalls === 8) server.close()
+    if (completedCalls === 9) server.close()
   })
 })
 

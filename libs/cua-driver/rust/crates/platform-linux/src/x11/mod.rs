@@ -309,7 +309,14 @@ pub fn transient_for(xid: u64) -> Option<u64> {
     let (conn, screen_num) = RustConnection::connect(None).ok()?;
     let root = conn.setup().roots[screen_num].root;
     let reply = conn
-        .get_property(false, xid, AtomEnum::WM_TRANSIENT_FOR, AtomEnum::WINDOW, 0, 1)
+        .get_property(
+            false,
+            xid,
+            AtomEnum::WM_TRANSIENT_FOR,
+            AtomEnum::WINDOW,
+            0,
+            1,
+        )
         .ok()?
         .reply()
         .ok()?;
@@ -403,7 +410,12 @@ pub fn pick_pid_window(
     }
     on_screen
         .iter()
-        .max_by_key(|w| (u64::from(w.width) * u64::from(w.height), w.z_index.unwrap_or(0)))
+        .max_by_key(|w| {
+            (
+                u64::from(w.width) * u64::from(w.height),
+                w.z_index.unwrap_or(0),
+            )
+        })
         .map(|w| w.xid)
 }
 
@@ -416,7 +428,11 @@ pub fn window_info(xid: u64) -> Option<WindowInfo> {
     let root = conn.setup().roots[screen_num].root;
     let attributes = conn.get_window_attributes(window).ok()?.reply().ok()?;
     let geom = conn.get_geometry(window).ok()?.reply().ok()?;
-    let trans = conn.translate_coordinates(window, root, 0, 0).ok()?.reply().ok()?;
+    let trans = conn
+        .translate_coordinates(window, root, 0, 0)
+        .ok()?
+        .reply()
+        .ok()?;
     let pid = get_window_pid(&conn, window).ok().flatten();
     let title = get_window_title(&conn, window).unwrap_or_default();
     let app_name = get_window_class(&conn, window)
@@ -441,7 +457,8 @@ pub fn window_info(xid: u64) -> Option<WindowInfo> {
 /// Alt+F4 does through mutter's passive grab, which a virtual keyboard cannot
 /// reach. Only a window of `pid` is accepted.
 pub fn close_window(xid: u64, pid: u32) -> Result<()> {
-    let window = u32::try_from(xid).map_err(|_| anyhow::anyhow!("window_id is out of X11 range"))?;
+    let window =
+        u32::try_from(xid).map_err(|_| anyhow::anyhow!("window_id is out of X11 range"))?;
     let (conn, screen_num) = RustConnection::connect(None)?;
     let root = conn.setup().roots[screen_num].root;
     match get_window_pid(&conn, window)? {
@@ -475,9 +492,10 @@ pub fn window_is_modal(xid: u64) -> bool {
     let Ok((conn, _)) = RustConnection::connect(None) else {
         return false;
     };
-    let (Ok(state_atom), Ok(modal_atom)) =
-        (get_atom(&conn, "_NET_WM_STATE"), get_atom(&conn, "_NET_WM_STATE_MODAL"))
-    else {
+    let (Ok(state_atom), Ok(modal_atom)) = (
+        get_atom(&conn, "_NET_WM_STATE"),
+        get_atom(&conn, "_NET_WM_STATE_MODAL"),
+    ) else {
         return false;
     };
     conn.get_property(false, xid, state_atom, AtomEnum::ATOM, 0, 64)
@@ -672,8 +690,7 @@ mod tests {
         // No transient_for relationship at all to the target's windows: this
         // must never be surfaced, no matter how similar its title/class.
         let windows = vec![win(10, Some(7), "GIMP"), win(50, Some(555), "Firefox")];
-        let cross =
-            list_cross_pid_transient_windows_with(7, windows, |_| None);
+        let cross = list_cross_pid_transient_windows_with(7, windows, |_| None);
         assert!(cross.is_empty());
     }
 
@@ -691,9 +708,8 @@ mod tests {
     #[test]
     fn no_own_windows_for_the_pid_yields_nothing_to_correlate_against() {
         let windows = vec![win(90, Some(999), "orphan dialog")];
-        let cross = list_cross_pid_transient_windows_with(7, windows, |xid| {
-            (xid == 90).then_some(10)
-        });
+        let cross =
+            list_cross_pid_transient_windows_with(7, windows, |xid| (xid == 90).then_some(10));
         assert!(cross.is_empty());
     }
 }

@@ -420,10 +420,12 @@ impl Tool for ScrollTool {
             // click pixel path — undo any session downscale, then translate
             // through the shared window frame (which refuses a window with no
             // live frame rather than scrolling at screen-absolute coords).
-            if let Some(ratio) = self.state.resize_registry.ratio(pid, window_id) {
-                cx *= ratio;
-                cy *= ratio;
-            }
+            let ratio = match super::screenshot_scale(&self.state, &args, pid, window_id) {
+                Ok(ratio) => ratio,
+                Err(refusal) => return refusal,
+            };
+            cx *= ratio;
+            cy *= ratio;
             let Some(wid) = window_id else {
                 // Unreachable: the None case refused above. Kept explicit so a
                 // future edit cannot reintroduce the screen-absolute fallback.

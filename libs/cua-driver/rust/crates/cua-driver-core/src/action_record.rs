@@ -535,7 +535,10 @@ impl ActionExecutionRecord {
         // Producers may declare explicit evidence items (`{kind, detail}`);
         // only the kinds the public contract publishes can carry a
         // `confirmed` effect (screenshot comparisons stay internal).
-        if let Some(items) = structured.get("evidence").and_then(serde_json::Value::as_array) {
+        if let Some(items) = structured
+            .get("evidence")
+            .and_then(serde_json::Value::as_array)
+        {
             for item in items {
                 let kind = match item.get("kind").and_then(serde_json::Value::as_str) {
                     Some("accessibility_readback") => EvidenceKind::AccessibilityReadback,
@@ -645,7 +648,11 @@ fn legacy_refusal(structured: &serde_json::Value) -> Option<ActionRefusal> {
         .and_then(serde_json::Value::as_str)?;
     let hint = ["/refusal/hint", "/refusal/message", "/hint", "/message"]
         .iter()
-        .find_map(|pointer| structured.pointer(pointer).and_then(serde_json::Value::as_str))
+        .find_map(|pointer| {
+            structured
+                .pointer(pointer)
+                .and_then(serde_json::Value::as_str)
+        })
         .map(str::to_owned);
     Some(ActionRefusal {
         code: code.to_owned(),
@@ -2003,6 +2010,22 @@ mod tests {
                 "legacy path {path} must normalize before the breaking cutover"
             );
         }
+    }
+
+    #[test]
+    fn foreground_macos_drag_path_uses_hid_transport() {
+        let record = ActionExecutionRecord::from_legacy(
+            "drag",
+            &serde_json::json!({"delivery_mode": "foreground"}),
+            &serde_json::json!({
+                "path": "cgevent_hid",
+                "effect": "unverifiable",
+            }),
+        )
+        .expect("foreground macOS drag should normalize");
+
+        assert_eq!(record.transport, ActionTransport::MacosCgEventHid);
+        assert_eq!(record.actual_delivery, Some(ActualDelivery::Foreground));
     }
 
     #[test]

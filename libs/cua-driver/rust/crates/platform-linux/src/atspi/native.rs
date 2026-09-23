@@ -272,8 +272,7 @@ fn spawn_focus_tracker(conn: &'static AccessibilityConnection) {
                 }
                 continue;
             }
-            let Ok(atspi::Event::Object(atspi::ObjectEvents::StateChanged(changed))) = event
-            else {
+            let Ok(atspi::Event::Object(atspi::ObjectEvents::StateChanged(changed))) = event else {
                 continue;
             };
             if changed.state != State::Focused {
@@ -1172,7 +1171,10 @@ async fn collect_visited_bounded_opts<'a>(
         .map(|(ordinal, r)| (r, 0usize, false, ordinal))
         .collect();
     if let Some(scope) = scoped_frame {
-        if let Some(position) = ordered.iter().position(|(_, _, _, ordinal)| *ordinal == scope) {
+        if let Some(position) = ordered
+            .iter()
+            .position(|(_, _, _, ordinal)| *ordinal == scope)
+        {
             let scoped = ordered.remove(position);
             ordered.insert(0, scoped);
         }
@@ -1200,9 +1202,7 @@ async fn collect_visited_bounded_opts<'a>(
     // historical OP_TIMEOUT so a 1 s tool budget bounds the whole walk.
     let deadline = {
         let legacy = tokio::time::Instant::now() + OP_TIMEOUT;
-        OP_DEADLINE
-            .try_with(|d| (*d).min(legacy))
-            .unwrap_or(legacy)
+        OP_DEADLINE.try_with(|d| (*d).min(legacy)).unwrap_or(legacy)
     };
     // Fast bail for an app that has stopped answering AT-SPI entirely (modal
     // grab): if several consecutive nodes each burn the full CALL_TIMEOUT, the
@@ -1532,12 +1532,13 @@ async fn collect_visited_bounded_opts<'a>(
                     // open menu is a mapped override-redirect window of this
                     // pid, and its entries' screen extents lie inside it.
                     if pid_popups.is_none() {
-                        let popups = tokio::task::spawn_blocking(crate::input::mapped_popup_windows)
-                            .await
-                            .unwrap_or_default()
-                            .into_iter()
-                            .filter(|popup| popup.pid.is_none_or(|popup_pid| popup_pid == pid))
-                            .collect::<Vec<_>>();
+                        let popups =
+                            tokio::task::spawn_blocking(crate::input::mapped_popup_windows)
+                                .await
+                                .unwrap_or_default()
+                                .into_iter()
+                                .filter(|popup| popup.pid.is_none_or(|popup_pid| popup_pid == pid))
+                                .collect::<Vec<_>>();
                         pid_popups = Some(popups);
                     }
                     if let Some(popups) = pid_popups.as_ref().filter(|popups| !popups.is_empty()) {
@@ -1765,7 +1766,11 @@ fn true_parents(visited: &[Visited<'_>]) -> Vec<Option<usize>> {
 /// label in the same container (a GTK grid row "Hue:" [spin]) — scanning
 /// stops at another control of the same role, so the second row never
 /// borrows the first row's label.
-fn preceding_sibling_label(visited: &[Visited<'_>], parents: &[Option<usize>], pos: usize) -> Option<String> {
+fn preceding_sibling_label(
+    visited: &[Visited<'_>],
+    parents: &[Option<usize>],
+    pos: usize,
+) -> Option<String> {
     let parent = parents[pos]?;
     let role = visited[pos].role.to_ascii_lowercase();
     for q in (0..pos).rev() {
@@ -1912,7 +1917,11 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
             nodes.push(AtspiNode {
                 element_index: Some(idx),
                 role: v.role.clone(),
-                name: if name.trim().is_empty() { None } else { Some(name) },
+                name: if name.trim().is_empty() {
+                    None
+                } else {
+                    Some(name)
+                },
                 value: v.value.clone().filter(|s| !s.is_empty()),
                 checked: v.checked,
                 enabled: v.enabled,
@@ -1945,12 +1954,22 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
 /// button is rendered as `- push button = "Restore" (disabled)` so a caller
 /// learns it must enable it (select something) rather than assume the tree
 /// dropped it.
-fn passive_marker(role: &str, has_action: bool, has_component: bool, enabled: Option<bool>) -> &'static str {
+fn passive_marker(
+    role: &str,
+    has_action: bool,
+    has_component: bool,
+    enabled: Option<bool>,
+) -> &'static str {
     let control = has_action
         || (has_component
             && matches!(
                 role.trim().to_ascii_lowercase().as_str(),
-                "button" | "push button" | "toggle button" | "menu item" | "check box" | "radio button"
+                "button"
+                    | "push button"
+                    | "toggle button"
+                    | "menu item"
+                    | "check box"
+                    | "radio button"
             ));
     if control && enabled == Some(false) {
         " (disabled)"
@@ -2023,14 +2042,14 @@ fn is_enabled_state(state: &StateSet) -> bool {
 fn is_indexable(v: &Visited) -> bool {
     v.showing
         && is_indexable_capabilities(
-        &v.role,
-        !v.actions.is_empty(),
-        v.has_editable,
-        v.has_value,
-        v.selectable,
-        v.has_component,
-        v.enabled,
-    )
+            &v.role,
+            !v.actions.is_empty(),
+            v.has_editable,
+            v.has_value,
+            v.selectable,
+            v.has_component,
+            v.enabled,
+        )
 }
 
 fn is_indexable_capabilities(
@@ -2167,9 +2186,8 @@ pub(super) fn walk_tree_bounded_with_timeout(
         // whole budget must still yield *some* frames (element-index clicks
         // resolve against them without a re-walk), so grant the bounds phase a
         // small grace of up to half the budget. The tool documents this.
-        let bounds_deadline = deadline.max(
-            tokio::time::Instant::now() + (timeout / 2).min(Duration::from_millis(1500)),
-        );
+        let bounds_deadline = deadline
+            .max(tokio::time::Instant::now() + (timeout / 2).min(Duration::from_millis(1500)));
         let bounds_backstop = bounds_deadline + Duration::from_millis(500);
         let (bounds, bounds_complete) = match before_snapshot_deadline(
             bounds_backstop,
@@ -2423,25 +2441,22 @@ fn list_windows_blocking(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo>
 /// withheld, because the field the user means (the focused one) may simply not
 /// have been reached yet and writing into an arbitrary earlier field (a name
 /// box, a search entry) would be a silent misdelivery.
-fn pick_editable<'v, 'a>(
-    visited: &'v [Visited<'a>],
-    complete: bool,
-) -> Option<&'v Visited<'a>> {
+fn pick_editable<'v, 'a>(visited: &'v [Visited<'a>], complete: bool) -> Option<&'v Visited<'a>> {
     visited
         .iter()
         .find(|v| v.has_editable && v.focused)
         .or_else(|| visited.iter().find(|v| v.has_editable && v.in_web_doc))
-        .or_else(|| complete.then(|| visited.iter().find(|v| v.has_editable)).flatten())
+        .or_else(|| {
+            complete
+                .then(|| visited.iter().find(|v| v.has_editable))
+                .flatten()
+        })
 }
 
 /// Try to write `text` into the best editable node in `visited` via AT-SPI
 /// EditableText. Returns `Ok(true)` if the write landed,
 /// `Ok(false)` if no editable was found / the EditableText write was rejected.
-async fn write_into_editable(
-    visited: &[Visited<'_>],
-    complete: bool,
-    text: &str,
-) -> Result<bool> {
+async fn write_into_editable(visited: &[Visited<'_>], complete: bool, text: &str) -> Result<bool> {
     let target = match pick_editable(visited, complete) {
         Some(t) => t,
         None => return Ok(false),
@@ -2794,12 +2809,19 @@ pub fn focused_control(pid: u32) -> Option<(String, String)> {
                     if let Some(Ok(selection)) = call(proxies.selection()).await {
                         if let Some(Ok(n)) = call(selection.n_selected_children()).await {
                             if n > 0 {
-                                if let Some(Ok(child)) = call(selection.get_selected_child(0)).await {
+                                if let Some(Ok(child)) = call(selection.get_selected_child(0)).await
+                                {
                                     if let Some(raw) = RawObjectRef::from_atspi(&child) {
-                                        if let Some(Ok(cell)) = call(accessible_for(conn, &raw)).await {
-                                            let (cell_role, cell_name) =
-                                                tokio::join!(call(cell.get_role_name()), call(cell.name()));
-                                            if let (Some(Ok(cell_role)), Some(Ok(cell_name))) = (cell_role, cell_name) {
+                                        if let Some(Ok(cell)) =
+                                            call(accessible_for(conn, &raw)).await
+                                        {
+                                            let (cell_role, cell_name) = tokio::join!(
+                                                call(cell.get_role_name()),
+                                                call(cell.name())
+                                            );
+                                            if let (Some(Ok(cell_role)), Some(Ok(cell_name))) =
+                                                (cell_role, cell_name)
+                                            {
                                                 return Ok(Some((cell_role, cell_name)));
                                             }
                                         }
@@ -2941,20 +2963,16 @@ pub(crate) fn is_container_role(role: &str) -> bool {
 /// previously active cell (A1 on a fresh sheet). With a real pointer
 /// available, a click on a cell must be a real press.
 fn is_cell_role(role: &str) -> bool {
-    matches!(role.trim().to_ascii_lowercase().as_str(), "table cell" | "cell")
+    matches!(
+        role.trim().to_ascii_lowercase().as_str(),
+        "table cell" | "cell"
+    )
 }
 
 fn is_selectable_item_role(role: &str) -> bool {
     matches!(
         role.trim().to_ascii_lowercase().as_str(),
-        "canvas"
-            | "list item"
-            | "table cell"
-            | "cell"
-            | "icon"
-            | "tree item"
-            | "table row"
-            | "row"
+        "canvas" | "list item" | "table cell" | "cell" | "icon" | "tree item" | "table row" | "row"
     )
 }
 
@@ -2963,7 +2981,11 @@ fn is_selectable_item_role(role: &str) -> bool {
 /// container's empty area must not open its current selection); an ancestor
 /// may only be fired when it is neither a container nor a `canvas` (a drawing
 /// surface whose `activate` means "open the selection" once it has children).
-fn at_point_activation_index(role: &str, actions: &[String], is_deepest_hit: bool) -> Option<usize> {
+fn at_point_activation_index(
+    role: &str,
+    actions: &[String],
+    is_deepest_hit: bool,
+) -> Option<usize> {
     if is_container_role(role) {
         return None;
     }
@@ -3259,7 +3281,6 @@ pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool, bool)> {
     )
 }
 
-
 // ── Cached-reference fast paths ──────────────────────────────────────────────
 //
 // Every per-index entry point above re-walks the application to turn an
@@ -3348,9 +3369,8 @@ pub fn perform_action_ref(object_ref: &ObjectRef) -> Result<(String, bool, bool)
                 .map_err(|e| anyhow!("Action unavailable: {e}"))?;
             let actions = action_names(&ap).await;
             let suspected_noop = actions.is_empty() || is_passive_role(&role);
-            let chosen = activation_index(&role, &actions).ok_or_else(|| {
-                anyhow!("element does not advertise a safe activation action")
-            })?;
+            let chosen = activation_index(&role, &actions)
+                .ok_or_else(|| anyhow!("element does not advertise a safe activation action"))?;
             // See `perform_action`'s `unacknowledged`: an unanswered doAction
             // is unknown, not dispatched-implies-success, and must not be
             // folded into `rejected`/`suspected_noop` (which would claim the
@@ -3392,7 +3412,9 @@ pub fn element_bounds_ref(
     in_web_content: bool,
 ) -> Result<(i32, i32, u32, u32)> {
     if in_web_content {
-        return Err(anyhow!("web-content bounds need the document origin; re-walk"));
+        return Err(anyhow!(
+            "web-content bounds need the document origin; re-walk"
+        ));
     }
     let offset = window_to_screen_offset(pid, xid, None);
     let coord = if offset.is_some() {
@@ -3421,9 +3443,8 @@ pub fn element_bounds_ref(
             if coord == CoordType::Window {
                 if let Some(Ok(raw)) = call(component.get_extents(CoordType::Screen)).await {
                     if screen_extents_trusted(raw, display) {
-                        return project_screen_extents(raw, (0, 0), None).ok_or_else(|| {
-                            anyhow!("cached element reports no on-screen extents")
-                        });
+                        return project_screen_extents(raw, (0, 0), None)
+                            .ok_or_else(|| anyhow!("cached element reports no on-screen extents"));
                     }
                 }
             }
@@ -3730,8 +3751,14 @@ mod at_point_coords_tests {
 
     #[test]
     fn unknown_or_implausible_origins_leave_the_point() {
-        assert_eq!(at_point_toolkit_coords((10, 20), None, Some((1, 2))), (10, 20));
-        assert_eq!(at_point_toolkit_coords((10, 20), Some((1, 2)), None), (10, 20));
+        assert_eq!(
+            at_point_toolkit_coords((10, 20), None, Some((1, 2))),
+            (10, 20)
+        );
+        assert_eq!(
+            at_point_toolkit_coords((10, 20), Some((1, 2)), None),
+            (10, 20)
+        );
         assert_eq!(
             at_point_toolkit_coords((10, 20), Some((900, 64)), Some((70, 64))),
             (10, 20)
@@ -3776,7 +3803,9 @@ async fn actuate_chain(
         if depth != deepest && !deepest_has_action && is_selectable_item_role(&role) {
             // The point is on a label / icon inside a file or list item: a
             // plain click selects that item.
-            if let Some(hit) = select_item_in_chain(chain, depth, &role, &deepest_name, skip_focus_roles).await {
+            if let Some(hit) =
+                select_item_in_chain(chain, depth, &role, &deepest_name, skip_focus_roles).await
+            {
                 return Ok(Some(hit));
             }
             dlog!(
@@ -3800,7 +3829,9 @@ async fn actuate_chain(
             // advertise `open`, which launched the file). Select it through
             // the container; only fall back to the item's action when the
             // container cannot select.
-            if let Some(hit) = select_item_in_chain(chain, deepest, &role, &deepest_name, skip_focus_roles).await {
+            if let Some(hit) =
+                select_item_in_chain(chain, deepest, &role, &deepest_name, skip_focus_roles).await
+            {
                 return Ok(Some(hit));
             }
             if actions.iter().any(|a| normalized_action_verb(a) == "open") {
@@ -3823,9 +3854,14 @@ async fn actuate_chain(
                     "hit-test ({win_x},{win_y}) -> depth {depth} role={role:?} is a container over {deepest_role:?}: not firing {:?}",
                     activation_index(&role, &actions).and_then(|i| actions.get(i))
                 );
-                return Ok(
-                    select_item_in_chain(chain, deepest, &deepest_role, &deepest_name, skip_focus_roles).await,
-                );
+                return Ok(select_item_in_chain(
+                    chain,
+                    deepest,
+                    &deepest_role,
+                    &deepest_name,
+                    skip_focus_roles,
+                )
+                .await);
             }
             continue;
         };
@@ -3870,9 +3906,14 @@ async fn actuate_chain(
         }
     }
     if !deepest_has_action && is_selectable_item_role(&deepest_role) {
-        if let Some(hit) =
-            select_item_in_chain(chain, deepest, &deepest_role, &deepest_name, skip_focus_roles)
-                .await
+        if let Some(hit) = select_item_in_chain(
+            chain,
+            deepest,
+            &deepest_role,
+            &deepest_name,
+            skip_focus_roles,
+        )
+        .await
         {
             return Ok(Some(hit));
         }
@@ -4642,7 +4683,11 @@ pub fn perform_action_at_point(
                 // A plain click on a file / list item selects it; its own
                 // `open` / `activate` is the double-click. Leave it to the
                 // caller's real pointer press.
-                dlog!("full-walk hit {:?} {:?} is a selectable item; not firing", target.role, target.name);
+                dlog!(
+                    "full-walk hit {:?} {:?} is a selectable item; not firing",
+                    target.role,
+                    target.name
+                );
                 return Ok(None);
             }
             let Some(chosen) = activation_index(&target.role, &target.actions) else {
@@ -4657,7 +4702,11 @@ pub fn perform_action_at_point(
                 .await
                 .map_err(|e| anyhow!("Action unavailable: {e}"))?;
             match call(ap.do_action(chosen as i32)).await {
-                Some(Ok(_)) => {}
+                Some(Ok(true)) => {}
+                Some(Ok(false)) => {
+                    dlog!("doAction declined at point; falling through to the pointer route");
+                    return Ok(None);
+                }
                 Some(Err(e)) => return Err(anyhow!("doAction failed: {e}")),
                 None => dlog!("doAction dispatched but not acknowledged in time"),
             }
@@ -4692,8 +4741,8 @@ pub fn perform_action_at_point(
 ///
 /// `screen_x`/`screen_y` are full-display screen pixels (what the vision
 /// screenshot and `get_window_state` frames are in). Returns `Ok(Some(action))`
-/// on a hit, `Ok(None)` when no element covers the point so the caller can fall
-/// back to its native injection path.
+/// when AT-SPI accepts the action, `Ok(None)` when there is no target or the
+/// action is rejected so the caller can fall back to its native injection path.
 pub fn perform_action_at_screen_point(
     pid: u32,
     xid: u64,
@@ -4786,7 +4835,10 @@ pub fn is_focus_taking_role(role: &str) -> bool {
 /// AT-SPI role names a toolkit gives a tooltip popup (`tool tip` is the
 /// canonical spelling; `tooltip` appears in some bridges).
 pub(crate) fn is_tooltip_role(role: &str) -> bool {
-    matches!(role.trim().to_ascii_lowercase().as_str(), "tool tip" | "tooltip")
+    matches!(
+        role.trim().to_ascii_lowercase().as_str(),
+        "tool tip" | "tooltip"
+    )
 }
 
 pub(crate) fn is_passive_role(role: &str) -> bool {
@@ -4854,7 +4906,12 @@ async fn commit_editable_write(proxies: &atspi::proxy::proxy_ext::Proxies<'_>) {
 /// SetValue never calls Component.GrabFocus: GTK may activate and raise the
 /// toplevel in response, violating the background contract. Toolkits that
 /// expose EditableText only while focused get an honest `NO_VALUE_ROUTE`.
-async fn set_value_on(acc: &AccessibleProxy<'_>, has_value: bool, value: &str, label: &str) -> Result<()> {
+async fn set_value_on(
+    acc: &AccessibleProxy<'_>,
+    has_value: bool,
+    value: &str,
+    label: &str,
+) -> Result<()> {
     let proxies = acc
         .proxies()
         .await
@@ -4908,7 +4965,13 @@ pub fn set_value(pid: u32, idx: usize, value: &str) -> Result<()> {
             let target = action_nodes.get(idx).ok_or_else(|| {
                 anyhow!("element {idx} not found (total: {})", action_nodes.len())
             })?;
-            set_value_on(&target.acc, target.has_value, value, &format!("element {idx}")).await
+            set_value_on(
+                &target.acc,
+                target.has_value,
+                value,
+                &format!("element {idx}"),
+            )
+            .await
         },
         || {
             Err(anyhow!(
@@ -4930,7 +4993,13 @@ pub fn set_value_ref(object_ref: &ObjectRef, value: &str) -> Result<()> {
                 Some(Ok(ifaces)) => ifaces,
                 _ => return Err(anyhow!("cached element interfaces unavailable")),
             };
-            set_value_on(&acc, ifaces.contains(Interface::Value), value, "cached element").await
+            set_value_on(
+                &acc,
+                ifaces.contains(Interface::Value),
+                value,
+                "cached element",
+            )
+            .await
         },
         || Err(anyhow!("set_value (cached element) timed out")),
     )
@@ -5573,11 +5642,10 @@ async fn element_bounds_for_visited(
     // un-timed blocking round-trip; still route both through `bounded_blocking`
     // so this single call site can't stall the walk past its budget (#42).
     let window_title_owned = window_title.map(str::to_owned);
-    let offset = bounded_blocking(move || {
-        window_to_screen_offset(pid, xid, window_title_owned.as_deref())
-    })
-    .await
-    .flatten();
+    let offset =
+        bounded_blocking(move || window_to_screen_offset(pid, xid, window_title_owned.as_deref()))
+            .await
+            .flatten();
     if crate::wayland::is_wayland()
         && crate::wayland::hyprland::is_session()
         && (offset.is_none() || scoped_frame.is_none())
@@ -5602,7 +5670,9 @@ async fn element_bounds_for_visited(
     // required window-origin delta. GTK's explicit Window-coordinate
     // path above remains authoritative when available.
     let screen_rebase = if offset.is_none() && !crate::wayland::is_wayland() && xid != 0 {
-        let x11_origin = bounded_blocking(move || x11_window_origin(xid)).await.flatten();
+        let x11_origin = bounded_blocking(move || x11_window_origin(xid))
+            .await
+            .flatten();
         let frame = visited.iter().find(|node| {
             scoped_frame.is_none_or(|scope| node.frame_ordinal == scope)
                 && node.has_component
@@ -5744,14 +5814,23 @@ mod walk_bounds_tests {
     #[test]
     fn degenerate_window_origin_is_rejected() {
         // A closed menu item projects (0,0,0,0) onto the window origin.
-        assert_eq!(walk_bounds_usable(Some((40, 60, 0, 0)), Some((1920, 1080))), None);
+        assert_eq!(
+            walk_bounds_usable(Some((40, 60, 0, 0)), Some((1920, 1080))),
+            None
+        );
         assert_eq!(walk_bounds_usable(None, Some((1920, 1080))), None);
     }
 
     #[test]
     fn off_screen_bounds_are_rejected() {
-        assert_eq!(walk_bounds_usable(Some((2000, 10, 50, 20)), Some((1920, 1080))), None);
-        assert_eq!(walk_bounds_usable(Some((-80, 10, 50, 20)), Some((1920, 1080))), None);
+        assert_eq!(
+            walk_bounds_usable(Some((2000, 10, 50, 20)), Some((1920, 1080))),
+            None
+        );
+        assert_eq!(
+            walk_bounds_usable(Some((-80, 10, 50, 20)), Some((1920, 1080))),
+            None
+        );
     }
 
     #[test]
@@ -5760,7 +5839,10 @@ mod walk_bounds_tests {
             walk_bounds_usable(Some((100, 200, 80, 24)), Some((1920, 1080))),
             Some((100, 200, 80, 24))
         );
-        assert_eq!(walk_bounds_usable(Some((100, 200, 80, 24)), None), Some((100, 200, 80, 24)));
+        assert_eq!(
+            walk_bounds_usable(Some((100, 200, 80, 24)), None),
+            Some((100, 200, 80, 24))
+        );
     }
 }
 
@@ -5770,8 +5852,14 @@ mod screen_extents_tests {
 
     #[test]
     fn trusts_plausible_on_screen_extents() {
-        assert!(screen_extents_trusted((70, 110, 848, 433), Some((1920, 1080))));
-        assert!(screen_extents_trusted((76, 1045, 43, 32), Some((1920, 1080))));
+        assert!(screen_extents_trusted(
+            (70, 110, 848, 433),
+            Some((1920, 1080))
+        ));
+        assert!(screen_extents_trusted(
+            (76, 1045, 43, 32),
+            Some((1920, 1080))
+        ));
     }
 
     #[test]
@@ -5779,10 +5867,19 @@ mod screen_extents_tests {
         // GTK4 (newer a11y) collapses every element to the origin.
         assert!(!screen_extents_trusted((0, 0, 100, 20), Some((1920, 1080))));
         // Unrealized widgets report INT_MIN.
-        assert!(!screen_extents_trusted((i32::MIN, i32::MIN, 1, 1), Some((1920, 1080))));
+        assert!(!screen_extents_trusted(
+            (i32::MIN, i32::MIN, 1, 1),
+            Some((1920, 1080))
+        ));
         // Entirely off the display.
-        assert!(!screen_extents_trusted((2000, 10, 40, 20), Some((1920, 1080))));
-        assert!(!screen_extents_trusted((-500, 10, 40, 20), Some((1920, 1080))));
+        assert!(!screen_extents_trusted(
+            (2000, 10, 40, 20),
+            Some((1920, 1080))
+        ));
+        assert!(!screen_extents_trusted(
+            (-500, 10, 40, 20),
+            Some((1920, 1080))
+        ));
     }
 }
 
@@ -5813,7 +5910,10 @@ mod stacking_z_index_tests {
             window(9, "Other", 3),
             window(7, "Brightness-Contrast", 4),
         ];
-        assert_eq!(z_index_from_stacking(&stacking, 7, "Brightness-Contrast"), Some(4));
+        assert_eq!(
+            z_index_from_stacking(&stacking, 7, "Brightness-Contrast"),
+            Some(4)
+        );
         assert_eq!(
             z_index_from_stacking(&stacking, 7, "GNU Image Manipulation Program"),
             Some(2)
@@ -5933,16 +6033,15 @@ mod frame_correlation_tests {
 #[cfg(test)]
 mod coord_tests {
     use super::parse_gtk_frame_extents;
-    use super::{
-        activation_index, before_snapshot_deadline, bounded_blocking, combine_wayland_content_offsets,
-        hyprland_document_top_inset, is_activation_action, is_enabled_state,
-        counts_as_showing, is_indexable_capabilities, is_passive_role, is_showing_state,
-        is_web_process_bus,
-        passive_marker, prefer_authoritative_wayland_origin, project_screen_extents, rebase_renderer_window_offset,
-        scoped_component_nodes, screen_extent_rebase, select_click_target, select_web_document,
-        ApplicationSelection,
-    };
     use super::OP_DEADLINE;
+    use super::{
+        activation_index, before_snapshot_deadline, bounded_blocking,
+        combine_wayland_content_offsets, counts_as_showing, hyprland_document_top_inset,
+        is_activation_action, is_enabled_state, is_indexable_capabilities, is_passive_role,
+        is_showing_state, is_web_process_bus, passive_marker, prefer_authoritative_wayland_origin,
+        project_screen_extents, rebase_renderer_window_offset, scoped_component_nodes,
+        screen_extent_rebase, select_click_target, select_web_document, ApplicationSelection,
+    };
     use atspi::{State, StateSet};
     use std::time::Duration;
 
@@ -6151,18 +6250,38 @@ mod coord_tests {
     fn hidden_and_disabled_controls_are_not_indexed_but_are_named() {
         // A hidden (not Showing) eject button in a sidebar row must not be
         // indexed: a click on it changes nothing.
-        assert!(!is_showing_state(&StateSet::new(State::Enabled | State::Visible)));
+        assert!(!is_showing_state(&StateSet::new(
+            State::Enabled | State::Visible
+        )));
         assert!(is_showing_state(&StateSet::new(
             State::Enabled | State::Visible | State::Showing
         )));
         // ...but a GTK2 menu item is never `Showing`, and stays indexed while `Visible`.
-        assert!(!counts_as_showing("push button", &StateSet::new(State::Enabled | State::Visible)));
-        assert!(counts_as_showing("menu item", &StateSet::new(State::Enabled | State::Visible)));
-        assert!(counts_as_showing("check menu item", &StateSet::new(State::Visible)));
-        assert!(!counts_as_showing("menu item", &StateSet::new(State::Enabled)));
+        assert!(!counts_as_showing(
+            "push button",
+            &StateSet::new(State::Enabled | State::Visible)
+        ));
+        assert!(counts_as_showing(
+            "menu item",
+            &StateSet::new(State::Enabled | State::Visible)
+        ));
+        assert!(counts_as_showing(
+            "check menu item",
+            &StateSet::new(State::Visible)
+        ));
+        assert!(!counts_as_showing(
+            "menu item",
+            &StateSet::new(State::Enabled)
+        ));
         // A visible but insensitive button keeps a marker in the markdown.
-        assert_eq!(passive_marker("push button", true, true, Some(false)), " (disabled)");
-        assert_eq!(passive_marker("push button", false, true, Some(false)), " (disabled)");
+        assert_eq!(
+            passive_marker("push button", true, true, Some(false)),
+            " (disabled)"
+        );
+        assert_eq!(
+            passive_marker("push button", false, true, Some(false)),
+            " (disabled)"
+        );
         assert_eq!(passive_marker("push button", true, true, Some(true)), "");
         assert_eq!(passive_marker("label", false, true, Some(false)), "");
     }
@@ -6592,12 +6711,21 @@ mod budget_tests {
     fn focus_log_tracks_latest_focused_object_per_bus_and_clears_on_blur() {
         let bus = ":9.test-focus-log";
         note_focus_event(bus, "/a", true);
-        assert_eq!(focus_map().lock().unwrap().get(bus).map(String::as_str), Some("/a"));
+        assert_eq!(
+            focus_map().lock().unwrap().get(bus).map(String::as_str),
+            Some("/a")
+        );
         note_focus_event(bus, "/b", true);
-        assert_eq!(focus_map().lock().unwrap().get(bus).map(String::as_str), Some("/b"));
+        assert_eq!(
+            focus_map().lock().unwrap().get(bus).map(String::as_str),
+            Some("/b")
+        );
         // A blur for a stale object must not erase the newer focus.
         note_focus_event(bus, "/a", false);
-        assert_eq!(focus_map().lock().unwrap().get(bus).map(String::as_str), Some("/b"));
+        assert_eq!(
+            focus_map().lock().unwrap().get(bus).map(String::as_str),
+            Some("/b")
+        );
         note_focus_event(bus, "/b", false);
         assert!(focus_map().lock().unwrap().get(bus).is_none());
     }
@@ -6625,7 +6753,9 @@ mod budget_tests {
                     assert!(deadline_passed());
                     // Once the deadline has passed, calls short-circuit.
                     let started = std::time::Instant::now();
-                    assert!(call(tokio::time::sleep(Duration::from_secs(10))).await.is_none());
+                    assert!(call(tokio::time::sleep(Duration::from_secs(10)))
+                        .await
+                        .is_none());
                     assert!(started.elapsed() < Duration::from_millis(50));
                 })
                 .await;
@@ -6665,16 +6795,36 @@ mod at_point_rules_tests {
             at_point_activation_index("layered pane", &acts(&["activate", "menu"]), false),
             None
         );
-        for role in ["list", "table", "tree", "tree table", "icon view", "panel", "list box"] {
-            assert_eq!(at_point_activation_index(role, &acts(&["activate"]), false), None);
+        for role in [
+            "list",
+            "table",
+            "tree",
+            "tree table",
+            "icon view",
+            "panel",
+            "list box",
+        ] {
+            assert_eq!(
+                at_point_activation_index(role, &acts(&["activate"]), false),
+                None
+            );
             // A click on the container's own empty area must not open its
             // current selection either.
-            assert_eq!(at_point_activation_index(role, &acts(&["activate"]), true), None);
+            assert_eq!(
+                at_point_activation_index(role, &acts(&["activate"]), true),
+                None
+            );
         }
         // A canvas is a surface: as an ancestor its activate is the
         // container's; as the deepest hit it is the widget itself.
-        assert_eq!(at_point_activation_index("canvas", &acts(&["activate"]), false), None);
-        assert_eq!(at_point_activation_index("canvas", &acts(&["activate"]), true), Some(0));
+        assert_eq!(
+            at_point_activation_index("canvas", &acts(&["activate"]), false),
+            None
+        );
+        assert_eq!(
+            at_point_activation_index("canvas", &acts(&["activate"]), true),
+            Some(0)
+        );
     }
 
     #[test]
@@ -6704,14 +6854,28 @@ mod at_point_rules_tests {
             assert!(is_cell_role(role), "{role}");
             assert!(is_selectable_item_role(role), "{role}");
         }
-        for role in ["canvas", "list item", "icon", "tree item", "row", "table row"] {
+        for role in [
+            "canvas",
+            "list item",
+            "icon",
+            "tree item",
+            "row",
+            "table row",
+        ] {
             assert!(!is_cell_role(role), "{role}");
         }
     }
 
     #[test]
     fn selectable_item_roles() {
-        for role in ["canvas", "list item", "table cell", "tree item", "icon", "row"] {
+        for role in [
+            "canvas",
+            "list item",
+            "table cell",
+            "tree item",
+            "icon",
+            "row",
+        ] {
             assert!(is_selectable_item_role(role), "{role}");
         }
         for role in ["push button", "layered pane", "label", "menu item"] {
@@ -6739,7 +6903,9 @@ mod at_point_rules_tests {
             selected: Some("file.txt".into()),
             selection_verified: true,
         };
-        assert!(selected.describe().starts_with("selected: canvas \"file.txt\""));
+        assert!(selected
+            .describe()
+            .starts_with("selected: canvas \"file.txt\""));
         assert!(selected.describe().contains("read back as selected"));
     }
 }

@@ -204,7 +204,10 @@ pub fn point_ownership(
                 let deepest = chain.last().expect("chain has more than one node");
                 let owner = describe_node(deepest).await;
                 let observed_name = match call(accessible_for(conn, &observed_raw)).await {
-                    Some(Ok(acc)) => call(acc.name()).await.and_then(Result::ok).unwrap_or_default(),
+                    Some(Ok(acc)) => call(acc.name())
+                        .await
+                        .and_then(Result::ok)
+                        .unwrap_or_default(),
                     _ => String::new(),
                 };
                 if !observed_name.is_empty() {

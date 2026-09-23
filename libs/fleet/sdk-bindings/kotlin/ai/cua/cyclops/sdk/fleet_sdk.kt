@@ -705,6 +705,10 @@ internal object IntegrityCheckingUniffiLib {
         uniffiCheckContractApiVersion(this)
         uniffiCheckApiChecksums(this)
     }
+    external fun uniffi_cyclops_sdk_checksum_func_claim_env_token_key(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_func_fleet_label_key(
+    ): Short
     external fun uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status(
     ): Short
     external fun uniffi_cyclops_sdk_checksum_func_pool_display_status(
@@ -726,6 +730,12 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim(
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_access_token(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_fleet_claims(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_fleet_claims(
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_presign_image_uploads(
     ): Short
@@ -761,6 +771,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request(
     ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_websocket_url(
+    ): Short
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_signed_service_url(
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_signed_service_urls(
@@ -791,9 +803,13 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_build(
     ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_labels(
+    ): Short
     external fun uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_name(
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_pool(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_secret_files(
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_spec(
     ): Short
@@ -946,6 +962,12 @@ external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_renew_claim(`ptr`: Long,
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim(`ptr`: Long,`claim`: RustBuffer.ByValue,
 ): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_access_token(`ptr`: Long,`forceRefresh`: Byte,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_create_fleet_claims(`ptr`: Long,`fleetId`: RustBuffer.ByValue,`requests`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_list_fleet_claims(`ptr`: Long,`namespace`: RustBuffer.ByValue,`fleetId`: RustBuffer.ByValue,
+): Long
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_presign_image_uploads(`ptr`: Long,`request`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_upload_image_file(`ptr`: Long,`namespace`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,`contents`: RustBuffer.ByValue,
@@ -979,6 +1001,8 @@ external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_pool(`ptr`: Lo
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_update_pool(`ptr`: Long,`pool`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_service_request(`ptr`: Long,`sandbox`: RustBuffer.ByValue,`service`: RustBuffer.ByValue,`path`: RustBuffer.ByValue,`request`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_service_websocket_url(`ptr`: Long,`sandbox`: RustBuffer.ByValue,`service`: RustBuffer.ByValue,`path`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_create_signed_service_url(`ptr`: Long,`request`: RustBuffer.ByValue,
 ): Long
@@ -1028,9 +1052,13 @@ external fun uniffi_cyclops_sdk_fn_constructor_createclaimrequestbuilder_new(uni
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_build(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
+external fun uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_labels(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
 external fun uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_name(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_pool(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_secret_files(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_spec(`ptr`: Long,`value`: RustBufferClaimSpec.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): Long
@@ -1148,6 +1176,10 @@ external fun uniffi_cyclops_sdk_fn_method_templatebuilder_metadata(`ptr`: Long,`
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_templatebuilder_spec(`ptr`: Long,`value`: RustBufferOSGymSandboxTemplateSpec.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): Long
+external fun uniffi_cyclops_sdk_fn_func_claim_env_token_key(uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun uniffi_cyclops_sdk_fn_func_fleet_label_key(uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
 external fun uniffi_cyclops_sdk_fn_func_healthy_pool_display_status(uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
 external fun uniffi_cyclops_sdk_fn_func_pool_display_status(`pool`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
@@ -1277,6 +1309,12 @@ private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
 }
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
+    if (lib.uniffi_cyclops_sdk_checksum_func_claim_env_token_key() != 8887.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_func_fleet_label_key() != 5219.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status() != 3094.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1295,7 +1333,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim() != 23330.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim() != 20460.toShort()) {
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim() != 52233.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim() != 17760.toShort()) {
@@ -1308,6 +1346,15 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim() != 18984.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_access_token() != 4889.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_fleet_claims() != 11135.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_fleet_claims() != 14544.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_presign_image_uploads() != 53280.toShort()) {
@@ -1361,6 +1408,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request() != 46699.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_websocket_url() != 47537.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_signed_service_url() != 17810.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1406,10 +1456,16 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_build() != 10518.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_labels() != 9576.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_name() != 19762.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_pool() != 7405.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_secret_files() != 54115.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_spec() != 28263.toShort()) {
@@ -2483,9 +2539,13 @@ public interface CreateClaimRequestBuilderInterface {
 
     fun `build`(): CreateClaimRequest
 
+    fun `labels`(`value`: Map<kotlin.String, kotlin.String>): CreateClaimRequestBuilder
+
     fun `name`(`value`: kotlin.String): CreateClaimRequestBuilder
 
     fun `pool`(`value`: Pool): CreateClaimRequestBuilder
+
+    fun `secretFiles`(`value`: Map<kotlin.String, kotlin.String>): CreateClaimRequestBuilder
 
     fun `spec`(`value`: ClaimSpec): CreateClaimRequestBuilder
 
@@ -2610,6 +2670,19 @@ open class CreateClaimRequestBuilder: Disposable, AutoCloseable, CreateClaimRequ
     }
 
 
+    override fun `labels`(`value`: Map<kotlin.String, kotlin.String>): CreateClaimRequestBuilder {
+            return FfiConverterTypeCreateClaimRequestBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_labels(
+        it,
+        FfiConverterMapStringString.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
     override fun `name`(`value`: kotlin.String): CreateClaimRequestBuilder {
             return FfiConverterTypeCreateClaimRequestBuilder.lift(
     callWithHandle {
@@ -2630,6 +2703,19 @@ open class CreateClaimRequestBuilder: Disposable, AutoCloseable, CreateClaimRequ
     UniffiLib.uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_pool(
         it,
         FfiConverterTypePool.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+    override fun `secretFiles`(`value`: Map<kotlin.String, kotlin.String>): CreateClaimRequestBuilder {
+            return FfiConverterTypeCreateClaimRequestBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_secret_files(
+        it,
+        FfiConverterMapStringString.lower(`value`),_status)
 }
     }
     )
@@ -3988,6 +4074,11 @@ public interface CyclopsClientInterface {
 
     suspend fun `createClaim`(`request`: CreateClaimRequest): Claim
 
+    /**
+     * Delete the claim and, when it references a claim-scoped Secret
+     * (`secret_files`), that Secret too. The pool-operator also owner-refs
+     * the Secret to the claim, so garbage collection is the backstop.
+     */
     suspend fun `deleteClaim`(`claim`: Claim)
 
     suspend fun `getClaim`(`claim`: Claim): Claim
@@ -4005,6 +4096,33 @@ public interface CyclopsClientInterface {
     suspend fun `renewClaim`(`claim`: Claim, `shutdownTime`: kotlin.String): Claim
 
     suspend fun `waitClaim`(`claim`: Claim): Sandbox
+
+    /**
+     * The bearer this client would send on its next authenticated request,
+     * for callers that open their own connection to the gateway (for example
+     * a native WebSocket). `force_refresh` bypasses any cached token; a
+     * static access token is returned as-is. The value is a raw token — the
+     * caller attaches it as `authorization: Bearer <token>`.
+     */
+    suspend fun `accessToken`(`forceRefresh`: kotlin.Boolean): kotlin.String
+
+    /**
+     * Fan out `create_claim` calls across the requested warm pools, tagging
+     * every claim with `cua.ai/fleet=<fleet_id>` so the group can be listed
+     * back later. Duplicate pool entries are aggregated before any network
+     * call. Claims are created sequentially; if one creation fails the error
+     * is returned immediately and claims already created keep their fleet
+     * label, so `list_fleet_claims` still finds them for retry or cleanup.
+     */
+    suspend fun `createFleetClaims`(`fleetId`: kotlin.String, `requests`: List<FleetPoolRequest>): FleetClaims
+
+    /**
+     * The fleet's claims within one namespace: enumerate the namespace's
+     * claims and keep those labeled `cua.ai/fleet=<fleet_id>`. A fleet that
+     * spans several pools spans that many namespaces (one pool per
+     * namespace), so call this once per member pool.
+     */
+    suspend fun `listFleetClaims`(`namespace`: kotlin.String, `fleetId`: kotlin.String): FleetClaims
 
     suspend fun `presignImageUploads`(`request`: ImageUploadRequest): ImageUploadResponse
 
@@ -4044,6 +4162,15 @@ public interface CyclopsClientInterface {
     suspend fun `updatePool`(`pool`: Pool): Pool
 
     suspend fun `serviceRequest`(`sandbox`: Sandbox, `service`: kotlin.String, `path`: kotlin.String, `request`: HttpRequest): HttpResponse
+
+    /**
+     * Where a native client opens its own WebSocket to a sandbox service:
+     * the gateway's `/api/svc` proxy forwards the HTTP upgrade, so the
+     * returned `ws(s)://` URL plus the returned bearer header are all a
+     * Rust or Swift caller needs to dial the socket directly.
+     * `service_request` stays the path for unary requests.
+     */
+    suspend fun `serviceWebsocketUrl`(`sandbox`: Sandbox, `service`: kotlin.String, `path`: kotlin.String): ServiceStreamTarget
 
     suspend fun `createSignedServiceUrl`(`request`: CreateSignedServiceUrlRequest): SignedServiceUrl
 
@@ -4190,6 +4317,11 @@ open class CyclopsClient: Disposable, AutoCloseable, CyclopsClientInterface
     }
 
 
+    /**
+     * Delete the claim and, when it references a claim-scoped Secret
+     * (`secret_files`), that Secret too. The pool-operator also owner-refs
+     * the Secret to the claim, so garbage collection is the backstop.
+     */
     @Throws(SdkException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
     override suspend fun `deleteClaim`(`claim`: Claim) {
@@ -4298,6 +4430,90 @@ open class CyclopsClient: Disposable, AutoCloseable, CyclopsClientInterface
         { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeSandbox.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * The bearer this client would send on its next authenticated request,
+     * for callers that open their own connection to the gateway (for example
+     * a native WebSocket). `force_refresh` bypasses any cached token; a
+     * static access token is returned as-is. The value is a raw token — the
+     * caller attaches it as `authorization: Bearer <token>`.
+     */
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `accessToken`(`forceRefresh`: kotlin.Boolean) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_access_token(
+                uniffiHandle,
+                FfiConverterBoolean.lower(`forceRefresh`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * Fan out `create_claim` calls across the requested warm pools, tagging
+     * every claim with `cua.ai/fleet=<fleet_id>` so the group can be listed
+     * back later. Duplicate pool entries are aggregated before any network
+     * call. Claims are created sequentially; if one creation fails the error
+     * is returned immediately and claims already created keep their fleet
+     * label, so `list_fleet_claims` still finds them for retry or cleanup.
+     */
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `createFleetClaims`(`fleetId`: kotlin.String, `requests`: List<FleetPoolRequest>) : FleetClaims {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_fleet_claims(
+                uniffiHandle,
+                FfiConverterString.lower(`fleetId`),FfiConverterSequenceTypeFleetPoolRequest.lower(`requests`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeFleetClaims.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * The fleet's claims within one namespace: enumerate the namespace's
+     * claims and keep those labeled `cua.ai/fleet=<fleet_id>`. A fleet that
+     * spans several pools spans that many namespaces (one pool per
+     * namespace), so call this once per member pool.
+     */
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `listFleetClaims`(`namespace`: kotlin.String, `fleetId`: kotlin.String) : FleetClaims {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_fleet_claims(
+                uniffiHandle,
+                FfiConverterString.lower(`namespace`),FfiConverterString.lower(`fleetId`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeFleetClaims.lift(it) },
         // Error FFI converter
         SdkException.ErrorHandler,
     )
@@ -4663,6 +4879,34 @@ open class CyclopsClient: Disposable, AutoCloseable, CyclopsClientInterface
         { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeHttpResponse.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * Where a native client opens its own WebSocket to a sandbox service:
+     * the gateway's `/api/svc` proxy forwards the HTTP upgrade, so the
+     * returned `ws(s)://` URL plus the returned bearer header are all a
+     * Rust or Swift caller needs to dial the socket directly.
+     * `service_request` stays the path for unary requests.
+     */
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `serviceWebsocketUrl`(`sandbox`: Sandbox, `service`: kotlin.String, `path`: kotlin.String) : ServiceStreamTarget {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_service_websocket_url(
+                uniffiHandle,
+                FfiConverterTypeSandbox.lower(`sandbox`),FfiConverterString.lower(`service`),FfiConverterString.lower(`path`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeServiceStreamTarget.lift(it) },
         // Error FFI converter
         SdkException.ErrorHandler,
     )
@@ -6704,6 +6948,24 @@ data class CreateClaimRequest (
      * `claim-<petname>` so concurrent leases and retries cannot collide.
      */
     var `name`: kotlin.String? = null
+    ,
+    /**
+     * Labels stamped onto the created claim's metadata verbatim. Grouping
+     * helpers (for example fleet fan-out) rely on this to tag related claims
+     * so they can be listed back by label within a namespace.
+     */
+    var `labels`: Map<kotlin.String, kotlin.String>? = null
+    ,
+    /**
+     * Files delivered into the bound sandbox under `/run/cua/<key>` (mode
+     * 0600) once the claim binds, without restarting it. The key
+     * `claim_env_token_key()` (`env-token`) carries the cua-env-driver token.
+     * The client stores them in a claim-scoped `cua-claim-<claim>` Secret
+     * that the claim references by `spec.secretRef`; `delete_claim` removes
+     * it. The pool's template must set `vmTemplate.claimSecrets`. Values are
+     * never serialized with the request nor printed by `Debug`.
+     */
+    var `secretFiles`: Map<kotlin.String, kotlin.String>? = null
 
 ){
 
@@ -6723,19 +6985,25 @@ public object FfiConverterTypeCreateClaimRequest: FfiConverterRustBuffer<CreateC
             FfiConverterTypePool.read(buf),
             FfiConverterOptionalTypeClaimSpec.read(buf),
             FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalMapStringString.read(buf),
+            FfiConverterOptionalMapStringString.read(buf),
         )
     }
 
     override fun allocationSize(value: CreateClaimRequest) = (
             FfiConverterTypePool.allocationSize(value.`pool`) +
             FfiConverterOptionalTypeClaimSpec.allocationSize(value.`spec`) +
-            FfiConverterOptionalString.allocationSize(value.`name`)
+            FfiConverterOptionalString.allocationSize(value.`name`) +
+            FfiConverterOptionalMapStringString.allocationSize(value.`labels`) +
+            FfiConverterOptionalMapStringString.allocationSize(value.`secretFiles`)
     )
 
     override fun write(value: CreateClaimRequest, buf: ByteBuffer) {
             FfiConverterTypePool.write(value.`pool`, buf)
             FfiConverterOptionalTypeClaimSpec.write(value.`spec`, buf)
             FfiConverterOptionalString.write(value.`name`, buf)
+            FfiConverterOptionalMapStringString.write(value.`labels`, buf)
+            FfiConverterOptionalMapStringString.write(value.`secretFiles`, buf)
     }
 }
 
@@ -7033,6 +7301,89 @@ public object FfiConverterTypeCyclopsTokenProviderConfiguration: FfiConverterRus
             FfiConverterUInt.write(value.`poolPollLimit`, buf)
             FfiConverterULong.write(value.`claimPollIntervalMs`, buf)
             FfiConverterUInt.write(value.`claimPollLimit`, buf)
+    }
+}
+
+
+
+/**
+ * A fleet's identity plus the claims currently known to belong to it.
+ */
+data class FleetClaims (
+    var `fleetId`: kotlin.String
+    ,
+    var `claims`: List<Claim>
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFleetClaims: FfiConverterRustBuffer<FleetClaims> {
+    override fun read(buf: ByteBuffer): FleetClaims {
+        return FleetClaims(
+            FfiConverterString.read(buf),
+            FfiConverterSequenceTypeClaim.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FleetClaims) = (
+            FfiConverterString.allocationSize(value.`fleetId`) +
+            FfiConverterSequenceTypeClaim.allocationSize(value.`claims`)
+    )
+
+    override fun write(value: FleetClaims, buf: ByteBuffer) {
+            FfiConverterString.write(value.`fleetId`, buf)
+            FfiConverterSequenceTypeClaim.write(value.`claims`, buf)
+    }
+}
+
+
+
+/**
+ * One pool's share of a fleet: claim `replicas` sandboxes from the warm pool
+ * named `pool`. On this platform the pool name is also its namespace.
+ */
+data class FleetPoolRequest (
+    var `pool`: kotlin.String
+    ,
+    var `replicas`: kotlin.UInt
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFleetPoolRequest: FfiConverterRustBuffer<FleetPoolRequest> {
+    override fun read(buf: ByteBuffer): FleetPoolRequest {
+        return FleetPoolRequest(
+            FfiConverterString.read(buf),
+            FfiConverterUInt.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FleetPoolRequest) = (
+            FfiConverterString.allocationSize(value.`pool`) +
+            FfiConverterUInt.allocationSize(value.`replicas`)
+    )
+
+    override fun write(value: FleetPoolRequest, buf: ByteBuffer) {
+            FfiConverterString.write(value.`pool`, buf)
+            FfiConverterUInt.write(value.`replicas`, buf)
     }
 }
 
@@ -7688,6 +8039,56 @@ public object FfiConverterTypeSandbox: FfiConverterRustBuffer<Sandbox> {
             FfiConverterString.write(value.`claim`, buf)
             FfiConverterString.write(value.`name`, buf)
             FfiConverterSequenceString.write(value.`services`, buf)
+    }
+}
+
+
+
+/**
+ * Where a native client opens its own WebSocket to a sandbox service through
+ * the gateway's `/api/svc` proxy. `url` is the `ws(s)://` endpoint;
+ * `auth_header_name`/`auth_header_value` carry the bearer the socket's HTTP
+ * upgrade request must send. Deliberately not serde-serializable: the value
+ * holds a live credential and must not be logged or persisted.
+ */
+data class ServiceStreamTarget (
+    var `url`: kotlin.String
+    ,
+    var `authHeaderName`: kotlin.String
+    ,
+    var `authHeaderValue`: kotlin.String
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeServiceStreamTarget: FfiConverterRustBuffer<ServiceStreamTarget> {
+    override fun read(buf: ByteBuffer): ServiceStreamTarget {
+        return ServiceStreamTarget(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ServiceStreamTarget) = (
+            FfiConverterString.allocationSize(value.`url`) +
+            FfiConverterString.allocationSize(value.`authHeaderName`) +
+            FfiConverterString.allocationSize(value.`authHeaderValue`)
+    )
+
+    override fun write(value: ServiceStreamTarget, buf: ByteBuffer) {
+            FfiConverterString.write(value.`url`, buf)
+            FfiConverterString.write(value.`authHeaderName`, buf)
+            FfiConverterString.write(value.`authHeaderValue`, buf)
     }
 }
 
@@ -8769,6 +9170,34 @@ public object FfiConverterSequenceTypeClaim: FfiConverterRustBuffer<List<Claim>>
 /**
  * @suppress
  */
+public object FfiConverterSequenceTypeFleetPoolRequest: FfiConverterRustBuffer<List<FleetPoolRequest>> {
+    override fun read(buf: ByteBuffer): List<FleetPoolRequest> {
+        val len = buf.getInt()
+        return List<FleetPoolRequest>(len) {
+            FfiConverterTypeFleetPoolRequest.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<FleetPoolRequest>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeFleetPoolRequest.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<FleetPoolRequest>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeFleetPoolRequest.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypeHttpHeader: FfiConverterRustBuffer<List<HttpHeader>> {
     override fun read(buf: ByteBuffer): List<HttpHeader> {
         val len = buf.getInt()
@@ -9043,6 +9472,34 @@ public object FfiConverterMapStringString: FfiConverterRustBuffer<Map<kotlin.Str
 
 
 
+
+
+        /**
+         * The `secret_files` key (and in-guest file name, `/run/cua/env-token`)
+         * that carries the cua-env-driver token for a claimed sandbox.
+         */ fun `claimEnvTokenKey`(): kotlin.String {
+            return FfiConverterString.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_func_claim_env_token_key(
+
+        _status)
+}
+    )
+    }
+
+
+        /**
+         * The label key a fleet's claims share, for callers that filter or clean up
+         * with raw Kubernetes tooling instead of `list_fleet_claims`.
+         */ fun `fleetLabelKey`(): kotlin.String {
+            return FfiConverterString.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_func_fleet_label_key(
+
+        _status)
+}
+    )
+    }
 
  fun `healthyPoolDisplayStatus`(): PoolDisplayStatus {
             return FfiConverterTypePoolDisplayStatus.lift(

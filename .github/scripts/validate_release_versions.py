@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify that checked-in Driver, Lume, and Sandbox release versions agree."""
+"""Verify that checked-in product release versions agree."""
 
 from __future__ import annotations
 
@@ -99,6 +99,7 @@ def driver_versions(root: Path) -> tuple[str, dict[str, str]]:
     local_names = {
         tomllib.loads((member / "Cargo.toml").read_text())["package"]["name"] for member in members
     }
+    local_names.discard("cua-perception")
     lock = tomllib.loads((base / "rust/Cargo.lock").read_text())
     for package in lock["package"]:
         if package["name"] in local_names:
@@ -109,6 +110,21 @@ def driver_versions(root: Path) -> tuple[str, dict[str, str]]:
     if missing:
         raise VersionError(f"Cargo.lock is missing workspace packages: {sorted(missing)}")
     return expected, values
+
+
+def perception_versions(root: Path) -> tuple[str, dict[str, str]]:
+    base = root / "libs/cua-driver/rust/crates/cua-perception"
+    expected = (base / "VERSION").read_text().strip()
+    project = tomllib.loads((base / "Cargo.toml").read_text())
+    lock = tomllib.loads((root / "libs/cua-driver/rust/Cargo.lock").read_text())
+    packages = [entry for entry in lock["package"] if entry["name"] == "cua-perception"]
+    if len(packages) != 1:
+        raise VersionError("Cargo.lock must contain exactly one cua-perception package")
+    stable_version_tuple(expected)
+    return expected, {
+        "Cargo.toml": str(project["package"]["version"]),
+        "Cargo.lock:cua-perception": str(packages[0]["version"]),
+    }
 
 
 def lume_versions(root: Path) -> tuple[str, dict[str, str]]:
@@ -167,6 +183,12 @@ def validate(root: Path, product: str) -> None:
                 f"Cua Driver baked installers advertise {installer_version}, "
                 f"ahead of source release {expected}"
             )
+    if product in {"all", "perception"}:
+        expected, values = perception_versions(root)
+        values[".release-please-manifest.json"] = str(
+            manifest["libs/cua-driver/rust/crates/cua-perception"]
+        )
+        require_equal("Cua Perception", expected, values)
     if product in {"all", "lume"}:
         expected, values = lume_versions(root)
         values[".release-please-manifest.json"] = str(manifest["libs/lume"])
@@ -180,7 +202,11 @@ def validate(root: Path, product: str) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-root", type=Path, default=Path.cwd())
-    parser.add_argument("--product", choices=("all", "driver", "lume", "sandbox"), default="all")
+    parser.add_argument(
+        "--product",
+        choices=("all", "driver", "perception", "lume", "sandbox"),
+        default="all",
+    )
     args = parser.parse_args(argv)
     try:
         validate(args.repo_root.resolve(), args.product)

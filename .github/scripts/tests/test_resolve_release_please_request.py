@@ -15,6 +15,7 @@ SPEC.loader.exec_module(MODULE)
 class TestResolveReleasePleaseRequest(unittest.TestCase):
     def setUp(self) -> None:
         self.manifest = {
+            "libs/cua-driver/rust/crates/cua-perception": "0.1.0",
             "libs/cua-driver": "0.9.0",
             "libs/lume": "0.4.7",
             "libs/python/cua-sandbox": "0.4.3",
@@ -24,10 +25,14 @@ class TestResolveReleasePleaseRequest(unittest.TestCase):
         driver = MODULE.resolve_request(self.manifest, "cua-driver-rs", "automatic")
         lume = MODULE.resolve_request(self.manifest, "lume", "automatic")
         sandbox = MODULE.resolve_request(self.manifest, "sandbox", "automatic")
+        perception = MODULE.resolve_request(self.manifest, "cua-perception", "automatic")
 
         self.assertEqual(driver["path"], "libs/cua-driver")
         self.assertEqual(lume["path"], "libs/lume")
         self.assertEqual(sandbox["path"], "libs/python/cua-sandbox")
+        self.assertEqual(
+            perception["path"], "libs/cua-driver/rust/crates/cua-perception"
+        )
         self.assertEqual(sandbox["current_version"], "0.4.3")
         self.assertIsNone(sandbox["release_as"])
         self.assertIsNone(driver["release_as"])

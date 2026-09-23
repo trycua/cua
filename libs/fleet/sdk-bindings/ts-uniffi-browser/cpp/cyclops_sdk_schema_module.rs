@@ -67,6 +67,11 @@ extern "C" {
         ptr: u64,
         status_: &mut u::RustCallStatus,
     ) -> u::RustBuffer;
+    fn uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_claim_secrets(
+        ptr: u64,
+        value: i8,
+        status_: &mut u::RustCallStatus,
+    ) -> u64;
     fn uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_command(
         ptr: u64,
         value: u::RustBuffer,
@@ -250,6 +255,7 @@ extern "C" {
     fn uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_build() -> u16;
     fn uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_name() -> u16;
     fn uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build() -> u16;
+    fn uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_claim_secrets() -> u16;
     fn uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_command() -> u16;
     fn uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_container_disk_image() -> u16;
     fn uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_cpu_cores() -> u16;
@@ -509,6 +515,23 @@ pub fn ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_build(
     let value_ = unsafe {
         uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_build(
             u64::into_rust(ptr),
+            &mut u_status_,
+        )
+    };
+    f_status_.copy_from(u_status_);
+    value_.into_js()
+}
+#[wasm_bindgen]
+pub fn ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_claim_secrets(
+    ptr: js::Handle,
+    value: js::Int8,
+    f_status_: &mut js::RustCallStatus,
+) -> js::Handle {
+    let mut u_status_ = u::RustCallStatus::default();
+    let value_ = unsafe {
+        uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_claim_secrets(
+            u64::into_rust(ptr),
+            i8::into_rust(value),
             &mut u_status_,
         )
     };
@@ -1154,6 +1177,11 @@ pub unsafe fn ubrn_uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefb
 pub unsafe fn ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build() -> js::UInt16
 {
     uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build().into_js()
+}
+#[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_claim_secrets(
+) -> js::UInt16 {
+    uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_claim_secrets().into_js()
 }
 #[wasm_bindgen]
 pub unsafe fn ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_command(

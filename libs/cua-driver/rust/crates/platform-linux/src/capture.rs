@@ -967,7 +967,9 @@ pub fn screenshot_root_region_png(x: i32, y: i32, width: u32, height: u32) -> Re
     let y1 = (y.saturating_add(height as i32)).clamp(0, sh);
     let (w, h) = ((x1 - x0) as u32, (y1 - y0) as u32);
     if w == 0 || h == 0 {
-        anyhow::bail!("window rectangle {x},{y} {width}x{height} lies outside the {sw}x{sh} screen");
+        anyhow::bail!(
+            "window rectangle {x},{y} {width}x{height} lies outside the {sw}x{sh} screen"
+        );
     }
     let img = conn
         .get_image(

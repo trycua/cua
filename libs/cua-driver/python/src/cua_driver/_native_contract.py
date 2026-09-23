@@ -1925,6 +1925,40 @@ class ClickPosition:
                 return False
             return True
 
+    @dataclass
+    class CAPTURED_COORDINATES:
+
+        def __init__(self, x:float, y:float, capture_id:str):
+            self.x = x
+
+
+            self.y = y
+
+
+            self.capture_id = capture_id
+
+
+            pass
+
+
+
+
+
+        def __str__(self):
+            return "ClickPosition.CAPTURED_COORDINATES(x={}, y={}, capture_id={})".format(self.x, self.y, self.capture_id)
+        def __eq__(self, other):
+            if not isinstance(other, ClickPosition):
+                return NotImplemented
+            if not other.is_CAPTURED_COORDINATES():
+                return False
+            if self.x != other.x:
+                return False
+            if self.y != other.y:
+                return False
+            if self.capture_id != other.capture_id:
+                return False
+            return True
+
 
 
     # For each variant, we have `is_NAME` and `is_name` methods for easily checking
@@ -1937,6 +1971,10 @@ class ClickPosition:
         return isinstance(self, ClickPosition.ELEMENT)
     def is_element(self) -> bool:
         return isinstance(self, ClickPosition.ELEMENT)
+    def is_CAPTURED_COORDINATES(self) -> bool:
+        return isinstance(self, ClickPosition.CAPTURED_COORDINATES)
+    def is_captured_coordinates(self) -> bool:
+        return isinstance(self, ClickPosition.CAPTURED_COORDINATES)
 
 
 # Now, a little trick - we make each nested variant class be a subclass of the main
@@ -1944,6 +1982,7 @@ class ClickPosition:
 # We might be able to do this a little more neatly with a metaclass, but this'll do.
 ClickPosition.COORDINATES = type("ClickPosition.COORDINATES", (ClickPosition.COORDINATES, ClickPosition,), {})  # type: ignore
 ClickPosition.ELEMENT = type("ClickPosition.ELEMENT", (ClickPosition.ELEMENT, ClickPosition,), {})  # type: ignore
+ClickPosition.CAPTURED_COORDINATES = type("ClickPosition.CAPTURED_COORDINATES", (ClickPosition.CAPTURED_COORDINATES, ClickPosition,), {})  # type: ignore
 
 
 
@@ -1961,6 +2000,12 @@ class _UniffiFfiConverterTypeClickPosition(_UniffiConverterRustBuffer):
             return ClickPosition.ELEMENT(
                 _UniffiFfiConverterString.read(buf),
             )
+        if variant == 3:
+            return ClickPosition.CAPTURED_COORDINATES(
+                _UniffiFfiConverterFloat64.read(buf),
+                _UniffiFfiConverterFloat64.read(buf),
+                _UniffiFfiConverterString.read(buf),
+            )
         raise InternalError("Raw enum value doesn't match any cases")
 
     @staticmethod
@@ -1971,6 +2016,11 @@ class _UniffiFfiConverterTypeClickPosition(_UniffiConverterRustBuffer):
             return
         if value.is_ELEMENT():
             _UniffiFfiConverterString.check_lower(value.element_token)
+            return
+        if value.is_CAPTURED_COORDINATES():
+            _UniffiFfiConverterFloat64.check_lower(value.x)
+            _UniffiFfiConverterFloat64.check_lower(value.y)
+            _UniffiFfiConverterString.check_lower(value.capture_id)
             return
         raise ValueError(value)
 
@@ -1983,6 +2033,11 @@ class _UniffiFfiConverterTypeClickPosition(_UniffiConverterRustBuffer):
         if value.is_ELEMENT():
             buf.write_i32(2)
             _UniffiFfiConverterString.write(value.element_token, buf)
+        if value.is_CAPTURED_COORDINATES():
+            buf.write_i32(3)
+            _UniffiFfiConverterFloat64.write(value.x, buf)
+            _UniffiFfiConverterFloat64.write(value.y, buf)
+            _UniffiFfiConverterString.write(value.capture_id, buf)
 
 
 
@@ -3639,7 +3694,7 @@ class _UniffiFfiConverterTypeGetSessionStateInput(_UniffiConverterRustBuffer):
 
 @dataclass
 class GetWindowStateInput:
-    def __init__(self, *, pid:int, window_id:int, session:typing.Optional[str], query:typing.Optional[str], include_accessibility_tree:typing.Optional[bool], include_screenshot:typing.Optional[bool], screenshot_out_file:typing.Optional[str], max_elements:typing.Optional[int], max_depth:typing.Optional[int], max_dimension:typing.Optional[int], timeout_ms:typing.Optional[int]):
+    def __init__(self, *, pid:int, window_id:int, session:typing.Optional[str], query:typing.Optional[str], include_accessibility_tree:typing.Optional[bool], include_screenshot:typing.Optional[bool], screenshot_out_file:typing.Optional[str], max_elements:typing.Optional[int], max_depth:typing.Optional[int], max_dimension:typing.Optional[int], max_image_dimension:typing.Optional[int], timeout_ms:typing.Optional[int]):
         self.pid = pid
         self.window_id = window_id
         self.session = session
@@ -3650,13 +3705,14 @@ class GetWindowStateInput:
         self.max_elements = max_elements
         self.max_depth = max_depth
         self.max_dimension = max_dimension
+        self.max_image_dimension = max_image_dimension
         self.timeout_ms = timeout_ms
 
 
 
 
     def __str__(self):
-        return "GetWindowStateInput(pid={}, window_id={}, session={}, query={}, include_accessibility_tree={}, include_screenshot={}, screenshot_out_file={}, max_elements={}, max_depth={}, max_dimension={}, timeout_ms={})".format(self.pid, self.window_id, self.session, self.query, self.include_accessibility_tree, self.include_screenshot, self.screenshot_out_file, self.max_elements, self.max_depth, self.max_dimension, self.timeout_ms)
+        return "GetWindowStateInput(pid={}, window_id={}, session={}, query={}, include_accessibility_tree={}, include_screenshot={}, screenshot_out_file={}, max_elements={}, max_depth={}, max_dimension={}, max_image_dimension={}, timeout_ms={})".format(self.pid, self.window_id, self.session, self.query, self.include_accessibility_tree, self.include_screenshot, self.screenshot_out_file, self.max_elements, self.max_depth, self.max_dimension, self.max_image_dimension, self.timeout_ms)
     def __eq__(self, other):
         if self.pid != other.pid:
             return False
@@ -3678,6 +3734,8 @@ class GetWindowStateInput:
             return False
         if self.max_dimension != other.max_dimension:
             return False
+        if self.max_image_dimension != other.max_image_dimension:
+            return False
         if self.timeout_ms != other.timeout_ms:
             return False
         return True
@@ -3696,6 +3754,7 @@ class _UniffiFfiConverterTypeGetWindowStateInput(_UniffiConverterRustBuffer):
             max_elements=_UniffiFfiConverterOptionalUInt32.read(buf),
             max_depth=_UniffiFfiConverterOptionalUInt32.read(buf),
             max_dimension=_UniffiFfiConverterOptionalUInt32.read(buf),
+            max_image_dimension=_UniffiFfiConverterOptionalUInt32.read(buf),
             timeout_ms=_UniffiFfiConverterOptionalUInt32.read(buf),
         )
 
@@ -3711,6 +3770,7 @@ class _UniffiFfiConverterTypeGetWindowStateInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalUInt32.check_lower(value.max_elements)
         _UniffiFfiConverterOptionalUInt32.check_lower(value.max_depth)
         _UniffiFfiConverterOptionalUInt32.check_lower(value.max_dimension)
+        _UniffiFfiConverterOptionalUInt32.check_lower(value.max_image_dimension)
         _UniffiFfiConverterOptionalUInt32.check_lower(value.timeout_ms)
 
     @staticmethod
@@ -3725,6 +3785,7 @@ class _UniffiFfiConverterTypeGetWindowStateInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalUInt32.write(value.max_elements, buf)
         _UniffiFfiConverterOptionalUInt32.write(value.max_depth, buf)
         _UniffiFfiConverterOptionalUInt32.write(value.max_dimension, buf)
+        _UniffiFfiConverterOptionalUInt32.write(value.max_image_dimension, buf)
         _UniffiFfiConverterOptionalUInt32.write(value.timeout_ms, buf)
 
 @dataclass
@@ -4659,6 +4720,1015 @@ class _UniffiFfiConverterTypeMoveCursorInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalTypeActionTarget.write(value.target, buf)
         _UniffiFfiConverterOptionalTypeDesktopScope.write(value.scope, buf)
         _UniffiFfiConverterOptionalString.write(value.session, buf)
+
+
+
+
+
+
+class VisualRegionKind(enum.Enum):
+
+    TEXT = 0
+
+    ICON = 1
+
+
+
+class _UniffiFfiConverterTypeVisualRegionKind(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return VisualRegionKind.TEXT
+        if variant == 2:
+            return VisualRegionKind.ICON
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if value == VisualRegionKind.TEXT:
+            return
+        if value == VisualRegionKind.ICON:
+            return
+        raise ValueError(value)
+
+    @staticmethod
+    def write(value, buf):
+        if value == VisualRegionKind.TEXT:
+            buf.write_i32(1)
+        if value == VisualRegionKind.ICON:
+            buf.write_i32(2)
+
+
+
+class _UniffiFfiConverterSequenceTypeVisualRegionKind(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterTypeVisualRegionKind.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterTypeVisualRegionKind.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterTypeVisualRegionKind.read(buf) for i in range(count)
+        ]
+
+class _UniffiFfiConverterOptionalSequenceTypeVisualRegionKind(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterSequenceTypeVisualRegionKind.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterSequenceTypeVisualRegionKind.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterSequenceTypeVisualRegionKind.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
+@dataclass
+class ParseVisualRegionsOptions:
+    """
+    Optional, model-neutral controls for one bounded parse.
+"""
+    def __init__(self, *, kinds:typing.Optional[typing.List[VisualRegionKind]], min_confidence:typing.Optional[float], max_regions:typing.Optional[int]):
+        self.kinds = kinds
+        self.min_confidence = min_confidence
+        self.max_regions = max_regions
+
+
+
+
+    def __str__(self):
+        return "ParseVisualRegionsOptions(kinds={}, min_confidence={}, max_regions={})".format(self.kinds, self.min_confidence, self.max_regions)
+    def __eq__(self, other):
+        if self.kinds != other.kinds:
+            return False
+        if self.min_confidence != other.min_confidence:
+            return False
+        if self.max_regions != other.max_regions:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeParseVisualRegionsOptions(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return ParseVisualRegionsOptions(
+            kinds=_UniffiFfiConverterOptionalSequenceTypeVisualRegionKind.read(buf),
+            min_confidence=_UniffiFfiConverterOptionalFloat64.read(buf),
+            max_regions=_UniffiFfiConverterOptionalUInt32.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterOptionalSequenceTypeVisualRegionKind.check_lower(value.kinds)
+        _UniffiFfiConverterOptionalFloat64.check_lower(value.min_confidence)
+        _UniffiFfiConverterOptionalUInt32.check_lower(value.max_regions)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterOptionalSequenceTypeVisualRegionKind.write(value.kinds, buf)
+        _UniffiFfiConverterOptionalFloat64.write(value.min_confidence, buf)
+        _UniffiFfiConverterOptionalUInt32.write(value.max_regions, buf)
+
+@dataclass
+class ParseVisualRegionsInput:
+    """
+    Transport-free request. Runtime use requires the future capture registry.
+"""
+    def __init__(self, *, capture_id:str, options:ParseVisualRegionsOptions):
+        self.capture_id = capture_id
+        self.options = options
+
+
+
+
+    def __str__(self):
+        return "ParseVisualRegionsInput(capture_id={}, options={})".format(self.capture_id, self.options)
+    def __eq__(self, other):
+        if self.capture_id != other.capture_id:
+            return False
+        if self.options != other.options:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeParseVisualRegionsInput(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return ParseVisualRegionsInput(
+            capture_id=_UniffiFfiConverterString.read(buf),
+            options=_UniffiFfiConverterTypeParseVisualRegionsOptions.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.capture_id)
+        _UniffiFfiConverterTypeParseVisualRegionsOptions.check_lower(value.options)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.capture_id, buf)
+        _UniffiFfiConverterTypeParseVisualRegionsOptions.write(value.options, buf)
+
+
+
+
+
+
+class VisualCaptureSource:
+    """
+    Exact screen content that produced the immutable capture.
+"""
+    def __init__(self):
+        raise RuntimeError("VisualCaptureSource cannot be instantiated directly")
+
+    # Each enum variant is a nested class of the enum itself.
+    @dataclass
+    class WINDOW:
+
+        def __init__(self, pid:int, window_id:int):
+            self.pid = pid
+
+
+            self.window_id = window_id
+
+
+            pass
+
+
+
+
+
+        def __str__(self):
+            return "VisualCaptureSource.WINDOW(pid={}, window_id={})".format(self.pid, self.window_id)
+        def __eq__(self, other):
+            if not isinstance(other, VisualCaptureSource):
+                return NotImplemented
+            if not other.is_WINDOW():
+                return False
+            if self.pid != other.pid:
+                return False
+            if self.window_id != other.window_id:
+                return False
+            return True
+
+    @dataclass
+    class PRIMARY_DESKTOP:
+
+        def __init__(self, display_id:str):
+            self.display_id = display_id
+
+
+            pass
+
+
+
+
+
+        def __str__(self):
+            return "VisualCaptureSource.PRIMARY_DESKTOP(display_id={})".format(self.display_id)
+        def __eq__(self, other):
+            if not isinstance(other, VisualCaptureSource):
+                return NotImplemented
+            if not other.is_PRIMARY_DESKTOP():
+                return False
+            if self.display_id != other.display_id:
+                return False
+            return True
+
+
+
+    # For each variant, we have `is_NAME` and `is_name` methods for easily checking
+    # whether an instance is that variant.
+    def is_WINDOW(self) -> bool:
+        return isinstance(self, VisualCaptureSource.WINDOW)
+    def is_window(self) -> bool:
+        return isinstance(self, VisualCaptureSource.WINDOW)
+    def is_PRIMARY_DESKTOP(self) -> bool:
+        return isinstance(self, VisualCaptureSource.PRIMARY_DESKTOP)
+    def is_primary_desktop(self) -> bool:
+        return isinstance(self, VisualCaptureSource.PRIMARY_DESKTOP)
+
+
+# Now, a little trick - we make each nested variant class be a subclass of the main
+# enum class, so that method calls and instance checks etc will work intuitively.
+# We might be able to do this a little more neatly with a metaclass, but this'll do.
+VisualCaptureSource.WINDOW = type("VisualCaptureSource.WINDOW", (VisualCaptureSource.WINDOW, VisualCaptureSource,), {})  # type: ignore
+VisualCaptureSource.PRIMARY_DESKTOP = type("VisualCaptureSource.PRIMARY_DESKTOP", (VisualCaptureSource.PRIMARY_DESKTOP, VisualCaptureSource,), {})  # type: ignore
+
+
+
+
+class _UniffiFfiConverterTypeVisualCaptureSource(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return VisualCaptureSource.WINDOW(
+                _UniffiFfiConverterUInt32.read(buf),
+                _UniffiFfiConverterUInt64.read(buf),
+            )
+        if variant == 2:
+            return VisualCaptureSource.PRIMARY_DESKTOP(
+                _UniffiFfiConverterString.read(buf),
+            )
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if value.is_WINDOW():
+            _UniffiFfiConverterUInt32.check_lower(value.pid)
+            _UniffiFfiConverterUInt64.check_lower(value.window_id)
+            return
+        if value.is_PRIMARY_DESKTOP():
+            _UniffiFfiConverterString.check_lower(value.display_id)
+            return
+        raise ValueError(value)
+
+    @staticmethod
+    def write(value, buf):
+        if value.is_WINDOW():
+            buf.write_i32(1)
+            _UniffiFfiConverterUInt32.write(value.pid, buf)
+            _UniffiFfiConverterUInt64.write(value.window_id, buf)
+        if value.is_PRIMARY_DESKTOP():
+            buf.write_i32(2)
+            _UniffiFfiConverterString.write(value.display_id, buf)
+
+
+
+@dataclass
+class VisualScreenshotReference:
+    """
+    Screenshot identity and geometry retained by the future capture registry.
+"""
+    def __init__(self, *, reference:str, width:int, height:int, mime_type:str, sha256:typing.Optional[str]):
+        self.reference = reference
+        self.width = width
+        self.height = height
+        self.mime_type = mime_type
+        self.sha256 = sha256
+
+
+
+
+    def __str__(self):
+        return "VisualScreenshotReference(reference={}, width={}, height={}, mime_type={}, sha256={})".format(self.reference, self.width, self.height, self.mime_type, self.sha256)
+    def __eq__(self, other):
+        if self.reference != other.reference:
+            return False
+        if self.width != other.width:
+            return False
+        if self.height != other.height:
+            return False
+        if self.mime_type != other.mime_type:
+            return False
+        if self.sha256 != other.sha256:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeVisualScreenshotReference(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return VisualScreenshotReference(
+            reference=_UniffiFfiConverterString.read(buf),
+            width=_UniffiFfiConverterUInt32.read(buf),
+            height=_UniffiFfiConverterUInt32.read(buf),
+            mime_type=_UniffiFfiConverterString.read(buf),
+            sha256=_UniffiFfiConverterOptionalString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.reference)
+        _UniffiFfiConverterUInt32.check_lower(value.width)
+        _UniffiFfiConverterUInt32.check_lower(value.height)
+        _UniffiFfiConverterString.check_lower(value.mime_type)
+        _UniffiFfiConverterOptionalString.check_lower(value.sha256)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.reference, buf)
+        _UniffiFfiConverterUInt32.write(value.width, buf)
+        _UniffiFfiConverterUInt32.write(value.height, buf)
+        _UniffiFfiConverterString.write(value.mime_type, buf)
+        _UniffiFfiConverterOptionalString.write(value.sha256, buf)
+
+
+
+
+
+
+class VisualActionCoordinateSpace:
+    """
+    Normative mapping from source screenshot pixels to Driver action coordinates.
+
+    Screenshot coordinates always originate at the encoded PNG's top-left; X
+    increases right and Y increases down. The affine form maps a source point
+    `(px, py)` exactly as:
+
+    `action_x = m11 * px + m12 * py + tx`
+
+    `action_y = m21 * px + m22 * py + ty`
+"""
+    def __init__(self):
+        raise RuntimeError("VisualActionCoordinateSpace cannot be instantiated directly")
+
+    # Each enum variant is a nested class of the enum itself.
+    @dataclass
+    class SCREENSHOT_PIXELS:
+        """
+        Action coordinates are the same physical pixel coordinates as the PNG.
+"""
+
+        def __init__(self, ):
+            pass
+
+
+
+
+
+        def __str__(self):
+            return "VisualActionCoordinateSpace.SCREENSHOT_PIXELS()".format()
+        def __eq__(self, other):
+            if not isinstance(other, VisualActionCoordinateSpace):
+                return NotImplemented
+            if not other.is_SCREENSHOT_PIXELS():
+                return False
+            return True
+
+    @dataclass
+    class AFFINE:
+        """
+        Lossless six-coefficient affine transform retained by the capture registry.
+"""
+
+        def __init__(self, m11:float, m12:float, m21:float, m22:float, tx:float, ty:float):
+            self.m11 = m11
+
+
+            self.m12 = m12
+
+
+            self.m21 = m21
+
+
+            self.m22 = m22
+
+
+            self.tx = tx
+
+
+            self.ty = ty
+
+
+            pass
+
+
+
+
+
+        def __str__(self):
+            return "VisualActionCoordinateSpace.AFFINE(m11={}, m12={}, m21={}, m22={}, tx={}, ty={})".format(self.m11, self.m12, self.m21, self.m22, self.tx, self.ty)
+        def __eq__(self, other):
+            if not isinstance(other, VisualActionCoordinateSpace):
+                return NotImplemented
+            if not other.is_AFFINE():
+                return False
+            if self.m11 != other.m11:
+                return False
+            if self.m12 != other.m12:
+                return False
+            if self.m21 != other.m21:
+                return False
+            if self.m22 != other.m22:
+                return False
+            if self.tx != other.tx:
+                return False
+            if self.ty != other.ty:
+                return False
+            return True
+
+
+
+    # For each variant, we have `is_NAME` and `is_name` methods for easily checking
+    # whether an instance is that variant.
+    def is_SCREENSHOT_PIXELS(self) -> bool:
+        return isinstance(self, VisualActionCoordinateSpace.SCREENSHOT_PIXELS)
+    def is_screenshot_pixels(self) -> bool:
+        return isinstance(self, VisualActionCoordinateSpace.SCREENSHOT_PIXELS)
+    def is_AFFINE(self) -> bool:
+        return isinstance(self, VisualActionCoordinateSpace.AFFINE)
+    def is_affine(self) -> bool:
+        return isinstance(self, VisualActionCoordinateSpace.AFFINE)
+
+
+# Now, a little trick - we make each nested variant class be a subclass of the main
+# enum class, so that method calls and instance checks etc will work intuitively.
+# We might be able to do this a little more neatly with a metaclass, but this'll do.
+VisualActionCoordinateSpace.SCREENSHOT_PIXELS = type("VisualActionCoordinateSpace.SCREENSHOT_PIXELS", (VisualActionCoordinateSpace.SCREENSHOT_PIXELS, VisualActionCoordinateSpace,), {})  # type: ignore
+VisualActionCoordinateSpace.AFFINE = type("VisualActionCoordinateSpace.AFFINE", (VisualActionCoordinateSpace.AFFINE, VisualActionCoordinateSpace,), {})  # type: ignore
+
+
+
+
+class _UniffiFfiConverterTypeVisualActionCoordinateSpace(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return VisualActionCoordinateSpace.SCREENSHOT_PIXELS(
+            )
+        if variant == 2:
+            return VisualActionCoordinateSpace.AFFINE(
+                _UniffiFfiConverterFloat64.read(buf),
+                _UniffiFfiConverterFloat64.read(buf),
+                _UniffiFfiConverterFloat64.read(buf),
+                _UniffiFfiConverterFloat64.read(buf),
+                _UniffiFfiConverterFloat64.read(buf),
+                _UniffiFfiConverterFloat64.read(buf),
+            )
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if value.is_SCREENSHOT_PIXELS():
+            return
+        if value.is_AFFINE():
+            _UniffiFfiConverterFloat64.check_lower(value.m11)
+            _UniffiFfiConverterFloat64.check_lower(value.m12)
+            _UniffiFfiConverterFloat64.check_lower(value.m21)
+            _UniffiFfiConverterFloat64.check_lower(value.m22)
+            _UniffiFfiConverterFloat64.check_lower(value.tx)
+            _UniffiFfiConverterFloat64.check_lower(value.ty)
+            return
+        raise ValueError(value)
+
+    @staticmethod
+    def write(value, buf):
+        if value.is_SCREENSHOT_PIXELS():
+            buf.write_i32(1)
+        if value.is_AFFINE():
+            buf.write_i32(2)
+            _UniffiFfiConverterFloat64.write(value.m11, buf)
+            _UniffiFfiConverterFloat64.write(value.m12, buf)
+            _UniffiFfiConverterFloat64.write(value.m21, buf)
+            _UniffiFfiConverterFloat64.write(value.m22, buf)
+            _UniffiFfiConverterFloat64.write(value.tx, buf)
+            _UniffiFfiConverterFloat64.write(value.ty, buf)
+
+
+
+@dataclass
+class VisualCaptureProvenance:
+    """
+    Immutable capture provenance echoed by a parse result.
+"""
+    def __init__(self, *, capture_id:str, source:VisualCaptureSource, screenshot:VisualScreenshotReference, action_coordinate_space:VisualActionCoordinateSpace, captured_at:typing.Optional[str]):
+        self.capture_id = capture_id
+        self.source = source
+        self.screenshot = screenshot
+        self.action_coordinate_space = action_coordinate_space
+        self.captured_at = captured_at
+
+
+
+
+    def __str__(self):
+        return "VisualCaptureProvenance(capture_id={}, source={}, screenshot={}, action_coordinate_space={}, captured_at={})".format(self.capture_id, self.source, self.screenshot, self.action_coordinate_space, self.captured_at)
+    def __eq__(self, other):
+        if self.capture_id != other.capture_id:
+            return False
+        if self.source != other.source:
+            return False
+        if self.screenshot != other.screenshot:
+            return False
+        if self.action_coordinate_space != other.action_coordinate_space:
+            return False
+        if self.captured_at != other.captured_at:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeVisualCaptureProvenance(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return VisualCaptureProvenance(
+            capture_id=_UniffiFfiConverterString.read(buf),
+            source=_UniffiFfiConverterTypeVisualCaptureSource.read(buf),
+            screenshot=_UniffiFfiConverterTypeVisualScreenshotReference.read(buf),
+            action_coordinate_space=_UniffiFfiConverterTypeVisualActionCoordinateSpace.read(buf),
+            captured_at=_UniffiFfiConverterOptionalString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.capture_id)
+        _UniffiFfiConverterTypeVisualCaptureSource.check_lower(value.source)
+        _UniffiFfiConverterTypeVisualScreenshotReference.check_lower(value.screenshot)
+        _UniffiFfiConverterTypeVisualActionCoordinateSpace.check_lower(value.action_coordinate_space)
+        _UniffiFfiConverterOptionalString.check_lower(value.captured_at)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.capture_id, buf)
+        _UniffiFfiConverterTypeVisualCaptureSource.write(value.source, buf)
+        _UniffiFfiConverterTypeVisualScreenshotReference.write(value.screenshot, buf)
+        _UniffiFfiConverterTypeVisualActionCoordinateSpace.write(value.action_coordinate_space, buf)
+        _UniffiFfiConverterOptionalString.write(value.captured_at, buf)
+
+@dataclass
+class VisualParserMetadata:
+    """
+    Identity of the extension and model that produced a result.
+"""
+    def __init__(self, *, extension_id:str, extension_version:str, model_id:str, model_version:str, runtime:typing.Optional[str], backend:typing.Optional[str], model_source_revision:typing.Optional[str], model_manifest_sha256:typing.Optional[str], onnx_runtime_version:typing.Optional[str], onnx_runtime_library_sha256:typing.Optional[str], fixture_sha256:typing.Optional[str]):
+        self.extension_id = extension_id
+        self.extension_version = extension_version
+        self.model_id = model_id
+        self.model_version = model_version
+        self.runtime = runtime
+        self.backend = backend
+        self.model_source_revision = model_source_revision
+        self.model_manifest_sha256 = model_manifest_sha256
+        self.onnx_runtime_version = onnx_runtime_version
+        self.onnx_runtime_library_sha256 = onnx_runtime_library_sha256
+        self.fixture_sha256 = fixture_sha256
+
+
+
+
+    def __str__(self):
+        return "VisualParserMetadata(extension_id={}, extension_version={}, model_id={}, model_version={}, runtime={}, backend={}, model_source_revision={}, model_manifest_sha256={}, onnx_runtime_version={}, onnx_runtime_library_sha256={}, fixture_sha256={})".format(self.extension_id, self.extension_version, self.model_id, self.model_version, self.runtime, self.backend, self.model_source_revision, self.model_manifest_sha256, self.onnx_runtime_version, self.onnx_runtime_library_sha256, self.fixture_sha256)
+    def __eq__(self, other):
+        if self.extension_id != other.extension_id:
+            return False
+        if self.extension_version != other.extension_version:
+            return False
+        if self.model_id != other.model_id:
+            return False
+        if self.model_version != other.model_version:
+            return False
+        if self.runtime != other.runtime:
+            return False
+        if self.backend != other.backend:
+            return False
+        if self.model_source_revision != other.model_source_revision:
+            return False
+        if self.model_manifest_sha256 != other.model_manifest_sha256:
+            return False
+        if self.onnx_runtime_version != other.onnx_runtime_version:
+            return False
+        if self.onnx_runtime_library_sha256 != other.onnx_runtime_library_sha256:
+            return False
+        if self.fixture_sha256 != other.fixture_sha256:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeVisualParserMetadata(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return VisualParserMetadata(
+            extension_id=_UniffiFfiConverterString.read(buf),
+            extension_version=_UniffiFfiConverterString.read(buf),
+            model_id=_UniffiFfiConverterString.read(buf),
+            model_version=_UniffiFfiConverterString.read(buf),
+            runtime=_UniffiFfiConverterOptionalString.read(buf),
+            backend=_UniffiFfiConverterOptionalString.read(buf),
+            model_source_revision=_UniffiFfiConverterOptionalString.read(buf),
+            model_manifest_sha256=_UniffiFfiConverterOptionalString.read(buf),
+            onnx_runtime_version=_UniffiFfiConverterOptionalString.read(buf),
+            onnx_runtime_library_sha256=_UniffiFfiConverterOptionalString.read(buf),
+            fixture_sha256=_UniffiFfiConverterOptionalString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.extension_id)
+        _UniffiFfiConverterString.check_lower(value.extension_version)
+        _UniffiFfiConverterString.check_lower(value.model_id)
+        _UniffiFfiConverterString.check_lower(value.model_version)
+        _UniffiFfiConverterOptionalString.check_lower(value.runtime)
+        _UniffiFfiConverterOptionalString.check_lower(value.backend)
+        _UniffiFfiConverterOptionalString.check_lower(value.model_source_revision)
+        _UniffiFfiConverterOptionalString.check_lower(value.model_manifest_sha256)
+        _UniffiFfiConverterOptionalString.check_lower(value.onnx_runtime_version)
+        _UniffiFfiConverterOptionalString.check_lower(value.onnx_runtime_library_sha256)
+        _UniffiFfiConverterOptionalString.check_lower(value.fixture_sha256)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.extension_id, buf)
+        _UniffiFfiConverterString.write(value.extension_version, buf)
+        _UniffiFfiConverterString.write(value.model_id, buf)
+        _UniffiFfiConverterString.write(value.model_version, buf)
+        _UniffiFfiConverterOptionalString.write(value.runtime, buf)
+        _UniffiFfiConverterOptionalString.write(value.backend, buf)
+        _UniffiFfiConverterOptionalString.write(value.model_source_revision, buf)
+        _UniffiFfiConverterOptionalString.write(value.model_manifest_sha256, buf)
+        _UniffiFfiConverterOptionalString.write(value.onnx_runtime_version, buf)
+        _UniffiFfiConverterOptionalString.write(value.onnx_runtime_library_sha256, buf)
+        _UniffiFfiConverterOptionalString.write(value.fixture_sha256, buf)
+
+@dataclass
+class VisualRegionBounds:
+    """
+    Integer pixel-edge bounds `[x, x + width) x [y, y + height)`.
+
+    `x` and `y` name the left and top pixel edges. The right and bottom edges
+    are excluded. A region therefore covers every pixel whose center lies in
+    this half-open box; its geometric center may lie between pixels.
+"""
+    def __init__(self, *, x:int, y:int, width:int, height:int):
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+
+
+
+
+    def __str__(self):
+        return "VisualRegionBounds(x={}, y={}, width={}, height={})".format(self.x, self.y, self.width, self.height)
+    def __eq__(self, other):
+        if self.x != other.x:
+            return False
+        if self.y != other.y:
+            return False
+        if self.width != other.width:
+            return False
+        if self.height != other.height:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeVisualRegionBounds(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return VisualRegionBounds(
+            x=_UniffiFfiConverterUInt32.read(buf),
+            y=_UniffiFfiConverterUInt32.read(buf),
+            width=_UniffiFfiConverterUInt32.read(buf),
+            height=_UniffiFfiConverterUInt32.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterUInt32.check_lower(value.x)
+        _UniffiFfiConverterUInt32.check_lower(value.y)
+        _UniffiFfiConverterUInt32.check_lower(value.width)
+        _UniffiFfiConverterUInt32.check_lower(value.height)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterUInt32.write(value.x, buf)
+        _UniffiFfiConverterUInt32.write(value.y, buf)
+        _UniffiFfiConverterUInt32.write(value.width, buf)
+        _UniffiFfiConverterUInt32.write(value.height, buf)
+
+@dataclass
+class VisualRegion:
+    """
+    One parser-observed region in the exact source screenshot pixel space.
+"""
+    def __init__(self, *, id:str, kind:VisualRegionKind, bounds:VisualRegionBounds, text:typing.Optional[str], label:typing.Optional[str], confidence:float, interactive:bool, parent_id:typing.Optional[str], group_id:typing.Optional[str], reading_order:typing.Optional[int]):
+        self.id = id
+        self.kind = kind
+        self.bounds = bounds
+        self.text = text
+        self.label = label
+        self.confidence = confidence
+        self.interactive = interactive
+        self.parent_id = parent_id
+        self.group_id = group_id
+        self.reading_order = reading_order
+
+
+
+
+    def __str__(self):
+        return "VisualRegion(id={}, kind={}, bounds={}, text={}, label={}, confidence={}, interactive={}, parent_id={}, group_id={}, reading_order={})".format(self.id, self.kind, self.bounds, self.text, self.label, self.confidence, self.interactive, self.parent_id, self.group_id, self.reading_order)
+    def __eq__(self, other):
+        if self.id != other.id:
+            return False
+        if self.kind != other.kind:
+            return False
+        if self.bounds != other.bounds:
+            return False
+        if self.text != other.text:
+            return False
+        if self.label != other.label:
+            return False
+        if self.confidence != other.confidence:
+            return False
+        if self.interactive != other.interactive:
+            return False
+        if self.parent_id != other.parent_id:
+            return False
+        if self.group_id != other.group_id:
+            return False
+        if self.reading_order != other.reading_order:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeVisualRegion(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return VisualRegion(
+            id=_UniffiFfiConverterString.read(buf),
+            kind=_UniffiFfiConverterTypeVisualRegionKind.read(buf),
+            bounds=_UniffiFfiConverterTypeVisualRegionBounds.read(buf),
+            text=_UniffiFfiConverterOptionalString.read(buf),
+            label=_UniffiFfiConverterOptionalString.read(buf),
+            confidence=_UniffiFfiConverterFloat64.read(buf),
+            interactive=_UniffiFfiConverterBoolean.read(buf),
+            parent_id=_UniffiFfiConverterOptionalString.read(buf),
+            group_id=_UniffiFfiConverterOptionalString.read(buf),
+            reading_order=_UniffiFfiConverterOptionalUInt32.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.id)
+        _UniffiFfiConverterTypeVisualRegionKind.check_lower(value.kind)
+        _UniffiFfiConverterTypeVisualRegionBounds.check_lower(value.bounds)
+        _UniffiFfiConverterOptionalString.check_lower(value.text)
+        _UniffiFfiConverterOptionalString.check_lower(value.label)
+        _UniffiFfiConverterFloat64.check_lower(value.confidence)
+        _UniffiFfiConverterBoolean.check_lower(value.interactive)
+        _UniffiFfiConverterOptionalString.check_lower(value.parent_id)
+        _UniffiFfiConverterOptionalString.check_lower(value.group_id)
+        _UniffiFfiConverterOptionalUInt32.check_lower(value.reading_order)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.id, buf)
+        _UniffiFfiConverterTypeVisualRegionKind.write(value.kind, buf)
+        _UniffiFfiConverterTypeVisualRegionBounds.write(value.bounds, buf)
+        _UniffiFfiConverterOptionalString.write(value.text, buf)
+        _UniffiFfiConverterOptionalString.write(value.label, buf)
+        _UniffiFfiConverterFloat64.write(value.confidence, buf)
+        _UniffiFfiConverterBoolean.write(value.interactive, buf)
+        _UniffiFfiConverterOptionalString.write(value.parent_id, buf)
+        _UniffiFfiConverterOptionalString.write(value.group_id, buf)
+        _UniffiFfiConverterOptionalUInt32.write(value.reading_order, buf)
+
+class _UniffiFfiConverterSequenceTypeVisualRegion(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterTypeVisualRegion.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterTypeVisualRegion.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterTypeVisualRegion.read(buf) for i in range(count)
+        ]
+
+@dataclass
+class VisualParseWarning:
+    def __init__(self, *, code:str, message:str, detail:typing.Optional[str]):
+        self.code = code
+        self.message = message
+        self.detail = detail
+
+
+
+
+    def __str__(self):
+        return "VisualParseWarning(code={}, message={}, detail={})".format(self.code, self.message, self.detail)
+    def __eq__(self, other):
+        if self.code != other.code:
+            return False
+        if self.message != other.message:
+            return False
+        if self.detail != other.detail:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeVisualParseWarning(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return VisualParseWarning(
+            code=_UniffiFfiConverterString.read(buf),
+            message=_UniffiFfiConverterString.read(buf),
+            detail=_UniffiFfiConverterOptionalString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.code)
+        _UniffiFfiConverterString.check_lower(value.message)
+        _UniffiFfiConverterOptionalString.check_lower(value.detail)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.code, buf)
+        _UniffiFfiConverterString.write(value.message, buf)
+        _UniffiFfiConverterOptionalString.write(value.detail, buf)
+
+class _UniffiFfiConverterSequenceTypeVisualParseWarning(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterTypeVisualParseWarning.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterTypeVisualParseWarning.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterTypeVisualParseWarning.read(buf) for i in range(count)
+        ]
+
+@dataclass
+class VisualParseTiming:
+    def __init__(self, *, duration_ms:int, preprocess_ms:typing.Optional[int], inference_ms:typing.Optional[int]):
+        self.duration_ms = duration_ms
+        self.preprocess_ms = preprocess_ms
+        self.inference_ms = inference_ms
+
+
+
+
+    def __str__(self):
+        return "VisualParseTiming(duration_ms={}, preprocess_ms={}, inference_ms={})".format(self.duration_ms, self.preprocess_ms, self.inference_ms)
+    def __eq__(self, other):
+        if self.duration_ms != other.duration_ms:
+            return False
+        if self.preprocess_ms != other.preprocess_ms:
+            return False
+        if self.inference_ms != other.inference_ms:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeVisualParseTiming(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return VisualParseTiming(
+            duration_ms=_UniffiFfiConverterUInt64.read(buf),
+            preprocess_ms=_UniffiFfiConverterOptionalUInt64.read(buf),
+            inference_ms=_UniffiFfiConverterOptionalUInt64.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterUInt64.check_lower(value.duration_ms)
+        _UniffiFfiConverterOptionalUInt64.check_lower(value.preprocess_ms)
+        _UniffiFfiConverterOptionalUInt64.check_lower(value.inference_ms)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterUInt64.write(value.duration_ms, buf)
+        _UniffiFfiConverterOptionalUInt64.write(value.preprocess_ms, buf)
+        _UniffiFfiConverterOptionalUInt64.write(value.inference_ms, buf)
+
+@dataclass
+class ParseVisualRegionsOutput:
+    def __init__(self, *, schema:str, capture:VisualCaptureProvenance, parser:VisualParserMetadata, regions:typing.List[VisualRegion], warnings:typing.List[VisualParseWarning], timing:VisualParseTiming, request_id:typing.Optional[str]):
+        self.schema = schema
+        self.capture = capture
+        self.parser = parser
+        self.regions = regions
+        self.warnings = warnings
+        self.timing = timing
+        self.request_id = request_id
+
+
+
+
+    def __str__(self):
+        return "ParseVisualRegionsOutput(schema={}, capture={}, parser={}, regions={}, warnings={}, timing={}, request_id={})".format(self.schema, self.capture, self.parser, self.regions, self.warnings, self.timing, self.request_id)
+    def __eq__(self, other):
+        if self.schema != other.schema:
+            return False
+        if self.capture != other.capture:
+            return False
+        if self.parser != other.parser:
+            return False
+        if self.regions != other.regions:
+            return False
+        if self.warnings != other.warnings:
+            return False
+        if self.timing != other.timing:
+            return False
+        if self.request_id != other.request_id:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeParseVisualRegionsOutput(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return ParseVisualRegionsOutput(
+            schema=_UniffiFfiConverterString.read(buf),
+            capture=_UniffiFfiConverterTypeVisualCaptureProvenance.read(buf),
+            parser=_UniffiFfiConverterTypeVisualParserMetadata.read(buf),
+            regions=_UniffiFfiConverterSequenceTypeVisualRegion.read(buf),
+            warnings=_UniffiFfiConverterSequenceTypeVisualParseWarning.read(buf),
+            timing=_UniffiFfiConverterTypeVisualParseTiming.read(buf),
+            request_id=_UniffiFfiConverterOptionalString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.schema)
+        _UniffiFfiConverterTypeVisualCaptureProvenance.check_lower(value.capture)
+        _UniffiFfiConverterTypeVisualParserMetadata.check_lower(value.parser)
+        _UniffiFfiConverterSequenceTypeVisualRegion.check_lower(value.regions)
+        _UniffiFfiConverterSequenceTypeVisualParseWarning.check_lower(value.warnings)
+        _UniffiFfiConverterTypeVisualParseTiming.check_lower(value.timing)
+        _UniffiFfiConverterOptionalString.check_lower(value.request_id)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.schema, buf)
+        _UniffiFfiConverterTypeVisualCaptureProvenance.write(value.capture, buf)
+        _UniffiFfiConverterTypeVisualParserMetadata.write(value.parser, buf)
+        _UniffiFfiConverterSequenceTypeVisualRegion.write(value.regions, buf)
+        _UniffiFfiConverterSequenceTypeVisualParseWarning.write(value.warnings, buf)
+        _UniffiFfiConverterTypeVisualParseTiming.write(value.timing, buf)
+        _UniffiFfiConverterOptionalString.write(value.request_id, buf)
 
 
 
@@ -6160,6 +7230,209 @@ class _UniffiFfiConverterTypeVerifyStateOutput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterUInt64.write(value.samples, buf)
         _UniffiFfiConverterSequenceTypePredicateOutcome.write(value.predicates, buf)
 
+
+
+
+
+
+class VisualParseErrorCode(enum.Enum):
+    """
+    Stable machine-readable failures for capture lookup and visual parsing.
+"""
+
+    NOT_INSTALLED = 0
+
+    CAPTURE_NOT_FOUND = 1
+
+    CAPTURE_EXPIRED = 2
+
+    CAPTURE_STALE = 3
+
+    CAPTURE_GENERATION_MISMATCH = 4
+
+    UNSUPPORTED_TARGET = 5
+
+    UNSUPPORTED_PLATFORM = 6
+
+    INCOMPATIBLE_PROTOCOL = 7
+
+    INVALID_FRAME = 8
+
+    WORKER_LAUNCH_FAILED = 9
+
+    WORKER_CRASHED = 10
+
+    WORKER_CANCELLED = 11
+
+    TIMEOUT = 12
+
+    RESOURCE_LIMIT_EXCEEDED = 13
+
+    ARTIFACT_INVALID = 14
+
+    INFERENCE_FAILED = 15
+
+
+
+class _UniffiFfiConverterTypeVisualParseErrorCode(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return VisualParseErrorCode.NOT_INSTALLED
+        if variant == 2:
+            return VisualParseErrorCode.CAPTURE_NOT_FOUND
+        if variant == 3:
+            return VisualParseErrorCode.CAPTURE_EXPIRED
+        if variant == 4:
+            return VisualParseErrorCode.CAPTURE_STALE
+        if variant == 5:
+            return VisualParseErrorCode.CAPTURE_GENERATION_MISMATCH
+        if variant == 6:
+            return VisualParseErrorCode.UNSUPPORTED_TARGET
+        if variant == 7:
+            return VisualParseErrorCode.UNSUPPORTED_PLATFORM
+        if variant == 8:
+            return VisualParseErrorCode.INCOMPATIBLE_PROTOCOL
+        if variant == 9:
+            return VisualParseErrorCode.INVALID_FRAME
+        if variant == 10:
+            return VisualParseErrorCode.WORKER_LAUNCH_FAILED
+        if variant == 11:
+            return VisualParseErrorCode.WORKER_CRASHED
+        if variant == 12:
+            return VisualParseErrorCode.WORKER_CANCELLED
+        if variant == 13:
+            return VisualParseErrorCode.TIMEOUT
+        if variant == 14:
+            return VisualParseErrorCode.RESOURCE_LIMIT_EXCEEDED
+        if variant == 15:
+            return VisualParseErrorCode.ARTIFACT_INVALID
+        if variant == 16:
+            return VisualParseErrorCode.INFERENCE_FAILED
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if value == VisualParseErrorCode.NOT_INSTALLED:
+            return
+        if value == VisualParseErrorCode.CAPTURE_NOT_FOUND:
+            return
+        if value == VisualParseErrorCode.CAPTURE_EXPIRED:
+            return
+        if value == VisualParseErrorCode.CAPTURE_STALE:
+            return
+        if value == VisualParseErrorCode.CAPTURE_GENERATION_MISMATCH:
+            return
+        if value == VisualParseErrorCode.UNSUPPORTED_TARGET:
+            return
+        if value == VisualParseErrorCode.UNSUPPORTED_PLATFORM:
+            return
+        if value == VisualParseErrorCode.INCOMPATIBLE_PROTOCOL:
+            return
+        if value == VisualParseErrorCode.INVALID_FRAME:
+            return
+        if value == VisualParseErrorCode.WORKER_LAUNCH_FAILED:
+            return
+        if value == VisualParseErrorCode.WORKER_CRASHED:
+            return
+        if value == VisualParseErrorCode.WORKER_CANCELLED:
+            return
+        if value == VisualParseErrorCode.TIMEOUT:
+            return
+        if value == VisualParseErrorCode.RESOURCE_LIMIT_EXCEEDED:
+            return
+        if value == VisualParseErrorCode.ARTIFACT_INVALID:
+            return
+        if value == VisualParseErrorCode.INFERENCE_FAILED:
+            return
+        raise ValueError(value)
+
+    @staticmethod
+    def write(value, buf):
+        if value == VisualParseErrorCode.NOT_INSTALLED:
+            buf.write_i32(1)
+        if value == VisualParseErrorCode.CAPTURE_NOT_FOUND:
+            buf.write_i32(2)
+        if value == VisualParseErrorCode.CAPTURE_EXPIRED:
+            buf.write_i32(3)
+        if value == VisualParseErrorCode.CAPTURE_STALE:
+            buf.write_i32(4)
+        if value == VisualParseErrorCode.CAPTURE_GENERATION_MISMATCH:
+            buf.write_i32(5)
+        if value == VisualParseErrorCode.UNSUPPORTED_TARGET:
+            buf.write_i32(6)
+        if value == VisualParseErrorCode.UNSUPPORTED_PLATFORM:
+            buf.write_i32(7)
+        if value == VisualParseErrorCode.INCOMPATIBLE_PROTOCOL:
+            buf.write_i32(8)
+        if value == VisualParseErrorCode.INVALID_FRAME:
+            buf.write_i32(9)
+        if value == VisualParseErrorCode.WORKER_LAUNCH_FAILED:
+            buf.write_i32(10)
+        if value == VisualParseErrorCode.WORKER_CRASHED:
+            buf.write_i32(11)
+        if value == VisualParseErrorCode.WORKER_CANCELLED:
+            buf.write_i32(12)
+        if value == VisualParseErrorCode.TIMEOUT:
+            buf.write_i32(13)
+        if value == VisualParseErrorCode.RESOURCE_LIMIT_EXCEEDED:
+            buf.write_i32(14)
+        if value == VisualParseErrorCode.ARTIFACT_INVALID:
+            buf.write_i32(15)
+        if value == VisualParseErrorCode.INFERENCE_FAILED:
+            buf.write_i32(16)
+
+
+
+@dataclass
+class VisualParseError:
+    def __init__(self, *, code:VisualParseErrorCode, message:str, retryable:bool, detail:typing.Optional[str]):
+        self.code = code
+        self.message = message
+        self.retryable = retryable
+        self.detail = detail
+
+
+
+
+    def __str__(self):
+        return "VisualParseError(code={}, message={}, retryable={}, detail={})".format(self.code, self.message, self.retryable, self.detail)
+    def __eq__(self, other):
+        if self.code != other.code:
+            return False
+        if self.message != other.message:
+            return False
+        if self.retryable != other.retryable:
+            return False
+        if self.detail != other.detail:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeVisualParseError(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return VisualParseError(
+            code=_UniffiFfiConverterTypeVisualParseErrorCode.read(buf),
+            message=_UniffiFfiConverterString.read(buf),
+            retryable=_UniffiFfiConverterBoolean.read(buf),
+            detail=_UniffiFfiConverterOptionalString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterTypeVisualParseErrorCode.check_lower(value.code)
+        _UniffiFfiConverterString.check_lower(value.message)
+        _UniffiFfiConverterBoolean.check_lower(value.retryable)
+        _UniffiFfiConverterOptionalString.check_lower(value.detail)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterTypeVisualParseErrorCode.write(value.code, buf)
+        _UniffiFfiConverterString.write(value.message, buf)
+        _UniffiFfiConverterBoolean.write(value.retryable, buf)
+        _UniffiFfiConverterOptionalString.write(value.detail, buf)
+
 class _UniffiFfiConverterOptionalTypeElementFrame(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
@@ -6643,12 +7916,16 @@ __all__ = [
     "SessionLifecycleState",
     "SessionClientKindOutput",
     "SessionTransportOutput",
+    "VisualRegionKind",
+    "VisualCaptureSource",
+    "VisualActionCoordinateSpace",
     "VerificationStatus",
     "UnknownReason",
     "ScrollDirection",
     "ScrollBy",
     "CaptureScope",
     "EffectiveScope",
+    "VisualParseErrorCode",
     "Platform",
     "ActionDelivery",
     "ActionError",
@@ -6694,6 +7971,16 @@ __all__ = [
     "WindowInfo",
     "ListWindowsOutput",
     "MoveCursorInput",
+    "ParseVisualRegionsOptions",
+    "ParseVisualRegionsInput",
+    "VisualScreenshotReference",
+    "VisualCaptureProvenance",
+    "VisualParserMetadata",
+    "VisualRegionBounds",
+    "VisualRegion",
+    "VisualParseWarning",
+    "VisualParseTiming",
+    "ParseVisualRegionsOutput",
     "PredicateOutcome",
     "PressKeyInput",
     "ScrollInput",
@@ -6713,6 +8000,7 @@ __all__ = [
     "TypeTextInput",
     "VerifyStateInput",
     "VerifyStateOutput",
+    "VisualParseError",
     "WindowElement",
     "WindowStateOutput",
 ]

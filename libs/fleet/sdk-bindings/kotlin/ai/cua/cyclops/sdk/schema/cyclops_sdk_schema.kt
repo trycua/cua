@@ -650,6 +650,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build(
     ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_claim_secrets(
+    ): Short
     external fun uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_command(
     ): Short
     external fun uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_container_disk_image(
@@ -768,6 +770,8 @@ external fun uniffi_cyclops_sdk_schema_fn_constructor_vmtemplatebuilder_new(unif
 ): Long
 external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_build(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
+external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_claim_secrets(`ptr`: Long,`value`: Byte,uniffi_out_err: UniffiRustCallStatus,
+): Long
 external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_command(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): Long
 external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_container_disk_image(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
@@ -984,6 +988,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build() != 17867.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_claim_secrets() != 62567.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_command() != 20371.toShort()) {
@@ -2902,6 +2909,8 @@ public interface VmTemplateBuilderInterface {
 
     fun `build`(): VmTemplate
 
+    fun `claimSecrets`(`value`: kotlin.Boolean): VmTemplateBuilder
+
     fun `command`(`value`: List<kotlin.String>): VmTemplateBuilder
 
     fun `containerDiskImage`(`value`: kotlin.String): VmTemplateBuilder
@@ -3047,6 +3056,19 @@ open class VmTemplateBuilder: Disposable, AutoCloseable, VmTemplateBuilderInterf
     UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_build(
         it,
         _status)
+}
+    }
+    )
+    }
+
+
+    override fun `claimSecrets`(`value`: kotlin.Boolean): VmTemplateBuilder {
+            return FfiConverterTypeVmTemplateBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_claim_secrets(
+        it,
+        FfiConverterBoolean.lower(`value`),_status)
 }
     }
     )
@@ -3635,6 +3657,43 @@ public object FfiConverterTypeClaimLifecycle: FfiConverterRustBuffer<ClaimLifecy
 
 
 
+/**
+ * Reference to a claim-scoped Secret delivered into the bound sandbox. See
+ * [`CLAIM_SECRET_NAME_PREFIX`].
+ */
+data class ClaimSecretRef (
+    var `name`: kotlin.String
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeClaimSecretRef: FfiConverterRustBuffer<ClaimSecretRef> {
+    override fun read(buf: ByteBuffer): ClaimSecretRef {
+        return ClaimSecretRef(
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ClaimSecretRef) = (
+            FfiConverterString.allocationSize(value.`name`)
+    )
+
+    override fun write(value: ClaimSecretRef, buf: ByteBuffer) {
+            FfiConverterString.write(value.`name`, buf)
+    }
+}
+
+
+
 data class ClaimSpec (
     var `sandboxTemplateRef`: SandboxTemplateRef
     ,
@@ -3645,6 +3704,8 @@ data class ClaimSpec (
     var `lifecycle`: ClaimLifecycle?
     ,
     var `ttlSecondsAfterCreated`: kotlin.UInt? = null
+    ,
+    var `secretRef`: ClaimSecretRef? = null
 
 ){
 
@@ -3666,6 +3727,7 @@ public object FfiConverterTypeClaimSpec: FfiConverterRustBuffer<ClaimSpec> {
             FfiConverterOptionalUInt.read(buf),
             FfiConverterOptionalTypeClaimLifecycle.read(buf),
             FfiConverterOptionalUInt.read(buf),
+            FfiConverterOptionalTypeClaimSecretRef.read(buf),
         )
     }
 
@@ -3674,7 +3736,8 @@ public object FfiConverterTypeClaimSpec: FfiConverterRustBuffer<ClaimSpec> {
             FfiConverterOptionalString.allocationSize(value.`warmpool`) +
             FfiConverterOptionalUInt.allocationSize(value.`bindDeadline`) +
             FfiConverterOptionalTypeClaimLifecycle.allocationSize(value.`lifecycle`) +
-            FfiConverterOptionalUInt.allocationSize(value.`ttlSecondsAfterCreated`)
+            FfiConverterOptionalUInt.allocationSize(value.`ttlSecondsAfterCreated`) +
+            FfiConverterOptionalTypeClaimSecretRef.allocationSize(value.`secretRef`)
     )
 
     override fun write(value: ClaimSpec, buf: ByteBuffer) {
@@ -3683,6 +3746,7 @@ public object FfiConverterTypeClaimSpec: FfiConverterRustBuffer<ClaimSpec> {
             FfiConverterOptionalUInt.write(value.`bindDeadline`, buf)
             FfiConverterOptionalTypeClaimLifecycle.write(value.`lifecycle`, buf)
             FfiConverterOptionalUInt.write(value.`ttlSecondsAfterCreated`, buf)
+            FfiConverterOptionalTypeClaimSecretRef.write(value.`secretRef`, buf)
     }
 }
 
@@ -4222,6 +4286,8 @@ data class VmTemplate (
     var `services`: List<SandboxService>?
     ,
     var `oidc`: OidcConfig?
+    ,
+    var `claimSecrets`: kotlin.Boolean? = null
 
 ): Disposable{
 
@@ -4247,7 +4313,8 @@ data class VmTemplate (
         this.`nestedVirtualization`,
         this.`probes`,
         this.`services`,
-        this.`oidc`
+        this.`oidc`,
+        this.`claimSecrets`
     )
     }
 
@@ -4275,6 +4342,7 @@ public object FfiConverterTypeVmTemplate: FfiConverterRustBuffer<VmTemplate> {
             FfiConverterOptionalTypePreservedJson.read(buf),
             FfiConverterOptionalSequenceTypeSandboxService.read(buf),
             FfiConverterOptionalTypeOidcConfig.read(buf),
+            FfiConverterOptionalBoolean.read(buf),
         )
     }
 
@@ -4293,7 +4361,8 @@ public object FfiConverterTypeVmTemplate: FfiConverterRustBuffer<VmTemplate> {
             FfiConverterOptionalBoolean.allocationSize(value.`nestedVirtualization`) +
             FfiConverterOptionalTypePreservedJson.allocationSize(value.`probes`) +
             FfiConverterOptionalSequenceTypeSandboxService.allocationSize(value.`services`) +
-            FfiConverterOptionalTypeOidcConfig.allocationSize(value.`oidc`)
+            FfiConverterOptionalTypeOidcConfig.allocationSize(value.`oidc`) +
+            FfiConverterOptionalBoolean.allocationSize(value.`claimSecrets`)
     )
 
     override fun write(value: VmTemplate, buf: ByteBuffer) {
@@ -4312,6 +4381,7 @@ public object FfiConverterTypeVmTemplate: FfiConverterRustBuffer<VmTemplate> {
             FfiConverterOptionalTypePreservedJson.write(value.`probes`, buf)
             FfiConverterOptionalSequenceTypeSandboxService.write(value.`services`, buf)
             FfiConverterOptionalTypeOidcConfig.write(value.`oidc`, buf)
+            FfiConverterOptionalBoolean.write(value.`claimSecrets`, buf)
     }
 }
 
@@ -4781,6 +4851,38 @@ public object FfiConverterOptionalTypeClaimLifecycle: FfiConverterRustBuffer<Cla
         } else {
             buf.put(1)
             FfiConverterTypeClaimLifecycle.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeClaimSecretRef: FfiConverterRustBuffer<ClaimSecretRef?> {
+    override fun read(buf: ByteBuffer): ClaimSecretRef? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeClaimSecretRef.read(buf)
+    }
+
+    override fun allocationSize(value: ClaimSecretRef?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeClaimSecretRef.allocationSize(value)
+        }
+    }
+
+    override fun write(value: ClaimSecretRef?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeClaimSecretRef.write(value, buf)
         }
     }
 }

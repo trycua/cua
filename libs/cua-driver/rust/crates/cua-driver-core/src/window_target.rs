@@ -187,7 +187,9 @@ impl Tool for PidOnlyWindowTargetGuard {
         // "snapshot belongs to window_id X".
         if let (Some(resolver), Some(handle)) = (
             self.snapshot_resolver.clone(),
-            args.get("snapshot_id").and_then(Value::as_str).map(str::to_owned),
+            args.get("snapshot_id")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
         ) {
             if let Some(window_id) = resolver(pid, &handle) {
                 if let Some(object) = args.as_object_mut() {
@@ -231,12 +233,11 @@ impl Tool for PidOnlyWindowTargetGuard {
                     (self.point_resolver.clone(), desktop_frame_point(&args))
                 {
                     let session_key = crate::tool_args::resolve_session_key(&args);
-                    let hit = tokio::task::spawn_blocking(move || {
-                        resolver(pid, x, y, &session_key)
-                    })
-                    .await
-                    .ok()
-                    .flatten();
+                    let hit =
+                        tokio::task::spawn_blocking(move || resolver(pid, x, y, &session_key))
+                            .await
+                            .ok()
+                            .flatten();
                     if let Some(window_id) = hit {
                         if let Some(candidate) =
                             candidates.iter().find(|c| c.window_id == window_id)
@@ -330,13 +331,10 @@ fn note_resolved_window(mut result: ToolResult, candidate: &WindowTargetCandidat
             ""
         }
     );
-    match result
-        .content
-        .iter_mut()
-        .find_map(|content| match content {
-            Content::Text { text, .. } => Some(text),
-            _ => None,
-        }) {
+    match result.content.iter_mut().find_map(|content| match content {
+        Content::Text { text, .. } => Some(text),
+        _ => None,
+    }) {
         Some(text) => text.push_str(&note),
         None => result.content.push(Content::text(note.trim().to_owned())),
     }
@@ -345,7 +343,11 @@ fn note_resolved_window(mut result: ToolResult, candidate: &WindowTargetCandidat
         "title": candidate.title,
         "transient_for": candidate.transient_for,
     });
-    match result.structured_content.as_mut().and_then(Value::as_object_mut) {
+    match result
+        .structured_content
+        .as_mut()
+        .and_then(Value::as_object_mut)
+    {
         Some(object) => {
             object.insert("resolved_window".to_owned(), resolved_window);
         }
@@ -481,7 +483,11 @@ mod tests {
             .invoke(serde_json::json!({"scope": "desktop", "x": 1, "y": 2}))
             .await;
         assert_eq!(calls.load(Ordering::SeqCst), 1);
-        assert!(result.structured_content.unwrap().get("window_id").is_none());
+        assert!(result
+            .structured_content
+            .unwrap()
+            .get("window_id")
+            .is_none());
     }
 
     #[tokio::test]
@@ -610,7 +616,8 @@ mod tests {
                 unreachable!()
             }
             async fn invoke(&self, args: Value) -> ToolResult {
-                self.0.store(args["window_id"].as_u64().unwrap_or(0), Ordering::SeqCst);
+                self.0
+                    .store(args["window_id"].as_u64().unwrap_or(0), Ordering::SeqCst);
                 ToolResult::text("Typed 'hi'.")
             }
         }
@@ -649,7 +656,9 @@ mod tests {
                 _ => panic!("text"),
             };
             assert!(
-                text.ends_with("[pid-only target resolved to window 7 \"Position and Size\" (an open dialog)]"),
+                text.ends_with(
+                    "[pid-only target resolved to window 7 \"Position and Size\" (an open dialog)]"
+                ),
                 "{text}"
             );
             let structured = result.structured_content.unwrap();
@@ -691,7 +700,10 @@ mod visibility_tests {
         );
         let json = serde_json::to_value(&candidates()[1]).unwrap();
         assert_eq!(json["transient_for"], 3);
-        assert!(serde_json::to_value(&candidates()[0]).unwrap().get("transient_for").is_none());
+        assert!(serde_json::to_value(&candidates()[0])
+            .unwrap()
+            .get("transient_for")
+            .is_none());
     }
 
     #[tokio::test]
@@ -704,15 +716,15 @@ mod visibility_tests {
                 unreachable!()
             }
             async fn invoke(&self, args: Value) -> ToolResult {
-                self.0.store(args["window_id"].as_u64().unwrap_or(0), Ordering::SeqCst);
+                self.0
+                    .store(args["window_id"].as_u64().unwrap_or(0), Ordering::SeqCst);
                 ToolResult::text("ok")
             }
         }
         let seen = Arc::new(AtomicU64::new(0));
         let candidates: WindowTargetCandidates = Arc::new(|_| vec![]);
-        let resolver: SnapshotWindowResolver = Arc::new(|pid, handle| {
-            (pid == 5 && handle == "s00000004").then_some(8395475)
-        });
+        let resolver: SnapshotWindowResolver =
+            Arc::new(|pid, handle| (pid == 5 && handle == "s00000004").then_some(8395475));
         let guard = PidOnlyWindowTargetGuard::new(Box::new(Echo(seen.clone())), candidates)
             .with_snapshot_resolver(resolver);
         let result = guard
@@ -724,7 +736,8 @@ mod visibility_tests {
 
     #[test]
     fn auto_resolved_pid_only_actions_say_which_window_received_them() {
-        let result = ToolResult::text("Pressed Escape.").with_structured(serde_json::json!({"path": "mpx"}));
+        let result =
+            ToolResult::text("Pressed Escape.").with_structured(serde_json::json!({"path": "mpx"}));
         let result = note_resolved_window(result, &candidates()[1]);
         let text = match &result.content[0] {
             Content::Text { text, .. } => text.clone(),

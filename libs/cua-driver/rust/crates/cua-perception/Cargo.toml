@@ -1,0 +1,24 @@
+[package]
+name = "cua-perception"
+version = "0.2.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Offline visual perception worker with manifest-verified ONNX Runtime inference"
+
+[[bin]]
+name = "cua-perception"
+path = "src/main.rs"
+
+[dependencies]
+base64.workspace = true
+image.workspace = true
+libloading.workspace = true
+ort.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+sha2.workspace = true
+thiserror.workspace = true

@@ -105,11 +105,11 @@ impl AtspiTreeResult {
             Some(q) => filter_tree(&walked.markdown, q),
             None => walked.markdown,
         };
-        let (truncated, truncation_reason, nodes_visited, nodes_pending) =
-            match &walked.truncation {
-                Some(t) => (true, Some(t.reason.to_owned()), t.visited, t.pending),
-                None => (false, None, walked.nodes.len(), 0),
-            };
+        let (truncated, truncation_reason, nodes_visited, nodes_pending) = match &walked.truncation
+        {
+            Some(t) => (true, Some(t.reason.to_owned()), t.visited, t.pending),
+            None => (false, None, walked.nodes.len(), 0),
+        };
         AtspiTreeResult {
             tree_markdown: md,
             nodes: walked.nodes,
@@ -164,7 +164,14 @@ pub fn walk_tree_bounded(
     max_elements: Option<usize>,
     max_depth: Option<usize>,
 ) -> AtspiTreeResult {
-    walk_tree_bounded_within(pid, xid, query, max_elements, max_depth, DEFAULT_WALK_TIMEOUT)
+    walk_tree_bounded_within(
+        pid,
+        xid,
+        query,
+        max_elements,
+        max_depth,
+        DEFAULT_WALK_TIMEOUT,
+    )
 }
 
 /// [`walk_tree_bounded`] with an explicit wall-clock budget for the WHOLE
@@ -197,8 +204,7 @@ pub fn walk_tree_bounded_within(
         if remaining.is_zero() {
             break;
         }
-        match native::walk_tree_bounded_with_timeout(pid, xid, max_elements, max_depth, remaining)
-        {
+        match native::walk_tree_bounded_with_timeout(pid, xid, max_elements, max_depth, remaining) {
             Ok(Some(walked)) => {
                 // `nodes.len() <= 1` == only the root window resolved: the
                 // cold-registry symptom. Accept any real tree immediately; only
@@ -749,23 +755,24 @@ mod budget_tests {
     use super::*;
 
     fn walked(truncation: Option<native::Truncation>) -> native::WalkedTree {
-        let node = |idx: usize, role: &str, name: &str, depth: usize, actions: Vec<String>| AtspiNode {
-            element_index: Some(idx),
-            role: role.into(),
-            name: Some(name.into()),
-            value: None,
-            checked: None,
-            enabled: Some(true),
-            selected: None,
-            description: None,
-            actions,
-            element_key: idx as u64,
-            depth,
-            parent_element_index: (depth > 0).then_some(0),
-            in_web_content: false,
-            identity: None,
-            object_ref: None,
-        };
+        let node =
+            |idx: usize, role: &str, name: &str, depth: usize, actions: Vec<String>| AtspiNode {
+                element_index: Some(idx),
+                role: role.into(),
+                name: Some(name.into()),
+                value: None,
+                checked: None,
+                enabled: Some(true),
+                selected: None,
+                description: None,
+                actions,
+                element_key: idx as u64,
+                depth,
+                parent_element_index: (depth > 0).then_some(0),
+                in_web_content: false,
+                identity: None,
+                object_ref: None,
+            };
         native::WalkedTree {
             markdown: "- [0] frame \"Untitled\"\n  - [1] push button \"OK\"\n".into(),
             nodes: vec![

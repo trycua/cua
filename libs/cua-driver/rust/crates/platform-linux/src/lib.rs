@@ -46,6 +46,7 @@ pub mod installed_apps;
 
 #[cfg(target_os = "linux")]
 pub mod capture;
+mod capture_action_frame;
 #[cfg(target_os = "linux")]
 mod clipboard;
 

@@ -75,9 +75,8 @@ impl X {
         let (conn, screen) = RustConnection::connect(None)
             .map_err(|e| anyhow!("focus guard: cannot open DISPLAY: {e}"))?;
         let root = conn.setup().roots[screen].root;
-        let intern = |name: &[u8]| -> Result<u32> {
-            Ok(conn.intern_atom(false, name)?.reply()?.atom)
-        };
+        let intern =
+            |name: &[u8]| -> Result<u32> { Ok(conn.intern_atom(false, name)?.reply()?.atom) };
         let atoms = Atoms {
             net_active_window: intern(b"_NET_ACTIVE_WINDOW")?,
             net_client_list_stacking: intern(b"_NET_CLIENT_LIST_STACKING")?,
@@ -113,7 +112,12 @@ impl X {
     }
 
     fn core_focus(&self) -> (Window, InputFocus) {
-        match self.conn.get_input_focus().ok().and_then(|c| c.reply().ok()) {
+        match self
+            .conn
+            .get_input_focus()
+            .ok()
+            .and_then(|c| c.reply().ok())
+        {
             Some(reply) => (reply.focus, reply.revert_to),
             None => (0, InputFocus::NONE),
         }
@@ -545,10 +549,12 @@ impl FocusSnapshot {
     /// it still exists — `_NET_ACTIVE_WINDOW` lags a destroyed dialog by a
     /// beat — else the core focus).
     fn current_focus_window(&self, x: &X) -> Option<Window> {
-        x.active_window().filter(|w| x.window_viewable(*w)).or_else(|| {
-            let (focus, _) = x.core_focus();
-            (focus > 1).then_some(focus)
-        })
+        x.active_window()
+            .filter(|w| x.window_viewable(*w))
+            .or_else(|| {
+                let (focus, _) = x.core_focus();
+                (focus > 1).then_some(focus)
+            })
     }
 
     /// The window that held the focus at capture time (active, else core).
@@ -929,7 +935,10 @@ mod tests {
             classify_focus_move(Some(7), Some(7), None),
             FocusMove::OtherApp
         );
-        assert_eq!(classify_focus_move(None, Some(7), Some(7)), FocusMove::OtherApp);
+        assert_eq!(
+            classify_focus_move(None, Some(7), Some(7)),
+            FocusMove::OtherApp
+        );
     }
 
     #[test]
@@ -964,7 +973,10 @@ mod grab_tests {
         assert_eq!(report.to_json()["focus_outcome"], "grab_held");
         let summary = report.summary();
         assert!(summary.contains("focus_outcome=grab_held"), "{summary}");
-        assert!(summary.contains("pid 77 holds a keyboard grab"), "{summary}");
+        assert!(
+            summary.contains("pid 77 holds a keyboard grab"),
+            "{summary}"
+        );
     }
 
     #[test]

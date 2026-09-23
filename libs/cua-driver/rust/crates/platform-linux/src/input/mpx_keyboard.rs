@@ -322,7 +322,9 @@ fn create_uinput_keyboard(name: &str) -> Result<VirtualDevice> {
 /// Make sure the session's master pair carries an attached uinput keyboard
 /// slave; creates the pair (pointer + keyboard master, uinput pointer) through
 /// `ensure_master_pointer` first when needed.
-fn ensure_master_keyboard(cursor_id: &str) -> Result<(MasterPointerIds, Arc<Mutex<VirtualDevice>>)> {
+fn ensure_master_keyboard(
+    cursor_id: &str,
+) -> Result<(MasterPointerIds, Arc<Mutex<VirtualDevice>>)> {
     let ids = ensure_master_pointer(cursor_id)?;
     if let (Some(_), Some(device)) = (
         ids.slave_keyboard_id,
@@ -392,8 +394,14 @@ fn warm_up_keyboard(
         return;
     }
     let steps = [
-        KeyStep { evdev_code: WARM_UP_EVDEV_CODE, press: true },
-        KeyStep { evdev_code: WARM_UP_EVDEV_CODE, press: false },
+        KeyStep {
+            evdev_code: WARM_UP_EVDEV_CODE,
+            press: true,
+        },
+        KeyStep {
+            evdev_code: WARM_UP_EVDEV_CODE,
+            press: false,
+        },
     ];
     for step in steps {
         let _ = device.emit(&[InputEvent::new(
@@ -686,17 +694,28 @@ pub fn send_virtual_keyboard_text(
     // would come out with all the in-map characters first, reordering the
     // typed text relative to what was asked for.
     let mut guards = Vec::new();
-    let (steps, skipped) = plan_text_with_fallback(&keymap.mapping, keymap.shift, text, |ch| {
-        match remap_spare_keycode(&keymap.conn, &keymap.mapping, keysym_for_char(ch)) {
-            Ok(guard) => {
-                let keycode = guard.keycode;
-                guards.push(guard);
-                Some(keycode)
-            }
-            Err(_) => None,
-        }
-    });
-    deliver(cursor_id, target_window, &steps, skipped, guards, &keymap.conn)
+    let (steps, skipped) =
+        plan_text_with_fallback(
+            &keymap.mapping,
+            keymap.shift,
+            text,
+            |ch| match remap_spare_keycode(&keymap.conn, &keymap.mapping, keysym_for_char(ch)) {
+                Ok(guard) => {
+                    let keycode = guard.keycode;
+                    guards.push(guard);
+                    Some(keycode)
+                }
+                Err(_) => None,
+            },
+        );
+    deliver(
+        cursor_id,
+        target_window,
+        &steps,
+        skipped,
+        guards,
+        &keymap.conn,
+    )
 }
 
 /// Press `key` with `modifiers` held, into `target_window`, without touching
@@ -712,8 +731,7 @@ pub fn send_virtual_keyboard_key(
     let mut modifier_keycodes = Vec::with_capacity(modifiers.len());
     for modifier in modifiers {
         let keysym = key_name_to_keysym(modifier)?;
-        let (keycode, guard) =
-            keycode_for_keysym(&keymap.conn, &keymap.mapping, keysym, modifier)?;
+        let (keycode, guard) = keycode_for_keysym(&keymap.conn, &keymap.mapping, keysym, modifier)?;
         guards.extend(guard);
         modifier_keycodes.push(keycode);
     }
@@ -721,14 +739,20 @@ pub fn send_virtual_keyboard_key(
     let (keycode, needs_shift) = match char_to_keycode_shift(&keymap.mapping, keysym) {
         Some(found) => found,
         None => {
-            let (keycode, guard) =
-                keycode_for_keysym(&keymap.conn, &keymap.mapping, keysym, key)?;
+            let (keycode, guard) = keycode_for_keysym(&keymap.conn, &keymap.mapping, keysym, key)?;
             guards.extend(guard);
             (keycode, false)
         }
     };
     let steps = plan_chord(&modifier_keycodes, keycode, needs_shift, keymap.shift);
-    deliver(cursor_id, target_window, &steps, Vec::new(), guards, &keymap.conn)
+    deliver(
+        cursor_id,
+        target_window,
+        &steps,
+        Vec::new(),
+        guards,
+        &keymap.conn,
+    )
 }
 
 #[cfg(test)]
@@ -823,11 +847,13 @@ mod tests {
         // more ASCII. The remapped character must land in the MIDDLE of the
         // key-event sequence, not be deferred to the end.
         const REMAPPED_KEYCODE: u8 = 250; // spare, per the mapping() doc comment
-        let (steps, skipped) =
-            plan_text_with_fallback(&mapping(), Some(50), "aé1", |ch| {
-                assert_eq!(ch, 'é', "only the out-of-keymap character should hit the fallback");
-                Some(REMAPPED_KEYCODE)
-            });
+        let (steps, skipped) = plan_text_with_fallback(&mapping(), Some(50), "aé1", |ch| {
+            assert_eq!(
+                ch, 'é',
+                "only the out-of-keymap character should hit the fallback"
+            );
+            Some(REMAPPED_KEYCODE)
+        });
         assert!(skipped.is_empty());
         let remapped_evdev = evdev_code_for_x_keycode(REMAPPED_KEYCODE).unwrap();
         assert_eq!(

@@ -17,8 +17,12 @@ jobs:
     name: "Linux / lightweight desktop readiness"
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      CUA_E2E_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ env.CUA_E2E_SOURCE_SHA }}
       - name: Prepare a disposable X11 session
         run: |
           sudo apt-get update
@@ -32,8 +36,12 @@ jobs:
     name: "Windows / lightweight desktop readiness"
     runs-on: windows-latest
     timeout-minutes: 15
+    env:
+      CUA_E2E_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ env.CUA_E2E_SOURCE_SHA }}
       - name: Ensure recording tools are available
         shell: pwsh
         run: .\scripts\ci\windows\setup-ffmpeg.ps1

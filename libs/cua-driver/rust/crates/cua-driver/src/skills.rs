@@ -42,6 +42,7 @@
 //!
 //! - Claude Code: `~/.claude/skills/`
 //! - Codex:       `~/.agents/skills/`
+//! - Pi:          `~/.pi/agent/skills/`
 //! - Prime Agent: `~/.prime/agent/skills/`
 //! - OpenClaw:    `~/.openclaw/skills/`
 //! - OpenCode: `~/.config/opencode/skills/` (macOS / Linux),
@@ -215,6 +216,11 @@ const AGENTS: &[Agent] = &[
         label: "Codex",
         parent: AgentParent::Home(".agents/skills"),
         install_marker: Some(".codex"),
+    },
+    Agent {
+        label: "Pi",
+        parent: AgentParent::Home(".pi/agent/skills"),
+        install_marker: Some(".pi/agent"),
     },
     Agent {
         label: "Prime Agent",
@@ -1016,6 +1022,20 @@ mod tests {
 
         let error = ensure_skills_parent(&parent, None).unwrap_err();
         assert!(error.to_string().contains("exists but is not a directory"));
+    }
+
+    #[test]
+    fn pi_target_matches_its_native_global_skill_directory() {
+        let target = AGENTS
+            .iter()
+            .find(|agent| agent.label == "Pi")
+            .expect("Pi must remain a supported skill target");
+
+        assert!(matches!(
+            target.parent,
+            AgentParent::Home(".pi/agent/skills")
+        ));
+        assert!(matches!(target.install_marker, Some(".pi/agent")));
     }
 
     #[test]

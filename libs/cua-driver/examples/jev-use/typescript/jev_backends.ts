@@ -265,6 +265,20 @@ export type SystemOneTransport = (
   timeoutSeconds: number
 ) => Promise<Record<string, unknown>>;
 
+export function systemOneRequestInit(
+  payload: Record<string, unknown>,
+  headers: Record<string, string>,
+  timeoutSeconds: number
+): RequestInit {
+  return {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload),
+    redirect: 'error',
+    signal: AbortSignal.timeout(timeoutSeconds * 1000),
+  };
+}
+
 async function defaultTransport(
   url: string,
   payload: Record<string, unknown>,
@@ -273,13 +287,7 @@ async function defaultTransport(
 ): Promise<Record<string, unknown>> {
   let response: Response;
   try {
-    response = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(payload),
-      redirect: 'error',
-      signal: AbortSignal.timeout(timeoutSeconds * 1000),
-    });
+    response = await fetch(url, systemOneRequestInit(payload, headers, timeoutSeconds));
   } catch (error: unknown) {
     if (error instanceof Error && error.name === 'TimeoutError') {
       throw new JevTransportError(`request timed out: ${error.message}`);

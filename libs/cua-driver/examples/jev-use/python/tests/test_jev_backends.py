@@ -12,6 +12,7 @@ from jev_backends import (
     JevProtocolError,
     JevTransportError,
     SystemOneHttpClient,
+    _NoRedirect,
     choose_with_backend,
     describe_backend,
     read_jev_config,
@@ -281,6 +282,22 @@ class ChooseWithBackendTest(unittest.TestCase):
 
 
 class HttpClientTest(unittest.TestCase):
+    def test_redirect_handler_refuses_redirects(self) -> None:
+        handler = _NoRedirect()
+        request = __import__("urllib.request", fromlist=["Request"]).Request(
+            "https://jev.example/v1/systemone"
+        )
+        self.assertIsNone(
+            handler.redirect_request(
+                request,
+                None,
+                302,
+                "Found",
+                {},
+                "https://other.example/v1/systemone",
+            )
+        )
+
     def test_missing_answers_is_protocol_error(self) -> None:
         config = read_jev_config({"JEV_BACKEND": "local"})
         client = SystemOneHttpClient(config, transport=stub_transport({"model": "x"}))

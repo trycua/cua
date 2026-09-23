@@ -259,6 +259,10 @@ npm run typecheck
 
 ## Relationship to PR #3914
 
+For an optional Python-only closed-candidate interface spanning Jev and local
+Cua-S1-4B, see [Closed-candidate decision models](decision-models.md). It does
+not change the existing Python or TypeScript runners.
+
 [PR #3914](https://github.com/trycua/cua/pull/3914) proposes an optional Jev
 policy head inside the Cua Driver binary. This directory is a complementary
 standalone example: it composes the public TypeSafe SDKs with the existing Cua

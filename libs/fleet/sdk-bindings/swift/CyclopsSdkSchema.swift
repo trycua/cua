@@ -1235,6 +1235,8 @@ public protocol VmTemplateBuilderProtocol: AnyObject, Sendable {
 
     func build() throws  -> VmTemplate
 
+    func claimSecrets(value: Bool)  -> VmTemplateBuilder
+
     func command(value: [String])  -> VmTemplateBuilder
 
     func containerDiskImage(value: String)  -> VmTemplateBuilder
@@ -1330,6 +1332,15 @@ open func build()throws  -> VmTemplate  {
     return try  FfiConverterTypeVmTemplate_lift(try rustCallWithError(FfiConverterTypeSchemaBuildError_lift) {
     uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_build(
             self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+open func claimSecrets(value: Bool) -> VmTemplateBuilder  {
+    return try!  FfiConverterTypeVmTemplateBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_claim_secrets(
+            self.uniffiCloneHandle(),
+        FfiConverterBool.lower(value),$0
     )
 })
 }
@@ -1731,21 +1742,77 @@ public func FfiConverterTypeClaimLifecycle_lower(_ value: ClaimLifecycle) -> Rus
 }
 
 
+/**
+ * Reference to a claim-scoped Secret delivered into the bound sandbox. See
+ * [`CLAIM_SECRET_NAME_PREFIX`].
+ */
+public struct ClaimSecretRef: Equatable, Hashable {
+    public var name: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: String) {
+        self.name = name
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClaimSecretRef: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClaimSecretRef: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClaimSecretRef {
+        return
+            try ClaimSecretRef(
+                name: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClaimSecretRef, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClaimSecretRef_lift(_ buf: RustBuffer) throws -> ClaimSecretRef {
+    return try FfiConverterTypeClaimSecretRef.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClaimSecretRef_lower(_ value: ClaimSecretRef) -> RustBuffer {
+    return FfiConverterTypeClaimSecretRef.lower(value)
+}
+
+
 public struct ClaimSpec: Equatable, Hashable {
     public var sandboxTemplateRef: SandboxTemplateRef
     public var warmpool: String?
     public var bindDeadline: UInt32?
     public var lifecycle: ClaimLifecycle?
     public var ttlSecondsAfterCreated: UInt32?
+    public var secretRef: ClaimSecretRef?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(sandboxTemplateRef: SandboxTemplateRef, warmpool: String?, bindDeadline: UInt32?, lifecycle: ClaimLifecycle?, ttlSecondsAfterCreated: UInt32? = nil) {
+    public init(sandboxTemplateRef: SandboxTemplateRef, warmpool: String?, bindDeadline: UInt32?, lifecycle: ClaimLifecycle?, ttlSecondsAfterCreated: UInt32? = nil, secretRef: ClaimSecretRef? = nil) {
         self.sandboxTemplateRef = sandboxTemplateRef
         self.warmpool = warmpool
         self.bindDeadline = bindDeadline
         self.lifecycle = lifecycle
         self.ttlSecondsAfterCreated = ttlSecondsAfterCreated
+        self.secretRef = secretRef
     }
 
 
@@ -1768,7 +1835,8 @@ public struct FfiConverterTypeClaimSpec: FfiConverterRustBuffer {
                 warmpool: FfiConverterOptionString.read(from: &buf),
                 bindDeadline: FfiConverterOptionUInt32.read(from: &buf),
                 lifecycle: FfiConverterOptionTypeClaimLifecycle.read(from: &buf),
-                ttlSecondsAfterCreated: FfiConverterOptionUInt32.read(from: &buf)
+                ttlSecondsAfterCreated: FfiConverterOptionUInt32.read(from: &buf),
+                secretRef: FfiConverterOptionTypeClaimSecretRef.read(from: &buf)
         )
     }
 
@@ -1778,6 +1846,7 @@ public struct FfiConverterTypeClaimSpec: FfiConverterRustBuffer {
         FfiConverterOptionUInt32.write(value.bindDeadline, into: &buf)
         FfiConverterOptionTypeClaimLifecycle.write(value.lifecycle, into: &buf)
         FfiConverterOptionUInt32.write(value.ttlSecondsAfterCreated, into: &buf)
+        FfiConverterOptionTypeClaimSecretRef.write(value.secretRef, into: &buf)
     }
 }
 
@@ -2463,10 +2532,11 @@ public struct VmTemplate {
     public var probes: PreservedJson?
     public var services: [SandboxService]?
     public var oidc: OidcConfig?
+    public var claimSecrets: Bool?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(containerDiskImage: String, command: [String]?, runtime: RuntimeKind?, runtimeClassName: String?, nodeSelector: [String: String]?, tolerations: [PreservedJson]?, imagePullPolicy: ImagePullPolicy?, imagePullSecret: String?, cpuCores: UInt32?, memory: String?, firmware: Firmware?, nestedVirtualization: Bool?, probes: PreservedJson?, services: [SandboxService]?, oidc: OidcConfig?) {
+    public init(containerDiskImage: String, command: [String]?, runtime: RuntimeKind?, runtimeClassName: String?, nodeSelector: [String: String]?, tolerations: [PreservedJson]?, imagePullPolicy: ImagePullPolicy?, imagePullSecret: String?, cpuCores: UInt32?, memory: String?, firmware: Firmware?, nestedVirtualization: Bool?, probes: PreservedJson?, services: [SandboxService]?, oidc: OidcConfig?, claimSecrets: Bool? = nil) {
         self.containerDiskImage = containerDiskImage
         self.command = command
         self.runtime = runtime
@@ -2482,6 +2552,7 @@ public struct VmTemplate {
         self.probes = probes
         self.services = services
         self.oidc = oidc
+        self.claimSecrets = claimSecrets
     }
 
 
@@ -2514,7 +2585,8 @@ public struct FfiConverterTypeVmTemplate: FfiConverterRustBuffer {
                 nestedVirtualization: FfiConverterOptionBool.read(from: &buf),
                 probes: FfiConverterOptionTypePreservedJson.read(from: &buf),
                 services: FfiConverterOptionSequenceTypeSandboxService.read(from: &buf),
-                oidc: FfiConverterOptionTypeOidcConfig.read(from: &buf)
+                oidc: FfiConverterOptionTypeOidcConfig.read(from: &buf),
+                claimSecrets: FfiConverterOptionBool.read(from: &buf)
         )
     }
 
@@ -2534,6 +2606,7 @@ public struct FfiConverterTypeVmTemplate: FfiConverterRustBuffer {
         FfiConverterOptionTypePreservedJson.write(value.probes, into: &buf)
         FfiConverterOptionSequenceTypeSandboxService.write(value.services, into: &buf)
         FfiConverterOptionTypeOidcConfig.write(value.oidc, into: &buf)
+        FfiConverterOptionBool.write(value.claimSecrets, into: &buf)
     }
 }
 
@@ -3165,6 +3238,30 @@ fileprivate struct FfiConverterOptionTypeClaimLifecycle: FfiConverterRustBuffer 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeClaimSecretRef: FfiConverterRustBuffer {
+    typealias SwiftType = ClaimSecretRef?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeClaimSecretRef.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeClaimSecretRef.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeOSGymSandboxClaimSandbox: FfiConverterRustBuffer {
     typealias SwiftType = OsGymSandboxClaimSandbox?
 
@@ -3610,6 +3707,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build() != 17867) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_claim_secrets() != 62567) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_command() != 20371) {

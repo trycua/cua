@@ -104,6 +104,7 @@ fn vm_template_round_trips_every_known_field() {
             aws_role_arn: Some("arn:aws:iam::123456789012:role/workload".into()),
             refresh_interval_seconds: Some(900),
         }),
+        claim_secrets: Some(true),
     };
 
     let value = serde_json::to_value(&template).unwrap();
@@ -148,6 +149,7 @@ fn minimal_vm_template_omits_none_fields_and_round_trips() {
         probes: None,
         services: None,
         oidc: None,
+        claim_secrets: None,
     };
 
     let value = serde_json::to_value(&template).unwrap();

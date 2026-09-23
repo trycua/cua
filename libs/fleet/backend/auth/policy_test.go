@@ -37,6 +37,7 @@ func TestRouteModulesNeverReadInputFacts(t *testing.T) {
 		"authz.rego":                      authzPolicy,
 		"pool_admission.rego":             poolAdmissionPolicy,
 		"sandbox_services_admission.rego": sandboxServicesAdmissionPolicy,
+		"tenant_secret_admission.rego":    tenantSecretAdmissionPolicy,
 		"image_admission.rego":            imageAdmissionPolicy,
 		"image_rollout.rego":              imageRolloutPolicy,
 	}

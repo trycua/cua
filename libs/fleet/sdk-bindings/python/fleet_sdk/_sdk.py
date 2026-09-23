@@ -480,6 +480,8 @@ def _uniffi_check_contract_api_version(lib):
         raise InternalError("UniFFI contract version mismatch: try cleaning and rebuilding your project")
 
 def _uniffi_check_api_checksums(lib):
+    if lib.uniffi_cyclops_sdk_checksum_func_claim_env_token_key() != 8887:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_func_fleet_label_key() != 5219:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status() != 3094:
@@ -503,6 +505,8 @@ def _uniffi_check_api_checksums(lib):
     if lib.uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_name() != 19762:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_pool() != 7405:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_secret_files() != 54115:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_spec() != 28263:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -576,7 +580,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_user_api_key() != 9174:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim() != 20460:
+    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim() != 52233:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_image() != 24680:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -1104,6 +1108,10 @@ _UniffiLib.uniffi_cyclops_sdk_fn_init_callback_vtable_httpclient.argtypes = (
     ctypes.POINTER(_UniffiVTableCallbackInterfaceFleetSdkHttpClient),
 )
 _UniffiLib.uniffi_cyclops_sdk_fn_init_callback_vtable_httpclient.restype = None
+_UniffiLib.uniffi_cyclops_sdk_fn_func_claim_env_token_key.argtypes = (
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_func_claim_env_token_key.restype = _UniffiRustBuffer
 _UniffiLib.uniffi_cyclops_sdk_fn_func_fleet_label_key.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
@@ -1161,6 +1169,12 @@ _UniffiLib.uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_pool.argtypes 
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_pool.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_secret_files.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_secret_files.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_spec.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -1650,6 +1664,9 @@ _UniffiLib.uniffi_cyclops_sdk_fn_method_templatebuilder_spec.restype = ctypes.c_
 _UniffiLib.ffi_cyclops_sdk_uniffi_contract_version.argtypes = (
 )
 _UniffiLib.ffi_cyclops_sdk_uniffi_contract_version.restype = ctypes.c_uint32
+_UniffiLib.uniffi_cyclops_sdk_checksum_func_claim_env_token_key.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_func_claim_env_token_key.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_checksum_func_fleet_label_key.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_func_fleet_label_key.restype = ctypes.c_uint16
@@ -1686,6 +1703,9 @@ _UniffiLib.uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_name.res
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_pool.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_pool.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_secret_files.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_secret_files.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_spec.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_spec.restype = ctypes.c_uint16
@@ -2449,7 +2469,7 @@ class _UniffiFfiConverterOptionalTypeClaimSpec(_UniffiConverterRustBuffer):
 
 @dataclass
 class CreateClaimRequest:
-    def __init__(self, *, pool:Pool, spec:typing.Optional[fleet_sdk.ClaimSpec], name:typing.Optional[str] = _DEFAULT, labels:typing.Optional[dict[str, str]] = _DEFAULT):
+    def __init__(self, *, pool:Pool, spec:typing.Optional[fleet_sdk.ClaimSpec], name:typing.Optional[str] = _DEFAULT, labels:typing.Optional[dict[str, str]] = _DEFAULT, secret_files:typing.Optional[dict[str, str]] = _DEFAULT):
         self.pool = pool
         self.spec = spec
         if name is _DEFAULT:
@@ -2460,12 +2480,16 @@ class CreateClaimRequest:
             self.labels = None
         else:
             self.labels = labels
+        if secret_files is _DEFAULT:
+            self.secret_files = None
+        else:
+            self.secret_files = secret_files
 
 
 
 
     def __str__(self):
-        return "CreateClaimRequest(pool={}, spec={}, name={}, labels={})".format(self.pool, self.spec, self.name, self.labels)
+        return "CreateClaimRequest(pool={}, spec={}, name={}, labels={}, secret_files={})".format(self.pool, self.spec, self.name, self.labels, self.secret_files)
     def __eq__(self, other):
         if self.pool != other.pool:
             return False
@@ -2474,6 +2498,8 @@ class CreateClaimRequest:
         if self.name != other.name:
             return False
         if self.labels != other.labels:
+            return False
+        if self.secret_files != other.secret_files:
             return False
         return True
 
@@ -2485,6 +2511,7 @@ class _UniffiFfiConverterTypeCreateClaimRequest(_UniffiConverterRustBuffer):
             spec=_UniffiFfiConverterOptionalTypeClaimSpec.read(buf),
             name=_UniffiFfiConverterOptionalString.read(buf),
             labels=_UniffiFfiConverterOptionalMapStringString.read(buf),
+            secret_files=_UniffiFfiConverterOptionalMapStringString.read(buf),
         )
 
     @staticmethod
@@ -2493,6 +2520,7 @@ class _UniffiFfiConverterTypeCreateClaimRequest(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalTypeClaimSpec.check_lower(value.spec)
         _UniffiFfiConverterOptionalString.check_lower(value.name)
         _UniffiFfiConverterOptionalMapStringString.check_lower(value.labels)
+        _UniffiFfiConverterOptionalMapStringString.check_lower(value.secret_files)
 
     @staticmethod
     def write(value, buf):
@@ -2500,6 +2528,7 @@ class _UniffiFfiConverterTypeCreateClaimRequest(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalTypeClaimSpec.write(value.spec, buf)
         _UniffiFfiConverterOptionalString.write(value.name, buf)
         _UniffiFfiConverterOptionalMapStringString.write(value.labels, buf)
+        _UniffiFfiConverterOptionalMapStringString.write(value.secret_files, buf)
 
 @dataclass
 class CreatePoolRequest:
@@ -4680,6 +4709,8 @@ class CreateClaimRequestBuilderProtocol(typing.Protocol):
         raise NotImplementedError
     def pool(self, value: Pool) -> CreateClaimRequestBuilder:
         raise NotImplementedError
+    def secret_files(self, value: dict[str, str]) -> CreateClaimRequestBuilder:
+        raise NotImplementedError
     def spec(self, value: fleet_sdk.ClaimSpec) -> CreateClaimRequestBuilder:
         raise NotImplementedError
 
@@ -4769,6 +4800,21 @@ class CreateClaimRequestBuilder(CreateClaimRequestBuilderProtocol):
         _uniffi_ffi_result = _uniffi_rust_call_with_error(
             _uniffi_error_converter,
             _UniffiLib.uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_pool,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def secret_files(self, value: dict[str, str]) -> CreateClaimRequestBuilder:
+
+        _UniffiFfiConverterMapStringString.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterMapStringString.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeCreateClaimRequestBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_secret_files,
             *_uniffi_lowered_args,
         )
         return _uniffi_lift_return(_uniffi_ffi_result)
@@ -5524,6 +5570,11 @@ class CyclopsClientProtocol(typing.Protocol):
     async def create_user_api_key(self, request: CreateUserApiKeyRequest) -> NewUserApiKey:
         raise NotImplementedError
     async def delete_claim(self, claim: Claim) -> None:
+        """
+        Delete the claim and, when it references a claim-scoped Secret
+        (`secret_files`), that Secret too. The pool-operator also owner-refs
+        the Secret to the claim, so garbage collection is the backstop.
+"""
         raise NotImplementedError
     async def delete_image(self, namespace: str,name: str) -> None:
         raise NotImplementedError
@@ -5938,6 +5989,11 @@ class CyclopsClient(CyclopsClientProtocol):
             _uniffi_error_converter,
         )
     async def delete_claim(self, claim: Claim) -> None:
+        """
+        Delete the claim and, when it references a claim-scoped Secret
+        (`secret_files`), that Secret too. The pool-operator also owner-refs
+        the Secret to the claim, so garbage collection is the backstop.
+"""
 
         _UniffiFfiConverterTypeClaim.check_lower(claim)
         _uniffi_lowered_args = (
@@ -7204,6 +7260,21 @@ class _UniffiFfiConverterUInt8(_UniffiConverterPrimitiveInt):
     @staticmethod
     def write(value, buf):
         buf.write_u8(value)
+def claim_env_token_key() -> str:
+    """
+    The `secret_files` key (and in-guest file name, `/run/cua/env-token`)
+    that carries the cua-env-driver token for a claimed sandbox.
+"""
+    _uniffi_lowered_args = (
+    )
+    _uniffi_lift_return = _UniffiFfiConverterString.lift
+    _uniffi_error_converter = None
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cyclops_sdk_fn_func_claim_env_token_key,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
 def fleet_label_key() -> str:
     """
     The label key a fleet's claims share, for callers that filter or clean up
@@ -7313,6 +7384,7 @@ __all__ = [
     "SignedServiceUrl",
     "Template",
     "UserApiKey",
+    "claim_env_token_key",
     "fleet_label_key",
     "healthy_pool_display_status",
     "pool_display_status",

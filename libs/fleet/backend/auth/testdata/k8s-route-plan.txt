@@ -17,3 +17,5 @@ All
   Leaf query=data.pool_admission.allow source=multi["registered:authz","registered:pool-admission"] body=1048576
   Because reason="a sandbox PATCH may only modify spec.vmTemplate.services (an optional metadata.resourceVersion precondition is also accepted)"
     Leaf query=data.sandbox_services_admission.allow source=registered:sandbox-services-admission body=1048576
+  Because reason="only tenant Secrets may be created through this API, in the path's namespace, with no generateName, annotations or ownerReferences. Claim secrets: a plain Opaque Secret named cua-claim-<name>, referenced from OSGymSandboxClaim spec.secretRef."
+    Leaf query=data.tenant_secret_admission.allow source=registered:tenant-secret-admission body=1048576

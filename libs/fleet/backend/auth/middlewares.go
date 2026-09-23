@@ -59,6 +59,15 @@ var customResourceCreationAdmissionPolicy string
 //go:embed sandbox_services_admission.rego
 var sandboxServicesAdmissionPolicy string
 
+// tenantSecretAdmissionPolicy restricts the one Secret create /api/k8s admits
+// (POST on the secrets collection) to the tenant Secret kinds, each under its
+// own name prefix (today cua-claim-*, the per-claim secret the pool-operator
+// delivers into a bound sandbox). One module for every kind, so kinds never
+// deny each other. A conjunct on the k8s surface, registered by name below.
+//
+//go:embed tenant_secret_admission.rego
+var tenantSecretAdmissionPolicy string
+
 //go:embed image_admission.rego
 var imageAdmissionPolicy string
 
@@ -400,6 +409,7 @@ func LoadOpa() {
 	RegisterPolicyModule("pool-admission", "pool_admission.rego", poolAdmissionPolicy)
 	RegisterPolicyModule("custom-resource-creation-admission", "custom_resource_creation_admission.rego", customResourceCreationAdmissionPolicy)
 	RegisterPolicyModule("sandbox-services-admission", "sandbox_services_admission.rego", sandboxServicesAdmissionPolicy)
+	RegisterPolicyModule("tenant-secret-admission", "tenant_secret_admission.rego", tenantSecretAdmissionPolicy)
 	RegisterPolicyModule("image-admission", "image_admission.rego", imageAdmissionPolicy)
 	RegisterPolicyModule("image-rollout", "image_rollout.rego", imageRolloutPolicy)
 	RegisterPolicyModule("authz-ownership", "authz_ownership.rego", authzOwnershipPolicy)

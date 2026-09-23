@@ -199,6 +199,7 @@ private_constant :UniffiHandleMap
     RustBuffer.check_lower_OptionalTypeClaimSpec(v.spec)
     RustBuffer.check_lower_Optionalstring(v.name)
     RustBuffer.check_lower_OptionalMapStringString(v.labels)
+    RustBuffer.check_lower_OptionalMapStringString(v.secret_files)
   end
 
   def self.alloc_from_TypeCreateClaimRequest(v)
@@ -1432,7 +1433,8 @@ class RustBufferStream
       pool: readTypePool,
       spec: readOptionalTypeClaimSpec,
       name: readOptionalstring,
-      labels: readOptionalMapStringString
+      labels: readOptionalMapStringString,
+      secret_files: readOptionalMapStringString
     )
   end
 
@@ -2375,6 +2377,7 @@ class RustBufferBuilder
     self.write_OptionalTypeClaimSpec(v.spec)
     self.write_Optionalstring(v.name)
     self.write_OptionalMapStringString(v.labels)
+    self.write_OptionalMapStringString(v.secret_files)
   end
 
   # The Record type CreatePoolRequest.
@@ -3544,6 +3547,9 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_pool,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_secret_files,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
   attach_function :uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_spec,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
@@ -3718,6 +3724,9 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_fn_method_templatebuilder_spec,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
+  attach_function :uniffi_cyclops_sdk_fn_func_claim_env_token_key,
+    [RustCallStatus.by_ref],
+    RustBuffer.by_value
   attach_function :uniffi_cyclops_sdk_fn_func_fleet_label_key,
     [RustCallStatus.by_ref],
     RustBuffer.by_value
@@ -3748,6 +3757,9 @@ module UniFFILib
   attach_function :ffi_cyclops_sdk_rustbuffer_reserve,
     [RustBuffer.by_value, :uint64, RustCallStatus.by_ref],
     RustBuffer.by_value
+  attach_function :uniffi_cyclops_sdk_checksum_func_claim_env_token_key,
+    [RustCallStatus.by_ref],
+    :uint16
   attach_function :uniffi_cyclops_sdk_checksum_func_fleet_label_key,
     [RustCallStatus.by_ref],
     :uint16
@@ -3899,6 +3911,9 @@ module UniFFILib
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_pool,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_secret_files,
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_spec,
@@ -4297,13 +4312,14 @@ end
 
   # Record type CreateClaimRequest
 class CreateClaimRequest
-  attr_reader :pool, :spec, :name, :labels
+  attr_reader :pool, :spec, :name, :labels, :secret_files
 
-  def initialize(pool:, spec:, name: nil, labels: nil)
+  def initialize(pool:, spec:, name: nil, labels: nil, secret_files: nil)
     @pool = pool
     @spec = spec
     @name = name
     @labels = labels
+    @secret_files = secret_files
   end
 
   def ==(other)
@@ -4317,6 +4333,9 @@ class CreateClaimRequest
       return false
     end
     if @labels != other.labels
+      return false
+    end
+    if @secret_files != other.secret_files
       return false
     end
 
@@ -4864,6 +4883,15 @@ class UserApiKey
 
     true
   end
+end
+
+
+
+
+
+def self.claim_env_token_key()
+  result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_func_claim_env_token_key,)
+  return result.consumeIntoString
 end
 
 
@@ -5667,6 +5695,12 @@ end
         value = value
         RustBuffer.check_lower_TypePool(value)
     result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_pool,uniffi_clone_handle(),RustBuffer.alloc_from_TypePool(value))
+    return CreateClaimRequestBuilder.uniffi_allocate(result)
+  end
+  def secret_files(value)
+        value = value.each.with_object({}) { |(k, v), res| res[FleetSdk::uniffi_utf8(k)] = FleetSdk::uniffi_utf8(v) }
+        RustBuffer.check_lower_MapStringString(value)
+    result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_secret_files,uniffi_clone_handle(),RustBuffer.alloc_from_MapStringString(value))
     return CreateClaimRequestBuilder.uniffi_allocate(result)
   end
   def spec(value)

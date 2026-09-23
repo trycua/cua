@@ -705,6 +705,8 @@ internal object IntegrityCheckingUniffiLib {
         uniffiCheckContractApiVersion(this)
         uniffiCheckApiChecksums(this)
     }
+    external fun uniffi_cyclops_sdk_checksum_func_claim_env_token_key(
+    ): Short
     external fun uniffi_cyclops_sdk_checksum_func_fleet_label_key(
     ): Short
     external fun uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status(
@@ -806,6 +808,8 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_name(
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_pool(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_secret_files(
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_spec(
     ): Short
@@ -1054,6 +1058,8 @@ external fun uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_name(`ptr`: 
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_pool(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): Long
+external fun uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_secret_files(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
 external fun uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_spec(`ptr`: Long,`value`: RustBufferClaimSpec.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): Long
 external fun uniffi_cyclops_sdk_fn_clone_createpoolrequestbuilder(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
@@ -1170,6 +1176,8 @@ external fun uniffi_cyclops_sdk_fn_method_templatebuilder_metadata(`ptr`: Long,`
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_templatebuilder_spec(`ptr`: Long,`value`: RustBufferOSGymSandboxTemplateSpec.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): Long
+external fun uniffi_cyclops_sdk_fn_func_claim_env_token_key(uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
 external fun uniffi_cyclops_sdk_fn_func_fleet_label_key(uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
 external fun uniffi_cyclops_sdk_fn_func_healthy_pool_display_status(uniffi_out_err: UniffiRustCallStatus,
@@ -1301,6 +1309,9 @@ private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
 }
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
+    if (lib.uniffi_cyclops_sdk_checksum_func_claim_env_token_key() != 8887.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cyclops_sdk_checksum_func_fleet_label_key() != 5219.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1322,7 +1333,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim() != 23330.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim() != 20460.toShort()) {
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim() != 52233.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim() != 17760.toShort()) {
@@ -1452,6 +1463,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_pool() != 7405.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_secret_files() != 54115.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_spec() != 28263.toShort()) {
@@ -2531,6 +2545,8 @@ public interface CreateClaimRequestBuilderInterface {
 
     fun `pool`(`value`: Pool): CreateClaimRequestBuilder
 
+    fun `secretFiles`(`value`: Map<kotlin.String, kotlin.String>): CreateClaimRequestBuilder
+
     fun `spec`(`value`: ClaimSpec): CreateClaimRequestBuilder
 
     companion object
@@ -2687,6 +2703,19 @@ open class CreateClaimRequestBuilder: Disposable, AutoCloseable, CreateClaimRequ
     UniffiLib.uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_pool(
         it,
         FfiConverterTypePool.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+    override fun `secretFiles`(`value`: Map<kotlin.String, kotlin.String>): CreateClaimRequestBuilder {
+            return FfiConverterTypeCreateClaimRequestBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_secret_files(
+        it,
+        FfiConverterMapStringString.lower(`value`),_status)
 }
     }
     )
@@ -4045,6 +4074,11 @@ public interface CyclopsClientInterface {
 
     suspend fun `createClaim`(`request`: CreateClaimRequest): Claim
 
+    /**
+     * Delete the claim and, when it references a claim-scoped Secret
+     * (`secret_files`), that Secret too. The pool-operator also owner-refs
+     * the Secret to the claim, so garbage collection is the backstop.
+     */
     suspend fun `deleteClaim`(`claim`: Claim)
 
     suspend fun `getClaim`(`claim`: Claim): Claim
@@ -4283,6 +4317,11 @@ open class CyclopsClient: Disposable, AutoCloseable, CyclopsClientInterface
     }
 
 
+    /**
+     * Delete the claim and, when it references a claim-scoped Secret
+     * (`secret_files`), that Secret too. The pool-operator also owner-refs
+     * the Secret to the claim, so garbage collection is the backstop.
+     */
     @Throws(SdkException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
     override suspend fun `deleteClaim`(`claim`: Claim) {
@@ -6916,6 +6955,17 @@ data class CreateClaimRequest (
      * so they can be listed back by label within a namespace.
      */
     var `labels`: Map<kotlin.String, kotlin.String>? = null
+    ,
+    /**
+     * Files delivered into the bound sandbox under `/run/cua/<key>` (mode
+     * 0600) once the claim binds, without restarting it. The key
+     * `claim_env_token_key()` (`env-token`) carries the cua-env-driver token.
+     * The client stores them in a claim-scoped `cua-claim-<claim>` Secret
+     * that the claim references by `spec.secretRef`; `delete_claim` removes
+     * it. The pool's template must set `vmTemplate.claimSecrets`. Values are
+     * never serialized with the request nor printed by `Debug`.
+     */
+    var `secretFiles`: Map<kotlin.String, kotlin.String>? = null
 
 ){
 
@@ -6936,6 +6986,7 @@ public object FfiConverterTypeCreateClaimRequest: FfiConverterRustBuffer<CreateC
             FfiConverterOptionalTypeClaimSpec.read(buf),
             FfiConverterOptionalString.read(buf),
             FfiConverterOptionalMapStringString.read(buf),
+            FfiConverterOptionalMapStringString.read(buf),
         )
     }
 
@@ -6943,7 +6994,8 @@ public object FfiConverterTypeCreateClaimRequest: FfiConverterRustBuffer<CreateC
             FfiConverterTypePool.allocationSize(value.`pool`) +
             FfiConverterOptionalTypeClaimSpec.allocationSize(value.`spec`) +
             FfiConverterOptionalString.allocationSize(value.`name`) +
-            FfiConverterOptionalMapStringString.allocationSize(value.`labels`)
+            FfiConverterOptionalMapStringString.allocationSize(value.`labels`) +
+            FfiConverterOptionalMapStringString.allocationSize(value.`secretFiles`)
     )
 
     override fun write(value: CreateClaimRequest, buf: ByteBuffer) {
@@ -6951,6 +7003,7 @@ public object FfiConverterTypeCreateClaimRequest: FfiConverterRustBuffer<CreateC
             FfiConverterOptionalTypeClaimSpec.write(value.`spec`, buf)
             FfiConverterOptionalString.write(value.`name`, buf)
             FfiConverterOptionalMapStringString.write(value.`labels`, buf)
+            FfiConverterOptionalMapStringString.write(value.`secretFiles`, buf)
     }
 }
 
@@ -9419,6 +9472,20 @@ public object FfiConverterMapStringString: FfiConverterRustBuffer<Map<kotlin.Str
 
 
 
+
+
+        /**
+         * The `secret_files` key (and in-guest file name, `/run/cua/env-token`)
+         * that carries the cua-env-driver token for a claimed sandbox.
+         */ fun `claimEnvTokenKey`(): kotlin.String {
+            return FfiConverterString.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_func_claim_env_token_key(
+
+        _status)
+}
+    )
+    }
 
 
         /**

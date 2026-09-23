@@ -378,6 +378,15 @@ func uniffiCheckChecksums() {
 	}
 	{
 		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_func_claim_env_token_key()
+		})
+		if checksum != 8887 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_func_claim_env_token_key: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
 			return C.uniffi_cyclops_sdk_checksum_func_fleet_label_key()
 		})
 		if checksum != 5219 {
@@ -443,7 +452,7 @@ func uniffiCheckChecksums() {
 		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
 			return C.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim()
 		})
-		if checksum != 20460 {
+		if checksum != 52233 {
 			// If this happens try cleaning and rebuilding your project
 			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim: UniFFI API checksum mismatch")
 		}
@@ -1399,6 +1408,9 @@ func (c FfiConverterAccessTokenProvider) register() {
 
 type CyclopsClientInterface interface {
 	CreateClaim(request CreateClaimRequest) (Claim, error)
+	// Delete the claim and, when it references a claim-scoped Secret
+	// (`secret_files`), that Secret too. The pool-operator also owner-refs
+	// the Secret to the claim, so garbage collection is the backstop.
 	DeleteClaim(claim Claim) error
 	GetClaim(claim Claim) (Claim, error)
 	ListClaims(namespace string) ([]Claim, error)
@@ -1590,6 +1602,9 @@ func (_self *CyclopsClient) CreateClaim(request CreateClaimRequest) (Claim, erro
 	return res, err
 }
 
+// Delete the claim and, when it references a claim-scoped Secret
+// (`secret_files`), that Secret too. The pool-operator also owner-refs
+// the Secret to the claim, so garbage collection is the backstop.
 func (_self *CyclopsClient) DeleteClaim(claim Claim) error {
 	_pointer := _self.ffiObject.incrementPointer("*CyclopsClient")
 	defer _self.ffiObject.decrementPointer()
@@ -3327,6 +3342,14 @@ type CreateClaimRequest struct {
 	// helpers (for example fleet fan-out) rely on this to tag related claims
 	// so they can be listed back by label within a namespace.
 	Labels *map[string]string
+	// Files delivered into the bound sandbox under `/run/cua/<key>` (mode
+	// 0600) once the claim binds, without restarting it. The key
+	// `claim_env_token_key()` (`env-token`) carries the cua-env-driver token.
+	// The client stores them in a claim-scoped `cua-claim-<claim>` Secret
+	// that the claim references by `spec.secretRef`; `delete_claim` removes
+	// it. The pool's template must set `vmTemplate.claimSecrets`. Values are
+	// never serialized with the request nor printed by `Debug`.
+	SecretFiles *map[string]string
 }
 
 func (r *CreateClaimRequest) Destroy() {
@@ -3334,6 +3357,7 @@ func (r *CreateClaimRequest) Destroy() {
 	FfiDestroyerOptionalClaimSpec{}.Destroy(r.Spec)
 	FfiDestroyerOptionalString{}.Destroy(r.Name)
 	FfiDestroyerOptionalMapStringString{}.Destroy(r.Labels)
+	FfiDestroyerOptionalMapStringString{}.Destroy(r.SecretFiles)
 }
 
 type FfiConverterCreateClaimRequest struct{}
@@ -3349,6 +3373,7 @@ func (c FfiConverterCreateClaimRequest) Read(reader io.Reader) CreateClaimReques
 		FfiConverterPoolINSTANCE.Read(reader),
 		FfiConverterOptionalClaimSpecINSTANCE.Read(reader),
 		FfiConverterOptionalStringINSTANCE.Read(reader),
+		FfiConverterOptionalMapStringStringINSTANCE.Read(reader),
 		FfiConverterOptionalMapStringStringINSTANCE.Read(reader),
 	}
 }
@@ -3366,6 +3391,7 @@ func (c FfiConverterCreateClaimRequest) Write(writer io.Writer, value CreateClai
 	FfiConverterOptionalClaimSpecINSTANCE.Write(writer, value.Spec)
 	FfiConverterOptionalStringINSTANCE.Write(writer, value.Name)
 	FfiConverterOptionalMapStringStringINSTANCE.Write(writer, value.Labels)
+	FfiConverterOptionalMapStringStringINSTANCE.Write(writer, value.SecretFiles)
 }
 
 type FfiDestroyerCreateClaimRequest struct{}
@@ -6663,6 +6689,16 @@ func fleet_sdk_uniffiFreeGorutine(data C.uint64_t) {
 
 	guard := handle.Value().(chan struct{})
 	guard <- struct{}{}
+}
+
+// The `secret_files` key (and in-guest file name, `/run/cua/env-token`)
+// that carries the cua-env-driver token for a claimed sandbox.
+func ClaimEnvTokenKey() string {
+	return FfiConverterStringINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) RustBufferI {
+		return GoRustBuffer{
+			inner: C.uniffi_cyclops_sdk_fn_func_claim_env_token_key(_uniffiStatus),
+		}
+	}))
 }
 
 // The label key a fleet's claims share, for callers that filter or clean up

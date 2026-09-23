@@ -280,6 +280,14 @@ pub struct VmTemplate {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(default)]
     pub oidc: Option<OidcConfig>,
+    #[schemars(
+        description = "Opt in to claim-scoped secret delivery (OSGymSandboxClaim spec.secretRef). The pool-operator gives every sandbox an operator-owned Secret, empty while the sandbox is warm, fills it when a claim binds and wipes it on release, so a warm sandbox receives its claimant's secrets without a restart. Pod runtimes mount it read-only as a directory (never subPath) at /run/cua, root-owned, mode 0600; the image keeps its default root user, and its root token-sync helper hands the token to a non-root driver. KubeVirt shares it over virtiofs as tag cua-claim-secrets (needs the KubeVirt EnableVirtioFsConfigVolumes feature gate); the guest image mounts that tag read-only at /run/cua. cua-env-driver images enable their await-token mode only when /run/cua is a mount point, so the key env-token becomes /run/cua/env-token. Claims with a secretRef fail on templates without this flag.",
+        schema_with = "bool_schema"
+    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(default)]
+    #[uniffi(default = None)]
+    pub claim_secrets: Option<bool>,
 }
 
 pub(crate) fn date_time_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {

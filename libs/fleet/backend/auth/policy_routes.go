@@ -199,10 +199,11 @@ func ImageRolloutPolicy() Node {
 }
 
 // K8sRoutePolicy guards /api/k8s/{path...}. It is the same base + surface shape
-// as every other route, with Image namespace ownership and four admission conjuncts: card-or-admin admission
-// for custom-resource creation, pool admission over the request body, and
+// as every other route, with Image namespace ownership and five admission conjuncts: card-or-admin admission
+// for custom-resource creation, pool admission over the request body,
 // sandbox-services admission over the body of the one Sandbox write the
-// allowlist admits, plus Image admission excluding status and mismatched identity.
+// allowlist admits, tenant-secret admission over the body of the one Secret
+// create it admits, plus Image admission excluding status and mismatched identity.
 //
 // Every conjunct must pass. The three body-reading leaves read the raw body
 // (bounded at 1 MiB) to inspect the object being created or patched, which is
@@ -243,6 +244,11 @@ const ServiceWriteNotSupportedMessage = "creating or modifying Kubernetes Servic
 // strays outside the one field clients may write.
 const SandboxPatchRestrictedMessage = "a sandbox PATCH may only modify spec.vmTemplate.services (an optional metadata.resourceVersion precondition is also accepted)"
 
+// TenantSecretRestrictedMessage is the 403 body when a Secret create through
+// /api/k8s is not one of the tenant Secret kinds (tenant_secret_admission.rego).
+// A new kind appends its own "; <kind>: ..." clause.
+const TenantSecretRestrictedMessage = "only tenant Secrets may be created through this API, in the path's namespace, with no generateName, annotations or ownerReferences. Claim secrets: a plain Opaque Secret named cua-claim-<name>, referenced from OSGymSandboxClaim spec.secretRef."
+
 func K8sRoutePolicy() Node {
 	return All(
 		BasePolicy(),
@@ -278,6 +284,14 @@ func K8sRoutePolicy() Node {
 				WithRawBody(1<<20),
 			),
 			SandboxPatchRestrictedMessage,
+		),
+		Because(
+			Policy(
+				Registered("tenant-secret-admission"),
+				Query("data.tenant_secret_admission.allow"),
+				WithRawBody(1<<20),
+			),
+			TenantSecretRestrictedMessage,
 		),
 	)
 }

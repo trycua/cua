@@ -166,3 +166,60 @@ fn claim_raw_crd_matches_the_authoritative_field_contract() {
 
     assert_eq!(generated, authoritative);
 }
+
+#[test]
+fn claim_secret_ref_is_optional_and_pinned_to_the_gateway_prefix() {
+    let claim = serde_json::to_value(OSGymSandboxClaim::crd()).unwrap();
+    let spec = claim
+        .pointer("/spec/versions/0/schema/openAPIV3Schema/properties/spec")
+        .unwrap();
+    let required = spec.get("required").and_then(Value::as_array).unwrap();
+    assert!(!required.contains(&json!("secretRef")));
+
+    let name = spec
+        .pointer("/properties/secretRef/properties/name")
+        .unwrap();
+    let pattern = name["pattern"].as_str().unwrap();
+    assert!(pattern.starts_with(&format!(
+        "^{}",
+        cyclops_sdk_schema::CLAIM_SECRET_NAME_PREFIX
+    )));
+    assert_eq!(name["maxLength"], json!(253));
+    assert_eq!(
+        spec.pointer("/properties/secretRef/required"),
+        Some(&json!(["name"]))
+    );
+}
+
+#[test]
+fn claim_spec_round_trips_secret_ref_and_omits_it_when_unset() {
+    use cyclops_sdk_schema::{ClaimSecretRef, ClaimSpec};
+
+    let spec: ClaimSpec = serde_json::from_value(json!({
+        "sandboxTemplateRef": { "name": "pool-template" },
+        "secretRef": { "name": "cua-claim-claim-a" },
+    }))
+    .unwrap();
+    assert_eq!(
+        spec.secret_ref,
+        Some(ClaimSecretRef {
+            name: "cua-claim-claim-a".into()
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(&spec).unwrap()["secretRef"],
+        json!({ "name": "cua-claim-claim-a" })
+    );
+
+    let bare: ClaimSpec = serde_json::from_value(json!({
+        "sandboxTemplateRef": { "name": "pool-template" },
+    }))
+    .unwrap();
+    assert!(bare.secret_ref.is_none());
+    assert!(
+        serde_json::to_value(&bare)
+            .unwrap()
+            .get("secretRef")
+            .is_none()
+    );
+}

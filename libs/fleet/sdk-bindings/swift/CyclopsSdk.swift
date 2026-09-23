@@ -780,6 +780,8 @@ public protocol CreateClaimRequestBuilderProtocol: AnyObject, Sendable {
 
     func pool(value: Pool)  -> CreateClaimRequestBuilder
 
+    func secretFiles(value: [String: String])  -> CreateClaimRequestBuilder
+
     func spec(value: ClaimSpec)  -> CreateClaimRequestBuilder
 
 }
@@ -874,6 +876,15 @@ open func pool(value: Pool) -> CreateClaimRequestBuilder  {
     uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_pool(
             self.uniffiCloneHandle(),
         FfiConverterTypePool_lower(value),$0
+    )
+})
+}
+
+open func secretFiles(value: [String: String]) -> CreateClaimRequestBuilder  {
+    return try!  FfiConverterTypeCreateClaimRequestBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_secret_files(
+            self.uniffiCloneHandle(),
+        FfiConverterDictionaryStringString.lower(value),$0
     )
 })
 }
@@ -1554,6 +1565,11 @@ public protocol CyclopsClientProtocol: AnyObject, Sendable {
 
     func createClaim(request: CreateClaimRequest) async throws  -> Claim
 
+    /**
+     * Delete the claim and, when it references a claim-scoped Secret
+     * (`secret_files`), that Secret too. The pool-operator also owner-refs
+     * the Secret to the claim, so garbage collection is the backstop.
+     */
     func deleteClaim(claim: Claim) async throws
 
     func getClaim(claim: Claim) async throws  -> Claim
@@ -1806,6 +1822,11 @@ open func createClaim(request: CreateClaimRequest)async throws  -> Claim  {
         )
 }
 
+    /**
+     * Delete the claim and, when it references a claim-scoped Secret
+     * (`secret_files`), that Secret too. The pool-operator also owner-refs
+     * the Secret to the claim, so garbage collection is the backstop.
+     */
 open func deleteClaim(claim: Claim)async throws   {
     return
         try  await uniffiRustCallAsync(
@@ -3499,6 +3520,16 @@ public struct CreateClaimRequest: Equatable, Hashable {
      * so they can be listed back by label within a namespace.
      */
     public var labels: [String: String]?
+    /**
+     * Files delivered into the bound sandbox under `/run/cua/<key>` (mode
+     * 0600) once the claim binds, without restarting it. The key
+     * `claim_env_token_key()` (`env-token`) carries the cua-env-driver token.
+     * The client stores them in a claim-scoped `cua-claim-<claim>` Secret
+     * that the claim references by `spec.secretRef`; `delete_claim` removes
+     * it. The pool's template must set `vmTemplate.claimSecrets`. Values are
+     * never serialized with the request nor printed by `Debug`.
+     */
+    public var secretFiles: [String: String]?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -3512,11 +3543,21 @@ public struct CreateClaimRequest: Equatable, Hashable {
          * Labels stamped onto the created claim's metadata verbatim. Grouping
          * helpers (for example fleet fan-out) rely on this to tag related claims
          * so they can be listed back by label within a namespace.
-         */labels: [String: String]? = nil) {
+         */labels: [String: String]? = nil,
+        /**
+         * Files delivered into the bound sandbox under `/run/cua/<key>` (mode
+         * 0600) once the claim binds, without restarting it. The key
+         * `claim_env_token_key()` (`env-token`) carries the cua-env-driver token.
+         * The client stores them in a claim-scoped `cua-claim-<claim>` Secret
+         * that the claim references by `spec.secretRef`; `delete_claim` removes
+         * it. The pool's template must set `vmTemplate.claimSecrets`. Values are
+         * never serialized with the request nor printed by `Debug`.
+         */secretFiles: [String: String]? = nil) {
         self.pool = pool
         self.spec = spec
         self.name = name
         self.labels = labels
+        self.secretFiles = secretFiles
     }
 
 
@@ -3538,7 +3579,8 @@ public struct FfiConverterTypeCreateClaimRequest: FfiConverterRustBuffer {
                 pool: FfiConverterTypePool.read(from: &buf),
                 spec: FfiConverterOptionTypeClaimSpec.read(from: &buf),
                 name: FfiConverterOptionString.read(from: &buf),
-                labels: FfiConverterOptionDictionaryStringString.read(from: &buf)
+                labels: FfiConverterOptionDictionaryStringString.read(from: &buf),
+                secretFiles: FfiConverterOptionDictionaryStringString.read(from: &buf)
         )
     }
 
@@ -3547,6 +3589,7 @@ public struct FfiConverterTypeCreateClaimRequest: FfiConverterRustBuffer {
         FfiConverterOptionTypeClaimSpec.write(value.spec, into: &buf)
         FfiConverterOptionString.write(value.name, into: &buf)
         FfiConverterOptionDictionaryStringString.write(value.labels, into: &buf)
+        FfiConverterOptionDictionaryStringString.write(value.secretFiles, into: &buf)
     }
 }
 
@@ -6356,6 +6399,16 @@ public func uniffiForeignFutureHandleCountFleetSdk() -> Int {
     UNIFFI_FOREIGN_FUTURE_HANDLE_MAP.count
 }
 /**
+ * The `secret_files` key (and in-guest file name, `/run/cua/env-token`)
+ * that carries the cua-env-driver token for a claimed sandbox.
+ */
+public func claimEnvTokenKey() -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_cyclops_sdk_fn_func_claim_env_token_key($0
+    )
+})
+}
+/**
  * The label key a fleet's claims share, for callers that filter or clean up
  * with raw Kubernetes tooling instead of `list_fleet_claims`.
  */
@@ -6412,6 +6465,9 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
+    if (uniffi_cyclops_sdk_checksum_func_claim_env_token_key() != 8887) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cyclops_sdk_checksum_func_fleet_label_key() != 5219) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -6433,7 +6489,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim() != 23330) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim() != 20460) {
+    if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim() != 52233) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim() != 17760) {
@@ -6563,6 +6619,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_pool() != 7405) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_secret_files() != 54115) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_spec() != 28263) {

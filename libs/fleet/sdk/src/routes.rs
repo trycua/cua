@@ -4,6 +4,8 @@ use url::Url;
 const POOL_COLLECTION_PREFIX: &str = "api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/";
 const CLAIM_COLLECTION_PREFIX: &str = "api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/";
 const CLAIM_COLLECTION_SUFFIX: &str = "/osgymsandboxclaims";
+const SECRET_COLLECTION_PREFIX: &str = "api/k8s/api/v1/namespaces/";
+const SECRET_COLLECTION_SUFFIX: &str = "/secrets";
 const POOL_COLLECTION_SUFFIX: &str = "/osgymsandboxwarmpools";
 const TEMPLATE_COLLECTION_SUFFIX: &str = "/osgymsandboxtemplates";
 const NAMESPACE_COLLECTION: &str = "api/namespaces";
@@ -255,6 +257,39 @@ pub fn claim_item(base: &Url, namespace: &str, name: &str) -> Result<Url, SdkErr
         base,
         format!("{CLAIM_COLLECTION_PREFIX}{namespace}{CLAIM_COLLECTION_SUFFIX}/{name}"),
     )
+}
+
+/// Core Secrets collection in a pool namespace. The gateway only admits
+/// creating Opaque `cua-claim-*` Secrets here.
+pub fn claim_secret_collection(base: &Url, namespace: &str) -> Result<Url, SdkError> {
+    validate_dns_label_for("namespace", namespace)?;
+    route(
+        base,
+        format!("{SECRET_COLLECTION_PREFIX}{namespace}{SECRET_COLLECTION_SUFFIX}"),
+    )
+}
+
+/// One claim-scoped Secret. Secret names are DNS subdomains, but claim secret
+/// names are `cua-claim-<claim>`, which is always a DNS label plus a prefix.
+pub fn claim_secret_item(base: &Url, namespace: &str, name: &str) -> Result<Url, SdkError> {
+    validate_dns_label_for("namespace", namespace)?;
+    validate_claim_secret_name(name)?;
+    route(
+        base,
+        format!("{SECRET_COLLECTION_PREFIX}{namespace}{SECRET_COLLECTION_SUFFIX}/{name}"),
+    )
+}
+
+pub(crate) fn validate_claim_secret_name(name: &str) -> Result<(), SdkError> {
+    let rest = name
+        .strip_prefix(cyclops_sdk_schema::CLAIM_SECRET_NAME_PREFIX)
+        .ok_or_else(|| SdkError::Configuration {
+            reason: format!(
+                "claim secret name must start with {}",
+                cyclops_sdk_schema::CLAIM_SECRET_NAME_PREFIX
+            ),
+        })?;
+    validate_dns_label_for("claim secret name", rest)
 }
 
 pub fn service_url(

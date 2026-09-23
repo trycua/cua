@@ -393,6 +393,11 @@ const DEFINITIONS = {
       ret: FfiType.Void,
       hasRustCallStatus: false,
     },
+    "uniffi_cyclops_sdk_fn_func_claim_env_token_key": {
+      args: [],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
     "uniffi_cyclops_sdk_fn_func_fleet_label_key": {
       args: [],
       ret: FfiType.RustBuffer,
@@ -449,6 +454,11 @@ const DEFINITIONS = {
       hasRustCallStatus: true,
     },
     "uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_pool": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_secret_files": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: true,
@@ -903,6 +913,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt32,
       hasRustCallStatus: false,
     },
+    "uniffi_cyclops_sdk_checksum_func_claim_env_token_key": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cyclops_sdk_checksum_func_fleet_label_key": {
       args: [],
       ret: FfiType.UInt16,
@@ -959,6 +974,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_pool": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_secret_files": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -1555,6 +1575,7 @@ interface NativeModuleInterface {
     uniffi_cyclops_sdk_fn_free_templatebuilder(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cyclops_sdk_fn_init_callback_vtable_accesstokenprovider(vtable: UniffiVTableCallbackInterfaceFleetSdkAccessTokenProvider): void;
     uniffi_cyclops_sdk_fn_init_callback_vtable_httpclient(vtable: UniffiVTableCallbackInterfaceFleetSdkHttpClient): void;
+    uniffi_cyclops_sdk_fn_func_claim_env_token_key(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cyclops_sdk_fn_func_fleet_label_key(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cyclops_sdk_fn_func_healthy_pool_display_status(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cyclops_sdk_fn_func_pool_display_status(pool: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -1567,6 +1588,7 @@ interface NativeModuleInterface {
     uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_labels(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_name(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_pool(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_secret_files(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_spec(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_fn_constructor_createpoolrequestbuilder_new(uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_build(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -1657,6 +1679,7 @@ interface NativeModuleInterface {
     uniffi_cyclops_sdk_fn_method_templatebuilder_metadata(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_fn_method_templatebuilder_spec(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     ffi_cyclops_sdk_uniffi_contract_version(): number;
+    uniffi_cyclops_sdk_checksum_func_claim_env_token_key(): number;
     uniffi_cyclops_sdk_checksum_func_fleet_label_key(): number;
     uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status(): number;
     uniffi_cyclops_sdk_checksum_func_pool_display_status(): number;
@@ -1669,6 +1692,7 @@ interface NativeModuleInterface {
     uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_labels(): number;
     uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_name(): number;
     uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_pool(): number;
+    uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_secret_files(): number;
     uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_spec(): number;
     uniffi_cyclops_sdk_checksum_constructor_createpoolrequestbuilder_new(): number;
     uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_build(): number;

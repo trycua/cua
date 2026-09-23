@@ -132,6 +132,25 @@ end
     end
   end
 
+  # The Record type ClaimSecretRef.
+
+  def self.check_lower_TypeClaimSecretRef(v)
+
+  end
+
+  def self.alloc_from_TypeClaimSecretRef(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_TypeClaimSecretRef(v)
+      return builder.finalize
+    end
+  end
+
+  def consumeIntoTypeClaimSecretRef
+    consumeWithStream do |stream|
+      return stream.readTypeClaimSecretRef
+    end
+  end
+
   # The Record type ClaimSpec.
 
   def self.check_lower_TypeClaimSpec(v)
@@ -140,6 +159,7 @@ end
     RustBuffer.check_lower_Optionalu32(v.bind_deadline)
     RustBuffer.check_lower_OptionalTypeClaimLifecycle(v.lifecycle)
     RustBuffer.check_lower_Optionalu32(v.ttl_seconds_after_created)
+    RustBuffer.check_lower_OptionalTypeClaimSecretRef(v.secret_ref)
   end
 
   def self.alloc_from_TypeClaimSpec(v)
@@ -407,6 +427,7 @@ end
     RustBuffer.check_lower_OptionalTypePreservedJson(v.probes)
     RustBuffer.check_lower_OptionalSequenceTypeSandboxService(v.services)
     RustBuffer.check_lower_OptionalTypeOidcConfig(v.oidc)
+    RustBuffer.check_lower_Optionalbool(v.claim_secrets)
   end
 
   def self.alloc_from_TypeVmTemplate(v)
@@ -625,6 +646,27 @@ end
   def consumeIntoOptionalTypeClaimLifecycle
     consumeWithStream do |stream|
       return stream.readOptionalTypeClaimLifecycle
+    end
+  end
+
+  # The Optional<T> type for TypeClaimSecretRef.
+
+  def self.check_lower_OptionalTypeClaimSecretRef(v)
+    if not v.nil?
+      RustBuffer.check_lower_TypeClaimSecretRef(v)
+    end
+  end
+
+  def self.alloc_from_OptionalTypeClaimSecretRef(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_OptionalTypeClaimSecretRef(v)
+      return builder.finalize()
+    end
+  end
+
+  def consumeIntoOptionalTypeClaimSecretRef
+    consumeWithStream do |stream|
+      return stream.readOptionalTypeClaimSecretRef
     end
   end
 
@@ -1114,6 +1156,14 @@ class RustBufferStream
     )
   end
 
+  # The Record type ClaimSecretRef.
+
+  def readTypeClaimSecretRef
+    ClaimSecretRef.new(
+      name: readString
+    )
+  end
+
   # The Record type ClaimSpec.
 
   def readTypeClaimSpec
@@ -1122,7 +1172,8 @@ class RustBufferStream
       warmpool: readOptionalstring,
       bind_deadline: readOptionalu32,
       lifecycle: readOptionalTypeClaimLifecycle,
-      ttl_seconds_after_created: readOptionalu32
+      ttl_seconds_after_created: readOptionalu32,
+      secret_ref: readOptionalTypeClaimSecretRef
     )
   end
 
@@ -1257,7 +1308,8 @@ class RustBufferStream
       nested_virtualization: readOptionalbool,
       probes: readOptionalTypePreservedJson,
       services: readOptionalSequenceTypeSandboxService,
-      oidc: readOptionalTypeOidcConfig
+      oidc: readOptionalTypeOidcConfig,
+      claim_secrets: readOptionalbool
     )
   end
 
@@ -1459,6 +1511,20 @@ class RustBufferStream
       return readTypeClaimLifecycle
     else
       raise InternalError, 'Unexpected flag byte for OptionalTypeClaimLifecycle'
+    end
+  end
+
+  # The Optional<T> type for TypeClaimSecretRef.
+
+  def readOptionalTypeClaimSecretRef
+    flag = unpack_from 1, 'c'
+
+    if flag == 0
+      return nil
+    elsif flag == 1
+      return readTypeClaimSecretRef
+    else
+      raise InternalError, 'Unexpected flag byte for OptionalTypeClaimSecretRef'
     end
   end
 
@@ -1830,6 +1896,12 @@ class RustBufferBuilder
     self.write_Optionalbool(v.auto_renew)
   end
 
+  # The Record type ClaimSecretRef.
+
+  def write_TypeClaimSecretRef(v)
+    self.write_String(v.name)
+  end
+
   # The Record type ClaimSpec.
 
   def write_TypeClaimSpec(v)
@@ -1838,6 +1910,7 @@ class RustBufferBuilder
     self.write_Optionalu32(v.bind_deadline)
     self.write_OptionalTypeClaimLifecycle(v.lifecycle)
     self.write_Optionalu32(v.ttl_seconds_after_created)
+    self.write_OptionalTypeClaimSecretRef(v.secret_ref)
   end
 
   # The Record type OSGymSandboxClaimCondition.
@@ -1949,6 +2022,7 @@ class RustBufferBuilder
     self.write_OptionalTypePreservedJson(v.probes)
     self.write_OptionalSequenceTypeSandboxService(v.services)
     self.write_OptionalTypeOidcConfig(v.oidc)
+    self.write_Optionalbool(v.claim_secrets)
   end
 
   # The Record type WarmPoolAutoscaling.
@@ -2043,6 +2117,17 @@ class RustBufferBuilder
     else
       pack_into(1, 'c', 1)
       self.write_TypeClaimLifecycle(v)
+    end
+  end
+
+  # The Optional<T> type for TypeClaimSecretRef.
+
+  def write_OptionalTypeClaimSecretRef(v)
+    if v.nil?
+      pack_into(1, 'c', 0)
+    else
+      pack_into(1, 'c', 1)
+      self.write_TypeClaimSecretRef(v)
     end
   end
 
@@ -2445,6 +2530,9 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_build,
     [:uint64, RustCallStatus.by_ref],
     RustBuffer.by_value
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_claim_secrets,
+    [:uint64, :int8, RustCallStatus.by_ref],
+    :uint64
   attach_function :uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_command,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
@@ -2593,6 +2681,9 @@ module UniFFILib
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_claim_secrets,
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_command,
@@ -2779,16 +2870,34 @@ class ClaimLifecycle
   end
 end
 
+  # Record type ClaimSecretRef
+class ClaimSecretRef
+  attr_reader :name
+
+  def initialize(name:)
+    @name = name
+  end
+
+  def ==(other)
+    if @name != other.name
+      return false
+    end
+
+    true
+  end
+end
+
   # Record type ClaimSpec
 class ClaimSpec
-  attr_reader :sandbox_template_ref, :warmpool, :bind_deadline, :lifecycle, :ttl_seconds_after_created
+  attr_reader :sandbox_template_ref, :warmpool, :bind_deadline, :lifecycle, :ttl_seconds_after_created, :secret_ref
 
-  def initialize(sandbox_template_ref:, warmpool:, bind_deadline:, lifecycle:, ttl_seconds_after_created: nil)
+  def initialize(sandbox_template_ref:, warmpool:, bind_deadline:, lifecycle:, ttl_seconds_after_created: nil, secret_ref: nil)
     @sandbox_template_ref = sandbox_template_ref
     @warmpool = warmpool
     @bind_deadline = bind_deadline
     @lifecycle = lifecycle
     @ttl_seconds_after_created = ttl_seconds_after_created
+    @secret_ref = secret_ref
   end
 
   def ==(other)
@@ -2805,6 +2914,9 @@ class ClaimSpec
       return false
     end
     if @ttl_seconds_after_created != other.ttl_seconds_after_created
+      return false
+    end
+    if @secret_ref != other.secret_ref
       return false
     end
 
@@ -2968,9 +3080,9 @@ end
 
   # Record type VmTemplate
 class VmTemplate
-  attr_reader :container_disk_image, :command, :runtime, :runtime_class_name, :node_selector, :tolerations, :image_pull_policy, :image_pull_secret, :cpu_cores, :memory, :firmware, :nested_virtualization, :probes, :services, :oidc
+  attr_reader :container_disk_image, :command, :runtime, :runtime_class_name, :node_selector, :tolerations, :image_pull_policy, :image_pull_secret, :cpu_cores, :memory, :firmware, :nested_virtualization, :probes, :services, :oidc, :claim_secrets
 
-  def initialize(container_disk_image:, command:, runtime:, runtime_class_name:, node_selector:, tolerations:, image_pull_policy:, image_pull_secret:, cpu_cores:, memory:, firmware:, nested_virtualization:, probes:, services:, oidc:)
+  def initialize(container_disk_image:, command:, runtime:, runtime_class_name:, node_selector:, tolerations:, image_pull_policy:, image_pull_secret:, cpu_cores:, memory:, firmware:, nested_virtualization:, probes:, services:, oidc:, claim_secrets: nil)
     @container_disk_image = container_disk_image
     @command = command
     @runtime = runtime
@@ -2986,6 +3098,7 @@ class VmTemplate
     @probes = probes
     @services = services
     @oidc = oidc
+    @claim_secrets = claim_secrets
   end
 
   def ==(other)
@@ -3032,6 +3145,9 @@ class VmTemplate
       return false
     end
     if @oidc != other.oidc
+      return false
+    end
+    if @claim_secrets != other.claim_secrets
       return false
     end
 
@@ -3392,6 +3508,12 @@ end
   def build()
     result = CyclopsSdkSchema.rust_call_with_error(SchemaBuildError,:uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_build,uniffi_clone_handle(),)
     return result.consumeIntoTypeVmTemplate
+  end
+  def claim_secrets(value)
+        value = value ? true : false
+
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_claim_secrets,uniffi_clone_handle(),(value ? 1 : 0))
+    return VmTemplateBuilder.uniffi_allocate(result)
   end
   def command(value)
         value = value.map { |v| CyclopsSdkSchema::uniffi_utf8(v) }

@@ -66,6 +66,7 @@ impl CyclopsClient {
                         spec: None,
                         name: None,
                         labels: Some(labels.clone()),
+                        secret_files: None,
                     })
                     .await?;
                 claims.push(claim);
@@ -187,6 +188,7 @@ mod tests {
                 warmpool: None,
                 bind_deadline: None,
                 ttl_seconds_after_created: None,
+                secret_ref: None,
                 lifecycle: None,
             },
             status: None,

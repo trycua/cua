@@ -33,6 +33,26 @@ const uniffiIsDebug =
 // Public interface members begin here.
 
 /**
+ * The `secret_files` key (and in-guest file name, `/run/cua/env-token`)
+ * that carries the cua-env-driver token for a claimed sandbox.
+ */
+export function claimEnvTokenKey(): string {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterString.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_func_claim_env_token_key(
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
  * The label key a fleet's claims share, for callers that filter or clean up
  * with raw Kubernetes tooling instead of `list_fleet_claims`.
  */
@@ -338,7 +358,17 @@ export type CreateClaimRequest = {
      * helpers (for example fleet fan-out) rely on this to tag related claims
      * so they can be listed back by label within a namespace.
      */
-    labels?: Map<string, string>
+    labels?: Map<string, string>,
+    /**
+     * Files delivered into the bound sandbox under `/run/cua/<key>` (mode
+     * 0600) once the claim binds, without restarting it. The key
+     * `claim_env_token_key()` (`env-token`) carries the cua-env-driver token.
+     * The client stores them in a claim-scoped `cua-claim-<claim>` Secret
+     * that the claim references by `spec.secretRef`; `delete_claim` removes
+     * it. The pool's template must set `vmTemplate.claimSecrets`. Values are
+     * never serialized with the request nor printed by `Debug`.
+     */
+    secretFiles?: Map<string, string>
 }
 
 /**
@@ -347,7 +377,8 @@ export type CreateClaimRequest = {
 export const CreateClaimRequest = (() => {
     const defaults = () => ({
         name: undefined,
-        labels: undefined
+        labels: undefined,
+        secretFiles: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<CreateClaimRequest, ReturnType<typeof defaults>>(defaults);
@@ -367,7 +398,8 @@ const FfiConverterTypeCreateClaimRequest = (() => {
                 pool: FfiConverterTypePool.read(from),
                 spec: FfiConverterOptionalTypeClaimSpec.read(from),
                 name: FfiConverterOptionalString.read(from),
-                labels: FfiConverterOptionalMapStringString.read(from)
+                labels: FfiConverterOptionalMapStringString.read(from),
+                secretFiles: FfiConverterOptionalMapStringString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -375,12 +407,14 @@ const FfiConverterTypeCreateClaimRequest = (() => {
             FfiConverterOptionalTypeClaimSpec.write(value.spec, into);
             FfiConverterOptionalString.write(value.name, into);
             FfiConverterOptionalMapStringString.write(value.labels, into);
+            FfiConverterOptionalMapStringString.write(value.secretFiles, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypePool.allocationSize(value.pool) +
              FfiConverterOptionalTypeClaimSpec.allocationSize(value.spec) +
              FfiConverterOptionalString.allocationSize(value.name) +
-             FfiConverterOptionalMapStringString.allocationSize(value.labels);
+             FfiConverterOptionalMapStringString.allocationSize(value.labels) +
+             FfiConverterOptionalMapStringString.allocationSize(value.secretFiles);
 
         }
     };
@@ -2932,6 +2966,7 @@ export interface CreateClaimRequestBuilderLike {
     labels(value: Map<string, string>): CreateClaimRequestBuilderLike;
     name(value: string): CreateClaimRequestBuilderLike;
     pool(value: Pool): CreateClaimRequestBuilderLike;
+    secretFiles(value: Map<string, string>): CreateClaimRequestBuilderLike;
     spec(value: ClaimSpec): CreateClaimRequestBuilderLike;
 }
 /**
@@ -3010,6 +3045,18 @@ export class CreateClaimRequestBuilder extends UniffiAbstractObject implements C
                 return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_pool(
                 uniffiTypeCreateClaimRequestBuilderObjectFactory.clonePointer(this),
         FfiConverterTypePool.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    secretFiles(value: Map<string, string>): CreateClaimRequestBuilderLike {
+    return FfiConverterTypeCreateClaimRequestBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_secret_files(
+                uniffiTypeCreateClaimRequestBuilderObjectFactory.clonePointer(this),
+        FfiConverterMapStringString.lower(value, nativeModule().rustbuffer_alloc),
                 callStatus);
             },
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
@@ -3797,6 +3844,11 @@ export interface CyclopsClientLike {
     createSignedServiceUrl(request: CreateSignedServiceUrlRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SignedServiceUrl>;
     createTemplate(request: CreateTemplateRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Template>;
     createUserApiKey(request: CreateUserApiKeyRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<NewUserApiKey>;
+/**
+ * Delete the claim and, when it references a claim-scoped Secret
+ * (`secret_files`), that Secret too. The pool-operator also owner-refs
+ * the Secret to the claim, so garbage collection is the backstop.
+ */
     deleteClaim(claim: Claim, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
     deleteImage(namespace: string, name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
     deleteNamespace(name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
@@ -4198,6 +4250,11 @@ private constructor(pointer: UniffiHandle) {
         );
     }
 
+/**
+ * Delete the claim and, when it references a claim-scoped Secret
+ * (`secret_files`), that Secret too. The pool-operator also owner-refs
+ * the Secret to the claim, so garbage collection is the backstop.
+ */
     async deleteClaim(claim: Claim, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
     return await uniffiRustCallAsync(
             /*rustCaller:*/ uniffiCaller,
@@ -5861,6 +5918,9 @@ function uniffiEnsureInitialized() {
     if (bindingsContractVersion !== scaffoldingContractVersion) {
         throw new UniffiInternalError.ContractVersionMismatch(scaffoldingContractVersion, bindingsContractVersion);
     }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_func_claim_env_token_key() !== 8887) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_func_claim_env_token_key");
+    }
     if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_func_fleet_label_key() !== 5219) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_func_fleet_label_key");
     }
@@ -5896,6 +5956,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_pool() !== 7405) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_pool");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_secret_files() !== 54115) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_secret_files");
     }
     if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_spec() !== 28263) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_spec");
@@ -6005,7 +6068,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_user_api_key() !== 9174) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_user_api_key");
     }
-    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim() !== 20460) {
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim() !== 52233) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim");
     }
     if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_image() !== 24680) {

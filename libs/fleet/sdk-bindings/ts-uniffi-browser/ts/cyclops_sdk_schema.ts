@@ -96,6 +96,49 @@ const FfiConverterTypeClaimLifecycle = (() => {
     return new FFIConverter();
 })();
 
+/**
+ * Reference to a claim-scoped Secret delivered into the bound sandbox. See
+ * [`CLAIM_SECRET_NAME_PREFIX`].
+ */
+export type ClaimSecretRef = {
+    name: string
+}
+
+/**
+ * Generated factory for {@link ClaimSecretRef} record objects.
+ */
+export const ClaimSecretRef = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ClaimSecretRef, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ClaimSecretRef>,
+    });
+})();
+
+const FfiConverterTypeClaimSecretRef = (() => {
+    type TypeName = ClaimSecretRef;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                name: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.name, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.name);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type SandboxTemplateRef = {
     name: string
 }
@@ -140,7 +183,8 @@ export type ClaimSpec = {
     warmpool?: string,
     bindDeadline?: number,
     lifecycle?: ClaimLifecycle,
-    ttlSecondsAfterCreated?: number
+    ttlSecondsAfterCreated?: number,
+    secretRef?: ClaimSecretRef
 }
 
 /**
@@ -148,7 +192,8 @@ export type ClaimSpec = {
  */
 export const ClaimSpec = (() => {
     const defaults = () => ({
-        ttlSecondsAfterCreated: undefined
+        ttlSecondsAfterCreated: undefined,
+        secretRef: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<ClaimSpec, ReturnType<typeof defaults>>(defaults);
@@ -169,7 +214,8 @@ const FfiConverterTypeClaimSpec = (() => {
                 warmpool: FfiConverterOptionalString.read(from),
                 bindDeadline: FfiConverterOptionalUInt32.read(from),
                 lifecycle: FfiConverterOptionalTypeClaimLifecycle.read(from),
-                ttlSecondsAfterCreated: FfiConverterOptionalUInt32.read(from)
+                ttlSecondsAfterCreated: FfiConverterOptionalUInt32.read(from),
+                secretRef: FfiConverterOptionalTypeClaimSecretRef.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -178,13 +224,15 @@ const FfiConverterTypeClaimSpec = (() => {
             FfiConverterOptionalUInt32.write(value.bindDeadline, into);
             FfiConverterOptionalTypeClaimLifecycle.write(value.lifecycle, into);
             FfiConverterOptionalUInt32.write(value.ttlSecondsAfterCreated, into);
+            FfiConverterOptionalTypeClaimSecretRef.write(value.secretRef, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypeSandboxTemplateRef.allocationSize(value.sandboxTemplateRef) +
              FfiConverterOptionalString.allocationSize(value.warmpool) +
              FfiConverterOptionalUInt32.allocationSize(value.bindDeadline) +
              FfiConverterOptionalTypeClaimLifecycle.allocationSize(value.lifecycle) +
-             FfiConverterOptionalUInt32.allocationSize(value.ttlSecondsAfterCreated);
+             FfiConverterOptionalUInt32.allocationSize(value.ttlSecondsAfterCreated) +
+             FfiConverterOptionalTypeClaimSecretRef.allocationSize(value.secretRef);
 
         }
     };
@@ -709,7 +757,8 @@ export type VmTemplate = {
     nestedVirtualization?: boolean,
     probes?: PreservedJsonLike,
     services?: Array<SandboxService>,
-    oidc?: OidcConfig
+    oidc?: OidcConfig,
+    claimSecrets?: boolean
 }
 
 /**
@@ -717,6 +766,7 @@ export type VmTemplate = {
  */
 export const VmTemplate = (() => {
     const defaults = () => ({
+        claimSecrets: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<VmTemplate, ReturnType<typeof defaults>>(defaults);
@@ -747,7 +797,8 @@ const FfiConverterTypeVmTemplate = (() => {
                 nestedVirtualization: FfiConverterOptionalBoolean.read(from),
                 probes: FfiConverterOptionalTypePreservedJson.read(from),
                 services: FfiConverterOptionalSequenceTypeSandboxService.read(from),
-                oidc: FfiConverterOptionalTypeOidcConfig.read(from)
+                oidc: FfiConverterOptionalTypeOidcConfig.read(from),
+                claimSecrets: FfiConverterOptionalBoolean.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -766,6 +817,7 @@ const FfiConverterTypeVmTemplate = (() => {
             FfiConverterOptionalTypePreservedJson.write(value.probes, into);
             FfiConverterOptionalSequenceTypeSandboxService.write(value.services, into);
             FfiConverterOptionalTypeOidcConfig.write(value.oidc, into);
+            FfiConverterOptionalBoolean.write(value.claimSecrets, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.containerDiskImage) +
@@ -782,7 +834,8 @@ const FfiConverterTypeVmTemplate = (() => {
              FfiConverterOptionalBoolean.allocationSize(value.nestedVirtualization) +
              FfiConverterOptionalTypePreservedJson.allocationSize(value.probes) +
              FfiConverterOptionalSequenceTypeSandboxService.allocationSize(value.services) +
-             FfiConverterOptionalTypeOidcConfig.allocationSize(value.oidc);
+             FfiConverterOptionalTypeOidcConfig.allocationSize(value.oidc) +
+             FfiConverterOptionalBoolean.allocationSize(value.claimSecrets);
 
         }
     };
@@ -1920,6 +1973,7 @@ const FfiConverterTypeSandboxTemplateRefBuilder = new FfiConverterObject(uniffiT
 export interface VmTemplateBuilderLike {
 
     build() /*throws*/: VmTemplate;
+    claimSecrets(value: boolean): VmTemplateBuilderLike;
     command(value: Array<string>): VmTemplateBuilderLike;
     containerDiskImage(value: string): VmTemplateBuilderLike;
     cpuCores(value: number): VmTemplateBuilderLike;
@@ -1976,6 +2030,18 @@ export class VmTemplateBuilder extends UniffiAbstractObject implements VmTemplat
             /*caller:*/ (callStatus) => {
                 return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_build(
                 uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    claimSecrets(value: boolean): VmTemplateBuilderLike {
+    return FfiConverterTypeVmTemplateBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_claim_secrets(
+                uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
+        FfiConverterBool.lower(value, nativeModule().rustbuffer_alloc),
                 callStatus);
             },
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
@@ -2423,6 +2489,9 @@ const FfiConverterOptionalUInt32 = new FfiConverterOptional(FfiConverterUInt32);
 // FfiConverter for ClaimLifecycle | undefined
 const FfiConverterOptionalTypeClaimLifecycle = new FfiConverterOptional(FfiConverterTypeClaimLifecycle);
 
+// FfiConverter for ClaimSecretRef | undefined
+const FfiConverterOptionalTypeClaimSecretRef = new FfiConverterOptional(FfiConverterTypeClaimSecretRef);
+
 // FfiConverter for Array<OsGymSandboxClaimCondition>
 const FfiConverterSequenceTypeOSGymSandboxClaimCondition = new FfiConverterArray(FfiConverterTypeOSGymSandboxClaimCondition);
 
@@ -2559,6 +2628,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build() !== 17867) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build");
     }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_claim_secrets() !== 62567) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_claim_secrets");
+    }
     if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_command() !== 20371) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_command");
     }
@@ -2626,6 +2698,7 @@ export default Object.freeze({
   initialize: uniffiEnsureInitialized,
   converters: {
     FfiConverterTypeClaimLifecycle,
+    FfiConverterTypeClaimSecretRef,
     FfiConverterTypeClaimSpec,
     FfiConverterTypeFirmware,
     FfiConverterTypeImagePullPolicy,

@@ -22,7 +22,10 @@ from core import (
     parse_visual_regions,
     validate_choice,
 )
-from jev_adapter import choose_live, choose_mock_adapter
+from jev_adapter import choose_mock_adapter
+from jev_backends import choose_with_backend, read_jev_config
+
+JEV_GOAL = "Enter the verification token, then submit the form."
 
 
 def fixture_state(fixture_url: str) -> dict[str, str | None]:
@@ -151,9 +154,28 @@ def write_event(log_path: Path | None, event: dict[str, Any]) -> None:
             stream.write(line + "\n")
 
 
+def jev_config_from_args(args: argparse.Namespace):
+    overlay = dict(os.environ)
+    provider = args.provider
+    if provider == "live":
+        provider = "typesafe"  # deprecated alias
+    if provider is not None:
+        overlay["JEV_BACKEND"] = provider
+    if args.jev_base_url:
+        overlay["JEV_BASE_URL"] = args.jev_base_url
+    if args.jev_api_key:
+        overlay["JEV_API_KEY"] = args.jev_api_key
+    if args.jev_model:
+        overlay["JEV_MODEL"] = args.jev_model
+    if args.jev_timeout_ms:
+        overlay["JEV_TIMEOUT_MS"] = str(args.jev_timeout_ms)
+    return read_jev_config(overlay)
+
+
 async def run(args: argparse.Namespace) -> str:
     token = args.token or f"jev-{uuid.uuid4().hex[:10]}"
     label = f"jev-python-{uuid.uuid4().hex[:8]}"
+    jev_config = jev_config_from_args(args)
     history: list[dict[str, Any]] = []
     log_path = Path(args.log) if args.log else None
     if log_path:
@@ -217,14 +239,40 @@ async def run(args: argparse.Namespace) -> str:
                     write_event(log_path, {"event": "outcome", "outcome": "abstained", "step": step})
                     return "abstained"
 
-                if args.provider == "mock":
+                if jev_config.backend == "mock":
                     choice, confidence, probabilities = choose_mock_adapter(
                         candidates, snapshot, visual, history
                     )
                 else:
-                    choice, confidence, probabilities = await asyncio.to_thread(
-                        choose_live, candidates, snapshot, visual, history
+                    criteria = {
+                        candidate.id: candidate.description for candidate in candidates
+                    }
+                    outcome = await asyncio.to_thread(
+                        choose_with_backend,
+                        jev_config,
+                        goal=JEV_GOAL,
+                        observation={
+                            "page": snapshot.get("page"),
+                            "outline": snapshot.get("outline"),
+                        },
+                        criteria=criteria,
                     )
+                    if not outcome.ok:
+                        write_event(
+                            log_path,
+                            {
+                                "event": "outcome",
+                                "outcome": "abstained",
+                                "step": step,
+                                "backend": outcome.backend,
+                                "reason": outcome.reason,
+                            },
+                        )
+                        return "abstained"
+                    assert outcome.decision is not None
+                    choice = outcome.decision.selected_id
+                    confidence = outcome.decision.confidence
+                    probabilities = outcome.decision.probabilities
                 if choice is None:
                     return "abstained"
                 candidate = validate_choice(
@@ -319,7 +367,16 @@ async def run(args: argparse.Namespace) -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--provider", choices=("mock", "live"), default="mock")
+    parser.add_argument(
+        "--provider",
+        choices=("mock", "typesafe", "openjev", "local", "live"),
+        default=None,
+        help="Jev backend override; otherwise use JEV_BACKEND (default mock). live is a deprecated alias for typesafe",
+    )
+    parser.add_argument("--jev-base-url", help="override the Jev base URL")
+    parser.add_argument("--jev-api-key", help="override the Jev API key")
+    parser.add_argument("--jev-model", help="override the Jev model name")
+    parser.add_argument("--jev-timeout-ms", type=int, help="Jev request timeout")
     parser.add_argument(
         "--fixture-url", type=validate_fixture_url, default="http://127.0.0.1:8765/"
     )

@@ -107,6 +107,38 @@ desktop certification, and it does not replace the desktop matrix.
 
 ## Desktop runners
 
+### Choose the evidence tier
+
+Use the narrowest useful tier during implementation, then complete the required
+platform evidence before delivery. The tiers describe evidence authority, not
+new workflow gates or permission to omit the final matrix.
+
+| Tier | Examples | What it establishes |
+| --- | --- | --- |
+| Fast | `CI: Cua Driver quick feedback (non-certifying)`, focused local tests | Formatting and shared contracts; no native desktop behavior. |
+| Platform | `E2E: Rust Linux interactive`, `E2E: Rust Windows interactive`, the logged-in macOS Lume runner | Complete canonical desktop behavior at an exact source SHA when all required lanes and strict preflight pass. |
+| Live | Protected Jev evidence workflows | Bounded provider behavior with exact signed candidate and platform prerequisites; not a replacement for the canonical matrix. |
+| Release-evidence | Signed candidate, certification records, private evidence validation | Artifact provenance and final review material; a recording or upload alone is not a passing desktop test. |
+
+For a change after a certified candidate, compare the tested commit with the
+proposed commit. The advisory classifier returns potentially affected desktop
+platforms and reasons as JSON:
+
+```bash
+python3 .github/scripts/cua_driver_e2e_impact.py TESTED_SHA CANDIDATE_SHA
+```
+
+Pass two full committed SHAs from this checkout; the command does not read a
+dirty worktree or start a test. It includes both sides of a rename. Explicit
+documentation and non-certifying diagnostic tooling can return an empty
+`affected_platforms` list. Platform implementation, harness, and workflow
+changes name the affected OS; shared, unknown, or ambiguous files return all
+three. Check the actual diff and the repository's certification timing rule
+before reusing any evidence. An empty list is advice about *new changes since
+the tested SHA*, not a certification result or a waiver of the complete stable
+candidate matrix. Keep the earlier exact-SHA result and account for each
+subsequent change in the PR review record.
+
 ### Quick development feedback
 
 `CI: Cua Driver quick feedback (non-certifying)` runs on relevant pull requests

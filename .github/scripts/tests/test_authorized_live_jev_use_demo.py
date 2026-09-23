@@ -1,4 +1,4 @@
-"""Static security contracts for the review-gated live Jev visual demo."""
+"""Static security contracts for the review-gated candidate Jev visual demo."""
 
 from pathlib import Path
 import re
@@ -25,6 +25,22 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         cls.triggers = cls.workflow.get("on", cls.workflow.get(True))
         cls.jobs = cls.workflow["jobs"]
 
+    def candidate_steps(self):
+        return self.jobs["candidate"]["steps"]
+
+    def candidate_text(self):
+        return "\n".join(step.get("run", "") for step in self.candidate_steps())
+
+    def test_workflow_is_credential_free(self):
+        self.assertNotIn("TYPESAFE_API_KEY", self.text)
+        self.assertNotIn("${{ secrets.", self.text)
+        self.assertNotIn("run_live", self.text)
+        self.assertNotIn("RUN_LIVE_ACKNOWLEDGED", self.text)
+        self.assertNotIn("jev-use-live", self.text)
+        for job_name in ("source", "mock-preflight"):
+            self.assertNotIn("environment", self.jobs[job_name])
+            self.assertNotIn("TYPESAFE_API_KEY", str(self.jobs[job_name]))
+
     def test_is_manual_or_callable_with_open_source_head_and_merged_jev_commit(self):
         self.assertEqual(set(self.triggers), {"workflow_dispatch", "workflow_call"})
         dispatch_inputs = self.triggers["workflow_dispatch"]["inputs"]
@@ -35,7 +51,6 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
             self.assertEqual(
                 set(trigger["inputs"]),
                 {
-                    "run_live",
                     "source_pr_number",
                     "source_sha",
                     "jev_pr_number",
@@ -47,13 +62,8 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
                 },
             )
             self.assertTrue(all(value["required"] for value in trigger["inputs"].values()))
-            self.assertEqual(trigger["inputs"]["run_live"]["type"], "boolean")
         source = self.jobs["source"]["steps"][0]["run"]
-        self.assertIn('[[ "$RUN_LIVE_ACKNOWLEDGED" == true ]]', source)
-        self.assertEqual(
-            self.jobs["source"]["steps"][0]["env"]["RUN_LIVE_ACKNOWLEDGED"],
-            "${{ inputs.run_live }}",
-        )
+        self.assertNotIn("RUN_LIVE_ACKNOWLEDGED", source)
         self.assertIn('validate_pr_head "$SOURCE_PR_NUMBER"', source)
         self.assertIn('validate_merged_pr "$JEV_PR_NUMBER"', source)
         self.assertNotIn("CANONICAL_JEV_MERGE_SHA", self.text)
@@ -77,7 +87,7 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         self.assertIn('.status <<<"$run_json")" == completed', source)
         download = next(
             step
-            for step in self.jobs["live"]["steps"]
+            for step in self.candidate_steps()
             if "download-artifact" in step.get("uses", "")
         )
         self.assertEqual(download["with"]["run-id"], "${{ needs.source.outputs.candidate_run_id }}")
@@ -92,31 +102,31 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
             ".conclusion",
         ):
             self.assertIn(contract, source)
-        live_text = "\n".join(step.get("run", "") for step in self.jobs["live"]["steps"])
-        self.assertIn("extension inspect cua-perception --catalog", live_text)
-        self.assertIn("extension install cua-perception --catalog", live_text)
-        self.assertIn("extension status cua-perception --self-test --json", live_text)
+        candidate_text = self.candidate_text()
+        self.assertIn("extension inspect cua-perception --catalog", candidate_text)
+        self.assertIn("extension install cua-perception --catalog", candidate_text)
+        self.assertIn("extension status cua-perception --self-test --json", candidate_text)
         self.assertIn(
             'catalog["signature_algorithm"] == measured["signature_algorithm"] == "ed25519"',
-            live_text,
+            candidate_text,
         )
-        self.assertIn('status["trust"] == "review-only-publisher-verified"', live_text)
-        self.assertIn('digest == files[model["path"]] == model["conversion_sha256"]', live_text)
-        self.assertNotIn("--allow-unsigned-local", live_text)
-        self.assertNotRegex(live_text, r"--archive\s+[^\n]+--catalog")
+        self.assertIn('status["trust"] == "review-only-publisher-verified"', candidate_text)
+        self.assertIn('digest == files[model["path"]] == model["conversion_sha256"]', candidate_text)
+        self.assertNotIn("--allow-unsigned-local", candidate_text)
+        self.assertNotRegex(candidate_text, r"--archive\s+[^\n]+--catalog")
 
-    def test_canonical_runs_are_attested_before_protected_live_job(self):
+    def test_canonical_runs_are_attested_before_protected_candidate_job(self):
         self.assertEqual(
             set(self.jobs),
-            {"source", "mock-preflight", "live"},
+            {"source", "mock-preflight", "candidate"},
         )
         preflights = "\n".join(str(self.jobs[name]) for name in ("source", "mock-preflight"))
         self.assertNotIn("environment", preflights)
         self.assertNotIn("TYPESAFE_API_KEY", preflights)
-        self.assertEqual(self.jobs["live"]["environment"], "authorized-live-jev-use-demo")
-        self.assertEqual(self.jobs["live"]["env"]["CUA_E2E_UNRESTRICTED_GUI"], "1")
+        self.assertEqual(self.jobs["candidate"]["environment"], "authorized-live-jev-use-demo")
+        self.assertEqual(self.jobs["candidate"]["env"]["CUA_E2E_UNRESTRICTED_GUI"], "1")
         self.assertEqual(
-            set(self.jobs["live"]["needs"]),
+            set(self.jobs["candidate"]["needs"]),
             {"source", "mock-preflight"},
         )
         source = self.jobs["source"]["steps"][0]["run"]
@@ -131,8 +141,8 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         self.assertIn("rust-linux-e2e-certification", source)
         self.assertNotIn("run-rust-e2e", self.text)
 
-    def test_live_matrix_uses_review_candidates_and_orchestrator_supports_macos(self):
-        matrix = self.jobs["live"]["strategy"]["matrix"]["include"]
+    def test_candidate_matrix_uses_review_candidates_and_orchestrator_supports_macos(self):
+        matrix = self.jobs["candidate"]["strategy"]["matrix"]["include"]
         self.assertEqual(
             {item["platform"]: item["runner"] for item in matrix},
             {
@@ -150,12 +160,12 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         self.assertGreater(shared, self.orchestrator.index('Command::new("py")'))
         self.assertGreater(shared, self.orchestrator.index('Command::new("python3")'))
 
-    def test_live_paths_use_private_windows_extension_home_and_runner_temp_evidence(self):
-        live_env = self.jobs["live"]["env"]
-        self.assertNotIn("CUA_PERCEPTION_EXTENSION_HOME", live_env)
-        self.assertNotIn("CUA_PERCEPTION_EVIDENCE_DIR", live_env)
-        self.assertNotIn("CUA_E2E_RECORDINGS_ROOT", live_env)
-        steps = self.jobs["live"]["steps"]
+    def test_candidate_paths_use_private_windows_extension_home_and_runner_temp_evidence(self):
+        candidate_env = self.jobs["candidate"]["env"]
+        self.assertNotIn("CUA_PERCEPTION_EXTENSION_HOME", candidate_env)
+        self.assertNotIn("CUA_PERCEPTION_EVIDENCE_DIR", candidate_env)
+        self.assertNotIn("CUA_E2E_RECORDINGS_ROOT", candidate_env)
+        steps = self.candidate_steps()
         configure = next(
             step for step in steps if step.get("name") == "Configure temporary evidence paths"
         )
@@ -181,7 +191,7 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         )
         self.assertNotIn("LOCALAPPDATA", configure["run"])
         self.assertIn(
-            "$extensionHome = Join-Path $env:RUNNER_TEMP 'cua-perception-extension-home/live'",
+            "$extensionHome = Join-Path $env:RUNNER_TEMP 'cua-perception-extension-home/mock'",
             configure["run"],
         )
         self.assertIn(
@@ -193,16 +203,14 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
             configure["run"],
         )
         self.assertIn(
-            "CUA_PERCEPTION_EVIDENCE_DIR=$(Join-Path $env:RUNNER_TEMP 'cua-perception-evidence/live')",
+            "CUA_PERCEPTION_EVIDENCE_DIR=$(Join-Path $env:RUNNER_TEMP 'cua-perception-evidence/mock')",
             configure["run"],
         )
         self.assertNotIn("if", configure)
         mock = next(step for step in steps if "deterministic mock" in step.get("name", ""))
-        live = next(step for step in steps if "bounded live Jev chooser" in step.get("name", ""))
         self.assertLess(steps.index(configure), steps.index(mock))
-        self.assertLess(steps.index(configure), steps.index(live))
         self.assertEqual(
-            {item["platform"] for item in self.jobs["live"]["strategy"]["matrix"]["include"]},
+            {item["platform"] for item in self.jobs["candidate"]["strategy"]["matrix"]["include"]},
             {"windows", "linux-x11"},
         )
         self.assertNotRegex(
@@ -214,10 +222,10 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
             r"CUA_E2E_RECORDINGS_ROOT[^\n]*github\.workspace",
         )
         self.assertNotIn("github.workspace", configure["run"])
-        self.assertFalse(any("${{ runner." in value for value in live_env.values()))
+        self.assertFalse(any("${{ runner." in value for value in candidate_env.values()))
 
-    def test_live_linux_desktop_persists_and_is_rechecked_before_demos(self):
-        steps = self.jobs["live"]["steps"]
+    def test_candidate_linux_desktop_persists_and_is_rechecked_before_demos(self):
+        steps = self.candidate_steps()
         prepare = next(step for step in steps if step.get("name") == "Prepare Linux X11 desktop")
         self.assertEqual(prepare["if"], "runner.os == 'Linux'")
         self.assertRegex(prepare["run"], r"apt-get install[^\n]*\bx11-utils\b")
@@ -263,6 +271,8 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         self.assertIn('kill "$pid"', stop["run"])
 
     def test_external_chooser_receives_only_the_key_and_windows_system_root(self):
+        # Product capability for direct local execution: the external chooser
+        # contract is unchanged, but no Actions workflow step invokes it.
         start = self.orchestrator.index("fn external_choice(")
         end = self.orchestrator.index("fn choose(", start)
         external = self.orchestrator[start:end]
@@ -270,65 +280,35 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         self.assertIn('.env("TYPESAFE_API_KEY", required("TYPESAFE_API_KEY"))', external)
         self.assertIn('command.env("SYSTEMROOT", system_root)', external)
         self.assertEqual(external.count(".env("), 2)
+        self.assertFalse(any("CUA_JEV_CHOOSER_PROGRAM" in str(step) for step in self.candidate_steps()))
 
     def test_review_driver_is_consumed_from_hash_bound_aggregate(self):
-        live_text = "\n".join(step.get("run", "") for step in self.jobs["live"]["steps"])
-        self.assertIn("review-measurements.json", live_text)
-        self.assertIn('measured["review_driver_sha256"]', live_text)
+        candidate_text = self.candidate_text()
+        self.assertIn("review-measurements.json", candidate_text)
+        self.assertIn('measured["review_driver_sha256"]', candidate_text)
         self.assertIn(
-            'measured["review_driver_build_profile"] == "debug-review-trust-root"', live_text
+            'measured["review_driver_build_profile"] == "debug-review-trust-root"', candidate_text
         )
-        self.assertIn("CUA_TEST_DRIVER_BIN", live_text)
-        self.assertIn("signed-candidate-checksums.txt", live_text)
-        self.assertIn('measured["code_signing"] == {"status": "not-applicable"', live_text)
-        self.assertNotIn("cargo build --manifest-path", live_text)
-        self.assertNotIn("target/release/cua-driver", live_text)
+        self.assertIn("CUA_TEST_DRIVER_BIN", candidate_text)
+        self.assertIn("signed-candidate-checksums.txt", candidate_text)
+        self.assertIn('measured["code_signing"] == {"status": "not-applicable"', candidate_text)
+        self.assertNotIn("cargo build --manifest-path", candidate_text)
+        self.assertNotIn("target/release/cua-driver", candidate_text)
         self.assertNotIn("RSA-SHA256", self.evidence_readme)
         self.assertIn("Ed25519", self.evidence_readme)
         self.assertIn("debug review-trust-root", self.evidence_readme)
 
-    def test_only_measured_binary_receives_typesafe_secret_in_one_bounded_step(self):
-        secret = next(
-            step for step in self.jobs["live"]["steps"] if "secrets.TYPESAFE_API_KEY" in str(step)
-        )
-        self.assertEqual(
-            sum("secrets.TYPESAFE_API_KEY" in str(step) for step in self.jobs["live"]["steps"]),
-            1,
-        )
-        self.assertEqual(secret["timeout-minutes"], 15)
-        self.assertEqual(
-            secret["env"],
-            {
-                "GH_TOKEN": "${{ github.token }}",
-                "LIVE_TYPESAFE_API_KEY": "${{ secrets.TYPESAFE_API_KEY }}",
-            },
-        )
-        self.assertNotIn("cargo ", secret["run"])
-        self.assertIn("CUA_LIVE_TEST_BINARY_SHA256", secret["run"])
-        self.assertIn("Remove-Item Env:LIVE_TYPESAFE_API_KEY", secret["run"])
-        self.assertIn("Remove-Item Env:TYPESAFE_API_KEY", secret["run"])
-        self.assertIn("pulls/$sourcePrNumber", secret["run"])
-        self.assertIn("pulls/$jevPrNumber", secret["run"])
-        self.assertIn("$jevReview.state -ne 'closed'", secret["run"])
-        self.assertIn("$jevReview.merged -ne $true", secret["run"])
-        self.assertIn("$jevReview.head.repo.full_name -ne $env:GITHUB_REPOSITORY", secret["run"])
-        self.assertIn(
-            "$jevReview.merge_commit_sha -ne '${{ needs.source.outputs.jev_sha }}'", secret["run"]
-        )
-        self.assertNotIn("$jevReview.head.sha", secret["run"])
-        self.assertIn("cua-perception-live-review", secret["run"])
-        self.assertIn("Remove-Item Env:GH_TOKEN", secret["run"])
-        self.assertIn(
-            "& $env:CUA_LIVE_TEST_BINARY --ignored --exact $env:CUA_LIVE_WINDOW_TEST",
-            secret["run"],
-        )
-        self.assertIn(
-            "& $env:CUA_LIVE_TEST_BINARY --ignored --exact $env:CUA_LIVE_DESKTOP_TEST",
-            secret["run"],
+    def test_no_step_uses_secrets_and_only_measured_binary_runs_demos(self):
+        candidate_text = self.candidate_text()
+        self.assertNotIn("TYPESAFE_API_KEY", candidate_text)
+        self.assertNotIn("${{ secrets.", candidate_text)
+        self.assertNotIn("LIVE_TYPESAFE_API_KEY", self.text)
+        self.assertFalse(
+            any("GH_TOKEN" in str(step.get("env", {})) for step in self.candidate_steps())
         )
         compile_step = next(
             step
-            for step in self.jobs["live"]["steps"]
+            for step in self.candidate_steps()
             if step.get("name", "").startswith("Compile and measure")
         )
         self.assertIn("--no-run --message-format=json", compile_step["run"])
@@ -337,60 +317,65 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         self.assertIn("re.fullmatch", compile_step["run"])
         self.assertIn('resolve("authorized_visual_only_window_demo")', compile_step["run"])
         self.assertIn('resolve("authorized_visual_only_primary_desktop_demo")', compile_step["run"])
-        self.assertIn("CUA_LIVE_WINDOW_TEST={window_test}", compile_step["run"])
-        self.assertIn("CUA_LIVE_DESKTOP_TEST={desktop_test}", compile_step["run"])
+        self.assertIn("CUA_CANDIDATE_WINDOW_TEST={window_test}", compile_step["run"])
+        self.assertIn("CUA_CANDIDATE_DESKTOP_TEST={desktop_test}", compile_step["run"])
+        self.assertIn("CUA_CANDIDATE_TEST_BINARY_SHA256", compile_step["run"])
+        mock = next(
+            step for step in self.candidate_steps() if "deterministic mock" in step.get("name", "")
+        )
+        self.assertIn("& $env:CUA_CANDIDATE_TEST_BINARY --ignored --exact $env:CUA_CANDIDATE_WINDOW_TEST", mock["run"])
+        self.assertIn("& $env:CUA_CANDIDATE_TEST_BINARY --ignored --exact $env:CUA_CANDIDATE_DESKTOP_TEST", mock["run"])
+        self.assertLess(
+            self.candidate_steps().index(compile_step), self.candidate_steps().index(mock)
+        )
 
-    def test_chooser_is_exact_fixed_and_fails_closed_when_absent(self):
-        live = self.jobs["live"]
-        checkout = next(
-            step
-            for step in live["steps"]
-            if step.get("name") == "Check out the exact reviewed Jev chooser"
-        )
-        self.assertEqual(checkout["with"]["ref"], "${{ needs.source.outputs.jev_sha }}")
-        setup = next(
-            step
-            for step in live["steps"]
-            if step.get("name", "").startswith("Install the locked reviewed chooser")
-        )
-        self.assertIn("python/choose_action.py", setup["run"])
-        self.assertIn("uv sync --frozen --project", setup["run"])
-        self.assertIn("reviewed live chooser contract is unavailable", setup["run"])
-        secret = next(step for step in live["steps"] if "secrets.TYPESAFE_API_KEY" in str(step))
-        self.assertIn("CUA_JEV_CHOOSER_PROGRAM", secret["run"])
-        self.assertIn("CUA_JEV_CHOOSER_SCRIPT", secret["run"])
+    def test_no_external_chooser_install_remains_and_orchestrator_fails_closed(self):
+        names = [step.get("name", "") for step in self.candidate_steps()]
+        self.assertFalse(any("Jev chooser" in name for name in names))
+        self.assertFalse(any("reviewed chooser" in name for name in names))
+        self.assertNotIn("CUA_FIXED_CHOOSER", self.text)
+        self.assertNotIn("CUA_JEV_LIVE", self.text)
+        self.assertNotIn("jev-use-source", self.text)
         self.assertNotIn("Invoke-Expression", self.text)
-        self.assertNotIn("bash -c", secret["run"])
+        self.assertNotIn("bash -c", self.candidate_text())
+        # The product orchestrator still supports a reviewed live chooser for
+        # direct local execution; Actions never configures it.
+        self.assertIn("CUA_JEV_LIVE", self.orchestrator)
+        self.assertIn(
+            "reviewed chooser program and script paths must be absolute", self.orchestrator
+        )
+        self.assertIn("set CUA_JEV_MOCK_DEMO=1 or CUA_JEV_LIVE=1", self.orchestrator)
 
     def test_mock_has_no_chooser_or_key(self):
         mock = next(
             step
-            for step in self.jobs["live"]["steps"]
+            for step in self.candidate_steps()
             if "deterministic mock" in step.get("name", "")
         )
         self.assertEqual(
             mock["env"],
             {
                 "CUA_JEV_MOCK_DEMO": "1",
-                "CUA_PERCEPTION_EVIDENCE_DIR": "${{ runner.temp }}/perception-evidence/mock",
                 "CUA_TEST_DRIVER_STDERR": "1",
             },
         )
         self.assertNotIn("CHOOSER", str(mock))
         self.assertNotIn("TYPESAFE", str(mock))
-        self.assertIn("--exact $env:CUA_LIVE_WINDOW_TEST", mock["run"])
-        self.assertIn("--exact $env:CUA_LIVE_DESKTOP_TEST", mock["run"])
+        self.assertIn("--exact $env:CUA_CANDIDATE_WINDOW_TEST", mock["run"])
+        self.assertIn("--exact $env:CUA_CANDIDATE_DESKTOP_TEST", mock["run"])
 
     def test_only_encrypted_schema_validated_evidence_is_uploaded(self):
         uploads = [
-            step for step in self.jobs["live"]["steps"] if "upload-artifact" in step.get("uses", "")
+            step for step in self.candidate_steps() if "upload-artifact" in step.get("uses", "")
         ]
         self.assertEqual(len(uploads), 1)
         upload = uploads[0]
         self.assertEqual(upload["with"]["path"], "${{ runner.temp }}/encrypted-evidence/")
+        self.assertIn("mock-jev-visual-", upload["with"]["name"])
+        self.assertNotIn("live-jev-visual", str(upload))
         validate_step = next(
             step
-            for step in self.jobs["live"]["steps"]
+            for step in self.candidate_steps()
             if step.get("name", "").startswith("Fully decode")
         )
         validate = validate_step["run"]
@@ -418,13 +403,13 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         self.assertIn('manifest["environment"] ==', validate)
         self.assertIn('perception["models"] == measured["models"]', validate)
         self.assertIn('chooser["model_id"]', validate)
-        self.assertIn('chooser["mode"] == "live"', validate)
-        self.assertIn('chooser["provider"] == "typesafe"', validate)
+        self.assertIn('chooser["mode"] == "mock"', validate)
+        self.assertIn('chooser["provider"] == "fixture"', validate)
         self.assertIn('recording_value["frame_rate"]', validate)
         self.assertIn('recording_value["edit_operations"]', validate)
         encrypt_step = next(
             step
-            for step in self.jobs["live"]["steps"]
+            for step in self.candidate_steps()
             if step.get("name") == "Encrypt the validated evidence bundles"
         )
         self.assertEqual(
@@ -438,7 +423,7 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         self.assertEqual(
             sum(
                 "vars.EVIDENCE_ARCHIVE_RECIPIENT_PUBLIC_KEY" in str(step)
-                for step in self.jobs["live"]["steps"]
+                for step in self.candidate_steps()
             ),
             1,
         )
@@ -451,7 +436,7 @@ class AuthorizedLiveDemoWorkflowTests(unittest.TestCase):
         self.assertIn("Remove-Item Env:CUA_PERCEPTION_EVIDENCE_RECIPIENT", encrypt_step["run"])
         self.assertIn('== ["primary-desktop.cuae", "window.cuae"]', encrypt_step["run"])
         self.assertNotIn("CUA_PERCEPTION_EVIDENCE_RECIPIENT", validate)
-        steps = self.jobs["live"]["steps"]
+        steps = self.candidate_steps()
         cleanup = next(
             step
             for step in steps

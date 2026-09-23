@@ -6,7 +6,7 @@ created: 2026-09-23
 last_updated: 2026-09-23
 status: review
 discussion: https://github.com/trycua/cua/issues/4055
-rfc_pr:
+rfc_pr: https://github.com/trycua/cua/pull/4056
 implementation:
   - https://github.com/evan-gabrielson-glean/cua/tree/prototype/composable-targeted-reads
 supersedes:

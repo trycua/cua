@@ -154,7 +154,7 @@ hostile native code running as the same desktop user.
 
 The repository contains `libs/cua-driver/kwin-target-helper`, an optional KWin 6
 effect loaded in the `kwin_wayland` process, and the Rust adapter at
-`platform-linux/src/wayland/kwin_helper.rs`.
+`libs/cua-driver/rust/crates/platform-linux/src/wayland/kwin_helper.rs`.
 
 The helper's current contract is deliberately small:
 
@@ -175,8 +175,7 @@ Important current properties are:
   UID, and currently accepts the helper only when `GetVersion() == 1`;
 - `available()` for KWin raw input remains false;
 - the focused-window mutation wrapper refuses;
-- portal/libei obtains RemoteDesktop portal authorization, but the resulting
-  input is focus-bound rather than target-bound.
+- portal/libei input remains focus-bound and carries no KWin target identity.
 
 That strict `GetVersion() == 1` check matters for migration: a simple helper
 upgrade from version 1 to version 2 would cause existing v1 drivers to reject
@@ -393,7 +392,7 @@ accepted KWin policy/target transaction, directly or through common
 Wayland routing, rather than bypassing it through a GNOME-oriented helper or a
 global input fallback.
 
-This keeps browser approval, exact target identity, generation, reconnect, and
+This keeps browser routing, exact target identity, generation, reconnect, and
 mutation under one safety boundary. Related broader browser work is tracked in
 #2283.
 
@@ -504,8 +503,9 @@ If a wire-incompatible change becomes necessary, the RFC must be updated with a
 parallel/dual-version migration before implementation. The design must not
 silently trade away existing read-only discovery compatibility.
 
-No unsafe fallback is introduced during rollout. Mismatch, missing capability, policy denial, or invalid transport/generation
-produces a precise refusal rather than degraded global input.
+No unsafe fallback is introduced during rollout. Mismatch, missing capability,
+policy denial, or invalid transport/generation produces a precise refusal rather
+than degraded global input.
 
 Rollback is straightforward only if discovery remains separable from mutation:
 disable/remove the new mutation capability and the driver returns to the current
@@ -677,9 +677,9 @@ target; this demonstrates target addressability rather than coincidental focus.
 Expand the stable candidate matrix to representative Chromium/Chrome, Firefox,
 GTK, Qt, Electron, two-window, covered, and alternate-workspace scenarios as
 supported by the harness. Evidence must observe fixture-owned state and relevant
-focus/z-order/no-leak/policy and generation oracles. Focus restoration after bounded
-foreground operations must be verified when activation is part of the accepted
-implementation.
+focus/z-order/no-leak/policy and generation oracles. Focus restoration after
+bounded foreground operations must be verified when activation is part of the
+accepted implementation.
 
 The expensive desktop matrix should run only after the implementation is stable,
 consistent with repository agent guidance, and must record the exact candidate

@@ -104,6 +104,7 @@ Windows requires no special permissions.
 - `query` (string, optional): Optional case-insensitive substring. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count.
 - `screenshot_out_file` (string, optional): When set, write the PNG to this file path instead of embedding base64 in the response. The structured output will contain `screenshot_file_path` instead.
 - `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+- `timeout_ms` (integer, optional): Accepted for parity with the Linux backend, where it bounds the accessibility-tree walk. This backend does not budget its walk yet, so the value is currently ignored. default: `1000`; range: 100–120000
 - `window_id` (integer, required): HWND of the target window. Must belong to `pid`. Enumerate via `list_windows` or read from `launch_app`'s `windows` array.
 
 ```json

@@ -145,6 +145,17 @@ pub fn timeout_ms_schema() -> Value {
     })
 }
 
+/// `timeout_ms` for a backend whose accessibility walk is not budgeted yet:
+/// the same shape, so clients can pass it uniformly, with a description that
+/// states the value is currently ignored there.
+pub fn timeout_ms_schema_unbudgeted() -> Value {
+    let mut schema = timeout_ms_schema();
+    schema["description"] = json!(
+        "Accepted for parity with the Linux backend, where it bounds the accessibility-tree walk. This backend does not budget its walk yet, so the value is currently ignored."
+    );
+    schema
+}
+
 /// Clamp a caller-supplied `timeout_ms` (or apply the default when absent /
 /// not an integer) to the documented bounds.
 pub fn resolve_timeout_ms(value: Option<&Value>) -> u64 {
@@ -309,6 +320,11 @@ mod tests {
         assert!(shared_schema_violations(
             "get_window_state",
             &json!({"type":"object","properties":{"timeout_ms": schema}})
+        )
+        .is_empty());
+        assert!(shared_schema_violations(
+            "get_window_state",
+            &json!({"type":"object","properties":{"timeout_ms": timeout_ms_schema_unbudgeted()}})
         )
         .is_empty());
     }

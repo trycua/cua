@@ -3,7 +3,7 @@ title: Target-addressable KWin input delivery for KDE/Wayland
 authors:
   - netbospl
 created: 2026-09-01
-last_updated: 2026-09-01
+last_updated: 2026-09-23
 status: review
 discussion: https://github.com/trycua/cua/issues/3506
 rfc_pr: https://github.com/trycua/cua/pull/3507
@@ -17,22 +17,27 @@ superseded_by:
 ## Summary
 
 Add a trusted KWin-side target-input capability that lets Cua Driver bind
-pointer and keyboard delivery to one freshly verified KDE/KWin window, while
-preserving an explicit user-authorization boundary at least as strong as the
-current RemoteDesktop portal flow. When exact delivery or authorization cannot
-be proven, the driver must return a structured refusal and must not fall back to
-focus-bound global portal/libei input.
+pointer and keyboard delivery to one freshly verified KDE/KWin window while
+preserving the Driver's existing per-action permission, policy, resource, and
+lifecycle admission. When exact delivery, target identity, policy admission, or
+transport ownership cannot be proven, the driver must return a structured
+refusal and must not fall back to focus-bound global portal/libei input.
 
 This RFC is intentionally gated on two proofs before product implementation:
 
 1. Plasma 6/KWin must expose a supported integration point that can bind the
    mutation itself to an exact target rather than merely activate a window; and
-2. the KWin helper must not become a generally callable session-bus input
-   injection service. Mutating calls require a scoped, user-authorized
-   capability; same-UID access alone is not an authorization model.
+2. the mutation path must be owned by the Driver integration so cached or
+   ambient compositor transport cannot bypass normal per-action Driver policy.
 
-If either proof cannot be established with supported KWin/desktop APIs, KDE raw
-target-addressed input remains refused and the implementation does not proceed.
+Per the accepted Hyprland compositor-input design in #3550/#3551, this RFC does
+not require a second KWin-specific approval mode, per-window consent prompt, or
+standalone signer. Same-desktop-account transport follows the project's
+trusted-local model and is not claimed to sandbox hostile same-user native code.
+
+If the target-binding or Driver-owned policy path cannot be established with
+supported KWin/desktop APIs, KDE raw target-addressed input remains refused and
+the implementation does not proceed.
 
 ## Motivation
 
@@ -51,19 +56,19 @@ checks focus, and then emits global libei input has a TOCTOU race. Focus may
 change after verification but before an irreversible click or key is processed;
 a later read-back cannot undo an event delivered to the wrong application.
 
-There is also a permission-boundary problem. The current libei path obtains
-RemoteDesktop portal authorization and persists the user's explicit consent.
-Adding raw mutating methods to the helper's ordinary session-bus interface
-without an equivalent authorization mechanism would create a new desktop input
-capability available outside that portal flow. Verifying that the helper belongs
-to KWin proves the server identity; it does not authorize every client that can
-reach the session bus to request input.
+There is also a policy-path problem. The compositor-specific mutation transport
+must not become an alternate path that skips the Driver's normal per-action
+permission, manifest, managed/user policy, resource, and lifecycle checks.
+Verifying that the helper belongs to KWin proves server identity; it does not
+prove that a mutation request passed through Driver admission.
 
-KDE therefore needs both target binding and caller authorization. The safety
-claim is stronger than "the intended window was focused shortly before input"
-and stronger than "the caller has the same UID": the compositor-side path must
-associate each accepted event with the exact verified target and a valid
-user-authorized capability, or refuse it.
+KDE therefore needs both target binding and a Driver-owned mutation path. The
+safety claim is stronger than "the intended window was focused shortly before
+input": the compositor-side path must associate each accepted event with the
+exact verified target and current helper/KWin generation, while the Driver
+performs normal action admission before dispatch. Under the accepted trusted-
+local desktop-account model, this is not a promise to isolate against arbitrary
+hostile native code running as the same desktop user.
 
 ## Goals
 
@@ -71,9 +76,11 @@ user-authorized capability, or refuse it.
   to one exact verified window identity.
 - Preserve and extend the current trusted helper-owner, PID, UID, window-token,
   and AT-SPI correlation checks.
-- Preserve a user-authorization boundary at least as strong as the existing
-  RemoteDesktop portal consent path; same UID, executable path, or process name
-  alone must not authorize raw input.
+- Preserve normal Cua Driver per-action admission, including `standard`,
+  `bounded`, and explicitly acknowledged `unrestricted` modes plus applicable
+  manifests and managed/user policy.
+- Prevent compositor-specific mutation transport from bypassing Driver policy
+  merely because a cached connection or session-bus endpoint exists.
 - Route supported KDE pointer and keyboard mutations only through a proven
   target-bound contract.
 - Guarantee that a selected KWin target never falls through to global
@@ -84,8 +91,8 @@ user-authorized capability, or refuse it.
   reporting.
 - Reuse the same KWin routing for existing-profile browser setup so browser
   setup cannot bypass the target-bound safety boundary.
-- Prove failure isolation with tests that observe target state, authorization,
-  and absence of leaked global input.
+- Prove failure isolation with tests that observe target state, policy outcomes,
+  generation changes, and absence of leaked global input.
 
 ## Non-goals
 
@@ -100,8 +107,9 @@ user-authorized capability, or refuse it.
   delivered safely.
 - This RFC does not approve private or unstable KWin internals merely because a
   prototype can call them.
-- This RFC does not define a generic Linux process-authentication scheme. It
-  requires a concrete desktop/user authorization mechanism for this capability.
+- This RFC does not introduce a second KWin-specific permission mode, mandatory
+  per-window approval UI, signer, or same-user sandbox beyond the existing
+  Driver policy and trusted-local threat model.
 
 ## Terminology
 
@@ -111,16 +119,22 @@ user-authorized capability, or refuse it.
   is valid only within the lifetime/generation in which it was issued.
 
 **Helper generation**
-: An identity that changes whenever a token from an earlier helper/KWin instance
-  could become stale. A captured D-Bus unique service owner may be part of this
-  proof, or the protocol may expose an explicit epoch. The chosen representation
-  must survive review and tests for helper/KWin restart and PID/token reuse.
+: An identity that changes whenever a token or mutation transport binding from
+  an earlier helper/KWin instance could become stale. A captured D-Bus unique
+  service owner may be part of this proof, or the protocol may expose an
+  explicit epoch. The chosen representation must survive review and tests for
+  helper/KWin restart and PID/token reuse.
 
-**Caller authorization**
-: A user-granted capability that permits raw desktop input. The current portal
-  RemoteDesktop authorization is the baseline security property. Same UID,
-  process name, executable path, or knowledge of a window token is not by
-  itself sufficient authorization for a new mutation endpoint.
+**Action admission**
+: Cua Driver's existing permission, manifest/policy, resource, and lifecycle
+  decision, repeated for every action before backend mutation. It is not a
+  compositor-specific per-window human approval grant.
+
+**Mutation authority**
+: The live Driver-integrated ability to invoke the KWin mutation transport for
+  an admitted action. It is bound to the current transport/helper generation
+  and target transaction. It prevents accidental or architectural bypass of the
+  Driver path; it is not claimed to sandbox hostile same-user native code.
 
 **Target-bound input**
 : Input delivery for which the compositor-side contract associates the mutation
@@ -132,8 +146,9 @@ user-authorized capability, or refuse it.
   the event is not contractually associated with the Cua-selected target.
 
 **Structured refusal**
-: A typed failure returned before unsafe mutation when identity, authorization,
-  capability, or transaction invariants cannot be proven.
+: A typed failure returned before unsafe mutation when identity, policy
+  admission, capability, generation, or target-delivery invariants cannot be
+  proven.
 
 ## Current state
 
@@ -193,35 +208,36 @@ no supported target-binding primitive exists, the disposition is to keep raw KDE
 input refused and, if useful, pursue an upstream KWin API rather than weaken the
 safety invariant.
 
-### 2. Authorization gate: do not create an ambient input service
+### 2. Policy/transport gate: do not create an ambient Driver bypass
 
 The current read-only D-Bus service may remain discoverable on the session bus.
-Mutating target-input capability must not become callable merely because a
-process can address `org.cua.KWinTarget`.
+Adding mutation must not create a compositor endpoint that the normal Driver
+path can use without repeating action admission, or that a cached connection can
+treat as authority for later actions.
 
-Before any mutation method is enabled, the implementation must establish a
-scoped authorization mechanism with security properties at least as strong as
-the existing user-approved RemoteDesktop portal path. Acceptable design families
-for review include:
+For every mutation, the Driver must apply its existing permission, manifest,
+managed/user policy, resource, and lifecycle checks before dispatch. The
+transport design must then bind the admitted operation to the current
+helper/KWin generation and exact target transaction.
 
-- retaining portal-granted authorization and proving that the authorized EIS
-  capability can be bound by KWin to the selected target before delivery;
-- obtaining an explicit user-approved KWin/desktop capability whose scope is the
-  target-input operation; or
-- another maintainer-approved capability design that is non-ambient, revocable,
-  generation-bound, and testable.
+Consistent with #3550/#3551:
 
-The exact mechanism is intentionally a review decision, but the following are
-not sufficient on their own:
+- `standard` and explicitly acknowledged `unrestricted` use the existing
+  Driver rules;
+- `bounded` requires the applicable approved manifest;
+- applicable managed/user policy remains binding;
+- compatibility qualification is not a second permission system; and
+- the same-desktop-account transport is trusted-local, not a sandbox against
+  arbitrary hostile native code running as that account.
 
-- same UID;
-- D-Bus sender PID;
-- process name or executable path;
-- possession of a window token;
-- an unguessable token that is not tied to user authorization and revocation.
+A separate per-window approval panel, signer, or KWin-specific permission mode
+is therefore not required merely because the backend is compositor-specific.
+If maintainers choose an additional KWin desktop consent mechanism for platform
+reasons, it must compose with rather than replace normal Driver admission.
 
-The helper must fail closed when authorization is absent, expired, revoked, for
-a different generation, or not valid for the requested operation.
+The helper/transport must fail closed when the target, generation, requested
+capability, or Driver admission is stale, denied, missing, or no longer valid
+for the operation.
 
 ### 3. Contract ownership and compatibility
 
@@ -251,8 +267,8 @@ The final capability encoding may differ, but it must distinguish at least:
 
 - identity/discovery;
 - target activation, if separately meaningful;
-- authorized target-bound pointer input;
-- authorized target-bound keyboard input.
+- target-bound pointer input;
+- target-bound keyboard input.
 
 If implementation needs a wire-incompatible protocol change, it must use an
 explicit migration strategy such as a parallel interface/path or dual-version
@@ -278,7 +294,7 @@ are required:
 - PID ownership is verified and cannot be substituted by title/app-id lookup;
 - the generation changes whenever an old token could become stale after helper
   reload, KWin restart, or other identity reset;
-- the authorization capability is bound to the compatible live generation;
+- the mutation transport binding is tied to the compatible live generation;
 - the target is revalidated immediately before each irreversible mutation or
   input frame;
 - duplicate or ambiguous identities refuse rather than selecting a best match.
@@ -291,7 +307,7 @@ must not assume the monotonic numeric token alone is globally unique or durable.
 The Rust adapter gains a target-input transaction abstraction conceptually like:
 
 ```rust
-with_target_input(pid, token, generation, authorization, |target| {
+with_target_input(pid, token, generation, admission, |target| {
     // bounded pointer/keyboard operations
 })
 ```
@@ -299,14 +315,14 @@ with_target_input(pid, token, generation, authorization, |target| {
 The concrete API does not need to match this signature. Opening the transaction
 must:
 
-1. obtain a fresh KWin snapshot;
-2. resolve exactly one verified target;
-3. validate the live helper/KWin generation;
-4. validate the caller's user-authorized input capability;
+1. run normal Driver action admission for the requested operation;
+2. obtain a fresh KWin snapshot;
+3. resolve exactly one verified target;
+4. validate the live helper/KWin generation;
 5. negotiate the required target-input capability;
-6. bind the transaction to the target identity and authorization scope;
-7. reject stale, ambiguous, missing, unauthorized, revoked, or unsupported
-   targets before mutation.
+6. bind the operation to the current mutation transport and target identity; and
+7. reject stale, ambiguous, missing, policy-denied, or unsupported targets
+   before mutation.
 
 During the transaction, the KWin-side path must ensure that delivery remains
 associated with the bound target. If the invariant cannot be maintained across
@@ -315,12 +331,12 @@ returns a structured refusal before the next frame.
 
 The implementation may internally activate the target when required by KWin,
 but activation is not the safety guarantee. The guarantee is that each accepted
-event is associated with the bound target and valid authorization at delivery
-time, or is refused.
+event is associated with the bound target and current generation at delivery
+time, after the Driver has admitted the action, or the operation is refused.
 
 ### 6. Supported operations
 
-Only operations proven to satisfy the same authorization and target-binding
+Only operations proven to satisfy the same Driver-admission and target-binding
 contract may be enabled:
 
 - click / pointer button actions;
@@ -340,18 +356,18 @@ another KWin/global mutation mechanism exists.
 The key delivery rule is:
 
 > After cua-driver selects the trusted KWin target route for an operation, any
-> inability to prove or maintain authorization and target-bound delivery MUST
-> return a structured refusal. The operation MUST NOT fall back to global
-> portal/libei input.
+> inability to prove or maintain Driver admission, generation validity, and
+> target-bound delivery MUST return a structured refusal. The operation MUST NOT
+> fall back to global portal/libei input.
 
-This includes authorization loss/revocation, capability loss, helper restart,
-target closure, generation change, ambiguous identity, unsupported input kinds,
-or any focus/user-interaction transition that the target-bound primitive cannot
-handle safely.
+This includes policy denial, capability loss, helper restart, target closure,
+generation change, ambiguous identity, unsupported input kinds, or any
+focus/user-interaction transition that the target-bound primitive cannot handle
+safely.
 
 Representative refusal categories include `target_input_unavailable`,
-`target_identity_stale`, and `target_input_unauthorized`; final names should
-follow the existing typed driver error taxonomy.
+`target_identity_stale`, and an existing/common policy-denial result; final
+names should follow the current typed driver error taxonomy.
 
 ### 8. libei relationship
 
@@ -364,15 +380,16 @@ semantics match the accepted contract. It may also remain valid for explicitly
 global operations outside this RFC.
 
 If the accepted KDE design retains libei/EIS, the implementation must prove that
-the already-authorized input capability is bound by KWin to the exact target
-*before delivery*. Pre/post focus checks and post-event read-back are
-insufficient.
+KWin binds the admitted operation to the exact target *before delivery*.
+Pre/post focus checks and post-event read-back are insufficient. Any portal or
+desktop authorization used by that lower-level transport is additive platform
+plumbing, not a replacement for normal Driver action admission.
 
 ### 9. Browser existing-profile setup
 
 The browser setup path has compositor-specific foreground routing that can differ
 from the general Wayland path. KDE existing-profile setup must use the same
-accepted KWin authorization/target transaction, directly or through common
+accepted KWin policy/target transaction, directly or through common
 Wayland routing, rather than bypassing it through a GNOME-oriented helper or a
 global input fallback.
 
@@ -382,8 +399,8 @@ mutation under one safety boundary. Related broader browser work is tracked in
 
 ### 10. Doctor and health reporting
 
-Health output must distinguish discovery, authorization, and mutation capability.
-Representative states are:
+Health output must distinguish discovery, policy/transport readiness, and
+mutation capability. Representative states are:
 
 ```text
 KWin identity adapter: available
@@ -392,14 +409,14 @@ KWin target input: unavailable (helper is read-only)
 
 ```text
 KWin identity adapter: available
-KWin target input: blocked (user authorization unavailable/revoked)
+KWin target input: blocked (Driver policy denied or mutation transport unavailable)
 ```
 
 and, only after all gates pass:
 
 ```text
 KWin identity adapter: available
-KWin target input: authorized pointer and keyboard target-bound delivery available
+KWin target input: pointer and keyboard target-bound delivery available
 Wayland backend: KDE/KWin target-addressable foreground dispatch available
 ```
 
@@ -409,9 +426,10 @@ Doctor should distinguish at least:
 2. helper present but read-only;
 3. incompatible wire version;
 4. helper missing required target-input capability;
-5. authorization absent/revoked/invalid for the current generation;
+5. Driver policy denial or mutation-transport unavailability;
 6. target identity ambiguous or stale;
-7. target-bound transaction unavailable for the requested operation.
+7. helper/KWin generation mismatch; and
+8. target-bound transaction unavailable for the requested operation.
 
 The platform support documentation remains experimental until the live acceptance
 evidence in this RFC is recorded.
@@ -430,15 +448,19 @@ Rejected. This narrows a timing window but does not remove it.
 
 ### Expose target mutation directly on the session bus to same-UID callers
 
-Rejected as the default security model. The current RemoteDesktop path carries
-explicit user authorization. A new ambient same-user input service would widen
-the capability boundary and could allow callers that never obtained that
-authorization to request desktop input.
+Rejected as the default integration shape. Same-UID transport is acceptable
+inside the project's trusted-local desktop-account threat model, but a raw
+ambient mutation endpoint would not prove that a request passed through normal
+Driver action admission or belongs to the current Driver-controlled operation.
+The transport should preserve Driver ownership and generation/target binding
+without claiming isolation from arbitrary hostile same-user native code.
 
 ### Trust D-Bus sender PID, process name, or executable path
 
-Rejected as sufficient authorization. These can contribute to diagnostics or
-defense in depth but do not replace a user-granted, revocable capability.
+Rejected as a substitute for Driver action admission. These may contribute to
+server/client identity, lifecycle checks, diagnostics, or defense in depth, but
+they do not replace the existing permission/manifest/policy decision for each
+action.
 
 ### Increment `GetVersion()` from 1 to 2 and call the rollout additive
 
@@ -447,7 +469,7 @@ Rejected without a compatibility layer. Current v1 drivers require exact version
 
 ### Use title, app-id, or geometry matching
 
-Rejected for authorization/identity. These values are not unique stable target
+Rejected for target identity. These values are not unique stable target
 identities and may change or collide.
 
 ### `wmctrl` / `xdotool`
@@ -457,8 +479,9 @@ do not establish a native Wayland target-bound input contract.
 
 ### Enable the existing adapter by setting `available() = true`
 
-Rejected while the mutation body remains global/focus-bound or authorization is
-unproven. Capability reporting must derive from the actual accepted contract.
+Rejected while the mutation body remains global/focus-bound or Driver admission
+and transport ownership are unproven. Capability reporting must derive from the
+actual accepted contract.
 
 ### Focus transaction with read-back after each event
 
@@ -475,15 +498,14 @@ The preferred rollout preserves the current wire-compatible discovery surface:
 - new driver + old helper: discovery works, target-input capability is absent,
   and raw KDE input remains refused;
 - new driver + new helper: target input is enabled only after capability,
-  authorization, generation, and target checks pass.
+  Driver admission, generation, and target checks pass.
 
 If a wire-incompatible change becomes necessary, the RFC must be updated with a
 parallel/dual-version migration before implementation. The design must not
 silently trade away existing read-only discovery compatibility.
 
-No unsafe fallback is introduced during rollout. Mismatch, missing capability,
-or missing authorization produces a precise refusal rather than degraded global
-input.
+No unsafe fallback is introduced during rollout. Mismatch, missing capability, policy denial, or invalid transport/generation
+produces a precise refusal rather than degraded global input.
 
 Rollback is straightforward only if discovery remains separable from mutation:
 disable/remove the new mutation capability and the driver returns to the current
@@ -502,40 +524,45 @@ Required properties:
 
 - verify the D-Bus service owner and expected KWin session process;
 - verify same-user/session ownership as server-identity evidence;
-- separately validate a user-authorized input capability for every mutation
-  transaction;
-- do not treat same UID, D-Bus sender PID, process name/path, or token possession
-  as sufficient authorization;
+- run normal Driver permission/manifest/policy/resource/lifecycle admission for
+  every mutation action, including actions using cached compositor connections;
+- do not treat D-Bus sender PID, process name/path, token possession, or cached
+  transport state as a substitute for that per-action Driver decision;
+- follow the accepted trusted-local model: do not claim the transport is a
+  sandbox against arbitrary hostile native code running as the desktop account;
 - do not trust caller-provided titles, app IDs, geometry, or PID without a fresh
   compositor snapshot;
-- bind mutation to an opaque live target plus generation and authorization scope;
-- invalidate transactions on helper/KWin restart, stale identity, authorization
-  revocation, or capability loss;
+- bind mutation to an opaque live target plus helper/KWin generation and the
+  current admitted operation;
+- invalidate transactions on helper/KWin restart, stale identity, policy/lifecycle
+  invalidation, or capability loss;
 - refuse ambiguous target resolution;
 - never send global raw input as a recovery path after target routing is chosen;
 - avoid telemetry containing typed text, key sequences, window titles, document
-  contents, target application data, authorization secrets, or restore tokens.
+  contents, target application data, credentials, or private transport material.
 
-Permitted telemetry should be limited to capability/authorization state,
-wire/capability version, structured refusal category, operation class, and
-coarse timing/error counters that cannot reconstruct user input.
+Permitted telemetry should be limited to capability/policy state, wire/capability
+version, structured refusal category, operation class, and coarse timing/error
+counters that cannot reconstruct user input.
 
 ## Implementation plan
 
 Implementation begins only after this RFC is accepted according to the Cua RFC
 process.
 
-### Increment 0: feasibility and authorization spike
+### Increment 0: feasibility and transport-ownership spike
 
 Before production routing changes:
 
 - identify the supported KWin API that can bind delivery to an exact target;
 - demonstrate a positive target-binding canary with two competing windows;
-- define and prototype the user-authorization mechanism without creating an
-  ambient session-bus mutation service;
-- document ABI/support constraints and rollback;
-- return to RFC review if the spike requires private KWin internals, weakens user
-  consent, or changes the public security boundary beyond this proposal.
+- define and prototype the Driver-owned mutation transport so every action still
+  passes through the common Driver admission path;
+- document the trusted-local same-account threat model, ABI/support constraints,
+  lifecycle invalidation, and rollback; and
+- return to RFC review if the spike requires private KWin internals, weakens the
+  common Driver policy contract, or changes the public security boundary beyond
+  this proposal.
 
 No raw KDE input support is advertised from this spike alone.
 
@@ -545,25 +572,25 @@ No raw KDE input support is advertised from this spike alone.
 - add compatible capability negotiation or an explicitly reviewed dual-version
   interface;
 - add generation-aware target validation;
-- bind authorization to the live helper/target generation;
+- bind mutation transport state to the live helper/target generation;
 - add the Rust target transaction abstraction;
-- add contract/unit tests for stale, duplicate, ambiguous, unauthorized and
+- add contract/unit tests for stale, duplicate, ambiguous, policy-denied and
   restarted targets.
 
 ### Increment 2: pointer/keyboard routing and no-fallback enforcement
 
-- route only proven KDE pointer/keyboard operations through the authorized target
-  transaction;
+- route only proven KDE pointer/keyboard operations through the admitted
+  target transaction;
 - hard-block transition from selected KWin routing to global libei;
-- add structured refusal coverage for mid-transaction target or authorization
-  changes;
+- add structured refusal coverage for mid-transaction target, generation,
+  capability, or policy/lifecycle changes;
 - verify multi-frame drag/type cancellation behavior.
 
 ### Increment 3: browser setup and health reporting
 
 - route existing-profile browser setup through the common accepted KWin path;
-- distinguish identity-only, authorization, and target-input capability in
-  doctor/health output;
+- distinguish identity-only, policy/transport readiness, and target-input
+  capability in doctor/health output;
 - add compatibility/version diagnostics.
 
 ### Increment 4: live Plasma 6 evidence and documentation
@@ -572,7 +599,7 @@ No raw KDE input support is advertised from this spike alone.
 - test representative Chromium, Firefox, GTK, Qt and Electron targets where the
   harness supports them;
 - prove pointer, keyboard, drag, scroll, target closure, focus takeover,
-  authorization loss, and focus restoration behavior;
+  policy/lifecycle invalidation, and focus restoration behavior;
 - update platform support/roadmap/action-support documentation only to the level
   demonstrated by evidence.
 
@@ -599,19 +626,24 @@ Cover at least:
 - target loss before mutation;
 - unsupported operation capability.
 
-### Authorization tests
+### Policy and transport-ownership tests
 
 Explicitly prove:
 
-- an ordinary session-bus caller without the approved user capability cannot
-  mutate input;
-- authorization revocation stops subsequent operations before delivery;
-- authorization from a previous helper/KWin generation cannot be replayed;
-- capability material is not exposed in logs, health output, or telemetry;
-- the accepted path preserves any required desktop/user consent semantics.
+- every mutating Driver action is admitted through the normal permission,
+  manifest/policy, resource, and lifecycle path, including cached connections;
+- a policy-denied action reaches no KWin mutation dispatch;
+- stale transport state from a previous helper/KWin generation cannot be replayed;
+- capability/transport material is not exposed in logs, health output, or
+  telemetry;
+- standard, bounded, and acknowledged unrestricted modes preserve their existing
+  semantics; and
+- the test plan does not claim same-user hostile-code isolation beyond the
+  accepted trusted-local threat model.
 
 Where the chosen design interacts with sandboxed applications or portal policy,
-include a representative isolation test supported by the repository harness.
+include a representative isolation/compatibility test supported by the
+repository harness.
 
 ### Target-safety tests
 
@@ -623,7 +655,7 @@ Explicitly trigger:
 - helper/KWin restart during a transaction;
 - target replacement with possible PID reuse;
 - another window of the same process becoming active;
-- authorization loss during a multi-frame operation.
+- policy/lifecycle invalidation or generation loss during a multi-frame operation.
 
 For every unsafe case, acceptance requires:
 
@@ -645,7 +677,7 @@ target; this demonstrates target addressability rather than coincidental focus.
 Expand the stable candidate matrix to representative Chromium/Chrome, Firefox,
 GTK, Qt, Electron, two-window, covered, and alternate-workspace scenarios as
 supported by the harness. Evidence must observe fixture-owned state and relevant
-focus/z-order/no-leak/authorization oracles. Focus restoration after bounded
+focus/z-order/no-leak/policy and generation oracles. Focus restoration after bounded
 foreground operations must be verified when activation is part of the accepted
 implementation.
 
@@ -659,35 +691,39 @@ SHA.
 - #2194 tracks trustworthy Wayland cursor-preservation evidence.
 
 These are related constraints/evidence streams, not substitutes for this RFC's
-authorization and exact-target decision.
+policy-path and exact-target decision.
 
 ## Unresolved questions
 
 - Which supported KWin extension/plugin API, if any, can implement exact
   target-bound delivery on Plasma 6 without relying on private unstable
   internals?
-- How should user authorization be represented so the helper cannot become an
-  ambient same-user input service and consent/revocation semantics remain at
-  least as strong as the current portal path?
-- Can an authorized EIS/libei capability be bound to an exact KWin target before
-  delivery, or does KDE require a different supported primitive?
+- Which mutation transport/interface best preserves per-action Driver policy
+  while avoiding an ambient architectural bypass: compatible methods on the v1
+  discovery surface, a parallel D-Bus interface/path, or another Driver-owned
+  channel?
+- Can EIS/libei be bound to an exact KWin target before delivery, or does KDE
+  require a different supported primitive?
 - Should compatible capability negotiation stay on wire version 1, or should a
   parallel interface/path carry a future incompatible major version?
-- What exact generation source most reliably prevents stale token, authorization
-  and PID reuse across helper/KWin/browser restarts?
+- What exact generation source most reliably prevents stale target tokens and
+  mutation transport state across helper/KWin/browser restarts?
 - Should the mutation API expose a bounded transaction or atomic operation calls
   so partial multi-frame delivery and cancellation semantics are unambiguous?
 - Can target-bound delivery preserve user foreground posture without activating
   the target, or is bounded activation/restoration required for some event
   classes?
-- Which refusal/error names best align with the current typed driver error
-  contract?
+- Which refusal/error names best align with the current typed Driver error
+  contract and common policy-denial results?
 - Which minimum live application matrix is required before documentation may
   advance KDE from experimental identity support to target-input support?
 
 ## Decision record
 
-Pending maintainer review. The decision summary in issue #3506 must record the
-chosen KWin primitive, authorization model, compatibility strategy, rejected
-alternatives, remaining risks, and final disposition before implementation
-begins.
+Pending maintainer review. The accepted shared-policy and trusted-local baseline
+from #3550/#3551 applies to this RFC unless maintainers record a KWin-specific
+exception. The decision summary in issue #3506 must record the chosen KWin
+primitive, mutation transport/ownership model, compatibility strategy,
+generation semantics, rejected alternatives, remaining risks, and final
+disposition before implementation begins.
+

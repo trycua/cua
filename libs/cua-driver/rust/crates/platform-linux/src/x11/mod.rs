@@ -54,6 +54,20 @@ pub fn list_windows(filter_pid: Option<u32>) -> Vec<WindowInfo> {
     }
 }
 
+/// Whether the X server still knows a window by this id.
+pub fn window_exists(xid: u64) -> bool {
+    let Ok(xid) = u32::try_from(xid) else {
+        return false;
+    };
+    let Ok((conn, _)) = RustConnection::connect(None) else {
+        return false;
+    };
+    conn.get_window_attributes(xid)
+        .ok()
+        .and_then(|cookie| cookie.reply().ok())
+        .is_some()
+}
+
 /// Verify that an X11 window still exists and belongs to the requested process.
 ///
 /// Checking `/proc/<pid>` alone is insufficient because Linux may recycle the

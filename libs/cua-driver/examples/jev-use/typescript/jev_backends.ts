@@ -277,6 +277,7 @@ async function defaultTransport(
       method: 'POST',
       headers,
       body: JSON.stringify(payload),
+      redirect: 'error',
       signal: AbortSignal.timeout(timeoutSeconds * 1000),
     });
   } catch (error: unknown) {

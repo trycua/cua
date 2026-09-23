@@ -107,6 +107,50 @@ desktop certification, and it does not replace the desktop matrix.
 
 ## Desktop runners
 
+### Quick development feedback
+
+`CI: Cua Driver quick feedback (non-certifying)` runs on relevant pull requests
+or by manual dispatch. It checks Rust formatting, the shared web fixture journal,
+the visual contract and perception protocol, and platform-independent core
+unit tests. Use it while iterating on those areas. It does not create a
+desktop session, exercise native input or capture, install a release, or issue
+a certification artifact. Its goal is a warm-cache run under 10 minutes;
+check the workflow's measured duration rather than treating the timeout as a
+performance guarantee.
+
+For a local focused iteration, run the matching commands from the repository
+root (a first compilation may be much slower than a warm run):
+
+```bash
+cargo fmt --manifest-path libs/cua-driver/rust/Cargo.toml --all -- --check
+node --test libs/cua-driver/tests/fixtures/shared/web/journal.test.cjs
+cd libs/cua-driver/rust
+cargo test --locked -p cua-driver-contract --test visual_contract
+cargo test --locked -p cua-perception --test protocol
+cargo test --locked -p cua-driver-core --lib
+```
+
+For desktop behavior, use a diagnostic lane only to narrow a failure. The
+complete Linux, Windows, and macOS runs at the stable exact candidate SHA
+remain the certification gate described below and in the test harnesses guide.
+The Linux and Windows E2E workflows cache Rust dependencies/build products
+per OS and lane, and cache npm downloads for the Electron fixture on exact-ref
+dispatches. A dispatch against a different reviewed SHA may restore a Rust
+cache but cannot save it. Exact-ref branch dispatches save only in that branch's
+GitHub cache scope; Windows RDP parity replays cannot save a cache. No fixture `node_modules`,
+recording, result, or certification artifact is cached.
+
+To measure the change, compare the wall time of each job and its build/test
+step in successive cold- and warm-cache full-matrix runs at a stable candidate.
+Record queue, setup, execution, and upload separately. As a pre-cache baseline,
+the exact-merge-SHA September 22, 2026 runs (`35789003557` Linux,
+`35789006039` Windows) took 25m31s for Linux shared and 40m52s for Windows
+shared (job start to completion). The corresponding behavior-matrix steps took
+23m20s and 39m41s. The other lanes ran in parallel; these times are not a
+median or evidence of a 30% improvement. Compare multiple warm runs before
+claiming a sustained reduction, and retain the source SHA and cache-hit state
+with each measurement.
+
 | Runner                          | Session                                                            | Canonical command |
 | ------------------------------- | ------------------------------------------------------------------ | ----------------- |
 | `linux/run-rust-e2e.sh`         | Existing Linux X11 or Wayland desktop                              | no selector       |

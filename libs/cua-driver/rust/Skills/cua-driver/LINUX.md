@@ -122,6 +122,13 @@ focus log, so a one-row miss is visible before you type.
 line/paragraph selection in editors) as one press train with real double-click
 cadence in both delivery modes; there is no `triple_click` tool.
 
+**Typing throughput.** Key-event typing (XTest in foreground, the virtual
+keyboard in background) runs at roughly 45-60 characters per second, so a
+1,300-character script takes about 30 s: scale a client-side `type_text`
+deadline with the text length instead of using a flat one (0.04 s per
+character leaves margin over those rates). A terminal can still be echoing when the call returns; read the
+result again before retyping text that looks truncated.
+
 **Cross-application drops.** A pointer action whose point lies over another
 application's window (a drag dropped onto VLC) reports that window's title
 change and the windows its pid opened as `foreign_window` / `window_change`

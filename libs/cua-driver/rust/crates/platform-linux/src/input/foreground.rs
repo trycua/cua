@@ -454,18 +454,49 @@ impl X11 {
     }
 
     /// Walk up from `window` to the first ancestor carrying `_NET_WM_PID`.
-    fn owning_pid(&self, mut window: Window) -> Option<u32> {
-        for _ in 0..64 {
-            if let Some(pid) = self.window_pid(window) {
-                return Some(pid);
-            }
-            let reply = self.conn.query_tree(window).ok()?.reply().ok()?;
-            if reply.parent == 0 || reply.parent == self.root || reply.parent == window {
-                return None;
-            }
-            window = reply.parent;
-        }
-        None
+    fn owning_pid(&self, window: Window) -> Option<u32> {
+        self.ancestors(window)
+            .find_map(|window| self.window_pid(window))
+    }
+
+    /// `window` and its ancestors below the root (bounded).
+    fn ancestors(&self, window: Window) -> impl Iterator<Item = Window> + '_ {
+        std::iter::successors(Some(window), move |&window| {
+            let parent = self.conn.query_tree(window).ok()?.reply().ok()?.parent;
+            (parent != 0 && parent != self.root && parent != window).then_some(parent)
+        })
+        .take(64)
+    }
+
+    /// First `WM_CLASS` class (else instance) name on `window` or one of its
+    /// ancestors.
+    fn wm_class(&self, window: Window) -> Option<String> {
+        self.ancestors(window).find_map(|window| {
+            let (instance, class) = crate::x11::get_window_class(&self.conn, window)?;
+            Some(if class.is_empty() { instance } else { class })
+        })
+    }
+
+    /// Who holds the X input focus, for a refusal that has to explain why the
+    /// target could not take it.
+    fn focus_holder(&self) -> String {
+        let focus = self
+            .conn
+            .get_input_focus()
+            .ok()
+            .and_then(|cookie| cookie.reply().ok())
+            .map(|reply| reply.focus);
+        let Some(focus) = focus else {
+            return "unknown".into();
+        };
+        let pid = (focus > 1).then(|| self.owning_pid(focus)).flatten();
+        let comm = pid.and_then(|pid| {
+            std::fs::read_to_string(format!("/proc/{pid}/comm"))
+                .ok()
+                .map(|comm| comm.trim().to_owned())
+        });
+        let class = (focus > 1).then(|| self.wm_class(focus)).flatten();
+        describe_focus_holder(focus, class.as_deref(), pid, comm.as_deref())
     }
 
     fn focus_is_within(&self, target: Window) -> bool {
@@ -483,6 +514,8 @@ struct ConfirmOutcome {
     elapsed: Duration,
     active_after: Window,
     focus_within: bool,
+    /// Set when the activation was not confirmed: see [`X11::focus_holder`].
+    focus_holder: Option<String>,
 }
 
 fn confirm_phase(target: Window, settle: Duration) -> Result<ConfirmOutcome> {
@@ -500,6 +533,7 @@ fn confirm_phase(target: Window, settle: Duration) -> Result<ConfirmOutcome> {
             elapsed: start.elapsed(),
             active_after: target,
             focus_within: true,
+            focus_holder: None,
         });
     }
     x.activate(target, prior)?;
@@ -517,6 +551,7 @@ fn confirm_phase(target: Window, settle: Duration) -> Result<ConfirmOutcome> {
                 elapsed: start.elapsed(),
                 active_after: target,
                 focus_within: true,
+                focus_holder: None,
             });
         }
         let now = Instant::now();
@@ -528,6 +563,7 @@ fn confirm_phase(target: Window, settle: Duration) -> Result<ConfirmOutcome> {
                 elapsed: start.elapsed(),
                 active_after: x.active_window().unwrap_or(0),
                 focus_within,
+                focus_holder: Some(x.focus_holder()),
             });
         }
         if retry_pending && now >= retry_at {
@@ -602,11 +638,19 @@ pub fn with_x11_foreground_opts<T>(
             )
         })??;
     if !outcome.confirmed {
+        let holder = outcome.focus_holder.as_deref().unwrap_or("unknown");
+        let cause = if outcome.active_after == 0 {
+            "No window is active at all: the window manager has not set \
+             _NET_ACTIVE_WINDOW (it may be restarting, or showing a modal surface of \
+             its own that no window list includes)"
+        } else {
+            "The window may be minimized, on another workspace, or blocked by a modal \
+             dialog — bring_to_front it or target that dialog instead"
+        };
         return Err(anyhow!(
             "{CODE_UNAVAILABLE}: window 0x{xid:x} did not become the active, focused \
-             window within {:?} (active=0x{:x}, focus_within_target={}); no input was sent. \
-             The window may be minimized, on another workspace, or blocked by a modal \
-             dialog — bring_to_front it or target that dialog instead",
+             window within {:?} (active=0x{:x}, focus_within_target={}, \
+             input focus: {holder}); no input was sent. {cause}",
             opts.settle,
             outcome.active_after,
             outcome.focus_within
@@ -641,9 +685,53 @@ pub fn with_x11_foreground_opts<T>(
     ))
 }
 
+/// `0x…` plus what owns it: the class and process of a client window, or a
+/// note that the focus sits on a window no client claims (the window
+/// manager's own, or the root).
+fn describe_focus_holder(
+    focus: Window,
+    class: Option<&str>,
+    pid: Option<u32>,
+    comm: Option<&str>,
+) -> String {
+    match focus {
+        0 => return "none".into(),
+        1 => return "PointerRoot".into(),
+        _ => {}
+    }
+    let owner = match (pid, comm) {
+        (Some(pid), Some(comm)) => format!("pid {pid} {comm}"),
+        (Some(pid), None) => format!("pid {pid}"),
+        _ => "no _NET_WM_PID".into(),
+    };
+    match class {
+        Some(class) => format!("0x{focus:x} ({class}, {owner})"),
+        None => format!("0x{focus:x} (no WM_CLASS, {owner})"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn focus_holder_names_the_owner() {
+        assert_eq!(describe_focus_holder(0, None, None, None), "none");
+        assert_eq!(describe_focus_holder(1, None, None, None), "PointerRoot");
+        assert_eq!(
+            describe_focus_holder(
+                0x520000a,
+                Some("Gnome-terminal"),
+                Some(1865),
+                Some("gnome-terminal-")
+            ),
+            "0x520000a (Gnome-terminal, pid 1865 gnome-terminal-)"
+        );
+        assert_eq!(
+            describe_focus_holder(0x800003, None, None, None),
+            "0x800003 (no WM_CLASS, no _NET_WM_PID)"
+        );
+    }
 
     #[test]
     fn error_code_recognises_prefixes() {

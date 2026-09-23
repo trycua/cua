@@ -561,7 +561,7 @@ pub fn wm_class_for_window(xid: u64) -> Option<(String, String)> {
     get_window_class(&conn, xid as u32)
 }
 
-fn get_window_class(conn: &RustConnection, xid: Window) -> Option<(String, String)> {
+pub(crate) fn get_window_class(conn: &RustConnection, xid: Window) -> Option<(String, String)> {
     let reply = conn
         .get_property(
             false,
@@ -574,8 +574,10 @@ fn get_window_class(conn: &RustConnection, xid: Window) -> Option<(String, Strin
         .ok()?
         .reply()
         .ok()?;
+    // Two NUL-terminated strings, instance then class; either may be empty
+    // (`\0Foo\0`), so the position decides which is which.
     let raw = reply.value;
-    let mut parts = raw.split(|&b| b == 0).filter(|s| !s.is_empty());
+    let mut parts = raw.split(|&b| b == 0);
     let instance = parts
         .next()
         .map(|s| String::from_utf8_lossy(s).into_owned())

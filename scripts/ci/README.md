@@ -130,6 +130,31 @@ cargo test --locked -p cua-perception --test protocol
 cargo test --locked -p cua-driver-core --lib
 ```
 
+Before spending time on a desktop matrix, run the lightweight host readiness
+check in the same logged-in desktop session that will run the test:
+
+```bash
+# Linux, from the repository root
+scripts/ci/linux/preflight-rust-e2e.sh
+```
+
+```powershell
+# Windows, from the repository root
+.\scripts\ci\windows\preflight-rust-e2e.ps1
+```
+
+These commands report the architecture, display or input desktop, session bus
+where applicable, recording tools, checkout SHA, and an already-built driver
+version (not its source identity). They do not build fixtures, request
+permissions, start the Driver, or write or clear E2E artifacts. A missing
+binary or optional browser does not fail the lightweight check. The commands
+cannot establish AX/UIA, capture, permission, video, fixture, or browser behavior.
+The canonical runner's strict environment preflight still proves those before
+any behavioral rows.
+If `CUA_E2E_SOURCE_SHA` is set, the lightweight check fails when it differs
+from the checked-out SHA. For a hosted Linux X11 lane, enter its `xvfb-run` and
+`dbus-run-session` environment before running this check.
+
 For desktop behavior, use a diagnostic lane only to narrow a failure. The
 complete Linux, Windows, and macOS runs at the stable exact candidate SHA
 remain the certification gate described below and in the test harnesses guide.

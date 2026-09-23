@@ -405,28 +405,37 @@ only the `cua.jev_choice_v1` response fields.
 `verify_choice_cli.py` launches the Python interface with the active interpreter
 and an absolute script path, passes JSON on stdin, and does not use a shell. The
 credential-free workflow runs that verifier in mock mode; the separately
-authorized live workflow runs it with the reviewer-gated TypeSafe secret. The
-chooser itself relies on the official SDK's environment handling and never
-reads, prints, or forwards the key.
+authorized candidate workflow also runs it in mock mode, and no GitHub Actions
+workflow supplies the TypeSafe credential. The chooser itself relies on the
+official SDK's environment handling and never reads, prints, or forwards the
+key.
 
 Final local verification passed 34 Python tests, 24 TypeScript tests,
 TypeScript typechecking, both mock chooser commands, workflow YAML parsing, and
 `git diff --check`. The SDK client tests cover live request/response shaping
 with local fake transports; no live TypeSafe request was made locally.
 
-### Live workflow credential hardening
+### Workflow credential boundary
 
-The authorized workflow resolves and installs the locked Python and Node clients
-before the reviewer-gated secret is available. Secret-bearing steps now invoke
-the resulting `.venv/bin/python` directly; they do not run uv, pip, npm, cargo,
-or another resolver, installer, or build command. The chooser verifier continues
-to launch the absolute chooser path with that interpreter and without a shell.
-All third-party actions in the workflow are pinned to immutable commits.
+No GitHub Actions workflow stores, references, or uses `TYPESAFE_API_KEY`. The
+authorized workflows keep the exact-SHA trusted-branch gate, the immutable
+signed-candidate verification, and the canonical Windows/Linux certification
+checks, and they run the bounded mock chooser rows through the preinstalled
+`.venv/bin/python`; they never run a live provider row or the chooser with a
+credential. All third-party actions in the workflow are pinned to immutable
+commits.
 
-A focused workflow contract test enumerates every action reference and every
-step containing `TYPESAFE_API_KEY`. It requires 40-character action commits,
-the preinstalled interpreter path, and the absence of resolver, installer, and
-build invocations in those steps.
+A focused workflow contract test enumerates every action reference and requires
+40-character action commits, the preinstalled interpreter path, mock-only
+chooser invocations, and the complete absence of secret references. A separate
+repository-wide guard scans every Actions workflow so the credential name
+cannot be reintroduced through another workflow file.
+
+Live TypeSafe validation is an out-of-band procedure: it runs only directly on
+a disposable Tahoe Lume guest, with the credential supplied from that guest's
+local Keychain to the bounded chooser process. That procedure is maintained
+privately and publishes hashes and outcomes only — never the key value or
+fleet details.
 
 Final focused verification passed 36 Python tests, 24 TypeScript tests,
 TypeScript typechecking, workflow YAML parsing, and `git diff --check`.

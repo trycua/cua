@@ -128,7 +128,7 @@ def test_hosted_macos_probe_proves_textedit_window_content() -> None:
 def test_script_ci_runs_when_hosted_macos_contract_changes() -> None:
     workflow = read(".github/workflows/ci-test-scripts.yml")
 
-    assert '      - ".github/workflows/e2e-rust-macos.yml"' in workflow
+    assert '      - ".github/workflows/**"' in workflow
     assert '      - "scripts/ci/macos/**"' in workflow
 
     guide = read("scripts/ci/README.md")

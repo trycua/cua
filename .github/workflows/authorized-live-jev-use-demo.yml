@@ -1,12 +1,8 @@
-name: "Authorized: live Jev visual demo"
+name: "Authorized: candidate Jev visual demo"
 
 on:
   workflow_dispatch:
     inputs:
-      run_live:
-        description: "Explicit acknowledgement that this invocation may use protected live credentials"
-        required: true
-        type: boolean
       source_pr_number:
         description: "Pull request number under live review; must be open with the fixed cua-perception-live-review label"
         required: true
@@ -41,10 +37,6 @@ on:
         type: string
   workflow_call:
     inputs:
-      run_live:
-        description: "Explicit acknowledgement that this invocation may use protected live credentials"
-        required: true
-        type: boolean
       source_pr_number:
         description: "Pull request number under live review; must be open with the fixed cua-perception-live-review label"
         required: true
@@ -101,7 +93,6 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          RUN_LIVE_ACKNOWLEDGED: ${{ inputs.run_live }}
           SOURCE_PR_NUMBER: ${{ inputs.source_pr_number }}
           REQUESTED_SHA: ${{ inputs.source_sha }}
           JEV_PR_NUMBER: ${{ inputs.jev_pr_number }}
@@ -117,8 +108,7 @@ jobs:
           EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
-          [[ "$GITHUB_REPOSITORY" == "trycua/cua" ]] || { echo "live demo runs only in trycua/cua" >&2; exit 2; }
-          [[ "$RUN_LIVE_ACKNOWLEDGED" == true ]] || { echo "run_live must be explicitly acknowledged" >&2; exit 2; }
+          [[ "$GITHUB_REPOSITORY" == "trycua/cua" ]] || { echo "candidate demo runs only in trycua/cua" >&2; exit 2; }
           [[ "$SOURCE_PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo "source_pr_number must be numeric" >&2; exit 2; }
           [[ "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "source_sha must be exactly 40 lowercase hexadecimal characters" >&2; exit 2; }
           [[ "$JEV_PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo "jev_pr_number must be numeric" >&2; exit 2; }
@@ -216,7 +206,7 @@ jobs:
             [[ "$EVENT_LABEL" == cua-perception-live-review && "$run_id" == "$GITHUB_RUN_ID" ]] || { echo "same-run caller lacks the exact review label or run ID" >&2; exit 2; }
             [[ "$(jq -r .status <<<"$run_json")" == in_progress && "$(jq -r .conclusion <<<"$run_json")" == null ]] || { echo "same-run candidate artifact is not from the active review run" >&2; exit 2; }
           else
-            [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]] || { echo "unsupported live demo invocation" >&2; exit 2; }
+            [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]] || { echo "unsupported candidate demo invocation" >&2; exit 2; }
             [[ "$(jq -r .status <<<"$run_json")" == completed && "$(jq -r .conclusion <<<"$run_json")" == success ]] || { echo "candidate artifact workflow run did not complete successfully" >&2; exit 2; }
           fi
           echo "sha=$REQUESTED_SHA" >> "$GITHUB_OUTPUT"
@@ -258,8 +248,8 @@ jobs:
           cargo test --manifest-path libs/cua-driver/rust/Cargo.toml -p cua-driver --test authorized_live_jev_use_demo_test --locked
           cargo test --manifest-path libs/cua-driver/rust/Cargo.toml -p cua-perception --locked
 
-  live:
-    name: Live Jev (${{ matrix.platform }})
+  candidate:
+    name: Candidate mock Jev (${{ matrix.platform }})
     needs: [source, mock-preflight]
     strategy:
       fail-fast: false
@@ -300,19 +290,12 @@ jobs:
             $extensionHomeItem = Get-Item -LiteralPath $extensionHome -Force
             if (-not $extensionHomeItem.PSIsContainer -or $extensionHomeItem.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Windows extension home must be a real directory' }
           } else {
-            $extensionHome = Join-Path $env:RUNNER_TEMP 'cua-perception-extension-home/live'
+            $extensionHome = Join-Path $env:RUNNER_TEMP 'cua-perception-extension-home/mock'
           }
           "CUA_PERCEPTION_EXTENSION_HOME=$extensionHome" >> $env:GITHUB_ENV
           "CUA_DRIVER_RS_HOME=$extensionHome" >> $env:GITHUB_ENV
           "CUA_E2E_RECORDINGS_ROOT=$(Join-Path $env:RUNNER_TEMP 'cua-perception-recordings')" >> $env:GITHUB_ENV
-          "CUA_PERCEPTION_EVIDENCE_DIR=$(Join-Path $env:RUNNER_TEMP 'cua-perception-evidence/live')" >> $env:GITHUB_ENV
-      - name: Check out the exact reviewed Jev chooser
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          repository: trycua/cua
-          ref: ${{ needs.source.outputs.jev_sha }}
-          path: jev-use-source
-          persist-credentials: false
+          "CUA_PERCEPTION_EVIDENCE_DIR=$(Join-Path $env:RUNNER_TEMP 'cua-perception-evidence/mock')" >> $env:GITHUB_ENV
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
@@ -490,38 +473,13 @@ jobs:
               stream.write(f"CUA_PERCEPTION_MODEL={supplied_model_path}\nCUA_RUNNER_OS_NAME={runner_identity['name']}\nCUA_RUNNER_OS_VERSION={runner_identity['version']}\nCUA_RUNNER_OS_ARCH={runner_identity['arch']}\n")
           '@ | python - $inspect $status $catalog $installed $env:GITHUB_ENV $driver $measurements
           if ($LASTEXITCODE -ne 0) { throw 'candidate measurement failed' }
-      - name: Install the locked reviewed chooser with the source-reviewed adapter
-        shell: pwsh
-        env:
-          EXPECTED_JEV_SHA: ${{ needs.source.outputs.jev_sha }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $chooserRepo = Join-Path $env:GITHUB_WORKSPACE 'jev-use-source'
-          $chooserRoot = Join-Path $chooserRepo 'libs/cua-driver/examples/jev-use'
-          if ((git -C $chooserRepo rev-parse HEAD).Trim() -ne $env:EXPECTED_JEV_SHA) { throw 'chooser checkout does not match jev_source_sha' }
-          $script = Join-Path $chooserRoot 'python/choose_action.py'
-          $adapter = Join-Path $env:GITHUB_WORKSPACE 'libs/cua-driver/examples/jev-use/python/jev_adapter.py'
-          $installedAdapter = Join-Path $chooserRoot 'python/jev_adapter.py'
-          if (-not (Test-Path $script -PathType Leaf)) { throw 'reviewed live chooser contract is unavailable' }
-          if (-not (Test-Path $adapter -PathType Leaf) -or -not (Test-Path $installedAdapter -PathType Leaf)) { throw 'reviewed live chooser adapter is unavailable' }
-          Copy-Item -LiteralPath $adapter -Destination $installedAdapter -Force
-          $adapterSha256 = (Get-FileHash $adapter -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ((Get-FileHash $installedAdapter -Algorithm SHA256).Hash.ToLowerInvariant() -ne $adapterSha256) { throw 'source-reviewed chooser adapter copy does not match' }
-          uv sync --frozen --project $chooserRoot
-          if ($LASTEXITCODE -ne 0) { throw 'locked chooser install failed' }
-          $program = if ($IsWindows) { Join-Path $chooserRoot '.venv/Scripts/python.exe' } else { Join-Path $chooserRoot '.venv/bin/python' }
-          if (-not (Test-Path $program -PathType Leaf)) { throw 'chooser interpreter is unavailable' }
-          "CUA_FIXED_CHOOSER_PROGRAM=$program" >> $env:GITHUB_ENV
-          "CUA_FIXED_CHOOSER_SCRIPT=$script" >> $env:GITHUB_ENV
-          "CUA_FIXED_CHOOSER_ADAPTER=$installedAdapter" >> $env:GITHUB_ENV
-          "CUA_FIXED_CHOOSER_ADAPTER_SHA256=$adapterSha256" >> $env:GITHUB_ENV
-      - name: Compile and measure the exact live test binary without credentials
+      - name: Compile and measure the exact candidate test binary without credentials
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $messages = Join-Path $env:RUNNER_TEMP 'live-test-build.jsonl'
+          $messages = Join-Path $env:RUNNER_TEMP 'candidate-test-build.jsonl'
           cargo test --manifest-path libs/cua-driver/rust/Cargo.toml -p cua-driver --test authorized_live_jev_use_demo_test --locked --no-run --message-format=json-render-diagnostics | Set-Content $messages -Encoding utf8
-          if ($LASTEXITCODE -ne 0) { throw 'live test build failed' }
+          if ($LASTEXITCODE -ne 0) { throw 'candidate test build failed' }
           @'
           import hashlib, json, os, pathlib, re, subprocess, sys
           records = []
@@ -535,23 +493,23 @@ jobs:
           available = [line.removesuffix(": test") for line in listing if line.endswith(": test")]
           def resolve(short_name):
               matches = [name for name in available if name == short_name or name.endswith(f"::{short_name}")]
-              assert len(matches) == 1, f"required live test {short_name!r} resolved to {matches!r}"
+              assert len(matches) == 1, f"required candidate test {short_name!r} resolved to {matches!r}"
               assert re.fullmatch(r"[A-Za-z0-9_]+(?:::[A-Za-z0-9_]+)*", matches[0]), matches[0]
               return matches[0]
           window_test = resolve("authorized_visual_only_window_demo")
           desktop_test = resolve("authorized_visual_only_primary_desktop_demo")
           negative_test = resolve("authorized_live_jev_no_matching_action_control")
           with pathlib.Path(os.environ["GITHUB_ENV"]).open("a") as stream:
-              stream.write(f"CUA_LIVE_TEST_BINARY={binary}\nCUA_LIVE_TEST_BINARY_SHA256={hashlib.sha256(binary.read_bytes()).hexdigest()}\nCUA_LIVE_WINDOW_TEST={window_test}\nCUA_LIVE_DESKTOP_TEST={desktop_test}\nCUA_LIVE_NEGATIVE_TEST={negative_test}\n")
+              stream.write(f"CUA_CANDIDATE_TEST_BINARY={binary}\nCUA_CANDIDATE_TEST_BINARY_SHA256={hashlib.sha256(binary.read_bytes()).hexdigest()}\nCUA_CANDIDATE_WINDOW_TEST={window_test}\nCUA_CANDIDATE_DESKTOP_TEST={desktop_test}\nCUA_CANDIDATE_NEGATIVE_TEST={negative_test}\n")
           '@ | python - $messages
-          if ($LASTEXITCODE -ne 0) { throw 'live test binary measurement failed' }
+          if ($LASTEXITCODE -ne 0) { throw 'candidate test binary measurement failed' }
       - name: Verify Linux X11 desktop survived setup steps
         if: runner.os == 'Linux'
         shell: bash
         run: |
           set -euo pipefail
           dump_desktop_state() {
-            echo "Linux X11 desktop is unavailable before the live demos" >&2
+            echo "Linux X11 desktop is unavailable before the mock demos" >&2
             pgrep -a -f 'Xvfb|dbus-daemon|openbox|picom' >&2 || true
             DISPLAY="$DISPLAY" xprop -root _NET_SUPPORTED _NET_SUPPORTING_WM_CHECK _NET_CLIENT_LIST >&2 2>&1 || true
             for name in xvfb dbus openbox picom; do
@@ -585,46 +543,12 @@ jobs:
         shell: pwsh
         env:
           CUA_JEV_MOCK_DEMO: "1"
-          CUA_PERCEPTION_EVIDENCE_DIR: ${{ runner.temp }}/perception-evidence/mock
           CUA_TEST_DRIVER_STDERR: "1"
         run: |
-          & $env:CUA_LIVE_TEST_BINARY --ignored --exact $env:CUA_LIVE_WINDOW_TEST --nocapture
+          & $env:CUA_CANDIDATE_TEST_BINARY --ignored --exact $env:CUA_CANDIDATE_WINDOW_TEST --nocapture
           if ($LASTEXITCODE -ne 0) { throw 'artifact-gated mock window demo failed' }
-          & $env:CUA_LIVE_TEST_BINARY --ignored --exact $env:CUA_LIVE_DESKTOP_TEST --nocapture
+          & $env:CUA_CANDIDATE_TEST_BINARY --ignored --exact $env:CUA_CANDIDATE_DESKTOP_TEST --nocapture
           if ($LASTEXITCODE -ne 0) { throw 'artifact-gated mock primary-desktop demo failed' }
-      - name: Run bounded live Jev chooser against the measured binary
-        shell: pwsh
-        timeout-minutes: 15
-        env:
-          GH_TOKEN: ${{ github.token }}
-          LIVE_TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $key = $env:LIVE_TYPESAFE_API_KEY; Remove-Item Env:LIVE_TYPESAFE_API_KEY
-          if ([string]::IsNullOrWhiteSpace($key)) { throw 'TYPESAFE_API_KEY environment secret is required' }
-          $sourcePrNumber = '${{ inputs.source_pr_number }}'
-          $jevPrNumber = '${{ inputs.jev_pr_number }}'
-          $review = gh api "repos/$env:GITHUB_REPOSITORY/pulls/$sourcePrNumber" | ConvertFrom-Json
-          if ($review.state -ne 'open' -or $review.head.repo.full_name -ne $env:GITHUB_REPOSITORY -or $review.head.sha -ne '${{ needs.source.outputs.sha }}' -or 'cua-perception-live-review' -notin $review.labels.name) { throw "PR #$sourcePrNumber is no longer the exact labeled source under review" }
-          $jevReview = gh api "repos/$env:GITHUB_REPOSITORY/pulls/$jevPrNumber" | ConvertFrom-Json
-          if ($jevReview.state -ne 'closed' -or $jevReview.merged -ne $true -or $jevReview.head.repo.full_name -ne $env:GITHUB_REPOSITORY -or $jevReview.merge_commit_sha -ne '${{ needs.source.outputs.jev_sha }}') { throw "PR #$jevPrNumber is no longer the exact canonical merged Jev recipe" }
-          Remove-Item Env:GH_TOKEN
-          if ((git rev-parse HEAD).Trim() -ne '${{ needs.source.outputs.sha }}') { throw 'source changed after build' }
-          if ((git -C (Join-Path $env:GITHUB_WORKSPACE 'jev-use-source') rev-parse HEAD).Trim() -ne '${{ needs.source.outputs.jev_sha }}') { throw 'chooser source changed after setup' }
-          if ((Get-FileHash $env:CUA_LIVE_TEST_BINARY -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:CUA_LIVE_TEST_BINARY_SHA256) { throw 'live test binary changed after measurement' }
-          if (-not (Test-Path $env:CUA_FIXED_CHOOSER_SCRIPT -PathType Leaf)) { throw 'chooser script disappeared after setup' }
-          if ((Get-FileHash $env:CUA_FIXED_CHOOSER_ADAPTER -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:CUA_FIXED_CHOOSER_ADAPTER_SHA256) { throw 'source-reviewed chooser adapter changed after setup' }
-          $env:CUA_JEV_LIVE = '1'; $env:CUA_JEV_CHOOSER_PROGRAM = $env:CUA_FIXED_CHOOSER_PROGRAM; $env:CUA_JEV_CHOOSER_SCRIPT = $env:CUA_FIXED_CHOOSER_SCRIPT; $env:TYPESAFE_API_KEY = $key
-          try {
-            & $env:CUA_LIVE_TEST_BINARY --ignored --exact $env:CUA_LIVE_NEGATIVE_TEST --nocapture
-            if ($LASTEXITCODE -ne 0) { throw 'live Jev no-matching-action control failed' }
-            & $env:CUA_LIVE_TEST_BINARY --ignored --exact $env:CUA_LIVE_WINDOW_TEST --nocapture
-            if ($LASTEXITCODE -ne 0) { throw 'live Jev window demo failed' }
-            & $env:CUA_LIVE_TEST_BINARY --ignored --exact $env:CUA_LIVE_DESKTOP_TEST --nocapture
-            if ($LASTEXITCODE -ne 0) { throw 'live Jev primary-desktop demo failed' }
-          } finally {
-            Remove-Item Env:TYPESAFE_API_KEY -ErrorAction SilentlyContinue; Remove-Item Env:CUA_JEV_LIVE -ErrorAction SilentlyContinue; Remove-Item Env:CUA_JEV_CHOOSER_PROGRAM -ErrorAction SilentlyContinue; Remove-Item Env:CUA_JEV_CHOOSER_SCRIPT -ErrorAction SilentlyContinue; $key = $null
-          }
       - name: Fully decode and validate redacted evidence
         shell: pwsh
         env:
@@ -637,7 +561,7 @@ jobs:
             $scopeEvidence = if ($scope -eq 'window') { $evidence } else { Join-Path $evidence $scope }
             $recording = Join-Path $scopeEvidence 'recording.mp4'
             $manifest = Join-Path $scopeEvidence 'manifest.json'
-            if (-not (Test-Path $recording -PathType Leaf) -or -not (Test-Path $manifest -PathType Leaf)) { throw "complete $scope live evidence was not produced" }
+            if (-not (Test-Path $recording -PathType Leaf) -or -not (Test-Path $manifest -PathType Leaf)) { throw "complete $scope mock evidence was not produced" }
             ffmpeg -v error -xerror -i $recording -map 0:v:0 -f null -
             if ($LASTEXITCODE -ne 0) { throw "$scope recording.mp4 did not fully decode" }
           }
@@ -662,7 +586,7 @@ jobs:
               assert driver["build"] == {"profile": measured["review_driver_build_profile"], "target": measured["target"], "sealed_artifact_manifest_sha256": measured["sealed_artifact_manifest_sha256"], "sealed_extension_manifest_sha256": measured["sealed_extension_manifest_sha256"]}
               assert perception["signature_algorithm"] == measured["signature_algorithm"] == "ed25519"; assert perception["signed_extension_archive_sha256"] == measured["archive_sha256"]; assert perception["signing_key_sha256"] == measured["public_key_sha256"]; assert perception["signed_catalog_sha256"] == measured["catalog_sha256"]
               assert perception["protocol_version"] == measured["protocol_version"] and perception["worker_sha256"] == measured["worker_sha256"] and perception["self_test"] == measured["self_test"] and perception["models"] == measured["models"] and perception["onnx_runtime"] == measured["onnx_runtime"]
-              assert chooser["mode"] == "live" and chooser["provider"] == "typesafe" and chooser["model_id"]
+              assert chooser["mode"] == "mock" and chooser["provider"] == "fixture" and chooser["model_id"]
               assert chooser["adapter_source_sha"] == os.environ["EXPECTED_SHA"] and chooser["source_sha"] == os.environ["CUA_JEV_SOURCE_SHA"]
               result = manifest["result"]; observation = manifest["observation"]
               assert observation["session_label"] == f'{os.environ["CUA_SESSION_LABEL"]}-{scope}'
@@ -709,7 +633,7 @@ jobs:
       - name: Upload only encrypted evidence envelopes
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
         with:
-          name: live-jev-visual-${{ matrix.platform }}-${{ needs.source.outputs.sha }}
+          name: mock-jev-visual-${{ matrix.platform }}-${{ needs.source.outputs.sha }}
           path: ${{ runner.temp }}/encrypted-evidence/
           if-no-files-found: error
           retention-days: 14

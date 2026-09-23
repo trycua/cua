@@ -407,7 +407,8 @@ impl Tool for ListAppsTool {
                 files in $XDG_DATA_HOME/applications and each $XDG_DATA_DIRS entry's \
                 applications/ subdir. Entries with `NoDisplay=true` or `Hidden=true` are \
                 filtered. A `.desktop` file whose launcher matches a running process \
-                (by basename) is merged into a single entry with `running: true`.\n\n\
+                (by basename), or whose WM_CLASS a top-level window carries, is merged \
+                into a single entry with `running: true`.\n\n\
                 Use this for \"is X installed?\" as well as \"is X running?\". For per-window \
                 state — visibility, geometry, titles — call list_windows instead."
                     .into(),
@@ -423,6 +424,24 @@ impl Tool for ListAppsTool {
         let apps = tokio::task::spawn_blocking(|| -> Vec<serde_json::Value> {
             let procs = crate::proc_fs::list_processes();
             let installed = crate::installed_apps::list_installed_apps();
+            let windows = crate::wayland::list_windows_dispatch(None);
+
+            // An app whose launcher is not its process (`libreoffice --calc`
+            // runs `soffice.bin`, `google-chrome` runs `chrome`, `gnome-terminal`
+            // hands off to `gnome-terminal-server`) never matches by
+            // basename. Its top-level windows still carry its WM_CLASS, so
+            // owning one is what makes it running.
+            let by_window: std::collections::HashMap<usize, u32> = installed
+                .iter()
+                .enumerate()
+                .filter_map(|(i, app)| {
+                    windows
+                        .iter()
+                        .find(|w| w.pid.is_some() && app.owns_window_class(&w.app_name))
+                        .and_then(|w| w.pid)
+                        .map(|pid| (i, pid))
+                })
+                .collect();
 
             // Match running processes to installed apps by executable
             // basename (Exec=firefox %u → "firefox"; cmdline /usr/bin/firefox
@@ -453,7 +472,14 @@ impl Tool for ListAppsTool {
                     continue;
                 }
                 let candidates = by_exe.get(&basename).map(|v| v.as_slice()).unwrap_or(&[]);
-                let merged = disambiguate_installed_match(candidates, &installed, key_source);
+                let merged = disambiguate_installed_match(candidates, &installed, key_source)
+                    .or_else(|| {
+                        by_window
+                            .iter()
+                            .filter(|(_, pid)| **pid == p.pid)
+                            .map(|(idx, _)| *idx)
+                            .min()
+                    });
                 if let Some(idx) = merged {
                     consumed.insert(idx);
                 }
@@ -496,11 +522,15 @@ impl Tool for ListAppsTool {
                 if consumed.contains(&i) {
                     continue;
                 }
+                // One process can own windows of several entries (a single
+                // `soffice.bin` showing Calc and Writer): each entry with a
+                // window is running under its own id.
+                let window_pid = by_window.get(&i).copied();
                 out.push(json!({
-                    "pid":         0,
+                    "pid":         window_pid.unwrap_or(0),
                     "bundle_id":   app.bundle_id.clone(),
                     "name":        app.name.clone(),
-                    "running":     false,
+                    "running":     window_pid.is_some(),
                     "active":      false,
                     "kind":        "desktop",
                     "launch_path": app.launch_path.clone(),
@@ -1533,6 +1563,15 @@ impl Tool for GetWindowStateTool {
                         screenshot_error = Some(error.to_string());
                         None
                     }
+                    // The window passed the ownership check above and went
+                    // away during the AT-SPI walk (a document closed by the
+                    // action being observed): a stale target, not a capture
+                    // failure.
+                    Err(_) if !crate::wayland::is_wayland() && !crate::x11::window_exists(xid) => {
+                        return Err(anyhow::anyhow!(
+                            "Window target pid {pid}, window_id {xid} is stale or no longer running; refresh list_windows."
+                        ));
+                    }
                     Err(error) => {
                         return Err(anyhow::anyhow!(
                             "window screenshot failed for window {xid}: {error}"
@@ -2107,6 +2146,7 @@ mod launch_app_tests {
             bundle_id: bundle_id.to_owned(),
             launch_path: launch_path.to_owned(),
             last_used: None,
+            startup_wm_class: None,
         }
     }
 
@@ -2394,19 +2434,23 @@ impl Tool for LaunchAppTool {
                             Some(pid) => {
                                 structured["handoff"] = json!("dbus_activation");
                                 text.push_str(&format!(
-                                    " The launcher handed the request to the running service \
-                                     (D-Bus activation) and exited; the window belongs to pid {pid}."
+                                    " The launcher handed the request to another process \
+                                     (a wrapper or D-Bus activation); the window belongs to pid {pid}."
                                 ));
                             }
                             None => {
                                 // The launcher exited (D-Bus activation or a failed
-                                // start) and the 8s deadline in
+                                // start) and the hand-off budget in
                                 // `resolve_launched_windows` passed with no new
                                 // window ever appearing. This is not a success: we
                                 // have no pid, no window, and no way to know the app
                                 // actually started. Report a typed refusal instead
                                 // of a `pid: null` shape that reads as success.
-                                return launch_handoff_timeout_result(&name, launcher_pid, 8);
+                                return launch_handoff_timeout_result(
+                                    &name,
+                                    launcher_pid,
+                                    LAUNCH_HANDOFF_BUDGET.as_secs(),
+                                );
                             }
                         }
                     }
@@ -2455,10 +2499,11 @@ fn launch_handoff_timeout_result(name: &str, launcher_pid: u32, waited_secs: u64
 #[derive(Default)]
 struct LaunchedWindows {
     /// The process that owns the app's window: the launcher itself, or the
-    /// running service it handed off to.
+    /// wrapper target / running service it handed off to.
     pid: Option<u32>,
     windows: Vec<crate::x11::WindowInfo>,
-    /// The launcher exited early without owning a window (D-Bus activation).
+    /// The window belongs to another process than the launcher, or the
+    /// launcher exited without one.
     handed_off: bool,
 }
 
@@ -2505,17 +2550,24 @@ fn window_matches_launch_key(window: &crate::x11::WindowInfo, query: &str) -> bo
         || stem.split_whitespace().next().is_some_and(|word| class.contains(word))
 }
 
-/// Resolve the window(s) of a launch. Waits for the launcher's own window
-/// first; when the launcher exits without one (GNOME apps hand the request
-/// to their running D-Bus service), watches the client list for a newly
-/// mapped top-level whose WM_CLASS matches the launch and adopts its pid.
+/// How long a launch may take to show a window while the launcher process is
+/// still alive (the app is starting; LibreOffice on a small VM needs well over
+/// ten seconds), and once it has exited (a wrapper or D-Bus activation has
+/// taken over, so the window is either imminent or never coming).
+const LAUNCH_STARTING_BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
+const LAUNCH_HANDOFF_BUDGET: std::time::Duration = std::time::Duration::from_secs(8);
+
+/// Resolve the window(s) of a launch. Prefers the launcher's own window;
+/// otherwise adopts a newly mapped top-level whose WM_CLASS matches the
+/// launch, whoever owns it: a wrapper script that exec'd the real binary
+/// (`libreoffice` → `soffice.bin`), or the running D-Bus service GNOME apps
+/// hand their request to.
 fn resolve_launched_windows(
     launcher_pid: u32,
     query: &str,
     before: &std::collections::HashSet<u64>,
 ) -> LaunchedWindows {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
-    let mut handed_off = false;
+    let started = std::time::Instant::now();
     loop {
         let all = crate::wayland::list_windows_dispatch(None);
         let own: Vec<_> = all
@@ -2530,28 +2582,31 @@ fn resolve_launched_windows(
                 handed_off: false,
             };
         }
-        if handed_off || process_exited(launcher_pid) {
-            handed_off = true;
-            let fresh: Vec<_> = all
-                .iter()
-                .filter(|w| !before.contains(&w.xid) && w.pid.is_some())
-                .filter(|w| window_matches_launch(w, query))
-                .cloned()
-                .collect();
-            if let Some(pid) = fresh.first().and_then(|w| w.pid) {
-                let windows = fresh.into_iter().filter(|w| w.pid == Some(pid)).collect();
-                return LaunchedWindows {
-                    pid: Some(pid),
-                    windows,
-                    handed_off: true,
-                };
-            }
-        }
-        if std::time::Instant::now() >= deadline {
+        let fresh: Vec<_> = all
+            .iter()
+            .filter(|w| !before.contains(&w.xid) && w.pid.is_some())
+            .filter(|w| window_matches_launch(w, query))
+            .cloned()
+            .collect();
+        if let Some(pid) = fresh.first().and_then(|w| w.pid) {
+            let windows = fresh.into_iter().filter(|w| w.pid == Some(pid)).collect();
             return LaunchedWindows {
-                pid: (!handed_off).then_some(launcher_pid),
+                pid: Some(pid),
+                windows,
+                handed_off: true,
+            };
+        }
+        let launcher_exited = process_exited(launcher_pid);
+        let budget = if launcher_exited {
+            LAUNCH_HANDOFF_BUDGET
+        } else {
+            LAUNCH_STARTING_BUDGET
+        };
+        if started.elapsed() >= budget {
+            return LaunchedWindows {
+                pid: (!launcher_exited).then_some(launcher_pid),
                 windows: Vec::new(),
-                handed_off,
+                handed_off: launcher_exited,
             };
         }
         std::thread::sleep(std::time::Duration::from_millis(100));

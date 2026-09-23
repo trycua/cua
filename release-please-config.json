@@ -19,6 +19,11 @@
           "type": "toml",
           "path": "Cargo.toml",
           "jsonpath": "$.package.version"
+        },
+        {
+          "type": "json",
+          "path": "tests/fixtures/parse-response.json",
+          "jsonpath": "$.result.identity.extension.version"
         }
       ]
     },

@@ -707,6 +707,11 @@ def test_release_stream_is_candidate_only_and_driver_remains_excluded() -> None:
             "type": "toml",
             "path": "Cargo.toml",
             "jsonpath": "$.package.version",
+        },
+        {
+            "type": "json",
+            "path": "tests/fixtures/parse-response.json",
+            "jsonpath": "$.result.identity.extension.version",
         }
     ]
     assert "include-paths" not in config["packages"][path]

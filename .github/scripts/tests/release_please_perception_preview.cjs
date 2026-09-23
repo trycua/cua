@@ -76,7 +76,8 @@ async function main() {
     },
   );
   assert.notEqual(release, undefined);
-  assert.equal(release.version.toString(), '0.2.0');
+  const [major, minor] = manifest[perceptionPath].split('.').map(Number);
+  assert.equal(release.version.toString(), `${major}.${minor + 1}.0`);
   assert.equal(perceptionConfig['skip-github-release'], true);
   assert.equal(perceptionConfig.component, 'cua-perception');
   assert.equal(perceptionConfig['version-file'], 'VERSION');
@@ -86,6 +87,7 @@ async function main() {
     [
       'libs/cua-driver/rust/crates/cua-perception/CHANGELOG.md',
       'libs/cua-driver/rust/crates/cua-perception/Cargo.toml',
+      'libs/cua-driver/rust/crates/cua-perception/tests/fixtures/parse-response.json',
       'libs/cua-driver/rust/crates/cua-perception/VERSION',
     ].sort(),
   );

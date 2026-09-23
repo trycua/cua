@@ -106,6 +106,38 @@ keep raw, mock, and validated plaintext evidence beneath the runner's temporary
 directory and remove those exact directories in an `always()` step after the
 upload step.
 
+### Resume private collection without rerunning the desktop test
+
+If an artifact transfer or a local reel render fails after a successful live
+run, cache the encrypted Actions artifact by its immutable ID. First verify
+the run ID, workflow path, source SHA, artifact ID, and artifact name against
+the reviewed certification record. In a private, mode-0700 directory, run:
+
+```bash
+python3 libs/cua-driver/tests/perception-demo/cache_evidence.py fetch \
+  --run-id RUN_ID --artifact-id ARTIFACT_ID --source-sha SOURCE_SHA \
+  --workflow .github/workflows/authorized-live-jev-use-demo.yml \
+  --name ARTIFACT_NAME --cache PRIVATE_CACHE
+python3 libs/cua-driver/tests/perception-demo/cache_evidence.py stage \
+  --run-id RUN_ID --artifact-id ARTIFACT_ID --source-sha SOURCE_SHA \
+  --workflow .github/workflows/authorized-live-jev-use-demo.yml \
+  --name ARTIFACT_NAME --cache PRIVATE_CACHE --output PRIVATE_STAGE
+```
+
+Use the producer's actual workflow path for each platform. `fetch` checks the
+completed GitHub run and artifact producer on every invocation and verifies
+GitHub's SHA-256 artifact ZIP digest. A retry reuses verified encrypted bytes
+without a second download. `stage` verifies the same identity and digest again,
+then extracts only the two ciphertext envelopes into a new private directory.
+An interrupted transfer is not cached; an interrupted metadata write can
+recover a complete, digest-matching ZIP. Neither command decrypts or certifies
+the evidence. Keep the private key outside GitHub, decrypt into a separate
+private directory with `evidence_envelope.py`, and validate each plaintext
+manifest, recording, provider SHA, and exact candidate SHA before editing or
+rendering. If the test failed, the artifact expired, or the candidate changed
+in a way that requires recertification, a cached download is not a substitute
+for a new run. Do not attach the cache, staged envelopes, or plaintext to a PR.
+
 Native macOS certification remains separate from the Windows/Linux live-provider
 workflow. This proof runs directly in a logged-in, TCC-authorized Lume guest. A maintainer
 dispatches `.github/workflows/e2e-rust-macos.yml` in `lume` mode, whose exact-SHA gate runs

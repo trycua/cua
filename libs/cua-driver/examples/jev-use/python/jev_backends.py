@@ -71,6 +71,16 @@ class JevProtocolError(Exception):
     """The System One HTTP response was not usable (bad JSON / wire shape)."""
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Keep the validated backend URL authoritative; redirects are transport errors."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_HTTP_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 @dataclass(frozen=True)
 class JevConfig:
     backend: str
@@ -267,7 +277,7 @@ class SystemOneHttpClient:
             url, data=body, headers=headers, method="POST"
         )
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            with _HTTP_OPENER.open(request, timeout=timeout) as response:
                 status = getattr(response, "status", 200)
                 raw = response.read()
         except socket.timeout as error:

@@ -58,7 +58,7 @@
 //!   vocabulary; the cua-driver pack provides the platform deep dives.
 //!
 //! Acts on a given agent when its parent skills dir already exists. For
-//! Claude Code and Codex, whose fresh installs may not create that directory,
+//! Claude Code, Codex, and Pi, whose fresh installs may not create that directory,
 //! the explicit `skills install` verb also creates it when the client's own
 //! home directory proves that client is installed. Never clobbers an existing
 //! `<agent_skills>/cua-driver` link — preserves dev users' hand-rolled symlinks.

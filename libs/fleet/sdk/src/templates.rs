@@ -143,8 +143,19 @@ fn template_merge_patch_json(template: &Template) -> Result<Vec<u8>, SdkError> {
     let mut value = serde_json::to_value(template).map_err(|error| SdkError::Body {
         reason: error.to_string(),
     })?;
-    if template.spec.vm_template.image_pull_secret.is_none() {
-        value["spec"]["vmTemplate"]["imagePullSecret"] = serde_json::Value::Null;
+    // The same explicit null clears the optional process and delivery fields a
+    // desired spec drops (Terraform removing `command`, say); a merge patch
+    // would otherwise keep them.
+    let vm_template = &template.spec.vm_template;
+    for (key, absent) in [
+        ("imagePullSecret", vm_template.image_pull_secret.is_none()),
+        ("command", vm_template.command.is_none()),
+        ("probes", vm_template.probes.is_none()),
+        ("claimSecrets", vm_template.claim_secrets.is_none()),
+    ] {
+        if absent {
+            value["spec"]["vmTemplate"][key] = serde_json::Value::Null;
+        }
     }
     to_json(&value)
 }

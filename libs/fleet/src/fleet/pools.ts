@@ -268,6 +268,11 @@ function seedVmTemplateBuilder(vm: VmTemplate): VmTemplateBuilderLike {
   if (vm.probes !== undefined) builder = builder.probes(vm.probes)
   if (vm.services !== undefined) builder = builder.services(vm.services)
   if (vm.oidc !== undefined) builder = builder.oidc(vm.oidc)
+  // The SDK patches a dropped claimSecrets to null, so a services edit has to
+  // carry it or it would turn claim-secret delivery off.
+  if (vm.claimSecrets !== undefined) {
+    builder = builder.claimSecrets(vm.claimSecrets)
+  }
   return builder
 }
 

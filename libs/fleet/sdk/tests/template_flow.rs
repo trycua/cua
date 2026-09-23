@@ -90,6 +90,55 @@ async fn reconcile_template_keeps_a_pull_secret_the_desired_spec_asks_for() {
     );
 }
 
+/// Terraform drops `command`, the probes or `claim_secrets` by leaving them
+/// out of the desired spec; the merge patch has to null them to clear them.
+#[tokio::test]
+async fn reconcile_template_nulls_process_fields_the_desired_spec_drops() {
+    let mut configured = spec(None);
+    configured.vm_template.command = Some(vec!["srv".into()]);
+    configured.vm_template.claim_secrets = Some(true);
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(json_response(200, &template(None))),
+        Ok(json_response(200, &template(None))),
+        Ok(json_response(200, &template(None))),
+        Ok(json_response(200, &template(None))),
+    ]));
+    let client = client(Arc::clone(&http));
+
+    client
+        .clone()
+        .reconcile_template(create_request(None))
+        .await
+        .unwrap();
+    client
+        .reconcile_template(CreateTemplateRequest {
+            spec: configured,
+            ..create_request(None)
+        })
+        .await
+        .unwrap();
+
+    let requests = http.authenticated_requests().await;
+    let dropped: serde_json::Value =
+        serde_json::from_slice(requests[1].body.as_deref().unwrap()).unwrap();
+    let vm_template = dropped["spec"]["vmTemplate"].as_object().unwrap();
+    for key in ["command", "probes", "claimSecrets"] {
+        assert!(
+            vm_template.contains_key(key),
+            "{key} must be patched to null"
+        );
+        assert_eq!(vm_template[key], serde_json::Value::Null);
+    }
+    let kept: serde_json::Value =
+        serde_json::from_slice(requests[3].body.as_deref().unwrap()).unwrap();
+    assert_eq!(
+        kept["spec"]["vmTemplate"]["command"],
+        serde_json::json!(["srv"])
+    );
+    assert_eq!(kept["spec"]["vmTemplate"]["claimSecrets"], true);
+}
+
 #[tokio::test]
 async fn reconcile_template_update_403_maps_to_pool_access_denied() {
     let http = Arc::new(ScriptedHttpClient::new([

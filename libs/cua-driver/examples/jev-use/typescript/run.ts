@@ -32,7 +32,6 @@ type Arguments = {
   dryRun: boolean;
   log?: string;
   jevBaseUrl?: string;
-  jevApiKey?: string;
   jevModel?: string;
   jevTimeoutMs?: number;
 };
@@ -52,7 +51,6 @@ function parseArgs(argv: string[]): Arguments {
     else if (value === '--dry-run') result.dryRun = true;
     else if (value === '--log') result.log = argv[++index];
     else if (value === '--jev-base-url') result.jevBaseUrl = argv[++index];
-    else if (value === '--jev-api-key') result.jevApiKey = argv[++index];
     else if (value === '--jev-model') result.jevModel = argv[++index];
     else if (value === '--jev-timeout-ms') result.jevTimeoutMs = Number(argv[++index]);
     else throw new Error(`unknown argument: ${value}`);
@@ -80,7 +78,6 @@ export function jevConfigFromArgs(args: Arguments): JevConfig {
     env.JEV_BACKEND = args.provider === 'live' ? 'typesafe' : args.provider;
   }
   if (args.jevBaseUrl) env.JEV_BASE_URL = args.jevBaseUrl;
-  if (args.jevApiKey) env.JEV_API_KEY = args.jevApiKey;
   if (args.jevModel) env.JEV_MODEL = args.jevModel;
   if (args.jevTimeoutMs !== undefined) env.JEV_TIMEOUT_MS = String(args.jevTimeoutMs);
   return readJevConfig(env);

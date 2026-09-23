@@ -39,6 +39,26 @@ static RECORDING_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 // durably emitted its first sample. This total includes the 300 ms baseline
 // settle and keeps immediate-refusal trajectories from finalizing empty.
 const MIN_BEHAVIOR_RECORDING_DURATION: Duration = Duration::from_millis(750);
+// A recorded macOS action includes one synchronous window capture before and
+// after dispatch. Keep the ordinary timeout for every other platform and for
+// the recording controls themselves.
+const MACOS_RECORDED_CALL_TIMEOUT: Duration = Duration::from_secs(CALL_TIMEOUT.as_secs() * 3);
+
+fn call_timeout(recording_started: bool, tool: &str, is_macos: bool) -> Duration {
+    let recording_meta_tool = matches!(
+        tool,
+        "start_recording" | "stop_recording" | "get_recording_state" | "replay_trajectory"
+    );
+    if is_macos && recording_started && !recording_meta_tool {
+        MACOS_RECORDED_CALL_TIMEOUT
+    } else {
+        CALL_TIMEOUT
+    }
+}
+
+fn timeout_error_message(tool: &str, timeout: Duration) -> String {
+    format!("TIMEOUT (>{}s) on {tool}", timeout.as_secs())
+}
 
 impl McpDriver {
     /// Spawn the driver, start the stdout reader thread, and `initialize`.
@@ -458,15 +478,16 @@ impl McpDriver {
     pub fn call_raw(&mut self, tool: &str, args: Value) -> Value {
         let id = self.next_id;
         self.next_id += 1;
+        let timeout = call_timeout(self.recording_started, tool, cfg!(target_os = "macos"));
         self.send(serde_json::json!({
             "jsonrpc": "2.0", "id": id, "method": "tools/call",
             "params": { "name": tool, "arguments": args }
         }));
-        match self.rx.recv_timeout(CALL_TIMEOUT) {
+        match self.rx.recv_timeout(timeout) {
             Ok(line) => serde_json::from_str(&line)
                 .unwrap_or_else(|_| serde_json::json!({ "error": format!("bad json: {line}") })),
             Err(_) => serde_json::json!({
-                "error": format!("TIMEOUT (>{}s) on {tool}", CALL_TIMEOUT.as_secs())
+                "error": timeout_error_message(tool, timeout)
             }),
         }
     }
@@ -584,7 +605,11 @@ fn unix_ms() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{recording_label, remaining_behavior_recording_time};
+    use super::{
+        call_timeout, recording_label, remaining_behavior_recording_time, timeout_error_message,
+        MACOS_RECORDED_CALL_TIMEOUT,
+    };
+    use crate::CALL_TIMEOUT;
     use std::time::Duration;
 
     #[test]
@@ -604,5 +629,46 @@ mod tests {
         );
         assert!(remaining_behavior_recording_time(Duration::from_millis(750)).is_zero());
         assert!(remaining_behavior_recording_time(Duration::from_secs(2)).is_zero());
+    }
+
+    #[test]
+    fn ordinary_calls_keep_the_base_timeout() {
+        assert_eq!(call_timeout(false, "click", true), CALL_TIMEOUT);
+    }
+
+    #[test]
+    fn recorded_macos_calls_allow_two_evidence_captures() {
+        assert_eq!(
+            call_timeout(true, "click", true),
+            MACOS_RECORDED_CALL_TIMEOUT
+        );
+        assert_eq!(
+            MACOS_RECORDED_CALL_TIMEOUT,
+            Duration::from_secs(CALL_TIMEOUT.as_secs() * 3)
+        );
+    }
+
+    #[test]
+    fn recording_controls_keep_the_base_timeout() {
+        assert_eq!(call_timeout(true, "start_recording", true), CALL_TIMEOUT);
+        assert_eq!(call_timeout(true, "stop_recording", true), CALL_TIMEOUT);
+        assert_eq!(
+            call_timeout(true, "get_recording_state", true),
+            CALL_TIMEOUT
+        );
+        assert_eq!(call_timeout(true, "replay_trajectory", true), CALL_TIMEOUT);
+    }
+
+    #[test]
+    fn non_macos_calls_keep_the_base_timeout_during_recording() {
+        assert_eq!(call_timeout(true, "click", false), CALL_TIMEOUT);
+    }
+
+    #[test]
+    fn timeout_errors_report_the_effective_deadline() {
+        assert_eq!(
+            timeout_error_message("click", MACOS_RECORDED_CALL_TIMEOUT),
+            "TIMEOUT (>75s) on click"
+        );
     }
 }

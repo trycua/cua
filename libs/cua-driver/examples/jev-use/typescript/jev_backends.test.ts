@@ -11,6 +11,7 @@ import {
   describeBackend,
   readJevConfig,
   systemoneUrl,
+  systemOneRequestInit,
   validateChoiceAnswer,
   validateCriteria,
   validateLoopbackUrl,
@@ -286,28 +287,14 @@ test('describeBackend redacts the key', () => {
   assert.ok(!JSON.stringify(described).includes('secret-key'));
 });
 
-test('default transport refuses HTTP redirects', async () => {
-  const originalFetch = globalThis.fetch;
-  let observedRedirect: RequestRedirect | undefined;
-  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
-    observedRedirect = init?.redirect;
-    return new Response(
-      JSON.stringify({ model: 'stub', answers: goodAnswers() }),
-      { status: 200, headers: { 'content-type': 'application/json' } }
-    );
-  }) as typeof fetch;
-  try {
-    const client = new SystemOneHttpClient(
-      readJevConfig({
-        JEV_BACKEND: 'openjev',
-        JEV_BASE_URL: 'https://jev.example',
-      })
-    );
-    await client.ask({ state: {}, questions: { candidate: {} } });
-    assert.equal(observedRedirect, 'error');
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+test('default transport request options refuse HTTP redirects', () => {
+  const init = systemOneRequestInit(
+    { state: {}, model: 'jev-latest', questions: {} },
+    { Accept: 'application/json' },
+    2.5
+  );
+  assert.equal(init.redirect, 'error');
+  assert.equal(init.method, 'POST');
 });
 
 test('ask throws on a missing answers object', async () => {

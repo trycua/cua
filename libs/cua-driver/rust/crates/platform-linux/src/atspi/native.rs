@@ -3896,9 +3896,15 @@ async fn actuate_chain(
             node.oref.path.clone(),
         );
         match call(ap.do_action(chosen as i32)).await {
-            Some(Ok(_)) => {
+            Some(Ok(true)) => {
                 tokio::time::sleep(Duration::from_millis(50)).await;
                 return Ok(Some(hit));
+            }
+            // Declined (a closed VCL menu answers false): nothing fired, so
+            // the caller falls through to the real pointer press.
+            Some(Ok(false)) => {
+                dlog!("hit-test doAction declined; falling through to the pointer route");
+                return Ok(None);
             }
             Some(Err(e)) => return Err(anyhow!("doAction failed: {e}")),
             // Dispatched; the reply waits on a nested main loop.
@@ -3929,7 +3935,7 @@ async fn actuate_chain(
         let Some(Ok(ap)) = call(proxies.action()).await else {
             return Ok(None);
         };
-        if let Some(Ok(_)) = call(ap.do_action(chosen as i32)).await {
+        if let Some(Ok(true)) = call(ap.do_action(chosen as i32)).await {
             return Ok(Some(AtPointHit::fired(
                 actions.get(chosen).cloned().unwrap_or_default(),
                 role,

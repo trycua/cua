@@ -1358,7 +1358,8 @@ impl Tool for GetWindowStateTool {
                 (long edge <= max_image_dimension, 1568 by default), because larger images \
                 are downsized before a model reads them and its pixel coordinates would then \
                 be uniformly short. Element `frame`s and x/y for the pointer tools are pixels \
-                of the delivered screenshot; `frame_scale` < 1 reports the downsizing.\n\n\
+                of the delivered screenshot; `frame_scale` < 1 reports the downsizing. An \
+                explicit per-call `max_image_dimension` (0 = native) replaces this cap.\n\n\
                 POPUP MENUS: a context menu / popover / combo list is an \
                 override-redirect window that list_windows never shows. A click or \
                 right_click that opened one names it in its result (`popup: \
@@ -1448,6 +1449,7 @@ impl Tool for GetWindowStateTool {
                 }
             },
         };
+        let explicit_max_image_dimension = max_image_dimension.is_some();
         let max_dim = {
             let cfg = self.state.config.read().unwrap();
             crate::capture_action_frame::resolve_max_image_dimension(
@@ -1627,7 +1629,14 @@ impl Tool for GetWindowStateTool {
                         let (orig_w, orig_h) = crate::capture::png_dimensions_pub(&raw)?;
                         let png = crate::capture::resize_png_if_needed(&raw, max_dim)?;
                         let (w, h) = crate::capture::png_dimensions_pub(&png)?;
-                        let png = match megapixel_long_edge_cap(w, h, WINDOW_SCREENSHOT_MAX_PIXELS) {
+                        // An explicit per-call max_image_dimension (0 = native)
+                        // is authoritative; the model-safe cap applies otherwise.
+                        let cap = if explicit_max_image_dimension {
+                            None
+                        } else {
+                            megapixel_long_edge_cap(w, h, WINDOW_SCREENSHOT_MAX_PIXELS)
+                        };
+                        let png = match cap {
                             Some(edge) => crate::capture::resize_png_if_needed(&png, edge)?,
                             None => png,
                         };
@@ -9939,8 +9948,10 @@ impl Tool for ScrollTool {
                 Err(result) => return result,
             };
             let direction = input.direction.as_str().to_owned();
-            let x = input.x.round() as i32;
-            let y = input.y.round() as i32;
+            // Pixels of the (possibly downsized) get_desktop_state image.
+            let (x, y) = self.state.desktop_to_screen(&cursor_id, input.x, input.y);
+            let x = x.round() as i32;
+            let y = y.round() as i32;
             let amount = input.amount.unwrap_or(3).clamp(1, 50) as usize;
             let display = direction.clone();
             let wayland = crate::wayland::wayland_input_enabled();
@@ -11090,7 +11101,13 @@ impl Tool for DragTool {
                 Ok(input) => input,
                 Err(result) => return result,
             };
-            let (from_x, from_y, to_x, to_y) = (input.from_x, input.from_y, input.to_x, input.to_y);
+            // Pixels of the (possibly downsized) get_desktop_state image.
+            let (from_x, from_y) =
+                self.state
+                    .desktop_to_screen(&cursor_id, input.from_x, input.from_y);
+            let (to_x, to_y) = self
+                .state
+                .desktop_to_screen(&cursor_id, input.to_x, input.to_y);
             let button = parse_mouse_button(input.button.unwrap_or(ClickButton::Left).as_str());
             let duration_ms = input.duration_ms.unwrap_or(500).min(10_000);
             let steps = input.steps.unwrap_or(20).clamp(1, 200) as usize;

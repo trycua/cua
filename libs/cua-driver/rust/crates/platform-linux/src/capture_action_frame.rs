@@ -58,13 +58,6 @@ pub fn publish_window(
     encoded_dimensions: (u32, u32),
     native_action_dimensions: (u32, u32),
 ) -> anyhow::Result<String> {
-    // The resizer preserves aspect ratio before rounding each encoded axis.
-    // Derive both ratios independently so a one-pixel rounded height does not
-    // skew Y coordinates in the native window frame.
-    let scale_x = f64::from(native_action_dimensions.0) / f64::from(encoded_dimensions.0);
-    let scale_y = f64::from(native_action_dimensions.1) / f64::from(encoded_dimensions.1);
-    let screenshot_to_action =
-        ScreenshotToActionTransform::new(scale_x, 0.0, 0.0, scale_y, 0.0, 0.0)?;
     publish(
         service,
         args,
@@ -72,7 +65,7 @@ pub fn publish_window(
         window_target(pid, window_id),
         encoded_dimensions,
         native_action_dimensions,
-        screenshot_to_action,
+        scaled_transform(encoded_dimensions, native_action_dimensions)?,
     )
 }
 
@@ -83,12 +76,7 @@ pub fn publish_desktop(
     encoded_dimensions: (u32, u32),
     native_action_dimensions: (u32, u32),
 ) -> anyhow::Result<String> {
-    // The desktop screenshot can be downsized below the action frame; map its
-    // pixels back per axis, as for a window capture.
-    let scale_x = f64::from(native_action_dimensions.0) / f64::from(encoded_dimensions.0);
-    let scale_y = f64::from(native_action_dimensions.1) / f64::from(encoded_dimensions.1);
-    let screenshot_to_action =
-        ScreenshotToActionTransform::new(scale_x, 0.0, 0.0, scale_y, 0.0, 0.0)?;
+    // The desktop screenshot can be downsized below the action frame.
     publish(
         service,
         args,
@@ -96,8 +84,29 @@ pub fn publish_desktop(
         CaptureTarget::PrimaryDesktop,
         encoded_dimensions,
         native_action_dimensions,
-        screenshot_to_action,
+        scaled_transform(encoded_dimensions, native_action_dimensions)?,
     )
+}
+
+/// Screenshot-to-action scaling for a capture encoded at `encoded` pixels of
+/// a `native` action frame. The resizer preserves aspect ratio before rounding
+/// each encoded axis, so both ratios are derived independently: a one-pixel
+/// rounded height must not skew Y coordinates.
+fn scaled_transform(
+    encoded: (u32, u32),
+    native: (u32, u32),
+) -> anyhow::Result<ScreenshotToActionTransform> {
+    anyhow::ensure!(
+        encoded.0 > 0 && encoded.1 > 0,
+        "capture has an empty encoded frame: {}x{}",
+        encoded.0,
+        encoded.1
+    );
+    let scale_x = f64::from(native.0) / f64::from(encoded.0);
+    let scale_y = f64::from(native.1) / f64::from(encoded.1);
+    Ok(ScreenshotToActionTransform::new(
+        scale_x, 0.0, 0.0, scale_y, 0.0, 0.0,
+    )?)
 }
 
 fn admit(

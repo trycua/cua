@@ -91,6 +91,7 @@ images are downsized before a model reads them, and its pixel coordinates
 would then be uniformly short. Element `frame`s and pointer `x`/`y` are pixels
 of the delivered image; `frame_scale` < 1 and `screenshot_original_width`
 report the downsizing, and the driver scales your pixels back to the window.
+An explicit per-call `max_image_dimension` (0 = native) replaces this cap.
 
 **Keys while the app's own popup is open.** A Qt combo list / completer or a
 GTK/VCL menu holds a keyboard grab that makes the X server drop keys from the

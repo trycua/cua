@@ -365,6 +365,7 @@ mod tests {
             description: None,
             actions: actions.iter().map(|value| (*value).to_owned()).collect(),
             element_key: 0,
+            identity: None,
             depth: 0,
             parent_element_index: None,
             in_web_content: false,

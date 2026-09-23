@@ -378,6 +378,15 @@ func uniffiCheckChecksums() {
 	}
 	{
 		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_func_fleet_label_key()
+		})
+		if checksum != 5219 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_func_fleet_label_key: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
 			return C.uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status()
 		})
 		if checksum != 3094 {
@@ -473,6 +482,33 @@ func uniffiCheckChecksums() {
 		if checksum != 18984 {
 			// If this happens try cleaning and rebuilding your project
 			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_method_cyclopsclient_access_token()
+		})
+		if checksum != 4889 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_access_token: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_fleet_claims()
+		})
+		if checksum != 11135 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_fleet_claims: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_fleet_claims()
+		})
+		if checksum != 14544 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_fleet_claims: UniFFI API checksum mismatch")
 		}
 	}
 	{
@@ -626,6 +662,15 @@ func uniffiCheckChecksums() {
 		if checksum != 46699 {
 			// If this happens try cleaning and rebuilding your project
 			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_websocket_url()
+		})
+		if checksum != 47537 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_websocket_url: UniFFI API checksum mismatch")
 		}
 	}
 	{
@@ -1365,6 +1410,24 @@ type CyclopsClientInterface interface {
 	// can be mutated through the SDK.
 	RenewClaim(claim Claim, shutdownTime string) (Claim, error)
 	WaitClaim(claim Claim) (Sandbox, error)
+	// The bearer this client would send on its next authenticated request,
+	// for callers that open their own connection to the gateway (for example
+	// a native WebSocket). `force_refresh` bypasses any cached token; a
+	// static access token is returned as-is. The value is a raw token — the
+	// caller attaches it as `authorization: Bearer <token>`.
+	AccessToken(forceRefresh bool) (string, error)
+	// Fan out `create_claim` calls across the requested warm pools, tagging
+	// every claim with `cua.ai/fleet=<fleet_id>` so the group can be listed
+	// back later. Duplicate pool entries are aggregated before any network
+	// call. Claims are created sequentially; if one creation fails the error
+	// is returned immediately and claims already created keep their fleet
+	// label, so `list_fleet_claims` still finds them for retry or cleanup.
+	CreateFleetClaims(fleetId string, requests []FleetPoolRequest) (FleetClaims, error)
+	// The fleet's claims within one namespace: enumerate the namespace's
+	// claims and keep those labeled `cua.ai/fleet=<fleet_id>`. A fleet that
+	// spans several pools spans that many namespaces (one pool per
+	// namespace), so call this once per member pool.
+	ListFleetClaims(namespace string, fleetId string) (FleetClaims, error)
 	PresignImageUploads(request ImageUploadRequest) (ImageUploadResponse, error)
 	// Hash and upload one file, or reuse a matching existing object.
 	// Returns only the bound digest, size, and tenant reference, never a signed URL.
@@ -1385,6 +1448,12 @@ type CyclopsClientInterface interface {
 	ReconcilePool(request CreatePoolRequest) (Pool, error)
 	UpdatePool(pool Pool) (Pool, error)
 	ServiceRequest(sandbox Sandbox, service string, path string, request HttpRequest) (HttpResponse, error)
+	// Where a native client opens its own WebSocket to a sandbox service:
+	// the gateway's `/api/svc` proxy forwards the HTTP upgrade, so the
+	// returned `ws(s)://` URL plus the returned bearer header are all a
+	// Rust or Swift caller needs to dial the socket directly.
+	// `service_request` stays the path for unary requests.
+	ServiceWebsocketUrl(sandbox Sandbox, service string, path string) (ServiceStreamTarget, error)
 	CreateSignedServiceUrl(request CreateSignedServiceUrlRequest) (SignedServiceUrl, error)
 	ListSignedServiceUrls(sandbox Sandbox) ([]SignedServiceUrl, error)
 	RevokeSignedServiceUrl(signedServiceUrl SignedServiceUrl) error
@@ -1681,6 +1750,126 @@ func (_self *CyclopsClient) WaitClaim(claim Claim) (Sandbox, error) {
 		},
 		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim(
 			_pointer, FfiConverterClaimINSTANCE.Lower(claim)),
+		// pollFn
+		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_poll_rust_buffer(handle, continuation, data)
+		},
+		// freeFn
+		func(handle C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_free_rust_buffer(handle)
+		},
+	)
+
+	if err == nil {
+		return res, nil
+	}
+
+	return res, err
+}
+
+// The bearer this client would send on its next authenticated request,
+// for callers that open their own connection to the gateway (for example
+// a native WebSocket). `force_refresh` bypasses any cached token; a
+// static access token is returned as-is. The value is a raw token — the
+// caller attaches it as `authorization: Bearer <token>`.
+func (_self *CyclopsClient) AccessToken(forceRefresh bool) (string, error) {
+	_pointer := _self.ffiObject.incrementPointer("*CyclopsClient")
+	defer _self.ffiObject.decrementPointer()
+	res, err := uniffiRustCallAsync[*SdkError](
+		FfiConverterSdkErrorINSTANCE,
+		// completeFn
+		func(handle C.uint64_t, status *C.RustCallStatus) RustBufferI {
+			res := C.ffi_cyclops_sdk_rust_future_complete_rust_buffer(handle, status)
+			return GoRustBuffer{
+				inner: res,
+			}
+		},
+		// liftFn
+		func(ffi RustBufferI) string {
+			return FfiConverterStringINSTANCE.Lift(ffi)
+		},
+		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_access_token(
+			_pointer, FfiConverterBoolINSTANCE.Lower(forceRefresh)),
+		// pollFn
+		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_poll_rust_buffer(handle, continuation, data)
+		},
+		// freeFn
+		func(handle C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_free_rust_buffer(handle)
+		},
+	)
+
+	if err == nil {
+		return res, nil
+	}
+
+	return res, err
+}
+
+// Fan out `create_claim` calls across the requested warm pools, tagging
+// every claim with `cua.ai/fleet=<fleet_id>` so the group can be listed
+// back later. Duplicate pool entries are aggregated before any network
+// call. Claims are created sequentially; if one creation fails the error
+// is returned immediately and claims already created keep their fleet
+// label, so `list_fleet_claims` still finds them for retry or cleanup.
+func (_self *CyclopsClient) CreateFleetClaims(fleetId string, requests []FleetPoolRequest) (FleetClaims, error) {
+	_pointer := _self.ffiObject.incrementPointer("*CyclopsClient")
+	defer _self.ffiObject.decrementPointer()
+	res, err := uniffiRustCallAsync[*SdkError](
+		FfiConverterSdkErrorINSTANCE,
+		// completeFn
+		func(handle C.uint64_t, status *C.RustCallStatus) RustBufferI {
+			res := C.ffi_cyclops_sdk_rust_future_complete_rust_buffer(handle, status)
+			return GoRustBuffer{
+				inner: res,
+			}
+		},
+		// liftFn
+		func(ffi RustBufferI) FleetClaims {
+			return FfiConverterFleetClaimsINSTANCE.Lift(ffi)
+		},
+		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_fleet_claims(
+			_pointer, FfiConverterStringINSTANCE.Lower(fleetId), FfiConverterSequenceFleetPoolRequestINSTANCE.Lower(requests)),
+		// pollFn
+		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_poll_rust_buffer(handle, continuation, data)
+		},
+		// freeFn
+		func(handle C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_free_rust_buffer(handle)
+		},
+	)
+
+	if err == nil {
+		return res, nil
+	}
+
+	return res, err
+}
+
+// The fleet's claims within one namespace: enumerate the namespace's
+// claims and keep those labeled `cua.ai/fleet=<fleet_id>`. A fleet that
+// spans several pools spans that many namespaces (one pool per
+// namespace), so call this once per member pool.
+func (_self *CyclopsClient) ListFleetClaims(namespace string, fleetId string) (FleetClaims, error) {
+	_pointer := _self.ffiObject.incrementPointer("*CyclopsClient")
+	defer _self.ffiObject.decrementPointer()
+	res, err := uniffiRustCallAsync[*SdkError](
+		FfiConverterSdkErrorINSTANCE,
+		// completeFn
+		func(handle C.uint64_t, status *C.RustCallStatus) RustBufferI {
+			res := C.ffi_cyclops_sdk_rust_future_complete_rust_buffer(handle, status)
+			return GoRustBuffer{
+				inner: res,
+			}
+		},
+		// liftFn
+		func(ffi RustBufferI) FleetClaims {
+			return FfiConverterFleetClaimsINSTANCE.Lift(ffi)
+		},
+		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_fleet_claims(
+			_pointer, FfiConverterStringINSTANCE.Lower(namespace), FfiConverterStringINSTANCE.Lower(fleetId)),
 		// pollFn
 		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
 			C.ffi_cyclops_sdk_rust_future_poll_rust_buffer(handle, continuation, data)
@@ -2269,6 +2458,46 @@ func (_self *CyclopsClient) ServiceRequest(sandbox Sandbox, service string, path
 		},
 		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_service_request(
 			_pointer, FfiConverterSandboxINSTANCE.Lower(sandbox), FfiConverterStringINSTANCE.Lower(service), FfiConverterStringINSTANCE.Lower(path), FfiConverterHttpRequestINSTANCE.Lower(request)),
+		// pollFn
+		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_poll_rust_buffer(handle, continuation, data)
+		},
+		// freeFn
+		func(handle C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_free_rust_buffer(handle)
+		},
+	)
+
+	if err == nil {
+		return res, nil
+	}
+
+	return res, err
+}
+
+// Where a native client opens its own WebSocket to a sandbox service:
+// the gateway's `/api/svc` proxy forwards the HTTP upgrade, so the
+// returned `ws(s)://` URL plus the returned bearer header are all a
+// Rust or Swift caller needs to dial the socket directly.
+// `service_request` stays the path for unary requests.
+func (_self *CyclopsClient) ServiceWebsocketUrl(sandbox Sandbox, service string, path string) (ServiceStreamTarget, error) {
+	_pointer := _self.ffiObject.incrementPointer("*CyclopsClient")
+	defer _self.ffiObject.decrementPointer()
+	res, err := uniffiRustCallAsync[*SdkError](
+		FfiConverterSdkErrorINSTANCE,
+		// completeFn
+		func(handle C.uint64_t, status *C.RustCallStatus) RustBufferI {
+			res := C.ffi_cyclops_sdk_rust_future_complete_rust_buffer(handle, status)
+			return GoRustBuffer{
+				inner: res,
+			}
+		},
+		// liftFn
+		func(ffi RustBufferI) ServiceStreamTarget {
+			return FfiConverterServiceStreamTargetINSTANCE.Lift(ffi)
+		},
+		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_service_websocket_url(
+			_pointer, FfiConverterSandboxINSTANCE.Lower(sandbox), FfiConverterStringINSTANCE.Lower(service), FfiConverterStringINSTANCE.Lower(path)),
 		// pollFn
 		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
 			C.ffi_cyclops_sdk_rust_future_poll_rust_buffer(handle, continuation, data)
@@ -3094,12 +3323,17 @@ type CreateClaimRequest struct {
 	// DNS-label validation); left unset, the client generates a random
 	// `claim-<petname>` so concurrent leases and retries cannot collide.
 	Name *string
+	// Labels stamped onto the created claim's metadata verbatim. Grouping
+	// helpers (for example fleet fan-out) rely on this to tag related claims
+	// so they can be listed back by label within a namespace.
+	Labels *map[string]string
 }
 
 func (r *CreateClaimRequest) Destroy() {
 	FfiDestroyerPool{}.Destroy(r.Pool)
 	FfiDestroyerOptionalClaimSpec{}.Destroy(r.Spec)
 	FfiDestroyerOptionalString{}.Destroy(r.Name)
+	FfiDestroyerOptionalMapStringString{}.Destroy(r.Labels)
 }
 
 type FfiConverterCreateClaimRequest struct{}
@@ -3115,6 +3349,7 @@ func (c FfiConverterCreateClaimRequest) Read(reader io.Reader) CreateClaimReques
 		FfiConverterPoolINSTANCE.Read(reader),
 		FfiConverterOptionalClaimSpecINSTANCE.Read(reader),
 		FfiConverterOptionalStringINSTANCE.Read(reader),
+		FfiConverterOptionalMapStringStringINSTANCE.Read(reader),
 	}
 }
 
@@ -3130,6 +3365,7 @@ func (c FfiConverterCreateClaimRequest) Write(writer io.Writer, value CreateClai
 	FfiConverterPoolINSTANCE.Write(writer, value.Pool)
 	FfiConverterOptionalClaimSpecINSTANCE.Write(writer, value.Spec)
 	FfiConverterOptionalStringINSTANCE.Write(writer, value.Name)
+	FfiConverterOptionalMapStringStringINSTANCE.Write(writer, value.Labels)
 }
 
 type FfiDestroyerCreateClaimRequest struct{}
@@ -3443,6 +3679,97 @@ func (c FfiConverterCyclopsTokenProviderConfiguration) Write(writer io.Writer, v
 type FfiDestroyerCyclopsTokenProviderConfiguration struct{}
 
 func (_ FfiDestroyerCyclopsTokenProviderConfiguration) Destroy(value CyclopsTokenProviderConfiguration) {
+	value.Destroy()
+}
+
+// A fleet's identity plus the claims currently known to belong to it.
+type FleetClaims struct {
+	FleetId string
+	Claims  []Claim
+}
+
+func (r *FleetClaims) Destroy() {
+	FfiDestroyerString{}.Destroy(r.FleetId)
+	FfiDestroyerSequenceClaim{}.Destroy(r.Claims)
+}
+
+type FfiConverterFleetClaims struct{}
+
+var FfiConverterFleetClaimsINSTANCE = FfiConverterFleetClaims{}
+
+func (c FfiConverterFleetClaims) Lift(rb RustBufferI) FleetClaims {
+	return LiftFromRustBuffer[FleetClaims](c, rb)
+}
+
+func (c FfiConverterFleetClaims) Read(reader io.Reader) FleetClaims {
+	return FleetClaims{
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterSequenceClaimINSTANCE.Read(reader),
+	}
+}
+
+func (c FfiConverterFleetClaims) Lower(value FleetClaims) C.RustBuffer {
+	return LowerIntoRustBuffer[FleetClaims](c, value)
+}
+
+func (c FfiConverterFleetClaims) LowerExternal(value FleetClaims) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[FleetClaims](c, value))
+}
+
+func (c FfiConverterFleetClaims) Write(writer io.Writer, value FleetClaims) {
+	FfiConverterStringINSTANCE.Write(writer, value.FleetId)
+	FfiConverterSequenceClaimINSTANCE.Write(writer, value.Claims)
+}
+
+type FfiDestroyerFleetClaims struct{}
+
+func (_ FfiDestroyerFleetClaims) Destroy(value FleetClaims) {
+	value.Destroy()
+}
+
+// One pool's share of a fleet: claim `replicas` sandboxes from the warm pool
+// named `pool`. On this platform the pool name is also its namespace.
+type FleetPoolRequest struct {
+	Pool     string
+	Replicas uint32
+}
+
+func (r *FleetPoolRequest) Destroy() {
+	FfiDestroyerString{}.Destroy(r.Pool)
+	FfiDestroyerUint32{}.Destroy(r.Replicas)
+}
+
+type FfiConverterFleetPoolRequest struct{}
+
+var FfiConverterFleetPoolRequestINSTANCE = FfiConverterFleetPoolRequest{}
+
+func (c FfiConverterFleetPoolRequest) Lift(rb RustBufferI) FleetPoolRequest {
+	return LiftFromRustBuffer[FleetPoolRequest](c, rb)
+}
+
+func (c FfiConverterFleetPoolRequest) Read(reader io.Reader) FleetPoolRequest {
+	return FleetPoolRequest{
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterUint32INSTANCE.Read(reader),
+	}
+}
+
+func (c FfiConverterFleetPoolRequest) Lower(value FleetPoolRequest) C.RustBuffer {
+	return LowerIntoRustBuffer[FleetPoolRequest](c, value)
+}
+
+func (c FfiConverterFleetPoolRequest) LowerExternal(value FleetPoolRequest) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[FleetPoolRequest](c, value))
+}
+
+func (c FfiConverterFleetPoolRequest) Write(writer io.Writer, value FleetPoolRequest) {
+	FfiConverterStringINSTANCE.Write(writer, value.Pool)
+	FfiConverterUint32INSTANCE.Write(writer, value.Replicas)
+}
+
+type FfiDestroyerFleetPoolRequest struct{}
+
+func (_ FfiDestroyerFleetPoolRequest) Destroy(value FleetPoolRequest) {
 	value.Destroy()
 }
 
@@ -4155,6 +4482,59 @@ func (c FfiConverterSandbox) Write(writer io.Writer, value Sandbox) {
 type FfiDestroyerSandbox struct{}
 
 func (_ FfiDestroyerSandbox) Destroy(value Sandbox) {
+	value.Destroy()
+}
+
+// Where a native client opens its own WebSocket to a sandbox service through
+// the gateway's `/api/svc` proxy. `url` is the `ws(s)://` endpoint;
+// `auth_header_name`/`auth_header_value` carry the bearer the socket's HTTP
+// upgrade request must send. Deliberately not serde-serializable: the value
+// holds a live credential and must not be logged or persisted.
+type ServiceStreamTarget struct {
+	Url             string
+	AuthHeaderName  string
+	AuthHeaderValue string
+}
+
+func (r *ServiceStreamTarget) Destroy() {
+	FfiDestroyerString{}.Destroy(r.Url)
+	FfiDestroyerString{}.Destroy(r.AuthHeaderName)
+	FfiDestroyerString{}.Destroy(r.AuthHeaderValue)
+}
+
+type FfiConverterServiceStreamTarget struct{}
+
+var FfiConverterServiceStreamTargetINSTANCE = FfiConverterServiceStreamTarget{}
+
+func (c FfiConverterServiceStreamTarget) Lift(rb RustBufferI) ServiceStreamTarget {
+	return LiftFromRustBuffer[ServiceStreamTarget](c, rb)
+}
+
+func (c FfiConverterServiceStreamTarget) Read(reader io.Reader) ServiceStreamTarget {
+	return ServiceStreamTarget{
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterStringINSTANCE.Read(reader),
+	}
+}
+
+func (c FfiConverterServiceStreamTarget) Lower(value ServiceStreamTarget) C.RustBuffer {
+	return LowerIntoRustBuffer[ServiceStreamTarget](c, value)
+}
+
+func (c FfiConverterServiceStreamTarget) LowerExternal(value ServiceStreamTarget) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[ServiceStreamTarget](c, value))
+}
+
+func (c FfiConverterServiceStreamTarget) Write(writer io.Writer, value ServiceStreamTarget) {
+	FfiConverterStringINSTANCE.Write(writer, value.Url)
+	FfiConverterStringINSTANCE.Write(writer, value.AuthHeaderName)
+	FfiConverterStringINSTANCE.Write(writer, value.AuthHeaderValue)
+}
+
+type FfiDestroyerServiceStreamTarget struct{}
+
+func (_ FfiDestroyerServiceStreamTarget) Destroy(value ServiceStreamTarget) {
 	value.Destroy()
 }
 
@@ -5754,6 +6134,53 @@ func (FfiDestroyerSequenceClaim) Destroy(sequence []Claim) {
 	}
 }
 
+type FfiConverterSequenceFleetPoolRequest struct{}
+
+var FfiConverterSequenceFleetPoolRequestINSTANCE = FfiConverterSequenceFleetPoolRequest{}
+
+func (c FfiConverterSequenceFleetPoolRequest) Lift(rb RustBufferI) []FleetPoolRequest {
+	return LiftFromRustBuffer[[]FleetPoolRequest](c, rb)
+}
+
+func (c FfiConverterSequenceFleetPoolRequest) Read(reader io.Reader) []FleetPoolRequest {
+	length := readInt32(reader)
+	if length == 0 {
+		return nil
+	}
+	result := make([]FleetPoolRequest, 0, length)
+	for i := int32(0); i < length; i++ {
+		result = append(result, FfiConverterFleetPoolRequestINSTANCE.Read(reader))
+	}
+	return result
+}
+
+func (c FfiConverterSequenceFleetPoolRequest) Lower(value []FleetPoolRequest) C.RustBuffer {
+	return LowerIntoRustBuffer[[]FleetPoolRequest](c, value)
+}
+
+func (c FfiConverterSequenceFleetPoolRequest) LowerExternal(value []FleetPoolRequest) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[[]FleetPoolRequest](c, value))
+}
+
+func (c FfiConverterSequenceFleetPoolRequest) Write(writer io.Writer, value []FleetPoolRequest) {
+	if len(value) > math.MaxInt32 {
+		panic("[]FleetPoolRequest is too large to fit into Int32")
+	}
+
+	writeInt32(writer, int32(len(value)))
+	for _, item := range value {
+		FfiConverterFleetPoolRequestINSTANCE.Write(writer, item)
+	}
+}
+
+type FfiDestroyerSequenceFleetPoolRequest struct{}
+
+func (FfiDestroyerSequenceFleetPoolRequest) Destroy(sequence []FleetPoolRequest) {
+	for _, value := range sequence {
+		FfiDestroyerFleetPoolRequest{}.Destroy(value)
+	}
+}
+
 type FfiConverterSequenceHttpHeader struct{}
 
 var FfiConverterSequenceHttpHeaderINSTANCE = FfiConverterSequenceHttpHeader{}
@@ -6236,6 +6663,16 @@ func fleet_sdk_uniffiFreeGorutine(data C.uint64_t) {
 
 	guard := handle.Value().(chan struct{})
 	guard <- struct{}{}
+}
+
+// The label key a fleet's claims share, for callers that filter or clean up
+// with raw Kubernetes tooling instead of `list_fleet_claims`.
+func FleetLabelKey() string {
+	return FfiConverterStringINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) RustBufferI {
+		return GoRustBuffer{
+			inner: C.uniffi_cyclops_sdk_fn_func_fleet_label_key(_uniffiStatus),
+		}
+	}))
 }
 
 func HealthyPoolDisplayStatus() PoolDisplayStatus {

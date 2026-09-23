@@ -332,12 +332,32 @@ fi
         self.assertIn("labeled, unlabeled", workflow)
 
     def test_agent_and_human_guidance_explain_the_release_title_contract(self) -> None:
-        for path in ("AGENTS.md", "CONTRIBUTING.md"):
-            guide = self.read(path)
-            self.assertIn("fix(cua-driver):", guide, path)
-            self.assertIn("feat(lume):", guide, path)
-            self.assertIn("no-release", guide, path)
-            self.assertIn("squash", guide, path)
+        """The release-title contract must be documented, and reachable from AGENTS.md.
+
+        CONTRIBUTING.md is the canonical copy. This used to require both files to
+        restate the literals, which made #3927 ("deduplicate repository agent
+        guidance") turn every subsequent pull request red: that commit removed the
+        restatement from AGENTS.md on purpose and replaced it with a link, so the
+        assertion failed on `main` itself and, because CI tests the merge result,
+        on every branch merged into it.
+
+        Restoring the literals to AGENTS.md would undo the deduplication and bring
+        back the two-copies-that-drift problem it was written to fix. So assert what
+        actually matters: the contract exists in the canonical document, and an
+        agent reading AGENTS.md is pointed at it.
+        """
+        contributing = self.read("CONTRIBUTING.md")
+        for token in ("fix(cua-driver):", "feat(lume):", "no-release", "squash"):
+            self.assertIn(token, contributing, "CONTRIBUTING.md")
+
+        # Either AGENTS.md carries the contract itself or it links to the file
+        # that does -- both satisfy "an agent can find the rules from here".
+        agents = self.read("AGENTS.md")
+        self.assertIn(
+            "CONTRIBUTING.md",
+            agents,
+            "AGENTS.md must reach the release-title contract, by link or restatement",
+        )
 
     def test_legacy_release_routes_exclude_driver_and_lume(self) -> None:
         workflow = self.read(".github/workflows/release-bump-version.yml")
@@ -817,6 +837,33 @@ fi
             workflow,
         )
 
+    def test_full_archive_packaging_requires_repository_license(self) -> None:
+        workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
+        self.assertTrue((REPO_ROOT / "LICENSE.md").is_file())
+
+        job_boundaries = (
+            ("build-linux", "build-windows"),
+            ("build-windows", "verify-windows-node-runtime"),
+            ("build-macos-universal", "build-hyprland-plugin-source"),
+        )
+        expected_copies = (
+            'cp ../../../LICENSE.md "release/${STAGE}/LICENSE"',
+            'Copy-Item "../../../LICENSE.md" "release/$stage/LICENSE" -ErrorAction Stop',
+            'cp ../../../LICENSE.md "release/${STAGE}/LICENSE"',
+        )
+        for (job, next_job), expected_copy in zip(job_boundaries, expected_copies):
+            with self.subTest(job=job):
+                job_block = workflow.split(f"  {job}:\n", 1)[1].split(
+                    f"\n  {next_job}:\n", 1
+                )[0]
+                package_block = job_block.split("      - name: Package\n", 1)[1].split(
+                    "\n      - uses: actions/upload-artifact", 1
+                )[0]
+                self.assertIn(expected_copy, package_block)
+                self.assertNotIn("2>/dev/null", package_block)
+                self.assertNotIn("|| true", package_block)
+                self.assertNotIn("Test-Path", package_block)
+
     def test_driver_release_blocks_on_packaged_mcp_client_discovery(self) -> None:
         workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
         ci_workflow = self.read(
@@ -867,10 +914,10 @@ fi
         self.assertEqual(
             len(expected["baseTools"]), len(set(expected["baseTools"]))
         )
-        self.assertEqual(len(expected["baseTools"]), 56)
+        self.assertEqual(len(expected["baseTools"]), 58)
         self.assertEqual(
             expected["outputSchemaCountByPlatform"],
-            {"darwin": 34, "linux": 38, "win32": 34},
+            {"darwin": 35, "linux": 39, "win32": 35},
         )
         self.assertEqual(
             expected["platformTools"],

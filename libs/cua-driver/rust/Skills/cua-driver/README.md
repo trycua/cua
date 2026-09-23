@@ -7,7 +7,8 @@ CLI or MCP server.
 
 It covers the canonical snapshot-action-verify loop, exact window addressing,
 accessibility and pixel actions, background/foreground delivery, typed browser
-automation, session recording, and platform-specific limitations. The skill
+automation, optional visual-region parsing, session recording, and
+platform-specific limitations. The skill
 defaults to background delivery and requires structured refusal or observed
 failure before a caller escalates to foreground input.
 
@@ -57,17 +58,23 @@ Use `--all-platforms` when the agent assists users across operating systems.
 
 ## Reading order
 
-- `SKILL.md`: shared contract, tool selection, session identity,
-  snapshot-action-verify loop, action ladder, and failure handling.
+- `SKILL.md`: lean entrypoint, mandatory safety rules, and task-based routing.
+- `WORKFLOW.md`: exact targets, bounded snapshots, coordinates, action semantics,
+  verification, filesystem and clipboard proof.
+- `RUNTIME.md`: preflight, transport/session ownership, authorization, cursor,
+  and cleanup.
 - `MACOS.md`, `WINDOWS.md`, or `LINUX.md`: host-specific launch, capture,
   accessibility, input delivery, permissions, and refusal boundaries.
 - `BROWSER.md`: exact browser-window binding, explicit profile preparation,
   page refs, trust-classified click/type/navigation, and native fallbacks.
+- `VISUAL.md`: optional model-neutral parsing of one retained screenshot into
+  capture-bound text and icon regions.
 - `RECORDING.md`: trajectory evidence, MP4 capture, and replay.
 - `EMBEDDING.md`: embedding the driver into another host application.
 
-The agent should load `SKILL.md`, the current platform guide, and only the
-cross-cutting guide needed for the task.
+The agent loads `SKILL.md`, then only the linked guide needed for its next
+step. Every reference ships in the pack; no separate skill installation or
+repository checkout is required. The installer keeps the flat Markdown layout.
 
 ## Browser model
 
@@ -94,8 +101,10 @@ missing. See `RECORDING.md`.
 
 ## Updates and source builds
 
-The skill is versioned with Cua Driver releases. For bleeding-edge validation
-against `main`:
+The skill is versioned with Cua Driver releases. Back up personal edits before updating: updates replace the installed pack.
+The pack version does not identify the running daemon; inspect the live tool
+schema when versions differ. For bleeding-edge validation against a matching
+source build (not an arbitrary installed release):
 
 ```bash
 cua-driver skills install --from main

@@ -3094,6 +3094,30 @@ mod tests {
     }
 
     #[test]
+    fn macos_pixel_drag_routes_preserve_background_and_use_hid_for_foreground() {
+        assert_eq!(
+            shared_web_route(
+                Platform::Macos,
+                DisplayServer::Quartz,
+                "drag",
+                Targeting::Px,
+                Delivery::Background,
+            ),
+            Ok(DriverRoute::MacosCgEventPid)
+        );
+        assert_eq!(
+            shared_web_route(
+                Platform::Macos,
+                DisplayServer::Quartz,
+                "drag",
+                Targeting::Px,
+                Delivery::Foreground,
+            ),
+            Ok(DriverRoute::MacosCgEventHid)
+        );
+    }
+
+    #[test]
     fn nested_wayland_pixel_route_is_distinct_from_stock_wayland() {
         let stock = shared_web_route_for_environment(
             Platform::Linux,

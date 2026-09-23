@@ -78,10 +78,13 @@ const LEGACY_SKILL_PACK_NAME: &str = "cua-driver-rs";
 const SKILL_FILES: &[&str] = &[
     "README.md",
     "SKILL.md",
+    "WORKFLOW.md",
+    "RUNTIME.md",
     "WINDOWS.md",
     "MACOS.md",
     "LINUX.md",
     "BROWSER.md",
+    "VISUAL.md",
     "RECORDING.md",
     "EMBEDDING.md",
 ];
@@ -1159,6 +1162,21 @@ mod tests {
         );
     }
 
+    fn core_guidance() -> String {
+        let skill_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../Skills/cua-driver");
+        ["SKILL.md", "WORKFLOW.md", "RUNTIME.md"]
+            .iter()
+            .map(|file| {
+                std::fs::read_to_string(skill_dir.join(file))
+                    .unwrap_or_else(|error| panic!("failed to read {file}: {error}"))
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
     #[test]
     fn macos_skill_keeps_ax_only_and_non_prompting_permission_guidance() {
         let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -1180,9 +1198,7 @@ mod tests {
 
     #[test]
     fn bundled_skill_keeps_filesystem_outcome_ladder_and_gui_proof_boundaries() {
-        let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let skill = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/SKILL.md"))
-            .expect("canonical skill must be readable");
+        let skill = core_guidance();
 
         for required in [
             "headless filesystem or command capability",
@@ -1202,8 +1218,7 @@ mod tests {
     #[test]
     fn bundled_skill_keeps_semantic_clipboard_outcome_ladder() {
         let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let skill = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/SKILL.md"))
-            .expect("canonical skill must be readable");
+        let skill = core_guidance();
         let browser = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/BROWSER.md"))
             .expect("canonical browser skill must be readable");
 
@@ -1221,7 +1236,7 @@ mod tests {
         for required in [
             "exact page content on the system clipboard",
             "passive headings and text nodes are evidence sources",
-            "foreground escalation rules in `SKILL.md`",
+            "foreground escalation rules in [RUNTIME.md]",
         ] {
             assert!(
                 browser.contains(required),
@@ -1279,12 +1294,21 @@ mod tests {
     #[test]
     fn extracted_skill_pack_keeps_history_consultation_policy() {
         let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let canonical = std::fs::read(crate_dir.join("../../Skills/cua-driver/SKILL.md"))
-            .expect("canonical skill must be readable");
-        let bytes = build_tarball(&[(
-            "cua-driver-rs-v0.19.3-skills/SKILL.md",
-            canonical.as_slice(),
-        )]);
+        let files = SKILL_FILES
+            .iter()
+            .map(|name| {
+                (
+                    format!("cua-driver-skills/{name}"),
+                    std::fs::read(crate_dir.join("../../Skills/cua-driver").join(name))
+                        .expect("canonical skill file must be readable"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let entries = files
+            .iter()
+            .map(|(name, bytes)| (name.as_str(), bytes.as_slice()))
+            .collect::<Vec<_>>();
+        let bytes = build_tarball(&entries);
         let dest = tempdir().unwrap();
 
         extract_tar_gz(&bytes, dest.path(), false).unwrap();
@@ -1292,13 +1316,25 @@ mod tests {
         let packaged = std::fs::read_to_string(dest.path().join("SKILL.md"))
             .expect("extracted skill must be readable");
         assert_history_consultation_policy(&packaged, "extracted skill pack");
+        for reference in ["WORKFLOW.md", "RUNTIME.md"] {
+            assert!(
+                packaged.contains(&format!("]({reference})")),
+                "entrypoint must route to bundled {reference}"
+            );
+            let expected =
+                std::fs::read(crate_dir.join("../../Skills/cua-driver").join(reference)).unwrap();
+            assert_eq!(
+                std::fs::read(dest.path().join(reference)).unwrap(),
+                expected,
+                "host-filtered install must retain the complete {reference}"
+            );
+        }
     }
 
     #[test]
     fn bundled_skill_keeps_sessions_and_authorization_as_separate_concepts() {
         let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let skill = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/SKILL.md"))
-            .expect("canonical skill must be readable");
+        let skill = core_guidance();
         let browser = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/BROWSER.md"))
             .expect("canonical browser skill must be readable");
 
@@ -1347,8 +1383,7 @@ mod tests {
     #[test]
     fn bundled_skill_keeps_agent_control_non_interfering_by_default() {
         let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let skill = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/SKILL.md"))
-            .expect("canonical skill must be readable");
+        let skill = core_guidance();
         let linux = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/LINUX.md"))
             .expect("canonical Linux skill must be readable");
 
@@ -1466,6 +1501,7 @@ mod tests {
             ("cua-driver-rs-v0.2.20-skills/LINUX.md", b"l"),
             ("cua-driver-rs-v0.2.20-skills/RECORDING.md", b"R"),
             ("cua-driver-rs-v0.2.20-skills/BROWSER.md", b"B"),
+            ("cua-driver-rs-v0.2.20-skills/VISUAL.md", b"V"),
             ("cua-driver-rs-v0.2.20-skills/EMBEDDING.md", b"E"),
         ]);
         let dest = tempdir().unwrap();
@@ -1476,6 +1512,7 @@ mod tests {
             "SKILL.md",
             "RECORDING.md",
             "BROWSER.md",
+            "VISUAL.md",
             "EMBEDDING.md",
         ] {
             assert!(

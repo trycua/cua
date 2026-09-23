@@ -21,7 +21,7 @@ use atspi::proxy::accessible::AccessibleProxy;
 use atspi::proxy::proxy_ext::ProxyExt;
 use atspi::{CoordType, Interface, State, StateSet};
 
-use super::AtspiNode;
+use super::{AtspiIdentity, AtspiNode};
 
 /// Per-call D-Bus timeout: a single unresponsive accessible (common in large,
 /// lazily-built trees like Chromium's) must not stall the whole walk.
@@ -256,6 +256,7 @@ struct Visited<'a> {
     /// tree; this is what lets a caller that named an exact native window prove
     /// which of those windows a node actually lives in.
     frame_ordinal: usize,
+    identity: Option<AtspiIdentity>,
     acc: AccessibleProxy<'a>,
 }
 
@@ -342,6 +343,38 @@ impl RawObjectRef {
             path: oref.path_as_str().to_owned(),
         })
     }
+}
+
+/// Pin well-known names to their current unique owner. A missing owner is
+/// discovery-only: indexed clicks cannot use an unproven persistent identity.
+async fn identity_ref(
+    conn: &AccessibilityConnection,
+    raw: &RawObjectRef,
+    owners: &mut std::collections::HashMap<String, Option<String>>,
+) -> Option<RawObjectRef> {
+    let owner = if raw.name.starts_with(':') {
+        raw.name.clone()
+    } else if let Some(owner) = owners.get(&raw.name) {
+        owner.clone()?
+    } else {
+        let owner = async {
+            let bus = atspi::zbus::fdo::DBusProxy::new(conn.connection())
+                .await
+                .ok()?;
+            let name = atspi::zbus::names::BusName::try_from(raw.name.as_str()).ok()?;
+            call(bus.get_name_owner(name))
+                .await?
+                .ok()
+                .map(|name| name.to_string())
+        }
+        .await;
+        owners.insert(raw.name.clone(), owner.clone());
+        owner?
+    };
+    Some(RawObjectRef {
+        name: owner,
+        path: raw.path.clone(),
+    })
 }
 
 /// Read Accessible.GetChildren without deserializing the bus-name field as a
@@ -722,13 +755,15 @@ async fn collect_visited_bounded<'a>(
     };
 
     let mut stack: Vec<(RawObjectRef, usize, bool, usize)> = seeds
-        .into_iter()
+        .iter()
+        .cloned()
         .enumerate()
         .map(|(ordinal, r)| (r, 0usize, false, ordinal))
         .rev()
         .collect();
 
     let mut visited: Vec<Visited<'a>> = Vec::new();
+    let mut identity_owners = std::collections::HashMap::new();
     // Guard against pathological/looping trees. Defaults to 5 000 (the
     // historical hard-coded budget); callers can override via max_elements.
     let mut budget = max_elements.unwrap_or(5000usize);
@@ -770,7 +805,14 @@ async fn collect_visited_bounded<'a>(
         // otherwise the loop never returns to the deadline check at the top and
         // the walk stalls past OP_TIMEOUT for callers without an outer guard
         // (snapshot bounds, insert_text). That was the residual #1936 hang.
-        let acc = match call(accessible_for(conn, &oref)).await {
+        let object_identity = identity_ref(conn, &oref, &mut identity_owners).await;
+        let frame_identity = identity_ref(conn, &seeds[frame_ordinal], &mut identity_owners).await;
+        let acc = match call(accessible_for(
+            conn,
+            object_identity.as_ref().unwrap_or(&oref),
+        ))
+        .await
+        {
             Some(Ok(a)) => a,
             Some(Err(error)) => {
                 dlog!("  accessible_for failed: {error:#}");
@@ -965,6 +1007,14 @@ async fn collect_visited_bounded<'a>(
             in_web_doc,
             on_web_process_bus: is_web_process_bus(&oref.name),
             frame_ordinal,
+            identity: object_identity
+                .zip(frame_identity)
+                .map(|(object, frame)| AtspiIdentity {
+                    bus_name: object.name,
+                    path: object.path,
+                    frame_bus_name: frame.name,
+                    frame_path: frame.path,
+                }),
             acc,
         });
     }
@@ -1050,6 +1100,7 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
                 description: None,
                 actions: v.actions.clone(),
                 element_key: idx as u64,
+                identity: v.identity.clone(),
                 depth: v.depth,
                 parent_element_index,
                 in_web_content: v.in_web_doc,
@@ -1931,9 +1982,12 @@ pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
                 .await
                 .map_err(|e| anyhow!("Action unavailable: {e}"))?;
             let action = target.actions.get(chosen).cloned().unwrap_or_default();
-            ap.do_action(chosen as i32)
+            let accepted = ap
+                .do_action(chosen as i32)
                 .await
                 .map_err(|e| anyhow!("doAction failed: {e}"))?;
+            require_action_accepted(accepted)
+                .with_context(|| format!("element {idx} rejected its native action"))?;
             // AT-SPI's doAction acknowledgement can precede the renderer's
             // queued DOM mutation. Give WebKit/Chromium one short event-loop
             // turn before returning success so a caller's immediate external
@@ -1947,6 +2001,223 @@ pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
             ))
         },
     )
+}
+
+/// A click target resolved from the object address observed in the snapshot.
+/// The public integer index remains an address within that snapshot only.
+pub struct ObservedClickTarget {
+    pid: u32,
+    xid: u64,
+    index: usize,
+    bounds_index: usize,
+    target_position: usize,
+    frame_ordinal: usize,
+    visited: Vec<Visited<'static>>,
+}
+
+impl ObservedClickTarget {
+    pub fn verify_live(&self) -> Result<()> {
+        if !crate::x11::window_belongs_to_pid(self.xid, self.pid) {
+            anyhow::bail!("stale_element_token: window ownership changed");
+        }
+        bounded(
+            async {
+                let state = call(self.visited[self.target_position].acc.get_state())
+                    .await
+                    .and_then(|reply| reply.ok())
+                    .ok_or_else(|| {
+                        anyhow!("stale_element_token: observed object no longer responds")
+                    })?;
+                if state.contains(State::Defunct) || !is_enabled_state(&state) {
+                    anyhow::bail!("stale_element_token: observed object is defunct or disabled");
+                }
+                Ok(())
+            },
+            || {
+                Err(anyhow!(
+                    "stale_element_token: observed object liveness check timed out"
+                ))
+            },
+        )
+    }
+
+    pub fn screen_bounds(&self) -> Result<(i32, i32, u32, u32)> {
+        bounded(
+            async {
+                element_bounds_for_visited(
+                    &self.visited,
+                    self.pid,
+                    self.xid,
+                    Some(self.frame_ordinal),
+                )
+                .await
+                .into_iter()
+                .find(|(index, _, _, _, _)| *index == self.bounds_index)
+                .map(|(_, x, y, width, height)| (x, y, width, height))
+                .ok_or_else(|| anyhow!("element {} has no usable Component bounds", self.index))
+            },
+            || {
+                Err(anyhow!(
+                    "indexed click bounds timed out for pid {}",
+                    self.pid
+                ))
+            },
+        )
+    }
+
+    pub fn needs_foreground_pointer(&self) -> bool {
+        let target = &self.visited[self.target_position];
+        target.has_editable || target.role == "table cell"
+    }
+
+    pub fn perform_action(&self, allow_activation: bool) -> Result<(String, bool)> {
+        let target = &self.visited[self.target_position];
+        if self.needs_foreground_pointer() {
+            return Err(super::ElementClickNeedsForeground.into());
+        }
+        if !allow_activation {
+            return Err(super::ClickActionUnavailable(
+                "modified click requires pointer delivery".into(),
+            )
+            .into());
+        }
+        let chosen = activation_index(&target.role, &target.actions).ok_or_else(|| {
+            super::ClickActionUnavailable(format!(
+                "element {} does not advertise a safe activation action",
+                self.index
+            ))
+        })?;
+        let suspected_noop = target.actions.is_empty() || is_passive_role(&target.role);
+        bounded(
+            async {
+                let action = target.acc.proxies().await?.action().await?;
+                if !action.do_action(chosen as i32).await? {
+                    anyhow::bail!("element {} rejected the accessibility action", self.index);
+                }
+                Ok((
+                    target.actions.get(chosen).cloned().unwrap_or_default(),
+                    suspected_noop,
+                ))
+            },
+            || {
+                Err(anyhow!(
+                    "indexed click action timed out for pid {}",
+                    self.pid
+                ))
+            },
+        )
+    }
+}
+
+/// Select a retained identity from a live walk. The supplied ordinal is only
+/// the position in that live walk, never the snapshot's public index.
+fn unique_observed_identity_position<'a>(
+    nodes: impl Iterator<Item = (usize, Option<&'a AtspiIdentity>, usize, bool)>,
+    identity: &AtspiIdentity,
+    expected_frame: usize,
+) -> Result<usize> {
+    let mut matches = nodes.filter(|(_, candidate, _, _)| *candidate == Some(identity));
+    let Some((position, _, frame_ordinal, indexable)) = matches.next() else {
+        anyhow::bail!("stale_element_token: observed AT-SPI object is no longer present");
+    };
+    if matches.next().is_some() || frame_ordinal != expected_frame || !indexable {
+        anyhow::bail!(
+            "stale_element_token: observed object is ambiguous, disabled or outside the target window"
+        );
+    }
+    Ok(position)
+}
+
+/// Match a fresh walk against the object and owning frame observed in a
+/// snapshot. A reordered ordinal must refuse rather than retarget the action.
+pub fn resolve_observed_click_target(
+    pid: u32,
+    index: usize,
+    xid: u64,
+    identity: &AtspiIdentity,
+) -> Result<ObservedClickTarget> {
+    bounded(
+        async {
+            let conn = shared_connection().await?;
+            let (visited, scoped_frame) = collect_visited_bounded(conn, pid, xid, None, None)
+                .await?
+                .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
+            let frame_ordinal = scoped_frame
+                .ok_or_else(|| anyhow!("stale_element_token: target window frame is unproven"))?;
+            let target_position = unique_observed_identity_position(
+                visited.iter().enumerate().map(|(position, node)| {
+                    (
+                        position,
+                        node.identity.as_ref(),
+                        node.frame_ordinal,
+                        is_indexable(node),
+                    )
+                }),
+                identity,
+                frame_ordinal,
+            )?;
+            let bounds_index = visited[..target_position]
+                .iter()
+                .filter(|node| is_indexable(node))
+                .count();
+            Ok(ObservedClickTarget {
+                pid,
+                xid,
+                index,
+                bounds_index,
+                target_position,
+                frame_ordinal,
+                visited,
+            })
+        },
+        || {
+            Err(anyhow!(
+                "stale_element_token: indexed click resolution timed out"
+            ))
+        },
+    )
+}
+
+#[cfg(test)]
+mod observed_identity_tests {
+    use super::*;
+
+    fn identity(path: &str) -> AtspiIdentity {
+        AtspiIdentity {
+            bus_name: ":1.1".into(),
+            path: path.into(),
+            frame_bus_name: ":1.1".into(),
+            frame_path: "/frame".into(),
+        }
+    }
+
+    #[test]
+    fn live_reorder_matches_retained_identity_not_the_old_index() {
+        let observed = identity("/ok");
+        let replacement = identity("/cancel");
+        let live = vec![replacement, observed.clone()];
+        let target = unique_observed_identity_position(
+            live.iter()
+                .enumerate()
+                .map(|(position, item)| (position, Some(item), 0, true)),
+            &observed,
+            0,
+        )
+        .unwrap();
+        assert_eq!(target, 1);
+    }
+
+    #[test]
+    fn removed_observed_identity_refuses_before_click() {
+        let observed = identity("/ok");
+        let replacement = identity("/cancel");
+        assert!(unique_observed_identity_position(
+            std::iter::once((0, Some(&replacement), 0, true)),
+            &observed,
+            0,
+        )
+        .is_err());
+    }
 }
 
 /// A mutation was attempted; callers must not replay through another route.
@@ -2605,10 +2876,14 @@ pub fn perform_action_at_point(pid: u32, win_x: i32, win_y: i32) -> Result<Optio
                 .action()
                 .await
                 .map_err(|e| anyhow!("Action unavailable: {e}"))?;
-            ap.do_action(chosen as i32)
+            let accepted = ap
+                .do_action(chosen as i32)
                 .await
                 .map_err(|e| anyhow!("doAction failed: {e}"))?;
-            Ok(target.actions.get(chosen).cloned())
+            Ok(accepted_action(
+                accepted,
+                target.actions.get(chosen).cloned(),
+            ))
         },
         || Ok(None),
     )
@@ -2634,8 +2909,8 @@ pub fn perform_action_at_point(pid: u32, win_x: i32, win_y: i32) -> Result<Optio
 ///
 /// `screen_x`/`screen_y` are full-display screen pixels (what the vision
 /// screenshot and `get_window_state` frames are in). Returns `Ok(Some(action))`
-/// on a hit, `Ok(None)` when no element covers the point so the caller can fall
-/// back to its native injection path.
+/// when AT-SPI accepts the action, `Ok(None)` when there is no target or the
+/// action is rejected so the caller can fall back to its native injection path.
 pub fn perform_action_at_screen_point(
     pid: u32,
     xid: u64,
@@ -2678,13 +2953,33 @@ pub fn perform_action_at_screen_point(
                 .action()
                 .await
                 .map_err(|e| anyhow!("Action unavailable: {e}"))?;
-            ap.do_action(chosen as i32)
+            let accepted = ap
+                .do_action(chosen as i32)
                 .await
                 .map_err(|e| anyhow!("doAction failed: {e}"))?;
-            Ok(target.actions.get(chosen).cloned())
+            Ok(accepted_action(
+                accepted,
+                target.actions.get(chosen).cloned(),
+            ))
         },
         || Ok(None),
     )
+}
+
+fn accepted_action(accepted: bool, action: Option<String>) -> Option<String> {
+    if accepted {
+        action
+    } else {
+        None
+    }
+}
+
+fn require_action_accepted(accepted: bool) -> Result<()> {
+    if accepted {
+        Ok(())
+    } else {
+        Err(anyhow!("AT-SPI action was rejected"))
+    }
 }
 
 /// Roles that draw text/graphics but don't *do* anything when actuated. GTK4
@@ -3546,12 +3841,12 @@ mod frame_correlation_tests {
 mod coord_tests {
     use super::parse_gtk_frame_extents;
     use super::{
-        activation_index, before_snapshot_deadline, combine_wayland_content_offsets,
-        hyprland_document_top_inset, is_activation_action, is_enabled_state,
-        is_indexable_capabilities, is_passive_role, is_web_process_bus,
+        accepted_action, activation_index, before_snapshot_deadline,
+        combine_wayland_content_offsets, hyprland_document_top_inset, is_activation_action,
+        is_enabled_state, is_indexable_capabilities, is_passive_role, is_web_process_bus,
         prefer_authoritative_wayland_origin, project_screen_extents, rebase_renderer_window_offset,
-        scoped_component_nodes, screen_extent_rebase, select_click_target, select_web_document,
-        ApplicationSelection,
+        require_action_accepted, scoped_component_nodes, screen_extent_rebase, select_click_target,
+        select_web_document, ApplicationSelection,
     };
     use atspi::{State, StateSet};
     use std::time::Duration;
@@ -3977,6 +4272,25 @@ mod coord_tests {
         assert_eq!(select_click_target(&frames, 20, 30), None); // bottom edge exclusive
         assert_eq!(select_click_target(&frames, 5, 5), None); // outside
         assert_eq!(select_click_target(&[], 0, 0), None); // no frames
+    }
+
+    #[test]
+    fn rejected_action_acknowledgement_does_not_report_success() {
+        assert_eq!(accepted_action(false, Some("click".to_owned())), None);
+    }
+
+    #[test]
+    fn accepted_action_acknowledgement_reports_the_selected_action() {
+        assert_eq!(
+            accepted_action(true, Some("click".to_owned())),
+            Some("click".to_owned())
+        );
+    }
+
+    #[test]
+    fn indexed_action_rejection_is_an_error() {
+        assert!(require_action_accepted(false).is_err());
+        assert!(require_action_accepted(true).is_ok());
     }
 
     #[test]

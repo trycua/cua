@@ -13,6 +13,7 @@ on:
         default: automatic
         options:
           - automatic
+          - cua-perception
           - cua-driver-rs
           - lume
           - sandbox
@@ -59,7 +60,7 @@ jobs:
           inputs.component == 'automatic' &&
           inputs.bump != 'automatic'
         run: |
-          echo "::error::Select cua-driver-rs, lume, or sandbox when forcing a bump type."
+          echo "::error::Select cua-perception, cua-driver-rs, lume, or sandbox when forcing a bump type."
           exit 1
 
       - name: Reject manifest tags outside main history
@@ -78,6 +79,94 @@ jobs:
           echo "path=$(jq -r .path <<<"$REQUEST")" >> "$GITHUB_OUTPUT"
           echo "current_version=$(jq -r .current_version <<<"$REQUEST")" >> "$GITHUB_OUTPUT"
           echo "release_as=$(jq -r '.release_as // ""' <<<"$REQUEST")" >> "$GITHUB_OUTPUT"
+
+      - name: Anchor a merged Perception version with a lightweight tag
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BEFORE_SHA: ${{ github.event.before }}
+          VERSION_PATH: libs/cua-driver/rust/crates/cua-perception/VERSION
+        run: |
+          set -euo pipefail
+          git checkout --detach "$GITHUB_SHA"
+
+          if [[ "$BEFORE_SHA" =~ ^0+$ ]]; then
+            echo "Skipping Perception tag creation for the initial branch push"
+            exit 0
+          fi
+          if ! git merge-base --is-ancestor "$BEFORE_SHA" "$GITHUB_SHA"; then
+            echo "::error::Refusing to create a release tag for a non-fast-forward main push"
+            exit 1
+          fi
+          BEFORE_VERSION=$(git show "$BEFORE_SHA:$VERSION_PATH" 2>/dev/null | tr -d '[:space:]' || true)
+          VERSION=$(tr -d '[:space:]' < "$VERSION_PATH")
+          if [[ "$BEFORE_VERSION" == "$VERSION" ]]; then
+            echo "Perception version did not change in this main push"
+            exit 0
+          fi
+
+          python3 .github/scripts/validate_release_versions.py --product perception
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Refusing to tag invalid Perception version: $VERSION"
+            exit 1
+          fi
+          if [[ -n "$BEFORE_VERSION" ]]; then
+            python3 - "$BEFORE_VERSION" "$VERSION" <<'PY'
+          import re
+          import sys
+
+          semver = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
+          previous, current = sys.argv[1:]
+          previous_match = semver.fullmatch(previous)
+          current_match = semver.fullmatch(current)
+          if not previous_match or not current_match:
+              raise SystemExit("Perception versions must be stable SemVer")
+          if tuple(map(int, current_match.groups())) <= tuple(map(int, previous_match.groups())):
+              raise SystemExit(
+                  f"Perception version must increase: previous={previous}, current={current}"
+              )
+          PY
+          fi
+          git fetch origin "+refs/heads/main:refs/remotes/origin/main"
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Refusing to tag a commit outside main"
+            exit 1
+          fi
+
+          TAG="cua-perception-v$VERSION"
+          read_remote_tag() {
+            gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" \
+              --jq '[.object.type, .object.sha] | @tsv' 2>/dev/null || true
+          }
+          require_exact_lightweight_tag() {
+            local tag_record="$1"
+            local tag_type tag_sha
+            IFS=$'\t' read -r tag_type tag_sha <<<"$tag_record"
+            if [[ "$tag_type" != "commit" || "$tag_sha" != "$GITHUB_SHA" ]]; then
+              echo "::error::$TAG already exists but is not a lightweight tag at $GITHUB_SHA"
+              exit 1
+            fi
+          }
+
+          EXISTING=$(read_remote_tag)
+          if [[ -n "$EXISTING" ]]; then
+            require_exact_lightweight_tag "$EXISTING"
+            echo "$TAG already points to the merged Perception version"
+            exit 0
+          fi
+
+          if ! gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+            -f ref="refs/tags/$TAG" \
+            -f sha="$GITHUB_SHA" >/dev/null; then
+            # A concurrent run may have created the same immutable anchor.
+            EXISTING=$(read_remote_tag)
+            if [[ -z "$EXISTING" ]]; then
+              echo "::error::Failed to create $TAG"
+              exit 1
+            fi
+            require_exact_lightweight_tag "$EXISTING"
+          fi
+          require_exact_lightweight_tag "$(read_remote_tag)"
 
       # release-please-action v4.4.1, embedding release-please 17.3.0.
       - name: Open or update automatic release pull requests
@@ -132,11 +221,13 @@ jobs:
             PR=$(gh pr view "$number" --json headRefName,headRepositoryOwner,files)
             DRIVER=$(echo "$PR" | jq -r \
               '.files | any(.path == "libs/cua-driver/rust/VERSION")')
+            PERCEPTION=$(echo "$PR" | jq -r \
+              '.files | any(.path == "libs/cua-driver/rust/crates/cua-perception/VERSION")')
             LUME=$(echo "$PR" | jq -r \
               '.files | any(.path == "libs/lume/VERSION")')
             SANDBOX=$(echo "$PR" | jq -r \
               '.files | any(.path == "libs/python/cua-sandbox/VERSION")')
-            if [[ "$DRIVER" != "true" && "$LUME" != "true" && "$SANDBOX" != "true" ]]; then
+            if [[ "$DRIVER" != "true" && "$PERCEPTION" != "true" && "$LUME" != "true" && "$SANDBOX" != "true" ]]; then
               continue
             fi
 
@@ -176,6 +267,9 @@ jobs:
               if [[ "$DRIVER" == "true" ]]; then
                 COMPONENT_ARGS+=(--component cua-driver-rs)
               fi
+              if [[ "$PERCEPTION" == "true" ]]; then
+                COMPONENT_ARGS+=(--component cua-perception)
+              fi
               if [[ "$LUME" == "true" ]]; then
                 COMPONENT_ARGS+=(--component lume)
               fi
@@ -194,7 +288,15 @@ jobs:
                 exit 1
               fi
             fi
-            if [[ "$DRIVER" == "true" ]]; then
+            if [[ "$PERCEPTION" == "true" ]]; then
+              PERCEPTION_VERSION=$(tr -d '[:space:]' < \
+                libs/cua-driver/rust/crates/cua-perception/VERSION)
+              cargo update --manifest-path libs/cua-driver/rust/Cargo.toml \
+                -p cua-perception --precise "$PERCEPTION_VERSION"
+              python3 .github/scripts/validate_release_versions.py --product perception
+              git add libs/cua-driver/rust/Cargo.lock
+              COMMIT_MESSAGE="chore(cua-perception): synchronize release lockfile"
+            elif [[ "$DRIVER" == "true" ]]; then
               DRIVER_VERSION=$(tr -d '[:space:]' < libs/cua-driver/rust/VERSION)
               cargo update --manifest-path libs/cua-driver/rust/Cargo.toml \
                 -p cua-driver --precise "$DRIVER_VERSION"

@@ -4,6 +4,10 @@ This is the maintainer-owned macOS GUI acceptance gate for `cua-driver`. It is
 not a GitHub Actions job. Run it on an Apple Silicon Mac with Lume, from a
 disposable clone of a stopped SIP-disabled golden image.
 
+Do not install or register a GitHub Actions runner inside the guest. GitHub may
+record the result afterward, but the canonical harness itself runs directly from
+Terminal in the logged-in VM session.
+
 The golden image supplies the logged-in Aqua session, stable local signing
 identity, and existing Accessibility and Screen Recording grants. Every run
 installs the requested source commit before testing. The preflight rejects a
@@ -390,6 +394,25 @@ standalone browser-tool matrix in the same exact-source run:
 cd ~/cua
 libs/cua-driver/tests/runners/macos-lume/run-all.sh --standalone-browser
 ```
+
+After a successful run, `artifacts/cua-driver/macos/direct-result.json` records
+the exact source SHA and run ID. Preserve the private artifacts and register
+their digest without uploading them publicly:
+
+```bash
+SOURCE_SHA="$(jq -r .source_sha artifacts/cua-driver/macos/direct-result.json)"
+tar -czf "/tmp/cua-macos-lume-${SOURCE_SHA}.tgz" \
+  artifacts/cua-driver/macos artifacts/cua-driver/macos-standalone-browser
+shasum -a 256 "/tmp/cua-macos-lume-${SOURCE_SHA}.tgz"
+jq -r .run_id artifacts/cua-driver/macos/direct-result.json
+base64 < artifacts/cua-driver/macos/direct-result.json | tr -d '\n'
+```
+
+Dispatch `.github/workflows/e2e-rust-macos.yml` in `lume` mode at the same
+source SHA, passing the run ID printed by the harness and the lowercase digest.
+Also pass the one-line base64 value of `direct-result.json`. The protected
+GitHub-hosted job validates and records the result; it does not rerun the guest
+or require a self-hosted runner.
 
 This adds the declared adversarial installed-browser rows and writes their
 separate typed results and MP4 evidence under

@@ -19,6 +19,7 @@ const (
 var fleetAttributionProperties = map[string]string{
 	"campaign_id":  productanalytics.FirstTouchCampaignIDProperty,
 	"content_id":   productanalytics.FirstTouchContentIDProperty,
+	"utm_content":  productanalytics.FirstTouchContentIDProperty,
 	"utm_source":   productanalytics.FirstTouchUTMSourceProperty,
 	"utm_medium":   productanalytics.FirstTouchUTMMediumProperty,
 	"utm_campaign": productanalytics.FirstTouchUTMCampaignProperty,
@@ -100,6 +101,9 @@ func validateFleetAttribution(record fleetAttributionRecord, now time.Time) (map
 	for key, value := range record.Values {
 		property, ok := fleetAttributionProperties[key]
 		if !ok || !validFleetAttributionValue(value) {
+			return nil, false
+		}
+		if existing, exists := setOnce[property]; exists && existing != value {
 			return nil, false
 		}
 		setOnce[property] = value

@@ -26,6 +26,7 @@ on:
           - shared
           - native
           - capture
+          - keyboard
       cell_filter:
         description: "Optional shared-cell substring for targeted diagnostics"
         required: false
@@ -59,6 +60,9 @@ jobs:
           case "${{ inputs.lane }}" in
             all) echo 'lanes=["shared","native","capture"]' >> "$GITHUB_OUTPUT" ;;
             shared|native|capture) printf 'lanes=["%s"]\n' "${{ inputs.lane }}" >> "$GITHUB_OUTPUT" ;;
+            keyboard)
+              [[ "${{ inputs.environment }}" == sway* ]] || { echo 'keyboard diagnostics require Sway' >&2; exit 2; }
+              echo 'lanes=["keyboard"]' >> "$GITHUB_OUTPUT" ;;
             *) echo "unsupported lane: ${{ inputs.lane }}" >&2; exit 2 ;;
           esac
 
@@ -76,6 +80,7 @@ jobs:
       CUA_E2E_INTERNAL_LANE: ${{ matrix.lane }}
       CUA_E2E_CELL_FILTER: ${{ inputs.cell_filter }}
       CUA_E2E_WAYLAND_SESSION: ${{ inputs.environment }}
+      CUA_E2E_WAYLAND_RUNNER: ${{ matrix.lane == 'keyboard' && 'scripts/ci/linux/run-keyboard-wayland-contracts.sh' || '' }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -100,7 +105,7 @@ jobs:
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
-      - name: Run complete native Wayland matrix
+      - name: Run selected native Wayland lane
         shell: bash
         env:
           CUA_AT_SPI_BUS_LAUNCHER: /usr/libexec/at-spi-bus-launcher
@@ -122,7 +127,7 @@ jobs:
           retention-days: 14
 
   summary:
-    if: always()
+    if: always() && inputs.lane != 'keyboard'
     needs: [source, wayland]
     name: "Linux / Wayland summary"
     runs-on: ubuntu-latest

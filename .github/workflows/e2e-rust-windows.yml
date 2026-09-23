@@ -20,6 +20,8 @@ on:
           - all
           - shared
           - native
+          - keyboard
+          - keyboard-xaml
           - capture
           - installer
 
@@ -94,8 +96,8 @@ jobs:
           retention-days: 14
 
   native:
-    if: inputs.lane == 'all' || inputs.lane == 'native'
-    name: "Windows / native WPF + WinUI3 + WebView2"
+    if: inputs.lane == 'all' || inputs.lane == 'native' || inputs.lane == 'keyboard' || inputs.lane == 'keyboard-xaml'
+    name: "Windows / native contracts"
     needs: source
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 90
@@ -119,11 +121,36 @@ jobs:
       - name: Ensure FFmpeg for trajectory video
         shell: pwsh
         run: .\scripts\ci\windows\setup-ffmpeg.ps1
+      - name: Build XAML keyboard fixture
+        if: inputs.lane == 'keyboard-xaml'
+        shell: pwsh
+        run: .\scripts\ci\windows\build-harnesses.ps1 -Targets winui3
       - name: Run native Rust harnesses
+        if: inputs.lane != 'keyboard' && inputs.lane != 'keyboard-xaml'
         shell: pwsh
         env:
           CUA_E2E_INTERNAL_LANE: native
         run: .\scripts\ci\windows\run-rust-e2e.ps1 -RequireGui
+      - name: Run native keyboard producer contracts
+        if: ${{ !cancelled() && inputs.lane != 'keyboard-xaml' }}
+        shell: pwsh
+        working-directory: libs/cua-driver/rust
+        run: |
+          & ../../../scripts/ci/windows/verify-user-session.ps1
+          New-Item -ItemType Directory -Force ../../../artifacts/cua-driver/windows | Out-Null
+          cargo test -p platform-windows --lib keyboard_producer_tests --locked -- --ignored --nocapture --test-threads=1 2>&1 |
+            Tee-Object -FilePath ../../../artifacts/cua-driver/windows/keyboard-producer.log
+          exit $LASTEXITCODE
+      - name: Run XAML keyboard producer contracts
+        if: ${{ !cancelled() && inputs.lane != 'keyboard' }}
+        shell: pwsh
+        working-directory: libs/cua-driver/rust
+        run: |
+          & ../../../scripts/ci/windows/verify-user-session.ps1
+          New-Item -ItemType Directory -Force ../../../artifacts/cua-driver/windows | Out-Null
+          cargo test -p platform-windows --lib keyboard_xaml_producer_tests --locked -- --ignored --nocapture --test-threads=1 2>&1 |
+            Tee-Object -FilePath ../../../artifacts/cua-driver/windows/keyboard-xaml-producer.log
+          exit $LASTEXITCODE
       - name: Collect logs
         if: always()
         shell: pwsh
@@ -306,7 +333,7 @@ jobs:
           retention-days: 14
 
   summary:
-    if: always()
+    if: always() && inputs.lane != 'keyboard' && inputs.lane != 'keyboard-xaml'
     needs: [source, shared, native, capture, installer]
     name: "Windows / matrix summary"
     runs-on: ubuntu-latest

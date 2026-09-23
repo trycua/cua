@@ -203,6 +203,9 @@ fn shared_web_route_for_environment(
             Ok(Route::Composite)
         }
 
+        (Platform::Macos, DisplayServer::Quartz, Targeting::Px, "press_key") => {
+            Ok(Route::MacosCgEventPid)
+        }
         (Platform::Macos, DisplayServer::Quartz, Targeting::Px, _) => {
             pointer_or_key_route(Route::MacosCgEventPid, Route::MacosCgEventHid)
         }

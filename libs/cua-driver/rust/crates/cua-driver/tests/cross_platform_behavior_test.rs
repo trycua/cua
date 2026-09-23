@@ -938,8 +938,7 @@ fn sdk_background_click(fixture: &Fixture, token: String) -> ClickInput {
     }
 }
 
-fn run_typed_sdk_native_window(fixture: &mut Fixture) -> Observation {
-    let runtime = tokio::runtime::Runtime::new().expect("SDK test runtime");
+fn native_sdk() -> std::sync::Arc<CuaDriver> {
     // The macOS harness authorizes the installed daemon, not cargo's test
     // executable. Exercise the typed SDK over that verified native backend.
     #[cfg(target_os = "macos")]
@@ -975,6 +974,12 @@ fn run_typed_sdk_native_window(fixture: &mut Fixture) -> Observation {
         .expect("create in-process native SDK runtime")
     };
 
+    sdk
+}
+
+fn run_typed_sdk_native_window(fixture: &mut Fixture) -> Observation {
+    let runtime = tokio::runtime::Runtime::new().expect("SDK test runtime");
+    let sdk = native_sdk();
     runtime.block_on(async {
         let apps = sdk
             .list_apps(ListAppsInput {})
@@ -1018,7 +1023,7 @@ fn run_typed_sdk_native_window(fixture: &mut Fixture) -> Observation {
         );
         let journal_before = fixture.journal.snapshot();
         let stale = sdk
-            .click(sdk_background_click(fixture, stale_token))
+            .click(sdk_background_click(fixture, stale_token.clone()))
             .await
             .expect_err("stale SDK token must refuse");
         assert!(
@@ -1060,6 +1065,20 @@ fn run_typed_sdk_native_window(fixture: &mut Fixture) -> Observation {
             "mismatched SDK window identity changed fixture state"
         );
 
+        sdk_keyboard_target_refusals(
+            &sdk,
+            fixture,
+            &stale_token,
+            &current_token,
+            other_window.window_id,
+            current.elements.as_ref().unwrap().iter()
+                .find(|element| element.element_token.as_deref() != Some(&current_token))
+                .unwrap().element_index,
+        ).await;
+
+        #[cfg(not(target_os = "macos"))]
+        sdk_keyboard_runtime_isolation(&sdk, fixture, &current_token).await;
+
         sdk.click(sdk_background_click(fixture, current_token.clone()))
             .await
             .expect("typed background element click");
@@ -1080,6 +1099,131 @@ fn run_typed_sdk_native_window(fixture: &mut Fixture) -> Observation {
         sdk.shutdown().await.expect("shut down typed SDK client");
     });
     delivered_observation()
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn sdk_keyboard_runtime_isolation(sdk: &CuaDriver, fixture: &Fixture, owner_token: &str) {
+    let other = native_sdk();
+    let snapshot = other
+        .get_window_state(sdk_window_input(fixture))
+        .await
+        .unwrap();
+    let other_token = sdk_click_token(&snapshot);
+    let before = fixture.journal.snapshot();
+    for tool in ["press_key", "hotkey"] {
+        let mut args = serde_json::json!({"pid": fixture.pid, "window_id": fixture.wid,
+            "element_token": owner_token, "delivery_mode": "foreground"});
+        if tool == "press_key" {
+            args["key"] = serde_json::json!("return");
+        } else {
+            args["keys"] = serde_json::json!(["ctrl", "shift", "h"]);
+        }
+        let response = other
+            .call_tool(tool.into(), args.to_string())
+            .await
+            .unwrap();
+        assert!(response.is_error, "{response:?}");
+        assert_eq!(
+            response.error_code.as_deref(),
+            Some("generation_mismatch"),
+            "{response:?}"
+        );
+    }
+    other.shutdown().await.unwrap();
+    for tool in ["press_key", "hotkey"] {
+        let mut args = serde_json::json!({"pid": fixture.pid, "window_id": fixture.wid,
+            "element_token": other_token, "delivery_mode": "foreground"});
+        if tool == "press_key" {
+            args["key"] = serde_json::json!("return");
+        } else {
+            args["keys"] = serde_json::json!(["ctrl", "shift", "h"]);
+        }
+        let response = sdk.call_tool(tool.into(), args.to_string()).await.unwrap();
+        assert!(response.is_error, "{response:?}");
+        assert_eq!(
+            response.error_code.as_deref(),
+            Some("stale_element_token"),
+            "{response:?}"
+        );
+        assert!(
+            other
+                .call_tool(tool.into(), args.to_string())
+                .await
+                .is_err(),
+            "closed runtime admitted keyboard input"
+        );
+    }
+    thread::sleep(Duration::from_millis(150));
+    assert_eq!(
+        fixture.journal.snapshot(),
+        before,
+        "foreign or retired runtime input reached the fixture"
+    );
+}
+
+async fn sdk_keyboard_target_refusals(
+    sdk: &CuaDriver,
+    fixture: &Fixture,
+    stale: &str,
+    current: &str,
+    other_window: u64,
+    other_index: u64,
+) {
+    let before = fixture.journal.snapshot();
+    for tool in ["press_key", "hotkey"] {
+        for (token, window, index, codes) in [
+            (stale, fixture.wid, None, &["stale_element_token"][..]),
+            (
+                current,
+                other_window,
+                None,
+                &[
+                    "conflicting_element_target",
+                    "window_target_not_found",
+                    "window_target_mismatch",
+                ][..],
+            ),
+            (
+                current,
+                fixture.wid,
+                Some(other_index),
+                &["conflicting_element_target"][..],
+            ),
+        ] {
+            let mut args = serde_json::json!({
+                "pid": fixture.pid,
+                "window_id": window,
+                "element_token": token,
+                "delivery_mode": "foreground",
+            });
+            if tool == "press_key" {
+                args["key"] = serde_json::json!("return");
+            } else {
+                args["keys"] = serde_json::json!(["ctrl", "shift", "h"]);
+            }
+            if let Some(index) = index {
+                args["element_index"] = serde_json::json!(index);
+            }
+            let result = sdk
+                .call_tool(tool.into(), args.to_string())
+                .await
+                .expect("keyboard refusal must retain the SDK transport");
+            assert!(
+                result.is_error,
+                "{tool} accepted an invalid native target: {result:?}"
+            );
+            assert!(
+                codes.contains(&result.error_code.as_deref().unwrap_or_default()),
+                "{tool}: {result:?}"
+            );
+            thread::sleep(Duration::from_millis(150));
+            assert_eq!(
+                fixture.journal.snapshot(),
+                before,
+                "{tool} mutated the fixture on refusal"
+            );
+        }
+    }
 }
 
 fn browser_ref_by_label(snapshot: &ToolResponse, label_fragment: &str) -> String {
@@ -1242,6 +1386,7 @@ fn run_press_key_action(fixture: &mut Fixture, addressing: &str, delivery: &str)
         .insert("key".to_owned(), serde_json::json!("return"));
     let response = fixture.driver.call("press_key", press_args);
     if let Some(code) = background_refusal_code(&response, delivery) {
+        assert_keyboard_refusal(&response);
         return refused_without_fixture_mutation(fixture, &journal_before, code, &response);
     }
     assert!(
@@ -1254,8 +1399,136 @@ fn run_press_key_action(fixture: &mut Fixture, addressing: &str, delivery: &str)
     passed.extend(unverified_background_protocol_oracle(&response, delivery));
     assert_fixture_contains(fixture, "key_state=enter");
     assert_fixture_value(fixture, "number-input", "42");
+    assert_keyboard_outcome(fixture, &response, "press_key", addressing, delivery);
 
     Observation::delivered(passed, Evidence::default())
+}
+
+fn assert_keyboard_outcome(
+    fixture: &Fixture,
+    response: &ToolResponse,
+    tool: &str,
+    addressing: &str,
+    delivery: &str,
+) {
+    let actual_delivery = if cfg!(target_os = "macos") && tool == "press_key" && addressing == "px"
+    {
+        "background"
+    } else {
+        delivery
+    };
+    #[cfg(target_os = "linux")]
+    let actual_delivery = if platform_linux::wayland::is_inject_mode() {
+        "background"
+    } else {
+        actual_delivery
+    };
+    let expected_route = match actual_delivery {
+        "foreground" => "global_input",
+        "background" => "synthetic_events",
+        other => panic!("unexpected keyboard delivery {other}"),
+    };
+    #[cfg(target_os = "linux")]
+    let expected_route = if platform_linux::wayland::is_inject_mode() {
+        "global_input"
+    } else {
+        expected_route
+    };
+    assert_eq!(
+        response.action_route(),
+        Some(expected_route),
+        "{}",
+        response.raw
+    );
+    assert_eq!(
+        response.action_delivery_mode(),
+        Some(actual_delivery),
+        "{}",
+        response.raw
+    );
+    assert_eq!(
+        response.action_effect(),
+        Some("unverifiable"),
+        "{}",
+        response.raw
+    );
+    let structured = response.structured();
+    assert_ne!(
+        structured
+            .pointer("/escalation/reason")
+            .and_then(|reason| reason.as_str()),
+        Some("delivery_failed"),
+        "an accepted, independently observed keyboard action is not a delivery failure: {}",
+        response.raw
+    );
+    assert!(structured["evidence"].is_null(), "{}", response.raw);
+    assert!(
+        structured["delivery"]["delivered_count"].is_null(),
+        "{}",
+        response.raw
+    );
+    for field in structured
+        .as_object()
+        .expect("keyboard ActionResult")
+        .keys()
+    {
+        assert!(
+            ["effect", "route", "delivery", "evidence", "escalation"].contains(&field.as_str()),
+            "private keyboard field {field} leaked: {}",
+            response.raw
+        );
+    }
+    assert_keyboard_recording(fixture, response, tool);
+}
+
+fn assert_keyboard_refusal(response: &ToolResponse) {
+    let public = response.structured();
+    assert!(
+        public["delivery"].is_null(),
+        "clean keyboard refusal must not claim delivery: {}",
+        response.raw
+    );
+    assert!(
+        public["evidence"].is_null(),
+        "clean keyboard refusal must not claim evidence: {}",
+        response.raw
+    );
+}
+
+fn assert_keyboard_recording(fixture: &Fixture, response: &ToolResponse, tool: &str) {
+    let Some(directory) = fixture.driver.recording_dir() else {
+        return;
+    };
+    let mut turns: Vec<_> = std::fs::read_dir(directory)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("turn-")
+        })
+        .collect();
+    turns.sort();
+    let path = turns
+        .last()
+        .expect("recorded keyboard turn")
+        .join("action.json");
+    let action: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    assert_eq!(action["tool"], tool);
+    let truth = &action["action_truth"];
+    let public = response.structured();
+    assert!(
+        truth.is_object(),
+        "keyboard recording lost producer truth: {action}"
+    );
+    assert_eq!(truth["effect"], public["effect"]);
+    assert_eq!(truth["route"], public["route"]);
+    assert_eq!(truth["actual_delivery"], public["delivery"]["mode"]);
+    assert_eq!(
+        truth["delivered_count"],
+        public["delivery"]["delivered_count"]
+    );
 }
 
 fn run_hotkey_action(fixture: &mut Fixture, addressing: &str, delivery: &str) -> Observation {
@@ -1268,6 +1541,7 @@ fn run_hotkey_action(fixture: &mut Fixture, addressing: &str, delivery: &str) ->
         .insert("keys".to_owned(), serde_json::json!(["ctrl", "shift", "h"]));
     let response = fixture.driver.call("hotkey", hotkey_args);
     if let Some(code) = background_refusal_code(&response, delivery) {
+        assert_keyboard_refusal(&response);
         return refused_without_fixture_mutation(fixture, &journal_before, code, &response);
     }
     assert!(
@@ -1278,6 +1552,7 @@ fn run_hotkey_action(fixture: &mut Fixture, addressing: &str, delivery: &str) ->
     );
     assert_fixture_contains(fixture, "key_state=hotkey");
     assert_fixture_value(fixture, "number-input", "42");
+    assert_keyboard_outcome(fixture, &response, "hotkey", addressing, delivery);
     #[cfg(target_os = "macos")]
     if fixture.name == "electron" && addressing == "px" && delivery == "foreground" {
         run_macos_selection_hotkeys(fixture);

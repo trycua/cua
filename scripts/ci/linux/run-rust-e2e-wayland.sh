@@ -287,6 +287,11 @@ fi
 set +e
 "${SESSION_RUNNER}" "$@"
 status=$?
+if [[ "${SESSION_KIND}" == sway* && ( "${CUA_E2E_INTERNAL_LANE:-all}" == native || "${CUA_E2E_INTERNAL_LANE:-all}" == all ) ]]; then
+  "${SCRIPT_DIR}/run-keyboard-wayland-contracts.sh"
+  keyboard_status=$?
+  if [[ "${status}" == 0 ]]; then status="${keyboard_status}"; fi
+fi
 set -e
 if [[ "${status}" != 0 && "${SESSION_KIND}" == sway* ]]; then
   swaymsg -t get_tree > "${REPO_ROOT}/artifacts/cua-driver/linux/sway-tree.json" 2>/dev/null || true

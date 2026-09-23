@@ -80,7 +80,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install jsonschema pyyaml pytest toml
+          pip install cryptography jsonschema pyyaml pytest toml
 
       - name: Run tests
         run: |
@@ -89,6 +89,12 @@ jobs:
 
       - name: Test Cua Driver uninstall scripts
         run: python -m pytest libs/cua-driver/scripts/tests/ -v
+
+      - name: Test private evidence cache and envelope contracts
+        run: |
+          python -m pytest \
+            libs/cua-driver/tests/perception-demo/test_cache_evidence.py \
+            libs/cua-driver/tests/perception-demo/test_evidence_envelope.py -v
 
       - uses: actions/setup-node@v4
         with:

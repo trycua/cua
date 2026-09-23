@@ -149,8 +149,14 @@ static MPX_LAST_USE: OnceLock<Mutex<HashMap<String, std::time::Instant>>> = Once
 static MPX_IDLE_REAPER: std::sync::Once = std::sync::Once::new();
 /// A session's retained master pair is removed after this much inactivity;
 /// `end_session` and the startup reaper cover the explicit and crash cases.
-const MPX_IDLE_TTL: Duration = Duration::from_secs(180);
-const MPX_IDLE_REAPER_PERIOD: Duration = Duration::from_secs(30);
+/// `XIRemoveMaster` churns the XInput hierarchy, and mutter 42.x segfaults when
+/// it processes that churn (the same reason per-call teardown crashes LibreOffice
+/// VCL), so the pair must outlive the inter-action idle of a live session; a
+/// long terminal-only stretch leaves the pointer unused far past a few minutes.
+/// The window is only a leak backstop for a client that dies without
+/// `end_session`; the startup reaper reclaims anything it misses.
+const MPX_IDLE_TTL: Duration = Duration::from_secs(1800);
+const MPX_IDLE_REAPER_PERIOD: Duration = Duration::from_secs(60);
 static MPX_NAME_COUNTER: AtomicU64 = AtomicU64::new(1);
 // evdev 0.12.2 asserts `name.len() + 1 < UINPUT_MAX_NAME_SIZE` while building
 // a device. Linux defines UINPUT_MAX_NAME_SIZE as 80, leaving 78 usable bytes.
@@ -4154,7 +4160,10 @@ mod path_tests {
         let now = std::time::Instant::now();
         let mut last_use = std::collections::HashMap::new();
         last_use.insert("fresh".to_owned(), now);
-        last_use.insert("old".to_owned(), now - std::time::Duration::from_secs(400));
+        last_use.insert(
+            "old".to_owned(),
+            now - (MPX_IDLE_TTL + std::time::Duration::from_secs(60)),
+        );
         last_use.insert("edge".to_owned(), now - MPX_IDLE_TTL);
         let mut stale = stale_cursor_ids(&last_use, now, MPX_IDLE_TTL);
         stale.sort();

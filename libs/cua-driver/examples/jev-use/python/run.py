@@ -163,8 +163,6 @@ def jev_config_from_args(args: argparse.Namespace):
         overlay["JEV_BACKEND"] = provider
     if args.jev_base_url:
         overlay["JEV_BASE_URL"] = args.jev_base_url
-    if args.jev_api_key:
-        overlay["JEV_API_KEY"] = args.jev_api_key
     if args.jev_model:
         overlay["JEV_MODEL"] = args.jev_model
     if args.jev_timeout_ms:
@@ -374,7 +372,6 @@ def parse_args() -> argparse.Namespace:
         help="Jev backend override; otherwise use JEV_BACKEND (default mock). live is a deprecated alias for typesafe",
     )
     parser.add_argument("--jev-base-url", help="override the Jev base URL")
-    parser.add_argument("--jev-api-key", help="override the Jev API key")
     parser.add_argument("--jev-model", help="override the Jev model name")
     parser.add_argument("--jev-timeout-ms", type=int, help="Jev request timeout")
     parser.add_argument(

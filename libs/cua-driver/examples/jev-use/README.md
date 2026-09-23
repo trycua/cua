@@ -202,9 +202,12 @@ uv run python/run.py
 
 The local backend accepts only HTTP loopback URLs. Remote URLs cannot embed
 credentials, and a configured API key is sent only to HTTPS; keyless OpenJev
-endpoints may still use an explicitly configured HTTP URL. Missing credentials
-or base URLs, timeouts, HTTP errors, and malformed model output return a
-machine-readable skipped decision and the runner abstains for that step.
+endpoints may still use an explicitly configured HTTP URL. HTTP redirects are
+refused so a validated loopback or credential destination cannot redirect the
+request elsewhere. Jev keys are read from environment variables only, never a
+command-line flag. Missing credentials or base URLs, timeouts, HTTP errors, and
+malformed model output return a machine-readable skipped decision and the
+runner abstains for that step.
 
 Choice output is fail-closed before it becomes an action ID: probability keys
 must exactly match the candidate table, values must be finite and in `[0,1]`,

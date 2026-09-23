@@ -86,11 +86,38 @@ fn capture_window_with_backends(
     ))
 }
 
+/// Longest an `import` run may take before it is killed.
+///
+/// Given a window id the server no longer knows, ImageMagick falls back to
+/// its interactive `XSelectWindow`: it grabs the X server and waits for a
+/// mouse click that never comes, and every other X client on the display
+/// hangs with it until the process dies. Killing it releases the grab.
+const IMPORT_TIMEOUT: Duration = Duration::from_secs(5);
+
 fn capture_via_import(xid: u64) -> Result<Vec<u8>> {
-    let out = Command::new("import")
+    if !crate::x11::window_exists(xid) {
+        bail!("window {xid} no longer exists");
+    }
+    let child = Command::new("import")
         .args(["-window", &xid.to_string(), "png:-"])
-        .output()
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .map_err(|e| anyhow!("failed to launch ImageMagick import: {e}"))?;
+    let pid = child.id();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(child.wait_with_output());
+    });
+    let out = match rx.recv_timeout(IMPORT_TIMEOUT) {
+        Ok(out) => out.map_err(|e| anyhow!("failed to wait for ImageMagick import: {e}"))?,
+        Err(_) => {
+            // SAFETY: plain libc call on a pid this process spawned and has not reaped.
+            unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+            bail!("ImageMagick import did not exit within {IMPORT_TIMEOUT:?} and was killed");
+        }
+    };
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         let detail = stderr.trim().chars().take(512).collect::<String>();

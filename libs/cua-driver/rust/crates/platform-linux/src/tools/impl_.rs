@@ -402,7 +402,9 @@ impl Tool for ListAppsTool {
                 relative to its XDG `applications/` root with the `.desktop` suffix \
                 stripped and path separators replaced with `-` \
                 (e.g. `kde4/konqbrowser.desktop` → `kde4-konqbrowser`).\n\
-                - last_used: RFC3339 mtime of the `.desktop` file, when readable.\n\n\
+                - last_used: RFC3339 mtime of the `.desktop` file, when readable.\n\
+                - windows: the app's current top-level windows (same records as list_windows); \
+                empty for a process without one.\n\n\
                 Running apps come from `/proc`. Installed apps come from XDG Desktop Entry \
                 files in $XDG_DATA_HOME/applications and each $XDG_DATA_DIRS entry's \
                 applications/ subdir. Entries with `NoDisplay=true` or `Hidden=true` are \
@@ -506,6 +508,14 @@ impl Tool for ListAppsTool {
                         None,
                     ),
                 };
+                let owned: Vec<Value> = windows
+                    .iter()
+                    .filter(|w| w.pid == Some(p.pid))
+                    .filter(|w| {
+                        merged.is_none_or(|idx| installed[idx].owns_window_class(&w.app_name))
+                    })
+                    .map(window_record_json)
+                    .collect();
                 out.push(json!({
                     "pid":         p.pid,
                     "bundle_id":   bundle_id,
@@ -515,7 +525,7 @@ impl Tool for ListAppsTool {
                     "kind":        kind,
                     "launch_path": launch_path,
                     "last_used":   last_used,
-                    "windows":     Vec::<serde_json::Value>::new(),
+                    "windows":     owned,
                 }));
             }
             for (i, app) in installed.iter().enumerate() {
@@ -526,6 +536,12 @@ impl Tool for ListAppsTool {
                 // `soffice.bin` showing Calc and Writer): each entry with a
                 // window is running under its own id.
                 let window_pid = by_window.get(&i).copied();
+                let owned: Vec<Value> = windows
+                    .iter()
+                    .filter(|w| w.pid.is_some() && w.pid == window_pid)
+                    .filter(|w| app.owns_window_class(&w.app_name))
+                    .map(window_record_json)
+                    .collect();
                 out.push(json!({
                     "pid":         window_pid.unwrap_or(0),
                     "bundle_id":   app.bundle_id.clone(),
@@ -535,7 +551,7 @@ impl Tool for ListAppsTool {
                     "kind":        "desktop",
                     "launch_path": app.launch_path.clone(),
                     "last_used":   app.last_used.clone(),
-                    "windows":     Vec::<serde_json::Value>::new(),
+                    "windows":     owned,
                 }));
             }
             out

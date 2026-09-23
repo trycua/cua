@@ -118,6 +118,10 @@ a certification artifact. Its goal is a warm-cache run under 10 minutes;
 check the workflow's measured duration rather than treating the timeout as a
 performance guarantee.
 
+`CI: Cua Driver desktop readiness (non-certifying)` runs the lightweight
+Linux and Windows checks in temporary GUI sessions when the preflight scripts
+change. It does not invoke the strict preflight or any behavior matrix.
+
 For a local focused iteration, run the matching commands from the repository
 root (a first compilation may be much slower than a warm run):
 

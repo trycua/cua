@@ -151,6 +151,24 @@ def write_event(log_path: Path | None, event: dict[str, Any]) -> None:
             stream.write(line + "\n")
 
 
+def decision_timing_fields(
+    *,
+    decision_ms: float,
+    semantic_observe_ms: float,
+    visual_observe_ms: float,
+    candidate_build_ms: float,
+    provider_decision_ms: float,
+) -> dict[str, float]:
+    """Stable additive timing fields shared by every emitted step event."""
+    return {
+        "decision_ms": decision_ms,
+        "semantic_observe_ms": semantic_observe_ms,
+        "visual_observe_ms": visual_observe_ms,
+        "candidate_build_ms": candidate_build_ms,
+        "provider_decision_ms": provider_decision_ms,
+    }
+
+
 async def run(args: argparse.Namespace) -> str:
     token = args.token or f"jev-{uuid.uuid4().hex[:10]}"
     label = f"jev-python-{uuid.uuid4().hex[:8]}"
@@ -192,6 +210,7 @@ async def run(args: argparse.Namespace) -> str:
                     return current
 
                 started = time.perf_counter()
+                phase_started = time.perf_counter()
                 snapshot = await driver.call(
                     "get_browser_state",
                     {
@@ -200,6 +219,9 @@ async def run(args: argparse.Namespace) -> str:
                         "snapshot_format": "semantic_v2",
                     },
                 )
+                semantic_observe_ms = round((time.perf_counter() - phase_started) * 1000, 2)
+
+                phase_started = time.perf_counter()
                 visual = await optional_visual_observation(
                     driver,
                     pid,
@@ -207,16 +229,21 @@ async def run(args: argparse.Namespace) -> str:
                     available_tools,
                     capture_bound_click,
                 )
+                visual_observe_ms = round((time.perf_counter() - phase_started) * 1000, 2)
+
+                phase_started = time.perf_counter()
                 candidates = build_candidates(
                     snapshot,
                     token,
                     visual,
                     capture_bound_click=capture_bound_click,
                 )
+                candidate_build_ms = round((time.perf_counter() - phase_started) * 1000, 2)
                 if not candidates:
                     write_event(log_path, {"event": "outcome", "outcome": "abstained", "step": step})
                     return "abstained"
 
+                phase_started = time.perf_counter()
                 if args.provider == "mock":
                     choice, confidence, probabilities = choose_mock_adapter(
                         candidates, snapshot, visual, history
@@ -225,6 +252,7 @@ async def run(args: argparse.Namespace) -> str:
                     choice, confidence, probabilities = await asyncio.to_thread(
                         choose_live, candidates, snapshot, visual, history
                     )
+                provider_decision_ms = round((time.perf_counter() - phase_started) * 1000, 2)
                 if choice is None:
                     return "abstained"
                 candidate = validate_choice(
@@ -233,6 +261,13 @@ async def run(args: argparse.Namespace) -> str:
                     current_capture_id=visual.capture_id if visual else None,
                 )
                 decision_ms = round((time.perf_counter() - started) * 1000, 2)
+                timing = decision_timing_fields(
+                    decision_ms=decision_ms,
+                    semantic_observe_ms=semantic_observe_ms,
+                    visual_observe_ms=visual_observe_ms,
+                    candidate_build_ms=candidate_build_ms,
+                    provider_decision_ms=provider_decision_ms,
+                )
 
                 if candidate.id == "reobserve":
                     event = {
@@ -241,8 +276,9 @@ async def run(args: argparse.Namespace) -> str:
                         "candidate": candidate.id,
                         "confidence": confidence,
                         "probabilities": probabilities,
-                        "decision_ms": decision_ms,
+                        **timing,
                         "action_ms": 0.0,
+                        "total_step_ms": round((time.perf_counter() - started) * 1000, 2),
                         "dry_run": args.dry_run,
                     }
                     history.append(event)
@@ -288,8 +324,9 @@ async def run(args: argparse.Namespace) -> str:
                     "candidate": candidate.id,
                     "confidence": confidence,
                     "probabilities": probabilities,
-                    "decision_ms": decision_ms,
+                    **timing,
                     "action_ms": action_ms,
+                    "total_step_ms": round((time.perf_counter() - started) * 1000, 2),
                     "dry_run": args.dry_run,
                 }
                 history.append(event)

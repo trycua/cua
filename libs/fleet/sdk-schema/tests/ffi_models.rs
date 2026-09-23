@@ -180,6 +180,8 @@ fn exported_status_records_are_typed_and_round_trip() {
         replicas: Some(3),
         ready_replicas: Some(2),
         selector: Some("osgym.cua.ai/pool=default".into()),
+        last_claimed_at: Some("2026-07-19T12:00:00Z".into()),
+        last_activity_time: Some("2026-07-19T12:05:00Z".into()),
     };
     let claim_status = OSGymSandboxClaimStatus {
         phase: Some("Bound".into()),

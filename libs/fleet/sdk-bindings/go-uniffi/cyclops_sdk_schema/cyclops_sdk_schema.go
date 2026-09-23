@@ -1127,6 +1127,8 @@ type OsGymSandboxWarmPoolSpec struct {
 	SandboxTemplateRef     SandboxTemplateRef
 	Autoscaling            *WarmPoolAutoscaling
 	TtlSecondsAfterCreated *uint32
+	IdleTtlSeconds         *uint32
+	TtlPolicy              *WarmPoolTtlPolicy
 }
 
 func (r *OsGymSandboxWarmPoolSpec) Destroy() {
@@ -1134,6 +1136,8 @@ func (r *OsGymSandboxWarmPoolSpec) Destroy() {
 	FfiDestroyerSandboxTemplateRef{}.Destroy(r.SandboxTemplateRef)
 	FfiDestroyerOptionalWarmPoolAutoscaling{}.Destroy(r.Autoscaling)
 	FfiDestroyerOptionalUint32{}.Destroy(r.TtlSecondsAfterCreated)
+	FfiDestroyerOptionalUint32{}.Destroy(r.IdleTtlSeconds)
+	FfiDestroyerOptionalWarmPoolTtlPolicy{}.Destroy(r.TtlPolicy)
 }
 
 type FfiConverterOsGymSandboxWarmPoolSpec struct{}
@@ -1150,6 +1154,8 @@ func (c FfiConverterOsGymSandboxWarmPoolSpec) Read(reader io.Reader) OsGymSandbo
 		FfiConverterSandboxTemplateRefINSTANCE.Read(reader),
 		FfiConverterOptionalWarmPoolAutoscalingINSTANCE.Read(reader),
 		FfiConverterOptionalUint32INSTANCE.Read(reader),
+		FfiConverterOptionalUint32INSTANCE.Read(reader),
+		FfiConverterOptionalWarmPoolTtlPolicyINSTANCE.Read(reader),
 	}
 }
 
@@ -1166,6 +1172,8 @@ func (c FfiConverterOsGymSandboxWarmPoolSpec) Write(writer io.Writer, value OsGy
 	FfiConverterSandboxTemplateRefINSTANCE.Write(writer, value.SandboxTemplateRef)
 	FfiConverterOptionalWarmPoolAutoscalingINSTANCE.Write(writer, value.Autoscaling)
 	FfiConverterOptionalUint32INSTANCE.Write(writer, value.TtlSecondsAfterCreated)
+	FfiConverterOptionalUint32INSTANCE.Write(writer, value.IdleTtlSeconds)
+	FfiConverterOptionalWarmPoolTtlPolicyINSTANCE.Write(writer, value.TtlPolicy)
 }
 
 type FfiDestroyerOsGymSandboxWarmPoolSpec struct{}
@@ -1175,15 +1183,19 @@ func (_ FfiDestroyerOsGymSandboxWarmPoolSpec) Destroy(value OsGymSandboxWarmPool
 }
 
 type OsGymSandboxWarmPoolStatus struct {
-	Replicas      *uint32
-	ReadyReplicas *uint32
-	Selector      *string
+	Replicas         *uint32
+	ReadyReplicas    *uint32
+	Selector         *string
+	LastClaimedAt    *string
+	LastActivityTime *string
 }
 
 func (r *OsGymSandboxWarmPoolStatus) Destroy() {
 	FfiDestroyerOptionalUint32{}.Destroy(r.Replicas)
 	FfiDestroyerOptionalUint32{}.Destroy(r.ReadyReplicas)
 	FfiDestroyerOptionalString{}.Destroy(r.Selector)
+	FfiDestroyerOptionalString{}.Destroy(r.LastClaimedAt)
+	FfiDestroyerOptionalString{}.Destroy(r.LastActivityTime)
 }
 
 type FfiConverterOsGymSandboxWarmPoolStatus struct{}
@@ -1198,6 +1210,8 @@ func (c FfiConverterOsGymSandboxWarmPoolStatus) Read(reader io.Reader) OsGymSand
 	return OsGymSandboxWarmPoolStatus{
 		FfiConverterOptionalUint32INSTANCE.Read(reader),
 		FfiConverterOptionalUint32INSTANCE.Read(reader),
+		FfiConverterOptionalStringINSTANCE.Read(reader),
+		FfiConverterOptionalStringINSTANCE.Read(reader),
 		FfiConverterOptionalStringINSTANCE.Read(reader),
 	}
 }
@@ -1214,6 +1228,8 @@ func (c FfiConverterOsGymSandboxWarmPoolStatus) Write(writer io.Writer, value Os
 	FfiConverterOptionalUint32INSTANCE.Write(writer, value.Replicas)
 	FfiConverterOptionalUint32INSTANCE.Write(writer, value.ReadyReplicas)
 	FfiConverterOptionalStringINSTANCE.Write(writer, value.Selector)
+	FfiConverterOptionalStringINSTANCE.Write(writer, value.LastClaimedAt)
+	FfiConverterOptionalStringINSTANCE.Write(writer, value.LastActivityTime)
 }
 
 type FfiDestroyerOsGymSandboxWarmPoolStatus struct{}
@@ -1881,6 +1897,47 @@ type FfiDestroyerServiceProtocol struct{}
 func (_ FfiDestroyerServiceProtocol) Destroy(value ServiceProtocol) {
 }
 
+// What the pool-operator deletes when a warm pool's creation TTL
+// (`ttlSecondsAfterCreated`) or idle TTL (`idleTtlSeconds`) expires.
+type WarmPoolTtlPolicy uint
+
+const (
+	// Delete only the warm pool. Its claims and namespace stay.
+	WarmPoolTtlPolicyRetain WarmPoolTtlPolicy = 1
+	// Also delete the pool's dead unbound claims (TTL passed, older than
+	// max(900s, bindDeadline)). Bound claims, the namespace and volumes stay.
+	WarmPoolTtlPolicyCascade WarmPoolTtlPolicy = 2
+)
+
+type FfiConverterWarmPoolTtlPolicy struct{}
+
+var FfiConverterWarmPoolTtlPolicyINSTANCE = FfiConverterWarmPoolTtlPolicy{}
+
+func (c FfiConverterWarmPoolTtlPolicy) Lift(rb RustBufferI) WarmPoolTtlPolicy {
+	return LiftFromRustBuffer[WarmPoolTtlPolicy](c, rb)
+}
+
+func (c FfiConverterWarmPoolTtlPolicy) Lower(value WarmPoolTtlPolicy) C.RustBuffer {
+	return LowerIntoRustBuffer[WarmPoolTtlPolicy](c, value)
+}
+
+func (c FfiConverterWarmPoolTtlPolicy) LowerExternal(value WarmPoolTtlPolicy) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[WarmPoolTtlPolicy](c, value))
+}
+func (FfiConverterWarmPoolTtlPolicy) Read(reader io.Reader) WarmPoolTtlPolicy {
+	id := readInt32(reader)
+	return WarmPoolTtlPolicy(id)
+}
+
+func (FfiConverterWarmPoolTtlPolicy) Write(writer io.Writer, value WarmPoolTtlPolicy) {
+	writeInt32(writer, int32(value))
+}
+
+type FfiDestroyerWarmPoolTtlPolicy struct{}
+
+func (_ FfiDestroyerWarmPoolTtlPolicy) Destroy(value WarmPoolTtlPolicy) {
+}
+
 type FfiConverterOptionalUint32 struct{}
 
 var FfiConverterOptionalUint32INSTANCE = FfiConverterOptionalUint32{}
@@ -2411,6 +2468,47 @@ type FfiDestroyerOptionalServiceProtocol struct{}
 func (_ FfiDestroyerOptionalServiceProtocol) Destroy(value *ServiceProtocol) {
 	if value != nil {
 		FfiDestroyerServiceProtocol{}.Destroy(*value)
+	}
+}
+
+type FfiConverterOptionalWarmPoolTtlPolicy struct{}
+
+var FfiConverterOptionalWarmPoolTtlPolicyINSTANCE = FfiConverterOptionalWarmPoolTtlPolicy{}
+
+func (c FfiConverterOptionalWarmPoolTtlPolicy) Lift(rb RustBufferI) *WarmPoolTtlPolicy {
+	return LiftFromRustBuffer[*WarmPoolTtlPolicy](c, rb)
+}
+
+func (_ FfiConverterOptionalWarmPoolTtlPolicy) Read(reader io.Reader) *WarmPoolTtlPolicy {
+	if readInt8(reader) == 0 {
+		return nil
+	}
+	temp := FfiConverterWarmPoolTtlPolicyINSTANCE.Read(reader)
+	return &temp
+}
+
+func (c FfiConverterOptionalWarmPoolTtlPolicy) Lower(value *WarmPoolTtlPolicy) C.RustBuffer {
+	return LowerIntoRustBuffer[*WarmPoolTtlPolicy](c, value)
+}
+
+func (c FfiConverterOptionalWarmPoolTtlPolicy) LowerExternal(value *WarmPoolTtlPolicy) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[*WarmPoolTtlPolicy](c, value))
+}
+
+func (_ FfiConverterOptionalWarmPoolTtlPolicy) Write(writer io.Writer, value *WarmPoolTtlPolicy) {
+	if value == nil {
+		writeInt8(writer, 0)
+	} else {
+		writeInt8(writer, 1)
+		FfiConverterWarmPoolTtlPolicyINSTANCE.Write(writer, *value)
+	}
+}
+
+type FfiDestroyerOptionalWarmPoolTtlPolicy struct{}
+
+func (_ FfiDestroyerOptionalWarmPoolTtlPolicy) Destroy(value *WarmPoolTtlPolicy) {
+	if value != nil {
+		FfiDestroyerWarmPoolTtlPolicy{}.Destroy(*value)
 	}
 }
 

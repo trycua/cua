@@ -692,9 +692,13 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_build(
     ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_idle_ttl_seconds(
+    ): Short
     external fun uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_replicas(
     ): Short
     external fun uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref(
+    ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_policy(
     ): Short
     external fun uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created(
     ): Short
@@ -830,9 +834,13 @@ external fun uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder
 ): Long
 external fun uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_build(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
+external fun uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_idle_ttl_seconds(`ptr`: Long,`value`: Int,uniffi_out_err: UniffiRustCallStatus,
+): Long
 external fun uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_replicas(`ptr`: Long,`value`: Int,uniffi_out_err: UniffiRustCallStatus,
 ): Long
 external fun uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_ttl_policy(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): Long
 external fun uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created(`ptr`: Long,`value`: Int,uniffi_out_err: UniffiRustCallStatus,
 ): Long
@@ -1053,10 +1061,16 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_build() != 5682.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_idle_ttl_seconds() != 56677.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_replicas() != 50438.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref() != 7198.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_policy() != 53364.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created() != 44516.toShort()) {
@@ -1754,9 +1768,13 @@ public interface OsGymSandboxWarmPoolSpecBuilderInterface {
 
     fun `build`(): OsGymSandboxWarmPoolSpec
 
+    fun `idleTtlSeconds`(`value`: kotlin.UInt): OsGymSandboxWarmPoolSpecBuilder
+
     fun `replicas`(`value`: kotlin.UInt): OsGymSandboxWarmPoolSpecBuilder
 
     fun `sandboxTemplateRef`(`value`: SandboxTemplateRef): OsGymSandboxWarmPoolSpecBuilder
+
+    fun `ttlPolicy`(`value`: WarmPoolTtlPolicy): OsGymSandboxWarmPoolSpecBuilder
 
     fun `ttlSecondsAfterCreated`(`value`: kotlin.UInt): OsGymSandboxWarmPoolSpecBuilder
 
@@ -1894,6 +1912,19 @@ open class OsGymSandboxWarmPoolSpecBuilder: Disposable, AutoCloseable, OsGymSand
     }
 
 
+    override fun `idleTtlSeconds`(`value`: kotlin.UInt): OsGymSandboxWarmPoolSpecBuilder {
+            return FfiConverterTypeOSGymSandboxWarmPoolSpecBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_idle_ttl_seconds(
+        it,
+        FfiConverterUInt.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
     override fun `replicas`(`value`: kotlin.UInt): OsGymSandboxWarmPoolSpecBuilder {
             return FfiConverterTypeOSGymSandboxWarmPoolSpecBuilder.lift(
     callWithHandle {
@@ -1914,6 +1945,19 @@ open class OsGymSandboxWarmPoolSpecBuilder: Disposable, AutoCloseable, OsGymSand
     UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref(
         it,
         FfiConverterTypeSandboxTemplateRef.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+    override fun `ttlPolicy`(`value`: WarmPoolTtlPolicy): OsGymSandboxWarmPoolSpecBuilder {
+            return FfiConverterTypeOSGymSandboxWarmPoolSpecBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_ttl_policy(
+        it,
+        FfiConverterTypeWarmPoolTtlPolicy.lower(`value`),_status)
 }
     }
     )
@@ -4044,6 +4088,10 @@ data class OsGymSandboxWarmPoolSpec (
     var `autoscaling`: WarmPoolAutoscaling?
     ,
     var `ttlSecondsAfterCreated`: kotlin.UInt? = null
+    ,
+    var `idleTtlSeconds`: kotlin.UInt? = null
+    ,
+    var `ttlPolicy`: WarmPoolTtlPolicy? = null
 
 ){
 
@@ -4064,6 +4112,8 @@ public object FfiConverterTypeOSGymSandboxWarmPoolSpec: FfiConverterRustBuffer<O
             FfiConverterTypeSandboxTemplateRef.read(buf),
             FfiConverterOptionalTypeWarmPoolAutoscaling.read(buf),
             FfiConverterOptionalUInt.read(buf),
+            FfiConverterOptionalUInt.read(buf),
+            FfiConverterOptionalTypeWarmPoolTtlPolicy.read(buf),
         )
     }
 
@@ -4071,7 +4121,9 @@ public object FfiConverterTypeOSGymSandboxWarmPoolSpec: FfiConverterRustBuffer<O
             FfiConverterUInt.allocationSize(value.`replicas`) +
             FfiConverterTypeSandboxTemplateRef.allocationSize(value.`sandboxTemplateRef`) +
             FfiConverterOptionalTypeWarmPoolAutoscaling.allocationSize(value.`autoscaling`) +
-            FfiConverterOptionalUInt.allocationSize(value.`ttlSecondsAfterCreated`)
+            FfiConverterOptionalUInt.allocationSize(value.`ttlSecondsAfterCreated`) +
+            FfiConverterOptionalUInt.allocationSize(value.`idleTtlSeconds`) +
+            FfiConverterOptionalTypeWarmPoolTtlPolicy.allocationSize(value.`ttlPolicy`)
     )
 
     override fun write(value: OsGymSandboxWarmPoolSpec, buf: ByteBuffer) {
@@ -4079,6 +4131,8 @@ public object FfiConverterTypeOSGymSandboxWarmPoolSpec: FfiConverterRustBuffer<O
             FfiConverterTypeSandboxTemplateRef.write(value.`sandboxTemplateRef`, buf)
             FfiConverterOptionalTypeWarmPoolAutoscaling.write(value.`autoscaling`, buf)
             FfiConverterOptionalUInt.write(value.`ttlSecondsAfterCreated`, buf)
+            FfiConverterOptionalUInt.write(value.`idleTtlSeconds`, buf)
+            FfiConverterOptionalTypeWarmPoolTtlPolicy.write(value.`ttlPolicy`, buf)
     }
 }
 
@@ -4090,6 +4144,10 @@ data class OsGymSandboxWarmPoolStatus (
     var `readyReplicas`: kotlin.UInt?
     ,
     var `selector`: kotlin.String?
+    ,
+    var `lastClaimedAt`: kotlin.String? = null
+    ,
+    var `lastActivityTime`: kotlin.String? = null
 
 ){
 
@@ -4109,19 +4167,25 @@ public object FfiConverterTypeOSGymSandboxWarmPoolStatus: FfiConverterRustBuffer
             FfiConverterOptionalUInt.read(buf),
             FfiConverterOptionalUInt.read(buf),
             FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
         )
     }
 
     override fun allocationSize(value: OsGymSandboxWarmPoolStatus) = (
             FfiConverterOptionalUInt.allocationSize(value.`replicas`) +
             FfiConverterOptionalUInt.allocationSize(value.`readyReplicas`) +
-            FfiConverterOptionalString.allocationSize(value.`selector`)
+            FfiConverterOptionalString.allocationSize(value.`selector`) +
+            FfiConverterOptionalString.allocationSize(value.`lastClaimedAt`) +
+            FfiConverterOptionalString.allocationSize(value.`lastActivityTime`)
     )
 
     override fun write(value: OsGymSandboxWarmPoolStatus, buf: ByteBuffer) {
             FfiConverterOptionalUInt.write(value.`replicas`, buf)
             FfiConverterOptionalUInt.write(value.`readyReplicas`, buf)
             FfiConverterOptionalString.write(value.`selector`, buf)
+            FfiConverterOptionalString.write(value.`lastClaimedAt`, buf)
+            FfiConverterOptionalString.write(value.`lastActivityTime`, buf)
     }
 }
 
@@ -4697,6 +4761,51 @@ public object FfiConverterTypeServiceProtocol: FfiConverterRustBuffer<ServicePro
 
 
 
+/**
+ * What the pool-operator deletes when a warm pool's creation TTL
+ * (`ttlSecondsAfterCreated`) or idle TTL (`idleTtlSeconds`) expires.
+ */
+
+enum class WarmPoolTtlPolicy {
+
+    /**
+     * Delete only the warm pool. Its claims and namespace stay.
+     */
+    RETAIN,
+    /**
+     * Also delete the pool's dead unbound claims (TTL passed, older than
+     * max(900s, bindDeadline)). Bound claims, the namespace and volumes stay.
+     */
+    CASCADE;
+
+
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeWarmPoolTtlPolicy: FfiConverterRustBuffer<WarmPoolTtlPolicy> {
+    override fun read(buf: ByteBuffer) = try {
+        WarmPoolTtlPolicy.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: WarmPoolTtlPolicy) = 4UL
+
+    override fun write(value: WarmPoolTtlPolicy, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
 
 /**
  * @suppress
@@ -5107,6 +5216,38 @@ public object FfiConverterOptionalTypeServiceProtocol: FfiConverterRustBuffer<Se
         } else {
             buf.put(1)
             FfiConverterTypeServiceProtocol.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeWarmPoolTtlPolicy: FfiConverterRustBuffer<WarmPoolTtlPolicy?> {
+    override fun read(buf: ByteBuffer): WarmPoolTtlPolicy? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeWarmPoolTtlPolicy.read(buf)
+    }
+
+    override fun allocationSize(value: WarmPoolTtlPolicy?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeWarmPoolTtlPolicy.allocationSize(value)
+        }
+    }
+
+    override fun write(value: WarmPoolTtlPolicy?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeWarmPoolTtlPolicy.write(value, buf)
         }
     }
 }

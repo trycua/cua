@@ -310,6 +310,8 @@ end
     RustBuffer.check_lower_TypeSandboxTemplateRef(v.sandbox_template_ref)
     RustBuffer.check_lower_OptionalTypeWarmPoolAutoscaling(v.autoscaling)
     RustBuffer.check_lower_Optionalu32(v.ttl_seconds_after_created)
+    RustBuffer.check_lower_Optionalu32(v.idle_ttl_seconds)
+    RustBuffer.check_lower_OptionalTypeWarmPoolTtlPolicy(v.ttl_policy)
   end
 
   def self.alloc_from_TypeOSGymSandboxWarmPoolSpec(v)
@@ -331,6 +333,8 @@ end
     RustBuffer.check_lower_Optionalu32(v.replicas)
     RustBuffer.check_lower_Optionalu32(v.ready_replicas)
     RustBuffer.check_lower_Optionalstring(v.selector)
+    RustBuffer.check_lower_Optionalstring(v.last_claimed_at)
+    RustBuffer.check_lower_Optionalstring(v.last_activity_time)
   end
 
   def self.alloc_from_TypeOSGymSandboxWarmPoolStatus(v)
@@ -540,6 +544,25 @@ end
   def consumeIntoTypeServiceProtocol
     consumeWithStream do |stream|
       return stream.readTypeServiceProtocol
+    end
+  end
+
+
+  # The Enum type WarmPoolTtlPolicy.
+
+  def self.check_lower_TypeWarmPoolTtlPolicy(v)
+  end
+
+  def self.alloc_from_TypeWarmPoolTtlPolicy(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_TypeWarmPoolTtlPolicy(v)
+      return builder.finalize
+    end
+  end
+
+  def consumeIntoTypeWarmPoolTtlPolicy
+    consumeWithStream do |stream|
+      return stream.readTypeWarmPoolTtlPolicy
     end
   end
 
@@ -814,6 +837,27 @@ end
   def consumeIntoOptionalTypeServiceProtocol
     consumeWithStream do |stream|
       return stream.readOptionalTypeServiceProtocol
+    end
+  end
+
+  # The Optional<T> type for TypeWarmPoolTtlPolicy.
+
+  def self.check_lower_OptionalTypeWarmPoolTtlPolicy(v)
+    if not v.nil?
+      RustBuffer.check_lower_TypeWarmPoolTtlPolicy(v)
+    end
+  end
+
+  def self.alloc_from_OptionalTypeWarmPoolTtlPolicy(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_OptionalTypeWarmPoolTtlPolicy(v)
+      return builder.finalize()
+    end
+  end
+
+  def consumeIntoOptionalTypeWarmPoolTtlPolicy
+    consumeWithStream do |stream|
+      return stream.readOptionalTypeWarmPoolTtlPolicy
     end
   end
 
@@ -1246,7 +1290,9 @@ class RustBufferStream
       replicas: readU32,
       sandbox_template_ref: readTypeSandboxTemplateRef,
       autoscaling: readOptionalTypeWarmPoolAutoscaling,
-      ttl_seconds_after_created: readOptionalu32
+      ttl_seconds_after_created: readOptionalu32,
+      idle_ttl_seconds: readOptionalu32,
+      ttl_policy: readOptionalTypeWarmPoolTtlPolicy
     )
   end
 
@@ -1256,7 +1302,9 @@ class RustBufferStream
     OSGymSandboxWarmPoolStatus.new(
       replicas: readOptionalu32,
       ready_replicas: readOptionalu32,
-      selector: readOptionalstring
+      selector: readOptionalstring,
+      last_claimed_at: readOptionalstring,
+      last_activity_time: readOptionalstring
     )
   end
 
@@ -1444,6 +1492,25 @@ class RustBufferStream
 
 
 
+
+
+  # The Enum type WarmPoolTtlPolicy.
+
+  def readTypeWarmPoolTtlPolicy
+    variant = unpack_from 4, 'l>'
+
+    if variant == 1
+      return WarmPoolTtlPolicy::RETAIN
+    end
+    if variant == 2
+      return WarmPoolTtlPolicy::CASCADE
+    end
+
+    raise InternalError, 'Unexpected variant tag for TypeWarmPoolTtlPolicy'
+  end
+
+
+
   # The Optional<T> type for u32.
 
   def readOptionalu32
@@ -1623,6 +1690,20 @@ class RustBufferStream
       return readTypeServiceProtocol
     else
       raise InternalError, 'Unexpected flag byte for OptionalTypeServiceProtocol'
+    end
+  end
+
+  # The Optional<T> type for TypeWarmPoolTtlPolicy.
+
+  def readOptionalTypeWarmPoolTtlPolicy
+    flag = unpack_from 1, 'c'
+
+    if flag == 0
+      return nil
+    elsif flag == 1
+      return readTypeWarmPoolTtlPolicy
+    else
+      raise InternalError, 'Unexpected flag byte for OptionalTypeWarmPoolTtlPolicy'
     end
   end
 
@@ -1970,6 +2051,8 @@ class RustBufferBuilder
     self.write_TypeSandboxTemplateRef(v.sandbox_template_ref)
     self.write_OptionalTypeWarmPoolAutoscaling(v.autoscaling)
     self.write_Optionalu32(v.ttl_seconds_after_created)
+    self.write_Optionalu32(v.idle_ttl_seconds)
+    self.write_OptionalTypeWarmPoolTtlPolicy(v.ttl_policy)
   end
 
   # The Record type OSGymSandboxWarmPoolStatus.
@@ -1978,6 +2061,8 @@ class RustBufferBuilder
     self.write_Optionalu32(v.replicas)
     self.write_Optionalu32(v.ready_replicas)
     self.write_Optionalstring(v.selector)
+    self.write_Optionalstring(v.last_claimed_at)
+    self.write_Optionalstring(v.last_activity_time)
   end
 
   # The Record type OidcConfig.
@@ -2061,6 +2146,13 @@ class RustBufferBuilder
   # The Enum type ServiceProtocol.
 
   def write_TypeServiceProtocol(v)
+    pack_into(4, 'l>', v)
+ end
+
+
+  # The Enum type WarmPoolTtlPolicy.
+
+  def write_TypeWarmPoolTtlPolicy(v)
     pack_into(4, 'l>', v)
  end
 
@@ -2205,6 +2297,17 @@ class RustBufferBuilder
     else
       pack_into(1, 'c', 1)
       self.write_TypeServiceProtocol(v)
+    end
+  end
+
+  # The Optional<T> type for TypeWarmPoolTtlPolicy.
+
+  def write_OptionalTypeWarmPoolTtlPolicy(v)
+    if v.nil?
+      pack_into(1, 'c', 0)
+    else
+      pack_into(1, 'c', 1)
+      self.write_TypeWarmPoolTtlPolicy(v)
     end
   end
 
@@ -2401,6 +2504,7 @@ module JsonValueError
 end
 
 
+
 # Map error modules to the RustBuffer method name that reads them
 ERROR_MODULE_TO_READER_METHOD = {
 
@@ -2412,6 +2516,7 @@ ERROR_MODULE_TO_READER_METHOD = {
 
 
   JsonValueError => :readTypeJsonValueError,
+
 
 }
 
@@ -2620,10 +2725,16 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_build,
     [:uint64, RustCallStatus.by_ref],
     RustBuffer.by_value
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_idle_ttl_seconds,
+    [:uint64, :uint32, RustCallStatus.by_ref],
+    :uint64
   attach_function :uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_replicas,
     [:uint64, :uint32, RustCallStatus.by_ref],
     :uint64
   attach_function :uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_ttl_policy,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
   attach_function :uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created,
@@ -2746,10 +2857,16 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_build,
     [RustCallStatus.by_ref],
     :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_idle_ttl_seconds,
+    [RustCallStatus.by_ref],
+    :uint16
   attach_function :uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_replicas,
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_policy,
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created,
@@ -2842,6 +2959,17 @@ class ServiceProtocol
 
 end
 
+
+
+
+
+
+
+class WarmPoolTtlPolicy
+  RETAIN = 1
+  CASCADE = 2
+
+end
 
 
 
@@ -3236,13 +3364,15 @@ end
 
   # Record type OSGymSandboxWarmPoolSpec
 class OSGymSandboxWarmPoolSpec
-  attr_reader :replicas, :sandbox_template_ref, :autoscaling, :ttl_seconds_after_created
+  attr_reader :replicas, :sandbox_template_ref, :autoscaling, :ttl_seconds_after_created, :idle_ttl_seconds, :ttl_policy
 
-  def initialize(replicas:, sandbox_template_ref:, autoscaling:, ttl_seconds_after_created: nil)
+  def initialize(replicas:, sandbox_template_ref:, autoscaling:, ttl_seconds_after_created: nil, idle_ttl_seconds: nil, ttl_policy: nil)
     @replicas = replicas
     @sandbox_template_ref = sandbox_template_ref
     @autoscaling = autoscaling
     @ttl_seconds_after_created = ttl_seconds_after_created
+    @idle_ttl_seconds = idle_ttl_seconds
+    @ttl_policy = ttl_policy
   end
 
   def ==(other)
@@ -3258,6 +3388,12 @@ class OSGymSandboxWarmPoolSpec
     if @ttl_seconds_after_created != other.ttl_seconds_after_created
       return false
     end
+    if @idle_ttl_seconds != other.idle_ttl_seconds
+      return false
+    end
+    if @ttl_policy != other.ttl_policy
+      return false
+    end
 
     true
   end
@@ -3265,12 +3401,14 @@ end
 
   # Record type OSGymSandboxWarmPoolStatus
 class OSGymSandboxWarmPoolStatus
-  attr_reader :replicas, :ready_replicas, :selector
+  attr_reader :replicas, :ready_replicas, :selector, :last_claimed_at, :last_activity_time
 
-  def initialize(replicas:, ready_replicas:, selector:)
+  def initialize(replicas:, ready_replicas:, selector:, last_claimed_at: nil, last_activity_time: nil)
     @replicas = replicas
     @ready_replicas = ready_replicas
     @selector = selector
+    @last_claimed_at = last_claimed_at
+    @last_activity_time = last_activity_time
   end
 
   def ==(other)
@@ -3281,6 +3419,12 @@ class OSGymSandboxWarmPoolStatus
       return false
     end
     if @selector != other.selector
+      return false
+    end
+    if @last_claimed_at != other.last_claimed_at
+      return false
+    end
+    if @last_activity_time != other.last_activity_time
       return false
     end
 
@@ -3791,6 +3935,12 @@ end
     result = CyclopsSdkSchema.rust_call_with_error(SchemaBuildError,:uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_build,uniffi_clone_handle(),)
     return result.consumeIntoTypeOSGymSandboxWarmPoolSpec
   end
+  def idle_ttl_seconds(value)
+        value = CyclopsSdkSchema::uniffi_in_range(value, "u32", 0, 2**32)
+
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_idle_ttl_seconds,uniffi_clone_handle(),value)
+    return OSGymSandboxWarmPoolSpecBuilder.uniffi_allocate(result)
+  end
   def replicas(value)
         value = CyclopsSdkSchema::uniffi_in_range(value, "u32", 0, 2**32)
 
@@ -3801,6 +3951,12 @@ end
         value = value
         RustBuffer.check_lower_TypeSandboxTemplateRef(value)
     result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref,uniffi_clone_handle(),RustBuffer.alloc_from_TypeSandboxTemplateRef(value))
+    return OSGymSandboxWarmPoolSpecBuilder.uniffi_allocate(result)
+  end
+  def ttl_policy(value)
+        value = value
+        RustBuffer.check_lower_TypeWarmPoolTtlPolicy(value)
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_ttl_policy,uniffi_clone_handle(),RustBuffer.alloc_from_TypeWarmPoolTtlPolicy(value))
     return OSGymSandboxWarmPoolSpecBuilder.uniffi_allocate(result)
   end
   def ttl_seconds_after_created(value)

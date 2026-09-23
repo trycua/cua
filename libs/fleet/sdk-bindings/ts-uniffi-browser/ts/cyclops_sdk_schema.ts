@@ -1034,11 +1034,53 @@ const FfiConverterTypeWarmPoolAutoscaling = (() => {
     return new FFIConverter();
 })();
 
+/**
+ * What the pool-operator deletes when a warm pool's creation TTL
+ * (`ttlSecondsAfterCreated`) or idle TTL (`idleTtlSeconds`) expires.
+ */
+export enum WarmPoolTtlPolicy {
+    /**
+     * Delete only the warm pool. Its claims and namespace stay.
+     */
+    Retain,
+    /**
+     * Also delete the pool's dead unbound claims (TTL passed, older than
+     * max(900s, bindDeadline)). Bound claims, the namespace and volumes stay.
+     */
+    Cascade
+}
+
+const FfiConverterTypeWarmPoolTtlPolicy = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = WarmPoolTtlPolicy;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return WarmPoolTtlPolicy.Retain;
+                case 2: return WarmPoolTtlPolicy.Cascade;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case WarmPoolTtlPolicy.Retain: return ordinalConverter.write(1, into);
+                case WarmPoolTtlPolicy.Cascade: return ordinalConverter.write(2, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
 export type OsGymSandboxWarmPoolSpec = {
     replicas: number,
     sandboxTemplateRef: SandboxTemplateRef,
     autoscaling?: WarmPoolAutoscaling,
-    ttlSecondsAfterCreated?: number
+    ttlSecondsAfterCreated?: number,
+    idleTtlSeconds?: number,
+    ttlPolicy?: WarmPoolTtlPolicy
 }
 
 /**
@@ -1046,7 +1088,9 @@ export type OsGymSandboxWarmPoolSpec = {
  */
 export const OsGymSandboxWarmPoolSpec = (() => {
     const defaults = () => ({
-        ttlSecondsAfterCreated: undefined
+        ttlSecondsAfterCreated: undefined,
+        idleTtlSeconds: undefined,
+        ttlPolicy: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<OsGymSandboxWarmPoolSpec, ReturnType<typeof defaults>>(defaults);
@@ -1066,7 +1110,9 @@ const FfiConverterTypeOSGymSandboxWarmPoolSpec = (() => {
                 replicas: FfiConverterUInt32.read(from),
                 sandboxTemplateRef: FfiConverterTypeSandboxTemplateRef.read(from),
                 autoscaling: FfiConverterOptionalTypeWarmPoolAutoscaling.read(from),
-                ttlSecondsAfterCreated: FfiConverterOptionalUInt32.read(from)
+                ttlSecondsAfterCreated: FfiConverterOptionalUInt32.read(from),
+                idleTtlSeconds: FfiConverterOptionalUInt32.read(from),
+                ttlPolicy: FfiConverterOptionalTypeWarmPoolTtlPolicy.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -1074,12 +1120,16 @@ const FfiConverterTypeOSGymSandboxWarmPoolSpec = (() => {
             FfiConverterTypeSandboxTemplateRef.write(value.sandboxTemplateRef, into);
             FfiConverterOptionalTypeWarmPoolAutoscaling.write(value.autoscaling, into);
             FfiConverterOptionalUInt32.write(value.ttlSecondsAfterCreated, into);
+            FfiConverterOptionalUInt32.write(value.idleTtlSeconds, into);
+            FfiConverterOptionalTypeWarmPoolTtlPolicy.write(value.ttlPolicy, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterUInt32.allocationSize(value.replicas) +
              FfiConverterTypeSandboxTemplateRef.allocationSize(value.sandboxTemplateRef) +
              FfiConverterOptionalTypeWarmPoolAutoscaling.allocationSize(value.autoscaling) +
-             FfiConverterOptionalUInt32.allocationSize(value.ttlSecondsAfterCreated);
+             FfiConverterOptionalUInt32.allocationSize(value.ttlSecondsAfterCreated) +
+             FfiConverterOptionalUInt32.allocationSize(value.idleTtlSeconds) +
+             FfiConverterOptionalTypeWarmPoolTtlPolicy.allocationSize(value.ttlPolicy);
 
         }
     };
@@ -1089,7 +1139,9 @@ const FfiConverterTypeOSGymSandboxWarmPoolSpec = (() => {
 export type OsGymSandboxWarmPoolStatus = {
     replicas?: number,
     readyReplicas?: number,
-    selector?: string
+    selector?: string,
+    lastClaimedAt?: string,
+    lastActivityTime?: string
 }
 
 /**
@@ -1097,6 +1149,8 @@ export type OsGymSandboxWarmPoolStatus = {
  */
 export const OsGymSandboxWarmPoolStatus = (() => {
     const defaults = () => ({
+        lastClaimedAt: undefined,
+        lastActivityTime: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<OsGymSandboxWarmPoolStatus, ReturnType<typeof defaults>>(defaults);
@@ -1115,18 +1169,24 @@ const FfiConverterTypeOSGymSandboxWarmPoolStatus = (() => {
             return {
                 replicas: FfiConverterOptionalUInt32.read(from),
                 readyReplicas: FfiConverterOptionalUInt32.read(from),
-                selector: FfiConverterOptionalString.read(from)
+                selector: FfiConverterOptionalString.read(from),
+                lastClaimedAt: FfiConverterOptionalString.read(from),
+                lastActivityTime: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterOptionalUInt32.write(value.replicas, into);
             FfiConverterOptionalUInt32.write(value.readyReplicas, into);
             FfiConverterOptionalString.write(value.selector, into);
+            FfiConverterOptionalString.write(value.lastClaimedAt, into);
+            FfiConverterOptionalString.write(value.lastActivityTime, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterOptionalUInt32.allocationSize(value.replicas) +
              FfiConverterOptionalUInt32.allocationSize(value.readyReplicas) +
-             FfiConverterOptionalString.allocationSize(value.selector);
+             FfiConverterOptionalString.allocationSize(value.selector) +
+             FfiConverterOptionalString.allocationSize(value.lastClaimedAt) +
+             FfiConverterOptionalString.allocationSize(value.lastActivityTime);
 
         }
     };
@@ -1480,8 +1540,10 @@ export interface OsGymSandboxWarmPoolSpecBuilderLike {
 
     autoscaling(value: WarmPoolAutoscaling): OsGymSandboxWarmPoolSpecBuilderLike;
     build() /*throws*/: OsGymSandboxWarmPoolSpec;
+    idleTtlSeconds(value: number): OsGymSandboxWarmPoolSpecBuilderLike;
     replicas(value: number): OsGymSandboxWarmPoolSpecBuilderLike;
     sandboxTemplateRef(value: SandboxTemplateRef): OsGymSandboxWarmPoolSpecBuilderLike;
+    ttlPolicy(value: WarmPoolTtlPolicy): OsGymSandboxWarmPoolSpecBuilderLike;
     ttlSecondsAfterCreated(value: number): OsGymSandboxWarmPoolSpecBuilderLike;
 }
 /**
@@ -1542,6 +1604,18 @@ export class OsGymSandboxWarmPoolSpecBuilder extends UniffiAbstractObject implem
     ));
     }
 
+    idleTtlSeconds(value: number): OsGymSandboxWarmPoolSpecBuilderLike {
+    return FfiConverterTypeOSGymSandboxWarmPoolSpecBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_idle_ttl_seconds(
+                uniffiTypeOsGymSandboxWarmPoolSpecBuilderObjectFactory.clonePointer(this),
+        FfiConverterUInt32.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
     replicas(value: number): OsGymSandboxWarmPoolSpecBuilderLike {
     return FfiConverterTypeOSGymSandboxWarmPoolSpecBuilder.lift(uniffiCaller.rustCall(
             /*caller:*/ (callStatus) => {
@@ -1560,6 +1634,18 @@ export class OsGymSandboxWarmPoolSpecBuilder extends UniffiAbstractObject implem
                 return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref(
                 uniffiTypeOsGymSandboxWarmPoolSpecBuilderObjectFactory.clonePointer(this),
         FfiConverterTypeSandboxTemplateRef.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    ttlPolicy(value: WarmPoolTtlPolicy): OsGymSandboxWarmPoolSpecBuilderLike {
+    return FfiConverterTypeOSGymSandboxWarmPoolSpecBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_ttl_policy(
+                uniffiTypeOsGymSandboxWarmPoolSpecBuilderObjectFactory.clonePointer(this),
+        FfiConverterTypeWarmPoolTtlPolicy.lower(value, nativeModule().rustbuffer_alloc),
                 callStatus);
             },
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
@@ -2546,6 +2632,9 @@ const FfiConverterOptionalTypeOidcConfig = new FfiConverterOptional(FfiConverter
 // FfiConverter for WarmPoolAutoscaling | undefined
 const FfiConverterOptionalTypeWarmPoolAutoscaling = new FfiConverterOptional(FfiConverterTypeWarmPoolAutoscaling);
 
+// FfiConverter for WarmPoolTtlPolicy | undefined
+const FfiConverterOptionalTypeWarmPoolTtlPolicy = new FfiConverterOptional(FfiConverterTypeWarmPoolTtlPolicy);
+
 
 /**
  * This should be called before anything else.
@@ -2583,11 +2672,17 @@ function uniffiEnsureInitialized() {
     if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_build() !== 5682) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_build");
     }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_idle_ttl_seconds() !== 56677) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_idle_ttl_seconds");
+    }
     if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_replicas() !== 50438) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_replicas");
     }
     if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref() !== 7198) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_policy() !== 53364) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_policy");
     }
     if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created() !== 44516) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created");
@@ -2726,5 +2821,6 @@ export default Object.freeze({
     FfiConverterTypeVmTemplateBuilder,
     FfiConverterTypeWarmPoolAutoscaling,
     FfiConverterTypeWarmPoolAutoscalingBuilder,
+    FfiConverterTypeWarmPoolTtlPolicy,
   }
 });

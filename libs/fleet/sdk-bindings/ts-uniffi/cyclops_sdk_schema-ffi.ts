@@ -363,12 +363,22 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
+    "uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_idle_ttl_seconds": {
+      args: [FfiType.Handle, FfiType.UInt32],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
     "uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_replicas": {
       args: [FfiType.Handle, FfiType.UInt32],
       ret: FfiType.Handle,
       hasRustCallStatus: true,
     },
     "uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_ttl_policy": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: true,
@@ -578,12 +588,22 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_idle_ttl_seconds": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_replicas": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
     "uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_policy": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -848,8 +868,10 @@ interface NativeModuleInterface {
     uniffi_cyclops_sdk_schema_fn_constructor_osgymsandboxwarmpoolspecbuilder_new(uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_autoscaling(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_build(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_idle_ttl_seconds(uniffiSelf: bigint, value: number, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_replicas(uniffiSelf: bigint, value: number, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_ttl_policy(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created(uniffiSelf: bigint, value: number, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_schema_fn_constructor_preservedjson_from_json(value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_schema_fn_method_preservedjson_to_json(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -891,8 +913,10 @@ interface NativeModuleInterface {
     uniffi_cyclops_sdk_schema_checksum_constructor_osgymsandboxwarmpoolspecbuilder_new(): number;
     uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_autoscaling(): number;
     uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_build(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_idle_ttl_seconds(): number;
     uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_replicas(): number;
     uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_policy(): number;
     uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created(): number;
     uniffi_cyclops_sdk_schema_checksum_constructor_preservedjson_from_json(): number;
     uniffi_cyclops_sdk_schema_checksum_method_preservedjson_to_json(): number;

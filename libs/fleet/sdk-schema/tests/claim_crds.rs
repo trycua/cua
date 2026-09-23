@@ -168,6 +168,98 @@ fn claim_raw_crd_matches_the_authoritative_field_contract() {
 }
 
 #[test]
+fn warm_pool_idle_ttl_and_ttl_policy_are_optional_and_bounded() {
+    let crd = serde_json::to_value(OSGymSandboxWarmPool::crd()).unwrap();
+    let spec = crd
+        .pointer("/spec/versions/0/schema/openAPIV3Schema/properties/spec")
+        .unwrap();
+    let required = spec.pointer("/required").and_then(Value::as_array).unwrap();
+    for field in ["idleTtlSeconds", "ttlPolicy"] {
+        assert!(
+            !required.contains(&json!(field)),
+            "{field} must be optional"
+        );
+    }
+
+    let mut idle = spec.pointer("/properties/idleTtlSeconds").cloned().unwrap();
+    idle.as_object_mut().unwrap().remove("description");
+    normalize_numbers(&mut idle);
+    assert_eq!(
+        idle,
+        json!({"type": "integer", "minimum": 0, "maximum": 4_294_967_295u64})
+    );
+
+    let mut policy = spec.pointer("/properties/ttlPolicy").cloned().unwrap();
+    policy.as_object_mut().unwrap().remove("description");
+    // No materialized default: absent keeps today's Retain behaviour without
+    // the apiserver rewriting every stored pool.
+    assert_eq!(
+        policy,
+        json!({"type": "string", "enum": ["Retain", "Cascade"]})
+    );
+
+    let status = crd
+        .pointer("/spec/versions/0/schema/openAPIV3Schema/properties/status/properties")
+        .unwrap();
+    for field in ["lastClaimedAt", "lastActivityTime"] {
+        let mut schema = status.pointer(&format!("/{field}")).cloned().unwrap();
+        schema.as_object_mut().unwrap().remove("description");
+        assert_eq!(schema, json!({"type": "string", "format": "date-time"}));
+    }
+}
+
+#[test]
+fn warm_pool_lifecycle_fields_round_trip_and_stay_absent_when_unset() {
+    use cyclops_sdk_schema::{
+        OSGymSandboxWarmPoolSpec, OSGymSandboxWarmPoolStatus, WarmPoolTtlPolicy,
+    };
+
+    let spec: OSGymSandboxWarmPoolSpec = serde_json::from_value(json!({
+        "replicas": 0,
+        "sandboxTemplateRef": {"name": "p-template"},
+        "idleTtlSeconds": 900,
+        "ttlPolicy": "Cascade",
+    }))
+    .unwrap();
+    assert_eq!(spec.idle_ttl_seconds, Some(900));
+    assert_eq!(spec.ttl_policy, Some(WarmPoolTtlPolicy::Cascade));
+    assert_eq!(serde_json::to_value(&spec).unwrap()["ttlPolicy"], "Cascade");
+
+    let legacy: OSGymSandboxWarmPoolSpec = serde_json::from_value(json!({
+        "replicas": 1,
+        "sandboxTemplateRef": {"name": "p-template"},
+    }))
+    .unwrap();
+    let legacy_json = serde_json::to_value(&legacy).unwrap();
+    assert!(legacy_json.get("idleTtlSeconds").is_none());
+    assert!(legacy_json.get("ttlPolicy").is_none());
+
+    assert!(
+        serde_json::from_value::<OSGymSandboxWarmPoolSpec>(json!({
+            "replicas": 1,
+            "sandboxTemplateRef": {"name": "p-template"},
+            "ttlPolicy": "Orphan",
+        }))
+        .is_err()
+    );
+
+    let status: OSGymSandboxWarmPoolStatus = serde_json::from_value(json!({
+        "replicas": 1,
+        "lastClaimedAt": "2026-09-22T10:00:00Z",
+        "lastActivityTime": "2026-09-22T10:05:00Z",
+    }))
+    .unwrap();
+    assert_eq!(
+        status.last_claimed_at.as_deref(),
+        Some("2026-09-22T10:00:00Z")
+    );
+    assert_eq!(
+        status.last_activity_time.as_deref(),
+        Some("2026-09-22T10:05:00Z")
+    );
+}
+
+#[test]
 fn claim_secret_ref_is_optional_and_pinned_to_the_gateway_prefix() {
     let claim = serde_json::to_value(OSGymSandboxClaim::crd()).unwrap();
     let spec = claim

@@ -241,3 +241,38 @@ test_nested_virt_false_allowed_for_non_admin {
 		"flags": non_admin_flags,
 	}
 }
+
+# Warm pools and claims carry no image configuration, so pool admission does
+# not apply to them: the idle-TTL lifecycle fields and creator-set cua.ai/
+# labels and annotations pass without a policy change.
+test_warm_pool_lifecycle_fields_and_labels_not_subject_to_pool_admission {
+	pool_admission.allow with input as {
+		"method": "POST",
+		"params": {"path": "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxwarmpools"},
+		"body": json.marshal({
+			"metadata": {
+				"name": "ns-a",
+				"labels": {"cua.ai/managed-by": "cua-sdk"},
+				"annotations": {"cua.ai/created-by": "sdk"},
+			},
+			"spec": {
+				"replicas": 0,
+				"sandboxTemplateRef": {"name": "ns-a-template"},
+				"idleTtlSeconds": 900,
+				"ttlPolicy": "Cascade",
+			},
+		}),
+		"user": non_admin,
+		"flags": non_admin_flags,
+	}
+}
+
+test_claim_label_patch_not_subject_to_pool_admission {
+	pool_admission.allow with input as {
+		"method": "PATCH",
+		"params": {"path": "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxclaims/claim-a"},
+		"body": json.marshal({"metadata": {"labels": {"cua.ai/fleet": "f1"}}}),
+		"user": non_admin,
+		"flags": non_admin_flags,
+	}
+}

@@ -203,12 +203,22 @@ extern "C" {
         ptr: u64,
         status_: &mut u::RustCallStatus,
     ) -> u::RustBuffer;
+    fn uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_idle_ttl_seconds(
+        ptr: u64,
+        value: u32,
+        status_: &mut u::RustCallStatus,
+    ) -> u64;
     fn uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_replicas(
         ptr: u64,
         value: u32,
         status_: &mut u::RustCallStatus,
     ) -> u64;
     fn uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref(
+        ptr: u64,
+        value: u::RustBuffer,
+        status_: &mut u::RustCallStatus,
+    ) -> u64;
+    fn uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_ttl_policy(
         ptr: u64,
         value: u::RustBuffer,
         status_: &mut u::RustCallStatus,
@@ -276,9 +286,12 @@ extern "C" {
     fn uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxtemplatespecbuilder_vm_template() -> u16;
     fn uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_autoscaling() -> u16;
     fn uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_build() -> u16;
+    fn uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_idle_ttl_seconds(
+    ) -> u16;
     fn uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_replicas() -> u16;
     fn uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref(
     ) -> u16;
+    fn uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_policy() -> u16;
     fn uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created(
     ) -> u16;
     fn uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_build() -> u16;
@@ -991,6 +1004,23 @@ pub fn ubrn_uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_
     value_.into_js()
 }
 #[wasm_bindgen]
+pub fn ubrn_uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_idle_ttl_seconds(
+    ptr: js::Handle,
+    value: js::UInt32,
+    f_status_: &mut js::RustCallStatus,
+) -> js::Handle {
+    let mut u_status_ = u::RustCallStatus::default();
+    let value_ = unsafe {
+        uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_idle_ttl_seconds(
+            u64::into_rust(ptr),
+            u32::into_rust(value),
+            &mut u_status_,
+        )
+    };
+    f_status_.copy_from(u_status_);
+    value_.into_js()
+}
+#[wasm_bindgen]
 pub fn ubrn_uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_replicas(
     ptr: js::Handle,
     value: js::UInt32,
@@ -1016,6 +1046,23 @@ pub fn ubrn_uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_
     let mut u_status_ = u::RustCallStatus::default();
     let value_ = unsafe {
         uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref(
+            u64::into_rust(ptr),
+            u::RustBuffer::into_rust(value),
+            &mut u_status_,
+        )
+    };
+    f_status_.copy_from(u_status_);
+    value_.into_js()
+}
+#[wasm_bindgen]
+pub fn ubrn_uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_ttl_policy(
+    ptr: js::Handle,
+    value: js::ForeignBytes,
+    f_status_: &mut js::RustCallStatus,
+) -> js::Handle {
+    let mut u_status_ = u::RustCallStatus::default();
+    let value_ = unsafe {
+        uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_ttl_policy(
             u64::into_rust(ptr),
             u::RustBuffer::into_rust(value),
             &mut u_status_,
@@ -1285,6 +1332,12 @@ pub unsafe fn ubrn_uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoo
     uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_build().into_js()
 }
 #[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_idle_ttl_seconds(
+) -> js::UInt16 {
+    uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_idle_ttl_seconds()
+        .into_js()
+}
+#[wasm_bindgen]
 pub unsafe fn ubrn_uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_replicas(
 ) -> js::UInt16 {
     uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_replicas().into_js()
@@ -1294,6 +1347,11 @@ pub unsafe fn ubrn_uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoo
 ) -> js::UInt16 {
     uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref()
         .into_js()
+}
+#[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_policy(
+) -> js::UInt16 {
+    uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_policy().into_js()
 }
 #[wasm_bindgen]
 pub unsafe fn ubrn_uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created(

@@ -656,9 +656,13 @@ public protocol OsGymSandboxWarmPoolSpecBuilderProtocol: AnyObject, Sendable {
 
     func build() throws  -> OsGymSandboxWarmPoolSpec
 
+    func idleTtlSeconds(value: UInt32)  -> OsGymSandboxWarmPoolSpecBuilder
+
     func replicas(value: UInt32)  -> OsGymSandboxWarmPoolSpecBuilder
 
     func sandboxTemplateRef(value: SandboxTemplateRef)  -> OsGymSandboxWarmPoolSpecBuilder
+
+    func ttlPolicy(value: WarmPoolTtlPolicy)  -> OsGymSandboxWarmPoolSpecBuilder
 
     func ttlSecondsAfterCreated(value: UInt32)  -> OsGymSandboxWarmPoolSpecBuilder
 
@@ -740,6 +744,15 @@ open func build()throws  -> OsGymSandboxWarmPoolSpec  {
 })
 }
 
+open func idleTtlSeconds(value: UInt32) -> OsGymSandboxWarmPoolSpecBuilder  {
+    return try!  FfiConverterTypeOSGymSandboxWarmPoolSpecBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_idle_ttl_seconds(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt32.lower(value),$0
+    )
+})
+}
+
 open func replicas(value: UInt32) -> OsGymSandboxWarmPoolSpecBuilder  {
     return try!  FfiConverterTypeOSGymSandboxWarmPoolSpecBuilder_lift(try! rustCall() {
     uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_replicas(
@@ -754,6 +767,15 @@ open func sandboxTemplateRef(value: SandboxTemplateRef) -> OsGymSandboxWarmPoolS
     uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref(
             self.uniffiCloneHandle(),
         FfiConverterTypeSandboxTemplateRef_lower(value),$0
+    )
+})
+}
+
+open func ttlPolicy(value: WarmPoolTtlPolicy) -> OsGymSandboxWarmPoolSpecBuilder  {
+    return try!  FfiConverterTypeOSGymSandboxWarmPoolSpecBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_ttl_policy(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeWarmPoolTtlPolicy_lower(value),$0
     )
 })
 }
@@ -2227,14 +2249,18 @@ public struct OsGymSandboxWarmPoolSpec: Equatable, Hashable {
     public var sandboxTemplateRef: SandboxTemplateRef
     public var autoscaling: WarmPoolAutoscaling?
     public var ttlSecondsAfterCreated: UInt32?
+    public var idleTtlSeconds: UInt32?
+    public var ttlPolicy: WarmPoolTtlPolicy?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(replicas: UInt32, sandboxTemplateRef: SandboxTemplateRef, autoscaling: WarmPoolAutoscaling?, ttlSecondsAfterCreated: UInt32? = nil) {
+    public init(replicas: UInt32, sandboxTemplateRef: SandboxTemplateRef, autoscaling: WarmPoolAutoscaling?, ttlSecondsAfterCreated: UInt32? = nil, idleTtlSeconds: UInt32? = nil, ttlPolicy: WarmPoolTtlPolicy? = nil) {
         self.replicas = replicas
         self.sandboxTemplateRef = sandboxTemplateRef
         self.autoscaling = autoscaling
         self.ttlSecondsAfterCreated = ttlSecondsAfterCreated
+        self.idleTtlSeconds = idleTtlSeconds
+        self.ttlPolicy = ttlPolicy
     }
 
 
@@ -2256,7 +2282,9 @@ public struct FfiConverterTypeOSGymSandboxWarmPoolSpec: FfiConverterRustBuffer {
                 replicas: FfiConverterUInt32.read(from: &buf),
                 sandboxTemplateRef: FfiConverterTypeSandboxTemplateRef.read(from: &buf),
                 autoscaling: FfiConverterOptionTypeWarmPoolAutoscaling.read(from: &buf),
-                ttlSecondsAfterCreated: FfiConverterOptionUInt32.read(from: &buf)
+                ttlSecondsAfterCreated: FfiConverterOptionUInt32.read(from: &buf),
+                idleTtlSeconds: FfiConverterOptionUInt32.read(from: &buf),
+                ttlPolicy: FfiConverterOptionTypeWarmPoolTtlPolicy.read(from: &buf)
         )
     }
 
@@ -2265,6 +2293,8 @@ public struct FfiConverterTypeOSGymSandboxWarmPoolSpec: FfiConverterRustBuffer {
         FfiConverterTypeSandboxTemplateRef.write(value.sandboxTemplateRef, into: &buf)
         FfiConverterOptionTypeWarmPoolAutoscaling.write(value.autoscaling, into: &buf)
         FfiConverterOptionUInt32.write(value.ttlSecondsAfterCreated, into: &buf)
+        FfiConverterOptionUInt32.write(value.idleTtlSeconds, into: &buf)
+        FfiConverterOptionTypeWarmPoolTtlPolicy.write(value.ttlPolicy, into: &buf)
     }
 }
 
@@ -2288,13 +2318,17 @@ public struct OsGymSandboxWarmPoolStatus: Equatable, Hashable {
     public var replicas: UInt32?
     public var readyReplicas: UInt32?
     public var selector: String?
+    public var lastClaimedAt: String?
+    public var lastActivityTime: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(replicas: UInt32?, readyReplicas: UInt32?, selector: String?) {
+    public init(replicas: UInt32?, readyReplicas: UInt32?, selector: String?, lastClaimedAt: String? = nil, lastActivityTime: String? = nil) {
         self.replicas = replicas
         self.readyReplicas = readyReplicas
         self.selector = selector
+        self.lastClaimedAt = lastClaimedAt
+        self.lastActivityTime = lastActivityTime
     }
 
 
@@ -2315,7 +2349,9 @@ public struct FfiConverterTypeOSGymSandboxWarmPoolStatus: FfiConverterRustBuffer
             try OsGymSandboxWarmPoolStatus(
                 replicas: FfiConverterOptionUInt32.read(from: &buf),
                 readyReplicas: FfiConverterOptionUInt32.read(from: &buf),
-                selector: FfiConverterOptionString.read(from: &buf)
+                selector: FfiConverterOptionString.read(from: &buf),
+                lastClaimedAt: FfiConverterOptionString.read(from: &buf),
+                lastActivityTime: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -2323,6 +2359,8 @@ public struct FfiConverterTypeOSGymSandboxWarmPoolStatus: FfiConverterRustBuffer
         FfiConverterOptionUInt32.write(value.replicas, into: &buf)
         FfiConverterOptionUInt32.write(value.readyReplicas, into: &buf)
         FfiConverterOptionString.write(value.selector, into: &buf)
+        FfiConverterOptionString.write(value.lastClaimedAt, into: &buf)
+        FfiConverterOptionString.write(value.lastActivityTime, into: &buf)
     }
 }
 
@@ -3115,6 +3153,84 @@ public func FfiConverterTypeServiceProtocol_lower(_ value: ServiceProtocol) -> R
 }
 
 
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * What the pool-operator deletes when a warm pool's creation TTL
+ * (`ttlSecondsAfterCreated`) or idle TTL (`idleTtlSeconds`) expires.
+ */
+
+public enum WarmPoolTtlPolicy: Equatable, Hashable {
+
+    /**
+     * Delete only the warm pool. Its claims and namespace stay.
+     */
+    case retain
+    /**
+     * Also delete the pool's dead unbound claims (TTL passed, older than
+     * max(900s, bindDeadline)). Bound claims, the namespace and volumes stay.
+     */
+    case cascade
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension WarmPoolTtlPolicy: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeWarmPoolTtlPolicy: FfiConverterRustBuffer {
+    typealias SwiftType = WarmPoolTtlPolicy
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> WarmPoolTtlPolicy {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .retain
+
+        case 2: return .cascade
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: WarmPoolTtlPolicy, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .retain:
+            writeInt(&buf, Int32(1))
+
+
+        case .cascade:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeWarmPoolTtlPolicy_lift(_ buf: RustBuffer) throws -> WarmPoolTtlPolicy {
+    return try FfiConverterTypeWarmPoolTtlPolicy.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeWarmPoolTtlPolicy_lower(_ value: WarmPoolTtlPolicy) -> RustBuffer {
+    return FfiConverterTypeWarmPoolTtlPolicy.lower(value)
+}
+
+
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -3422,6 +3538,30 @@ fileprivate struct FfiConverterOptionTypeServiceProtocol: FfiConverterRustBuffer
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeServiceProtocol.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeWarmPoolTtlPolicy: FfiConverterRustBuffer {
+    typealias SwiftType = WarmPoolTtlPolicy?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeWarmPoolTtlPolicy.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeWarmPoolTtlPolicy.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -3772,10 +3912,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_build() != 5682) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_idle_ttl_seconds() != 56677) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_replicas() != 50438) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref() != 7198) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_policy() != 53364) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created() != 44516) {

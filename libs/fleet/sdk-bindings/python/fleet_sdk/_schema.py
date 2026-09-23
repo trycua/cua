@@ -490,9 +490,13 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_build() != 5682:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_idle_ttl_seconds() != 56677:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_replicas() != 50438:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref() != 7198:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_policy() != 53364:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created() != 44516:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -925,6 +929,12 @@ _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_b
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_build.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_idle_ttl_seconds.argtypes = (
+    ctypes.c_uint64,
+    ctypes.c_uint32,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_idle_ttl_seconds.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_replicas.argtypes = (
     ctypes.c_uint64,
     ctypes.c_uint32,
@@ -937,6 +947,12 @@ _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_s
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_ttl_policy.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_ttl_policy.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created.argtypes = (
     ctypes.c_uint64,
     ctypes.c_uint32,
@@ -1148,12 +1164,18 @@ _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbui
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_build.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_build.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_idle_ttl_seconds.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_idle_ttl_seconds.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_replicas.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_replicas.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_policy.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_policy.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created.restype = ctypes.c_uint16
@@ -2877,9 +2899,85 @@ class _UniffiFfiConverterOptionalTypeWarmPoolAutoscaling(_UniffiConverterRustBuf
         else:
             raise InternalError("Unexpected flag byte for optional type")
 
+
+
+
+
+
+class WarmPoolTtlPolicy(enum.Enum):
+    """
+    What the pool-operator deletes when a warm pool's creation TTL
+    (`ttlSecondsAfterCreated`) or idle TTL (`idleTtlSeconds`) expires.
+"""
+
+    RETAIN = 0
+    """
+    Delete only the warm pool. Its claims and namespace stay.
+"""
+
+    CASCADE = 1
+    """
+    Also delete the pool's dead unbound claims (TTL passed, older than
+    max(900s, bindDeadline)). Bound claims, the namespace and volumes stay.
+"""
+
+
+
+class _UniffiFfiConverterTypeWarmPoolTtlPolicy(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return WarmPoolTtlPolicy.RETAIN
+        if variant == 2:
+            return WarmPoolTtlPolicy.CASCADE
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if value == WarmPoolTtlPolicy.RETAIN:
+            return
+        if value == WarmPoolTtlPolicy.CASCADE:
+            return
+        raise ValueError(value)
+
+    @staticmethod
+    def write(value, buf):
+        if value == WarmPoolTtlPolicy.RETAIN:
+            buf.write_i32(1)
+        if value == WarmPoolTtlPolicy.CASCADE:
+            buf.write_i32(2)
+
+
+
+class _UniffiFfiConverterOptionalTypeWarmPoolTtlPolicy(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeWarmPoolTtlPolicy.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeWarmPoolTtlPolicy.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeWarmPoolTtlPolicy.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
 @dataclass
 class OsGymSandboxWarmPoolSpec:
-    def __init__(self, *, replicas:int, sandbox_template_ref:SandboxTemplateRef, autoscaling:typing.Optional[WarmPoolAutoscaling], ttl_seconds_after_created:typing.Optional[int] = _DEFAULT):
+    def __init__(self, *, replicas:int, sandbox_template_ref:SandboxTemplateRef, autoscaling:typing.Optional[WarmPoolAutoscaling], ttl_seconds_after_created:typing.Optional[int] = _DEFAULT, idle_ttl_seconds:typing.Optional[int] = _DEFAULT, ttl_policy:typing.Optional[WarmPoolTtlPolicy] = _DEFAULT):
         self.replicas = replicas
         self.sandbox_template_ref = sandbox_template_ref
         self.autoscaling = autoscaling
@@ -2887,12 +2985,20 @@ class OsGymSandboxWarmPoolSpec:
             self.ttl_seconds_after_created = None
         else:
             self.ttl_seconds_after_created = ttl_seconds_after_created
+        if idle_ttl_seconds is _DEFAULT:
+            self.idle_ttl_seconds = None
+        else:
+            self.idle_ttl_seconds = idle_ttl_seconds
+        if ttl_policy is _DEFAULT:
+            self.ttl_policy = None
+        else:
+            self.ttl_policy = ttl_policy
 
 
 
 
     def __str__(self):
-        return "OsGymSandboxWarmPoolSpec(replicas={}, sandbox_template_ref={}, autoscaling={}, ttl_seconds_after_created={})".format(self.replicas, self.sandbox_template_ref, self.autoscaling, self.ttl_seconds_after_created)
+        return "OsGymSandboxWarmPoolSpec(replicas={}, sandbox_template_ref={}, autoscaling={}, ttl_seconds_after_created={}, idle_ttl_seconds={}, ttl_policy={})".format(self.replicas, self.sandbox_template_ref, self.autoscaling, self.ttl_seconds_after_created, self.idle_ttl_seconds, self.ttl_policy)
     def __eq__(self, other):
         if self.replicas != other.replicas:
             return False
@@ -2901,6 +3007,10 @@ class OsGymSandboxWarmPoolSpec:
         if self.autoscaling != other.autoscaling:
             return False
         if self.ttl_seconds_after_created != other.ttl_seconds_after_created:
+            return False
+        if self.idle_ttl_seconds != other.idle_ttl_seconds:
+            return False
+        if self.ttl_policy != other.ttl_policy:
             return False
         return True
 
@@ -2912,6 +3022,8 @@ class _UniffiFfiConverterTypeOSGymSandboxWarmPoolSpec(_UniffiConverterRustBuffer
             sandbox_template_ref=_UniffiFfiConverterTypeSandboxTemplateRef.read(buf),
             autoscaling=_UniffiFfiConverterOptionalTypeWarmPoolAutoscaling.read(buf),
             ttl_seconds_after_created=_UniffiFfiConverterOptionalUInt32.read(buf),
+            idle_ttl_seconds=_UniffiFfiConverterOptionalUInt32.read(buf),
+            ttl_policy=_UniffiFfiConverterOptionalTypeWarmPoolTtlPolicy.read(buf),
         )
 
     @staticmethod
@@ -2920,6 +3032,8 @@ class _UniffiFfiConverterTypeOSGymSandboxWarmPoolSpec(_UniffiConverterRustBuffer
         _UniffiFfiConverterTypeSandboxTemplateRef.check_lower(value.sandbox_template_ref)
         _UniffiFfiConverterOptionalTypeWarmPoolAutoscaling.check_lower(value.autoscaling)
         _UniffiFfiConverterOptionalUInt32.check_lower(value.ttl_seconds_after_created)
+        _UniffiFfiConverterOptionalUInt32.check_lower(value.idle_ttl_seconds)
+        _UniffiFfiConverterOptionalTypeWarmPoolTtlPolicy.check_lower(value.ttl_policy)
 
     @staticmethod
     def write(value, buf):
@@ -2927,25 +3041,39 @@ class _UniffiFfiConverterTypeOSGymSandboxWarmPoolSpec(_UniffiConverterRustBuffer
         _UniffiFfiConverterTypeSandboxTemplateRef.write(value.sandbox_template_ref, buf)
         _UniffiFfiConverterOptionalTypeWarmPoolAutoscaling.write(value.autoscaling, buf)
         _UniffiFfiConverterOptionalUInt32.write(value.ttl_seconds_after_created, buf)
+        _UniffiFfiConverterOptionalUInt32.write(value.idle_ttl_seconds, buf)
+        _UniffiFfiConverterOptionalTypeWarmPoolTtlPolicy.write(value.ttl_policy, buf)
 
 @dataclass
 class OsGymSandboxWarmPoolStatus:
-    def __init__(self, *, replicas:typing.Optional[int], ready_replicas:typing.Optional[int], selector:typing.Optional[str]):
+    def __init__(self, *, replicas:typing.Optional[int], ready_replicas:typing.Optional[int], selector:typing.Optional[str], last_claimed_at:typing.Optional[str] = _DEFAULT, last_activity_time:typing.Optional[str] = _DEFAULT):
         self.replicas = replicas
         self.ready_replicas = ready_replicas
         self.selector = selector
+        if last_claimed_at is _DEFAULT:
+            self.last_claimed_at = None
+        else:
+            self.last_claimed_at = last_claimed_at
+        if last_activity_time is _DEFAULT:
+            self.last_activity_time = None
+        else:
+            self.last_activity_time = last_activity_time
 
 
 
 
     def __str__(self):
-        return "OsGymSandboxWarmPoolStatus(replicas={}, ready_replicas={}, selector={})".format(self.replicas, self.ready_replicas, self.selector)
+        return "OsGymSandboxWarmPoolStatus(replicas={}, ready_replicas={}, selector={}, last_claimed_at={}, last_activity_time={})".format(self.replicas, self.ready_replicas, self.selector, self.last_claimed_at, self.last_activity_time)
     def __eq__(self, other):
         if self.replicas != other.replicas:
             return False
         if self.ready_replicas != other.ready_replicas:
             return False
         if self.selector != other.selector:
+            return False
+        if self.last_claimed_at != other.last_claimed_at:
+            return False
+        if self.last_activity_time != other.last_activity_time:
             return False
         return True
 
@@ -2956,6 +3084,8 @@ class _UniffiFfiConverterTypeOSGymSandboxWarmPoolStatus(_UniffiConverterRustBuff
             replicas=_UniffiFfiConverterOptionalUInt32.read(buf),
             ready_replicas=_UniffiFfiConverterOptionalUInt32.read(buf),
             selector=_UniffiFfiConverterOptionalString.read(buf),
+            last_claimed_at=_UniffiFfiConverterOptionalString.read(buf),
+            last_activity_time=_UniffiFfiConverterOptionalString.read(buf),
         )
 
     @staticmethod
@@ -2963,12 +3093,16 @@ class _UniffiFfiConverterTypeOSGymSandboxWarmPoolStatus(_UniffiConverterRustBuff
         _UniffiFfiConverterOptionalUInt32.check_lower(value.replicas)
         _UniffiFfiConverterOptionalUInt32.check_lower(value.ready_replicas)
         _UniffiFfiConverterOptionalString.check_lower(value.selector)
+        _UniffiFfiConverterOptionalString.check_lower(value.last_claimed_at)
+        _UniffiFfiConverterOptionalString.check_lower(value.last_activity_time)
 
     @staticmethod
     def write(value, buf):
         _UniffiFfiConverterOptionalUInt32.write(value.replicas, buf)
         _UniffiFfiConverterOptionalUInt32.write(value.ready_replicas, buf)
         _UniffiFfiConverterOptionalString.write(value.selector, buf)
+        _UniffiFfiConverterOptionalString.write(value.last_claimed_at, buf)
+        _UniffiFfiConverterOptionalString.write(value.last_activity_time, buf)
 
 
 
@@ -3185,9 +3319,13 @@ class OsGymSandboxWarmPoolSpecBuilderProtocol(typing.Protocol):
         raise NotImplementedError
     def build(self, ) -> OsGymSandboxWarmPoolSpec:
         raise NotImplementedError
+    def idle_ttl_seconds(self, value: int) -> OsGymSandboxWarmPoolSpecBuilder:
+        raise NotImplementedError
     def replicas(self, value: int) -> OsGymSandboxWarmPoolSpecBuilder:
         raise NotImplementedError
     def sandbox_template_ref(self, value: SandboxTemplateRef) -> OsGymSandboxWarmPoolSpecBuilder:
+        raise NotImplementedError
+    def ttl_policy(self, value: WarmPoolTtlPolicy) -> OsGymSandboxWarmPoolSpecBuilder:
         raise NotImplementedError
     def ttl_seconds_after_created(self, value: int) -> OsGymSandboxWarmPoolSpecBuilder:
         raise NotImplementedError
@@ -3251,6 +3389,21 @@ class OsGymSandboxWarmPoolSpecBuilder(OsGymSandboxWarmPoolSpecBuilderProtocol):
             *_uniffi_lowered_args,
         )
         return _uniffi_lift_return(_uniffi_ffi_result)
+    def idle_ttl_seconds(self, value: int) -> OsGymSandboxWarmPoolSpecBuilder:
+
+        _UniffiFfiConverterUInt32.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterUInt32.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeOSGymSandboxWarmPoolSpecBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_idle_ttl_seconds,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
     def replicas(self, value: int) -> OsGymSandboxWarmPoolSpecBuilder:
 
         _UniffiFfiConverterUInt32.check_lower(value)
@@ -3278,6 +3431,21 @@ class OsGymSandboxWarmPoolSpecBuilder(OsGymSandboxWarmPoolSpecBuilderProtocol):
         _uniffi_ffi_result = _uniffi_rust_call_with_error(
             _uniffi_error_converter,
             _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def ttl_policy(self, value: WarmPoolTtlPolicy) -> OsGymSandboxWarmPoolSpecBuilder:
+
+        _UniffiFfiConverterTypeWarmPoolTtlPolicy.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterTypeWarmPoolTtlPolicy.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeOSGymSandboxWarmPoolSpecBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_ttl_policy,
             *_uniffi_lowered_args,
         )
         return _uniffi_lift_return(_uniffi_ffi_result)
@@ -4056,6 +4224,7 @@ __all__ = [
     "ImagePullPolicy",
     "Firmware",
     "ServiceProtocol",
+    "WarmPoolTtlPolicy",
     "JsonValueError",
     "SchemaBuildError",
     "ClaimLifecycle",

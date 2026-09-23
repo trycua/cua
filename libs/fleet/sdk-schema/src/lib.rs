@@ -22,7 +22,7 @@ pub use sandbox::{
 };
 pub use warmpool::{
     OSGymSandboxWarmPool, OSGymSandboxWarmPoolSpec, OSGymSandboxWarmPoolSpecBuilder,
-    OSGymSandboxWarmPoolStatus, WarmPoolAutoscaling, WarmPoolAutoscalingBuilder,
+    OSGymSandboxWarmPoolStatus, WarmPoolAutoscaling, WarmPoolAutoscalingBuilder, WarmPoolTtlPolicy,
 };
 
 uniffi::setup_scaffolding!("cyclops_sdk_schema");

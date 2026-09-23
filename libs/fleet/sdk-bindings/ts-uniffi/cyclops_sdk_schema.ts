@@ -1025,11 +1025,53 @@ const FfiConverterTypeWarmPoolAutoscaling = (() => {
     return new FFIConverter();
 })();
 
+/**
+ * What the pool-operator deletes when a warm pool's creation TTL
+ * (`ttlSecondsAfterCreated`) or idle TTL (`idleTtlSeconds`) expires.
+ */
+export enum WarmPoolTtlPolicy {
+    /**
+     * Delete only the warm pool. Its claims and namespace stay.
+     */
+    Retain,
+    /**
+     * Also delete the pool's dead unbound claims (TTL passed, older than
+     * max(900s, bindDeadline)). Bound claims, the namespace and volumes stay.
+     */
+    Cascade
+}
+
+const FfiConverterTypeWarmPoolTtlPolicy = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = WarmPoolTtlPolicy;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return WarmPoolTtlPolicy.Retain;
+                case 2: return WarmPoolTtlPolicy.Cascade;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case WarmPoolTtlPolicy.Retain: return ordinalConverter.write(1, into);
+                case WarmPoolTtlPolicy.Cascade: return ordinalConverter.write(2, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
 export type OsGymSandboxWarmPoolSpec = {
     replicas: number,
     sandboxTemplateRef: SandboxTemplateRef,
     autoscaling?: WarmPoolAutoscaling,
-    ttlSecondsAfterCreated?: number
+    ttlSecondsAfterCreated?: number,
+    idleTtlSeconds?: number,
+    ttlPolicy?: WarmPoolTtlPolicy
 }
 
 /**
@@ -1037,7 +1079,9 @@ export type OsGymSandboxWarmPoolSpec = {
  */
 export const OsGymSandboxWarmPoolSpec = (() => {
     const defaults = () => ({
-        ttlSecondsAfterCreated: undefined
+        ttlSecondsAfterCreated: undefined,
+        idleTtlSeconds: undefined,
+        ttlPolicy: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<OsGymSandboxWarmPoolSpec, ReturnType<typeof defaults>>(defaults);
@@ -1057,7 +1101,9 @@ const FfiConverterTypeOSGymSandboxWarmPoolSpec = (() => {
                 replicas: FfiConverterUInt32.read(from),
                 sandboxTemplateRef: FfiConverterTypeSandboxTemplateRef.read(from),
                 autoscaling: FfiConverterOptionalTypeWarmPoolAutoscaling.read(from),
-                ttlSecondsAfterCreated: FfiConverterOptionalUInt32.read(from)
+                ttlSecondsAfterCreated: FfiConverterOptionalUInt32.read(from),
+                idleTtlSeconds: FfiConverterOptionalUInt32.read(from),
+                ttlPolicy: FfiConverterOptionalTypeWarmPoolTtlPolicy.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -1065,12 +1111,16 @@ const FfiConverterTypeOSGymSandboxWarmPoolSpec = (() => {
             FfiConverterTypeSandboxTemplateRef.write(value.sandboxTemplateRef, into);
             FfiConverterOptionalTypeWarmPoolAutoscaling.write(value.autoscaling, into);
             FfiConverterOptionalUInt32.write(value.ttlSecondsAfterCreated, into);
+            FfiConverterOptionalUInt32.write(value.idleTtlSeconds, into);
+            FfiConverterOptionalTypeWarmPoolTtlPolicy.write(value.ttlPolicy, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterUInt32.allocationSize(value.replicas) +
              FfiConverterTypeSandboxTemplateRef.allocationSize(value.sandboxTemplateRef) +
              FfiConverterOptionalTypeWarmPoolAutoscaling.allocationSize(value.autoscaling) +
-             FfiConverterOptionalUInt32.allocationSize(value.ttlSecondsAfterCreated);
+             FfiConverterOptionalUInt32.allocationSize(value.ttlSecondsAfterCreated) +
+             FfiConverterOptionalUInt32.allocationSize(value.idleTtlSeconds) +
+             FfiConverterOptionalTypeWarmPoolTtlPolicy.allocationSize(value.ttlPolicy);
 
         }
     };
@@ -1080,7 +1130,9 @@ const FfiConverterTypeOSGymSandboxWarmPoolSpec = (() => {
 export type OsGymSandboxWarmPoolStatus = {
     replicas?: number,
     readyReplicas?: number,
-    selector?: string
+    selector?: string,
+    lastClaimedAt?: string,
+    lastActivityTime?: string
 }
 
 /**
@@ -1088,6 +1140,8 @@ export type OsGymSandboxWarmPoolStatus = {
  */
 export const OsGymSandboxWarmPoolStatus = (() => {
     const defaults = () => ({
+        lastClaimedAt: undefined,
+        lastActivityTime: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<OsGymSandboxWarmPoolStatus, ReturnType<typeof defaults>>(defaults);
@@ -1106,18 +1160,24 @@ const FfiConverterTypeOSGymSandboxWarmPoolStatus = (() => {
             return {
                 replicas: FfiConverterOptionalUInt32.read(from),
                 readyReplicas: FfiConverterOptionalUInt32.read(from),
-                selector: FfiConverterOptionalString.read(from)
+                selector: FfiConverterOptionalString.read(from),
+                lastClaimedAt: FfiConverterOptionalString.read(from),
+                lastActivityTime: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterOptionalUInt32.write(value.replicas, into);
             FfiConverterOptionalUInt32.write(value.readyReplicas, into);
             FfiConverterOptionalString.write(value.selector, into);
+            FfiConverterOptionalString.write(value.lastClaimedAt, into);
+            FfiConverterOptionalString.write(value.lastActivityTime, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterOptionalUInt32.allocationSize(value.replicas) +
              FfiConverterOptionalUInt32.allocationSize(value.readyReplicas) +
-             FfiConverterOptionalString.allocationSize(value.selector);
+             FfiConverterOptionalString.allocationSize(value.selector) +
+             FfiConverterOptionalString.allocationSize(value.lastClaimedAt) +
+             FfiConverterOptionalString.allocationSize(value.lastActivityTime);
 
         }
     };
@@ -1392,6 +1452,9 @@ const FfiConverterOptionalTypeOidcConfig = new FfiConverterOptional(FfiConverter
 // FfiConverter for WarmPoolAutoscaling | undefined
 const FfiConverterOptionalTypeWarmPoolAutoscaling = new FfiConverterOptional(FfiConverterTypeWarmPoolAutoscaling);
 
+// FfiConverter for WarmPoolTtlPolicy | undefined
+const FfiConverterOptionalTypeWarmPoolTtlPolicy = new FfiConverterOptional(FfiConverterTypeWarmPoolTtlPolicy);
+
 
 /**
  * This should be called before anything else.
@@ -1446,5 +1509,6 @@ export default Object.freeze({
     FfiConverterTypeServiceProtocol,
     FfiConverterTypeVmTemplate,
     FfiConverterTypeWarmPoolAutoscaling,
+    FfiConverterTypeWarmPoolTtlPolicy,
   }
 });

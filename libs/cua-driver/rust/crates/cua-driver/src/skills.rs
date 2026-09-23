@@ -42,7 +42,7 @@
 //!
 //! - Claude Code: `~/.claude/skills/`
 //! - Codex:       `~/.agents/skills/`
-//! - Pi:          `~/.pi/agent/skills/`
+//! - Pi:          `~/.agents/skills/` (shared global location; Pi also reads `~/.pi/agent/skills/`)
 //! - Prime Agent: `~/.prime/agent/skills/`
 //! - OpenClaw:    `~/.openclaw/skills/`
 //! - OpenCode: `~/.config/opencode/skills/` (macOS / Linux),
@@ -219,7 +219,10 @@ const AGENTS: &[Agent] = &[
     },
     Agent {
         label: "Pi",
-        parent: AgentParent::Home(".pi/agent/skills"),
+        // Pi discovers both ~/.pi/agent/skills and ~/.agents/skills. Reuse the
+        // latter so Pi + Codex converge on one managed cua-driver link instead
+        // of making Pi report a duplicate skill-name collision.
+        parent: AgentParent::Home(".agents/skills"),
         install_marker: Some(".pi/agent"),
     },
     Agent {
@@ -1033,9 +1036,26 @@ mod tests {
 
         assert!(matches!(
             target.parent,
-            AgentParent::Home(".pi/agent/skills")
+            AgentParent::Home(".agents/skills")
         ));
         assert!(matches!(target.install_marker, Some(".pi/agent")));
+    }
+
+    #[test]
+    fn codex_and_pi_share_one_managed_global_skill_directory() {
+        let codex = AGENTS.iter().find(|agent| agent.label == "Codex").unwrap();
+        let pi = AGENTS.iter().find(|agent| agent.label == "Pi").unwrap();
+
+        assert!(matches!(
+            codex.parent,
+            AgentParent::Home(".agents/skills")
+        ));
+        assert!(matches!(
+            pi.parent,
+            AgentParent::Home(".agents/skills")
+        ));
+        assert!(matches!(codex.install_marker, Some(".codex")));
+        assert!(matches!(pi.install_marker, Some(".pi/agent")));
     }
 
     #[test]

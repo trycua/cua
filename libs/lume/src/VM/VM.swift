@@ -44,6 +44,8 @@ struct VMDirContext {
 class VM {
     // MARK: - Properties
 
+    private var vsockForwarders: [VsockForwarder] = []
+
     var vmDirContext: VMDirContext
     var telemetryTransport: TelemetryTransport?
 
@@ -175,6 +177,8 @@ class VM {
         displayMode: DisplayMode = .vnc, sharedDirectories: [SharedDirectory], mount: Path?,
         vncPort: Int = 0, vncPassword: String? = nil, recoveryMode: Bool = false,
         usbMassStoragePaths: [Path]? = nil, additionalDiskPaths: [Path]? = nil,
+        stackedDiskSpecs: [StackedDiskSpec]? = nil,
+        vsockForwards: [VsockForwarder.Rule]? = nil,
         networkMode: NetworkMode? = nil, clipboard: Bool = false,
         vncPolicy: VNCPolicy = .enabled
     ) async throws {
@@ -322,6 +326,7 @@ class VM {
                 recoveryMode: recoveryMode,
                 usbMassStoragePaths: usbMassStoragePaths,
                 additionalDiskPaths: additionalDiskPaths,
+                stackedDiskSpecs: stackedDiskSpecs,
                 networkMode: networkMode
             )
             Logger.info(
@@ -397,6 +402,18 @@ class VM {
                 "Starting VM via virtualization service", metadata: ["name": vmDirContext.name])
             try await service.start()
             Logger.info("VM started successfully", metadata: ["name": vmDirContext.name])
+
+            if let rules = vsockForwards, !rules.isEmpty, let handle = service.vmHandle {
+                for rule in rules {
+                    let fwd = VsockForwarder(handle: handle, rule: rule)
+                    do {
+                        try fwd.start()
+                        vsockForwarders.append(fwd)
+                    } catch {
+                        Logger.error("vsock forward failed", metadata: ["error": error.localizedDescription])
+                    }
+                }
+            }
             if let telemetryTransport {
                 TelemetryClient.shared.recordVMStarted(
                     transport: telemetryTransport,
@@ -1275,6 +1292,7 @@ class VM {
         recoveryMode: Bool = false,
         usbMassStoragePaths: [Path]? = nil,
         additionalDiskPaths: [Path]? = nil,
+        stackedDiskSpecs: [StackedDiskSpec]? = nil,
         networkMode: NetworkMode? = nil
     ) throws -> VMVirtualizationServiceContext {
         // This is a diagnostic log to track actual file paths on disk for debugging
@@ -1297,6 +1315,7 @@ class VM {
             recoveryMode: recoveryMode,
             usbMassStoragePaths: usbMassStoragePaths,
             additionalDiskPaths: additionalDiskPaths,
+            stackedDiskSpecs: stackedDiskSpecs,
             networkMode: effectiveNetworkMode
         )
     }

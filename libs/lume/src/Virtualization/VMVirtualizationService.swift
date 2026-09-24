@@ -16,6 +16,7 @@ struct VMVirtualizationServiceContext {
     let recoveryMode: Bool
     let usbMassStoragePaths: [Path]?
     let additionalDiskPaths: [Path]?
+    let stackedDiskSpecs: [StackedDiskSpec]?
     let networkMode: NetworkMode
 }
 
@@ -25,6 +26,7 @@ protocol VMVirtualizationService {
     var state: VZVirtualMachine.State { get }
     /// The framework VM used by native display and VNC. Test services may return nil.
     var displayVirtualMachine: VZVirtualMachine? { get }
+    var vmHandle: BaseVirtualizationService.VirtualMachineHandle? { get }
     func start() async throws
     func stop() async throws
     func pause() async throws
@@ -59,6 +61,8 @@ class BaseVirtualizationService: VMVirtualizationService {
     var displayVirtualMachine: VZVirtualMachine? {
         virtualMachine
     }
+
+    var vmHandle: BaseVirtualizationService.VirtualMachineHandle? { virtualMachineHandle }
 
     init(
         virtualMachine: VZVirtualMachine,
@@ -286,9 +290,12 @@ class BaseVirtualizationService: VMVirtualizationService {
         let automountTag = VZVirtioFileSystemDeviceConfiguration.macOSGuestAutomountTag
         return grouped.map { tag, directories in
             let device = VZVirtioFileSystemDeviceConfiguration(tag: tag)
+            let isFlatAutomount = tag == automountTag && directories.count == 1
             device.share = createDirectoryShare(
                 directories,
                 withLiveUpdatePlaceholder: withLiveUpdatePlaceholder && tag == automountTag
+                    && !isFlatAutomount,
+                preferSingle: isFlatAutomount
             )
             return device
         }
@@ -296,8 +303,18 @@ class BaseVirtualizationService: VMVirtualizationService {
 
     nonisolated static func createDirectoryShare(
         _ sharedDirectories: [SharedDirectory],
-        withLiveUpdatePlaceholder: Bool = false
+        withLiveUpdatePlaceholder: Bool = false,
+        preferSingle: Bool = false
     ) -> VZDirectoryShare {
+        if preferSingle, let only = sharedDirectories.first, sharedDirectories.count == 1 {
+            return VZSingleDirectoryShare(
+                directory: VZSharedDirectory(
+                    url: URL(fileURLWithPath: only.hostPath),
+                    readOnly: only.readOnly
+                )
+            )
+        }
+
         var directories: [String: VZSharedDirectory] = [:]
         if withLiveUpdatePlaceholder {
             // Live updates work reliably when VZMultipleDirectoryShare starts populated.
@@ -396,6 +413,11 @@ final class DarwinVirtualizationService: BaseVirtualizationService {
                     try createStorageDeviceConfiguration(diskPath: diskPath, readOnly: false))
             }
         }
+        if let stacks = config.stackedDiskSpecs {
+            for stack in stacks {
+                storageDevices.append(try stack.storageDeviceConfiguration())
+            }
+        }
         vzConfig.storageDevices = storageDevices
         vzConfig.networkDevices = [
             try createNetworkDeviceConfiguration(
@@ -405,6 +427,7 @@ final class DarwinVirtualizationService: BaseVirtualizationService {
         ]
         vzConfig.memoryBalloonDevices = [VZVirtioTraditionalMemoryBalloonDeviceConfiguration()]
         vzConfig.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
+        vzConfig.socketDevices = [VZVirtioSocketDeviceConfiguration()]
         
         // Audio configuration
         let soundDeviceConfiguration = VZVirtioSoundDeviceConfiguration()
@@ -618,6 +641,12 @@ final class LinuxVirtualizationService: BaseVirtualizationService {
                         diskPath: diskPath, readOnly: false, cachingMode: diskCachingMode))
             }
         }
+        if let stacks = config.stackedDiskSpecs {
+            for stack in stacks {
+                storageDevices.append(
+                    try stack.storageDeviceConfiguration(cachingMode: diskCachingMode))
+            }
+        }
         vzConfig.storageDevices = storageDevices
         vzConfig.networkDevices = [
             try createNetworkDeviceConfiguration(
@@ -627,6 +656,7 @@ final class LinuxVirtualizationService: BaseVirtualizationService {
         ]
         vzConfig.memoryBalloonDevices = [VZVirtioTraditionalMemoryBalloonDeviceConfiguration()]
         vzConfig.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
+        vzConfig.socketDevices = [VZVirtioSocketDeviceConfiguration()]
 
         // Audio configuration
         let soundDeviceConfiguration = VZVirtioSoundDeviceConfiguration()

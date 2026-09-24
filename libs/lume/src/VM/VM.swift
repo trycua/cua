@@ -44,6 +44,8 @@ struct VMDirContext {
 class VM {
     // MARK: - Properties
 
+    private var vsockPortForwarders: [VsockPortForwarder] = []
+
     var vmDirContext: VMDirContext
     var telemetryTransport: TelemetryTransport?
 
@@ -226,6 +228,8 @@ class VM {
         displayMode: DisplayMode = .vnc, sharedDirectories: [SharedDirectory], mount: Path?,
         vncPort: Int = 0, vncPassword: String? = nil, recoveryMode: Bool = false,
         usbMassStoragePaths: [Path]? = nil, additionalDiskPaths: [Path]? = nil,
+        stackedDiskSpecs: [StackedDiskSpec]? = nil,
+        vsockForwards: [VsockPortForwarder.Rule]? = nil,
         networkMode: NetworkMode? = nil, clipboard: Bool = false,
         vncPolicy: VNCPolicy = .enabled, forwards: [UInt16] = [],
         hostDevices: HostDeviceOptions = .all,
@@ -353,6 +357,7 @@ class VM {
                 recoveryMode: recoveryMode,
                 usbMassStoragePaths: usbMassStoragePaths,
                 additionalDiskPaths: additionalDiskPaths,
+                stackedDiskSpecs: stackedDiskSpecs,
                 networkMode: networkMode
             )
             activeNetworkMode = config.networkMode
@@ -363,6 +368,7 @@ class VM {
             activeSocketDevice = Self.usesSocketDevice(
                 forwards: forwards,
                 guestTimePort: guestTimePort,
+                vsockPortForwards: !(vsockForwards ?? []).isEmpty,
                 hasSavedState: !recoveryMode && vmDirContext.dir.hasSavedState(),
                 savedStateHasVsock: vmDirContext.dir.savedStateHasVsock())
             config.socketDevice = activeSocketDevice
@@ -378,6 +384,11 @@ class VM {
                         "The saved state has no virtio socket device; resuming without the guest time service",
                         metadata: ["name": vmDirContext.name])
                 }
+            }
+            if !activeSocketDevice, !(vsockForwards ?? []).isEmpty {
+                Logger.info(
+                    "The saved state has no virtio socket device; resuming without --vsock-forward",
+                    metadata: ["name": vmDirContext.name])
             }
             vmDirContext.dir.clearVsockSession()
             Logger.info(
@@ -472,6 +483,19 @@ class VM {
             Logger.info("VM started successfully", metadata: ["name": vmDirContext.name])
             if activeSocketDevice && !forwards.isEmpty {
                 startVsockForwards(forwards, service: service)
+            }
+            if activeSocketDevice, let rules = vsockForwards, !rules.isEmpty,
+                let handle = service.vmHandle
+            {
+                for rule in rules {
+                    let fwd = VsockPortForwarder(handle: handle, rule: rule)
+                    do {
+                        try fwd.start()
+                        vsockPortForwarders.append(fwd)
+                    } catch {
+                        Logger.error("vsock forward failed", metadata: ["error": error.localizedDescription])
+                    }
+                }
             }
             if let telemetryTransport {
                 TelemetryClient.shared.recordVMStarted(
@@ -1490,14 +1514,14 @@ class VM {
 
     /// Whether the VM gets a virtio socket device. A resume follows the saved
     /// state, which restores only into the devices it was saved with, whatever
-    /// this run asks for; a cold boot gets one for `forwards` or a guest time
-    /// service.
+    /// this run asks for; a cold boot gets one for `forwards`, a guest time
+    /// service, or `--vsock-forward` rules (`vsockPortForwards`).
     nonisolated static func usesSocketDevice(
-        forwards: [UInt16], guestTimePort: UInt32? = nil,
+        forwards: [UInt16], guestTimePort: UInt32? = nil, vsockPortForwards: Bool = false,
         hasSavedState: Bool, savedStateHasVsock: Bool
     ) -> Bool {
         if hasSavedState { return savedStateHasVsock }
-        return !forwards.isEmpty || guestTimePort != nil
+        return !forwards.isEmpty || guestTimePort != nil || vsockPortForwards
     }
 
     /// Publishes `forwards` on host loopback ports through the guest agent
@@ -1548,6 +1572,7 @@ class VM {
         recoveryMode: Bool = false,
         usbMassStoragePaths: [Path]? = nil,
         additionalDiskPaths: [Path]? = nil,
+        stackedDiskSpecs: [StackedDiskSpec]? = nil,
         networkMode: NetworkMode? = nil
     ) throws -> VMVirtualizationServiceContext {
         // This is a diagnostic log to track actual file paths on disk for debugging
@@ -1570,6 +1595,7 @@ class VM {
             recoveryMode: recoveryMode,
             usbMassStoragePaths: usbMassStoragePaths,
             additionalDiskPaths: additionalDiskPaths,
+            stackedDiskSpecs: stackedDiskSpecs,
             networkMode: effectiveNetworkMode
         )
     }

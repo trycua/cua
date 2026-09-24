@@ -9,6 +9,7 @@
 //! (avoids per-property cross-process calls that make Chrome's 5000-node tree
 //!  take >4s when reading each property individually).
 
+use cua_driver_core::walk_budget::WalkBudget;
 use windows::core::{Interface, BSTR};
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
@@ -239,14 +240,29 @@ pub fn walk_tree_bounded(
     max_elements: usize,
     max_depth: usize,
 ) -> UiaTreeResult {
-    unsafe { walk_tree_unsafe(hwnd, query, max_elements, max_depth) }
+    let mut budget = WalkBudget::nodes_only(max_elements);
+    walk_tree_budgeted(hwnd, query, max_depth, &mut budget)
+}
+
+/// [`walk_tree_bounded`] under a caller's [`WalkBudget`]. The bulk
+/// `BuildUpdatedCache` fetch cannot be interrupted, so the budget is checked
+/// before each retry of it and per node of the cached (and MSAA) walk: a walk
+/// whose fetch outlasted the budget returns an empty, truncated tree. Read
+/// the outcome from `budget` afterwards.
+pub fn walk_tree_budgeted(
+    hwnd: u64,
+    query: Option<&str>,
+    max_depth: usize,
+    budget: &mut WalkBudget,
+) -> UiaTreeResult {
+    unsafe { walk_tree_unsafe(hwnd, query, max_depth, budget) }
 }
 
 unsafe fn walk_tree_unsafe(
     hwnd: u64,
     query: Option<&str>,
-    max_elements: usize,
     max_depth: usize,
+    budget: &mut WalkBudget,
 ) -> UiaTreeResult {
     let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
 
@@ -318,7 +334,7 @@ unsafe fn walk_tree_unsafe(
     // Two reasons:
     //   1. **Hang avoidance** for SALSUBFRAME / SALMENU / SALTMPSUBFRAME —
     //      VCL's UIA provider hangs on `BuildUpdatedCache(TreeScope.Subtree)`
-    //      under the daemon's MTA pool, wasting the 4 s outer timeout.
+    //      under the daemon's MTA pool, wasting the timeout_ms walk budget.
     //   2. **Role fidelity** for SALFRAME (main document window, Recovery
     //      dialog) — UIA technically walks fine, but the built-in
     //      MSAA→UIA proxy collapses `ROLE_SYSTEM_BUTTONDROPDOWN` (0x38) to
@@ -338,7 +354,7 @@ unsafe fn walk_tree_unsafe(
         n > 0 && String::from_utf16_lossy(&buf[..n as usize]).starts_with("SAL")
     };
     if sal_class {
-        return crate::msaa::walk_msaa_tree(hwnd);
+        return crate::msaa::walk_msaa_tree_budgeted(hwnd, budget);
     }
 
     // Two-call sequence (ElementFromHandle + BuildUpdatedCache) instead of
@@ -370,7 +386,7 @@ unsafe fn walk_tree_unsafe(
                 Ok(e) => break e,
                 Err(e) => {
                     attempt += 1;
-                    if attempt >= MAX_ATTEMPTS {
+                    if attempt >= MAX_ATTEMPTS || budget.expired() {
                         return UiaTreeResult {
                             tree_markdown: format!(
                                 "BuildUpdatedCache failed after {attempt} attempts: {e}"
@@ -387,7 +403,6 @@ unsafe fn walk_tree_unsafe(
     let mut nodes: Vec<UiaNode> = Vec::new();
     let mut lines: Vec<(usize, String)> = Vec::new();
     let mut counter = 0usize;
-    let mut total = 0usize;
 
     walk_cached_bounded(
         &root_elem,
@@ -397,8 +412,7 @@ unsafe fn walk_tree_unsafe(
         &mut nodes,
         &mut lines,
         &mut counter,
-        &mut total,
-        max_elements,
+        budget,
         max_depth,
     );
 
@@ -418,7 +432,7 @@ unsafe fn walk_tree_unsafe(
     // wrapper-only node from the primary walk stays the result — better than
     // erasing it AND leaving the consumed `MAX_TOTAL_ELEMENTS` budget intact
     // for the fallback (which would then truncate large trees prematurely).
-    if nodes.iter().filter(|n| n.element_index.is_some()).count() == 0 {
+    if nodes.iter().filter(|n| n.element_index.is_some()).count() == 0 && !budget.expired() {
         // Skip the desktop-root walk-by-pid fallback for VCL / SAL
         // targets (LibreOffice, OpenOffice). The fallback does its own
         // `BuildUpdatedCache(TreeScope.Subtree)` per matched top-level
@@ -450,7 +464,6 @@ unsafe fn walk_tree_unsafe(
                 let mut fallback_nodes: Vec<UiaNode> = Vec::new();
                 let mut fallback_lines: Vec<(usize, String)> = Vec::new();
                 let mut fallback_counter = 0usize;
-                let mut fallback_total = 0usize;
 
                 tracing::debug!(
                     target: "uia",
@@ -464,17 +477,16 @@ unsafe fn walk_tree_unsafe(
                     &mut fallback_nodes,
                     &mut fallback_lines,
                     &mut fallback_counter,
-                    &mut fallback_total,
-                    max_elements,
+                    budget,
                     max_depth,
                 );
 
                 if fallback_nodes.iter().any(|n| n.element_index.is_some()) {
                     nodes = fallback_nodes;
                     lines = fallback_lines;
-                    // counter/total aren't read after this point — they're
-                    // only used by walk_cached's &mut params for element
-                    // indexing inside that call.
+                    // counter isn't read after this point — it's only used
+                    // by walk_cached's &mut params for element indexing
+                    // inside that call. The budget spans both walks.
                 }
             }
         } else {
@@ -487,7 +499,7 @@ unsafe fn walk_tree_unsafe(
             // Return a tree_markdown that mirrors the get_window_state
             // timeout diagnostic so callers get the same actionable
             // fallback options even though the walk itself didn't hit
-            // the 4 s outer timeout (because we skipped the hang-prone
+            // the timeout_ms walk budget (because we skipped the hang-prone
             // fallback). Without this the caller sees an empty tree
             // and no error, which is less actionable.
             let stub = format!(
@@ -550,8 +562,7 @@ unsafe fn walk_root_by_pid(
     nodes: &mut Vec<UiaNode>,
     lines: &mut Vec<(usize, String)>,
     counter: &mut usize,
-    total: &mut usize,
-    max_elements: usize,
+    budget: &mut WalkBudget,
     max_depth: usize,
 ) {
     let root = match automation.GetRootElement() {
@@ -611,16 +622,7 @@ unsafe fn walk_root_by_pid(
             }
         };
         walk_cached_bounded(
-            &cached,
-            0,
-            None,
-            false,
-            nodes,
-            lines,
-            counter,
-            total,
-            max_elements,
-            max_depth,
+            &cached, 0, None, false, nodes, lines, counter, budget, max_depth,
         );
     }
 }
@@ -632,7 +634,6 @@ unsafe fn walk_cached(
     nodes: &mut Vec<UiaNode>,
     lines: &mut Vec<(usize, String)>,
     counter: &mut usize,
-    total: &mut usize,
 ) {
     walk_cached_bounded(
         element,
@@ -642,8 +643,7 @@ unsafe fn walk_cached(
         nodes,
         lines,
         counter,
-        total,
-        MAX_TOTAL_ELEMENTS,
+        &mut WalkBudget::nodes_only(MAX_TOTAL_ELEMENTS),
         MAX_DEPTH,
     );
 }
@@ -657,14 +657,14 @@ unsafe fn walk_cached_bounded(
     nodes: &mut Vec<UiaNode>,
     lines: &mut Vec<(usize, String)>,
     counter: &mut usize,
-    total: &mut usize,
-    max_elements: usize,
+    budget: &mut WalkBudget,
     max_depth: usize,
 ) {
-    if depth > max_depth || *total >= max_elements {
+    // Node and time budget: a refused node is counted as discovered but not
+    // visited, and the walk unwinds with the partial tree it has.
+    if depth > max_depth || !budget.admit() {
         return;
     }
-    *total += 1;
 
     let control_type = read_cached_control_type(element);
     let name = read_cached_bstr_name(element);
@@ -756,8 +756,7 @@ unsafe fn walk_cached_bounded(
                     nodes,
                     lines,
                     counter,
-                    total,
-                    max_elements,
+                    budget,
                     max_depth,
                 );
             }

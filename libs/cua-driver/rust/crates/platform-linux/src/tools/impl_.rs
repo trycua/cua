@@ -1712,7 +1712,7 @@ impl Tool for GetWindowStateTool {
                         tr.elapsed_ms
                     );
                     if tr.truncated {
-                        header.push_str(&truncation_note(
+                        header.push_str(&cua_driver_core::walk_budget::truncation_note(
                             tr.truncation_reason.as_deref(),
                             timeout_ms,
                             tr.nodes_visited,
@@ -1880,12 +1880,13 @@ impl Tool for GetWindowStateTool {
                             }));
                     } else if count == 0 && tr.truncated {
                         structured["degraded"] = json!(true);
-                        structured["degraded_reason"] = json!(truncation_note(
-                            tr.truncation_reason.as_deref(),
-                            timeout_ms,
-                            tr.nodes_visited,
-                            tr.nodes_pending,
-                        ));
+                        structured["degraded_reason"] =
+                            json!(cua_driver_core::walk_budget::truncation_note(
+                                tr.truncation_reason.as_deref(),
+                                timeout_ms,
+                                tr.nodes_visited,
+                                tr.nodes_pending,
+                            ));
                     } else if count == 0 {
                         structured["degraded"] = json!(true);
                         structured["degraded_reason"] = json!(
@@ -2033,32 +2034,6 @@ impl Tool for GetWindowStateTool {
 
 /// One-line, model-facing explanation of a partial tree and what to do about
 /// it. Shared by the text header and the structured `degraded_reason`.
-fn truncation_note(
-    reason: Option<&str>,
-    timeout_ms: u64,
-    visited: usize,
-    pending: usize,
-) -> String {
-    let why = match reason {
-        Some("timeout") => format!("the {timeout_ms} ms timeout_ms budget ran out"),
-        Some("node_budget") => "the max_elements node budget ran out".to_owned(),
-        Some("app_unresponsive") => "the application stopped answering AT-SPI".to_owned(),
-        Some("app_lookup_timeout") => {
-            format!("the application did not register with AT-SPI within {timeout_ms} ms")
-        }
-        Some("huge_container") => "a container with more children than can be enumerated \
-            (e.g. a spreadsheet's cell grid) was not expanded"
-            .to_owned(),
-        Some(other) => other.to_owned(),
-        None => "the walk stopped early".to_owned(),
-    };
-    format!(
-        "⚠️ PARTIAL TREE: {why} after {visited} node(s) ({pending} discovered but not visited). \
-         Every element listed is real; elements after the cut are missing. If the element you \
-         need is absent, retry with a larger timeout_ms (e.g. 5000) or narrow with query / max_depth."
-    )
-}
-
 fn surface_identity_unproven_error(xid: u64, reason: String) -> Value {
     json!({
         "code": "surface_identity_unproven",
@@ -15040,25 +15015,6 @@ mod background_budget_tests {
         assert!(!maps_indicate_synthetic_pointer_dropped(
             "7f /usr/lib/libX11.so.6\n"
         ));
-    }
-
-    #[test]
-    fn truncation_note_names_the_budget_and_the_remedy() {
-        let note = truncation_note(Some("timeout"), 1000, 240, 88);
-        assert!(note.contains("PARTIAL TREE"));
-        assert!(note.contains("1000 ms"));
-        assert!(note.contains("240 node(s)"));
-        assert!(note.contains("88 discovered"));
-        assert!(note.contains("timeout_ms"));
-        assert!(note.contains("query"));
-        let note = truncation_note(Some("node_budget"), 1000, 5000, 3);
-        assert!(note.contains("max_elements"));
-        let note = truncation_note(Some("app_unresponsive"), 1000, 3, 0);
-        assert!(note.contains("stopped answering"));
-        let note = truncation_note(Some("app_lookup_timeout"), 250, 0, 0);
-        assert!(note.contains("250 ms"));
-        let note = truncation_note(Some("huge_container"), 1000, 1918, 0);
-        assert!(note.contains("not expanded"));
     }
 
     #[test]

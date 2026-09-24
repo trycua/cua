@@ -1605,7 +1605,7 @@
             "type": "string"
           },
           "timeout_ms": {
-            "description": "Wall-clock budget for the accessibility walk in milliseconds\n(default 1000). A walk that runs out returns a partial tree flagged\n`truncated` rather than failing.",
+            "description": "Wall-clock budget for the accessibility walk in milliseconds\n(default 1000 on every platform). A walk that runs out returns a\npartial tree flagged `truncated` rather than failing.",
             "maximum": 120000,
             "minimum": 100,
             "type": "integer"

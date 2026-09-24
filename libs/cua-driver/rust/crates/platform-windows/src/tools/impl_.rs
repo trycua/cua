@@ -1214,6 +1214,11 @@ mod get_window_state_max_image_dimension_tests {
     }
 }
 
+/// Slack past `timeout_ms` before the walk task is abandoned.
+const UIA_WALK_BACKSTOP_GRACE: std::time::Duration = std::time::Duration::from_millis(500);
+/// Deadline for the window capture, separate from the walk budget.
+const UIA_SCREENSHOT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(4);
+
 #[async_trait]
 impl Tool for GetWindowStateTool {
     fn def(&self) -> &ToolDef {
@@ -1289,7 +1294,7 @@ impl Tool for GetWindowStateTool {
                 "query":{"type":"string","description":"Optional case-insensitive substring. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count."},
                 "max_elements":{"type":"integer","minimum":1,"description":"Cap on the total number of UIA nodes walked. Truncates depth-first; markdown and structured elements truncate together. Omit for the default (5 000). Lower for Electron / large web apps that produce 10k+ element trees."},
                 "max_depth":{"type":"integer","minimum":1,"description":"Cap on the UIA-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower for deep menu / Electron trees."},
-                "timeout_ms": cua_driver_core::tool_schema::timeout_ms_schema_unbudgeted(),
+                "timeout_ms": cua_driver_core::tool_schema::timeout_ms_schema(),
                 "max_image_dimension":{"type":"integer","minimum":0,"description":"Per-call long-edge limit for the returned screenshot, in pixels (aspect ratio preserved). Explicit values override configured behavior; 0 returns native resolution. Omit to preserve the configured default."},
                 "max_dimension":{"type":"integer","minimum":1,"description":"Legacy optional cap on the returned screenshot's long edge, in pixels (aspect ratio preserved). Applied on top of the configured max_image_dimension ceiling when max_image_dimension is omitted; the tighter wins."}
             },"additionalProperties":false}),
@@ -1398,6 +1403,7 @@ impl Tool for GetWindowStateTool {
             .and_then(|v| v.as_u64())
             .map(|v| v.max(1) as usize)
             .unwrap_or(crate::uia::DEFAULT_MAX_DEPTH);
+        let timeout_ms = cua_driver_core::tool_schema::resolve_timeout_ms(args.get("timeout_ms"));
 
         // Always walk the UIA tree. The screenshot is returned by DEFAULT — the
         // grounding frame the agent cross-checks the (sometimes-lying) tree
@@ -1430,26 +1436,55 @@ impl Tool for GetWindowStateTool {
         let state = self.state.clone();
         let q = query.clone();
         let out_file = screenshot_out_file.clone();
-        let blocking = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
-            let tree_result = if do_tree {
-                Some(crate::uia::walk_tree_bounded(
-                    hwnd,
-                    q.as_deref(),
-                    max_elements,
-                    max_depth,
-                ))
-            } else {
-                None
-            };
-            let tree_result = tree_result.map(|tree| {
+        // The tree walk runs under `timeout_ms`. UIA's bulk BuildUpdatedCache
+        // cannot be interrupted (Chrome's provider can block indefinitely on
+        // property reads), so when the walk task itself outlives the budget
+        // the response carries an empty tree flagged `truncated` instead of an
+        // error, and the screenshot below still comes back.
+        let tree_result = if do_tree {
+            let tree_task = tokio::task::spawn_blocking(move || {
+                let mut budget =
+                    cua_driver_core::walk_budget::WalkBudget::new(timeout_ms, max_elements);
+                let tree =
+                    crate::uia::walk_tree_budgeted(hwnd, q.as_deref(), max_depth, &mut budget);
                 let kind = if tree.nodes.iter().any(|node| node.msaa_role.is_some()) {
                     crate::uia::cache::SnapshotKind::Msaa
                 } else {
                     crate::uia::cache::SnapshotKind::Uia
                 };
                 let payload = crate::uia::cache::CachedSnapshot::from_nodes(&tree.nodes, kind);
-                (tree, payload)
+                (tree, payload, budget.outcome())
             });
+            let started = std::time::Instant::now();
+            let deadline = std::time::Duration::from_millis(timeout_ms) + UIA_WALK_BACKSTOP_GRACE;
+            match tokio::time::timeout(deadline, tree_task).await {
+                Ok(Ok(tree)) => Some(tree),
+                Ok(Err(e)) => return ToolResult::error(format!("UIA walk task panicked: {e}")),
+                Err(_elapsed) => {
+                    let class = crate::input::delivery::read_class_name(hwnd);
+                    let walk = cua_driver_core::walk_budget::WalkOutcome::timed_out(
+                        timeout_ms,
+                        started.elapsed(),
+                    );
+                    let tree = crate::uia::UiaTreeResult {
+                        tree_markdown: format!(
+                            "(The UIA provider for hwnd 0x{hwnd:x}, class '{class}', did not \
+                             answer. Act by pixel off the screenshot, or send press_key with \
+                             delivery_mode:\"foreground\" for a dialog's default accelerator.)"
+                        ),
+                        nodes: Vec::new(),
+                    };
+                    let payload = crate::uia::cache::CachedSnapshot::from_nodes(
+                        &[],
+                        crate::uia::cache::SnapshotKind::Uia,
+                    );
+                    Some((tree, payload, walk))
+                }
+            }
+        } else {
+            None
+        };
+        let blocking = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
             // Capture screenshot AND any error message so the response can
             // surface *why* there's no image (the iconic-window guard from
             // #1973 / PR #1974 is the load-bearing case: minimized windows
@@ -1485,33 +1520,23 @@ impl Tool for GetWindowStateTool {
             } else {
                 (None, None)
             };
-            Ok((tree_result, screenshot, screenshot_err))
+            Ok((screenshot, screenshot_err))
         });
-        // Timeout: Chrome's UIA provider can block indefinitely on property reads.
-        let result: Result<anyhow::Result<_>, _> =
-            match tokio::time::timeout(std::time::Duration::from_secs(4), blocking).await {
-                Ok(join_result) => join_result.map_err(|e| anyhow::anyhow!("task panic: {e}")),
-                Err(_elapsed) => {
-                    // Surface the target's window class + an actionable hint
-                    // instead of just "UIA provider unresponsive". The class
-                    // points the caller at the right workaround (e.g. SALFRAME
-                    // → screenshot + pixel coords + delivery_mode:"foreground"; UWP
-                    // class → re-call with a depth-limited scan and act by pixel
-                    // off the screenshot if the tree stays unusable).
-                    let class = crate::input::delivery::read_class_name(hwnd);
-                    Err(anyhow::anyhow!(
-                        "get_window_state timed out after 4s (UIA provider unresponsive on \
-                     hwnd 0x{hwnd:x}, class '{class}'). Fallback options: \
-                     (a) re-call this tool with a depth-limited scan \
-                     (`max_elements` / `max_depth`) — if the tree stays unusable, act \
-                     by pixel `click(x, y)` off the screenshot in the response; \
-                     (b) if the target is a transient VCL / message-box dialog, send \
-                     `press_key` with `delivery_mode:\"foreground\"` (SendInput) to fire the \
-                     default accelerator (Esc / Enter / Y / N) without needing the tree."
-                    ))
-                }
+        let result: anyhow::Result<_> =
+            match tokio::time::timeout(UIA_SCREENSHOT_TIMEOUT, blocking).await {
+                Ok(join_result) => join_result
+                    .map_err(|e| anyhow::anyhow!("task panic: {e}"))
+                    .and_then(|r| r),
+                Err(_elapsed) => Ok((
+                    None,
+                    Some(format!(
+                        "window capture did not finish within {}s",
+                        UIA_SCREENSHOT_TIMEOUT.as_secs()
+                    )),
+                )),
             };
-        let result = result.and_then(|r| r);
+        let result =
+            result.map(|(screenshot, screenshot_err)| (tree_result, screenshot, screenshot_err));
 
         match result {
             Ok((tree_opt, screenshot_opt, screenshot_err)) => {
@@ -1522,14 +1547,19 @@ impl Tool for GetWindowStateTool {
                     .map(|(_, _, w, _, native_w, _, _)| *native_w as f64 / *w as f64);
                 let mut published_snapshot = false;
 
-                if let Some((tr, payload)) = tree_opt {
+                if let Some((tr, payload, walk)) = tree_opt {
                     let is_msaa = tr.nodes.iter().any(|node| node.msaa_role.is_some());
                     let count = tr
                         .nodes
                         .iter()
                         .filter(|n| n.element_index.is_some())
                         .count();
-                    let header = format!("window_id={hwnd} pid={pid} elements={count}\n\n");
+                    let mut header = format!("window_id={hwnd} pid={pid} elements={count}\n");
+                    if let Some(note) = walk.note() {
+                        header.push_str(&note);
+                        header.push('\n');
+                    }
+                    header.push('\n');
                     content.push(cua_driver_core::protocol::Content::text(
                         header + &tr.tree_markdown,
                     ));
@@ -1539,6 +1569,7 @@ impl Tool for GetWindowStateTool {
                     // conservative until that proof is available.
                     structured["elements_complete"] = json!(false);
                     structured["tree_markdown"] = json!(tr.tree_markdown);
+                    walk.apply(&mut structured);
 
                     let snapshot_id = (!observation_only)
                         .then(|| {
@@ -1605,6 +1636,9 @@ impl Tool for GetWindowStateTool {
                              Cua Driver used a partial MSAA tree. Treat it as discovery \
                              evidence only; it cannot prove checked state."
                         );
+                    } else if let (0, Some(note)) = (count, walk.note()) {
+                        structured["degraded"] = json!(true);
+                        structured["degraded_reason"] = json!(note);
                     } else if count == 0 {
                         structured["degraded"] = json!(true);
                         structured["degraded_reason"] = json!(

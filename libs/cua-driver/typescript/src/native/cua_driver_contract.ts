@@ -2461,8 +2461,8 @@ export type GetWindowStateInput = {
     maxImageDimension?: number,
     /**
      * Wall-clock budget for the accessibility walk in milliseconds
-     * (default 1000). A walk that runs out returns a partial tree flagged
-     * `truncated` rather than failing.
+     * (default 1000 on every platform). A walk that runs out returns a
+     * partial tree flagged `truncated` rather than failing.
      */
     timeoutMs?: number
 }

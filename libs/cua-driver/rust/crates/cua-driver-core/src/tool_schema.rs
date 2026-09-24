@@ -122,42 +122,34 @@ pub fn element_token_schema() -> Value {
     })
 }
 
-/// Default / bounds for the per-call accessibility-walk budget (`timeout_ms`).
+/// Default and bounds for the per-call accessibility-walk budget
+/// (`timeout_ms`), the same on every platform.
 pub const TIMEOUT_MS_DEFAULT: u64 = 1000;
 pub const TIMEOUT_MS_MIN: u64 = 100;
 pub const TIMEOUT_MS_MAX: u64 = 120_000;
 
 /// Shared `timeout_ms` parameter: wall-clock budget for the accessibility walk
-/// behind an observation tool. Declared on every platform so clients can pass
-/// it uniformly; a backend whose walk is not yet budgeted documents that.
+/// behind an observation tool, with the same default, bounds, and partial-tree
+/// semantics on every platform (see [`crate::walk_budget`]).
 pub fn timeout_ms_schema() -> Value {
     json!({
         "type": "integer",
         "minimum": TIMEOUT_MS_MIN,
         "maximum": TIMEOUT_MS_MAX,
         "default": TIMEOUT_MS_DEFAULT,
-        "description": "Wall-clock budget in milliseconds for the accessibility-tree walk \
-            (default 1000, min 100, max 120000). Bounds the WHOLE operation — retries and \
-            bounds resolution included (bounds may add up to 50% grace). When the budget runs \
-            out the tool returns the PARTIAL tree it has, flagged with `truncated: true`, \
-            `truncation_reason`, `nodes_visited`, `nodes_pending` and `elements_complete: false`; \
-            retry with a larger value (e.g. 5000) or narrow with `query` / `max_depth`."
+        "description": format!(
+            "Wall-clock budget in milliseconds for the accessibility-tree walk \
+             (default {TIMEOUT_MS_DEFAULT}, min {TIMEOUT_MS_MIN}, max {TIMEOUT_MS_MAX}). \
+             Bounds the WHOLE walk. When the budget runs out the tool returns the PARTIAL tree \
+             it has, flagged with `truncated: true`, `truncation_reason`, `nodes_visited`, \
+             `nodes_pending` and `elements_complete: false`; retry with a larger value \
+             (e.g. 5000) or narrow with `query` / `max_depth`."
+        )
     })
 }
 
-/// `timeout_ms` for a backend whose accessibility walk is not budgeted yet:
-/// the same shape, so clients can pass it uniformly, with a description that
-/// states the value is currently ignored there.
-pub fn timeout_ms_schema_unbudgeted() -> Value {
-    let mut schema = timeout_ms_schema();
-    schema["description"] = json!(
-        "Accepted for parity with the Linux backend, where it bounds the accessibility-tree walk. This backend does not budget its walk yet, so the value is currently ignored."
-    );
-    schema
-}
-
-/// Clamp a caller-supplied `timeout_ms` (or apply the default when absent /
-/// not an integer) to the documented bounds.
+/// Clamp a caller-supplied `timeout_ms` to the shared bounds, or apply the
+/// default when absent / not an integer.
 pub fn resolve_timeout_ms(value: Option<&Value>) -> u64 {
     value
         .and_then(Value::as_u64)
@@ -320,11 +312,6 @@ mod tests {
         assert!(shared_schema_violations(
             "get_window_state",
             &json!({"type":"object","properties":{"timeout_ms": schema}})
-        )
-        .is_empty());
-        assert!(shared_schema_violations(
-            "get_window_state",
-            &json!({"type":"object","properties":{"timeout_ms": timeout_ms_schema_unbudgeted()}})
         )
         .is_empty());
     }

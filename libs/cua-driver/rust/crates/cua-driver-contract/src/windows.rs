@@ -98,8 +98,8 @@ pub struct GetWindowStateInput {
     #[schemars(schema_with = "nonnegative_integer_schema")]
     pub max_image_dimension: Option<u32>,
     /// Wall-clock budget for the accessibility walk in milliseconds
-    /// (default 1000). A walk that runs out returns a partial tree flagged
-    /// `truncated` rather than failing.
+    /// (default 1000 on every platform). A walk that runs out returns a
+    /// partial tree flagged `truncated` rather than failing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "timeout_ms_schema")]
     pub timeout_ms: Option<u32>,

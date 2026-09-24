@@ -6,6 +6,28 @@
 
 * **cua-driver:** deliver X11 key-down before the tap delay and finish background keyboard delivery before closing the input connection.
 
+## [0.29.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.28.2...cua-driver-rs-v0.29.0) (2026-09-24)
+
+
+### Features
+
+* **cua-driver:** add optional visual perception extension ([681bc44](https://github.com/trycua/cua/commit/681bc44807d1be81a4357f8e158f1c74a81d5a5b))
+* **cua-driver:** land background and foreground input on X11 desktops (OSWorld) and budget get_window_state walks on every platform ([#3882](https://github.com/trycua/cua/issues/3882)) ([7ffcdf1](https://github.com/trycua/cua/commit/7ffcdf13e635e5ba871a9d75b1b2102c4f80fa3e))
+* **cua-driver:** observe agent cursor moves/presses and report the system cursor shape ([#3883](https://github.com/trycua/cua/issues/3883)) ([7fe7c33](https://github.com/trycua/cua/commit/7fe7c33f741ee2dd5961ba80044d59f93b48ba47))
+
+
+### Bug Fixes
+
+* **cua-driver:** correlate Chromium profile window titles ([#4030](https://github.com/trycua/cua/issues/4030)) ([210efbc](https://github.com/trycua/cua/commit/210efbceb46bf1acb0f66985a098262445d91e93)), closes [#4029](https://github.com/trycua/cua/issues/4029)
+* **cua-driver:** expose referenced MCP skill resources ([#4028](https://github.com/trycua/cua/issues/4028)) ([4eb8ab5](https://github.com/trycua/cua/commit/4eb8ab51e71b241316136805fe6191b7e2914e35))
+* **cua-driver:** hint foreground escalation on unavailable UIA clicks ([#3888](https://github.com/trycua/cua/issues/3888)) ([2f52f65](https://github.com/trycua/cua/commit/2f52f65acee92bebff6c0c4ca0877aacb9fa5b6b))
+* **cua-driver:** make skill workflows match runtime contracts ([#3719](https://github.com/trycua/cua/issues/3719)) ([6863ab6](https://github.com/trycua/cua/commit/6863ab6f11649f362d8c34401e19a46fe2a39a35))
+* **cua-driver:** preserve observed X11 click identities ([#3864](https://github.com/trycua/cua/issues/3864)) ([27062ed](https://github.com/trycua/cua/commit/27062ed04a36a5aa1969fa44f58349d16f0bdc13))
+* **cua-driver:** report daemon_running accurately from socket liveness ([#4019](https://github.com/trycua/cua/issues/4019)) ([27a318c](https://github.com/trycua/cua/commit/27a318c3a616f9ff19d24fe2acca7517c5f8fa7b))
+* **cua-driver:** report surviving local install on uninstall ([#3021](https://github.com/trycua/cua/issues/3021)) ([625118a](https://github.com/trycua/cua/commit/625118a9076e51da2f57b6a5d475972030197443))
+* **cua-driver:** rotate the perception extension signing key ([#4072](https://github.com/trycua/cua/issues/4072)) ([cf07615](https://github.com/trycua/cua/commit/cf0761552675c6fb020d5950ca7003c9a7e40997))
+* **cua-driver:** stabilize Hyprland agent input ([f6be600](https://github.com/trycua/cua/commit/f6be60087b8d1bb3d0a822ea11736761b8b8ace0))
+
 ## [0.28.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.28.1...cua-driver-rs-v0.28.2) (2026-09-15)
 
 

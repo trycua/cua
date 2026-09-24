@@ -34,15 +34,17 @@ capture ID plus the expected source (exact window PID/window ID or primary
 desktop) to the guard after a `selected` response. This means the raw public
 Driver tool payload, not the `core.parse_visual_regions` wrapper's
 `VisualObservation` object. The guard validates its source, PNG provenance,
-coordinate mapping, and bounds before returning Driver action coordinates.
-Only a successful guard
-returns a point and capture ID to pass to Driver. Missing, duplicated, stale,
+coordinate mapping, and bounds before returning screenshot-pixel coordinates.
+Only a successful guard returns a point and capture ID to pass to Driver.
+Missing, duplicated, stale,
 low-confidence, or mismatched region facts refuse the action. This is one
 example caller policy, not a generic authorization engine or a Driver feature;
 other action types need their own typed checks. The helper does not dispatch a
-click or verify its effect. The caller must pass the returned point in the
-source's action coordinate space to the corresponding window or desktop Driver
-action; it must not reuse those coordinates against another target.
+click or verify its effect. The caller must pass the returned screenshot-pixel
+point to the corresponding window or desktop Driver action with the same
+`capture_id`. Driver applies the capture's coordinate mapping
+once; the caller must not map the returned point again or reuse it against
+another target.
 
 The input is the existing `cua.jev_choice_request_v1` request accepted by
 `choose_action.py`. The output is a separate

@@ -214,14 +214,16 @@ def authorize_exact_region_text_action(
             matches.append(region)
     if len(matches) != 1 or matches[0]["id"] != action.region_id:
         raise ActionAuthorizationError("exact-text condition is not uniquely satisfied")
+    offered = next(
+        (region for region in offered_regions if region.get("id") == action.region_id), None
+    )
+    region_fields = {"id", "kind", "bounds", "text", "label", "confidence", "interactive"}
+    required_fields = {"id", "kind", "bounds", "confidence", "interactive"}
     if (
-        sum(
-            isinstance(region, Mapping)
-            and region.get("id") == action.region_id
-            and region == matches[0]
-            for region in offered_regions
-        )
-        != 1
+        not isinstance(offered, Mapping)
+        or not required_fields.issubset(offered)
+        or not set(offered).issubset(region_fields)
+        or any(offered.get(key) != matches[0].get(key) for key in region_fields)
     ):
         raise ActionAuthorizationError("offered region differs from the original parse")
     bounds = matches[0].get("bounds")
@@ -242,8 +244,8 @@ def authorize_exact_region_text_action(
     px = bounds["x"] + bounds["width"] / 2
     py = bounds["y"] + bounds["height"] / 2
     m11, m12, m21, m22, tx, ty = values
-    return AuthorizedVisualClick(
-        current_capture_id,
-        m11 * px + m12 * py + tx,
-        m21 * px + m22 * py + ty,
-    )
+    x = m11 * px + m12 * py + tx
+    y = m21 * px + m22 * py + ty
+    if not math.isfinite(x) or not math.isfinite(y):
+        raise ActionAuthorizationError("action coordinate mapping produced a non-finite point")
+    return AuthorizedVisualClick(current_capture_id, px, py)

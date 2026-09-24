@@ -226,7 +226,35 @@ class ActionPolicyTest(unittest.TestCase):
             "ty": 20,
         }
         click = self.authorize(request, decision, parsed, action, source=source)
-        self.assertEqual((click.x, click.y), (106.0, 92.0))
+        self.assertEqual((click.x, click.y), (48.0, 36.0))
+
+    def test_affine_coordinates_are_not_mapped_twice(self) -> None:
+        request, decision, parsed, action = inputs()
+        parsed["capture"]["action_coordinate_space"] = {
+            "kind": "affine",
+            "m11": 0.5,
+            "m12": 0,
+            "m21": 0,
+            "m22": 0.5,
+            "tx": 0,
+            "ty": 0,
+        }
+        click = self.authorize(request, decision, parsed, action)
+        self.assertEqual((click.x, click.y), (48.0, 36.0))
+
+    def test_affine_mapping_that_overflows_the_point_refuses(self) -> None:
+        request, decision, parsed, action = inputs()
+        parsed["capture"]["action_coordinate_space"] = {
+            "kind": "affine",
+            "m11": 1e308,
+            "m12": 0,
+            "m21": 0,
+            "m22": 1e-308,
+            "tx": 0,
+            "ty": 0,
+        }
+        with self.assertRaisesRegex(ActionAuthorizationError, "non-finite point"):
+            self.authorize(request, decision, parsed, action)
 
     def test_tied_scores_and_duplicate_offered_regions_refuse(self) -> None:
         request, decision, parsed, action = inputs()
@@ -241,6 +269,13 @@ class ActionPolicyTest(unittest.TestCase):
         request["regions"].append(copy.deepcopy(request["regions"][0]))
         with self.assertRaisesRegex(ActionAuthorizationError, "offered visual regions"):
             self.authorize(request, decision, parsed, action)
+
+    def test_driver_optional_region_metadata_does_not_block_authorization(self) -> None:
+        request, decision, parsed, action = inputs()
+        parsed["regions"][0].update({"reading_order": 1, "parent_id": None})
+        request["regions"][0]["label"] = None
+        click = self.authorize(request, decision, parsed, action)
+        self.assertEqual((click.x, click.y), (48.0, 36.0))
 
 
 if __name__ == "__main__":

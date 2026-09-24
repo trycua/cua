@@ -235,13 +235,12 @@ complete repo-local matrix.
 The maintainer-facing macOS command is
 `libs/cua-driver/tests/runners/macos-lume/run-all.sh`. It verifies the private
 Lume seed, installs the exact committed source, and then delegates to the thin
-`macos/run-rust-e2e.sh` matrix runner above. Pass `--standalone-browser` to run
-the optional installed Chrome/Edge browser matrix after the canonical repo-local
-harness matrix.
+`macos/run-rust-e2e.sh` matrix runner above. It then always runs the installed
+Chrome/Edge browser matrix after the canonical repo-local harness matrix.
 
 Run the canonical logged-in Lume gate directly from Terminal in the disposable
 guest; do not install or register a GitHub Actions runner in that guest. After a
-successful `run-all.sh --standalone-browser` invocation, bundle the private
+successful `run-all.sh` invocation, bundle the private
 artifact directories, calculate their SHA-256 digest, and dispatch
 `.github/workflows/e2e-rust-macos.yml` in `lume` mode at the exact candidate SHA
 with the harness run ID and digest. That protected `ubuntu-latest` job only

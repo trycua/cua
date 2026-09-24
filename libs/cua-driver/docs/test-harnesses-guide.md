@@ -41,9 +41,9 @@ Windows and Linux use the repository's GitHub-hosted workflows when their
 strict environment preflights pass. Windows Azure RDP runs are optional
 environment-parity replays or a fallback when the hosted preflight cannot prove
 a required capability. macOS uses the logged-in Lume maintainer wrapper.
-For browser-facing changes or browser-use release certification, also run the
-standalone Chrome/Edge matrix: the macOS wrapper accepts
-`--standalone-browser`, while the Windows and Linux workflow is
+The macOS wrapper always runs the standalone Chrome/Edge matrix after the
+repo-local matrix. For browser-facing changes or browser-use release
+certification on Windows and Linux, also run
 `.github/workflows/e2e-rust-standalone-browsers.yml`.
 
 Historical `*-plan.md`, `*-journal.md`, and release evidence documents record
@@ -285,7 +285,7 @@ Canonical runner: `libs/cua-driver/tests/runners/macos-lume/run-all.sh`
 
 Canonical Actions wrapper: manually dispatch
 `.github/workflows/e2e-rust-macos.yml` in `lume` mode at the exact source SHA. It runs the
-logged-in Lume wrapper with `--standalone-browser` and emits the certification
+logged-in Lume wrapper, including its standalone browser matrix, and emits the certification
 artifact consumed by protected evidence workflows.
 
 Supplemental hosted runner: manually dispatch

@@ -626,7 +626,6 @@ REPORT_OPTIONS = (
     'printf "harness=%s\\n" "$RETRY_HARNESS"\n'
     'printf "attempts=%s\\n" "$RETRY_ATTEMPTS"\n'
     'printf "only=%s\\n" "$RETRY_ONLY"\n'
-    'printf "standalone=%s\\n" "$RUN_STANDALONE_BROWSER"\n'
     'printf "nobuild=%s\\n" "$NO_BUILD"\n'
     'printf "lane=%s\\n" "$RETRY_INTERNAL_LANE"\n'
 )
@@ -643,7 +642,6 @@ def test_default_invocation_runs_the_full_matrix() -> None:
     assert fields["status"] == "0"
     assert fields["cell"] == ""
     assert fields["only"] == "0"
-    assert fields["standalone"] == "0"
     assert fields["nobuild"] == "0"
 
 
@@ -737,10 +735,7 @@ def test_native_swiftui_selector_matches_exactly_one_owned_cell() -> None:
         pytest.param(["--retry-cell", "cell", "--retry-harness", "Electron!"], id="bad-harness"),
         pytest.param(["--retry-cell"], id="missing-cell-value"),
         pytest.param(["--retry-cell", "--retry-only"], id="flag-as-cell-value"),
-        pytest.param(
-            ["--retry-cell", "cell", "--retry-only", "--standalone-browser"],
-            id="retry-only-with-standalone-browser",
-        ),
+        pytest.param(["--standalone-browser"], id="removed-standalone-browser-flag"),
         pytest.param(["--unknown"], id="unknown-argument"),
     ],
 )

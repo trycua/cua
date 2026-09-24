@@ -168,7 +168,11 @@ jobs:
       - name: Prove Session 0 refusal
         if: steps.runner-session.outputs.session_id == '0'
         working-directory: libs/cua-driver/rust
-        run: cargo test -p cua-driver-sdk session_zero_refuses_runtime_creation_before_platform_dispatch --lib --locked
+        shell: pwsh
+        run: |
+          cargo test -p cua-driver-sdk session_zero_refuses_runtime_creation_before_platform_dispatch --lib --locked | Tee-Object -Variable sessionZeroLog
+          if ($LASTEXITCODE -ne 0) { throw "Session 0 refusal test failed with exit $LASTEXITCODE" }
+          if (-not ($sessionZeroLog -match 'test result: ok\. 1 passed')) { throw "Session 0 refusal filter matched no test" }
       - name: Prove metadata commands remain desktop-free
         working-directory: libs/cua-driver/rust
         run: |

@@ -189,8 +189,9 @@ jobs:
         run: |
           cargo test --locked -p platform-windows diagnostics::tests:: --lib
           if ($LASTEXITCODE -ne 0) { throw "Windows diagnostics tests failed with exit $LASTEXITCODE" }
-          cargo test --locked -p cua-driver-sdk session_zero_refuses_runtime_creation_before_platform_dispatch --lib
+          cargo test --locked -p cua-driver-sdk session_zero_refuses_runtime_creation_before_platform_dispatch --lib | Tee-Object -Variable sessionZeroLog
           if ($LASTEXITCODE -ne 0) { throw "Session 0 refusal test failed with exit $LASTEXITCODE" }
+          if (-not ($sessionZeroLog -match 'test result: ok\. 1 passed')) { throw "Session 0 refusal filter matched no test" }
           cargo run --locked -p cua-driver -- list-tools | Out-Null
           if ($LASTEXITCODE -ne 0) { throw "Session 0 list-tools failed with exit $LASTEXITCODE" }
           cargo run --locked -p cua-driver -- describe click | Out-Null

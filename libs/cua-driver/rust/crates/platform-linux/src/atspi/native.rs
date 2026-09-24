@@ -564,7 +564,7 @@ async fn collect_visited<'a>(
 ) -> Result<Option<Vec<Visited<'a>>>> {
     collect_visited_bounded(conn, pid, 0, None, None)
         .await
-        .map(|walked| walked.map(|(visited, _)| visited))
+        .map(|walked| walked.map(|(visited, _, _)| visited))
 }
 
 /// Screen-space distance between an AT-SPI frame's extents and a native
@@ -712,17 +712,29 @@ async fn resolve_window_frame(
 
 /// `collect_visited` with caller-supplied caps.
 /// - `max_elements = None` keeps the historical 5 000-node budget.
+/// - `max_elements = Some(n)` bounds the nodes of the walker's scoped window
+///   (`xid`), not the whole application: a sibling window's subtree must not
+///   consume the cap the requested window's controls are measured against
+///   (#3812). Nodes are still *visited* either way, because element indices
+///   are application-wide — actuators resolve an index against an unbounded
+///   walk of the whole application, so skipping subtrees would renumber every
+///   element emitted after them.
 /// - `max_depth = None` keeps depth uncapped (the historical behaviour);
 ///   `Some(d)` skips enqueueing children whose depth would exceed `d`.
 /// Issue #22865: caps protect against Electron / large web apps that produce
 /// 10k+ element trees and blow context windows.
+///
+/// Returns `(visited, scoped_frame, complete)`, where `complete` is true only
+/// when the walk enumerated the tree without truncation (budget, deadline,
+/// depth cap, or a per-node/subtree fetch failure), so absence of an element
+/// within the emitted scope can be proven.
 async fn collect_visited_bounded<'a>(
     conn: &'a AccessibilityConnection,
     pid: u32,
     xid: u64,
     max_elements: Option<usize>,
     max_depth: Option<usize>,
-) -> Result<Option<(Vec<Visited<'a>>, Option<usize>)>> {
+) -> Result<Option<(Vec<Visited<'a>>, Option<usize>, bool)>> {
     let app = match app_for_pid(conn, pid).await? {
         Some(a) => a,
         None => return Ok(None),
@@ -767,6 +779,9 @@ async fn collect_visited_bounded<'a>(
     // Guard against pathological/looping trees. Defaults to 5 000 (the
     // historical hard-coded budget); callers can override via max_elements.
     let mut budget = max_elements.unwrap_or(5000usize);
+    // Starts true and is cleared by every condition that makes the
+    // enumeration non-exhaustive for the emitted scope.
+    let mut complete = true;
     // Time budget alongside the node budget: when an app is unresponsive to
     // AT-SPI (most commonly because it holds a modal grab and isn't servicing
     // D-Bus), every per-node `call()` burns the full CALL_TIMEOUT before being
@@ -785,14 +800,21 @@ async fn collect_visited_bounded<'a>(
 
     while let Some((oref, depth, inherited_web_doc, frame_ordinal)) = stack.pop() {
         if budget == 0 {
-            dlog!("node budget exhausted; truncating walk");
+            dlog!("element budget exhausted; truncating walk");
+            complete = false;
             break;
         }
         if std::time::Instant::now() >= deadline {
             dlog!("collect_visited time budget exhausted; returning partial walk");
+            complete = false;
             break;
         }
-        budget -= 1;
+        // Charge the cap only for nodes of the scoped window (#3812). An
+        // application-wide walk (`scoped_frame == None`) keeps the historical
+        // per-node budget.
+        if scoped_frame.is_none_or(|scope| frame_ordinal == scope) {
+            budget -= 1;
+        }
         // WebKitGTK publishes its embedded page on a distinct WebProcess
         // D-Bus peer and can expose blank role names for the entire subtree.
         // The peer identity is therefore the reliable document boundary when
@@ -816,10 +838,12 @@ async fn collect_visited_bounded<'a>(
             Some(Ok(a)) => a,
             Some(Err(error)) => {
                 dlog!("  accessible_for failed: {error:#}");
+                complete = false;
                 continue;
             }
             None => {
                 consecutive_timeouts += 1;
+                complete = false;
                 if consecutive_timeouts >= 3 {
                     dlog!(
                         "{} consecutive AT-SPI timeouts (accessible_for); app unresponsive, bailing walk",
@@ -978,6 +1002,8 @@ async fn collect_visited_bounded<'a>(
         // Honor max_depth (#22865): skip enqueueing descendants whose depth
         // would exceed the cap.
         let descend = max_depth.map(|d| depth + 1 <= d).unwrap_or(true);
+        let hidden_children =
+            !descend && matches!(children_r.as_ref(), Some(Ok(children)) if !children.is_empty());
         if descend {
             match children_r {
                 Some(Ok(children)) => {
@@ -985,9 +1011,19 @@ async fn collect_visited_bounded<'a>(
                         stack.push((c, depth + 1, child_in_web_doc, frame_ordinal));
                     }
                 }
-                Some(Err(error)) => dlog!("  get_children failed: {error:#}"),
-                None => dlog!("  get_children timed out"),
+                Some(Err(error)) => {
+                    dlog!("  get_children failed: {error:#}");
+                    complete = false;
+                }
+                None => {
+                    dlog!("  get_children timed out");
+                    complete = false;
+                }
             }
+        } else if hidden_children {
+            // A depth cap that hides children makes the enumeration
+            // non-exhaustive, so absence cannot be proven below this node.
+            complete = false;
         }
 
         visited.push(Visited {
@@ -1020,7 +1056,7 @@ async fn collect_visited_bounded<'a>(
     }
 
     dlog!("walked pid {pid}: {} node(s)", visited.len());
-    Ok(Some((visited, scoped_frame)))
+    Ok(Some((visited, scoped_frame, complete)))
 }
 
 /// Render visited nodes into the markdown + node list `walk_tree` returns.
@@ -1210,6 +1246,10 @@ pub struct WalkedTree {
     /// top-level and the snapshot contains only that window's nodes. False
     /// means the snapshot spans every window the application publishes.
     pub window_scoped: bool,
+    /// True only when the walk enumerated the tree without truncation (no
+    /// budget/deadline/depth/fetch failure), so absence of an element within
+    /// the emitted scope can be proven.
+    pub elements_complete: bool,
 }
 
 /// Walk the AT-SPI tree with caller-supplied node + depth caps.
@@ -1248,7 +1288,7 @@ pub(super) fn walk_tree_bounded_with_timeout(
                 return Ok(None);
             }
         };
-        let Some((visited, scoped_frame)) = walked else {
+        let Some((visited, scoped_frame, complete)) = walked else {
             return Ok(None);
         };
         let walk_elapsed = walk_started.elapsed();
@@ -1290,6 +1330,7 @@ pub(super) fn walk_tree_bounded_with_timeout(
             nodes,
             bounds,
             window_scoped: scoped_frame.is_some(),
+            elements_complete: complete,
         }))
     })
 }
@@ -2920,7 +2961,7 @@ pub fn perform_action_at_screen_point(
     bounded(
         async {
             let conn = shared_connection().await?;
-            let (visited, scoped_frame) =
+            let (visited, scoped_frame, _) =
                 match collect_visited_bounded(conn, pid, xid, None, None).await? {
                     Some(walked) => walked,
                     None => return Ok(None),
@@ -3168,7 +3209,7 @@ pub fn get_element_bounds_for_window(
     bounded(
         async {
             let conn = shared_connection().await?;
-            let (visited, scoped_frame) = collect_visited_bounded(conn, pid, xid, None, None)
+            let (visited, scoped_frame, _) = collect_visited_bounded(conn, pid, xid, None, None)
                 .await?
                 .context("no AT-SPI application")?;
             let scope =

@@ -105,9 +105,13 @@ TypeSafe request. The CLI currently exposes only the text adapter.
 
 The focused fake-model tests cover the selection contract, reserved outcomes,
 malformed scores, the 26-option boundary, and absence of screenshot and action
-arguments in the TypeSafe request. A
-local pinned-weight S1 text inference selected the expected `submit-form`
-candidate from the synthetic fixture request. That is a runtime smoke, not
-evidence that S1 matches Jev's decision quality or that the S1 path has been
-run end to end on a desktop. Keep an independent fixture oracle for any future
-desktop comparison.
+arguments in the TypeSafe request. A local pinned-weight S1 text inference
+selected the expected `submit-form` candidate from the synthetic fixture
+request. That is a runtime smoke, not evidence that S1 matches Jev's decision
+quality or that the S1 path has been run end to end on a desktop.
+
+In a separate synthetic mismatch where the observation said `Save` but the
+only action condition required `Send`, Jev selected `abstain` while S1
+selected `reobserve`. Both choices prevent an action, but S1 did not follow
+the fixture's expected outcome. Keep an independent fixture oracle and a
+caller-owned score and margin policy for future desktop comparisons.

@@ -47,16 +47,32 @@ def inputs(
     }
     parsed = {
         "schema": "cua.visual_regions_v1",
-        "capture": {"capture_id": "capture-1"},
+        "capture": {
+            "capture_id": "capture-1",
+            "source": {"kind": "window", "pid": 10, "window_id": 20},
+            "screenshot": {
+                "reference": "png-sha256:synthetic",
+                "width": 100,
+                "height": 100,
+                "mime_type": "image/png",
+            },
+            "action_coordinate_space": {"kind": "screenshot_pixels"},
+        },
         "regions": [region],
     }
     return request, decision, parsed, action
 
 
 class ActionPolicyTest(unittest.TestCase):
-    def authorize(self, request, decision, parsed, action, capture_id="capture-1"):
+    def authorize(self, request, decision, parsed, action, capture_id="capture-1", source=None):
+        source = source or {"kind": "window", "pid": 10, "window_id": 20}
         return authorize_exact_region_text_action(
-            request, decision, parsed, action, current_capture_id=capture_id
+            request,
+            decision,
+            parsed,
+            action,
+            current_capture_id=capture_id,
+            expected_source=source,
         )
 
     def test_matching_text_authorizes(self) -> None:
@@ -171,6 +187,60 @@ class ActionPolicyTest(unittest.TestCase):
     def test_wire_description_preserves_the_enforced_threshold(self) -> None:
         with self.assertRaisesRegex(ValueError, "two decimal places"):
             ExactRegionTextAction("region:one", "one", "Send", 0.805)
+
+    def test_source_geometry_and_provenance_are_checked(self) -> None:
+        for case in ("source", "screenshot", "outside", "mapping"):
+            with self.subTest(case=case):
+                request, decision, parsed, action = inputs()
+                if case == "source":
+                    parsed["capture"]["source"]["window_id"] = 21
+                elif case == "screenshot":
+                    parsed["capture"]["screenshot"]["mime_type"] = "image/jpeg"
+                elif case == "outside":
+                    parsed["regions"][0]["bounds"]["x"] = 90
+                    request["regions"][0]["bounds"]["x"] = 90
+                else:
+                    parsed["capture"]["action_coordinate_space"] = {
+                        "kind": "affine",
+                        "m11": 0,
+                        "m12": 0,
+                        "m21": 0,
+                        "m22": 0,
+                        "tx": 0,
+                        "ty": 0,
+                    }
+                with self.assertRaises(ActionAuthorizationError):
+                    self.authorize(request, decision, parsed, action)
+
+    def test_primary_desktop_and_affine_coordinates(self) -> None:
+        request, decision, parsed, action = inputs()
+        source = {"kind": "primary_desktop", "display_id": "primary"}
+        parsed["capture"]["source"] = source
+        parsed["capture"]["action_coordinate_space"] = {
+            "kind": "affine",
+            "m11": 2,
+            "m12": 0,
+            "m21": 0,
+            "m22": 2,
+            "tx": 10,
+            "ty": 20,
+        }
+        click = self.authorize(request, decision, parsed, action, source=source)
+        self.assertEqual((click.x, click.y), (106.0, 92.0))
+
+    def test_tied_scores_and_duplicate_offered_regions_refuse(self) -> None:
+        request, decision, parsed, action = inputs()
+        decision["probabilities"] = {
+            action.candidate_id: 0.5,
+            "reobserve": 0.5,
+            "abstain": 0.0,
+        }
+        with self.assertRaisesRegex(ActionAuthorizationError, "decision scores"):
+            self.authorize(request, decision, parsed, action)
+        request, decision, parsed, action = inputs()
+        request["regions"].append(copy.deepcopy(request["regions"][0]))
+        with self.assertRaisesRegex(ActionAuthorizationError, "offered visual regions"):
+            self.authorize(request, decision, parsed, action)
 
 
 if __name__ == "__main__":

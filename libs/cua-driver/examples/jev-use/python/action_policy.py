@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import math
+import sys
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -64,6 +65,7 @@ def authorize_exact_region_text_action(
     action: ExactRegionTextAction,
     *,
     current_capture_id: str,
+    expected_source: Mapping[str, Any],
 ) -> AuthorizedVisualClick:
     """Raise unless the original parse still proves the selected action condition.
 
@@ -86,6 +88,58 @@ def authorize_exact_region_text_action(
         raise ActionAuthorizationError("capture identity changed")
     if parsed.get("schema") != "cua.visual_regions_v1":
         raise ActionAuthorizationError("unsupported visual observation")
+    source = capture.get("source")
+    if (
+        not isinstance(expected_source, Mapping)
+        or expected_source.get("kind") not in {"window", "primary_desktop"}
+        or not isinstance(source, Mapping)
+        or dict(source) != dict(expected_source)
+    ):
+        raise ActionAuthorizationError("visual capture source changed")
+    if source["kind"] == "window" and (
+        not isinstance(source.get("pid"), int)
+        or isinstance(source["pid"], bool)
+        or source["pid"] <= 0
+        or not isinstance(source.get("window_id"), int)
+        or isinstance(source["window_id"], bool)
+        or source["window_id"] <= 0
+    ):
+        raise ActionAuthorizationError("malformed window source")
+    if source["kind"] == "primary_desktop" and source.get("display_id") != "primary":
+        raise ActionAuthorizationError("malformed desktop source")
+    screenshot = capture.get("screenshot")
+    if (
+        not isinstance(screenshot, Mapping)
+        or screenshot.get("mime_type") != "image/png"
+        or not isinstance(screenshot.get("reference"), str)
+        or not screenshot["reference"]
+        or any(
+            not isinstance(screenshot.get(key), int)
+            or isinstance(screenshot[key], bool)
+            or screenshot[key] <= 0
+            for key in ("width", "height")
+        )
+    ):
+        raise ActionAuthorizationError("invalid screenshot provenance")
+    coordinate_space = capture.get("action_coordinate_space")
+    if not isinstance(coordinate_space, Mapping) or coordinate_space.get("kind") not in {
+        "screenshot_pixels",
+        "affine",
+    }:
+        raise ActionAuthorizationError("unsupported action coordinate space")
+    values = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0]
+    if coordinate_space["kind"] == "affine":
+        values = [coordinate_space.get(key) for key in ("m11", "m12", "m21", "m22", "tx", "ty")]
+        if (
+            any(
+                not isinstance(value, (int, float))
+                or isinstance(value, bool)
+                or not math.isfinite(value)
+                for value in values
+            )
+            or abs(values[0] * values[3] - values[1] * values[2]) <= sys.float_info.epsilon
+        ):
+            raise ActionAuthorizationError("malformed action coordinate mapping")
     if (
         decision.get("schema") != "cua.decision_choice_v1"
         or decision.get("kind") != "selected"
@@ -121,6 +175,7 @@ def authorize_exact_region_text_action(
         )
         or abs(sum(scores.values()) - 1) > 0.02
         or scores[action.candidate_id] != max(scores.values())
+        or sum(score == max(scores.values()) for score in scores.values()) != 1
     ):
         raise ActionAuthorizationError("decision scores do not match the candidate set")
 
@@ -128,6 +183,13 @@ def authorize_exact_region_text_action(
     offered_regions = request.get("regions")
     if not isinstance(regions, list) or not isinstance(offered_regions, list):
         raise ActionAuthorizationError("visual regions are unavailable")
+    offered_ids = [region.get("id") for region in offered_regions if isinstance(region, Mapping)]
+    if (
+        len(offered_ids) != len(offered_regions)
+        or any(not isinstance(region_id, str) for region_id in offered_ids)
+        or len(set(offered_ids)) != len(offered_ids)
+    ):
+        raise ActionAuthorizationError("offered visual regions are malformed")
     matches: list[Mapping[str, Any]] = []
     region_ids: set[str] = set()
     for region in regions:
@@ -173,10 +235,15 @@ def authorize_exact_region_text_action(
         or bounds["y"] < 0
         or bounds["width"] <= 0
         or bounds["height"] <= 0
+        or bounds["x"] + bounds["width"] > screenshot["width"]
+        or bounds["y"] + bounds["height"] > screenshot["height"]
     ):
         raise ActionAuthorizationError("malformed visual bounds")
+    px = bounds["x"] + bounds["width"] / 2
+    py = bounds["y"] + bounds["height"] / 2
+    m11, m12, m21, m22, tx, ty = values
     return AuthorizedVisualClick(
         current_capture_id,
-        bounds["x"] + bounds["width"] / 2,
-        bounds["y"] + bounds["height"] / 2,
+        m11 * px + m12 * py + tx,
+        m21 * px + m22 * py + ty,
     )

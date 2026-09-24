@@ -184,7 +184,7 @@ pub fn point_ownership(
             let scoped = resolve_window_frame(conn, pid, xid, &seeds).await;
             let (hit_x, hit_y) = match scoped {
                 Some(ordinal) => {
-                    let frame_origin = frame_screen_origin(conn, &seeds[ordinal]).await;
+                    let frame_origin = decoration_frame_origin(conn, &app, &seeds[ordinal]).await;
                     at_point_toolkit_coords((win_x, win_y), Some(client_origin), frame_origin)
                 }
                 None => (win_x, win_y),

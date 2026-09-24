@@ -436,10 +436,16 @@ struct Visited<'a> {
     enabled: Option<bool>,
     selected: Option<bool>,
     selectable: bool,
-    /// False when the toolkit's state set is known and lacks `Showing`: the
-    /// widget exists in the tree but is not on screen (a hidden button, a
-    /// widget on an unmapped page). Unknown state sets count as showing.
+    /// False when the toolkit's state set is known and marks the widget
+    /// neither `Showing` nor `Visible`: it exists in the tree but is hidden
+    /// (a widget on an unmapped page). Unknown state sets count as showing.
     showing: bool,
+    /// `Visible` but not `Showing`: listed and indexed, but not on screen
+    /// right now (GTK3 drops `Showing` for a control scrolled out of its
+    /// viewport, and for a revealer child such as Nautilus' hover-only eject
+    /// buttons). The tree says so, so the caller can scroll it into view or
+    /// prefer an on-screen control.
+    offscreen: bool,
     /// Children this walk deliberately did not enumerate: the items of a
     /// menu that is not open (every closed LibreOffice menu would otherwise
     /// put ~500 frameless entries ahead of the document).
@@ -1381,10 +1387,10 @@ async fn collect_visited_bounded_opts<'a>(
             .as_ref()
             .and_then(|state| state.as_ref().ok())
             .is_some_and(|state| state.contains(State::Selectable));
-        let showing = state_r
+        let (showing, offscreen) = state_r
             .as_ref()
             .and_then(|state| state.as_ref().ok())
-            .is_none_or(|state| counts_as_showing(&role_lower, state));
+            .map_or((true, false), |state| listing_state(&role_lower, state));
         let expanded = state_r
             .as_ref()
             .and_then(|state| state.as_ref().ok())
@@ -1621,6 +1627,7 @@ async fn collect_visited_bounded_opts<'a>(
             selected,
             selectable,
             showing,
+            offscreen,
             collapsed_children,
             actions,
             has_editable,
@@ -1914,6 +1921,9 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
             if let Some(note) = unlabelled_note {
                 description_parts.push(note);
             }
+            if v.offscreen {
+                description_parts.push(OFFSCREEN_NOTE.to_owned());
+            }
             nodes.push(AtspiNode {
                 element_index: Some(idx),
                 role: v.role.clone(),
@@ -2002,6 +2012,25 @@ fn is_menu_entry_role(role_lower: &str) -> bool {
 fn counts_as_showing(role_lower: &str, state: &StateSet) -> bool {
     is_showing_state(state) || (is_menu_entry_role(role_lower) && state.contains(State::Visible))
 }
+
+/// `(listed, offscreen)` for a node with a known state set. A hidden widget
+/// (neither showing nor `Visible`) is left out of the tree and the index. A
+/// `Visible` widget that is not showing stays listed — an element action can
+/// still reach a control scrolled out of view, as on every other platform —
+/// and is marked off-screen.
+fn listing_state(role_lower: &str, state: &StateSet) -> (bool, bool) {
+    if counts_as_showing(role_lower, state) {
+        (true, false)
+    } else if state.contains(State::Visible) {
+        (true, true)
+    } else {
+        (false, false)
+    }
+}
+
+/// Description note for an indexed element that is not on screen.
+const OFFSCREEN_NOTE: &str =
+    "off-screen: scroll it into view before a pixel action; element actions still reach it";
 
 /// How many leading children of a menubar menu the closed-menu peek reads
 /// (gail puts a state-less tearoff item first).
@@ -3183,7 +3212,7 @@ fn dedupe_menu_matches(visited: &[Visited<'_>], matches: Vec<usize>) -> Vec<usiz
     let showing: Vec<usize> = matches
         .iter()
         .copied()
-        .filter(|index| visited[*index].showing)
+        .filter(|index| visited[*index].showing && !visited[*index].offscreen)
         .collect();
     let mut candidates = if showing.is_empty() { matches } else { showing };
     let mut seen = std::collections::HashSet::new();
@@ -3655,7 +3684,7 @@ pub fn perform_action_at_point_in(
             // Re-base the point on the frame's own screen origin.
             let (hit_x, hit_y) = match scoped {
                 Some(ordinal) => {
-                    let frame_origin = frame_screen_origin(conn, &seeds[ordinal]).await;
+                    let frame_origin = decoration_frame_origin(conn, &app, &seeds[ordinal]).await;
                     let client_origin = x11_window_origin(xid);
                     at_point_toolkit_coords((win_x, win_y), client_origin, frame_origin)
                 }
@@ -3682,6 +3711,45 @@ pub fn perform_action_at_point_in(
             Ok(None)
         },
         || Ok(None),
+    )
+}
+
+/// The frame origin to re-base an at-point query on: the top-level's screen
+/// origin for a toolkit whose `Window` coordinates start at the WM frame
+/// (VCL), `None` for GTK. GTK measures `Window` coordinates from its client
+/// window but reports the top-level's screen extents including server-side
+/// decorations (Openbox, XFCE), so adding that inset would hit-test a title
+/// bar too low; under client-side decorations (GNOME) the inset is zero anyway.
+async fn decoration_frame_origin(
+    conn: &AccessibilityConnection,
+    app: &AccessibleProxy<'_>,
+    frame: &RawObjectRef,
+) -> Option<(i32, i32)> {
+    if toolkit_measures_from_client(app).await {
+        return None;
+    }
+    frame_screen_origin(conn, frame).await
+}
+
+async fn toolkit_measures_from_client(app: &AccessibleProxy<'_>) -> bool {
+    let Some(Ok(proxies)) = call(app.proxies()).await else {
+        return false;
+    };
+    let Some(Ok(application)) = call(proxies.application()).await else {
+        return false;
+    };
+    let Some(Ok(name)) = call(application.toolkit_name()).await else {
+        return false;
+    };
+    is_client_coordinate_toolkit(&name)
+}
+
+/// GTK 3/4 (`GTK`) and GTK 2 (`GAIL`) measure `Window` coordinates from the
+/// client window.
+fn is_client_coordinate_toolkit(toolkit_name: &str) -> bool {
+    matches!(
+        toolkit_name.trim().to_ascii_lowercase().as_str(),
+        "gtk" | "gail"
     )
 }
 
@@ -3731,6 +3799,14 @@ pub(crate) fn at_point_toolkit_coords(
 #[cfg(test)]
 mod at_point_coords_tests {
     use super::at_point_toolkit_coords;
+
+    #[test]
+    fn gtk_and_gail_measure_from_the_client_window() {
+        assert!(super::is_client_coordinate_toolkit("GTK"));
+        assert!(super::is_client_coordinate_toolkit("GAIL"));
+        assert!(!super::is_client_coordinate_toolkit("VCL"));
+        assert!(!super::is_client_coordinate_toolkit("Qt"));
+    }
 
     #[test]
     fn vcl_title_bar_inset_is_added() {
@@ -6044,9 +6120,10 @@ mod coord_tests {
         activation_index, before_snapshot_deadline, bounded_blocking,
         combine_wayland_content_offsets, counts_as_showing, hyprland_document_top_inset,
         is_activation_action, is_enabled_state, is_indexable_capabilities, is_passive_role,
-        is_showing_state, is_web_process_bus, passive_marker, prefer_authoritative_wayland_origin,
-        project_screen_extents, rebase_renderer_window_offset, scoped_component_nodes,
-        screen_extent_rebase, select_click_target, select_web_document, ApplicationSelection,
+        is_showing_state, is_web_process_bus, listing_state, passive_marker,
+        prefer_authoritative_wayland_origin, project_screen_extents, rebase_renderer_window_offset,
+        scoped_component_nodes, screen_extent_rebase, select_click_target, select_web_document,
+        ApplicationSelection,
     };
     use atspi::{State, StateSet};
     use std::time::Duration;
@@ -6254,14 +6331,34 @@ mod coord_tests {
 
     #[test]
     fn hidden_and_disabled_controls_are_not_indexed_but_are_named() {
-        // A hidden (not Showing) eject button in a sidebar row must not be
-        // indexed: a click on it changes nothing.
+        // `Showing` is the on-screen state.
         assert!(!is_showing_state(&StateSet::new(
             State::Enabled | State::Visible
         )));
         assert!(is_showing_state(&StateSet::new(
             State::Enabled | State::Visible | State::Showing
         )));
+        // A Visible-but-not-Showing control (scrolled out of its viewport, a
+        // hover-only eject button) stays listed, marked off-screen; a hidden
+        // one (not Visible) is left out.
+        assert_eq!(
+            listing_state(
+                "push button",
+                &StateSet::new(State::Enabled | State::Visible)
+            ),
+            (true, true)
+        );
+        assert_eq!(
+            listing_state("push button", &StateSet::new(State::Enabled)),
+            (false, false)
+        );
+        assert_eq!(
+            listing_state(
+                "push button",
+                &StateSet::new(State::Enabled | State::Visible | State::Showing)
+            ),
+            (true, false)
+        );
         // ...but a GTK2 menu item is never `Showing`, and stays indexed while `Visible`.
         assert!(!counts_as_showing(
             "push button",

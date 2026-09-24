@@ -32,7 +32,7 @@ strict no-foreground:
 
 | `delivery_mode`          | Behavior on Windows                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `"background"` (DEFAULT) | Never fronts and **never raises/restacks** the target — macOS-aligned (mirrors CGEvent-to-pid). **Pixel clicks**: a UIA hit-test at the point first (accessibility-channel Invoke — works on UWP / WinUI3 / Win11 packaged apps, no flash); if that misses, coordinate-injected pen/touch, **but only when the target is the _visible_ window at that point**; PostMessage for plain Win32. It returns a structured `background_unavailable` error — rather than raising or fronting — when the target is **occluded** at the point, or the event kind is known-dropped (Chromium DOM mouse + key-combos, GTK buttons, VCL/LibreOffice accelerators, terminal / WPF text with no `element_index`). **No foreground swap and no z-order raise, ever.** |
+| `"background"` (DEFAULT) | Never fronts and **never raises/restacks** the target — macOS-aligned (mirrors CGEvent-to-pid). **Pixel clicks**: a UIA hit-test at the point first (accessibility-channel Invoke — works on UWP / WinUI3 / Win11 packaged apps, no flash); if that misses, coordinate-injected pen/touch, **but only when the target is the _visible_ window at that point**; PostMessage for plain Win32. It returns a structured `background_unavailable` error — rather than raising or fronting — when the target is **occluded** at the point, or the event kind is known-dropped (Chromium DOM mouse + key-combos, GTK buttons, VCL/LibreOffice accelerators, terminal / WPF text with no `element_token`). **No foreground swap and no z-order raise, ever.** |
 | `"foreground"`           | SendInput with brief `SetForegroundWindow(target)` → restore. The explicit, agent-chosen rung where fronting IS allowed — required to reach occluded targets, Chromium DOM content, GTK buttons, VCL accelerators, WPF drag, terminals, and canvas / custom-drawn surfaces with no UIA peer. Implemented for **every** input tool — `type_text` (SendInput Unicode via `send_text_synthesized`) and `scroll` (SendInput wheel via `send_wheel_synthesized`) included. The activation and restoration are scoped to that action.                                                                                                                                                                                                                       |
 
 > **macOS is the source of truth — `background` never alters the screen.**
@@ -209,7 +209,7 @@ frontmost state:
   drive backgrounded, use `launch_app({urls: [url]})` — Chromium-
   family browsers open each URL in a new **window**. Each window has
   its own `window_id`, its own UIA tree, and can be inspected /
-  interacted with via `element_index` without activating or switching
+  interacted with via `element_token` without activating or switching
   anything. Tabs are a UX grouping for humans; cua-driver-rs
   workflows should default to windows.
 
@@ -366,13 +366,12 @@ When a cua-driver surprises you, diagnose cua-driver first:
   element at that pixel inside the target HWND, so it fell through
   to `PostMessage(WM_LBUTTONDOWN)`. For UWP / WebView2 surfaces,
   PostMessage silently no-ops — re-snapshot via
-  `get_window_state(pid, window_id)` and use `element_index` so the
+  `get_window_state(pid, window_id)` and use `element_token` so the
   daemon can invoke the cached UIA element by identity instead of by
   point.
-- **`Invalid element_index` / `No cached UIA state`?** You either
-  skipped `get_window_state` this turn or passed a different
-  `window_id` than the one the snapshot cached against. The cache is
-  keyed on `(pid, window_id)` — indices don't carry across windows of
+- **`stale_element_token` / `No cached UIA state`?** You either
+  skipped `get_window_state` this turn or used a token from an older
+  snapshot. Snapshots are keyed on `(pid, window_id)` — tokens don't carry across windows of
   the same app. Re-snapshot with the same window_id you're about to
   click in.
 - **`Invalid window handle (0x80070578)`?** The HWND you passed is
@@ -406,7 +405,7 @@ When a cua-driver surprises you, diagnose cua-driver first:
   means UWP and you're on the PostMessage path. UWP processes
   pointer input via `Windows.UI.Input`, NOT through HWND message
   queues — PostMessage(WM_LBUTTONDOWN) gets ignored. Use
-  `element_index` instead of (x,y) for UWP targets.
+  `element_token` instead of (x,y) for UWP targets.
 
 Only after those are ruled out should you fall through to the
 activate fallback. Always name the focus steal in your response
@@ -515,13 +514,13 @@ Do not assume the window array is populated immediately on a cold launch.
 **Every action MUST be bracketed by `get_window_state(pid, window_id)`**:
 
 - **Before** — the pre-action snapshot resolves the `element_token`
-  you're about to use. A bare integer is rejected in 0.17; clients that keep
-  integers must send the same response's `snapshot_id`. Targets from previous turns are stale; the
-  server replaces the element index map on every snapshot, keyed
-  on `(pid, window_id)`. Indices from turn N don't resolve in turn
+  you're about to use. Targets from previous turns are stale; the
+  server replaces the snapshot on every read, keyed on
+  `(pid, window_id)`, and lists the replaced ids in
+  `invalidated_snapshot_ids`. Tokens from turn N don't resolve in turn
   N+1, and targets from window A don't resolve against window B of
-  the same app. Skip this and element-indexed actions fail with
-  `stale_element_token` or `snapshot_id_required`.
+  the same app. Skip this and element actions fail with
+  `stale_element_token`, which names the current snapshots.
 - **After** — the post-action snapshot verifies the action actually
   landed. Without it you can't tell a silent no-op from a real
   effect. The UIA tree change (new value, new window, disappeared
@@ -733,7 +732,7 @@ typed browser tools yet.
   a different desktop session. Re-resolve via `list_windows`.
 - **Calc display stuck at "0" after pixel clicks** — the (x,y) UIA
   hit-test missed and PostMessage fell through (PostMessage is a
-  silent no-op on UWP). Switch to `element_index` mode. Symptom:
+  silent no-op on UWP). Switch to `element_token` mode. Symptom:
   the action result reports `route:"synthetic_events"` instead of
   `route:"accessibility"`.
 - **LibreOffice (VCL) `type_text` / `hotkey` reported success but
@@ -746,7 +745,7 @@ typed browser tools yet.
   - **`hotkey` / `press_key`** (keystroke + key-combo): `delivery_mode:"background"`
     surfaces a `background_unavailable` error for VCL.
   - **`type_text`** does a **UIA read-back** and returns the shared
-    `ActionResult`. With an `element_index`, the ValuePattern path returns
+    `ActionResult`. With an `element_token`, the ValuePattern path returns
     `effect:"confirmed"` with `evidence:[{"kind":"value_readback"}]` only
     when the complete expected value is synchronously visible and differs from
     the prior value. If SetValue succeeded but the provider still exposes the
@@ -760,7 +759,7 @@ typed browser tools yet.
     contains the requested text, the result stays `effect:"unverifiable"` because
     WM_CHAR does not expose the insertion point. Take a fresh snapshot before
     retrying. It may recommend foreground when a background insert appears
-    dropped. Passing an `element_index` makes the
+    dropped. Passing an `element_token` makes the
     read-back target that exact element by handle (ValuePattern → TextPattern),
     independent of foreground focus. Without one, PostMessage verification
     falls back to system-wide `GetFocusedElement`, which normally resolves only

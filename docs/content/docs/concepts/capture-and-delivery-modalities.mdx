@@ -11,7 +11,7 @@ Every Cua Driver action is shaped by four things: **what the agent observes**, *
 
 `get_window_state(pid, window_id)` returns **both the accessibility tree and a screenshot by default**, in one call. There is no capture mode to pick: you ground on the tree and the screenshot together and cross-check one against the other. This matters because the tree *lies* on some surfaces: it can expose useful structure while still echoing a write the app did not apply, omitting the rendered value, or reporting geometry that disagrees with the pixels. A grounding screenshot is always present, so when the tree looks wrong you check the pixels in the *same* response.
 
-The accessibility tree is the ground truth for *what is clickable*: roles, labels, advertised actions, and an `element_index` handle on every actionable element. The screenshot tells you *which one*. It disambiguates repeated or empty labels and shows captions, colors, and layout the tree omits, which is common in Chromium and Electron. They come back together because each catches what the other misses.
+The accessibility tree is the ground truth for *what is clickable*: roles, labels, advertised actions, and an `element_token` handle on every actionable element. The screenshot tells you *which one*. It disambiguates repeated or empty labels and shows captions, colors, and layout the tree omits, which is common in Chromium and Electron. They come back together because each catches what the other misses.
 
 > **Performance opt-out: `include_screenshot`.** `include_screenshot` (boolean, default `true`) is the one performance knob. The default returns both. Pass `include_screenshot: false` to skip the screen grab and get the tree only when you are re-indexing before an element ax action and do not need fresh pixels. The `ax`-versus-`px` decision still lives at action time.
 
@@ -23,12 +23,12 @@ You don't pick a capture mode; you pick **how you address the target** on the ac
 
 | Rung | Address with | Delivered through | Properties |
 |---|---|---|---|
-| **element ax action** | `element_index` / `element_token` | the accessibility rung: UIA Invoke (Windows), `AXPerformAction` (macOS), AT-SPI `doAction` (Linux) | Backgroundable, z-order-independent, and the only **driver-verifiable** rung. |
+| **element ax action** | `element_token` | the accessibility rung: UIA Invoke (Windows), `AXPerformAction` (macOS), AT-SPI `doAction` (Linux) | Backgroundable, z-order-independent, and the only **driver-verifiable** rung. |
 | **element px action** | `x, y` | the pixel rung, reading the coordinate straight off the screenshot already in the `get_window_state` response | Best-effort; the caller confirms the effect off the screenshot. |
 
 Default to the element ax action because the driver can verify it and often keep it in the background. Drop to an element px action when the tree cannot disambiguate repeated or empty labels, when it is empty (`degraded`, a non-AX surface), when an action came back `suspected_noop`, or when the tree disagrees with the pixels. You never re-capture to switch rungs. The screenshot is already in the snapshot, so you only change *how you address* the target.
 
-Both rungs apply to the **keyboard family** (`type_text`, `press_key`, `hotkey`) as well as the pointer tools. Address by `element_index` (ax) to target a field with no pre-click. Address by `x, y` (px) to pixel-click at `(x, y)`, establish real renderer focus, and deliver the keystroke(s) to the now-focused element. The px form is the one-call path for Chromium/Electron inputs the AX layer cannot focus: `type_text({ pid, window_id, x, y, text })` focuses and types in a single call. The two forms are mutually exclusive. `set_value` is the exception: it stays ax-only because it sets the value of a non-text control like a dropdown, checkbox, or slider.
+Both rungs apply to the **keyboard family** (`type_text`, `press_key`, `hotkey`) as well as the pointer tools. Address by `element_token` (ax) to target a field with no pre-click. Address by `x, y` (px) to pixel-click at `(x, y)`, establish real renderer focus, and deliver the keystroke(s) to the now-focused element. The px form is the one-call path for Chromium/Electron inputs the AX layer cannot focus: `type_text({ pid, window_id, x, y, text })` focuses and types in a single call. The two forms are mutually exclusive. `set_value` is the exception: it stays ax-only because it sets the value of a non-text control like a dropdown, checkbox, or slider.
 
 ### 3. Delivery: how input is delivered
 
@@ -39,7 +39,7 @@ Set `delivery_mode` per call on the input family (`click`, `double_click`, `righ
 | `background` (default) | Input is routed to the target process/window/element directly. The user's frontmost app, real cursor, and window z-order are untouched when the target surface supports background delivery. See [Best-effort background](/concepts/the-no-foreground-contract). |
 | `foreground` | The target is briefly fronted for that action, input lands on the now-active window, then the prior frontmost is restored. Use this when a background attempt did not land, or when the app only accepts events while foregrounded (DirectInput games, raw-input canvases). |
 
-Only `background` and `foreground` are valid; the historical `auto` heuristic is removed. At runtime, omitted or unknown values fall back to `background` for safety. Element ax actions (`element_index`) address an element instead of the focused window, so they hold the background path without any `delivery_mode` flag. The delivery axis matters most for the pixel rung (`x, y`), where `background` routes the event to the target and `foreground` raises the window first.
+Only `background` and `foreground` are valid; the historical `auto` heuristic is removed. At runtime, omitted or unknown values fall back to `background` for safety. Element ax actions (`element_token`) address an element instead of the focused window, so they hold the background path without any `delivery_mode` flag. The delivery axis matters most for the pixel rung (`x, y`), where `background` routes the event to the target and `foreground` raises the window first.
 
 `bring_to_front` is not a normal escalation step. Reserve it for focus-proxy surfaces that must stay foreground across multiple calls, such as a remote desktop session. For an ordinary `background_unavailable` response, retry only the refused action with `delivery_mode:"foreground"`.
 

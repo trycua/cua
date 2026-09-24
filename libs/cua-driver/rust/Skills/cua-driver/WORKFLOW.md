@@ -50,7 +50,7 @@ The accessibility model may lag or disagree with rendered state: Electron text s
 
 ## Act once
 
-Use an opaque `element_token` from the latest snapshot of the intended window. If using an integer, pair `element_index` with that response's `snapshot_id`. Do not derive or edit tokens. A later snapshot can invalidate a pending action, including when another agent observes the same window.
+Use an opaque `element_token` from the latest snapshot of the intended window. Do not derive or edit tokens. A later snapshot can invalidate a pending action, including when another agent observes the same window.
 
 Example CLI window action, with IDs and token replaced from the preceding response:
 

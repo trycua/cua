@@ -643,8 +643,7 @@ fn harness_appkit_stale_element_token_fails_closed() {
                 serde_json::json!({
                     "pid": pid as i64,
                     "window_id": wid,
-                    "snapshot_id": first.snapshot_id(),
-                    "element_index": index
+                    "element_token": first.element_token(index)
                 }),
             );
             assert!(
@@ -768,8 +767,7 @@ fn harness_appkit_text_input() {
                 serde_json::json!({
                     "pid": pid as i64,
                     "window_id": wid,
-                    "element_index": idx,
-                    "snapshot_id": snap_pre.snapshot_id(),
+                    "element_token": snap_pre.element_token(idx),
                     "value": "hello-cua"
                 }),
             );
@@ -1101,8 +1099,7 @@ fn harness_appkit_type_text_background() {
             let resp = driver.call(
                 "type_text",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": idx,
-                    "snapshot_id": snap_pre.snapshot_id(),
+                    "pid": pid as i64, "window_id": wid, "element_token": snap_pre.element_token(idx),
                     "text": "kbd-cua", "delivery_mode": "background"
                 }),
             );
@@ -1143,8 +1140,7 @@ fn harness_appkit_scroll_foreground() {
                 serde_json::json!({
                     "pid": pid as i64,
                     "window_id": wid,
-                    "element_index": index,
-                    "snapshot_id": pre.snapshot_id(),
+                    "element_token": pre.element_token(index),
                     "direction": "down",
                     "amount": 5,
                     "delivery_mode": "foreground"
@@ -1183,8 +1179,7 @@ fn harness_appkit_scroll_background() {
             serde_json::json!({
                 "pid": pid as i64,
                 "window_id": wid,
-                "element_index": index,
-                "snapshot_id": pre.snapshot_id(),
+                "element_token": pre.element_token(index),
                 "direction": "down",
                 "amount": 5,
                 "delivery_mode": "background"
@@ -1234,8 +1229,7 @@ fn harness_appkit_counter() {
                 serde_json::json!({
                     "pid": pid as i64,
                     "window_id": wid,
-                    "element_index": idx,
-                    "snapshot_id": snap_pre.snapshot_id(),
+                    "element_token": snap_pre.element_token(idx),
                     "action": "press",
                     "delivery_mode": "background"
                 }),

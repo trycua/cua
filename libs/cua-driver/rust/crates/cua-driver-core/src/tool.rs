@@ -198,12 +198,22 @@ impl ToolDef {
 
 fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -> Value {
     let mut schema = schema.clone();
-    if !crate::action_target::supports_typed_target(tool_name) {
-        return schema;
-    }
+    let closed = schema["additionalProperties"] == false;
     let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) else {
         return schema;
     };
+    if closed
+        && cua_driver_contract::tool_contract(tool_name).is_none_or(|contract| {
+            contract.schema_mode != cua_driver_contract::SchemaMode::CanonicalRuntime
+        })
+    {
+        properties
+            .entry("session")
+            .or_insert_with(crate::tool_schema::session_schema);
+    }
+    if !crate::action_target::supports_typed_target(tool_name) {
+        return schema;
+    }
     // Reuse the portable contract's exact tagged-union schema while retaining
     // the live runtime's broader legacy `scope=window|desktop` decoder.
     if let Some(portable) = cua_driver_contract::tool_contract(tool_name) {
@@ -244,7 +254,7 @@ fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -> Value {
 /// - `accessibility.tree`, `accessibility.tree.structured`,
 ///   `accessibility.tree.bounded`, `accessibility.window_state`,
 ///   `accessibility.element_tokens` (Surface 6 — tool accepts the
-///   opaque `element_token` arg alongside the integer `element_index`)
+///   opaque `element_token` arg)
 /// - `app.launch`, `app.list`, `app.kill`, `window.list`,
 ///   `window.activate`, `window.frame.set`, `window.debug_info`
 /// - `system.permissions.tcc`,
@@ -277,8 +287,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         // ── input.pointer ────────────────────────────────────────────
         //
         // Surface 6: tools that accept the opaque `element_token` arg
-        // (in addition to the integer `element_index`) claim the
-        // `accessibility.element_tokens` token so consumers can branch
+        // claim the `accessibility.element_tokens` token so consumers can branch
         // on its presence — Hermes' wrapper currently does this by name
         // for each tool; the capability token removes that coupling.
         "double_click" => &[
@@ -1108,6 +1117,17 @@ impl ToolRegistry {
         // Normalize deprecated public argument spellings before any policy,
         // consent, recording, or implementation layer interprets the call.
         normalize_delivery_mode_args(tool.def(), &mut args);
+        let schema = advertised_runtime_input_schema(resolved_name, &tool.def().input_schema);
+        let unknown_argument = args.as_object().and_then(|arguments| {
+            let properties = schema.get("properties").and_then(Value::as_object);
+            arguments
+                .keys()
+                .find(|name| {
+                    schema["additionalProperties"] == false
+                        && !properties.is_some_and(|properties| properties.contains_key(*name))
+                })
+                .cloned()
+        });
         if let Err(result) = crate::action_target::normalize_action_target(resolved_name, &mut args)
         {
             return result;
@@ -1259,6 +1279,13 @@ impl ToolRegistry {
             return protected_refusal(
                 "os_permission_prompt_requires_trusted_host",
                 "operating-system permission prompts must be initiated by a trusted host outside the agent tool path; call check_permissions with prompt=false to inspect state",
+            );
+        }
+
+        if let Some(name) = unknown_argument {
+            return protected_refusal(
+                "invalid_arguments",
+                &format!("{resolved_name}: unknown argument {name}"),
             );
         }
 
@@ -3185,6 +3212,11 @@ mod runtime_isolation_tests {
                 },
                 "additionalProperties": false
             })
+        } else if name == "check_permissions" {
+            serde_json::json!({
+                "type": "object", "properties": {"prompt": {"type": "boolean"}},
+                "additionalProperties": false
+            })
         } else {
             serde_json::json!({"type": "object"})
         };
@@ -3811,8 +3843,20 @@ resources:
         }
     }
 
+    #[test]
+    fn recording_advertises_the_shared_session_argument() {
+        let tool = crate::recording_tools::StartRecordingTool::new(Arc::new(
+            crate::recording::RecordingSession::new(),
+        ));
+        let advertised = super::Tool::def(&tool).to_list_entry();
+        assert_eq!(
+            advertised["inputSchema"]["properties"]["session"]["type"],
+            "string"
+        );
+    }
+
     #[tokio::test]
-    async fn canonical_dispatch_normalizes_legacy_delivery_mode_before_execution() {
+    async fn dispatch_checks_argument_names_after_alias_normalization() {
         let hits = Arc::new(AtomicUsize::new(0));
         let last_args = Arc::new(Mutex::new(None));
         let mut registry = super::ToolRegistry::new();
@@ -3826,7 +3870,8 @@ resources:
                     "type": "object",
                     "properties": {
                         "delivery_mode": crate::tool_schema::delivery_mode_schema()
-                    }
+                    },
+                    "additionalProperties": false
                 }),
                 read_only: false,
                 destructive: false,
@@ -3839,7 +3884,7 @@ resources:
         let result = registry
             .invoke_with_context(
                 "click",
-                serde_json::json!({"dispatch": "foreground"}),
+                serde_json::json!({"dispatch": "foreground", "session": "schema-test"}),
                 standard_context(),
             )
             .await;
@@ -3849,6 +3894,24 @@ resources:
         let received = last_args.lock().unwrap().clone().expect("arguments");
         assert_eq!(received["delivery_mode"], "foreground");
         assert!(received.get("dispatch").is_none());
+
+        let result = registry
+            .invoke_with_context(
+                "click",
+                serde_json::json!({"unknown": null}),
+                standard_context(),
+            )
+            .await;
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(
+            result.structured_content.unwrap()["refusal"]["code"],
+            "invalid_arguments"
+        );
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            1,
+            "must refuse before invocation"
+        );
     }
 
     #[tokio::test]
@@ -4025,7 +4088,7 @@ resources:
             let denied = registry
                 .invoke_with_context(
                     "check_permissions",
-                    serde_json::json!({"prompt": true, "session": "permissions"}),
+                    serde_json::json!({"prompt": true, "session": "permissions", "unknown": null}),
                     context,
                 )
                 .await;
@@ -4690,7 +4753,7 @@ resources:
     }
 
     #[tokio::test]
-    async fn element_tokens_are_bound_to_the_dispatch_runtime_generation() {
+    async fn element_tokens_resolve_only_in_the_runtime_that_published_them() {
         let pid = 8_675_309;
         let (first_cache, token) = DISPATCH_RUNTIME_SCOPE
             .scope("token-dispatch-runtime-a".to_owned(), async {
@@ -4708,30 +4771,23 @@ resources:
         let structured = DISPATCH_RUNTIME_SCOPE
             .scope("token-dispatch-runtime-b".to_owned(), async {
                 second_cache
-                    .resolve_element_args(pid, None, Some(&token), None, None, "click")
+                    .resolve(pid, &serde_json::json!({ "element_token": token }))
                     .unwrap_err()
             })
             .await
             .structured_content
             .unwrap();
-        assert_eq!(
-            structured["refusal"]["message"],
-            "element_token belongs to another runtime generation"
-        );
-        assert_eq!(
-            structured.pointer("/refusal/code"),
-            Some(&serde_json::Value::String("generation_mismatch".into()))
-        );
+        assert_eq!(structured["refusal"]["code"], "stale_element_token");
 
         let owner = DISPATCH_RUNTIME_SCOPE
             .scope("token-dispatch-runtime-a".to_owned(), async {
-                first_cache.resolve_element_args(pid, None, Some(&token), None, None, "click")
+                first_cache.resolve(pid, &serde_json::json!({ "element_token": token }))
             })
             .await;
         assert!(matches!(
             owner.unwrap(),
             crate::element_token::ResolvedElement::Element {
-                window_id: Some(44),
+                window_id: 44,
                 element_index: 0,
                 element: 0,
                 ..
@@ -5037,7 +5093,11 @@ fn synthesize_action_label(tool_name: &str, args: &Value) -> String {
     };
     let summary = match tool_name {
         "click" | "double_click" | "right_click" => {
-            if let Some(idx) = args.opt_u64("element_index") {
+            if let Some((_, idx)) = args
+                .opt_str("element_token")
+                .as_deref()
+                .and_then(crate::element_token::parse_token)
+            {
                 format!("element_index={idx}")
             } else if let (Some(x), Some(y)) = (args.opt_f64("x"), args.opt_f64("y")) {
                 format!("({x:.0}, {y:.0})")

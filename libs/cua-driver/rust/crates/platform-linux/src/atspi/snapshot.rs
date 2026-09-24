@@ -2,9 +2,9 @@
 //!
 //! Two views of the same `get_window_state` snapshot live here:
 //!
-//! 1. [`CachedSnapshot`], the [`SnapshotPayload`] published into the runtime
-//!    element cache (`cua_driver_core::element_cache`). An `element_token` /
-//!    `element_index` resolves through it to a [`CachedElement`]: the
+//! 1. [`AtspiSnapshot`], the [`SnapshotPayload`] published into the runtime
+//!    snapshot store (`cua_driver_core::snapshot_store`). An `element_token`
+//!    resolves through it to a [`CachedElement`]: the
 //!    element's proven AT-SPI identity ([`AtspiIdentity`]) plus what a later
 //!    per-index action needs to act WITHOUT re-walking the application (its
 //!    D-Bus address ([`native::ObjectRef`]), role, and the screen frame the
@@ -23,7 +23,7 @@
 
 use super::native::{self, ObjectRef};
 use super::{AtspiIdentity, AtspiNode};
-use cua_driver_core::element_cache::{ElementCacheCore, SnapshotPayload};
+use cua_driver_core::snapshot_store::{SnapshotPayload, SnapshotStore};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -51,11 +51,11 @@ pub struct CachedElement {
     pub bounds: Option<(i32, i32, u32, u32)>,
 }
 
-pub struct CachedSnapshot {
+pub struct AtspiSnapshot {
     elements: Arc<HashMap<usize, CachedElement>>,
 }
 
-impl CachedSnapshot {
+impl AtspiSnapshot {
     pub fn from_nodes(nodes: &[AtspiNode]) -> Self {
         Self::from_nodes_with_bounds(nodes, &[])
     }
@@ -95,7 +95,7 @@ impl CachedSnapshot {
     }
 }
 
-impl SnapshotPayload for CachedSnapshot {
+impl SnapshotPayload for AtspiSnapshot {
     type Element = CachedElement;
     fn len(&self) -> usize {
         self.elements.len()
@@ -105,7 +105,7 @@ impl SnapshotPayload for CachedSnapshot {
     }
 }
 
-pub type ElementCache = ElementCacheCore<CachedSnapshot>;
+pub type Snapshots = SnapshotStore<AtspiSnapshot>;
 
 // -- (pid, xid) side index ----------------------------------------------------
 
@@ -123,8 +123,8 @@ pub(crate) fn update_snapshot(
     xid: u64,
     nodes: &[AtspiNode],
     bounds: &[(usize, i32, i32, u32, u32)],
-) -> CachedSnapshot {
-    let snapshot = CachedSnapshot::from_nodes_with_bounds(nodes, bounds);
+) -> AtspiSnapshot {
+    let snapshot = AtspiSnapshot::from_nodes_with_bounds(nodes, bounds);
     store()
         .lock()
         .unwrap()
@@ -133,7 +133,7 @@ pub(crate) fn update_snapshot(
 }
 
 /// Forget the side-index entry for (pid, xid) (the runtime cache is retired
-/// separately by the owning `ElementCache`).
+/// separately by the owning `SnapshotStore`).
 pub(crate) fn forget_window(pid: u32, xid: u64) {
     store().lock().unwrap().remove(&CacheKey { pid, xid });
 }
@@ -221,11 +221,14 @@ mod tests {
 
     #[test]
     fn sparse_application_indices_are_members_not_dense_offsets_or_native_keys() {
-        let cache = ElementCache::new();
-        let id = cache.publish(42, 7, CachedSnapshot::from_nodes(&[node(11), node(7)]));
+        let cache = Snapshots::new();
+        let id = cache.publish(42, 7, AtspiSnapshot::from_nodes(&[node(11), node(7)]));
         for index in [7, 11] {
             let resolved = cache
-                .resolve_element_args(42, None, Some(&token_for(id, index)), None, None, "click")
+                .resolve(
+                    42,
+                    &serde_json::json!({ "element_token": token_for(id, index) }),
+                )
                 .unwrap();
             assert!(
                 matches!(resolved, ResolvedElement::Element { element, .. } if element.identity.path == format!("/node/{index}"))
@@ -233,7 +236,10 @@ mod tests {
         }
         for index in [0, 1, 8, 999] {
             assert!(cache
-                .resolve_element_args(42, None, Some(&token_for(id, index)), None, None, "click")
+                .resolve(
+                    42,
+                    &serde_json::json!({ "element_token": token_for(id, index) })
+                )
                 .is_err());
         }
     }
@@ -242,7 +248,7 @@ mod tests {
     fn duplicate_and_unindexed_nodes_do_not_create_members() {
         let mut unindexed = node(8);
         unindexed.element_index = None;
-        let payload = CachedSnapshot::from_nodes(&[node(11), unindexed, node(7), node(11)]);
+        let payload = AtspiSnapshot::from_nodes(&[node(11), unindexed, node(7), node(11)]);
         assert_eq!(payload.len(), 2);
         assert_eq!(payload.retain(7).unwrap().identity.path, "/node/7");
         assert_eq!(payload.retain(11).unwrap().identity.path, "/node/11");
@@ -254,27 +260,33 @@ mod tests {
     fn unproven_identity_is_discovery_only() {
         let mut unproven = node(3);
         unproven.identity = None;
-        let payload = CachedSnapshot::from_nodes(&[unproven, node(4)]);
+        let payload = AtspiSnapshot::from_nodes(&[unproven, node(4)]);
         assert_eq!(payload.len(), 1);
         assert!(payload.retain(3).is_none());
     }
 
     #[test]
     fn reordered_live_index_cannot_retarget_an_observed_control() {
-        let cache = ElementCache::new();
-        let observed = cache.publish(42, 7, CachedSnapshot::from_nodes(&[node(5)]));
+        let cache = Snapshots::new();
+        let observed = cache.publish(42, 7, AtspiSnapshot::from_nodes(&[node(5)]));
         let mut replacement = node(5);
         replacement.identity.as_mut().unwrap().path = "/node/replacement".into();
-        let current = cache.publish(42, 7, CachedSnapshot::from_nodes(&[replacement]));
+        let current = cache.publish(42, 7, AtspiSnapshot::from_nodes(&[replacement]));
 
         // The former observation is invalidated rather than resolving index 5
         // to the replacement. The current token retains the replacement's own
         // object address for the X11 click resolver to match directly.
         assert!(cache
-            .resolve_element_args(42, None, Some(&token_for(observed, 5)), None, None, "click")
+            .resolve(
+                42,
+                &serde_json::json!({ "element_token": token_for(observed, 5) })
+            )
             .is_err());
         let current = cache
-            .resolve_element_args(42, None, Some(&token_for(current, 5)), None, None, "click")
+            .resolve(
+                42,
+                &serde_json::json!({ "element_token": token_for(current, 5) }),
+            )
             .unwrap();
         assert!(
             matches!(current, ResolvedElement::Element { element, .. } if element.identity.path == "/node/replacement")
@@ -283,35 +295,37 @@ mod tests {
 
     #[test]
     fn replacement_retires_old_linux_membership() {
-        let cache = ElementCache::new();
-        let old = cache.publish(42, 7, CachedSnapshot::from_nodes(&[node(7), node(11)]));
-        let fresh = cache.publish(42, 7, CachedSnapshot::from_nodes(&[node(3)]));
+        let cache = Snapshots::new();
+        let old = cache.publish(42, 7, AtspiSnapshot::from_nodes(&[node(7), node(11)]));
+        let fresh = cache.publish(42, 7, AtspiSnapshot::from_nodes(&[node(3)]));
         for index in [7, 11] {
             let refusal = cache
-                .resolve_element_args(42, None, Some(&token_for(old, index)), None, None, "click")
+                .resolve(
+                    42,
+                    &serde_json::json!({ "element_token": token_for(old, index) }),
+                )
                 .unwrap_err();
             assert_eq!(
                 refusal.structured_content.unwrap()["refusal"]["code"],
                 "stale_element_token"
             );
             assert!(cache
-                .resolve_element_args(
+                .resolve(
                     42,
-                    None,
-                    Some(&token_for(fresh, index)),
-                    None,
-                    None,
-                    "click"
+                    &serde_json::json!({ "element_token": token_for(fresh, index) })
                 )
                 .is_err());
         }
         let target = cache
-            .resolve_element_args(42, None, Some(&token_for(fresh, 3)), None, None, "click")
+            .resolve(
+                42,
+                &serde_json::json!({ "element_token": token_for(fresh, 3) }),
+            )
             .unwrap();
         assert!(matches!(
             target,
             ResolvedElement::Element {
-                window_id: Some(7),
+                window_id: 7,
                 element,
                 ..
             } if element.identity.path == "/node/3"
@@ -320,38 +334,40 @@ mod tests {
 
     #[test]
     fn compositor_window_ids_do_not_alias_their_low_bits() {
-        let cache = ElementCache::new();
+        let cache = Snapshots::new();
         let window = (1_u64 << 40) | 7;
-        let low = cache.publish(42, 7, CachedSnapshot::from_nodes(&[node(7)]));
-        let high = cache.publish(42, window, CachedSnapshot::from_nodes(&[node(11)]));
+        let low = cache.publish(42, 7, AtspiSnapshot::from_nodes(&[node(7)]));
+        let high = cache.publish(42, window, AtspiSnapshot::from_nodes(&[node(11)]));
         let target = cache
-            .resolve_element_args(
+            .resolve(
                 42,
-                None,
-                Some(&token_for(high, 11)),
-                None,
-                Some(window),
-                "click",
+                &serde_json::json!({ "element_token": token_for(high, 11) }),
             )
             .unwrap();
         assert!(
-            matches!(target, ResolvedElement::Element { window_id: Some(id), element, .. } if id == window && element.identity.path == "/node/11")
+            matches!(target, ResolvedElement::Element { window_id, element, .. } if window_id == window && element.identity.path == "/node/11")
         );
-        assert!(cache
-            .resolve_element_args(42, None, Some(&token_for(high, 11)), None, Some(7), "click")
-            .is_err());
         cache.remove(42, window);
-        assert!(cache
-            .resolve_element_args(42, None, Some(&token_for(low, 7)), None, Some(7), "click")
-            .is_ok());
+        assert!(matches!(
+            cache
+                .resolve(
+                    42,
+                    &serde_json::json!({ "element_token": token_for(low, 7) })
+                )
+                .unwrap(),
+            ResolvedElement::Element { window_id: 7, .. }
+        ));
     }
 
     #[test]
     fn empty_linux_snapshot_has_no_element_zero() {
-        let cache = ElementCache::new();
-        let id = cache.publish(42, 7, CachedSnapshot::from_nodes(&[]));
+        let cache = Snapshots::new();
+        let id = cache.publish(42, 7, AtspiSnapshot::from_nodes(&[]));
         assert!(cache
-            .resolve_element_args(42, None, Some(&token_for(id, 0)), None, None, "click")
+            .resolve(
+                42,
+                &serde_json::json!({ "element_token": token_for(id, 0) })
+            )
             .is_err());
     }
 

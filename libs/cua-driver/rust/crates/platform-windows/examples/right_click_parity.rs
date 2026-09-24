@@ -75,7 +75,7 @@ fn main() {
     );
     let v1: serde_json::Value = serde_json::from_str(r1.trim()).unwrap();
     assert!(extract_text(&v1)
-        .contains("Provide element_index or (x, y) to address the right-click target"));
+        .contains("Provide element_token or (x, y) to address the right-click target"));
     println!("Missing-target err OK");
 
     // 2. Partial xy.
@@ -93,22 +93,24 @@ fn main() {
     let r3 = req(
         &mut pipe,
         &format!(
-            r#"{{"method":"call","name":"right_click","args":{{"pid":{pid},"window_id":{wid},"element_index":0,"x":50,"y":50}}}}"#
+            r#"{{"method":"call","name":"right_click","args":{{"pid":{pid},"window_id":{wid},"element_token":"s00000000:0","x":50,"y":50}}}}"#
         ),
     );
-    assert!(extract_text(&serde_json::from_str(r3.trim()).unwrap())
-        .contains("Provide either element_index or (x, y), not both"));
+    assert!(
+        extract_text(&serde_json::from_str(r3.trim()).unwrap()).contains("element_token is stale")
+    );
     println!("Both-modes err OK");
 
-    // 4. element_index without window_id.
+    // 4. A stale element_token without window_id.
     let r4 = req(
         &mut pipe,
         &format!(
-            r#"{{"method":"call","name":"right_click","args":{{"pid":{pid},"element_index":0}}}}"#
+            r#"{{"method":"call","name":"right_click","args":{{"pid":{pid},"element_token":"s00000000:0"}}}}"#
         ),
     );
-    assert!(extract_text(&serde_json::from_str(r4.trim()).unwrap())
-        .contains("window_id is required when element_index is used"));
+    assert!(
+        extract_text(&serde_json::from_str(r4.trim()).unwrap()).contains("element_token is stale")
+    );
     println!("Element-without-window err OK");
 
     // 5. Real pixel right-click.

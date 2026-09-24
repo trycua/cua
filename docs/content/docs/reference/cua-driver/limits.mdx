@@ -92,11 +92,11 @@ does not imply arbitrary raw background PX delivery on Wayland.
 
 **Workarounds, in order of preference:**
 
-1. Use `right_click({pid, element_index})` on AX-addressable targets (links, buttons, toolbar items). AX delivery sidesteps the renderer filter entirely.
+1. Use `right_click({pid, element_token})` on AX-addressable targets (links, buttons, toolbar items). AX delivery sidesteps the renderer filter entirely.
 2. For context menus on pure web content (nothing in the AX tree), activate Chrome briefly and fall back to a HID-tap right-click. This interrupts best-effort background behavior for that one click.
 
 <Callout type="info">
-  Element-indexed right-click (`right_click` with `element_index`) works fine. The limit is
+  Element right-click (`right_click` with `element_token`) works fine. The limit is
   specifically pixel right-click on non-AX Chromium web content.
 </Callout>
 
@@ -136,13 +136,13 @@ does not imply arbitrary raw background PX delivery on Wayland.
 
 ## Minimized windows silently drop keyboard commits
 
-**Symptom:** `press_key({pid, element_index, key: "return"})` on a text field in a minimized window returns success, but the field doesn't commit. The macOS system-alert beep fires, or nothing happens.
+**Symptom:** `press_key({pid, element_token, key: "return"})` on a text field in a minimized window returns success, but the field doesn't commit. The macOS system-alert beep fires, or nothing happens.
 
 **Cause:** AX reads and AX clicks propagate through to minimized windows normally, but keyboard-commit events (Return, Space, Tab) require renderer focus, which AX focus does not confer on a minimized window. This is a macOS-wide behavior.
 
 **Workarounds:**
 
-1. Use `set_value({pid, element_index, value: "..."})` to write the field's value directly. No keyboard event involved; no focus handoff required.
+1. Use `set_value({pid, element_token, value: "..."})` to write the field's value directly. No keyboard event involved; no focus handoff required.
 2. AX-click a commit-equivalent button (Go, Submit, Send, OK) rather than relying on Return.
 3. Restore the window through the Dock or an application-specific Window menu command. This interrupts best-effort background behavior for that window. (`Cmd+M` minimizes a window; it does not restore one.)
 
@@ -172,7 +172,7 @@ not require the same portal route.
 **Workarounds:**
 
 1. Type into accessible text fields with `type_text`. AT-SPI `insertText` writes the field directly, with no synthetic key event involved.
-2. Drive controls by `element_index` (`click`, `set_value`) instead of keyboard shortcuts where an equivalent control exists.
+2. Drive controls by `element_token` (`click`, `set_value`) instead of keyboard shortcuts where an equivalent control exists.
 3. Retry with `delivery_mode:"foreground"` when the desktop exposes a verified
    activation and input adapter.
 4. Run the app under XWayland (`GDK_BACKEND=x11` / `QT_QPA_PLATFORM=xcb`). It
@@ -224,8 +224,7 @@ the window-local screenshot space. `double_click` currently labels these as
 screen coordinates in its generated argument reference, but its implementation
 uses the same window-local conversion as the other pixel actions.
 
-**What to do:** prefer `element_token`, or `element_index` with the matching
-`snapshot_id`. The accessibility path carries no coordinates, so it is
+**What to do:** prefer `element_token`. The accessibility path carries no coordinates, so it is
 unaffected by this mismatch, and it also works on backgrounded windows. Reach
 for a pixel action only on canvas, WebGL, or custom-drawn surfaces that expose
 no element.

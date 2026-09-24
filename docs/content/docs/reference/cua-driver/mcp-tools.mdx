@@ -46,7 +46,9 @@ Only apps with NSApplicationActivationPolicyRegular are included — background 
 
 Use this for "is X installed?" as well as "is X running?". For per-window state — on-screen, on-current-Space, minimized, window titles — call list_windows instead. For just opening an app — running or not — call launch_app(&#123;bundle_id: ...&#125;) directly; list_apps is not a prerequisite.
 
-**Arguments:** none.
+**Arguments:**
+
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ### `list_windows`
 
@@ -58,16 +60,17 @@ Per-record fields: window_id, pid, app_name, title, bounds (x/y/width/height, to
 
 - `on_screen_only` (boolean, optional): When true, drop windows not on the current Space. Default false.
 - `pid` (integer, optional): Optional pid filter. When set, only this pid's windows are returned.
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ### `get_window_state`
 
-Walk a running app's AX tree and return BOTH a structured `elements` array (preferred) AND a Markdown rendering of the same tree (back-compat). Every actionable element is tagged with [element_index N] in the markdown and as `element_index` in the structured array — pass those indices to click, type_text, press_key, etc.
+Walk a running app's AX tree and return BOTH a structured `elements` array (preferred) AND a Markdown rendering of the same tree (back-compat). Every actionable element is tagged with [element_index N] in the markdown and as `element_index` in the structured array; pass each element's `element_token` to click, type_text, press_key, etc.
 
-INVARIANT: call get_window_state once per turn per (pid, window_id) before any element-indexed action. The index map is replaced by the next snapshot.
+INVARIANT: call get_window_state once per turn per (pid, window_id) before any element action. The next snapshot of the window replaces this one, stales its element tokens, and lists the replaced ids in `invalidated_snapshot_ids`.
 
 PREFERRED CONSUMERS read `structuredContent.elements` (one entry per indexed row with `element_index`, `role`, `label`, `value` (the element's text/AXValue when present — use it to verify what a field holds), `actions` (names of AX actions exposed by the element, omitted when empty), `frame: {x,y,w,h}`, `parent_index`, `depth`). The markdown `tree_markdown` stays available and unchanged in shape for existing text-parsing callers — but new fields will only be added to the structured side.
 
-Always returns BOTH the element tree AND a screenshot — ground on both and cross-check (the tree lies on some surfaces: Electron echo-confirms, Catalyst null values, virtualized off-viewport rows with `h:1` frames). You choose the modality at ACTION time, not here: an element ax action (pass `element_index`/`element_token` → the accessibility rung) or an element px action (pass `x`,`y` → the pixel rung, read straight off this screenshot). `capture_mode` is deprecated and ignored. Pass `include_screenshot:false` to skip the grab and get the tree only — the cheap path when you're just re-indexing before an element ax action.
+Always returns BOTH the element tree AND a screenshot — ground on both and cross-check (the tree lies on some surfaces: Electron echo-confirms, Catalyst null values, virtualized off-viewport rows with `h:1` frames). You choose the modality at ACTION time, not here: an element ax action (pass `element_token` → the accessibility rung) or an element px action (pass `x`,`y` → the pixel rung, read straight off this screenshot). `capture_mode` is deprecated and ignored. Pass `include_screenshot:false` to skip the grab and get the tree only — the cheap path when you're just re-indexing before an element ax action.
 
 The mirror image: pass `include_accessibility_tree:false` to SKIP the AX walk entirely (the expensive part, bounded by timeout_ms) and return just the screenshot plus window metadata — `window_bounds`, `screenshot_scale`, `screenshot_width`/`screenshot_height`, `app_name`, and `window_title` — the capture-only path for rendering a live window preview / picture-in-picture without paying for perception. Setting BOTH `include_accessibility_tree:false` and `include_screenshot:false` is an error (nothing to return). Optional `max_image_dimension` overrides the configured screenshot long-edge limit for this call; use 0 for native resolution. The legacy `max_dimension` remains a tighter cap for compatibility.
 
@@ -79,7 +82,7 @@ Optional `max_elements` / `max_depth` bound the AX walk to mitigate context-wind
 
 **Arguments:**
 
-- `capture_mode` (string, optional): DEPRECATED and ignored. get_window_state always returns BOTH the element tree and a screenshot — ground on both. The modality is chosen at action time by how you address the target: an element ax action (element_index/element_token) or an element px action (x,y). Any value (including the old "som"/"screenshot" aliases) is accepted but has no effect.
+- `capture_mode` (string, optional): DEPRECATED and ignored. get_window_state always returns BOTH the element tree and a screenshot — ground on both. The modality is chosen at action time by how you address the target: an element ax action (element_token) or an element px action (x,y). Any value (including the old "som"/"screenshot" aliases) is accepted but has no effect.
 - `include_accessibility_tree` (boolean, optional): Default true — walk the AX tree and return `elements` + `tree_markdown` alongside the screenshot. Set false to SKIP the AX walk entirely (the expensive part, bounded by timeout_ms) and return just the screenshot plus window metadata (bounds, scale, app_name, window_title) — the capture-only path for rendering a live window preview / picture-in-picture. Mirrors include_screenshot. Setting BOTH include_accessibility_tree:false AND include_screenshot:false is an error (nothing to return).
 - `include_screenshot` (boolean, optional): Default true — returns a grounding screenshot alongside the tree. Set false to skip the grab and return the tree only (the cheap path when you're just re-indexing before an element ax action; saves the image tokens + screen-grab latency). screenshot_out_file still forces a capture to disk.
 - `max_depth` (integer, optional): Cap on the AX-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower this for deep menu/Electron trees. range: 1–unbounded
@@ -103,7 +106,9 @@ Return a lightweight snapshot of the desktop: running regular apps and on-screen
 
 For the full AX subtree of a single window (with interactive element indices you can click by), use `get_window_state` instead — that's the heavy per-window tool. This one is a fast discovery read that needs no TCC grants.
 
-**Arguments:** none.
+**Arguments:**
+
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ### `get_desktop_state`
 
@@ -135,7 +140,9 @@ Return the current mouse cursor position in screen points (origin top-left).
 
 Return the current cua-driver-rs configuration.
 
-**Arguments:** none.
+**Arguments:**
+
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ### `get_recording_state`
 
@@ -143,7 +150,9 @@ Report the current trajectory recorder state: whether recording is enabled, the 
 
 Pure read-only.
 
-**Arguments:** none.
+**Arguments:**
+
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ### `get_agent_cursor_state`
 
@@ -183,6 +192,7 @@ Returns the launched app's pid, bundle_id, name, and a `windows` array (same sha
 - `bundle_id` (string, optional): App bundle identifier, e.g. com.apple.calculator. Preferred over name.
 - `creates_new_application_instance` (boolean, optional): When true, force a new app instance even if already running (open -n). Use for concurrent multi-agent/multi-session work so each session gets an isolated instance + window instead of sharing one — on single-instance apps (e.g. Calculator) every caller otherwise gets the same window and the sessions clobber each other.
 - `name` (string, optional): App display name. Used only when bundle_id is absent.
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 - `urls` (array of string, optional): Optional file paths or URLs to open with the app (e.g. a folder path for Finder).
 - `webkit_inspector_port` (integer, optional): Open a WebKit inspector server on this port (sets WEBKIT_INSPECTOR_SERVER env var).
 
@@ -193,6 +203,7 @@ Force-terminate a process by pid (kill -9 equivalent on macOS / Linux; taskkill 
 **Arguments:**
 
 - `pid` (integer, required): PID of the process to terminate.
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ```json
 {"pid":844}
@@ -205,6 +216,7 @@ Persistently activate an app and leave it in the foreground. Most input does not
 **Arguments:**
 
 - `pid` (integer, required)
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 - `window_id` (integer, optional)
 
 ```json
@@ -236,7 +248,7 @@ Click against a target pid. **Prefer `element_token` over pixel coordinates** �
 
 Two addressing modes:
 
-- element_token, or element_index + snapshot_id (from get_window_state): AX action path. Works on backgrounded/hidden windows. No cursor move, no focus steal. The snapshot cache is scoped per (pid, window_id) and is replaced by the next snapshot of the same window — re-snapshot every turn before clicking.
+- element_token (from get_window_state): AX action path. Works on backgrounded/hidden windows. No cursor move, no focus steal. The snapshot cache is scoped per (pid, window_id) and is replaced by the next snapshot of the same window — re-snapshot every turn before clicking.
 
 - x, y (window-local screenshot pixels, top-left origin of the PNG returned by get_window_state): CGEvent path. Synthesizes mouse events and posts to pid. Use modifier for cmd/shift/option/ctrl. Needs a visible on-screen window to anchor the conversion.
 
@@ -252,40 +264,36 @@ from_zoom: set true after a zoom call to auto-translate zoom-image pixel coordin
 - `count` (integer, optional): Click count (pixel path only). Default 1.
 - `debug_image_out` (string, optional): Optional file path. When set on a pixel-addressed click, captures a fresh screenshot, draws a red crosshair at (x, y), and writes the PNG. Use to verify coordinate spaces. Requires window_id; incompatible with from_zoom.
 - `delivery_mode` (string, optional): Best-effort-background ladder rung (default "background"). "background": perform the AX action or post the CGEvent without fronting. "foreground": briefly front the window, act, let transient UI settle, then restore the prior frontmost app. Requires window_id. Modified clicks require "foreground" so macOS observes physical modifier-key state. A generic click has no independent postcondition read-back, except selection of list-like AX rows whose AXSelected state can be confirmed; otherwise confirm the effect from a fresh state snapshot. Use the agent loop: background AX (element_index) → snapshot → background pixel (x/y) → snapshot → delivery_mode:"foreground".
-- `element_index` (integer, optional): Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
-- `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.
+- `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it.
 - `from_zoom` (boolean, optional): When true, x and y are in the last zoom image for this pid; driver translates back to full-window coordinates.
 - `modifier` (array of string, optional): Modifier keys: cmd, shift, option/alt, ctrl.
 - `pid` (integer, optional): Target process ID.
 - `scope` (string, optional): Coordinate frame for a windowless screen-absolute click (default "window"). Pass "desktop" when sending x,y with NO pid/window_id — the coordinates are then true screen pixels (read from get_desktop_state with scope="desktop"). Per-call; not a setting.
 - `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
-- `snapshot_id` (string, optional): Snapshot handle from get_window_state. Required when targeting by element_index; stale snapshots fail closed.
 - `target` (window target or desktop target, optional): Exact capture/input target selected independently for each action.
 
 `display_id="primary"` is the portable desktop target in this release.
 Platforms that cannot address another display reject it explicitly rather
 than silently changing coordinate spaces.
-- `window_id` (integer, optional): Target window ID. Required for element_index. Optional when element_token is supplied (the token carries it).
+- `window_id` (integer, optional): Target window ID. Omit when element_token is supplied (the token carries it).
 - `x` (number, optional): X in screenshot pixels. A window target uses the get_window_state PNG; a desktop target uses the native get_desktop_state PNG. The driver reverses Retina backing scale and any window-image downscale.
 - `y` (number, optional): Y in screenshot pixels from the image selected by target.
 
 ### `double_click`
 
-Double-click at (x, y) or on an AX element identified by element_index + window_id.
+Double-click at (x, y) or on an AX element identified by element_token.
 
-AX path (element_index provided): performs `AXOpen` when the element advertises it (Finder items, openable list rows/cells); otherwise resolves the element's on-screen center and falls back to a pixel double-click there.
+AX path (element_token provided): performs `AXOpen` when the element advertises it (Finder items, openable list rows/cells); otherwise resolves the element's on-screen center and falls back to a pixel double-click there.
 
 Pixel path (x, y provided): two down/up pairs ~80 ms apart at the given coordinates.
 
 **Arguments:**
 
 - `delivery_mode` (string, optional): Best-effort-background ladder rung (default "background"). "background": inject without fronting or raising the target — no focus steal. "foreground": briefly front the target, act, then restore the prior frontmost — the explicit last resort when a background attempt didn't land. Re-call with "foreground" only for the action that needs it.
-- `element_index` (integer, optional): Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
-- `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.
+- `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it.
 - `pid` (integer, required)
 - `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
-- `snapshot_id` (string, optional): Snapshot handle from get_window_state. Required when targeting by element_index; stale snapshots fail closed.
-- `window_id` (integer, optional): CGWindowID. Required when element_index is used. Optional when element_token is supplied (the token carries it).
+- `window_id` (integer, optional): CGWindowID. Omit when element_token is supplied (the token carries it).
 - `x` (number, optional): Screen X coordinate (pixel path).
 - `y` (number, optional): Screen Y coordinate (pixel path).
 
@@ -297,22 +305,20 @@ Pixel path (x, y provided): two down/up pairs ~80 ms apart at the given coordina
 
 Right-click against a target pid. Two addressing modes:
 
-- `element_index` + `window_id` (from the last `get_window_state` snapshot) — performs `AXShowMenu` on the cached element. Pure AX RPC, works on backgrounded / hidden windows, no cursor move or focus steal. Requires a prior `get_window_state(pid, window_id)` in this turn.
+- `element_token` (from the last `get_window_state` snapshot) — performs `AXShowMenu` on the cached element. Pure AX RPC, works on backgrounded / hidden windows, no cursor move or focus steal. Requires a prior `get_window_state(pid, window_id)` in this turn.
 
 - `x`, `y` — synthesizes `rightMouseDown` / `rightMouseUp` CGEvent pair posted to the pid. Driver converts image-pixel → screen-point internally. `modifier` forces the CGEvent path (AX actions don't propagate modifier keys).
 
-Exactly one of `element_index` or (`x` AND `y`) must be provided. `pid` always required. `window_id` required when `element_index` is used.
+Exactly one of `element_token` or (`x` AND `y`) must be provided. `pid` always required.
 
 **Arguments:**
 
 - `delivery_mode` (string, optional): Best-effort-background ladder rung (default "background"). "background": inject without fronting or raising the target — no focus steal. "foreground": briefly front the target, act, then restore the prior frontmost — the explicit last resort when a background attempt didn't land. Re-call with "foreground" only for the action that needs it.
-- `element_index` (integer, optional): Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
-- `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.
+- `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it.
 - `modifier` (array of string, optional): Modifier keys held during the right-click: cmd/shift/option/ctrl. Pixel path only.
 - `pid` (integer, required): Target process ID.
 - `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
-- `snapshot_id` (string, optional): Snapshot handle from get_window_state. Required when targeting by element_index; stale snapshots fail closed.
-- `window_id` (integer, optional): CGWindowID. Required when element_index is used. Optional when element_token is supplied (the token carries it).
+- `window_id` (integer, optional): CGWindowID. Omit when element_token is supplied (the token carries it).
 - `x` (number, optional): X in window-local screenshot pixels. Must be provided together with y.
 - `y` (number, optional): Y in window-local screenshot pixels. Must be provided together with x.
 
@@ -362,28 +368,26 @@ than silently changing coordinate spaces.
 
 Insert text into the target pid via `AXSetAttribute(kAXSelectedText)`. Works for standard Cocoa text fields and text views. No keystrokes are synthesized — special keys (Return / Escape / arrows) go through `press_key` / `hotkey`. For Chromium / Electron inputs that don't implement `kAXSelectedText`, the tool falls back to CGEvent character synthesis automatically when the estimated route stays within the daemon transport budget. Longer synthesized routes are refused before character events and return a safe chunk size; one-call AX insertion remains uncapped.
 
-Optional `element_index` + `window_id` (from the last `get_window_state` snapshot) directs the write to a specific field. Without `element_index`, the write goes to the pid's currently focused element.
+Optional `element_token` (from the last `get_window_state` snapshot) directs the write to a specific field. Without `element_token`, the write goes to the pid's currently focused element.
 
-WEB CONTENT (Chromium/WebKit/Electron — browser tabs, Slack, VS Code, X's compose box): AXValue is not independent proof that the renderer/DOM observed an AX write or synthesized keystrokes. The driver detects this at the element level (an AXWebArea ancestor) and refuses to trust AXValue-only read-back there. Electron AX targets that are web content or cannot be proven native refuse background delivery before mutation because the AX route cannot establish exact renderer focus; use the px form or explicit foreground delivery. Other web-content paths return effect:"unverifiable" + escalation, never a false "confirmed" (a browser's own native address bar/toolbar stays trusted). For a browser TAB the reliable path is the `page` tool (drives the DOM via CDP); for an embedded web view use this tool's px form: pass x,y (no element_index) to pixel-click the field then type, in one call. NOTE: a px focus-click won't reliably open+focus a CLOSED control; AX-press to open/activate it first (works in the background), then px-type. Always confirm via the screenshot; if px-background still drops, escalate to delivery_mode:"foreground".
+WEB CONTENT (Chromium/WebKit/Electron — browser tabs, Slack, VS Code, X's compose box): AXValue is not independent proof that the renderer/DOM observed an AX write or synthesized keystrokes. The driver detects this at the element level (an AXWebArea ancestor) and refuses to trust AXValue-only read-back there. Electron AX targets that are web content or cannot be proven native refuse background delivery before mutation because the AX route cannot establish exact renderer focus; use the px form or explicit foreground delivery. Other web-content paths return effect:"unverifiable" + escalation, never a false "confirmed" (a browser's own native address bar/toolbar stays trusted). For a browser TAB the reliable path is the `page` tool (drives the DOM via CDP); for an embedded web view use this tool's px form: pass x,y (no element_token) to pixel-click the field then type, in one call. NOTE: a px focus-click won't reliably open+focus a CLOSED control; AX-press to open/activate it first (works in the background), then px-type. Always confirm via the screenshot; if px-background still drops, escalate to delivery_mode:"foreground".
 
 **Arguments:**
 
 - `delay_ms` (integer, optional): Milliseconds between characters in the CGEvent fallback path. Default 30. Ignored when the AX path succeeds. range: 0–200
 - `delivery_mode` (string, optional): Best-effort-background ladder rung (default "background"). "background": AX insert, then CGEvent keystrokes if needed — no focus steal; native controls can be confirmed via AXValue read-back, while web-content writes remain effect:"unverifiable". "foreground": briefly front the window, type, restore the prior frontmost — the explicit last resort for focus-sensitive surfaces (e.g. WhatsApp/Catalyst) where background keystrokes don't land. Re-call with "foreground" when a background attempt remains unverifiable and a fresh snapshot shows the text did not appear.
-- `element_index` (integer, optional): Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
-- `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.
+- `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it.
 - `pid` (integer, optional): Target process ID.
 - `scope` (string, optional): Use desktop with no pid/window_id to type into the frontmost application. default: `"window"`
 - `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
-- `snapshot_id` (string, optional): Snapshot handle from get_window_state. Required when targeting by element_index; stale snapshots fail closed.
 - `target` (window target or desktop target, optional): Exact capture/input target selected independently for each action.
 
 `display_id="primary"` is the portable desktop target in this release.
 Platforms that cannot address another display reject it explicitly rather
 than silently changing coordinate spaces.
 - `text` (string, required): Text to insert at the target's cursor.
-- `window_id` (integer, optional): CGWindowID. Required when element_index is used. Optional when element_token is supplied (the token carries it).
-- `x` (number, optional): Screenshot-pixel X of the field to type into — the element px action form. Pass x,y (no element_index) and the tool pixel-clicks there to establish real renderer focus, then types. Use for Chromium/Electron inputs the AX path can't reach. Read straight off the get_window_state PNG, same convention as click.
+- `window_id` (integer, optional): CGWindowID. Omit when element_token is supplied (the token carries it).
+- `x` (number, optional): Screenshot-pixel X of the field to type into — the element px action form. Pass x,y (no element_token) and the tool pixel-clicks there to establish real renderer focus, then types. Use for Chromium/Electron inputs the AX path can't reach. Read straight off the get_window_state PNG, same convention as click.
 - `y` (number, optional): Screenshot-pixel Y of the field (see x).
 
 ```json
@@ -393,7 +397,7 @@ than silently changing coordinate spaces.
 ### `press_key`
 
 Press and release a single key. Follows the same `delivery_mode` ladder as click/type_text — it does NOT raise the window by default:
-• `background` (default): post to the pid WITHOUT fronting/raising — the auth-message path (Chromium-safe). With element_index it focuses that AX element first. `window_id` only targets; it does not raise.
+• `background` (default): post to the pid WITHOUT fronting/raising — the auth-message path (Chromium-safe). With element_token it focuses that AX element first. `window_id` only targets; it does not raise.
 • `foreground`: guard and briefly front the exact window, focus an addressed AX element when supplied, send a genuine HID key transition so Chromium content, inline editors, and native menu equivalents receive it, then restore prior frontmost. Requires window_id.
 
 A key press is confirmed only when a bounded native AX value/selection read-back changes on the same control. Otherwise a successfully attempted post remains effect:"unverifiable" without implying delivery failure or recommending foreground. Key names: return, tab, escape, up/down/left/right, space, delete, home, end, pageup, pagedown, f1-f12, plus any letter or digit. Modifiers array: cmd, shift, option/alt, ctrl, fn.
@@ -401,21 +405,19 @@ A key press is confirmed only when a bounded native AX value/selection read-back
 **Arguments:**
 
 - `delivery_mode` (string, optional): Best-effort-background ladder rung (default "background"). "background": inject without fronting or raising the target — no focus steal. "foreground": briefly front the target, act, then restore the prior frontmost — the explicit last resort when a background attempt didn't land. Re-call with "foreground" only for the action that needs it.
-- `element_index` (integer, optional): Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
-- `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.
+- `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it.
 - `key` (string, required): Key name: return, tab, escape, up, down, etc.
 - `modifiers` (array of string, optional): Modifier keys: cmd, shift, option/alt, ctrl, fn.
 - `pid` (integer, optional)
 - `scope` (string, optional): Use desktop with no pid/window_id to send the key to the frontmost application. default: `"window"`
 - `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
-- `snapshot_id` (string, optional): Snapshot handle from get_window_state. Required when targeting by element_index; stale snapshots fail closed.
 - `target` (window target or desktop target, optional): Exact capture/input target selected independently for each action.
 
 `display_id="primary"` is the portable desktop target in this release.
 Platforms that cannot address another display reject it explicitly rather
 than silently changing coordinate spaces.
 - `window_id` (integer, optional): Target window. Required for delivery_mode:"foreground". Does NOT itself raise the window — raising is gated on delivery_mode.
-- `x` (number, optional): Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the key. Use when the key must go to a Chromium/Electron surface the AX path can't focus. Pass with y, no element_index.
+- `x` (number, optional): Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the key. Use when the key must go to a Chromium/Electron surface the AX path can't focus. Pass with y, no element_token.
 - `y` (number, optional): Screenshot-pixel Y (see x).
 
 ```json
@@ -435,13 +437,11 @@ Recognized modifiers: cmd/command, shift, option/alt, ctrl/control, fn. Non-modi
 **Arguments:**
 
 - `delivery_mode` (string, optional): Best-effort-background ladder rung (default "background"). "background": inject without fronting or raising the target — no focus steal. "foreground": briefly front the target, act, then restore the prior frontmost — the explicit last resort when a background attempt didn't land. Re-call with "foreground" only for the action that needs it.
-- `element_index` (integer, optional): Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
-- `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.
+- `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it.
 - `keys` (array of string, required): Modifier(s) and one non-modifier key, e.g. ["cmd", "c"]. items: 2–unbounded
 - `pid` (integer, optional): Target process ID.
 - `scope` (string, optional): Use desktop with no pid/window_id to send the chord to the frontmost application. default: `"window"`
 - `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
-- `snapshot_id` (string, optional): Snapshot handle from get_window_state. Required when targeting by element_index; stale snapshots fail closed.
 - `target` (window target or desktop target, optional): Exact capture/input target selected independently for each action.
 
 `display_id="primary"` is the portable desktop target in this release.
@@ -467,13 +467,11 @@ For free-form text entry into web inputs, prefer `type_text_chars` which synthes
 
 **Arguments:**
 
-- `element_index` (integer, optional): Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
-- `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.
+- `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it.
 - `pid` (integer, required)
 - `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
-- `snapshot_id` (string, optional): Snapshot handle from get_window_state. Required when targeting by element_index; stale snapshots fail closed.
 - `value` (string, required): New value. AX will coerce to the element's native type.
-- `window_id` (integer, optional): CGWindowID for the window whose get_window_state produced the element_index. Required when element_index is used; optional when element_token is supplied (the token carries it).
+- `window_id` (integer, optional): CGWindowID. Omit when element_token is supplied (the token carries it).
 
 ```json
 {"pid":844,"value":"42"}
@@ -483,7 +481,7 @@ For free-form text entry into web inputs, prefer `type_text_chars` which synthes
 
 Scroll the target pid. Two paths, picked by how you address the scroll:
 
-• **Targeted wheel path** — when you pass a target, either `element_index`/`element_token` (preferred) or window-local `x, y` pixels: the driver synthesizes a real mouse-wheel event (CGEventCreateScrollWheelEvent, at that screen point. The renderer hit-tests the wheel at the cursor, so the scroll lands on whatever element is under the point — exactly like physically rolling the wheel over it. This is the ONLY way to scroll a nested `overflow:auto` region (e.g. a scrollable &lt;div&gt; with no tabindex): such regions never take keyboard focus, so the keystroke path below no-ops on them. Use this for inner/nested scrollers in web views.
+• **Targeted wheel path** — when you pass a target, either `element_token` (preferred) or window-local `x, y` pixels: the driver synthesizes a real mouse-wheel event (CGEventCreateScrollWheelEvent, at that screen point. The renderer hit-tests the wheel at the cursor, so the scroll lands on whatever element is under the point — exactly like physically rolling the wheel over it. This is the ONLY way to scroll a nested `overflow:auto` region (e.g. a scrollable &lt;div&gt; with no tabindex): such regions never take keyboard focus, so the keystroke path below no-ops on them. Use this for inner/nested scrollers in web views.
 
 • **Keystroke path (focused region)** — when you pass NO target (just pid + direction): synthesizes PageDown/PageUp (by='page') or Down/Up arrows (by='line'); horizontal uses Left/Right arrows. Drives the focused / page scroller only.
 
@@ -495,12 +493,10 @@ Mapping: by='page' → larger step; by='line' → smaller step; amount = number 
 - `by` (string, optional): Scroll granularity. Default: line.
 - `delivery_mode` (string, optional): Best-effort-background ladder rung (default "background"). "background": inject without fronting or raising the target — no focus steal. "foreground": briefly front the target, act, then restore the prior frontmost — the explicit last resort when a background attempt didn't land. Re-call with "foreground" only for the action that needs it.
 - `direction` (string, required): Scroll direction.
-- `element_index` (integer, optional): Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
-- `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.
+- `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it.
 - `pid` (integer, optional)
 - `scope` (string, optional): Use desktop with x,y and no pid/window_id for native get_desktop_state screenshot coordinates. default: `"window"`
 - `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
-- `snapshot_id` (string, optional): Snapshot handle from get_window_state. Required when targeting by element_index; stale snapshots fail closed.
 - `target` (window target or desktop target, optional): Exact capture/input target selected independently for each action.
 
 `display_id="primary"` is the portable desktop target in this release.
@@ -535,11 +531,12 @@ Move a cursor to (x, y). In window scope (default), moves only the agent cursor 
 
 Capture a cropped JPEG of a window region (x1,y1)–(x2,y2) in screenshot pixel coordinates, with 20% padding added on each side. The output image is at most 500 px wide.
 
-After a zoom, pass `from_zoom=true` to click/type_text to auto-translate coordinates back to full-window space. Coordinate actions return `screenshot_context_missing` when the latest snapshot does not contain a screenshot owned by this session. `from_zoom` actions return `zoom_context_missing` when the zoom was never created or was replaced; call `get_window_state`, then `zoom`, again on the same connection.
+After a zoom, pass `from_zoom=true` to click/type_text to auto-translate coordinates back to full-window space. Coordinate actions return `screenshot_context_missing` when no current snapshot contains a screenshot owned by this session. `from_zoom` actions return `zoom_context_missing` when the zoom was never created or was replaced; call `get_window_state`, then `zoom`, again on the same connection.
 
 **Arguments:**
 
 - `pid` (integer, optional): Optional target pid. When omitted, the driver resolves the unique current snapshot for this session and window.
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 - `window_id` (integer, required): CGWindowID from list_windows.
 - `x1` (number, required): Left edge of region in screenshot pixels.
 - `x2` (number, required): Right edge of region in screenshot pixels.
@@ -575,6 +572,7 @@ Actions:
 - `javascript` (string, optional): JavaScript to execute. Required for execute_javascript.
 - `pid` (integer, optional): Target process ID.
 - `selector` (string, optional): CSS selector for click_element (e.g. 'button.submit', '#login a').
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 - `target_url_contains` (string, optional): Optional, for execute_javascript/insert_text/type_keystrokes: require exactly one browser tab whose URL contains this substring. Use this on a multi-tab browser — there's no built-in link between window_id and which tab a CDP call reaches.
 - `text` (string, optional): Text to insert or type. Required for insert_text and type_keystrokes. The target field must already have DOM focus (click/focus it first).
 - `user_has_confirmed_enabling` (boolean, optional): Must be true to proceed with enable_javascript_apple_events. This will quit and relaunch the browser.
@@ -637,6 +635,7 @@ State persists for the life of the daemon; a restart resets to disabled with no 
 
 - `output_dir` (string, required): Absolute or ~-rooted directory where turn folders and (when enabled) the video file are written.
 - `record_video` (boolean, optional): Capture the main display to &lt;output_dir&gt;/recording.mp4. Default: false. Set to true to also capture the main display to recording.mp4 (otherwise only the per-turn screenshots + JSON are recorded). On macOS this uses native ScreenCaptureKit (no extra TCC prompt, macOS 15.0+); on Windows + Linux it requires ffmpeg on PATH.
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ```json
 {"output_dir":"~/cua-trajectories/demo1"}
@@ -648,14 +647,16 @@ Stop trajectory recording. Disables further per-turn capture and, when video was
 
 A manual `stop_recording` is **unconditional** — it stops whatever recording is active regardless of which session started it. Ownership-scoped teardown (so one client disconnecting can't stop a recording a later client started) is handled by the registry's `session_end` lifecycle hook, not by this tool.
 
-**Arguments:** none.
+**Arguments:**
+
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ### `replay_trajectory`
 
 Replay a recorded trajectory by re-invoking every turn's tool call in lexical order. `dir` must point at a directory previously written by `start_recording`. Each `turn-NNNNN/` is parsed for `action.json`, and the recorded tool is called with its recorded `arguments` via the same dispatch path an MCP / CLI call uses.
 
 Caveats:
-- Element-indexed actions (`click({pid, element_index})` etc.) will fail because element indices are per-snapshot and don't survive across sessions. Pixel clicks (`click({pid, x, y})`) and all keyboard tools replay cleanly. Failures are reported but don't stop replay unless `stop_on_error` is true.
+- Element-token actions (`click({pid, element_token})` etc.) will fail because element tokens are per-snapshot and don't survive across sessions. Pixel clicks (`click({pid, x, y})`) and all keyboard tools replay cleanly. Failures are reported but don't stop replay unless `stop_on_error` is true.
 - `get_window_state` and other read-only tools are NOT currently recorded, so replays do not re-populate the per-(pid, window_id) element cache.
 - If recording is ENABLED while replay runs, the replay itself is recorded into the currently configured output directory.  That's deliberate: recording a replay against a new build and diffing the two trajectories is the regression-test workflow.
 
@@ -663,6 +664,7 @@ Caveats:
 
 - `delay_ms` (integer, optional): Milliseconds to sleep between turns, for human-observable pacing. Default 500. range: 0–10000
 - `dir` (string, required): Trajectory directory previously written by `start_recording`. Absolute or ~-rooted.
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 - `stop_on_error` (boolean, optional): Stop replay on the first tool-call error. Default true — set false to best-effort through the full trajectory.
 
 ```json
@@ -683,6 +685,7 @@ Note: capture_mode is a per-call param (on get_window_state / click), not a stor
 - `experimental_pip_geometry` (string, optional): PiP window size + optional position in `WxH` or `WxH+X+Y` form (e.g. `320x200+24+24`). Applies on next daemon restart.
 - `key` (string, optional): Name of a single config field to write (&#123;key, value&#125; shape, matching the CLI `config set` and the Windows/Linux tools). Pair with `value`. Equivalent to passing the field directly.
 - `max_image_dimension` (integer, optional): Max dimension for screenshot resizing (0 = no limit).
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 - `value` (unknown, optional): New value for `key`. JSON type depends on the key.
 
 ### `start_session`
@@ -754,6 +757,7 @@ Returns: `accessibility` + `screen_recording` (booleans from the TCC preflight A
 
 - `probe_direct_capture` (boolean, optional): When prompting and Screen Recording is granted, also run the live ScreenCaptureKit probe that may raise Tahoe's direct-capture consent. Default true. Set false for a staged Accessibility/Screen Recording request.
 - `prompt` (boolean, optional): Raise the system permission prompts for missing grants. Default false; only a trusted host setup route may set true. default: `false`
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ### `health_report`
 
@@ -803,13 +807,16 @@ Stability: schema_version="1" is the contract. Future breaking changes will be `
 **Arguments:**
 
 - `include` (array of string, optional): Only run these checks (canonical names). Wins over `skip`.
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 - `skip` (array of string, optional): Skip these checks (canonical names). Ignored when `include` is set.
 
 ### `check_for_update`
 
 Check the saved stable/nightly Cua Driver channel for a release on GitHub. Returns current and selected channels, current and latest versions, an `update_available` boolean, the install one-liner, and the release notes URL. Read-only — never installs. Pacman-owned Linux executables return package-manager guidance without checking GitHub. Mirror of `cua-driver check-update --json`.
 
-**Arguments:** none.
+**Arguments:**
+
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ### `install_ffmpeg`
 
@@ -818,6 +825,7 @@ Install the ffmpeg binary used by start_recording's video capture (Linux/Windows
 **Arguments:**
 
 - `confirm` (boolean, optional): Run the install command. Without it, only the planned command is reported.
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ## Other tools
 
@@ -1077,6 +1085,7 @@ Preview or install one Driver-managed optional extension. The first call without
 
 - `confirm` (boolean, optional): Install the previewed extension. Omit or false for a read-only plan.
 - `name` (string, required)
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ```json
 {"name":"perception"}

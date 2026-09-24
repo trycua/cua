@@ -1,7 +1,7 @@
 use super::bindings::AXUIElementRef;
 use super::tree::AXNode;
 use core_foundation::base::{CFRelease, CFRetain, CFTypeRef};
-use cua_driver_core::element_cache::{ElementCacheCore, SnapshotPayload};
+use cua_driver_core::snapshot_store::{SnapshotPayload, SnapshotStore};
 
 pub struct RetainedElement(usize);
 
@@ -32,11 +32,11 @@ impl Drop for RetainedElement {
     }
 }
 
-pub struct CachedSnapshot {
+pub struct AxSnapshot {
     pub elements: Vec<usize>,
 }
 
-impl CachedSnapshot {
+impl AxSnapshot {
     pub fn from_nodes(nodes: &[AXNode]) -> Self {
         Self {
             elements: nodes
@@ -48,7 +48,7 @@ impl CachedSnapshot {
     }
 }
 
-impl SnapshotPayload for CachedSnapshot {
+impl SnapshotPayload for AxSnapshot {
     type Element = RetainedElement;
     fn len(&self) -> usize {
         self.elements.len()
@@ -60,7 +60,7 @@ impl SnapshotPayload for CachedSnapshot {
     }
 }
 
-impl Drop for CachedSnapshot {
+impl Drop for AxSnapshot {
     fn drop(&mut self) {
         for ptr in &self.elements {
             if *ptr != 0 {
@@ -70,7 +70,7 @@ impl Drop for CachedSnapshot {
     }
 }
 
-pub type ElementCache = ElementCacheCore<CachedSnapshot>;
+pub type Snapshots = SnapshotStore<AxSnapshot>;
 
 #[cfg(test)]
 mod tests {
@@ -79,15 +79,11 @@ mod tests {
     use core_foundation::string::CFString;
     use cua_driver_core::element_token::{token_for, ResolvedElement};
 
-    fn resolve(cache: &ElementCache, snapshot: u32, index: usize) -> Option<RetainedElement> {
+    fn resolve(cache: &Snapshots, snapshot: u32, index: usize) -> Option<RetainedElement> {
         match cache
-            .resolve_element_args(
+            .resolve(
                 1,
-                None,
-                Some(&token_for(snapshot, index)),
-                None,
-                Some(2),
-                "click",
+                &serde_json::json!({ "element_token": token_for(snapshot, index) }),
             )
             .ok()?
         {
@@ -96,9 +92,9 @@ mod tests {
         }
     }
 
-    fn payload(ptr: usize) -> CachedSnapshot {
+    fn payload(ptr: usize) -> AxSnapshot {
         unsafe { CFRetain(ptr as CFTypeRef) };
-        CachedSnapshot {
+        AxSnapshot {
             elements: vec![ptr],
         }
     }
@@ -108,12 +104,12 @@ mod tests {
         let value = CFString::new("cua-driver-uaf-test-element-placeholder");
         let ptr = value.as_concrete_TypeRef() as usize;
         let base = unsafe { CFGetRetainCount(ptr as CFTypeRef) };
-        let cache = ElementCache::new();
+        let cache = Snapshots::new();
         let snapshot = cache.publish(1, 2, payload(ptr));
         assert_eq!(unsafe { CFGetRetainCount(ptr as CFTypeRef) }, base + 1);
         let guard = resolve(&cache, snapshot, 0).unwrap();
         assert_eq!(unsafe { CFGetRetainCount(ptr as CFTypeRef) }, base + 2);
-        cache.publish(1, 2, CachedSnapshot::from_nodes(&[]));
+        cache.publish(1, 2, AxSnapshot::from_nodes(&[]));
         assert_eq!(unsafe { CFGetRetainCount(ptr as CFTypeRef) }, base + 1);
         assert!(resolve(&cache, snapshot, 0).is_none());
         drop(guard);
@@ -125,7 +121,7 @@ mod tests {
         let value = CFString::new("cua-driver-invariant-admitted-native-work");
         let ptr = value.as_concrete_TypeRef() as usize;
         let base = unsafe { CFGetRetainCount(ptr as CFTypeRef) };
-        let cache = ElementCache::new();
+        let cache = Snapshots::new();
         let snapshot = cache.publish(1, 2, payload(ptr));
         let guard = resolve(&cache, snapshot, 0).unwrap();
         let (finish_tx, finish_rx) = std::sync::mpsc::channel();
@@ -144,9 +140,9 @@ mod tests {
 
     #[test]
     fn missing_index_returns_none() {
-        let cache = ElementCache::new();
+        let cache = Snapshots::new();
         assert!(resolve(&cache, 0, 0).is_none());
-        let snapshot = cache.publish(1, 2, CachedSnapshot::from_nodes(&[]));
+        let snapshot = cache.publish(1, 2, AxSnapshot::from_nodes(&[]));
         assert!(resolve(&cache, snapshot, 0).is_none());
         assert!(resolve(&cache, snapshot, 5).is_none());
     }
@@ -158,7 +154,7 @@ mod tests {
         let original_ptr = original.as_concrete_TypeRef() as usize;
         let replacement_ptr = replacement.as_concrete_TypeRef() as usize;
         let base = unsafe { CFGetRetainCount(replacement_ptr as CFTypeRef) };
-        let cache = ElementCache::new();
+        let cache = Snapshots::new();
         let snapshot = cache.publish(1, 2, payload(original_ptr));
         let prepared = payload(replacement_ptr);
         assert_eq!(resolve(&cache, snapshot, 0).unwrap().as_ptr(), original_ptr);

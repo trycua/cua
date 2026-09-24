@@ -68,11 +68,9 @@ fn def() -> &'static ToolDef {
                 "pid": { "type": "integer" },
                 "window_id": {
                     "type": "integer",
-                    "description": "CGWindowID for the window whose get_window_state produced the element_index. Required when element_index is used; optional when element_token is supplied (the token carries it)."
+                    "description": "CGWindowID. Omit when element_token is supplied (the token carries it)."
                 },
-                "element_index": cua_driver_core::tool_schema::element_index_schema(),
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
-                "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                 "value": {
                     "type": "string",
                     "description": "New value. AX will coerce to the element's native type."
@@ -104,48 +102,23 @@ impl Tool for SetValueTool {
             Err(e) => return e,
         };
 
-        // Surface 6: element_token / element_index precedence. Neither
-        // is now schema-required so the resolver can centralize the
-        // "missing addressing" error message.
-        let element_token_arg = args.opt_str("element_token");
-        let window_id_arg = args.opt_u64("window_id");
-        let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match self.state.element_cache.resolve_element_args(
-            pid,
-            element_index_arg,
-            element_token_arg.as_deref(),
-            args.opt_str("snapshot_id").as_deref(),
-            window_id_arg,
-            "set_value",
-        ) {
-            Ok(r) => r,
-            Err(e) => return e,
-        };
-        let (element_index, window_id, element_guard) = match resolved {
-            cua_driver_core::element_token::ResolvedElement::None => {
-                return ToolResult::error(
-                    "set_value requires element_index (+ window_id) or element_token to \
-                     address the target element.",
-                )
-            }
-            cua_driver_core::element_token::ResolvedElement::Element {
-                window_id: Some(wid),
-                element_index: idx,
-                element,
-                ..
-            } => match u32::try_from(wid) {
-                Ok(wid) => (idx, wid, element),
-                Err(_) => return ToolResult::error("window_id is out of range for macOS."),
-            },
-            cua_driver_core::element_token::ResolvedElement::Element {
-                window_id: None, ..
-            } => {
-                return ToolResult::error(
-                    "set_value requires window_id when element_index is used \
-                 (omit only when supplying element_token, which carries it).",
-                )
-            }
-        };
+        let (element_index, window_id, element_guard) =
+            match self.state.snapshots.resolve(pid, &args) {
+                Ok(cua_driver_core::element_token::ResolvedElement::None) => {
+                    return ToolResult::error(
+                        "set_value requires element_token to address the target element.",
+                    )
+                }
+                Ok(cua_driver_core::element_token::ResolvedElement::Element {
+                    window_id,
+                    element_index,
+                    element,
+                }) => match u32::try_from(window_id) {
+                    Ok(window_id) => (element_index, window_id, element),
+                    Err(_) => return ToolResult::error("window_id is out of range for macOS."),
+                },
+                Err(refusal) => return refusal,
+            };
 
         let element_ptr = element_guard.as_ptr();
 

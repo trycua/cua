@@ -302,8 +302,8 @@ impl Tool for ReplayTrajectoryTool {
                 recorded tool is called with its recorded `arguments` via the same dispatch \
                 path an MCP / CLI call uses.\n\n\
                 Caveats:\n\
-                - Element-indexed actions (`click({pid, element_index})` etc.) will fail \
-                  because element indices are per-snapshot and don't survive across \
+                - Element-token actions (`click({pid, element_token})` etc.) will fail \
+                  because element tokens are per-snapshot and don't survive across \
                   sessions. Pixel clicks (`click({pid, x, y})`) and all keyboard tools \
                   replay cleanly. Failures are reported but don't stop replay unless \
                   `stop_on_error` is true.\n\

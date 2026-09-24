@@ -21,8 +21,7 @@ fn macos_semantic_activation_without_a_point_preserves_truth_without_a_marker() 
     let args = json!({
         "pid": 32166,
         "window_id": 2467,
-        "element_index": 12,
-        "snapshot_id": "s00000232",
+        "element_token": "s00000001:12",
         "action": "press",
         "delivery_mode": "foreground"
     });

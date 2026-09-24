@@ -3,8 +3,8 @@
 //!
 //! THE RACE (what these tests model):
 //!   Two concurrent sessions drive the same (pid, hwnd).
-//!   - Session A: `get_window_state` → `ElementCache::update` → `core.insert`
-//!     replaces the snapshot → old `CachedSnapshot::drop` → COM `Release` on
+//!   - Session A: `get_window_state` → `Snapshots::update` → `core.insert`
+//!     replaces the snapshot → old `UiaSnapshot::drop` → COM `Release` on
 //!     every cached `IUIAutomationElement`.
 //!   - Session B: `click` / `type_text` / `set_value` looked the element up out
 //!     of the cache and is mid-action, dereferencing the same COM pointer.
@@ -18,7 +18,7 @@
 //!   (`AddRef` via `clone()`, `Release` via `drop`). So we feed it a real,
 //!   independently-refcounted COM-ABI object of our own (`FakeObj`) with a
 //!   hand-rolled IUnknown vtable. The cache's real `with_snapshot` mutex, real
-//!   `CachedSnapshot::drop`, and the real `get_element_retained` AddRef-under-
+//!   `UiaSnapshot::drop`, and the real `get_element_retained` AddRef-under-
 //!   lock all run unchanged against it.
 //!
 //!   `FakeObj` is instrumented two ways:
@@ -35,7 +35,7 @@
 //! releases → B dereferences) with channels instead of relying on luck, so
 //! BEFORE deterministically trips and AFTER deterministically survives.
 
-use super::{CachedSnapshot, ElementCache, RetainedElement, SnapshotKind};
+use super::{RetainedElement, SnapshotKind, Snapshots, UiaSnapshot};
 use cua_driver_core::element_token::{format_token, ResolvedElement};
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
@@ -122,8 +122,8 @@ fn make_fake(uaf_hits: &'static AtomicUsize, poison_on_zero: bool) -> usize {
     Box::into_raw(obj) as usize
 }
 
-fn snapshot_with(ptrs: Vec<usize>) -> CachedSnapshot {
-    CachedSnapshot {
+fn snapshot_with(ptrs: Vec<usize>) -> UiaSnapshot {
+    UiaSnapshot {
         elements: ptrs
             .into_iter()
             .map(|ptr| RetainedElement {
@@ -137,19 +137,15 @@ fn snapshot_with(ptrs: Vec<usize>) -> CachedSnapshot {
     }
 }
 
-fn old_get_element_ptr(cache: &ElementCache, snapshot: u32, idx: usize) -> Option<usize> {
+fn old_get_element_ptr(cache: &Snapshots, snapshot: u32, idx: usize) -> Option<usize> {
     acquire(cache, snapshot, idx).map(|guard| guard.as_ptr())
 }
 
-fn acquire(cache: &ElementCache, snapshot: u32, idx: usize) -> Option<RetainedElement> {
+fn acquire(cache: &Snapshots, snapshot: u32, idx: usize) -> Option<RetainedElement> {
     match cache
-        .resolve_element_args(
+        .resolve(
             PID as i32,
-            None,
-            Some(&format_token(snapshot, idx)),
-            None,
-            Some(HWND),
-            "test",
+            &serde_json::json!({ "element_token": format_token(snapshot, idx) }),
         )
         .ok()?
     {
@@ -177,7 +173,7 @@ const HWND: u64 = (1_u64 << 40) | 0x1234;
 /// Returns the number of use-after-free touches observed.
 fn run_forced_interleave(use_retained: bool, poison_on_zero: bool) -> usize {
     let uaf_hits: &'static AtomicUsize = Box::leak(Box::new(AtomicUsize::new(0)));
-    let cache = Arc::new(ElementCache::new());
+    let cache = Arc::new(Snapshots::new());
 
     let ptr = make_fake(uaf_hits, poison_on_zero);
     let snapshot = cache.publish(PID as i32, HWND, snapshot_with(vec![ptr]));
@@ -244,7 +240,7 @@ fn prefix_path_commits_use_after_free() {
 #[test]
 fn fixed_path_stress_no_uaf() {
     let uaf_hits: &'static AtomicUsize = Box::leak(Box::new(AtomicUsize::new(0)));
-    let cache = Arc::new(ElementCache::new());
+    let cache = Arc::new(Snapshots::new());
 
     // Seed a snapshot of several elements.
     let seed: Vec<usize> = (0..8).map(|_| make_fake(uaf_hits, false)).collect();
@@ -296,7 +292,7 @@ fn fixed_path_stress_no_uaf() {
 #[test]
 fn exact_snapshot_retains_matching_identity_and_geometry() {
     let hits = Box::leak(Box::new(AtomicUsize::new(0)));
-    let cache = ElementCache::new();
+    let cache = Snapshots::new();
     let ptr = make_fake(hits, false);
     let mut payload = snapshot_with(vec![ptr]);
     payload.elements[0].kind = SnapshotKind::Msaa;
@@ -319,16 +315,6 @@ fn exact_snapshot_retains_matching_identity_and_geometry() {
     assert!(guard.focus_element().is_err());
     assert_eq!(guard.element_has_keyboard_focus(), None);
     assert_eq!(acquire(&cache, second, 0).unwrap().center, (0, 0));
-    assert!(cache
-        .resolve_element_args(
-            PID as i32,
-            None,
-            Some(&format_token(second, 0)),
-            None,
-            Some(HWND + 1),
-            "test",
-        )
-        .is_err());
     let cloned = guard.clone();
     drop(guard);
     unsafe { touch_vtable(cloned.as_ptr()) };
@@ -343,7 +329,7 @@ fn exact_snapshot_retains_matching_identity_and_geometry() {
 #[test]
 fn eviction_remove_and_clear_release_payload_but_not_acquired_guard() {
     let hits = Box::leak(Box::new(AtomicUsize::new(0)));
-    let cache = ElementCache::new();
+    let cache = Snapshots::new();
     let ptr = make_fake(hits, false);
     let first = cache.publish(PID as i32, HWND, snapshot_with(vec![ptr]));
     let guard = acquire(&cache, first, 0).unwrap();
@@ -383,7 +369,7 @@ fn eviction_remove_and_clear_release_payload_but_not_acquired_guard() {
 #[tokio::test]
 async fn detached_worker_keeps_only_admitted_target_and_geometry() {
     let hits = Box::leak(Box::new(AtomicUsize::new(0)));
-    let cache = ElementCache::new();
+    let cache = Snapshots::new();
     let target = make_fake(hits, false);
     let sibling = make_fake(hits, false);
     let mut payload = snapshot_with(vec![target, sibling]);
@@ -443,8 +429,8 @@ async fn detached_worker_keeps_only_admitted_target_and_geometry() {
 fn recording_metadata_uses_snapshot_without_native_geometry() {
     cua_driver_core::tool::with_runtime_scope("windows-recording-metadata-test".into(), || {
         let hits = Box::leak(Box::new(AtomicUsize::new(0)));
-        let cache = Arc::new(ElementCache::new());
-        cua_driver_core::element_cache::register_runtime_cache(&cache);
+        let cache = Arc::new(Snapshots::new());
+        cua_driver_core::snapshot_store::register_runtime_store(&cache);
         let ptr = make_fake(hits, false);
         let id = cache.publish(PID as i32, HWND, snapshot_with(vec![ptr]));
         let args = serde_json::json!({"element_token": format_token(id, 0)});
@@ -463,7 +449,7 @@ fn recording_metadata_uses_snapshot_without_native_geometry() {
 
 #[test]
 fn null_native_pointer_is_not_an_actionable_member() {
-    let cache = ElementCache::new();
+    let cache = Snapshots::new();
     let snapshot = cache.publish(PID as i32, HWND, snapshot_with(vec![0]));
     assert!(acquire(&cache, snapshot, 0).is_none());
 }
@@ -472,7 +458,7 @@ fn null_native_pointer_is_not_an_actionable_member() {
 async fn cancelled_caller_keeps_the_blocking_workers_native_target_alive() {
     let hits = Box::leak(Box::new(AtomicUsize::new(0)));
     let ptr = make_fake(hits, false);
-    let cache = ElementCache::new();
+    let cache = Snapshots::new();
     let snapshot = cache.publish(PID as i32, HWND, snapshot_with(vec![ptr]));
     let guard = acquire(&cache, snapshot, 0).unwrap();
     let (started_tx, started_rx) = tokio::sync::oneshot::channel();
@@ -524,7 +510,7 @@ fn unpublished_payload_releases_its_walker_retain() {
 /// STATUS_ACCESS_VIOLATION. Poison-on-zero makes the otherwise heap-reuse-
 /// dependent UAF deterministic. Run with:
 ///   cargo test -p platform-windows -- --ignored --exact \
-///     uia::cache::cache_uaf_repro::prefix_path_real_access_violation
+///     uia::snapshot::snapshot_uaf_repro::prefix_path_real_access_violation
 /// EXPECTED: the test process crashes (exception 0xC0000005); it does NOT
 /// print "test result: ok".
 #[test]

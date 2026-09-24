@@ -46,7 +46,7 @@ use cua_driver_core::{
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::{ax::cache::ElementCache, cursor::state::CursorRegistry};
+use crate::{ax::snapshot::Snapshots, cursor::state::CursorRegistry};
 
 fn native_window_id(
     window_id: Option<u64>,
@@ -149,9 +149,7 @@ pub use check_permissions::{
     PERMISSIONS_HOST_REQUEST_ARG,
 };
 
-pub use cua_driver_core::element_cache::{
-    SnapshotBoundZoomContext as ZoomContext, SnapshotBoundZoomRegistry as ZoomRegistry,
-};
+pub use cua_driver_core::snapshot_store::ZoomContext;
 
 /// Input delivery modality — the agent-selected rung of the best-effort-background
 /// ladder, passed per call (never a stored/config setting).
@@ -245,7 +243,7 @@ async fn decide_background_window_action(
         decide_background_input, BackgroundInputDecision, ExactWindowTarget,
     };
     let element_guard =
-        element_ptr.map(|ptr| unsafe { crate::ax::cache::RetainedElement::retain(ptr) });
+        element_ptr.map(|ptr| unsafe { crate::ax::snapshot::RetainedElement::retain(ptr) });
     let facts = match tokio::task::spawn_blocking(move || {
         let element_ptr = element_guard.as_ref().map(|guard| guard.as_ptr());
         crate::ax::exact_target::gather_background_facts(pid, window_id, element_ptr)
@@ -637,9 +635,8 @@ impl Default for SessionConfigRegistry {
 
 /// Shared state passed to all tools.
 pub struct ToolState {
-    pub element_cache: Arc<ElementCache>,
+    pub snapshots: Arc<Snapshots>,
     pub cursor_registry: Arc<CursorRegistry>,
-    pub zoom_registry: Arc<ZoomRegistry>,
     pub(crate) capture_bindings: Arc<capture_binding::MacCaptureBindings>,
     /// Global, disk-persisted config — the base layer and the only one the
     /// anonymous session / CLI writes.
@@ -690,9 +687,8 @@ impl ToolState {
         host_bundle_id: Option<String>,
     ) -> Self {
         Self {
-            element_cache: Arc::new(ElementCache::new()),
+            snapshots: Arc::new(Snapshots::new()),
             cursor_registry: Arc::new(CursorRegistry::new()),
-            zoom_registry: Arc::new(ZoomRegistry::new()),
             capture_bindings: Arc::new(capture_binding::MacCaptureBindings::new(capture_service)),
             // Load persisted config from ~/.cua-driver/config.json so that
             // `cua-driver config set` changes carry over into MCP sessions.
@@ -712,11 +708,14 @@ pub(super) fn screenshot_scale(
     pid: i32,
     window_id: Option<u32>,
 ) -> Result<f64, cua_driver_core::protocol::ToolResult> {
-    state.element_cache.screenshot_scale_or_refusal(
-        pid,
-        window_id.map(u64::from),
-        args.get("_session_id").and_then(serde_json::Value::as_str),
-    )
+    state
+        .snapshots
+        .screenshot_context(
+            pid,
+            window_id.map(u64::from),
+            args.get("_session_id").and_then(serde_json::Value::as_str),
+        )
+        .map(|context| context.scale)
 }
 
 pub(super) fn zoom_context(
@@ -725,8 +724,7 @@ pub(super) fn zoom_context(
     pid: i32,
     window_id: Option<u32>,
 ) -> Result<ZoomContext, cua_driver_core::protocol::ToolResult> {
-    state.zoom_registry.resolve(
-        &state.element_cache,
+    state.snapshots.zoom(
         pid,
         window_id.map(u64::from),
         args.get("_session_id").and_then(serde_json::Value::as_str),
@@ -818,22 +816,20 @@ pub fn register_all(
     }
     // Share the element cache with the recording-hook layer so it can
     // resolve element_index → window-local screenshot coords for click.png.
-    crate::recording_hooks::set_element_cache(state.element_cache.clone());
+    crate::recording_hooks::set_snapshots(state.snapshots.clone());
 
     // Drop a disconnecting session's config overrides + owned cursor on
     // `session_end`. The daemon fans the session id out to this hook;
     // recording ownership is handled separately on the core RecordingSession.
     {
         let session_config = state.session_config.clone();
-        let element_cache = state.element_cache.clone();
-        let zoom_registry = state.zoom_registry.clone();
+        let snapshots = state.snapshots.clone();
         let cursor_registry = state.cursor_registry.clone();
         let capture_bindings = state.capture_bindings.clone();
         let registration =
             cua_driver_core::session::register_scoped_session_end_hook(move |session_id| {
                 session_config.clear(session_id);
-                zoom_registry.retire_session(session_id);
-                element_cache.retire_session_screenshots(session_id);
+                snapshots.retire_session_screenshots(session_id);
                 capture_bindings.retire_session(session_id);
                 // Per-session agent cursor: the session_id is the cursor key when
                 // the caller gave no explicit cursor_id, so dropping it here both

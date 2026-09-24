@@ -324,7 +324,7 @@ fn harness_lo_vcl_font_color_expand_opens_picker() {
         "click",
         serde_json::json!({
             "pid": pid as i64, "window_id": wid,
-            "element_index": idx, "snapshot_id": snap.snapshot_id(),
+            "element_token": snap.element_token(idx),
             "action": "expand"
         }),
     );
@@ -686,7 +686,7 @@ fn harness_lo_vcl_color_pick_green_end_to_end() {
         "click",
         serde_json::json!({
             "pid": pid as i64, "window_id": wid,
-            "element_index": fc_idx, "snapshot_id": snap.snapshot_id(),
+            "element_token": snap.element_token(fc_idx),
             "action": "expand"
         }),
     );
@@ -752,7 +752,7 @@ fn harness_lo_vcl_color_pick_green_end_to_end() {
         "click",
         serde_json::json!({
             "pid": pid as i64, "window_id": picker_wid,
-            "element_index": green_idx, "snapshot_id": psnap.snapshot_id()
+            "element_token": psnap.element_token(green_idx)
         }),
     );
     let pick_text = pick_resp.text();

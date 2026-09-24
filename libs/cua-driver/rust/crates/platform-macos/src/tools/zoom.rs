@@ -23,7 +23,7 @@ fn def() -> &'static ToolDef {
             500 px wide.\n\n\
             After a zoom, pass `from_zoom=true` to click/type_text to auto-translate coordinates \
             back to full-window space. Coordinate actions return `screenshot_context_missing` \
-            when the latest snapshot does not contain a screenshot owned by this session. \
+            when no current snapshot contains a screenshot owned by this session. \
             `from_zoom` actions return `zoom_context_missing` when the zoom was never created or \
             was replaced; call `get_window_state`, then `zoom`, again on the same connection.".into(),
         input_schema: serde_json::json!({
@@ -66,7 +66,7 @@ impl Tool for ZoomTool {
             },
         };
         let session_id = args.opt_str("_session_id");
-        let (pid, screenshot) = match self.state.element_cache.screenshot_context_for_zoom(
+        let (pid, screenshot) = match self.state.snapshots.screenshot_context_for_zoom(
             requested_pid,
             u64::from(window_id),
             session_id.as_deref(),
@@ -111,8 +111,7 @@ impl Tool for ZoomTool {
         match result {
             Ok(Ok(crop)) => {
                 // Store zoom context so from_zoom clicks can translate back.
-                if let Err(refusal) = state.zoom_registry.set_if_current(
-                    &state.element_cache,
+                if let Err(refusal) = state.snapshots.set_zoom(
                     pid,
                     session_id.as_deref(),
                     ZoomContext {
@@ -155,7 +154,7 @@ impl Tool for ZoomTool {
 #[cfg(test)]
 mod tests {
     use super::{def, ToolState};
-    use crate::ax::cache::CachedSnapshot;
+    use crate::ax::snapshot::AxSnapshot;
 
     #[test]
     fn schema_keeps_pid_optional_for_window_owned_zoom_lookup() {
@@ -167,28 +166,28 @@ mod tests {
     #[test]
     fn omitted_pid_resolves_owned_window_snapshot() {
         let state = ToolState::new(false, false, None);
-        state.element_cache.publish_for_session(
+        state.snapshots.publish_for_session(
             42,
             7,
-            CachedSnapshot::from_nodes(&[]),
+            AxSnapshot::from_nodes(&[]),
             Some("zoom-optional-pid-macos"),
             Some(2.0),
         );
         let (pid, context) = state
-            .element_cache
+            .snapshots
             .screenshot_context_for_zoom(None, 7, Some("zoom-optional-pid-macos"))
             .unwrap();
         assert_eq!(pid, 42);
         assert_eq!(context.window_id, 7);
-        state.element_cache.publish_for_session(
+        state.snapshots.publish_for_session(
             43,
             7,
-            CachedSnapshot::from_nodes(&[]),
+            AxSnapshot::from_nodes(&[]),
             Some("zoom-optional-pid-macos"),
             Some(1.0),
         );
         assert!(state
-            .element_cache
+            .snapshots
             .screenshot_context_for_zoom(None, 7, Some("zoom-optional-pid-macos"))
             .is_err());
     }

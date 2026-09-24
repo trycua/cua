@@ -210,7 +210,6 @@ fn tool_scope(tool_name: &str, args: &Value) -> ToolScope {
         let explicit_desktop = args.get("scope").and_then(Value::as_str) == Some("desktop");
         let has_window_target = args.get("pid").is_some()
             || args.get("window_id").is_some()
-            || args.get("element_index").is_some()
             || args.get("element_token").is_some();
         if explicit_desktop && !has_window_target {
             ToolScope::Desktop

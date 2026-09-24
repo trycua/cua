@@ -30,10 +30,11 @@ fn def() -> &'static ToolDef {
         description: "Walk a running app's AX tree and return BOTH a structured \
             `elements` array (preferred) AND a Markdown rendering of the same tree \
             (back-compat). Every actionable element is tagged with [element_index N] \
-            in the markdown and as `element_index` in the structured array — pass \
-            those indices to click, type_text, press_key, etc.\n\n\
+            in the markdown and as `element_index` in the structured array; pass \
+            each element's `element_token` to click, type_text, press_key, etc.\n\n\
             INVARIANT: call get_window_state once per turn per (pid, window_id) before any \
-            element-indexed action. The index map is replaced by the next snapshot.\n\n\
+            element action. The next snapshot of the window replaces this one, stales its \
+            element tokens, and lists the replaced ids in `invalidated_snapshot_ids`.\n\n\
             PREFERRED CONSUMERS read `structuredContent.elements` (one entry per \
             indexed row with `element_index`, `role`, `label`, `value` (the \
             element's text/AXValue when present — use it to verify what a field \
@@ -46,7 +47,7 @@ fn def() -> &'static ToolDef {
             both and cross-check (the tree lies on some surfaces: Electron \
             echo-confirms, Catalyst null values, virtualized off-viewport rows \
             with `h:1` frames). You choose the modality at ACTION time, not here: \
-            an element ax action (pass `element_index`/`element_token` → the \
+            an element ax action (pass `element_token` → the \
             accessibility rung) or an element px action (pass `x`,`y` → the pixel \
             rung, read straight off this screenshot). `capture_mode` is deprecated \
             and ignored. Pass `include_screenshot:false` to skip the grab and get \
@@ -327,7 +328,7 @@ impl Tool for GetWindowStateTool {
                     max_depth,
                     cua_driver_core::walk_budget::WalkBudget::new(timeout_ms, max_elements),
                 );
-                let payload = crate::ax::cache::CachedSnapshot::from_nodes(&tree.nodes);
+                let payload = crate::ax::snapshot::AxSnapshot::from_nodes(&tree.nodes);
                 (tree, payload)
             });
             let backstop = std::time::Duration::from_millis(timeout_ms) + AX_WALK_BACKSTOP_GRACE;
@@ -361,9 +362,9 @@ impl Tool for GetWindowStateTool {
         // this tool never does — so treat that as resolved.
         let scope_matched = window_scope.as_ref().is_none_or(|s| s.is_matched());
 
-        if !scope_matched && !observation_only {
-            self.state.element_cache.remove(pid, u64::from(window_id));
-        }
+        let removed = (!scope_matched && !observation_only)
+            .then(|| self.state.snapshots.remove(pid, u64::from(window_id)))
+            .flatten();
 
         // Capture the screenshot and deliver it alongside the tree — the
         // grounding frame the agent cross-checks the (sometimes-lying) tree
@@ -534,24 +535,20 @@ impl Tool for GetWindowStateTool {
         let snapshot_payload = prepared_snapshot.or_else(|| {
             screenshot_resize_scale
                 .is_some()
-                .then(|| crate::ax::cache::CachedSnapshot::from_nodes(&[]))
+                .then(|| crate::ax::snapshot::AxSnapshot::from_nodes(&[]))
         });
-        let snapshot_id = snapshot_payload
+        let (snapshot_id, replaced) = snapshot_payload
             .filter(|_| scope_matched && !observation_only)
             .and_then(|payload| {
-                self.state.element_cache.publish_for_session(
+                self.state.snapshots.publish_for_session(
                     pid,
                     u64::from(window_id),
                     payload,
                     session_id.as_deref(),
                     screenshot_resize_scale,
                 )
-            });
-        if let Some(snapshot_id) = snapshot_id {
-            self.state
-                .zoom_registry
-                .retire_replaced(pid, u64::from(window_id), snapshot_id);
-        }
+            })
+            .unzip();
         let capture_id = match (snapshot_id, screenshot.as_ref()) {
             (Some(_), Some((png, _, width, height, native_width, native_height, _, _))) => {
                 match self.state.capture_bindings.publish_window(
@@ -631,9 +628,19 @@ impl Tool for GetWindowStateTool {
         // registered (unresolved window scope).
         if let Some(sid) = snapshot_id {
             structured["snapshot_id"] =
-                serde_json::json!(cua_driver_core::element_token::token_for(sid, 0)
-                    .trim_end_matches(":0")
-                    .to_string());
+                serde_json::json!(cua_driver_core::element_token::format_snapshot_id(sid));
+        }
+        let invalidated: Vec<String> = removed
+            .into_iter()
+            .chain(replaced.into_iter().flatten())
+            .map(cua_driver_core::element_token::format_snapshot_id)
+            .collect();
+        if !invalidated.is_empty() {
+            content.push(Content::text(format!(
+                "Invalidated snapshots {}: their element_tokens are stale.",
+                invalidated.join(", ")
+            )));
+            structured["invalidated_snapshot_ids"] = serde_json::json!(invalidated);
         }
         if let Some(capture_id) = capture_id {
             structured["capture_id"] = serde_json::json!(capture_id);
@@ -767,7 +774,7 @@ impl Tool for GetWindowStateTool {
 /// clicked by `element_index`. Both refusals name the exact retry, matching the
 /// remedy-in-the-refusal shape the rest of the driver uses.
 ///
-/// The owner pid is REPORTED, not followed: `element_cache`, the element-token
+/// The owner pid is REPORTED, not followed: `snapshots`, the element-token
 /// registry and snapshot-owned screenshot transform are keyed on the caller-supplied pid, so
 /// walking under `owner_pid` while echoing the requested pid would hand back
 /// indices the caller replays against the wrong key. One retry with the named
@@ -1556,14 +1563,14 @@ mod tests {
 
     #[test]
     fn build_elements_array_with_token_emits_element_token_per_row() {
-        let cache = crate::ax::cache::ElementCache::new();
+        let cache = crate::ax::snapshot::Snapshots::new();
         let pid = 0x6abc_0001_i32;
         let nodes = vec![
             node(Some(0), "AXButton", Some("A"), 1, None, None, vec![]),
             node(Some(1), "AXButton", Some("B"), 1, None, None, vec![]),
             node(Some(2), "AXButton", Some("C"), 1, None, None, vec![]),
         ];
-        let sid = cache.publish(pid, 9, crate::ax::cache::CachedSnapshot::from_nodes(&nodes));
+        let sid = cache.publish(pid, 9, crate::ax::snapshot::AxSnapshot::from_nodes(&nodes));
         let entries = build_elements_array_with_token(&nodes, Some(sid));
         assert_eq!(entries.len(), 3);
         // Every entry must have BOTH fields (additive contract).
@@ -1583,7 +1590,7 @@ mod tests {
             let idx = e["element_index"].as_u64().unwrap() as usize;
             let tok = e["element_token"].as_str().unwrap();
             let (resolved_idx, wid, _) = cache
-                .resolve_element_args(pid, None, Some(tok), None, None, "click")
+                .resolve(pid, &serde_json::json!({ "element_token": tok }))
                 .expect("token must resolve")
                 .into_parts(None);
             assert_eq!(wid, Some(9));

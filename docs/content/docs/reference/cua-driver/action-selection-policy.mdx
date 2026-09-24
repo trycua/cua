@@ -6,7 +6,7 @@ description: "Behavior an agent should follow when choosing element, pixel, page
 This policy describes how an agent should choose Cua Driver action parameters. It is meant for agent prompts, wrappers, and evaluators. It is not a user walkthrough.
 
 Use it when the agent must decide what to pass to `click`, `type_text`,
-`get_window_state`, and related tools: `element_index` versus `x, y`,
+`get_window_state`, and related tools: `element_token` versus `x, y`,
 `delivery_mode: background` versus `foreground`, and a window versus desktop
 target.
 
@@ -16,17 +16,17 @@ The agent should already be connected to the driver and able to launch an app an
 
 ## Start on the accessibility path (the default)
 
-The agent should default to the **element ax action with background delivery**. Act by `element_index`. It is the only rung the driver can verify, it avoids foregrounding when the target surface supports it, and it works on Windows, macOS, and Linux (X11 and Wayland).
+The agent should default to the **element ax action with background delivery**. Act by `element_token`. It is the only rung the driver can verify, it avoids foregrounding when the target surface supports it, and it works on Windows, macOS, and Linux (X11 and Wayland).
 
 Read the window once, then act on an element from that snapshot. The snapshot already carries the screenshot too, so the agent does not re-capture to switch how it addresses the target:
 
 ```jsonc
 // 1. snapshot: returns the accessibility tree AND a screenshot by default
 get_window_state({ pid, window_id })
-// → elements[], each with an element_index and a frame, plus a grounding screenshot
+// → elements[], each with an element_token and a frame, plus a grounding screenshot
 
-// 2. act by element_index: the element ax action, background by default
-click({ pid, window_id, element_index: 12 })
+// 2. act by element_token: the element ax action, background by default
+click({ pid, element_token: "s0000002a:12" })
 type_text({ pid, text: "hello" })
 ```
 
@@ -36,7 +36,7 @@ When the agent is only re-indexing before an element ax action and does not need
 
 Every action response carries the signals that tell the agent the next rung. Walk the ladder in order, and only step down when the response says to:
 
-1. **Element ax action, background (the default).** Act by `element_index`. If the response shows `effect: "confirmed"`, the driver read the result back. If `get_window_state` came back `degraded` (empty AX tree), an action returns `effect: "suspected_noop"` (the AX action ran but likely no-op'd), an action returns `effect: "unverifiable"` on an echo-prone surface, or the tree disagrees with the screenshot (an `h:1` or off-viewport row), follow `escalation.recommended`.
+1. **Element ax action, background (the default).** Act by `element_token`. If the response shows `effect: "confirmed"`, the driver read the result back. If `get_window_state` came back `degraded` (empty AX tree), an action returns `effect: "suspected_noop"` (the AX action ran but likely no-op'd), an action returns `effect: "unverifiable"` on an echo-prone surface, or the tree disagrees with the screenshot (an `h:1` or off-viewport row), follow `escalation.recommended`.
 
 2. **Element px action, background.** When `escalation.recommended` is `"px"`, pick the target pixel from the screenshot already in the `get_window_state` response and click it. Coordinates are window-relative for a windowed target.
 
@@ -48,7 +48,7 @@ Every action response carries the signals that tell the agent the next rung. Wal
    Use the same px form for keyboard fallback. If AX `type_text`, `press_key`, or `hotkey` returns `effect: "unverifiable"` on Electron/Chromium, retry with `x, y`: the tool pixel-clicks to focus, then sends the keys.
 
    ```jsonc
-   type_text({ pid, window_id, element_index: 18, text: "hello" })
+   type_text({ pid, element_token: "s0000002a:18", text: "hello" })
    // → { effect: "unverifiable", escalation: { recommended: "px", reason: "..." } }
 
    type_text({ pid, window_id, x: 320, y: 210, text: "hello" })
@@ -61,7 +61,7 @@ Every action response carries the signals that tell the agent the next rung. Wal
 3. **Browser-tab DOM.** When `escalation.recommended` is `"page"`, switch to the `page` tool for browser-tab DOM work instead of retrying the AX write.
 
    ```jsonc
-   type_text({ pid, window_id, element_index: 18, text: "hello" })
+   type_text({ pid, element_token: "s0000002a:18", text: "hello" })
    // → { effect: "unverifiable", escalation: { recommended: "page", reason: "..." } }
 
    page({
@@ -89,7 +89,7 @@ Two additive fields make the ladder explicit, so the agent escalates from data r
 - **`escalation`**: present when there is a next rung: `{ recommended: "px" | "foreground" | "page", reason }`. A `degraded` `get_window_state` carries the same hint (recommending `px`).
 
 ```jsonc
-click({ pid, window_id, element_index: 12 })
+click({ pid, element_token: "s0000002a:12" })
 // → { effect: "suspected_noop", escalation: { recommended: "px", reason: "..." } }
 ```
 
@@ -133,7 +133,7 @@ exact window target, or use
 `target: {kind: "desktop", display_id: "primary"}` for screen-absolute work.
 
 **Problem: keystrokes don't land on a Linux app.**
-On native Wayland, raw keys have no background path. Type into accessible fields with `type_text`, drive controls by `element_index`, or run the app under XWayland. See [Known limits](/reference/cua-driver/limits#native-wayland-background-keyboard-input-is-focus-bound).
+On native Wayland, raw keys have no background path. Type into accessible fields with `type_text`, drive controls by `element_token`, or run the app under XWayland. See [Known limits](/reference/cua-driver/limits#native-wayland-background-keyboard-input-is-focus-bound).
 
 ## Related
 

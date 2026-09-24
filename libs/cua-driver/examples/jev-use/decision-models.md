@@ -48,6 +48,12 @@ uv run --frozen python/choose_decision.py --model mock \
   < fixtures/jev-choice-request-v1.json
 ```
 
+To verify the expected fixture choice without printing the full response, run
+`uv run --frozen verify_decision_cli.py --model mock`. The same verifier accepts
+`--model jev` or `--model s1` after configuring that provider. It checks the
+response schema, capture ID, complete candidate set, and selected ID. It does
+not dispatch a Driver action or prove live desktop behavior.
+
 The TypeSafe Jev path uses the example's official SDK and reads its credential
 from the local environment. Run it only with data you intend to send to that
 service. Do not put `TYPESAFE_API_KEY` in CI or GitHub Actions:

@@ -286,8 +286,10 @@ async function defaultTransport(
   timeoutSeconds: number
 ): Promise<Record<string, unknown>> {
   let response: Response;
+  let request: RequestInit;
   try {
-    response = await fetch(url, systemOneRequestInit(payload, headers, timeoutSeconds));
+    request = systemOneRequestInit(payload, headers, timeoutSeconds);
+    response = await fetch(url, request);
   } catch (error: unknown) {
     if (error instanceof Error && error.name === 'TimeoutError') {
       throw new JevTransportError(`request timed out: ${error.message}`);
@@ -306,6 +308,9 @@ async function defaultTransport(
   try {
     parsed = await response.json();
   } catch (error: unknown) {
+    if (request.signal?.aborted) {
+      throw new JevTransportError('request timed out while reading response body');
+    }
     throw new JevProtocolError(
       `response is not JSON: ${error instanceof Error ? error.message : String(error)}`
     );

@@ -401,6 +401,25 @@ impl PixelCheckbox {
     }
 }
 
+/// A system prompt, such as macOS's local-network consent alert, can take key
+/// focus at the moment the bounded setup click lands and swallow it. Retry the
+/// same proven control a bounded number of times, only after the previous click
+/// had time to flip it, so a delivered click is never repeated into a toggle.
+const PIXEL_CHECKBOX_MAX_ATTEMPTS: u8 = 3;
+const PIXEL_CHECKBOX_RETRY_SETTLE: Duration = Duration::from_millis(1500);
+
+fn pixel_checkbox_click_allowed(
+    attempts: u8,
+    last_attempt: Option<Instant>,
+    now: Instant,
+    original: Option<PixelCheckbox>,
+    observed: PixelCheckbox,
+) -> bool {
+    attempts < PIXEL_CHECKBOX_MAX_ATTEMPTS
+        && last_attempt.is_none_or(|last| now.duration_since(last) >= PIXEL_CHECKBOX_RETRY_SETTLE)
+        && original.is_none_or(|original| original.same_control_as(observed, 3.0))
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct SetupGeometry {
     search: (u32, u32, u32, u32),
@@ -892,7 +911,8 @@ pub struct SetupUiHandle {
     close_button: Option<usize>,
     enable_attempted: bool,
     trusted_checkbox_fallback_attempted: bool,
-    pixel_checkbox_fallback_attempted: bool,
+    pixel_checkbox_attempts: u8,
+    last_pixel_checkbox_attempt: Option<Instant>,
     setup_navigation_committed: bool,
     remote_debugging_mutation_possible: bool,
     pixel_checkbox: Option<PixelCheckbox>,
@@ -1183,7 +1203,8 @@ fn set_remote_debugging(
             close_button: None,
             enable_attempted: false,
             trusted_checkbox_fallback_attempted: false,
-            pixel_checkbox_fallback_attempted: false,
+            pixel_checkbox_attempts: 0,
+            last_pixel_checkbox_attempt: None,
             setup_navigation_committed: false,
             remote_debugging_mutation_possible: false,
             pixel_checkbox: None,
@@ -1260,7 +1281,8 @@ fn set_remote_debugging(
                 close_button: Some(close_button),
                 enable_attempted: false,
                 trusted_checkbox_fallback_attempted: false,
-                pixel_checkbox_fallback_attempted: false,
+                pixel_checkbox_attempts: 0,
+                last_pixel_checkbox_attempt: None,
                 setup_navigation_committed: false,
                 remote_debugging_mutation_possible: false,
                 pixel_checkbox: None,
@@ -1626,10 +1648,19 @@ fn set_remote_debugging(
                     release_actionable_nodes(&tree.nodes);
                     return Ok(handle);
                 }
-                Ok(Some(checkbox)) if !handle.pixel_checkbox_fallback_attempted => {
-                    handle.pixel_checkbox_fallback_attempted = true;
+                Ok(Some(checkbox))
+                    if pixel_checkbox_click_allowed(
+                        handle.pixel_checkbox_attempts,
+                        handle.last_pixel_checkbox_attempt,
+                        Instant::now(),
+                        handle.pixel_checkbox,
+                        checkbox,
+                    ) =>
+                {
+                    handle.pixel_checkbox_attempts += 1;
+                    handle.last_pixel_checkbox_attempt = Some(Instant::now());
                     handle.remote_debugging_mutation_possible = true;
-                    handle.pixel_checkbox = Some(checkbox);
+                    handle.pixel_checkbox.get_or_insert(checkbox);
                     handle.used_bounded_pixel_fallback = true;
                     release_actionable_nodes(&tree.nodes);
                     handle.injected_global_input = true;
@@ -2236,6 +2267,63 @@ mod tests {
         ));
         assert!(remote_debugging_cleanup_required(false, true));
         assert!(!remote_debugging_cleanup_required(false, false));
+    }
+
+    #[test]
+    fn pixel_checkbox_click_retries_only_the_same_control_after_it_settles() {
+        let original = PixelCheckbox {
+            screen_x: 106.0,
+            screen_y: 136.0,
+            window_local_x: 106.0,
+            window_local_y: 86.0,
+            window_frame: [0.0, 50.0, 400.0, 250.0],
+            state: CheckboxState::Off,
+        };
+        let moved = PixelCheckbox {
+            window_local_x: 130.0,
+            ..original
+        };
+        let start = Instant::now();
+        let settled = start + PIXEL_CHECKBOX_RETRY_SETTLE;
+
+        // The first click needs no prior identity or settle interval.
+        assert!(pixel_checkbox_click_allowed(0, None, start, None, original));
+        // A swallowed click is retried once the previous click had time to land.
+        assert!(!pixel_checkbox_click_allowed(
+            1,
+            Some(start),
+            start + Duration::from_millis(200),
+            Some(original),
+            original
+        ));
+        assert!(pixel_checkbox_click_allowed(
+            1,
+            Some(start),
+            settled,
+            Some(original),
+            original
+        ));
+        // A different control is never clicked as a retry.
+        assert!(!pixel_checkbox_click_allowed(
+            1,
+            Some(start),
+            settled,
+            Some(original),
+            moved
+        ));
+        // Retries stay bounded.
+        assert!(!pixel_checkbox_click_allowed(
+            PIXEL_CHECKBOX_MAX_ATTEMPTS,
+            Some(start),
+            settled,
+            Some(original),
+            original
+        ));
+        // Every allowed click, including the settle waits, fits the setup deadline.
+        assert!(
+            PIXEL_CHECKBOX_RETRY_SETTLE * u32::from(PIXEL_CHECKBOX_MAX_ATTEMPTS - 1)
+                < EXISTING_PROFILE_SETUP_READY_TIMEOUT
+        );
     }
 
     #[test]

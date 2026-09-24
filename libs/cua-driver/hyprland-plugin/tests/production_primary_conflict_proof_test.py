@@ -417,6 +417,11 @@ class RunTests(unittest.TestCase):
                     self.assertEqual(report['error']['message'], 'unexpected refusal reservation')
                 if failure == 'reserved_after_close':
                     self.assertEqual(len(launched), 2, 'recovery followed an unreleased reservation')
+                if failure == 'start_lost':
+                    self.assertEqual(report['error']['message'], 'trace start acknowledgement lost')
+                    self.assertIn({'operation': 'finish_trace',
+                                   'error': 'refusal trace boundary was never recorded; final history is unverifiable'},
+                                  json.loads((args.evidence / 'cleanup.json').read_text())['errors'])
 
 
 if __name__ == '__main__':

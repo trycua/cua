@@ -158,11 +158,10 @@ def recover_once(client, observer, victim, sibling, spec, stage, trace, boundary
     response = client.tool('start_session', {'session': fresh['name']})
     assert not response.get('isError'), response
     identity = app_process_identity(spec['app'], spec['target']['pid'])
-    started_ns = time.monotonic_ns()
     before = grounded_snapshot(client, fresh['target'], fresh)
     # Match prepare_drag: discovery precedes the observation; the complete
     # snapshot and pixel grounding remain inside the five-second limit.
-    started_ns = before.get('proof_observation_started_ns', started_ns)
+    started_ns = observation_started_ns(before)
     image = pointer_grounding.read_pixels(before['proof_image'])
     requested_stage = stage
     if stage == 'scroll_visible':
@@ -197,11 +196,26 @@ def recover_once(client, observer, victim, sibling, spec, stage, trace, boundary
     page = trace.collect()
     save('recovery-prefix.json', page)
     result['trace'] = verify_recovery_trace(boundary, page, lane, tool)
-    assert client.process.poll() is None and sibling.process.poll() is None, 'runtime exited during recovery'
+    require_recovery_runtimes(client, sibling)
     if guard:
         guard()
     result['result'] = 'verified'
     return page
+
+
+def require_recovery_runtimes(*clients):
+    """After a recovery action, its fresh runtime and every peer must still be live."""
+    assert all(client.process.poll() is None for client in clients), 'runtime exited during recovery'
+
+
+def observation_started_ns(snapshot):
+    """Freshness starts at the recorded observation; never substitute this wrapper's clock.
+
+    Callers bound the age with 0 <= dispatch_ns - started_ns, so a future value also fails.
+    """
+    value = snapshot.get('proof_observation_started_ns')
+    assert type(value) is int and value > 0, 'invalid observation timestamp'
+    return value
 
 
 def observation_runtime(client):
@@ -276,7 +290,7 @@ def prepare_drag(client, spec):
     """Ground once before either gesture starts; never reuse an earlier action's image."""
     started_ns = time.monotonic_ns()
     before = grounded_snapshot(client, spec['target'], spec)
-    observation_started_ns = before.get('proof_observation_started_ns', started_ns)
+    observation_ns = observation_started_ns(before)
     observed_ns = time.monotonic_ns()
     arguments, oracle = dict(spec['drag']), None
     if 'pointer_stage' in spec:
@@ -284,9 +298,9 @@ def prepare_drag(client, spec):
             before, pointer_grounding.read_pixels(before['proof_image']), spec['app'], spec['pointer_stage'])
     return {'snapshot': before, 'arguments': arguments, 'oracle': oracle,
             'target': dict(spec['target']), 'session': spec['name'],
-            'prepared_ns': observation_started_ns,
+            'prepared_ns': observation_ns,
             'timing': {'preparation_started_ns': started_ns,
-                       'observation_started_ns': observation_started_ns, 'observation_finished_ns': observed_ns,
+                       'observation_started_ns': observation_ns, 'observation_finished_ns': observed_ns,
                        'grounding_finished_ns': time.monotonic_ns()}}
 
 

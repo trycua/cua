@@ -102,12 +102,25 @@ class OracleTests(unittest.TestCase):
                 proof.verify_fault(trace(rows), record(), action())
 
     def test_unchanged_geometry_stale_gate_and_invalid_timestamps_fail(self):
-        for field, value in [('result', 'unproven'), ('requested_ns', 300_000_000),
+        for field, value in [('result', 'unproven'),
                              ('acknowledged_ns', 4_000_000), ('gate_ns', 7_000_000),
                              ('after', {'bounds': BOUNDS, 'observed_ns': 11_000_000}),
                              ('before_bounds', record()['expected_bounds'])]:
             with self.subTest(field=field), self.assertRaises(AssertionError):
                 proof.verify_fault(trace(CANCEL), {**record(), field: value}, action())
+        # Isolate the 250 ms gate-to-request bound; every ordering check still holds.
+        for requested_ms, stale in ((255, False), (256, True)):
+            rows = ACTIVE + [(requested_ms, 'agent_cancel', 1, 0), (requested_ms + 1, 'pointer_button', 1, 0),
+                             (requested_ms + 1, 'pointer_leave', 1, 0)]
+            candidate = {**record(), 'gate_ns': 5_000_000, 'requested_ns': requested_ms * 1_000_000,
+                         'acknowledged_ns': (requested_ms + 1) * 1_000_000,
+                         'after': {**record()['after'], 'observed_ns': (requested_ms + 2) * 1_000_000}}
+            with self.subTest(requested_ms=requested_ms):
+                if stale:
+                    with self.assertRaisesRegex(AssertionError, 'stale fault gate'):
+                        proof.verify_fault(trace(rows), candidate, action())
+                else:
+                    self.assertEqual(proof.verify_fault(trace(rows), candidate, action())['result'], 'verified')
 
 
 class OwnershipTests(unittest.TestCase):
@@ -281,7 +294,8 @@ class RecoveryTests(unittest.TestCase):
 
     def test_fresh_runtime_fresh_grounding_single_new_action_and_unknown_never_replayed(self):
         for app in ('calc', 'inkscape'):
-            for failure in (None, 'slow_discovery', 'alive', 'reused', 'stale', 'unknown', 'guard', 'effect'):
+            for failure in (None, 'slow_discovery', 'alive', 'reused', 'stale', 'unknown', 'guard', 'effect',
+                            'fresh_exited', 'observer_exited'):
                 with self.subTest(app=app, failure=failure), ExitStack() as stack:
                     spec = plan(app=app)['agents'][0]
                     stage = plan(app=app)['recovery']['pointer_stage']
@@ -290,6 +304,16 @@ class RecoveryTests(unittest.TestCase):
                     if failure == 'reused':
                         fresh.process.pid = 100
                     fresh.tool.side_effect = [{}, TimeoutError('lost reply') if failure == 'unknown' else DELIVERED]
+                    if failure in ('fresh_exited', 'observer_exited'):
+                        # The runtime dies after its one action; the saved result must not verify.
+                        exiting = fresh if failure == 'fresh_exited' else observer
+                        replies = iter(fresh.tool.side_effect)
+                        def reply(*_args, exiting=exiting, replies=replies):
+                            value = next(replies)
+                            if value is DELIVERED:
+                                exiting.process.poll.return_value = 1
+                            return value
+                        fresh.tool.side_effect = reply
                     before, after = {'proof_image': 'before.png', 'proof_observation_started_ns': 100}, {'proof_image': 'after.png'}
                     dispatch_ns = 101
                     if failure == 'slow_discovery':
@@ -304,7 +328,11 @@ class RecoveryTests(unittest.TestCase):
                     stack.enter_context(patch.object(proof, 'verify_recovery_trace', return_value={'result': 'verified'}))
                     result, save = {}, Mock()
                     guard = Mock(side_effect=AssertionError('primary expired') if failure == 'guard' else None)
-                    if failure not in (None, 'slow_discovery'):
+                    if failure in ('fresh_exited', 'observer_exited'):
+                        with self.assertRaisesRegex(AssertionError, 'runtime exited during recovery'):
+                            proof.recover(fresh, observer, victim, spec, stage, Mock(), trace(CANCEL), 1, guard, save, result)
+                        self.assertNotIn('result', result)
+                    elif failure not in (None, 'slow_discovery'):
                         with self.assertRaises(AssertionError):
                             proof.recover(fresh, observer, victim, spec, stage, Mock(), trace(CANCEL), 1, guard, save, result)
                     else:

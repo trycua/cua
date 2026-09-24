@@ -41,7 +41,9 @@ import zipfile
 
 from driver_input_live import wait_for, wm
 from primary_trace import Trace, analyze
-from production_app_smoke import NS, ground, provenance, rectangle, verify_calc, verify_inkscape
+from production_app_smoke import (
+    APP_PROFILES, NS, ground, profile_packages, provenance, rectangle, verify_calc, verify_inkscape,
+)
 from production_mcp import DirectMCP
 from production_realapp_proof import (
     SMOKE_STEPS, app_process_identity, assert_no_dispatch, capacity_lane,
@@ -62,9 +64,12 @@ POLICY_SNAPSHOT_LIMITS = {'inkscape': {'max_elements': 2500}}
 
 
 def validate_plan(plan):
-    assert set(plan) <= {'case', 'mode', 'app', 'target', 'document', 'disposable'}
+    assert set(plan) <= {'case', 'mode', 'app', 'target', 'document', 'disposable', 'app_profile'}
     assert plan.get('disposable') is True, 'requires a prepared disposable desktop'
     assert plan['case'] in CASES and plan['app'] in SMOKE_STEPS
+    if 'app_profile' in plan:
+        profile_packages(plan['app_profile'])
+        assert plan['app'] in APP_PROFILES[plan['app_profile']], 'app is outside the selected app profile'
     assert plan.get('mode', 'unrestricted') in ('standard', 'bounded', 'unrestricted')
     assert plan['case'] != 'no_manifest_allow' or plan.get('mode', 'unrestricted') != 'bounded', \
         'bounded cannot admit an action without a manifest'

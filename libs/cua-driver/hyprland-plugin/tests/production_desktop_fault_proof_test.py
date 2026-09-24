@@ -62,20 +62,10 @@ def keymap_status(generation=2):
     return result
 
 
-def layout_refusal():
-    return {'outcome': 'response', 'replayed': False, 'runtime_pid': 103, 'previous_runtime_pid': 100,
-            'tool': 'click', 'prepared_ns': 10_100_000, 'dispatch_ns': 10_500_000, 'observed_ns': 11_000_000,
-            'snapshot': {'window_bounds': dict(BOUNDS)}, 'after_snapshot': {'window_bounds': dict(BOUNDS)},
-            'response': {'isError': True, 'structuredContent': {'effect': 'refused', 'reason': 'unsupported_layout',
-                'code': 'background_unavailable', 'detail': 'unsupported_layout', 'route': 'synthetic_events'}},
-            'before': keymap_status(), 'after': keymap_status(), 'keymap_options': options(False),
-            'trace_before': trace(CANCEL), 'trace_after': trace(CANCEL)}
-
-
 def keymap_record():
     return {**record(), 'kind': 'keymap', 'config': {'sha256': proof.digest(proof.KEYMAP_CAPS_CTRL.encode())},
             'before': keymap_status(1), 'gate_status': keymap_status(1), 'after': keymap_status(2),
-            'keymap_before': options(), 'keymap_after': options(False), 'wrong_layout': layout_refusal()}
+            'keymap_before': options(), 'keymap_after': options(False)}
 
 
 def keymap_restoration():
@@ -112,20 +102,7 @@ def retained_evidence(kind='keymap'):
     boundary['events'] += [[7, 8_000_000, 'agent_cancel', 100, 100, 1, 0],
                            [8, 9_000_000, 'pointer_button', 100, 100, 1, 0]]
     boundary['count'] = len(boundary['events'])
-    if kind == 'keymap':
-        refused = candidate['wrong_layout']
-        refused.update(pointer_cleanup='retained_inert', lane=1,
-                       target=dict(candidate['target']), bounds=dict(BOUNDS),
-                       snapshot=target_snapshot('refusal-before', runtime=103, observed_ns=10_200_000),
-                       after_snapshot=target_snapshot('refusal-after', runtime=101, observed_ns=10_700_000),
-                       before=deepcopy(candidate['after']), after=deepcopy(candidate['after']),
-                       trace_before=deepcopy(boundary), trace_after=deepcopy(boundary))
-        refused['response']['structuredContent']['lane'] = 0
-        refused['after']['input']['lanes'][0]['reserved'] = True
-        refused['closure'] = {'runtime_pid': refused['runtime_pid'], 'exit_code': 0,
-                              'started_ns': 11_100_000, 'reaped_ns': 11_200_000, 'observed_ns': 11_300_000,
-                              'status': deepcopy(refused['before']), 'trace': deepcopy(boundary)}
-    else:
+    if kind != 'keymap':
         candidate['after']['configured'] = False
         candidate['after']['transport']['ready'] = False
         candidate['after']['input']['transport_ready'] = False
@@ -171,42 +148,6 @@ class RetainedPointerTests(unittest.TestCase):
                         self.assertEqual(fault.record['after']['input']['lanes'][0]['pointer_focus'], True)
                     self.assertEqual(atomic.call_count, int(failure != 'gate_absent'))
 
-    def test_fresh_refusal_probe_threads_retained_policy_and_exact_target(self):
-        for missing_focus in (False, True):
-            with self.subTest(missing_focus=missing_focus), ExitStack() as stack:
-                boundary, candidate, _ = retained_evidence()
-                spec = plan('keymap')['agents'][0]
-                fresh, observer, victim = client(103), client(101), client(100, alive=False)
-                fresh.tool.side_effect = [{}, candidate['wrong_layout']['response']]
-                before = deepcopy(candidate['after'])
-                if missing_focus:
-                    before['input']['lanes'][0]['pointer_focus'] = False
-                stack.enter_context(patch.object(proof, 'production_status', side_effect=[before, candidate['wrong_layout']['after'], candidate['after']]))
-                stack.enter_context(patch.object(proof, 'close_owned', side_effect=lambda c: setattr(c.process.poll, 'return_value', 0)))
-                stack.enter_context(patch.object(proof, 'app_process_identity'))
-                stack.enter_context(patch.object(proof, 'grounded_snapshot', side_effect=[
-                    {**target_snapshot('refusal-before', runtime=103, observed_ns=10_200_000), 'proof_image': '/synthetic/image'},
-                    target_snapshot('refusal-after', runtime=101, observed_ns=10_700_000)]))
-                stack.enter_context(patch.object(proof.pointer_grounding, 'read_pixels', return_value=[]))
-                stack.enter_context(patch.object(proof.pointer_grounding, 'action', return_value=({'x': 20, 'y': 20}, {})))
-                stack.enter_context(patch.object(proof, 'keymap_options', return_value=options(False)))
-                stack.enter_context(patch.object(proof, '_guard'))
-                stack.enter_context(patch.object(proof, 'file_identity', return_value={'inode': 20}))
-                stack.enter_context(patch.object(proof.time, 'monotonic_ns', side_effect=[10_100_000, 10_500_000, 11_000_000, 11_100_000, 11_200_000, 11_300_000]))
-                config = {'instance': 'exact', 'path': '/unused', 'deadline_ns': 12_000_000_000,
-                          'pointer_cleanup': 'retained_inert', 'lane': 1,
-                          'files': {'disabled': {'identity': {'inode': 20}}}}
-                args = (fresh, observer, victim, spec, 'click_b2', Mock(collect=Mock(return_value=boundary)), config, Mock(), Mock())
-                if missing_focus:
-                    with self.assertRaises(AssertionError):
-                        proof.refuse_new_action(*args)
-                    self.assertEqual(fresh.tool.call_count, 1)
-                else:
-                    observed = proof.refuse_new_action(*args)
-                    self.assertEqual(observed['pointer_cleanup'], 'retained_inert')
-                    self.assertEqual(observed['target'], spec['target'])
-                    self.assertEqual(observed['verification']['result'], 'verified')
-
     def test_opt_in_and_legacy_default_are_distinct(self):
         for kind in ('config_disable', 'keymap'):
             for policy in ('cleared', 'retained_inert', None, True, 'retained', {}, []):
@@ -235,14 +176,10 @@ class RetainedPointerTests(unittest.TestCase):
                   ('reserved', True), ('reserved', None), ('pointer_focus', False),
                   ('pointer_focus', 1), ('pointer_focus', None), ('dispatches', 2)]
         for kind in ('config_disable', 'keymap'):
-            stages = ['after', 'restored', 'target_status'] + (['refusal-before', 'refusal-after'] if kind == 'keymap' else [])
-            for stage in stages:
+            for stage in ('after', 'restored', 'target_status'):
                 for key, value in fields:
-                    if stage == 'refusal-after' and key == 'reserved' and value is True:
-                        value = False  # This one fresh CLAIM must exist until EOF.
                     boundary, candidate, restored = retained_evidence(kind)
-                    observed = (restored['status'] if stage == 'restored' else
-                                candidate['wrong_layout'][stage.split('-')[1]] if stage.startswith('refusal-') else candidate[stage])
+                    observed = restored['status'] if stage == 'restored' else candidate[stage]
                     observed['input']['lanes'][0][key] = value
                     with self.subTest(kind=kind, stage=stage, key=key, value=value), self.assertRaises(AssertionError):
                         proof.verify_fault(boundary, candidate, restored, action())
@@ -251,45 +188,29 @@ class RetainedPointerTests(unittest.TestCase):
             with self.assertRaisesRegex(AssertionError, 'presence'):
                 proof.verify_fault(boundary, candidate, restored, action())
 
-    def test_fresh_claim_is_capacity_only_and_must_disappear_on_probe_eof(self):
+    def test_fresh_refusal_claim_is_capacity_only_on_its_exact_lane(self):
+        before = keymap_status(2)
+        before['input']['lanes'][0]['pointer_focus'] = True
         for claimed in (0, 1):
-            _, candidate, _ = retained_evidence()
-            record = candidate['wrong_layout']
-            record['response']['structuredContent']['lane'] = claimed
-            for row in record['after']['input']['lanes']:
-                row['reserved'] = row['lane'] == claimed
-            self.assertEqual(proof.verify_layout_refusal(record)['result'], 'verified')
-            for side, lane, key, value in (
-                ('before', claimed, 'reserved', True), ('after', 1 - claimed, 'reserved', True),
-                ('after', claimed, 'lease_active', True), ('after', claimed, 'held_keys', 1),
-                ('after', claimed, 'held_button', 272), ('after', claimed, 'keyboard_focus', True),
-                ('after', claimed, 'drag_active', True), ('after', claimed, 'dispatches', 99),
-                ('closure', claimed, 'reserved', True), ('closure', 0, 'pointer_focus', False)):
-                bad = deepcopy(record)
-                status = bad['closure']['status'] if side == 'closure' else bad[side]
-                status['input']['lanes'][lane][key] = value
-                with self.subTest(claimed=claimed, side=side, key=key), self.assertRaises(AssertionError):
-                    proof.verify_layout_refusal(bad)
-        _, candidate, _ = retained_evidence()
-        record = candidate['wrong_layout']
+            after = deepcopy(before)
+            after['input']['lanes'][claimed]['reserved'] = True
+            response = {'structuredContent': {'lane': claimed}}
+            self.assertEqual(proof.verify_refusal_claim(before, after, response, 1)['claimed_lane'], claimed)
+            for lane, key, value in ((1 - claimed, 'reserved', True), (claimed, 'lease_active', True),
+                                     (claimed, 'held_keys', 1), (claimed, 'held_button', 272),
+                                     (claimed, 'keyboard_focus', True), (claimed, 'drag_active', True),
+                                     (claimed, 'dispatches', 99), (0, 'pointer_focus', False)):
+                bad = deepcopy(after)
+                bad['input']['lanes'][lane][key] = value
+                with self.subTest(claimed=claimed, lane=lane, key=key), self.assertRaises(AssertionError):
+                    proof.verify_refusal_claim(before, bad, response, 1)
+        after = deepcopy(before)
+        after['input']['lanes'][0]['reserved'] = True
         for bad_lane in (None, True, -1, 2, '0'):
-            bad = deepcopy(record)
-            bad['response']['structuredContent']['lane'] = bad_lane
-            with self.subTest(lane=bad_lane), self.assertRaises(AssertionError):
-                proof.verify_layout_refusal(bad)
-        for key, value in (('runtime_pid', record['runtime_pid'] + 1), ('exit_code', None),
-                           ('reaped_ns', 1), ('observed_ns', 1)):
-            bad = deepcopy(record)
-            bad['closure'][key] = value
-            with self.subTest(key=key), self.assertRaises(AssertionError):
-                proof.verify_layout_refusal(bad)
-        for event in ('pointer_leave', 'pointer_enter', 'pointer_motion', 'agent_admitted', 'pointer_button'):
-            bad = deepcopy(record)
-            page = bad['closure']['trace']
-            page['events'].append([9, 11_250_000, event, 100, 100, 1, 0])
-            page['count'] += 1
-            with self.subTest(event=event), self.assertRaises(AssertionError):
-                proof.verify_layout_refusal(bad)
+            with self.subTest(lane=bad_lane), self.assertRaisesRegex(AssertionError, 'exact claimed lane'):
+                proof.verify_refusal_claim(before, after, {'structuredContent': {'lane': bad_lane}}, 1)
+        with self.assertRaises(AssertionError):
+            proof.verify_refusal_claim(before, after, {'structuredContent': {'lane': 0}}, 2)
 
     def test_retained_trace_cannot_hide_leave_retarget_motion_new_input_or_missing_release(self):
         for kind in ('config_disable', 'keymap'):
@@ -314,14 +235,11 @@ class RetainedPointerTests(unittest.TestCase):
 
     def test_target_process_window_geometry_and_snapshot_identity_are_required(self):
         for kind in ('config_disable', 'keymap'):
-            for stage in ('target_before', 'target_after', 'snapshot', 'after_snapshot'):
-                if kind == 'config_disable' and stage in ('snapshot', 'after_snapshot'):
-                    continue
+            for stage in ('target_before', 'target_after'):
                 for key, value in (('pid', 21), ('window_id', 201), ('window_id', None),
                                    ('window_bounds', {**BOUNDS, 'x': 999}), ('snapshot_id', '')):
                     boundary, candidate, restored = retained_evidence(kind)
-                    snapshot = candidate[stage] if stage.startswith('target_') else candidate['wrong_layout'][stage]
-                    snapshot[key] = value
+                    candidate[stage][key] = value
                     with self.subTest(kind=kind, stage=stage, key=key), self.assertRaises(AssertionError):
                         proof.verify_fault(boundary, candidate, restored, action())
             boundary, candidate, restored = retained_evidence(kind)
@@ -330,22 +248,6 @@ class RetainedPointerTests(unittest.TestCase):
             candidate['target_after']['proof_runtime'] = deepcopy(candidate['target_before']['proof_runtime'])
             with self.assertRaisesRegex(AssertionError, 'reused'):
                 proof.verify_fault(boundary, candidate, restored, action())
-
-    def test_refusal_snapshot_ids_are_scoped_to_the_observer_and_require_new_observations(self):
-        for same_runtime in (False, True):
-            for same_id in (False, True):
-                _, candidate, _ = retained_evidence()
-                refusal = candidate['wrong_layout']
-                if same_runtime:
-                    refusal['after_snapshot']['proof_runtime'] = deepcopy(refusal['snapshot']['proof_runtime'])
-                if same_id:
-                    refusal['after_snapshot']['snapshot_id'] = refusal['snapshot']['snapshot_id']
-                with self.subTest(same_runtime=same_runtime, same_id=same_id):
-                    if same_runtime and same_id:
-                        with self.assertRaisesRegex(AssertionError, 'reused'):
-                            proof.verify_layout_refusal(refusal)
-                    else:
-                        self.assertEqual(proof.verify_layout_refusal(refusal)['result'], 'verified')
 
     def test_cross_runtime_counter_collision_cannot_hide_stale_or_invalid_timing(self):
         for key, value in (('proof_observation_started_ns', None), ('proof_observation_started_ns', True),
@@ -358,24 +260,13 @@ class RetainedPointerTests(unittest.TestCase):
             candidate['target_after'][key] = value
             with self.subTest(key=key, value=value), self.assertRaises(AssertionError):
                 proof.verify_fault(boundary, candidate, restored, action())
-        _, candidate, _ = retained_evidence()
-        refusal = candidate['wrong_layout']
-        refusal['after_snapshot']['snapshot_id'] = refusal['snapshot']['snapshot_id']
-        refusal['after_snapshot']['proof_observation_started_ns'] = refusal['snapshot']['proof_observation_started_ns']
+        boundary, candidate, restored = retained_evidence()
+        candidate['target_after']['snapshot_id'] = candidate['target_before']['snapshot_id']
+        candidate['target_after']['proof_observation_started_ns'] = candidate['target_before']['proof_observation_started_ns']
         with self.assertRaisesRegex(AssertionError, 'out-of-order'):
-            proof.verify_layout_refusal(refusal)
+            proof.verify_fault(boundary, candidate, restored, action())
 
-    def test_refusal_has_no_synthetic_events_even_with_unchanged_status(self):
-        for event in ('pointer_enter', 'pointer_leave', 'pointer_motion', 'pointer_button',
-                      'agent_admitted', 'keyboard_leave'):
-            _, candidate, _ = retained_evidence()
-            refusal = candidate['wrong_layout']
-            refusal['trace_after']['events'].append([9, 10_800_000, event, 100, 100, 1, 0])
-            refusal['trace_after']['count'] += 1
-            with self.subTest(event=event), self.assertRaisesRegex(AssertionError, 'synthetic input'):
-                proof.verify_layout_refusal(refusal)
-
-    def test_gate_epoch_generation_refusal_policy_and_lane_cannot_be_substituted(self):
+    def test_gate_epoch_generation_policy_and_lane_cannot_be_substituted(self):
         for change in ('gate', 'epoch', 'generation', 'policy', 'lane', 'target', 'dispatch'):
             boundary, candidate, restored = retained_evidence()
             if change == 'gate':
@@ -386,7 +277,7 @@ class RetainedPointerTests(unittest.TestCase):
             elif change == 'dispatch':
                 candidate['gate_status']['input']['lanes'][0]['dispatches'] = 2
             else:
-                candidate['wrong_layout'][{'policy': 'pointer_cleanup', 'lane': 'lane', 'target': 'target'}[change]] = {
+                candidate[{'policy': 'pointer_cleanup', 'lane': 'lane', 'target': 'target'}[change]] = {
                     'policy': 'cleared', 'lane': 2, 'target': {'pid': 21, 'window_id': 201}}[change]
             with self.subTest(change=change), self.assertRaises(AssertionError):
                 proof.verify_fault(boundary, candidate, restored, action())
@@ -483,17 +374,11 @@ class MotionGateTests(unittest.TestCase):
 
 
 class KeymapTests(unittest.TestCase):
-    def test_supported_user_remap_fixtures_keep_us_layout_and_change_only_options(self):
-        self.assertEqual(set(proof.KEYMAP_REMAPS), {'caps_to_ctrl', 'caps_to_super'})
-        self.assertIn('kb_layout = "us"', proof.KEYMAP_CAPS_CTRL)
-        self.assertIn('kb_options = "ctrl:nocaps"', proof.KEYMAP_CAPS_CTRL)
-        self.assertIn('kb_layout = "us"', proof.KEYMAP_CAPS_SUPER)
-        self.assertIn('kb_options = "caps:super"', proof.KEYMAP_CAPS_SUPER)
-        for fixture in proof.KEYMAP_REMAPS.values():
-            self.assertIn('kb_rules = "evdev"', fixture)
-            self.assertIn('kb_model = "pc105"', fixture)
-            self.assertIn('kb_variant = ""', fixture)
-            self.assertIn('kb_file = ""', fixture)
+    def test_fault_fixture_keeps_us_layout_and_changes_only_options(self):
+        self.assertIn('kb_options = ""', proof.KEYMAP_US)
+        self.assertEqual(proof.KEYMAP_CAPS_CTRL,
+                         proof.KEYMAP_US.replace('kb_options = ""', 'kb_options = "ctrl:nocaps"'))
+        self.assertEqual(proof.fixed_bytes('keymap'), (proof.KEYMAP_US, proof.KEYMAP_CAPS_CTRL))
 
     def test_idle_baseline_allows_only_unreserved_inert_hover_on_either_lane(self):
         for lane in (0, 1):
@@ -550,11 +435,10 @@ class KeymapTests(unittest.TestCase):
             with self.subTest(kind=kind, data=data), self.assertRaises(AssertionError):
                 proof.validate_plan(candidate)
 
-    def test_compiled_map_gate_refusal_and_original_map_restoration_pass(self):
-        self.assertEqual(proof.verify_fault(trace(CANCEL), keymap_record(), keymap_restoration(), action())['result'], 'verified')
-        result = proof.verify_layout_refusal(layout_refusal())
-        self.assertEqual(result['no_dispatch'], 'verified')
-        self.assertEqual(result['keymap_hash'], 'not_exposed')
+    def test_compiled_map_gate_and_original_map_restoration_pass(self):
+        result = proof.verify_fault(trace(CANCEL), keymap_record(), keymap_restoration(), action())
+        self.assertEqual(result['result'], 'verified')
+        self.assertNotIn('legacy_wrong_layout', result)
 
     def test_exact_option_readback_rejects_labels_variants_options_and_override(self):
         for key in options():
@@ -578,111 +462,24 @@ class KeymapTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(AssertionError):
                 proof.verify_keymap_transition(keymap_status(1), after)
 
-    def test_refusal_rejects_generic_error_unknown_replay_and_stale_runtime(self):
-        for key, value in (('outcome', 'unknown'), ('replayed', True), ('runtime_pid', 100), ('tool', 'drag'),
-                           ('dispatch_ns', 9_000_000), ('dispatch_ns', 99_000_000_000)):
-            candidate = layout_refusal()
-            candidate[key] = value
-            with self.subTest(key=key), self.assertRaises(AssertionError):
-                proof.verify_layout_refusal(candidate)
-        for key, value in (('reason', 'unsupported_operation'), ('detail', 'wrong layout'), ('route', 'foreground'),
-                           ('effect', 'partial'), ('delivery', {'mode': 'background'}), ('code', 'unsupported_layout')):
-            candidate = layout_refusal()
-            candidate['response']['structuredContent'][key] = value
-            with self.subTest(key=key), self.assertRaises(AssertionError):
-                proof.verify_layout_refusal(candidate)
-
-    def test_refusal_requires_no_dispatch_and_no_primary_disturbance(self):
-        candidate = layout_refusal()
-        candidate['after_snapshot']['window_bounds']['x'] += 1
-        with self.assertRaises(AssertionError):
-            proof.verify_layout_refusal(candidate)
-        for kind, lane in (('agent_admitted', 1), ('pointer_button', 1), ('pointer_axis', 2),
-                           ('keyboard_key', 0), ('pointer_focus', 0)):
-            candidate = layout_refusal()
-            candidate['trace_after'] = trace(CANCEL + [(11, kind, lane, 0)])
-            with self.subTest(kind=kind), self.assertRaises(AssertionError):
-                proof.verify_layout_refusal(candidate)
-        for key, value in (('dispatches', 2), ('desktop_generation', 3), ('epoch', 'replaced'), ('held_button', 1)):
-            candidate = layout_refusal()
-            candidate['after']['input']['lanes'][1][key] = value
-            with self.subTest(key=key), self.assertRaises(AssertionError):
-                proof.verify_layout_refusal(candidate)
-        candidate = layout_refusal()
-        candidate['trace_after']['events'][0][3] += 1
-        with self.assertRaises(AssertionError):
-            proof.verify_layout_refusal(candidate)
-
     def test_restoration_requires_original_options_and_new_generation(self):
-        for mutate in (lambda r: r.update(keymap_options=options(False)),
-                       lambda r: r.update(status=keymap_status(2)),
-                       lambda r: r.update(config={'sha256': proof.digest(proof.ENABLED.encode())})):
+        for mutate, message in ((lambda r: r.update(keymap_options=options(False)), 'keymap option'),
+                                (lambda r: r.update(config={'sha256': proof.digest(proof.ENABLED.encode())}), ''),
+                                # These reach the live after-to-restoration keymap transition.
+                                (lambda r: r.update(status=keymap_status(2)), 'did not invalidate authority'),
+                                (lambda r: r['status']['input']['lanes'][1].update(epoch='replaced'), 'lane replaced'),
+                                (lambda r: r['status']['input']['lanes'][0].update(reserved=True),
+                                 'reservation survived')):
             restored = keymap_restoration()
             mutate(restored)
-            with self.assertRaises(AssertionError):
+            with self.subTest(message=message), self.assertRaisesRegex(AssertionError, message):
                 proof.verify_fault(trace(CANCEL), keymap_record(), restored, action())
-        for mutate in (lambda r: r['wrong_layout'].update(observed_ns=13_000_000),
-                       lambda r: r['wrong_layout'].update(keymap_options=options()),
-                       lambda r: r.update(after=keymap_status(1))):
+        for mutate in (lambda r: r.update(after=keymap_status(1)),
+                       lambda r: r.update(keymap_after=options())):
             candidate = keymap_record()
             mutate(candidate)
             with self.assertRaises(AssertionError):
                 proof.verify_fault(trace(CANCEL), candidate, keymap_restoration(), action())
-
-    def test_new_driver_action_is_fresh_guarded_and_preserves_failed_evidence(self):
-        for failure in (None, 'runtime', 'stale', 'watchdog', 'file', 'held', 'unknown', 'generic', 'dispatch',
-                        'expired_during_snapshot', 'restored_during_snapshot'):
-            with self.subTest(failure=failure), ExitStack() as stack:
-                candidate = plan('keymap')
-                spec = candidate['agents'][0]
-                fresh, observer, victim = client(103), client(101), client(100, alive=False)
-                if failure == 'runtime':
-                    victim.process.poll.return_value = None
-                response = layout_refusal()['response']
-                if failure == 'generic':
-                    response['structuredContent']['reason'] = 'unsupported_operation'
-                fresh.tool.side_effect = [{}, TimeoutError('lost response') if failure == 'unknown' else response]
-                page = trace(CANCEL + [(11, 'pointer_button', 1, 1)]) if failure == 'dispatch' else trace(CANCEL)
-                transport = Mock(collect=Mock(side_effect=[trace(CANCEL), page]))
-                before = keymap_status()
-                if failure == 'held':
-                    before['input']['lanes'][0]['held_button'] = 272
-                stack.enter_context(patch.object(proof, 'production_status', side_effect=[before, keymap_status()]))
-                stack.enter_context(patch.object(proof, 'app_process_identity'))
-                snapshot = stack.enter_context(patch.object(proof, 'grounded_snapshot', return_value={
-                    'proof_image': '/synthetic/image', 'window_bounds': dict(BOUNDS)}))
-                stack.enter_context(patch.object(proof.pointer_grounding, 'read_pixels', return_value=[]))
-                stack.enter_context(patch.object(proof.pointer_grounding, 'action', return_value=({'x': 20, 'y': 20}, {})))
-                stack.enter_context(patch.object(proof, 'keymap_options', side_effect=[options(False),
-                    AssertionError('watchdog restored keymap') if failure == 'restored_during_snapshot' else options(False)]))
-                stack.enter_context(patch.object(proof, '_guard'))
-                stack.enter_context(patch.object(proof, 'file_identity', return_value={} if failure == 'file' else {'inode': 20}))
-                stack.enter_context(patch.object(proof.time, 'monotonic_ns', side_effect=[10_100_000,
-                    99_000_000_000 if failure == 'stale' else 10_500_000,
-                    13_000_000_000 if failure == 'expired_during_snapshot' else 11_000_000]))
-                config = {'instance': 'exact', 'path': '/unused', 'deadline_ns': 11_000_000 if failure == 'watchdog' else 12_000_000_000,
-                          'files': {'disabled': {'identity': {'inode': 20}}}}
-                saved = {}
-                def save(name, record):
-                    saved[name] = deepcopy(record)
-                if failure:
-                    with self.assertRaises((AssertionError, TimeoutError)):
-                        proof.refuse_new_action(fresh, observer, victim, spec, 'click_b2', transport, config, Mock(), save)
-                else:
-                    result = proof.refuse_new_action(fresh, observer, victim, spec, 'click_b2', transport, config, Mock(), save)
-                    self.assertEqual(result['verification']['no_dispatch'], 'verified')
-                    self.assertEqual(fresh.tool.call_args.args[0], 'click')
-                    self.assertEqual(fresh.tool.call_args.args[1]['session'], spec['name'] + '-wrong-layout')
-                    self.assertEqual(snapshot.call_args_list[0].args[0], fresh)
-                    self.assertEqual(snapshot.call_args_list[1].args[0], observer)
-                    self.assertEqual(snapshot.call_args_list[1].kwargs, {'session': False})
-                    self.assertEqual(result['snapshot']['window_bounds'], result['after_snapshot']['window_bounds'])
-                if failure in ('runtime', 'stale', 'watchdog', 'file', 'held'):
-                    self.assertFalse(any(call.args[0] == 'click' for call in fresh.tool.call_args_list))
-                if failure in ('unknown', 'generic', 'dispatch', 'expired_during_snapshot', 'restored_during_snapshot'):
-                    self.assertIn('wrong-layout-action.json', saved)
-                    self.assertNotIn('verification', saved['wrong-layout-action.json'])
-
 
 class OracleTests(unittest.TestCase):
     def test_partial_unknown_and_exact_history_pass_without_claiming_app_effect(self):
@@ -709,9 +506,24 @@ class OracleTests(unittest.TestCase):
 
     def test_fault_cancellation_and_release_must_precede_restoration(self):
         for changes in ({'requested_ns': 9_000_000}, {'gate_ns': 7_000_000},
-                        {'requested_ns': 300_000_000}, {'watchdog_deadline_ns': 12_000_000}):
+                        {'watchdog_deadline_ns': 12_000_000}):
             with self.subTest(changes=changes), self.assertRaises(AssertionError):
                 proof.verify_fault(trace(CANCEL), {**record(), **changes}, restoration(), action())
+        # Isolate the 250 ms gate-to-request bound; every ordering check still holds.
+        for requested_ms, stale in ((255, False), (256, True)):
+            late_cancel = ACTIVE + [(requested_ms, 'agent_cancel', 1, 0), (requested_ms + 1, 'pointer_button', 1, 0),
+                                    (requested_ms + 1, 'pointer_leave', 1, 0)]
+            candidate = {**record(), 'gate_ns': 5_000_000, 'requested_ns': requested_ms * 1_000_000,
+                         'acknowledged_ns': (requested_ms + 1) * 1_000_000, 'watchdog_deadline_ns': 1_000_000_000}
+            restored = {**restoration(), 'started_ns': (requested_ms + 2) * 1_000_000,
+                        'observed_ns': (requested_ms + 3) * 1_000_000}
+            with self.subTest(requested_ms=requested_ms):
+                if stale:
+                    with self.assertRaisesRegex(AssertionError, 'stale fault gate'):
+                        proof.verify_fault(trace(late_cancel), candidate, restored, action())
+                else:
+                    self.assertEqual(proof.verify_fault(trace(late_cancel), candidate, restored, action())['result'],
+                                     'verified')
         late = ACTIVE + [(12, 'agent_cancel', 1, 0), (13, 'pointer_button', 1, 0)]
         with self.assertRaisesRegex(AssertionError, 'during fault'):
             proof.verify_fault(trace(late), record(), restoration(), action())

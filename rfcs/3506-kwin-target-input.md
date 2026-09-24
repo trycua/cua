@@ -3,7 +3,7 @@ title: Target-addressable KWin input delivery for KDE/Wayland
 authors:
   - netbospl
 created: 2026-09-01
-last_updated: 2026-09-23
+last_updated: 2026-09-24
 status: review
 discussion: https://github.com/trycua/cua/issues/3506
 rfc_pr: https://github.com/trycua/cua/pull/3507
@@ -19,9 +19,11 @@ superseded_by:
 Add a trusted KWin-side target-input capability that lets Cua Driver bind
 pointer and keyboard delivery to one freshly verified KDE/KWin window while
 preserving the Driver's existing per-action permission, policy, resource, and
-lifecycle admission. When exact delivery, target identity, policy admission, or
-transport ownership cannot be proven, the driver must return a structured
-refusal and must not fall back to focus-bound global portal/libei input.
+lifecycle admission. Before dispatch, failure to establish these invariants
+requires a structured refusal. Once dispatch may have begun, lost transport or
+acknowledgement requires a partial/unknown result that preserves any acknowledged
+progress. The operation must never be replayed, including after reconnect or
+target re-resolution, and must never fall back to global portal/libei input.
 
 This RFC is intentionally gated on two proofs before product implementation:
 
@@ -85,6 +87,9 @@ hostile native code running as the same desktop user.
   target-bound contract.
 - Guarantee that a selected KWin target never falls through to global
   portal/libei delivery when target-bound dispatch is unavailable or unsafe.
+- Guarantee at-most-once mutation across transport/acknowledgement failure,
+  with operation identity independent of target identity and truthful
+  partial/unknown results after dispatch may have begun.
 - Preserve read-only discovery compatibility for existing v1 drivers/helpers
   during capability rollout.
 - Expose precise capability and refusal information through doctor/health
@@ -115,40 +120,51 @@ hostile native code running as the same desktop user.
 
 **KWin target token**
 : A helper-issued opaque token associated with a live KWin window identity. In
-  the current helper it is allocated from the window's KWin `internalId()` and
-  is valid only within the lifetime/generation in which it was issued.
+the current helper it is allocated from the window's KWin `internalId()` and
+is valid only within the lifetime/generation in which it was issued.
 
 **Helper generation**
 : An identity that changes whenever a token or mutation transport binding from
-  an earlier helper/KWin instance could become stale. A captured D-Bus unique
-  service owner may be part of this proof, or the protocol may expose an
-  explicit epoch. The chosen representation must survive review and tests for
-  helper/KWin restart and PID/token reuse.
+an earlier helper/KWin instance could become stale. A captured D-Bus unique
+service owner may be part of this proof, or the protocol may expose an
+explicit epoch. The chosen representation must survive review and tests for
+helper/KWin restart and PID/token reuse.
 
 **Action admission**
 : Cua Driver's existing permission, manifest/policy, resource, and lifecycle
-  decision, repeated for every action before backend mutation. It is not a
-  compositor-specific per-window human approval grant.
+decision, repeated for every action before backend mutation. It is not a
+compositor-specific per-window human approval grant.
 
 **Mutation authority**
 : The live Driver-integrated ability to invoke the KWin mutation transport for
-  an admitted action. It is bound to the current transport/helper generation
-  and target transaction. It prevents accidental or architectural bypass of the
-  Driver path; it is not claimed to sandbox hostile same-user native code.
+an admitted action. It is bound to the current transport/helper generation
+and target transaction. It prevents accidental or architectural bypass of the
+Driver path; it is not claimed to sandbox hostile same-user native code.
 
 **Target-bound input**
 : Input delivery for which the compositor-side contract associates the mutation
-  with one exact verified target identity rather than with whichever surface
-  happens to hold focus at processing time.
+with one exact verified target identity rather than with whichever surface
+happens to hold focus at processing time.
 
 **Global input**
 : Focus-bound input injection, including ordinary portal/libei delivery, where
-  the event is not contractually associated with the Cua-selected target.
+the event is not contractually associated with the Cua-selected target.
 
 **Structured refusal**
-: A typed failure returned before unsafe mutation when identity, policy
-  admission, capability, generation, or target-delivery invariants cannot be
-  proven.
+: A typed failure for an operation known not to have dispatched any input when
+identity, policy admission, capability, generation, or target-delivery
+invariants cannot be proven. It must not erase possible or acknowledged
+delivery from an earlier attempt or frame of the same operation.
+
+**Operation identity**
+: A private mutation-connection identity plus a strictly increasing operation
+sequence, bound to the admitted action, exact target, and helper generation.
+Re-resolving the same target does not create permission to replay an action.
+
+**Acknowledged progress**
+: Helper-confirmed dispatch of a prefix of an operation, expressed in defined
+units such as frames or characters. Receipt of a request is not dispatch
+acknowledgement, and dispatched input is not proof of application effect.
 
 ## Current state
 
@@ -234,9 +250,10 @@ is therefore not required merely because the backend is compositor-specific.
 If maintainers choose an additional KWin desktop consent mechanism for platform
 reasons, it must compose with rather than replace normal Driver admission.
 
-The helper/transport must fail closed when the target, generation, requested
-capability, or Driver admission is stale, denied, missing, or no longer valid
-for the operation.
+The helper/transport must stop further dispatch when the target, generation,
+requested capability, or Driver admission is stale, denied, missing, or no
+longer valid. The result must retain prior delivery and uncertainty according
+to section 5; failing closed does not turn an in-flight action into a refusal.
 
 ### 3. Contract ownership and compatibility
 
@@ -277,6 +294,12 @@ current v1 drivers reject non-1 helpers.
 A helper that only implements the current `GetVersion()` and `GetWindows()` must
 never be reported as mutation-capable.
 
+Before choosing the D-Bus/interface shape, specify operation identity, sequence
+consumption, duplicate handling, acknowledgement boundaries, and disconnect
+ownership as part of the mutation contract in section 5. Capability negotiation
+must establish that contract as well as the input kind. Target generation alone
+cannot prevent a second delivery to the same still-valid target.
+
 ### 4. Target identity and generation
 
 A target-input transaction is opened only from a fresh snapshot that resolves
@@ -306,7 +329,7 @@ must not assume the monotonic numeric token alone is globally unique or durable.
 The Rust adapter gains a target-input transaction abstraction conceptually like:
 
 ```rust
-with_target_input(pid, token, generation, admission, |target| {
+with_target_input(pid, token, generation, admission, operation_id, |target| {
     // bounded pointer/keyboard operations
 })
 ```
@@ -319,19 +342,104 @@ must:
 3. resolve exactly one verified target;
 4. validate the live helper/KWin generation;
 5. negotiate the required target-input capability;
-6. bind the operation to the current mutation transport and target identity; and
+6. bind a fresh operation identity to the private mutation connection, admitted
+   action, target identity, and generation; and
 7. reject stale, ambiguous, missing, policy-denied, or unsupported targets
    before mutation.
 
 During the transaction, the KWin-side path must ensure that delivery remains
 associated with the bound target. If the invariant cannot be maintained across
-multi-frame operations such as drag or type sequences, the transaction stops and
-returns a structured refusal before the next frame.
+multi-frame operations such as drag or type sequences, stop before the next
+unsafe frame and cancel queued work. Report refusal only if zero dispatch is
+known; otherwise preserve acknowledged progress and any uncertain remainder.
 
 The implementation may internally activate the target when required by KWin,
 but activation is not the safety guarantee. The guarantee is that each accepted
 event is associated with the bound target and current generation at delivery
-time, after the Driver has admitted the action, or the operation is refused.
+time, after the Driver has admitted the action. A dispatched event cannot be
+undone by a later failure, cancellation, or loss of acknowledgement.
+
+#### Operation identity and replay ownership
+
+Import the at-most-once invariant from the accepted
+[Hyprland scheduling and replay contract](3550-hyprland-isolated-input.md#scheduling-replay-and-cancellation):
+
+> Before dispatch, failure may be a refusal. After dispatch may have begun,
+> transport loss or missing acknowledgement is partial/unknown and must never
+> authorize replay.
+
+The transport must provide these properties regardless of its wire shape:
+
+- Each private connection has a non-reused identity. Operation sequences are
+  strictly increasing within it, including across fresh target selections;
+  `(pid, token, generation)` is not an operation identity. Sequence exhaustion
+  closes admission rather than wrapping or resetting the counter.
+- The helper atomically validates and consumes a sequence before any event can
+  be emitted. Repeated, lower, or concurrently duplicated sequences cannot
+  dispatch again. The consumed high-water mark survives target re-resolution
+  and result-cache eviction for the connection lifetime. A multi-frame protocol
+  must also reject duplicate frames without resending an acknowledged prefix.
+- The default duplicate response is a typed replay refusal for the duplicate
+  attempt. It does not establish zero delivery for the original operation.
+  A bounded cache may return the original final result only if it proves the
+  same operation/payload binding and performs no dispatch; cache misses never
+  authorize execution. Private request data must not be persisted for replay.
+- The Driver records that dispatch may have begun before handing a mutation to
+  the transport. A failed send, timeout, D-Bus disconnect, or helper death cannot
+  prove non-delivery unless the transport provides a definitive zero-dispatch
+  result. Neither the Driver nor its adapter may automatically retry, resume,
+  or reissue an uncertain operation under a fresh sequence or connection.
+- Reconnect creates a fresh connection identity and repeats helper/generation
+  verification. Old operation identities are invalid on the new connection.
+  The Driver retains the old operation's terminal partial/unknown outcome;
+  reconnect, helper restart, and target re-resolution do not enqueue its
+  payload or remaining frames. Driver restart likewise must not restore pending
+  mutations as replayable work.
+- A genuinely new action may proceed only after fresh common admission,
+  capability/identity/generation checks, and new application observation, with
+  a fresh operation identity. Passing those checks is not permission to relabel
+  an automatic retry of the uncertain action as new work.
+
+The helper owns duplicate suppression on its live connection; the Driver owns
+the prohibition on replay across connection/generation changes. Public result
+mapping and callers must retain that prohibition rather than treating an
+ordinary transport error as a retry instruction. Any optional result lookup is
+read-only and must not dispatch input.
+
+#### Results and acknowledgement boundaries
+
+Keep transport receipt, compositor dispatch, and observed application effect
+separate. Retain cumulative, monotonic acknowledged progress in defined units,
+and track possible additional delivery independently. Acknowledgement of frame
+or character N proves that prefix was dispatched; it does not prove N+1 never
+landed. Stop queued/unsent work on failure and mark any unacknowledged in-flight
+remainder unknown, even if the helper disappears immediately after a progress
+acknowledgement.
+
+| Known state                                                                   | Required result                                                                                                                                            |
+| ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Rejected before dispatch, with definitive zero-delivery evidence              | Structured refusal; no delivery/effect evidence.                                                                                                           |
+| Final dispatch acknowledgement received for the complete operation            | Report dispatch separately from independently verified application effect.                                                                                 |
+| Prefix acknowledged and final stop acknowledgement proves no further dispatch | Partial result with the acknowledged count and known undelivered remainder.                                                                                |
+| Dispatch may have begun and final acknowledgement is missing                  | Unknown delivery; retain any acknowledged prefix as partial progress and the unacknowledged remainder as unknown. Never infer zero delivery or completion. |
+
+Map these facts into the shared
+[action-result contract](../libs/cua-driver/docs/action-result-contract.md):
+`partial` retains `delivery.delivered_count` when progress is known;
+`unverifiable` expresses uncertainty when no delivered count is known.
+Dispatch acknowledgement alone does not justify `confirmed`. Preserve unknown
+additional delivery alongside a partial count; do not invent a new public enum
+value or discard uncertainty to fit an existing field. Any required shared
+schema extension must receive review and Rust/Python/TypeScript/CLI/MCP parity
+coverage before input is enabled.
+
+Target loss, generation change, capability loss, and cancellation after dispatch
+must not collapse into an ordinary `target_identity_stale` refusal. Keep their
+cause separate from the delivery outcome. Cancellation/cleanup cannot undo a
+click or text already delivered, and must release only operation-owned held
+state through a valid target-bound path, never through global input or a
+replacement target. Partial or unknown operations and their remaining frames
+are never automatically replayed.
 
 ### 6. Supported operations
 
@@ -356,15 +464,17 @@ The key delivery rule is:
 
 > After cua-driver selects the trusted KWin target route for an operation, any
 > inability to prove or maintain Driver admission, generation validity, and
-> target-bound delivery MUST return a structured refusal. The operation MUST NOT
-> fall back to global portal/libei input.
+> target-bound delivery MUST stop further dispatch. Return a structured refusal
+> only when zero dispatch is known; otherwise preserve partial/unknown delivery
+> under section 5. The operation MUST NOT be replayed or fall back to global
+> portal/libei input.
 
 This includes policy denial, capability loss, helper restart, target closure,
 generation change, ambiguous identity, unsupported input kinds, or any
 focus/user-interaction transition that the target-bound primitive cannot handle
 safely.
 
-Representative refusal categories include `target_input_unavailable`,
+Representative pre-dispatch refusal categories include `target_input_unavailable`,
 `target_identity_stale`, and an existing/common policy-denial result; final
 names should follow the current typed driver error taxonomy.
 
@@ -379,7 +489,7 @@ semantics match the accepted contract. It may also remain valid for explicitly
 global operations outside this RFC.
 
 If the accepted KDE design retains libei/EIS, the implementation must prove that
-KWin binds the admitted operation to the exact target *before delivery*.
+KWin binds the admitted operation to the exact target _before delivery_.
 Pre/post focus checks and post-event read-back are insufficient. Any portal or
 desktop authorization used by that lower-level transport is additive platform
 plumbing, not a replacement for normal Driver action admission.
@@ -393,8 +503,9 @@ Wayland routing, rather than bypassing it through a GNOME-oriented helper or a
 global input fallback.
 
 This keeps browser routing, exact target identity, generation, reconnect, and
-mutation under one safety boundary. Related broader browser work is tracked in
-#2283.
+mutation under one safety boundary, including the same operation identity,
+partial/unknown results, and no-replay rule. Related broader browser work is
+tracked in #2283.
 
 ### 10. Doctor and health reporting
 
@@ -504,8 +615,9 @@ parallel/dual-version migration before implementation. The design must not
 silently trade away existing read-only discovery compatibility.
 
 No unsafe fallback is introduced during rollout. Mismatch, missing capability,
-policy denial, or invalid transport/generation produces a precise refusal rather
-than degraded global input.
+policy denial, or invalid transport/generation before dispatch produces a
+precise refusal. Once dispatch may have begun, preserve partial/unknown results
+and prohibit replay, including across helper upgrades or rollback.
 
 Rollback is straightforward only if discovery remains separable from mutation:
 disable/remove the new mutation capability and the driver returns to the current
@@ -533,9 +645,12 @@ Required properties:
 - do not trust caller-provided titles, app IDs, geometry, or PID without a fresh
   compositor snapshot;
 - bind mutation to an opaque live target plus helper/KWin generation and the
-  current admitted operation;
+  current admitted operation's private connection identity and sequence;
 - invalidate transactions on helper/KWin restart, stale identity, policy/lifecycle
-  invalidation, or capability loss;
+  invalidation, or capability loss without erasing acknowledged progress or
+  uncertain delivery;
+- reject duplicate/replayed operations and never replay partial/unknown input
+  after recovery;
 - refuse ambiguous target resolution;
 - never send global raw input as a recovery path after target routing is chosen;
 - avoid telemetry containing typed text, key sequences, window titles, document
@@ -558,6 +673,8 @@ Before production routing changes:
 - demonstrate a positive target-binding canary with two competing windows;
 - define and prototype the Driver-owned mutation transport so every action still
   passes through the common Driver admission path;
+- specify replay ownership, operation identity, and acknowledgement/result
+  semantics before choosing the mutation interface;
 - document the trusted-local same-account threat model, ABI/support constraints,
   lifecycle invalidation, and rollback; and
 - return to RFC review if the spike requires private KWin internals, weakens the
@@ -573,6 +690,8 @@ No raw KDE input support is advertised from this spike alone.
   interface;
 - add generation-aware target validation;
 - bind mutation transport state to the live helper/target generation;
+- add connection-scoped operation sequences, atomic duplicate suppression, and
+  bounded replay/result state;
 - add the Rust target transaction abstraction;
 - add contract/unit tests for stale, duplicate, ambiguous, policy-denied and
   restarted targets.
@@ -582,9 +701,10 @@ No raw KDE input support is advertised from this spike alone.
 - route only proven KDE pointer/keyboard operations through the admitted
   target transaction;
 - hard-block transition from selected KWin routing to global libei;
-- add structured refusal coverage for mid-transaction target, generation,
-  capability, or policy/lifecycle changes;
-- verify multi-frame drag/type cancellation behavior.
+- distinguish zero-dispatch refusal from partial/unknown delivery on target,
+  generation, capability, policy/lifecycle, or transport failure;
+- verify multi-frame drag/type cancellation, acknowledged progress, and no
+  replay across missing acknowledgements and reconnects.
 
 ### Increment 3: browser setup and health reporting
 
@@ -621,6 +741,10 @@ Cover at least:
 - ambiguous AT-SPI correlation;
 - stale token after window close;
 - helper/KWin generation change;
+- duplicate/lower/concurrent operation sequences, sequence exhaustion, and
+  duplicate multi-frame messages;
+- result-cache eviction without sequence reuse; if cached final results are
+  supported, exact operation/payload matching without redispatch;
 - browser restart and PID reuse;
 - workspace and geometry changes;
 - target loss before mutation;
@@ -634,6 +758,8 @@ Explicitly prove:
   manifest/policy, resource, and lifecycle path, including cached connections;
 - a policy-denied action reaches no KWin mutation dispatch;
 - stale transport state from a previous helper/KWin generation cannot be replayed;
+- reconnect or target re-resolution cannot reset replay protection or turn a
+  partial/unknown operation into a fresh automatic attempt;
 - capability/transport material is not exposed in logs, health output, or
   telemetry;
 - standard, bounded, and acknowledged unrestricted modes preserve their existing
@@ -660,12 +786,33 @@ Explicitly trigger:
 For every unsafe case, acceptance requires:
 
 ```text
-structured refusal
+structured refusal only if zero dispatch is known; otherwise partial/unknown
+acknowledged progress and uncertain remainder preserved
 no event delivered to a non-target window
 no fallback global input sent
+no replay of the operation or its remaining frames
 ```
 
 A successful driver response alone is not evidence.
+
+### At-most-once transport and acknowledgement tests
+
+Use fault injection with independent fixture-owned event counts and adapter
+dispatch traces; a returned error alone cannot prove absence of replay.
+
+| Fault / sequence                                                        | Required evidence                                                                                                                                                                                                                                                                                                                                  |
+| ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Lost final reply after one irreversible event                           | Admit and deliver one click/key event, then suppress the final helper reply. Reconnect and re-resolve the same target. The Driver reports unknown/partial, retains any acknowledged count, and emits no second event. Submit a genuinely new action with a fresh operation identity after new observation and admission; it proceeds exactly once. |
+| Disconnect or helper death after a multi-frame progress acknowledgement | Deliver and acknowledge a prefix, allow the next frame to dispatch, then lose its reply. Preserve the acknowledged frames/chars and an unknown remainder, not `target_identity_stale` or a claimed zero remainder. Reconnect/restart does not resend the prefix or resume the suffix.                                                              |
+| Duplicate request while active or after completion                      | Repeat the same sequence, including concurrently and after target re-resolution or result-cache eviction. No additional input is emitted; return a replay refusal for that attempt, or a proven cached original final result. Lower sequences and old-connection identities also cannot mutate.                                                    |
+| Definitive pre-dispatch failure                                         | Deny policy, invalidate the target, or reject capability before any dispatch; independently prove zero input and a structured refusal.                                                                                                                                                                                                             |
+| Known stop after a delivered prefix                                     | A final stop acknowledgement establishes the exact dispatched count and undelivered remainder; preserve a partial result and do not replay it.                                                                                                                                                                                                     |
+
+Run the lost-reply case for pointer and keyboard operations and the multi-frame
+case for drag and typing where those capabilities are proposed. Cover the same
+result/no-retry behavior through the affected shared Driver, SDK, CLI, MCP, and
+browser setup paths. These are implementation acceptance requirements, not
+claims of live validation supplied by this documentation-only RFC.
 
 ### Live Plasma 6 evidence
 
@@ -710,6 +857,9 @@ policy-path and exact-target decision.
   mutation transport state across helper/KWin/browser restarts?
 - Should the mutation API expose a bounded transaction or atomic operation calls
   so partial multi-frame delivery and cancellation semantics are unambiguous?
+  How will the selected transport represent private connection identity,
+  increasing sequences, acknowledgement boundaries, and bounded duplicate
+  suppression while preserving section 5's mandatory no-replay invariant?
 - Can target-bound delivery preserve user foreground posture without activating
   the target, or is bounded activation/restoration required for some event
   classes?
@@ -724,6 +874,5 @@ Pending maintainer review. The accepted shared-policy and trusted-local baseline
 from #3550/#3551 applies to this RFC unless maintainers record a KWin-specific
 exception. The decision summary in issue #3506 must record the chosen KWin
 primitive, mutation transport/ownership model, compatibility strategy,
-generation semantics, rejected alternatives, remaining risks, and final
-disposition before implementation begins.
-
+generation and operation/replay semantics, rejected alternatives, remaining
+risks, and final disposition before implementation begins.

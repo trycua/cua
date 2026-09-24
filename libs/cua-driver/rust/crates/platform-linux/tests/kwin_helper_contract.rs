@@ -1,3 +1,5 @@
+#![cfg(target_os = "linux")]
+
 use platform_linux::wayland::kwin_helper::{
     available, correlate_atspi_window, parse_snapshot, require_active_target, with_focused_window,
     CorrelationError,

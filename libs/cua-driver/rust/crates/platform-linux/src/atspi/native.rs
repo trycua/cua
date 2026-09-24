@@ -969,6 +969,150 @@ fn correlate_frame_to_window(
     Some(best_ordinal)
 }
 
+#[derive(Debug)]
+struct HyprlandFrame {
+    ordinal: usize,
+    title: String,
+    browser_root: bool,
+    size: Option<(i32, i32)>,
+}
+
+fn chromium_title_matches(accessible: &str, native: &str) -> bool {
+    if native.is_empty() {
+        return false;
+    }
+    accessible == native
+        || accessible
+            .strip_prefix(native)
+            .and_then(|suffix| suffix.strip_prefix(" - "))
+            .is_some_and(|profile| {
+                !profile.trim().is_empty() && !profile.chars().any(char::is_control)
+            })
+}
+
+fn correlate_hyprland_frame(
+    frames: &[HyprlandFrame],
+    clients: &[(&str, u32, u32)],
+    target: usize,
+) -> Option<usize> {
+    let &(title, _, _) = clients.get(target)?;
+    if title.is_empty() || clients.iter().filter(|client| client.0 == title).count() != 1 {
+        return None;
+    }
+    let matches = |frame: &HyprlandFrame, client: &(&str, u32, u32)| {
+        frame.title == client.0
+            || (frame.browser_root
+                && frame.size.is_some_and(|(width, height)| {
+                    width > 0
+                        && height > 0
+                        && i64::from(width) == i64::from(client.1)
+                        && i64::from(height) == i64::from(client.2)
+                })
+                && chromium_title_matches(&frame.title, client.0))
+    };
+    let mut candidates = frames
+        .iter()
+        .filter(|frame| matches(frame, &clients[target]));
+    let frame = candidates.next()?;
+    if candidates.next().is_some()
+        || clients
+            .iter()
+            .filter(|client| matches(frame, client))
+            .count()
+            != 1
+    {
+        return None;
+    }
+    Some(frame.ordinal)
+}
+
+#[cfg(test)]
+mod hyprland_frame_tests {
+    use super::*;
+
+    fn frame(title: &str) -> HyprlandFrame {
+        HyprlandFrame {
+            ordinal: 7,
+            title: title.into(),
+            browser_root: true,
+            size: Some((800, 600)),
+        }
+    }
+
+    #[test]
+    fn binds_unique_chromium_profile_title() {
+        assert_eq!(
+            correlate_hyprland_frame(
+                &[frame("Page - Google Chrome - Cua Test")],
+                &[("Page - Google Chrome", 800, 600), ("Other", 800, 600)],
+                0,
+            ),
+            Some(7)
+        );
+    }
+
+    #[test]
+    fn rejects_generic_prefixes_unknown_roots_and_wrong_sizes() {
+        assert!(!chromium_title_matches("Pageant", "Page"));
+        assert!(!chromium_title_matches("Page - ", "Page"));
+        let mut candidate = frame("Page - Google Chrome - Cua Test");
+        candidate.browser_root = false;
+        assert_eq!(
+            correlate_hyprland_frame(&[candidate], &[("Page - Google Chrome", 800, 600)], 0),
+            None
+        );
+        assert_eq!(
+            correlate_hyprland_frame(
+                &[frame("Page - Google Chrome - Cua Test")],
+                &[("Page - Google Chrome", 801, 600)],
+                0,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn rejects_ambiguous_native_and_accessibility_candidates() {
+        assert_eq!(
+            correlate_hyprland_frame(
+                &[frame("Page - Google Chrome - Cua Test")],
+                &[
+                    ("Page - Google Chrome", 800, 600),
+                    ("Page - Google Chrome - Cua Test", 800, 600),
+                ],
+                0,
+            ),
+            None
+        );
+        assert_eq!(
+            correlate_hyprland_frame(
+                &[
+                    frame("Page - Google Chrome"),
+                    frame("Page - Google Chrome - Cua Test"),
+                ],
+                &[("Page - Google Chrome", 800, 600)],
+                0,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn preserves_exact_non_chromium_matching() {
+        let mut candidate = frame("Editor");
+        candidate.browser_root = false;
+        candidate.size = None;
+        assert_eq!(
+            correlate_hyprland_frame(&[candidate], &[("Editor", 800, 600)], 0),
+            Some(7)
+        );
+        assert_eq!(
+            correlate_hyprland_frame(&[frame("")], &[("", 800, 600)], 0),
+            None
+        );
+    }
+}
+
 /// Resolve native window `xid` to the ordinal of the application top-level that
 /// renders it, or `None` when that cannot be proven. `None` means the walk stays
 /// application-wide: callers that merely want a tree carry on, and callers that
@@ -980,28 +1124,57 @@ async fn resolve_window_frame(
     seeds: &[RawObjectRef],
 ) -> Option<usize> {
     if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
-        let window = crate::wayland::hyprland::accessibility_window(xid, pid)?;
-        let mut matches = Vec::new();
+        let windows = crate::wayland::hyprland::list_windows().ok()?;
+        let owned: Vec<_> = windows.iter().filter(|window| window.pid == pid).collect();
+        let target = owned.iter().position(|window| window.address == xid)?;
+        let chromium = std::fs::read_link(format!("/proc/{pid}/exe"))
+            .ok()
+            .and_then(|path| {
+                path.file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+            })
+            .is_some_and(|name| crate::browser_platform::is_chromium_identity(&name));
+        let mut frames = Vec::new();
         for (ordinal, oref) in seeds.iter().enumerate() {
-            let Some(Ok(acc)) = call(accessible_for(conn, oref)).await else {
-                continue;
-            };
-            let Some(Ok(role)) = call(acc.get_role_name()).await else {
-                continue;
-            };
+            let acc = call(accessible_for(conn, oref)).await?.ok()?;
+            let role = call(acc.get_role_name()).await?.ok()?;
             if !matches!(
                 role.as_str(),
                 "frame" | "window" | "dialog" | "alert" | "file chooser"
             ) {
                 continue;
             }
-            if matches!(call(acc.name()).await, Some(Ok(name)) if name == window.title) {
-                matches.push(ordinal);
-            }
+            let title = call(acc.name()).await?.ok()?;
+            let browser_root = if chromium {
+                call(acc.get_attributes())
+                    .await?
+                    .ok()?
+                    .get("class")
+                    .is_some_and(|class| class == "BrowserRootView")
+            } else {
+                false
+            };
+            let size = if browser_root {
+                let proxies = call(acc.proxies()).await?.ok()?;
+                let component = call(proxies.component()).await?.ok()?;
+                let (_, _, width, height) =
+                    call(component.get_extents(CoordType::Screen)).await?.ok()?;
+                Some((width, height))
+            } else {
+                None
+            };
+            frames.push(HyprlandFrame {
+                ordinal,
+                title,
+                browser_root,
+                size,
+            });
         }
-        // Title is only an AX-to-client correlation within the already
-        // attested PID. Duplicate frame names must never select a sibling.
-        return (matches.len() == 1).then(|| matches[0]);
+        let clients = owned
+            .iter()
+            .map(|window| (window.title.as_str(), window.width, window.height))
+            .collect::<Vec<_>>();
+        return correlate_hyprland_frame(&frames, &clients, target);
     }
     if seeds.len() == 1 {
         // One top-level: the caller's window is the only thing this

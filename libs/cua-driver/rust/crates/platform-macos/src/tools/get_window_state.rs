@@ -617,6 +617,18 @@ impl Tool for GetWindowStateTool {
         if let Some(capture_id) = capture_id {
             structured["capture_id"] = serde_json::json!(capture_id);
         }
+        if let Some(summary) = tree_result
+            .as_ref()
+            .and_then(|result| result.ax_enumeration.as_ref())
+        {
+            structured["ax_enumeration"] = serde_json::json!({
+                "children_count": summary.children_count,
+                "windows_count": summary.windows_count,
+                "union_count": summary.union_count,
+                "ax_window_count": summary.ax_window_count,
+                "mapped_window_count": summary.mapped_window_count,
+            });
+        }
         // Best-effort-background ladder, rung (2). Both rungs point the agent at
         // the same next move: an empty AX tree means element_index has nothing
         // to bind to, so the deliberate action is an element px action — read

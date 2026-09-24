@@ -146,6 +146,18 @@ pub struct TreeWalkResult {
     /// [`WindowScope::Matched`] comes with an EMPTY walk, so `nodes` never
     /// describes a window other than the requested one.
     pub window_scope: Option<WindowScope>,
+    /// Counts observed at the application AX boundary. These are diagnostic
+    /// only; an unresolved scope still produces no walkable elements.
+    pub ax_enumeration: Option<AXEnumerationSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AXEnumerationSummary {
+    pub children_count: usize,
+    pub windows_count: usize,
+    pub union_count: usize,
+    pub ax_window_count: usize,
+    pub mapped_window_count: usize,
 }
 
 /// Walk the AX tree of `pid`, optionally filtered to a specific window.
@@ -196,6 +208,7 @@ pub fn walk_tree_bounded(
     // avoids a false-positive when the tree naturally ends on exactly the cap.
     let mut truncated = false;
     let mut window_scope: Option<WindowScope> = None;
+    let mut ax_enumeration: Option<AXEnumerationSummary> = None;
 
     unsafe {
         let app_elem = AXUIElementCreateApplication(pid);
@@ -207,6 +220,7 @@ pub fn walk_tree_bounded(
                 // No application AX element at all, so a requested window
                 // certainly did not resolve.
                 window_scope: window_id.map(|_| WindowScope::AxUnresolved { ax_window_count: 0 }),
+                ax_enumeration: None,
             };
         }
         set_messaging_timeout(app_elem);
@@ -227,6 +241,8 @@ pub fn walk_tree_bounded(
         // AXWindows returns the window list regardless of activation state.
         let from_children = copy_children(app_elem);
         let from_windows = copy_ax_windows(app_elem);
+        let children_count = from_children.len();
+        let windows_count = from_windows.len();
 
         let mut top_level = from_children;
         for w in from_windows {
@@ -244,6 +260,14 @@ pub fn walk_tree_bounded(
                 CFRelease(w as CFTypeRef);
             }
         }
+
+        ax_enumeration = Some(AXEnumerationSummary {
+            children_count,
+            windows_count,
+            union_count: top_level.len(),
+            ax_window_count: 0,
+            mapped_window_count: 0,
+        });
 
         // Scope: keep non-window children (menu bar) + the target window —
         // but ONLY once the target window has actually been identified. When
@@ -273,6 +297,16 @@ pub fn walk_tree_bounded(
                     }
                 })
                 .collect();
+            if let Some(summary) = ax_enumeration.as_mut() {
+                summary.ax_window_count = candidates
+                    .iter()
+                    .filter(|candidate| candidate.role == "AXWindow")
+                    .count();
+                summary.mapped_window_count = candidates
+                    .iter()
+                    .filter(|candidate| candidate.ax_window_id.is_some())
+                    .count();
+            }
             let decision = decide_window_scope(&candidates, wid, || {
                 crate::windows::resolve_window_owner(pid, wid)
             });
@@ -334,6 +368,7 @@ pub fn walk_tree_bounded(
         nodes,
         truncated: truncated_flag,
         window_scope,
+        ax_enumeration,
     }
 }
 

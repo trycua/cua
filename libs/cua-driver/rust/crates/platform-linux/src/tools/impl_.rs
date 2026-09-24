@@ -6221,7 +6221,14 @@ impl ClickTool {
                 // the element is, and a hidden sibling view (a QFileDialog's
                 // off-page QListView mirroring the visible QTreeView) can
                 // report a frame nothing is drawn at. See atspi::native::hit_test.
-                let (sx, sy, redirect_note) = if let Some(oref) = observed.object_ref.clone() {
+                // Web content is exempt: Chromium's GetAccessibleAtPoint
+                // answers with an unrelated `panel` for web elements, so it
+                // cannot vouch for (or against) the point.
+                let owned_ref = observed
+                    .object_ref
+                    .clone()
+                    .filter(|_| !observed.in_web_content);
+                let (sx, sy, redirect_note) = if let Some(oref) = owned_ref {
                     let (pid_c, oref_c, sx_i, sy_i) =
                         (pid, oref, sx.round() as i32, sy.round() as i32);
                     let ownership = tokio::task::spawn_blocking(move || {

@@ -803,6 +803,10 @@ pub unsafe fn copy_ax_window_by_remote_token(pid: i32, window_id: u32) -> Option
         if copy_string_attr(element, "AXRole").as_deref() == Some("AXWindow")
             && ax_get_window_id(element) == Some(window_id)
         {
+            // The snapshot walk reads the whole subtree through this element;
+            // restore the system default so slow apps are not cut off at the
+            // probe's per-candidate timeout (issue #4082).
+            AXUIElementSetMessagingTimeout(element, 0.0);
             return Some(element);
         }
         CFRelease(element as CFTypeRef);
@@ -810,9 +814,21 @@ pub unsafe fn copy_ax_window_by_remote_token(pid: i32, window_id: u32) -> Option
     None
 }
 
+/// Whether to run the remote-token probe for a window `AXWindows` omitted.
+/// Only windows WindowServer reports on another Space qualify; a current-Space
+/// or unknown window that AX cannot map fails fast instead of paying the
+/// probe's deadline on every call (issue #4083). `on_current_space` is only
+/// queried for unlisted windows, so listed windows skip the WindowServer read.
+fn should_probe_off_space_window(
+    listed_in_ax_windows: bool,
+    on_current_space: impl FnOnce() -> Option<bool>,
+) -> bool {
+    !listed_in_ax_windows && on_current_space() == Some(false)
+}
+
 /// `AXWindows` of `pid`'s application element, plus the requested window when
-/// `AXWindows` does not list it (it is on another Space). Returns retained
-/// elements the caller must release.
+/// `AXWindows` does not list it because it is on another Space. Returns
+/// retained elements the caller must release.
 ///
 /// # Safety
 ///
@@ -824,10 +840,12 @@ pub unsafe fn copy_ax_windows_including(
     window_id: u32,
 ) -> Vec<AXUIElementRef> {
     let mut windows = copy_ax_windows(app);
-    if !windows
+    let listed = windows
         .iter()
-        .any(|&window| ax_get_window_id(window) == Some(window_id))
-    {
+        .any(|&window| ax_get_window_id(window) == Some(window_id));
+    if should_probe_off_space_window(listed, || {
+        crate::windows::window_on_current_space_by_id(window_id)
+    }) {
         windows.extend(copy_ax_window_by_remote_token(pid, window_id));
     }
     windows
@@ -845,6 +863,16 @@ mod tests {
         assert_eq!(&token[4..8], &[0, 0, 0, 0]);
         assert_eq!(&token[8..12], &0x636f_636fi32.to_ne_bytes());
         assert_eq!(&token[12..20], &42u64.to_ne_bytes());
+    }
+
+    #[test]
+    fn off_space_probe_runs_only_for_unlisted_off_space_windows() {
+        assert!(should_probe_off_space_window(false, || Some(false)));
+        assert!(!should_probe_off_space_window(false, || Some(true)));
+        assert!(!should_probe_off_space_window(false, || None));
+        assert!(!should_probe_off_space_window(true, || {
+            panic!("listed windows must not query Space membership")
+        }));
     }
 
     #[test]

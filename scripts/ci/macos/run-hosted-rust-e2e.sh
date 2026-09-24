@@ -219,9 +219,12 @@ if [[ "${LANE}" == browser ]]; then
     [[ -x "${browser_executable}" ]] \
       || fail "missing hosted standalone browser: ${browser_app}"
     browser_requirement="=anchor apple generic and certificate leaf[subject.OU] = \"${browser_team}\" and identifier \"${browser_identifier}\""
-    codesign --verify --strict --test-requirement "${browser_requirement}" \
-        "${browser_executable}" >/dev/null 2>&1 \
-      || fail "hosted standalone browser signature is not valid: ${browser_executable}"
+    if ! browser_verify_output="$(codesign --verify --strict -vvvv \
+        --test-requirement "${browser_requirement}" "${browser_executable}" 2>&1)"; then
+      printf '%s\n' "${browser_verify_output}" >&2
+      codesign -dvvv "${browser_executable}" >&2 2>&1 || true
+      fail "hosted standalone browser signature is not valid: ${browser_executable}"
+    fi
   done
 fi
 

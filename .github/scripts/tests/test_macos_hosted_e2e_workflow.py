@@ -218,7 +218,7 @@ def test_hosted_macos_browser_lane_mirrors_the_lume_standalone_browser_matrix() 
     assert 'STANDALONE_BROWSER_PRODUCTS="chrome,edge"' in runner
     assert '"/Applications/Google Chrome.app|com.google.Chrome|EQHXZ8M8AV"' in runner
     assert '"/Applications/Microsoft Edge.app|com.microsoft.edgemac|UBF8T346G9"' in runner
-    assert "codesign --verify --strict --test-requirement" in runner
+    assert "--test-requirement \"${browser_requirement}\"" in runner
     platform = read("libs/cua-driver/rust/crates/platform-macos/src/browser/platform.rs")
     for identity in ('"com.google.Chrome"', '"EQHXZ8M8AV"', '"com.microsoft.edgemac"', '"UBF8T346G9"'):
         assert identity in platform

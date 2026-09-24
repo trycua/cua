@@ -474,8 +474,17 @@ def query_code_vectors(
 
 
 # Create the ASGI app
+#
+# json_response=True answers each POST with one application/json body
+# (Content-Length) instead of a text/event-stream. Every tool here returns a
+# single result and sends no progress or log notifications, so nothing needs a
+# stream. Streamed POST responses were being cut off right after their headers
+# for HTTP/1.1 clients behind the ingress; rmcp-based clients (mcp-js) then
+# wait forever for the lost result. A plain JSON body arrives whole or fails
+# as a normal HTTP error. Clients must accept both forms per the MCP spec.
 app = mcp.http_app(
     transport="streamable-http",
+    json_response=True,
     middleware=[
         Middleware(
             CORSMiddleware,

@@ -225,12 +225,20 @@ if [[ "${LANE}" == browser ]]; then
     # strict verification (like the driver's own attestation) rejects that
     # Finder detritus. Remove only that attribute, record each path, and still
     # require the full strict vendor requirement below.
+    # The attribute can sit on a framework symlink, so clear it from both the
+    # link (-s) and its target; the strict requirement check is the judge.
+    finderinfo_paths=()
     while IFS= read -r -d '' finderinfo_path; do
+      finderinfo_paths+=("${finderinfo_path}")
+    done < <(find "${browser_app}" -xattrname com.apple.FinderInfo -print0)
+    for finderinfo_path in ${finderinfo_paths[@]+"${finderinfo_paths[@]}"}; do
       printf '%s\n' "${finderinfo_path}" \
         >> "${BOOTSTRAP_DIR}/standalone-browser-finderinfo-removed.txt"
-      run_bounded 20 sudo -n /usr/bin/xattr -d com.apple.FinderInfo "${finderinfo_path}" \
-        || fail "could not remove Finder detritus from ${finderinfo_path}"
-    done < <(find "${browser_app}" -xattrname com.apple.FinderInfo -print0)
+      run_bounded 20 sudo -n /usr/bin/xattr -s -d com.apple.FinderInfo \
+        "${finderinfo_path}" >/dev/null 2>&1 || true
+      run_bounded 20 sudo -n /usr/bin/xattr -d com.apple.FinderInfo \
+        "${finderinfo_path}" >/dev/null 2>&1 || true
+    done
     browser_requirement="=anchor apple generic and certificate leaf[subject.OU] = \"${browser_team}\" and identifier \"${browser_identifier}\""
     if ! browser_verify_output="$(codesign --verify --strict -vvvv \
         --test-requirement "${browser_requirement}" "${browser_executable}" 2>&1)"; then

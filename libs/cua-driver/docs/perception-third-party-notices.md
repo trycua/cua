@@ -58,8 +58,10 @@ a service.
   `d8a876bf7f9fb73d7da9432904ade7fa78e092e9a91674e5a2806b45562a9ab2`.
 - Artifact license recorded by the release ledger: AGPL-3.0-only.
 
-The release ledger marks this artifact `license-review-required`. Publication
-must remain blocked until that review passes. A distributor must preserve the
+On 2026-09-24 the Cua maintainers decided to distribute this artifact under
+AGPL-3.0-only, and the release ledger marks it `release-verified`. This is a
+maintainer decision, not a legal opinion. Cua Perception packaging refuses an
+AGPL model that lacks its bundled source input. A distributor must preserve the
 AGPL-3.0-only license and notices and provide the corresponding source and
 pinned conversion/export material required for this artifact. Network use of a
 covered modified version may also trigger the license's corresponding-source

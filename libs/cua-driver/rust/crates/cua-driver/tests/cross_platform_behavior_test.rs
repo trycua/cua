@@ -1722,9 +1722,7 @@ fn shared_case_with_native_hyprland(
             OracleKind::ZOrder,
             OracleKind::NoLeakedInput,
         ]);
-        if cua_driver_testkit::e2e::DisplayServer::current()
-            != cua_driver_testkit::e2e::DisplayServer::Wayland
-        {
+        if cua_driver_testkit::e2e::native_cursor_oracle_required() {
             oracles.push(OracleKind::Cursor);
         }
         if !expected_background_refusal

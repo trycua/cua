@@ -70,7 +70,9 @@ fn def() -> &'static ToolDef {
             window belongs to the panel service, not the app). If the window is live under \
             this pid but its accessibility surface can't be resolved, the tree comes back \
             EMPTY with `degraded_reason: ax_window_unresolved` and the screenshot of the \
-            requested window — act by pixel there. This tool never returns another \
+            requested window; background input is refused until it resolves, so \
+            re-snapshot or act with `delivery_mode:\"foreground\"`. A window on another \
+            Space still resolves by its exact CGWindowID. This tool never returns another \
             surface's elements under your window_id. Before exposing a screenshot, \
             its raw dimensions are validated as a coherent 1x/2x representation of \
             the requested WindowServer bounds. `px_frame_mismatch` or \

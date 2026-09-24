@@ -3510,6 +3510,28 @@ fn screen_extent_rebase(
     }
 }
 
+// A near-zero frame may be a correctly positioned maximized window. Component
+// Screen/Window agreement with the X11 client origin proves Screen is already
+// translated. Keep the existing renderer correction when evidence is missing.
+fn component_screen_rebase(
+    candidate: (i32, i32),
+    client_origin: (i32, i32),
+    screen_origin: (i32, i32),
+    window_origin: Option<(i32, i32)>,
+) -> (i32, i32) {
+    if let Some(window) = window_origin {
+        let translated = |screen: i32, local: i32, client: i32| {
+            (i64::from(screen) - i64::from(local) - i64::from(client)).abs() <= 2
+        };
+        if translated(screen_origin.0, window.0, client_origin.0)
+            && translated(screen_origin.1, window.1, client_origin.1)
+        {
+            return (0, 0);
+        }
+    }
+    candidate
+}
+
 fn rebase_renderer_window_offset(
     mut offset: (i32, i32),
     frame_origin: Option<(i32, i32)>,
@@ -3612,8 +3634,12 @@ async fn element_bounds_for_visited(
     // produce a zero delta; Chromium's local (0,0) frame produces the
     // required window-origin delta. GTK's explicit Window-coordinate
     // path above remains authoritative when available.
-    let screen_rebase = if offset.is_none() && !crate::wayland::is_wayland() && xid != 0 {
-        let x11_origin = x11_window_origin(xid);
+    let screen_client_origin = if offset.is_none() && !crate::wayland::is_wayland() && xid != 0 {
+        x11_window_origin(xid)
+    } else {
+        None
+    };
+    let screen_rebase = if let Some(origin) = screen_client_origin {
         let frame = visited.iter().find(|node| {
             scoped_frame.is_none_or(|scope| node.frame_ordinal == scope)
                 && node.has_component
@@ -3622,7 +3648,7 @@ async fn element_bounds_for_visited(
                     "frame" | "window" | "dialog" | "alert" | "file chooser"
                 )
         });
-        if let (Some(origin), Some(frame)) = (x11_origin, frame) {
+        if let Some(frame) = frame {
             let accessible_origin = match call(frame.acc.proxies()).await {
                 Some(Ok(proxies)) => match call(proxies.component()).await {
                     Some(Ok(component)) => {
@@ -3690,7 +3716,7 @@ async fn element_bounds_for_visited(
     if let Some((ox, oy)) = offset {
         dlog!("element bounds: WINDOW coords + screen offset ({ox},{oy})");
     } else if let Some((ox, oy)) = screen_rebase {
-        dlog!("element bounds: SCREEN coords + X11 frame rebase ({ox},{oy})");
+        dlog!("element bounds: SCREEN coords with candidate X11 frame rebase ({ox},{oy})");
     }
 
     let action_nodes: Vec<&Visited> = visited.iter().filter(|v| is_indexable(v)).collect();
@@ -3716,7 +3742,23 @@ async fn element_bounds_for_visited(
             } else {
                 None
             };
-            return project_screen_extents((x, y, w, h), (offset_x, offset_y), document_origin)
+            let component_offset = if let (Some(candidate), Some(client_origin)) = (
+                screen_rebase.filter(|delta| *delta != (0, 0)),
+                screen_client_origin,
+            ) {
+                let window_origin = match call(comp.get_extents(CoordType::Window)).await {
+                    Some(Ok((wx, wy, ww, wh)))
+                        if crate::snapshot_queries::plausible_raw_extents((wx, wy, ww, wh)) =>
+                    {
+                        Some((wx, wy))
+                    }
+                    _ => None,
+                };
+                component_screen_rebase(candidate, client_origin, (x, y), window_origin)
+            } else {
+                (offset_x, offset_y)
+            };
+            return project_screen_extents((x, y, w, h), component_offset, document_origin)
                 .map(|bounds| (idx, bounds));
         }
         None
@@ -4048,6 +4090,42 @@ mod coord_tests {
         assert_eq!(screen_extent_rebase((604, 80), (0, 0)), Some((604, 80)));
         assert_eq!(screen_extent_rebase((604, 100), (604, 80)), None);
         assert_eq!(screen_extent_rebase((604, 80), (604, 80)), None);
+    }
+
+    #[test]
+    fn component_screen_coordinates_do_not_receive_the_client_origin_twice() {
+        // Retained maximized LibreOffice field: outer frame0,0; client0,17.
+        assert_eq!(
+            super::component_screen_rebase((0, 17), (0, 17), (1197, 173), Some((1197, 156))),
+            (0, 0)
+        );
+        let correction =
+            super::component_screen_rebase((0, 17), (0, 17), (1197, 173), Some((1197, 156)));
+        assert_eq!(
+            super::project_screen_extents((1197, 173, 59, 34), correction, None),
+            Some((1197, 173, 59, 34))
+        );
+        assert_eq!(
+            super::component_screen_rebase((-604, 80), (-604, 80), (-504, 180), Some((100, 100))),
+            (0, 0)
+        );
+    }
+
+    #[test]
+    fn renderer_local_screen_coordinates_retain_their_origin_correction() {
+        assert_eq!(
+            super::component_screen_rebase((604, 80), (604, 80), (100, 100), Some((100, 100))),
+            (604, 80)
+        );
+        assert_eq!(
+            super::component_screen_rebase((604, 80), (604, 80), (100, 100), None),
+            (604, 80)
+        );
+        // Agreement on only one axis does not establish correct translation.
+        assert_eq!(
+            super::component_screen_rebase((0, 17), (0, 17), (100, 100), Some((100, 100))),
+            (0, 17)
+        );
     }
 
     #[test]

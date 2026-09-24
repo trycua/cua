@@ -130,7 +130,10 @@ def choose(model: DecisionModel, request: DecisionRequest) -> DecisionResult:
         )
     except Exception as error:
         reason = "option_limit" if isinstance(error, OptionLimitError) else "model_error"
-        return DecisionResult("error", request.capture_id, None, model.name, None, {}, reason)
+        model_name = getattr(model, "name", "unknown")
+        if not isinstance(model_name, str) or not 0 < len(model_name) <= 128:
+            model_name = "unknown"
+        return DecisionResult("error", request.capture_id, None, model_name, None, {}, reason)
 
 
 class OptionLimitError(ValueError):
@@ -183,7 +186,9 @@ def visual_regions_as_text(request: DecisionRequest) -> str:
         label = region.get("text") or region.get("label")
         lines.append(
             f"{json.dumps(region['id'])}: {region['kind']} {label!r} at "
-            f"({bounds['x']},{bounds['y']},{bounds['width']},{bounds['height']})"
+            f"({bounds['x']},{bounds['y']},{bounds['width']},{bounds['height']}) "
+            f"confidence={json.dumps(region['confidence'])} "
+            f"interactive={json.dumps(region['interactive'])}"
         )
     if request.history:
         lines.append("Prior bounded decisions:")
@@ -200,18 +205,22 @@ class S1DecisionModel:
         *,
         modality: Literal["text", "multimodal"] = "text",
         screenshot_path: Path | None = None,
+        screenshot_capture_id: str | None = None,
     ) -> None:
         self.scorer = scorer
         self.modality = modality
         self.screenshot_path = screenshot_path
+        self.screenshot_capture_id = screenshot_capture_id
 
     def score(self, request: DecisionRequest) -> ModelScores:
         if len(request.candidates) > 26:
             raise OptionLimitError("S1 uses one letter per option, at most 26")
         if self.modality == "multimodal" and (
-            self.screenshot_path is None or not self.screenshot_path.is_file()
+            self.screenshot_path is None
+            or not self.screenshot_path.is_file()
+            or self.screenshot_capture_id != request.capture_id
         ):
-            raise ValueError("multimodal S1 requires an existing local screenshot")
+            raise ValueError("multimodal S1 requires a screenshot bound to the request capture")
         scorer_modality = getattr(self.scorer, "modality", self.modality)
         if scorer_modality != self.modality:
             raise ValueError("S1 scorer modality does not match the decision adapter")

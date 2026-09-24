@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -79,7 +80,19 @@ class DecisionModelsTest(unittest.TestCase):
         options, kwargs = scorer.calls[0]
         self.assertEqual([option.element_id for option in options], list(choice["probabilities"]))
         self.assertIn("Visual-region-derived", kwargs["ax_tree"])
+        self.assertIn("confidence=0.98", kwargs["ax_tree"])
+        self.assertIn("interactive=true", kwargs["ax_tree"])
         self.assertNotIn("screenshot", kwargs)
+
+    def test_s1_text_adapter_preserves_region_confidence_and_interactivity(self) -> None:
+        value = request()
+        value["regions"][0]["confidence"] = 0.7999
+        value["regions"][0]["interactive"] = False
+        scorer = FakeScorer({"submit-form": 1.0, "reobserve": 0.0, "abstain": 0.0})
+        choose_request(value, S1DecisionModel(scorer))
+        prompt = scorer.calls[0][1]["ax_tree"]
+        self.assertIn("confidence=0.7999", prompt)
+        self.assertIn("interactive=false", prompt)
 
     def test_s1_reserved_decisions_do_not_become_actions(self) -> None:
         for selected, kind in (("reobserve", "reobserve"), ("abstain", "abstain")):
@@ -136,6 +149,38 @@ class DecisionModelsTest(unittest.TestCase):
         choice = choose_request(request(), S1DecisionModel(scorer, modality="multimodal"))
         self.assertEqual(choice["kind"], "error")
         self.assertEqual(scorer.calls, [])
+
+    def test_multimodal_screenshot_must_match_capture_id(self) -> None:
+        scores = {"submit-form": 1.0, "reobserve": 0.0, "abstain": 0.0}
+        with tempfile.TemporaryDirectory() as directory:
+            screenshot = Path(directory) / "capture.png"
+            screenshot.write_bytes(b"fixture")
+            scorer = FakeScorer(scores)
+            model = S1DecisionModel(
+                scorer,
+                modality="multimodal",
+                screenshot_path=screenshot,
+                screenshot_capture_id="old-capture",
+            )
+            self.assertEqual(choose_request(request(), model)["kind"], "error")
+            self.assertEqual(scorer.calls, [])
+            current = S1DecisionModel(
+                scorer,
+                modality="multimodal",
+                screenshot_path=screenshot,
+                screenshot_capture_id="capture-1",
+            )
+            self.assertEqual(choose_request(request(), current)["kind"], "selected")
+            self.assertEqual(scorer.calls[0][1]["screenshot"], screenshot)
+
+    def test_model_without_name_returns_non_actionable_error(self) -> None:
+        class UnnamedModel:
+            def score(self, request):
+                raise RuntimeError("model failed")
+
+        choice = choose_request(request(), UnnamedModel())
+        self.assertEqual((choice["kind"], choice["reason"]), ("error", "model_error"))
+        self.assertEqual(choice["model"], "unknown")
 
     def test_tied_scores_are_non_actionable(self) -> None:
         scores = {"submit-form": 0.5, "reobserve": 0.0, "abstain": 0.5}

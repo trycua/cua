@@ -89,7 +89,8 @@ S1_DEVICE=cpu S1_DTYPE=float16 \
   < fixtures/jev-choice-request-v1.json
 ```
 
-The S1 text adapter renders OmniParser regions as text and labels the result
+The S1 text adapter renders OmniParser regions, including confidence and
+interactivity, as text and labels the result
 `Visual-region-derived observation`. It is not a genuine accessibility tree,
 even though the underlying S1 prompt still titles this text field
 `Accessibility tree:`. The reserved options are represented as closed-choice
@@ -98,8 +99,11 @@ S1's one-letter-per-option readout supports at most 26 candidates, including
 `reobserve` and `abstain`; a larger validated request returns `error` with
 `reason: "option_limit"` and never silently truncates the table. The Jev
 request schema permits up to 32 candidates. The S1 multimodal adapter requires
-an existing local screenshot path; that path and image are never added to a
-TypeSafe request. The CLI currently exposes only the text adapter.
+an existing local screenshot path and an explicit screenshot capture ID equal
+to the request's `capture_id`. The caller must supply the image from that
+capture; the adapter checks identity but cannot authenticate image contents.
+The path and image are never added to a TypeSafe request. The CLI currently
+exposes only the text adapter.
 
 ## Verification scope
 

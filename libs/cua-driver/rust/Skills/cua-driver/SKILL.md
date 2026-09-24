@@ -58,7 +58,7 @@ Check the installed version and advertised schema before using unfamiliar parame
 
 1. Select the exact target on each action. A session is lifecycle metadata, not capture scope or permission authority.
 2. Observe before input and verify after it. `effect:"unverifiable"` and a successful exit are not task success; never replay a partial, canceled, or unknown action blindly.
-3. Use returned tokens, never invented indices. A fresh snapshot replaces prior element handles; prefer `element_token` over `element_index` plus `snapshot_id`.
+3. Use returned tokens, never invented indices. A fresh snapshot replaces prior element handles and lists them in `invalidated_snapshot_ids`; act with `element_token`.
 4. Keep background window actions non-interfering. Foreground delivery and desktop input require authorization for visible control; an unavailable route is not permission to escalate.
 5. Never infer pixels from a missing image, a different window, or an unaccounted-for resized preview. Capture failure and an empty accessibility tree are different failures.
 6. Keep one controller for a shared desktop. Distinct sessions/cursors do not isolate focus, keyboard input, application state, or snapshot caches.

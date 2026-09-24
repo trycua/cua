@@ -78,7 +78,7 @@ The agent tests and fixes an app while the terminal remains in front.
 
 The safest ladder is:
 
-1. Act by `element_index` in the background.
+1. Act by `element_token` in the background.
 2. If the element path is unavailable or unverifiable, act by `x, y` from the same window screenshot.
 3. If the app still rejects the action, retry that one action with `delivery_mode: "foreground"`.
 

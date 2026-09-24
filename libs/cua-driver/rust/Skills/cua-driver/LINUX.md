@@ -118,7 +118,7 @@ Each input rung and its stable public route:
 
 | Modality                        | `delivery_mode`           | `route`                                                              | Postcondition proof                                      |
 | ------------------------------- | ------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------- |
-| Element click (`element_index`) | `background`              | `accessibility`                                                      | Use `verify_state`; invocation alone is not confirmation |
+| Element click (`element_token`) | `background`              | `accessibility`                                                      | Use `verify_state`; invocation alone is not confirmation |
 | **element px action (x,y)**     | `background`              | `accessibility` when AT-SPI-at-point lands, otherwise `global_input` | Use `verify_state` or multimodal reading                 |
 | Pixel (px) click, escalated     | `foreground`              | `global_input`                                                       | Use `verify_state` or multimodal reading                 |
 | `type_text` into editable       | `background`              | `accessibility`                                                      | `confirmed` only with `value_readback` evidence          |

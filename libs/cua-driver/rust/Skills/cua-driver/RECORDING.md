@@ -75,7 +75,7 @@ Each action writes to `turn-NNNNN/` (five-digit zero-padded counter):
   status. The original before/after images and state remain intact.
   **Both addressing modes are covered:** explicit
   `x, y` clicks use the platform's recording-coordinate mapping, and
-  `element_index`-addressed clicks resolve to the element's center
+  `element_token`-addressed clicks resolve to the element's center
   via the live AX/UIA cache, then convert to the retained image's coordinate
   space. Native Hyprland recording retains the output image, so both kinds of
   marker use output coordinates. Pixel markers also account for the target

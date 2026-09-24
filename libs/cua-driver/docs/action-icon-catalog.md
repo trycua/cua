@@ -51,7 +51,7 @@ need unrelated illustrations. A maintainable asset system uses:
 
 | Token             | Meaning                                               | How it is selected                        |
 | ----------------- | ----------------------------------------------------- | ----------------------------------------- |
-| `ax`              | Accessibility-addressed element action                | `element_token` or `element_index`        |
+| `ax`              | Accessibility-addressed element action                | `element_token`                           |
 | `px`              | Window-local pixel action                             | Window target plus `x`/`y` coordinates    |
 | `focused`         | Acts on the target's currently focused control        | No element or point supplied              |
 | `desktop`         | Screen-absolute action                                | `scope:"desktop"` without a window target |

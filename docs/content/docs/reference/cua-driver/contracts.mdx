@@ -17,7 +17,7 @@ MCP may own that runtime directly or select `cua-driver serve` explicitly.
 | Dimension | CLI (`call`) | MCP (`mcp`) |
 |---|---|---|
 | Lifetime | each one-shot call gets a disposable implicit session; the selected service may own other durable state | one implicit session per authenticated transport connection |
-| `element_index` cache | owned by the selected service; survives until invalidation or service restart | owned by the MCP runtime; lives across calls |
+| snapshot store | owned by the selected service; survives until invalidation or service restart | owned by the MCP runtime; lives across calls |
 | Public label | optional `session`; it does not carry authority | optional `session`; it does not carry authority |
 | Where `set_config` lands | the persisted global default when no public session is supplied | an in-memory override when a public session is supplied |
 | Agent cursor | initialized for the call and cleaned up with its disposable session | initialized on the first cursor-bearing action and reused on later unnamed calls |
@@ -125,12 +125,12 @@ Every input tool chooses its route from the target and action arguments:
 
 | Arguments | Path | Behavior |
 |---|---|---|
-| window target plus `element_index` | accessibility action | UIA Invoke, `AXPerformAction`, or AT-SPI. Background, no cursor move, no focus steal. |
+| `element_token` | accessibility action | UIA Invoke, `AXPerformAction`, or AT-SPI. Background, no cursor move, no focus steal. |
 | window target plus `x`, `y` | window-local pixel | coordinates are relative to that window's screenshot. For keyboard tools, this form can click the coordinate to establish renderer focus before sending keys. |
 | desktop target plus `x`, `y` | screen-absolute | true screen pixels on the primary display, with foreground delivery |
 
 The keyboard family's coordinate form is mutually exclusive with
-`element_index`. A malformed, mixed, or ambiguous target fails before
+`element_token`. A malformed, mixed, or ambiguous target fails before
 authorization and platform dispatch.
 
 ---
@@ -143,12 +143,12 @@ delivery mode:
 
 | Target | Action rung | `delivery_mode` | Valid? | Why |
 |---|---|---|---|---|
-| window | `ax` (`element_index`) | `background` | ✅ | Semantic action on a background-capable window. |
-| window | `ax` (`element_index`) | `foreground` | ✅ | Activate, then act by element. |
+| window | `ax` (`element_token`) | `background` | ✅ | Semantic action on a background-capable window. |
+| window | `ax` (`element_token`) | `foreground` | ✅ | Activate, then act by element. |
 | window | `px` (`x`, `y`) | `background` | ✅ | Act at a coordinate from the window screenshot without raising the target when supported. |
 | window | `px` (`x`, `y`) | `foreground` | ✅ | Activate, then act by coordinate. |
 | desktop | `px` (`x`, `y`) | `foreground` | ✅ | Act at screen coordinates on the primary display. |
-| desktop | `ax` (`element_index`) | any | ❌ | A desktop target has no window element tree. |
+| desktop | `ax` (`element_token`) | any | ❌ | A desktop target has no window element tree. |
 | desktop | any | `background` | ❌ | Screen input lands on the active desktop and has no per-process background route. |
 
 The driver enforces these rejections before it sends input.

@@ -5,15 +5,29 @@ resolution-markers = [
     "python_full_version >= '3.12'",
     "python_full_version < '3.12'",
 ]
+conflicts = [[
+    { package = "cua-s1", extra = "four-b" },
+    { package = "cua-s1", extra = "nano-vision" },
+], [
+    { package = "cua-s1", extra = "four-b" },
+    { package = "cua-s1", extra = "four-b-train" },
+], [
+    { package = "cua-s1", extra = "four-b" },
+    { package = "cua-s1", extra = "four-b-rl" },
+], [
+    { package = "cua-s1", extra = "all" },
+    { package = "cua-s1", extra = "four-b" },
+]]
 
 [[package]]
 name = "accelerate"
 version = "1.15.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "huggingface-hub" },
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "huggingface-hub", version = "0.36.2", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-6-cua-s1-all' or extra != 'extra-6-cua-s1-four-b' or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "huggingface-hub", version = "1.32.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-6-cua-s1-four-b'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12' or (extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or (extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
     { name = "packaging" },
     { name = "psutil" },
     { name = "pyyaml" },
@@ -23,6 +37,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/f5/b5/1d3ed029ac71d3f2961346829a268da923698e9fd63f218f78841f216bfd/accelerate-1.15.0.tar.gz", hash = "sha256:5654f8c5eaa0d4fa68b33e287a97765da6849bf6d51dcac874e73fbbddfb6134", size = 422615, upload-time = "2026-09-09T13:04:49.078Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8a/4c/34f0450479d01195027260da68d8a3880683f1640c3ca5adf64acb3185f1/accelerate-1.15.0-py3-none-any.whl", hash = "sha256:97eacca0b73e45cb867dbf8c5d5d4dc32219544300e0c8992c7334dc2ef33cec", size = 394295, upload-time = "2026-09-09T13:04:47.331Z" },
+]
+
+[[package]]
+name = "annotated-doc"
+version = "0.0.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/5a/8e/38aa427ed5402449e226975b649c5dc73ccadfefeb95e6aecb8f8ea4b6b6/annotated_doc-0.0.5.tar.gz", hash = "sha256:c7e58ce09192557605d8bbd92836d7e1d520ac9580096042c0bfd197efacf1bb", size = 10758, upload-time = "2026-07-28T13:50:58.129Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3e/30/e900b21425a860e195f32e37657aa1f7c7f2b1bfb26f03ca209b90933c06/annotated_doc-0.0.5-py3-none-any.whl", hash = "sha256:117bac03a25ede5df5440e855b32d556049ca169ead221505badf432fed4b101", size = 5302, upload-time = "2026-07-28T13:50:57.239Z" },
 ]
 
 [[package]]
@@ -70,7 +93,7 @@ name = "cffi"
 version = "2.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pycparser", marker = "implementation_name != 'PyPy'" },
+    { name = "pycparser", marker = "implementation_name != 'PyPy' or (extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/9e/ef/008a1939e372c06329a3fce4279c02f328488f3526744906eeec3da7ad5f/cffi-2.1.1.tar.gz", hash = "sha256:dd31f52ea1086513bb9df30f8fcee9b8918323ae067a3d5b78bc826a000712be", size = 530807, upload-time = "2026-08-03T21:21:18.939Z" }
 wheels = [
@@ -216,7 +239,7 @@ name = "cryptography"
 version = "50.0.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cffi", marker = "platform_python_implementation != 'PyPy'" },
+    { name = "cffi", marker = "platform_python_implementation != 'PyPy' or (extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/bb/ad/5d6702db60b1e40b41ef513b6967ff5848f307d50f8449baf1634f5908f1/cryptography-50.0.1.tar.gz", hash = "sha256:5dd9bda1c12b4162f6ff568eeb5e0ff956c28d14406e875cfe8a63a2d414ff20", size = 880381, upload-time = "2026-08-25T19:45:45.499Z" }
 wheels = [
@@ -285,8 +308,8 @@ name = "cua-s1"
 version = "0.0.0"
 source = { editable = "." }
 dependencies = [
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12' or (extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or (extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
     { name = "safetensors" },
     { name = "torch" },
 ]
@@ -297,32 +320,33 @@ all = [
     { name = "pdfplumber" },
     { name = "peft" },
     { name = "pillow" },
-    { name = "transformers" },
+    { name = "transformers", version = "4.57.6", source = { registry = "https://pypi.org/simple" } },
 ]
 four-b = [
     { name = "peft" },
-    { name = "transformers" },
+    { name = "torchvision" },
+    { name = "transformers", version = "5.17.0", source = { registry = "https://pypi.org/simple" } },
 ]
 four-b-rl = [
     { name = "accelerate" },
     { name = "cua-bench-s1" },
     { name = "peft" },
     { name = "pillow" },
-    { name = "transformers" },
+    { name = "transformers", version = "4.57.6", source = { registry = "https://pypi.org/simple" } },
 ]
 four-b-train = [
     { name = "accelerate" },
     { name = "cua-bench-s1" },
     { name = "peft" },
     { name = "torchvision" },
-    { name = "transformers" },
+    { name = "transformers", version = "4.57.6", source = { registry = "https://pypi.org/simple" } },
 ]
 mcp = [
     { name = "mcp" },
 ]
 nano-vision = [
     { name = "pillow" },
-    { name = "transformers" },
+    { name = "transformers", version = "4.57.6", source = { registry = "https://pypi.org/simple" } },
 ]
 pdf = [
     { name = "pdfplumber" },
@@ -359,9 +383,10 @@ requires-dist = [
     { name = "pillow", marker = "extra == 'nano-vision'", specifier = ">=10,<12" },
     { name = "safetensors", specifier = ">=0.4,<1" },
     { name = "torch", specifier = ">=2.2,<3" },
+    { name = "torchvision", marker = "extra == 'four-b'", specifier = ">=0.17,<1" },
     { name = "torchvision", marker = "extra == 'four-b-train'", specifier = ">=0.17,<1" },
     { name = "transformers", marker = "extra == 'all'", specifier = ">=4.45,<5" },
-    { name = "transformers", marker = "extra == 'four-b'", specifier = ">=4.45,<5" },
+    { name = "transformers", marker = "extra == 'four-b'", specifier = ">=5.10.1,<6" },
     { name = "transformers", marker = "extra == 'four-b-rl'", specifier = ">=4.45,<5" },
     { name = "transformers", marker = "extra == 'four-b-train'", specifier = ">=4.45,<5" },
     { name = "transformers", marker = "extra == 'nano-vision'", specifier = ">=4.45,<5" },
@@ -385,10 +410,16 @@ dependencies = [
 wheels = [
     { url = "https://files.pythonhosted.org/packages/19/6f/e00ffcebcad6405a2326a52612eff98240a67c637dfed516e61b881e2db3/cuda_bindings-13.4.2-cp311-cp311-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:fc0a18f65b26459cd3c49c0250a44b419cdf790cffcb096ff4d46a1973f6f4b7", size = 6484069, upload-time = "2026-09-17T22:05:52.594Z" },
     { url = "https://files.pythonhosted.org/packages/f4/4c/743b8d6dc28f8db80811b04b2c2dde877cd13a93a227e6f3c925a5cd3a00/cuda_bindings-13.4.2-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:3c0415cf8fb98fbae3eb65079f151e10b9764ac2d5970027a49dc5a627c2af9d", size = 7159298, upload-time = "2026-09-17T22:05:54.664Z" },
+    { url = "https://files.pythonhosted.org/packages/b8/98/e48d8ed4e3560f5dc457adf0d90701787fcf46c1f99ba8f30e7405e1e2c3/cuda_bindings-13.4.2-cp311-cp311-win_amd64.whl", hash = "sha256:e73b6ae6592194a5ba01ec1f5f4fe4c8dc05b5f90545842ba5ff996f65328553", size = 6110867, upload-time = "2026-09-17T22:05:57.03Z" },
+    { url = "https://files.pythonhosted.org/packages/9b/3b/901ed9799f71b8aef196a8ff0fdb1cecb4323b2afd3a02e2b5a6e98d5ed9/cuda_bindings-13.4.2-cp311-cp311-win_arm64.whl", hash = "sha256:19697badd5b76ce31e264e214825eb24bf77c8bfd49eabf90c5c50c2751ef43a", size = 5191355, upload-time = "2026-09-17T22:05:59.063Z" },
     { url = "https://files.pythonhosted.org/packages/27/df/281aa982f033426d59c6276b6643637746b6bf0a883186443daa89717291/cuda_bindings-13.4.2-cp312-cp312-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:bb2e91717c83ea550ef1b19ebafd25c9fe805478f479d04b3fc798cc6d29d453", size = 6479822, upload-time = "2026-09-17T22:06:01.3Z" },
     { url = "https://files.pythonhosted.org/packages/83/d6/10b7031f23052e95a60d4d5e4bffdd0bbdd2ae9fa5b1c6fcb7099325fbb4/cuda_bindings-13.4.2-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:40c811caf26976eb319462db614422112438f1d02b4f3df3a4a96f9bbcc77b6d", size = 7170860, upload-time = "2026-09-17T22:06:03.841Z" },
+    { url = "https://files.pythonhosted.org/packages/3b/e1/5ba955ea7e0a84dd3a1a40c4c5c392cc2d674e80b6014692b033cf4ab0cb/cuda_bindings-13.4.2-cp312-cp312-win_amd64.whl", hash = "sha256:75729fb787224dba93d1aa2bd08d29220aaa5a685a1b4e18e22c49818dfcee46", size = 6330127, upload-time = "2026-09-17T22:06:06.384Z" },
+    { url = "https://files.pythonhosted.org/packages/73/1a/1c44e35a9f5bf0f939895309a84ea07312c8c0e41ed7b027888b00ac47e6/cuda_bindings-13.4.2-cp312-cp312-win_arm64.whl", hash = "sha256:ee4b19ef6621679d73ac056bcb41fe04e58fba6d521c1ea16a390a9f73fa31c3", size = 5329419, upload-time = "2026-09-17T22:06:08.542Z" },
     { url = "https://files.pythonhosted.org/packages/99/33/8c4b5274ecca4adfbe51d01694c5fca3e962e80fc5ba85ba6f441c6d2019/cuda_bindings-13.4.2-cp313-cp313-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:251057d5cee0e015c6586332684f66c4f6e1af5cac91b99520fca44250d877a8", size = 6313558, upload-time = "2026-09-17T22:06:10.828Z" },
     { url = "https://files.pythonhosted.org/packages/9f/cb/1f2719be03546aa9940bfab7ad6941335ec3326b48fe4e256d07d6d6bbc5/cuda_bindings-13.4.2-cp313-cp313-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:50e68c36222a58d271fbd2e23149497d35450a911d792d49a029e58519abb7e5", size = 6924257, upload-time = "2026-09-17T22:06:13.065Z" },
+    { url = "https://files.pythonhosted.org/packages/98/23/1e71712da482a323d6955f649d02ea51c09d8c60ec73feec96c4d703ace0/cuda_bindings-13.4.2-cp313-cp313-win_amd64.whl", hash = "sha256:663dafd7a6db60837a7bab8cd370431b7989caa98721191631f58fb457477127", size = 6288559, upload-time = "2026-09-17T22:06:15.651Z" },
+    { url = "https://files.pythonhosted.org/packages/25/3c/5dd4633eb2bdf60ef6765f0d8ff9c14029c9e5a925f7f8b1cd86f2c02042/cuda_bindings-13.4.2-cp313-cp313-win_arm64.whl", hash = "sha256:ddafc5e60af19c2fec4673e24e9ba2bcff51651afc4603c4e6b4ef53ccdb58c7", size = 5296261, upload-time = "2026-09-17T22:06:17.753Z" },
 ]
 
 [[package]]
@@ -409,43 +440,43 @@ wheels = [
 
 [package.optional-dependencies]
 cublas = [
-    { name = "nvidia-cublas", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
-    { name = "nvidia-cuda-nvrtc", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
+    { name = "nvidia-cublas", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "nvidia-cuda-nvrtc", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
 ]
 cudart = [
-    { name = "nvidia-cuda-runtime", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
+    { name = "nvidia-cuda-runtime", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
 ]
 cufft = [
-    { name = "nvidia-cufft", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
-    { name = "nvidia-nvjitlink", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
+    { name = "nvidia-cufft", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "nvidia-nvjitlink", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
 ]
 cufile = [
-    { name = "nvidia-cufile", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')" },
+    { name = "nvidia-cufile", marker = "(platform_machine != 'aarch64' and platform_machine != 'x86_64' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform != 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform != 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform != 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
 ]
 cupti = [
-    { name = "nvidia-cuda-cupti", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
+    { name = "nvidia-cuda-cupti", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
 ]
 curand = [
-    { name = "nvidia-curand", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
+    { name = "nvidia-curand", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
 ]
 cusolver = [
-    { name = "nvidia-cublas", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
-    { name = "nvidia-cusolver", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
-    { name = "nvidia-cusparse", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
-    { name = "nvidia-nvjitlink", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
+    { name = "nvidia-cublas", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "nvidia-cusolver", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "nvidia-cusparse", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "nvidia-nvjitlink", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
 ]
 cusparse = [
-    { name = "nvidia-cusparse", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
-    { name = "nvidia-nvjitlink", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
+    { name = "nvidia-cusparse", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "nvidia-nvjitlink", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
 ]
 nvjitlink = [
-    { name = "nvidia-nvjitlink", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
+    { name = "nvidia-nvjitlink", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
 ]
 nvrtc = [
-    { name = "nvidia-cuda-nvrtc", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
+    { name = "nvidia-cuda-nvrtc", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
 ]
 nvtx = [
-    { name = "nvidia-nvtx", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
+    { name = "nvidia-nvtx", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform == 'linux' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
 ]
 
 [[package]]
@@ -532,19 +563,47 @@ wheels = [
 name = "huggingface-hub"
 version = "0.36.2"
 source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.12'",
+    "python_full_version < '3.12'",
+]
 dependencies = [
-    { name = "filelock" },
-    { name = "fsspec" },
-    { name = "hf-xet", marker = "platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'arm64' or platform_machine == 'x86_64'" },
-    { name = "packaging" },
-    { name = "pyyaml" },
-    { name = "requests" },
-    { name = "tqdm" },
-    { name = "typing-extensions" },
+    { name = "filelock", marker = "extra == 'extra-6-cua-s1-all' or extra != 'extra-6-cua-s1-four-b' or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "fsspec", marker = "extra == 'extra-6-cua-s1-all' or extra != 'extra-6-cua-s1-four-b' or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "hf-xet", marker = "(platform_machine == 'aarch64' and extra == 'extra-6-cua-s1-all') or (platform_machine == 'aarch64' and extra != 'extra-6-cua-s1-four-b') or (platform_machine == 'amd64' and extra == 'extra-6-cua-s1-all') or (platform_machine == 'amd64' and extra != 'extra-6-cua-s1-four-b') or (platform_machine == 'arm64' and extra == 'extra-6-cua-s1-all') or (platform_machine == 'arm64' and extra != 'extra-6-cua-s1-four-b') or (platform_machine == 'x86_64' and extra == 'extra-6-cua-s1-all') or (platform_machine == 'x86_64' and extra != 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "packaging", marker = "extra == 'extra-6-cua-s1-all' or extra != 'extra-6-cua-s1-four-b' or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "pyyaml", marker = "extra == 'extra-6-cua-s1-all' or extra != 'extra-6-cua-s1-four-b' or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "requests", marker = "extra == 'extra-6-cua-s1-all' or extra != 'extra-6-cua-s1-four-b' or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "tqdm", marker = "extra == 'extra-6-cua-s1-all' or extra != 'extra-6-cua-s1-four-b' or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "typing-extensions", marker = "extra == 'extra-6-cua-s1-all' or extra != 'extra-6-cua-s1-four-b' or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/7c/b7/8cb61d2eece5fb05a83271da168186721c450eb74e3c31f7ef3169fa475b/huggingface_hub-0.36.2.tar.gz", hash = "sha256:1934304d2fb224f8afa3b87007d58501acfda9215b334eed53072dd5e815ff7a", size = 649782, upload-time = "2026-02-06T09:24:13.098Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a8/af/48ac8483240de756d2438c380746e7130d1c6f75802ef22f3c6d49982787/huggingface_hub-0.36.2-py3-none-any.whl", hash = "sha256:48f0c8eac16145dfce371e9d2d7772854a4f591bcb56c9cf548accf531d54270", size = 566395, upload-time = "2026-02-06T09:24:11.133Z" },
+]
+
+[[package]]
+name = "huggingface-hub"
+version = "1.32.0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.12'",
+    "python_full_version < '3.12'",
+]
+dependencies = [
+    { name = "click", marker = "extra == 'extra-6-cua-s1-four-b'" },
+    { name = "filelock", marker = "extra == 'extra-6-cua-s1-four-b'" },
+    { name = "fsspec", marker = "extra == 'extra-6-cua-s1-four-b'" },
+    { name = "hf-xet", marker = "(platform_machine == 'AMD64' and extra == 'extra-6-cua-s1-four-b') or (platform_machine == 'aarch64' and extra == 'extra-6-cua-s1-four-b') or (platform_machine == 'amd64' and extra == 'extra-6-cua-s1-four-b') or (platform_machine == 'arm64' and extra == 'extra-6-cua-s1-four-b') or (platform_machine == 'x86_64' and extra == 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "httpx", marker = "extra == 'extra-6-cua-s1-four-b'" },
+    { name = "packaging", marker = "extra == 'extra-6-cua-s1-four-b'" },
+    { name = "pyyaml", marker = "extra == 'extra-6-cua-s1-four-b'" },
+    { name = "tqdm", marker = "extra == 'extra-6-cua-s1-four-b'" },
+    { name = "typing-extensions", marker = "extra == 'extra-6-cua-s1-four-b'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/fe/0f/e83fdd856da8fca26bf78d71709ebd120432a0ce535e72b9597cab1eb5bf/huggingface_hub-1.32.0.tar.gz", hash = "sha256:ed70a45498abe86039df7c2f4e5f7575de524be908d3840e8f828d5525eafd6a", size = 1038662, upload-time = "2026-09-17T10:27:48.049Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1b/cf/d98dd561d6d0d7b7d7a64d1563f8aaaa7c235daee41c1c9bcc3da62420ed/huggingface_hub-1.32.0-py3-none-any.whl", hash = "sha256:b0c7c80561969d9cdacdd55fce67ba9584cca0b9d4ea80957a3a5c1445fac5c8", size = 842906, upload-time = "2026-09-17T10:27:46.102Z" },
 ]
 
 [[package]]
@@ -602,6 +661,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/19/74/a633ee74eb36c44aa6d1095e7cc5569bebf04342ee146178e2d36600708b/jsonschema_specifications-2025.9.1.tar.gz", hash = "sha256:b540987f239e745613c7a9176f3edb72b832a4ac465cf02712288397832b5e8d", size = 32855, upload-time = "2025-09-08T01:34:59.186Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/41/45/1a4ed80516f02155c51f51e8cedb3c1902296743db0bbc66608a0db2814f/jsonschema_specifications-2025.9.1-py3-none-any.whl", hash = "sha256:98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe", size = 18437, upload-time = "2025-09-08T01:34:57.871Z" },
+]
+
+[[package]]
+name = "markdown-it-py"
+version = "4.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "mdurl", marker = "extra == 'extra-6-cua-s1-four-b'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/06/ff/7841249c247aa650a76b9ee4bbaeae59370dc8bfd2f6c01f3630c35eb134/markdown_it_py-4.2.0.tar.gz", hash = "sha256:04a21681d6fbb623de53f6f364d352309d4094dd4194040a10fd51833e418d49", size = 82454, upload-time = "2026-05-07T12:08:28.36Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b3/81/4da04ced5a082363ecfa159c010d200ecbd959ae410c10c0264a38cac0f5/markdown_it_py-4.2.0-py3-none-any.whl", hash = "sha256:9f7ebbcd14fe59494226453aed97c1070d83f8d24b6fc3a3bcf9a38092641c4a", size = 91687, upload-time = "2026-05-07T12:08:27.182Z" },
 ]
 
 [[package]]
@@ -669,16 +740,25 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "python-multipart" },
-    { name = "pywin32", marker = "sys_platform == 'win32'" },
+    { name = "pywin32", marker = "sys_platform == 'win32' or (extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
     { name = "sse-starlette" },
     { name = "starlette" },
     { name = "typing-extensions" },
     { name = "typing-inspection" },
-    { name = "uvicorn", marker = "sys_platform != 'emscripten'" },
+    { name = "uvicorn", marker = "sys_platform != 'emscripten' or (extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/ba/93/0142dc84a666daf8ad51a34268f34c12fd6fda4f3810c4be2504eecc8212/mcp-1.30.0.tar.gz", hash = "sha256:445414625fce5c295faa505bb11bacece661ab6f4028d57c935db57820b7a3e4", size = 680511, upload-time = "2026-09-07T14:34:15.845Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f5/f4/e58bc33317c92a0203664daaf00bf6f41166cc0149e5d6870a03f7cd004a/mcp-1.30.0-py3-none-any.whl", hash = "sha256:666edb5009503e1047c9d60346a756f94b261f05cc2625f23d41c728ffc484d0", size = 234581, upload-time = "2026-09-07T14:34:14.266Z" },
+]
+
+[[package]]
+name = "mdurl"
+version = "0.1.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d6/54/cfe61301667036ec958cb99bd3efefba235e65cdeb9c84d24a8293ba1d90/mdurl-0.1.2.tar.gz", hash = "sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba", size = 8729, upload-time = "2022-08-14T12:40:10.846Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b3/38/89ba8ad64ae25be8de66a6d463314cf1eb366222074cfda9ee839c56a4b4/mdurl-0.1.2-py3-none-any.whl", hash = "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8", size = 9979, upload-time = "2022-08-14T12:40:09.779Z" },
 ]
 
 [[package]]
@@ -803,6 +883,7 @@ dependencies = [
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a7/a1/0bd24ee8c8d03adac032fd2909426a00c88f8c57961b1277ded97f91119f/nvidia_cublas-13.1.1.3-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:b7a210458267ac818974c53038fbec2e969d5c99f305ab15c72522fa9f001dd5", size = 542848918, upload-time = "2026-04-08T18:46:22.985Z" },
     { url = "https://files.pythonhosted.org/packages/3b/cd/154ca20c38269e05eff77c1464e6c1da89f50a6390b565e9d82e06bc11e1/nvidia_cublas-13.1.1.3-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:37936a16db8fe4ac1f065c2139360608a543a09275cb1a1af612e08cfa065436", size = 423138758, upload-time = "2026-04-08T18:46:58.655Z" },
+    { url = "https://files.pythonhosted.org/packages/45/9e/2f562daf80eb8f7a685fb7bea4fda71f6048e4f359d6fdd1b6e70206cb2f/nvidia_cublas-13.1.1.3-py3-none-win_amd64.whl", hash = "sha256:b6cdce694e47ff6aadf0a69df1cab6628d696f5ff56e8d16af50309d855fa20f", size = 404358158, upload-time = "2026-04-08T18:47:26.987Z" },
 ]
 
 [[package]]
@@ -812,6 +893,7 @@ source = { registry = "https://pypi.org/simple" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2a/2a/80353b103fc20ce05ef51e928daed4b6015db4aaa9162ed0997090fe2250/nvidia_cuda_cupti-13.0.85-py3-none-manylinux_2_25_aarch64.whl", hash = "sha256:796bd679890ee55fb14a94629b698b6db54bcfd833d391d5e94017dd9d7d3151", size = 10310827, upload-time = "2025-09-04T08:26:42.012Z" },
     { url = "https://files.pythonhosted.org/packages/33/6d/737d164b4837a9bbd202f5ae3078975f0525a55730fe871d8ed4e3b952b0/nvidia_cuda_cupti-13.0.85-py3-none-manylinux_2_25_x86_64.whl", hash = "sha256:4eb01c08e859bf924d222250d2e8f8b8ff6d3db4721288cf35d14252a4d933c8", size = 10715597, upload-time = "2025-09-04T08:26:51.312Z" },
+    { url = "https://files.pythonhosted.org/packages/ad/df/b74b10025c1205695c5676373f2edd3e87a7202cc62ead0dfbc373b0f6ea/nvidia_cuda_cupti-13.0.85-py3-none-win_amd64.whl", hash = "sha256:683f58d301548deeefcb8f6fac1b8d907691b9d8b18eccab417f51e362102f00", size = 7736776, upload-time = "2025-09-04T08:38:08.38Z" },
 ]
 
 [[package]]
@@ -821,6 +903,7 @@ source = { registry = "https://pypi.org/simple" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c3/68/483a78f5e8f31b08fb1bb671559968c0ca3a065ac7acabfc7cee55214fd6/nvidia_cuda_nvrtc-13.0.88-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl", hash = "sha256:ad9b6d2ead2435f11cbb6868809d2adeeee302e9bb94bcf0539c7a40d80e8575", size = 90215200, upload-time = "2025-09-04T08:28:44.204Z" },
     { url = "https://files.pythonhosted.org/packages/b7/dc/6bb80850e0b7edd6588d560758f17e0550893a1feaf436807d64d2da040f/nvidia_cuda_nvrtc-13.0.88-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:d27f20a0ca67a4bb34268a5e951033496c5b74870b868bacd046b1b8e0c3267b", size = 43015449, upload-time = "2025-09-04T08:28:20.239Z" },
+    { url = "https://files.pythonhosted.org/packages/4a/af/345fedb9f4c76c84ab4fa445b36bd4048a4d9db60e6bc76b4f913ff4b852/nvidia_cuda_nvrtc-13.0.88-py3-none-win_amd64.whl", hash = "sha256:6bcd4e7f8e205cbe644f5a98f2f799bef9556fefc89dd786e79a16312ce49872", size = 76807835, upload-time = "2025-09-04T08:39:15.274Z" },
 ]
 
 [[package]]
@@ -830,6 +913,7 @@ source = { registry = "https://pypi.org/simple" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/87/4f/17d7b9b8e285199c58ce28e31b5c5bbaa4d8271af06a89b6405258245de2/nvidia_cuda_runtime-13.0.96-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:ef9bcbe90493a2b9d810e43d249adb3d02e98dd30200d86607d8d02687c43f55", size = 2261060, upload-time = "2025-10-09T08:55:15.78Z" },
     { url = "https://files.pythonhosted.org/packages/2e/24/d1558f3b68b1d26e706813b1d10aa1d785e4698c425af8db8edc3dced472/nvidia_cuda_runtime-13.0.96-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:7f82250d7782aa23b6cfe765ecc7db554bd3c2870c43f3d1821f1d18aebf0548", size = 2243632, upload-time = "2025-10-09T08:55:36.117Z" },
+    { url = "https://files.pythonhosted.org/packages/b7/94/6b867483bec07da24ffa32736c79fabb94ef3a7af4d787a9d4a974868576/nvidia_cuda_runtime-13.0.96-py3-none-win_amd64.whl", hash = "sha256:f79298c8a098cec150a597c8eba58ecdab96e3bdc4b9bc4f9983635031740492", size = 2927037, upload-time = "2025-10-09T09:04:23.782Z" },
 ]
 
 [[package]]
@@ -842,6 +926,7 @@ dependencies = [
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ca/30/7c257e3d5cb4fecb147b93895c66e29c93f8e76d74b45bb418ff0587c4ec/nvidia_cudnn_cu13-9.24.0.43-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:a6812a554a1ff0413e9c52b84c26c050380649ab9615f9c16bded368ce9f421f", size = 650976863, upload-time = "2026-07-02T16:23:39.248Z" },
     { url = "https://files.pythonhosted.org/packages/5c/ba/791cffd048fe5b044e620df55267e3e95c0e6e07d50b41e377c03dfc910f/nvidia_cudnn_cu13-9.24.0.43-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:71f181cd810e90f9b6023b01186fe82d13d65f0ec098581ee201d39fad769e4b", size = 553099438, upload-time = "2026-07-02T16:27:42.58Z" },
+    { url = "https://files.pythonhosted.org/packages/31/23/1dd3aa15cc4ab62c8fc88f8049ef137bc44c17892f5577bc80d994941f77/nvidia_cudnn_cu13-9.24.0.43-py3-none-win_amd64.whl", hash = "sha256:67a7273b5cf062f9446fd76cf464351a1c0f66501e6cd78f6675c0d604d8ac87", size = 412314771, upload-time = "2026-07-02T16:31:07.973Z" },
 ]
 
 [[package]]
@@ -854,6 +939,7 @@ dependencies = [
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8b/ae/f417a75c0259e85c1d2f83ca4e960289a5f814ed0cea74d18c353d3e989d/nvidia_cufft-12.0.0.61-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:2708c852ef8cd89d1d2068bdbece0aa188813a0c934db3779b9b1faa8442e5f5", size = 214053554, upload-time = "2025-09-04T08:31:38.196Z" },
     { url = "https://files.pythonhosted.org/packages/a8/2f/7b57e29836ea8714f81e9898409196f47d772d5ddedddf1592eadb8ab743/nvidia_cufft-12.0.0.61-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:6c44f692dce8fd5ffd3e3df134b6cdb9c2f72d99cf40b62c32dde45eea9ddad3", size = 214085489, upload-time = "2025-09-04T08:31:56.044Z" },
+    { url = "https://files.pythonhosted.org/packages/85/b2/f8af21a2ed1beed337a6a02c5a28aeb85441f4d578ec3d529543c775ea4b/nvidia_cufft-12.0.0.61-py3-none-win_amd64.whl", hash = "sha256:2abce5b39d2f5ae12730fb7e5db6696533e36c26e2d3e8fd1750bdd2853364eb", size = 213342123, upload-time = "2025-09-04T08:40:51.145Z" },
 ]
 
 [[package]]
@@ -872,6 +958,7 @@ source = { registry = "https://pypi.org/simple" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/1e/72/7c2ae24fb6b63a32e6ae5d241cc65263ea18d08802aaae087d9f013335a2/nvidia_curand-10.4.0.35-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:133df5a7509c3e292aaa2b477afd0194f06ce4ea24d714d616ff36439cee349a", size = 61962106, upload-time = "2025-08-04T10:21:41.128Z" },
     { url = "https://files.pythonhosted.org/packages/a5/9f/be0a41ca4a4917abf5cb9ae0daff1a6060cc5de950aec0396de9f3b52bc5/nvidia_curand-10.4.0.35-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:1aee33a5da6e1db083fe2b90082def8915f30f3248d5896bcec36a579d941bfc", size = 59544258, upload-time = "2025-08-04T10:22:03.992Z" },
+    { url = "https://files.pythonhosted.org/packages/99/27/72103153b1ffc00e09fdc40ac970235343dcd1ea8bd762e84d2d73219ffa/nvidia_curand-10.4.0.35-py3-none-win_amd64.whl", hash = "sha256:65b1710aa6961d326b411e314b374290904c5ddf41dc3f766ebc3f1d7d4ca69f", size = 55242481, upload-time = "2025-08-04T10:30:41.831Z" },
 ]
 
 [[package]]
@@ -886,6 +973,7 @@ dependencies = [
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c8/c3/b30c9e935fc01e3da443ec0116ed1b2a009bb867f5324d3f2d7e533e776b/nvidia_cusolver-12.0.4.66-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:02c2457eaa9e39de20f880f4bd8820e6a1cfb9f9a34f820eb12a155aa5bc92d2", size = 223467760, upload-time = "2025-09-04T08:33:04.222Z" },
     { url = "https://files.pythonhosted.org/packages/5f/67/cba3777620cdacb99102da4042883709c41c709f4b6323c10781a9c3aa34/nvidia_cusolver-12.0.4.66-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:0a759da5dea5c0ea10fd307de75cdeb59e7ea4fcb8add0924859b944babf1112", size = 200941980, upload-time = "2025-09-04T08:33:22.767Z" },
+    { url = "https://files.pythonhosted.org/packages/99/ef/332a0101260ca78a1daef046bf0b06199e8ed4dac1d2aa698289c358169c/nvidia_cusolver-12.0.4.66-py3-none-win_amd64.whl", hash = "sha256:16515bd33a8e76bb54d024cfa068fa68d30e80fc34b9e1090813ea9362e0cb65", size = 193551444, upload-time = "2025-09-04T08:41:46.813Z" },
 ]
 
 [[package]]
@@ -898,6 +986,7 @@ dependencies = [
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f8/94/5c26f33738ae35276672f12615a64bd008ed5be6d1ebcb23579285d960a9/nvidia_cusparse-12.6.3.3-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:80bcc4662f23f1054ee334a15c72b8940402975e0eab63178fc7e670aa59472c", size = 162155568, upload-time = "2025-09-04T08:33:42.864Z" },
     { url = "https://files.pythonhosted.org/packages/fa/18/623c77619c31d62efd55302939756966f3ecc8d724a14dab2b75f1508850/nvidia_cusparse-12.6.3.3-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:2b3c89c88d01ee0e477cb7f82ef60a11a4bcd57b6b87c33f789350b59759360b", size = 145942937, upload-time = "2025-09-04T08:33:58.029Z" },
+    { url = "https://files.pythonhosted.org/packages/02/b0/b043d6f3480f102f885cf87fc3ffd3edcb5e23b855025a50e2ef4d059185/nvidia_cusparse-12.6.3.3-py3-none-win_amd64.whl", hash = "sha256:cbcf42feb737bd7ec15b4c0a63e62351886bd3f975027b8815d7f720a2b5ea79", size = 143783033, upload-time = "2025-09-04T08:42:12.391Z" },
 ]
 
 [[package]]
@@ -907,6 +996,7 @@ source = { registry = "https://pypi.org/simple" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/46/e1/cdc1797eadf82d3a9a575a19b33fdc871a97edbec42c00b5b5e914f4aff4/nvidia_cusparselt_cu13-0.8.1-py3-none-manylinux2014_aarch64.whl", hash = "sha256:4dca476c50bf4780d46cd0bfbd82e2bc10a08e4fef7950917ce8d7578d22a23f", size = 221051344, upload-time = "2025-09-05T18:49:51.289Z" },
     { url = "https://files.pythonhosted.org/packages/34/7d/2661f2fb3ac4302f3a246f5fc030213ac60c1fe0bce84f9783dbd831dbb7/nvidia_cusparselt_cu13-0.8.1-py3-none-manylinux2014_x86_64.whl", hash = "sha256:786ce87568c303fadb5afcc7102d454cd3040d75f6f8626f5db460d1871f4dd0", size = 170148586, upload-time = "2025-09-05T18:50:50.248Z" },
+    { url = "https://files.pythonhosted.org/packages/31/83/f3647ce26916c94a6ca4ff1810623e2c405cff2dea6e78d29516b2514df9/nvidia_cusparselt_cu13-0.8.1-py3-none-win_amd64.whl", hash = "sha256:dccbd362f91a7b9024d1f55ee9f548ac065027ff15d8c8b0db889ab3a8f31215", size = 156885108, upload-time = "2025-09-05T18:51:35.958Z" },
 ]
 
 [[package]]
@@ -925,6 +1015,8 @@ source = { registry = "https://pypi.org/simple" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/1d/6b/eef7a9e32872b8f41e145bf10cddc9af26e153c338852811fe9a9baddf9e/nvidia_nvjitlink-13.4.92-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl", hash = "sha256:e0391f24ed94ec879b84e3da4d4ec320c879aff681f2c7a638462f7199284323", size = 42452378, upload-time = "2026-09-16T20:45:29.042Z" },
     { url = "https://files.pythonhosted.org/packages/1f/a8/1cbd4014898af8b419e69b0d7dbc63da2121ee92d92b47d59f4fe9075349/nvidia_nvjitlink-13.4.92-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:25f74fad0d654271c921ac4dca614bd6258bc21791242fc7b2289dad7ae9c099", size = 40420120, upload-time = "2026-09-16T20:45:19.163Z" },
+    { url = "https://files.pythonhosted.org/packages/72/7c/c44bd7277afafed9de262a23baec4dc8dcf7ecbb1b9ecb228821442d1e9b/nvidia_nvjitlink-13.4.92-py3-none-win_amd64.whl", hash = "sha256:b286f3a4f227a9363efdec263c7b91788cef1478d2b8a5fa8bab7f3e82ff82fd", size = 39053950, upload-time = "2026-09-16T20:52:54.244Z" },
+    { url = "https://files.pythonhosted.org/packages/3a/8e/afaa7687fac05a507d10765f6097937e99735f835c5b262276d1e2d2cad5/nvidia_nvjitlink-13.4.92-py3-none-win_arm64.whl", hash = "sha256:9e4a7ff4f0cafa8c624917055b863dc11f5c2912ead23c462889e166f3b0e57d", size = 35981621, upload-time = "2026-09-16T20:56:30.819Z" },
 ]
 
 [[package]]
@@ -943,6 +1035,7 @@ source = { registry = "https://pypi.org/simple" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c2/f3/d86c845465a2723ad7e1e5c36dcd75ddb82898b3f53be47ebd429fb2fa5d/nvidia_nvtx-13.0.85-py3-none-manylinux1_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:4936d1d6780fbe68db454f5e72a42ff64d1fd6397df9f363ae786930fd5c1cd4", size = 148047, upload-time = "2025-09-04T08:29:01.761Z" },
     { url = "https://files.pythonhosted.org/packages/a8/64/3708a90d1ebe202ffdeb7185f878a3c84d15c2b2c31858da2ce0583e2def/nvidia_nvtx-13.0.85-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:cb7780edb6b14107373c835bf8b72e7a178bac7367e23da7acb108f973f157a6", size = 148878, upload-time = "2025-09-04T08:28:53.627Z" },
+    { url = "https://files.pythonhosted.org/packages/d2/50/0e2220f8620a177de994211186ffc5bfa9f2ce1e1282797f8f90096f9f88/nvidia_nvtx-13.0.85-py3-none-win_amd64.whl", hash = "sha256:d66ea44254dd3c6eacc300047af6e1288d2269dd072b417e0adffbf479e18519", size = 137066, upload-time = "2025-09-04T08:39:25.649Z" },
 ]
 
 [[package]]
@@ -987,16 +1080,18 @@ version = "0.21.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "accelerate" },
-    { name = "huggingface-hub" },
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "huggingface-hub", version = "0.36.2", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-6-cua-s1-all' or extra != 'extra-6-cua-s1-four-b' or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "huggingface-hub", version = "1.32.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-6-cua-s1-four-b'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12' or (extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or (extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
     { name = "packaging" },
     { name = "psutil" },
     { name = "pyyaml" },
     { name = "safetensors" },
     { name = "torch" },
     { name = "tqdm" },
-    { name = "transformers" },
+    { name = "transformers", version = "4.57.6", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-6-cua-s1-all' or extra != 'extra-6-cua-s1-four-b' or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "transformers", version = "5.17.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-6-cua-s1-four-b'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/4f/91/56cc2b1b6824f5a4026750274240f26cd23465fb1a29cd14772d555433f2/peft-0.21.0.tar.gz", hash = "sha256:17f2b5a264439f4cd983c02e95954f2e948e3bcb85f75895ee307f94a55fd28f", size = 978334, upload-time = "2026-09-15T13:34:02.583Z" }
 wheels = [
@@ -1263,7 +1358,7 @@ name = "pytest"
 version = "9.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
     { name = "iniconfig" },
     { name = "packaging" },
     { name = "pluggy" },
@@ -1280,7 +1375,7 @@ version = "1.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pytest" },
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13' or (extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/43/7c/d36d04db312ecf4298932ef77e6e4a9e8ad017906e24e34f0b0c361a2473/pytest_asyncio-1.4.0.tar.gz", hash = "sha256:c6c0d2259945122819f171a32ecea2c349ead889ee28176caaf492143424be42", size = 58514, upload-time = "2026-05-26T09:56:04.083Z" }
 wheels = [
@@ -1365,7 +1460,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "attrs" },
     { name = "rpds-py" },
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13' or (extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/22/f5/df4e9027acead3ecc63e50fe1e36aca1523e1719559c499951bb4b53188f/referencing-0.37.0.tar.gz", hash = "sha256:44aefc3142c5b842538163acb373e24cce6632bd54bdb01b21ad5863489f50d8", size = 78036, upload-time = "2025-10-13T15:30:48.871Z" }
 wheels = [
@@ -1433,14 +1528,27 @@ name = "requests"
 version = "2.34.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "certifi" },
-    { name = "charset-normalizer" },
-    { name = "idna" },
-    { name = "urllib3" },
+    { name = "certifi", marker = "extra == 'extra-6-cua-s1-all' or extra != 'extra-6-cua-s1-four-b' or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "charset-normalizer", marker = "extra == 'extra-6-cua-s1-all' or extra != 'extra-6-cua-s1-four-b' or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "idna", marker = "extra == 'extra-6-cua-s1-all' or extra != 'extra-6-cua-s1-four-b' or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "urllib3", marker = "extra == 'extra-6-cua-s1-all' or extra != 'extra-6-cua-s1-four-b' or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/ac/c3/e2a2b89f2d3e2179abd6d00ebd70bff6273f37fb3e0cc209f48b39d00cbf/requests-2.34.2.tar.gz", hash = "sha256:f288924cae4e29463698d6d60bc6a4da69c89185ad1e0bcc4104f584e960b9ed", size = 142856, upload-time = "2026-05-14T19:25:27.735Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a0/f4/c67b0b3f1b9245e8d266f0f112c500d50e5b4e83cb6f3b71b6528104182a/requests-2.34.2-py3-none-any.whl", hash = "sha256:2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0", size = 73075, upload-time = "2026-05-14T19:25:26.443Z" },
+]
+
+[[package]]
+name = "rich"
+version = "15.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "markdown-it-py", marker = "extra == 'extra-6-cua-s1-four-b'" },
+    { name = "pygments", marker = "extra == 'extra-6-cua-s1-four-b'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c0/8f/0722ca900cc807c13a6a0c696dacf35430f72e0ec571c4275d2371fca3e9/rich-15.0.0.tar.gz", hash = "sha256:edd07a4824c6b40189fb7ac9bc4c52536e9780fbbfbddf6f1e2502c31b068c36", size = 230680, upload-time = "2026-04-12T08:24:00.75Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/82/3b/64d4899d73f91ba49a8c18a8ff3f0ea8f1c1d75481760df8c68ef5235bf5/rich-15.0.0-py3-none-any.whl", hash = "sha256:33bd4ef74232fb73fe9279a257718407f169c09b78a87ad3d296f548e27de0bb", size = 310654, upload-time = "2026-04-12T08:24:02.83Z" },
 ]
 
 [[package]]
@@ -1567,6 +1675,15 @@ wheels = [
 ]
 
 [[package]]
+name = "shellingham"
+version = "1.5.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/58/15/8b3609fd3830ef7b27b655beb4b4e9c62313a4e8da8c676e142cc210d58e/shellingham-1.5.4.tar.gz", hash = "sha256:8dbca0739d487e5bd35ab3ca4b36e11c4078f3a234bfce294b0a0291363404de", size = 10310, upload-time = "2023-10-24T04:13:40.426Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e0/f9/0595336914c5619e5f28a1fb793285925a8cd4b432c9da0a987836c7f822/shellingham-1.5.4-py2.py3-none-any.whl", hash = "sha256:7ecfff8f2fd72616f7481040475a65b2bf8af90a56c89140852d1120324e8686", size = 9755, upload-time = "2023-10-24T04:13:38.866Z" },
+]
+
+[[package]]
 name = "sse-starlette"
 version = "3.4.11"
 source = { registry = "https://pypi.org/simple" }
@@ -1585,7 +1702,7 @@ version = "1.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13' or (extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/b5/b4/205b0d5241d934e8add0c38aa924c4f9fb7330834ff11e5444db964ec3f9/starlette-1.6.0.tar.gz", hash = "sha256:d4e3ac5e546444960c710297a3c9fc3f7ebae1b7e963f3d36173b49da535be9b", size = 2716969, upload-time = "2026-08-08T18:27:57.512Z" }
 wheels = [
@@ -1608,8 +1725,12 @@ wheels = [
 name = "tokenizers"
 version = "0.22.2"
 source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.12'",
+    "python_full_version < '3.12'",
+]
 dependencies = [
-    { name = "huggingface-hub" },
+    { name = "huggingface-hub", version = "0.36.2", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-6-cua-s1-all' or extra != 'extra-6-cua-s1-four-b' or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/73/6f/f80cfef4a312e1fb34baf7d85c72d4411afde10978d4657f8cdd811d3ccc/tokenizers-0.22.2.tar.gz", hash = "sha256:473b83b915e547aa366d1eee11806deaf419e17be16310ac0a14077f1e28f917", size = 372115, upload-time = "2026-01-05T10:45:15.988Z" }
 wheels = [
@@ -1631,23 +1752,54 @@ wheels = [
 ]
 
 [[package]]
+name = "tokenizers"
+version = "0.23.2"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.12'",
+    "python_full_version < '3.12'",
+]
+dependencies = [
+    { name = "huggingface-hub", version = "1.32.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-6-cua-s1-four-b'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/18/1e/bc6587c5ab643b2e17776cace9070a2ae73549c86bffac9934a600bf3c31/tokenizers-0.23.2.tar.gz", hash = "sha256:7f0f085686b9de0d0079e6f874ae053600db64c5d13049e0bbc0119926d25aac", size = 385745, upload-time = "2026-09-03T08:55:42.89Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4d/ed/8a443528baa6fac8dfe8c3b75b038c63ac92bb539bcabe311e227c718173/tokenizers-0.23.2-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:85a9a357a3764aecc904ee76bdaf8cf1ad8e5a67a1b929a487c4a39b49ed0e90", size = 3148852, upload-time = "2026-09-03T08:55:30.874Z" },
+    { url = "https://files.pythonhosted.org/packages/67/49/22da045a91732384d3a3771816bf188dc5a1f702c32e635afa7c679c0bef/tokenizers-0.23.2-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:986670e43691469dcee610ea0f846f91a8f84e91fc6f7a48d4c064414c0ec2bf", size = 3101593, upload-time = "2026-09-03T08:55:28.587Z" },
+    { url = "https://files.pythonhosted.org/packages/2e/4d/8f569ed49372a3ed8e57099bd515055fd48d7c95912c4307cda6973c2168/tokenizers-0.23.2-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:a37039b5dfc4af84eb3ef0a92f4307e28936c8f9adccba2629d36f652e9bf7a2", size = 3516830, upload-time = "2026-09-03T08:55:14.741Z" },
+    { url = "https://files.pythonhosted.org/packages/2a/de/e2f14c8919d5bf51874051d00d6c7b7e0e8bde6c6a2dbeddda7f642896ff/tokenizers-0.23.2-cp310-abi3-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:7b7e37ba198f24150f523e1242e83c4970de4a525480586be5dcc24d9add32c5", size = 3407975, upload-time = "2026-09-03T08:55:16.842Z" },
+    { url = "https://files.pythonhosted.org/packages/c5/bd/93c69152d02ef06ce47aed8b2bf4952dcf733c935a62791873932b2934d9/tokenizers-0.23.2-cp310-abi3-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:43e4f2071e3cc8d5d86421c874aebc82659bb51a68bcdef5a0da75ee89511ccb", size = 3748165, upload-time = "2026-09-03T08:55:24.769Z" },
+    { url = "https://files.pythonhosted.org/packages/2d/b7/56b84b80bc96942bba8eb23751a9e8a1fce4faaf4390425e7083f721c98c/tokenizers-0.23.2-cp310-abi3-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:325fee2e0418a9dc6c9ecf736a5f5f0db7875183ace9549ae339da76f7a1fbb7", size = 4024165, upload-time = "2026-09-03T08:55:18.806Z" },
+    { url = "https://files.pythonhosted.org/packages/9b/8a/0175e216f005c2fe08238292663aa41e4c802b216e71047a69a0e9fc6fa3/tokenizers-0.23.2-cp310-abi3-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:950d7c9426fa72406a0ffeacdbc0bb9985f5db20eb8b263f29c79aaf83105703", size = 3591899, upload-time = "2026-09-03T08:55:22.752Z" },
+    { url = "https://files.pythonhosted.org/packages/2c/ca/ca6b93c7820df123b2662a9469e8facc826ccc94e98fdd0d615f6431e73a/tokenizers-0.23.2-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:41c2f84d172449b4dadb9cdc508e3e364076613c35b16e76ecfe47a60d1e3305", size = 3386843, upload-time = "2026-09-03T08:55:26.584Z" },
+    { url = "https://files.pythonhosted.org/packages/e9/a4/4f9106d317b14a80aefea9f0e3a8d07ef25f856a7607eb7f5ab894281fcb/tokenizers-0.23.2-cp310-abi3-manylinux_2_31_riscv64.whl", hash = "sha256:12f0835dc2ee694746a76adf7b1567d4346a4a502ebe93fb1f5f80ea49799b78", size = 3577314, upload-time = "2026-09-03T08:55:20.825Z" },
+    { url = "https://files.pythonhosted.org/packages/8d/6a/1552b70fb0d9ab074fd3fc961435d01364e79c9058481822c3af6e8d402c/tokenizers-0.23.2-cp310-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:eb2f9c8a24da020ea8c11a01a19c1c2547912d92121ae4a01cfbca46125dee40", size = 9967367, upload-time = "2026-09-03T08:55:33.188Z" },
+    { url = "https://files.pythonhosted.org/packages/06/01/3ccb3a956c7528b2507b8a9714155c4baf86af593039db6ea375dd0c96c3/tokenizers-0.23.2-cp310-abi3-musllinux_1_2_armv7l.whl", hash = "sha256:f486f402f6f9abee5bb032553736813af0c710a86b2e0ca592634c55cea1f835", size = 9811886, upload-time = "2026-09-03T08:55:35.642Z" },
+    { url = "https://files.pythonhosted.org/packages/fa/73/7038e612d48bda1599457f712f6bd3854eae1a9dc9c13aa47f835349db48/tokenizers-0.23.2-cp310-abi3-musllinux_1_2_i686.whl", hash = "sha256:bef235815a067b2648caf6dcc7a71091b0b0fff9ee8057f6451eb9335fae52ef", size = 10146224, upload-time = "2026-09-03T08:55:38.391Z" },
+    { url = "https://files.pythonhosted.org/packages/b5/d8/8e9e4e0b287a338d8f88976729628c9d22e8a54cfaf9777018a7f7cb58a0/tokenizers-0.23.2-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:5c56bda1511921587789163e524d196ed8284174ac23abd7685d5ea8da6c4718", size = 10256304, upload-time = "2026-09-03T08:55:40.977Z" },
+    { url = "https://files.pythonhosted.org/packages/f3/1f/c79a01f671a49728ebb0b61f7ff9ea45663b66cab40bc0858e9859b25c16/tokenizers-0.23.2-cp310-abi3-win32.whl", hash = "sha256:debf978920d93ba9c219bd67cc4bbfaf912c9039e41e7a28b91ec15e3728c95a", size = 2592809, upload-time = "2026-09-03T08:55:48.02Z" },
+    { url = "https://files.pythonhosted.org/packages/db/f7/0a69ac6b82dbccf3f71add938a161c497952749294b8dd6dfe03a819dc40/tokenizers-0.23.2-cp310-abi3-win_amd64.whl", hash = "sha256:2e96f5699d5249c9c64aa8412e044f727aae3a4098cf830f9901ec1afc361cde", size = 2863236, upload-time = "2026-09-03T08:55:46.193Z" },
+    { url = "https://files.pythonhosted.org/packages/d7/b0/dee84cb44175be1b4c35bd2f770727494e78f0bb38e571a623ade94dbebb/tokenizers-0.23.2-cp310-abi3-win_arm64.whl", hash = "sha256:e49c394456dd9985787fec76132438ba3fb8911f857b1bf3d40119f9292d41aa", size = 2729352, upload-time = "2026-09-03T08:55:44.345Z" },
+]
+
+[[package]]
 name = "torch"
 version = "2.14.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cuda-bindings", marker = "sys_platform == 'linux'" },
-    { name = "cuda-toolkit", extra = ["cublas", "cudart", "cufft", "cufile", "cupti", "curand", "cusolver", "cusparse", "nvjitlink", "nvrtc", "nvtx"], marker = "sys_platform == 'linux'" },
+    { name = "cuda-bindings", marker = "sys_platform == 'linux' or (extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "cuda-toolkit", extra = ["cublas", "cudart", "cufft", "cufile", "cupti", "curand", "cusolver", "cusparse", "nvjitlink", "nvrtc", "nvtx"], marker = "sys_platform == 'linux' or (extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
     { name = "filelock" },
     { name = "fsspec" },
     { name = "jinja2" },
     { name = "networkx" },
-    { name = "nvidia-cudnn-cu13", marker = "sys_platform == 'linux'" },
-    { name = "nvidia-cusparselt-cu13", marker = "sys_platform == 'linux'" },
-    { name = "nvidia-nccl-cu13", marker = "sys_platform == 'linux'" },
-    { name = "nvidia-nvshmem-cu13", marker = "sys_platform == 'linux'" },
+    { name = "nvidia-cudnn-cu13", marker = "sys_platform == 'linux' or (extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "nvidia-cusparselt-cu13", marker = "sys_platform == 'linux' or (extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "nvidia-nccl-cu13", marker = "sys_platform == 'linux' or (extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "nvidia-nvshmem-cu13", marker = "sys_platform == 'linux' or (extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
     { name = "setuptools" },
     { name = "sympy" },
-    { name = "triton", marker = "sys_platform == 'linux'" },
+    { name = "triton", marker = "sys_platform == 'linux' or (extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
     { name = "typing-extensions" },
 ]
 wheels = [
@@ -1670,8 +1822,8 @@ name = "torchvision"
 version = "0.29.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12' or (extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or (extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
     { name = "pillow" },
     { name = "torch" },
 ]
@@ -1706,22 +1858,51 @@ wheels = [
 name = "transformers"
 version = "4.57.6"
 source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.12'",
+    "python_full_version < '3.12'",
+]
 dependencies = [
-    { name = "filelock" },
-    { name = "huggingface-hub" },
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "packaging" },
-    { name = "pyyaml" },
-    { name = "regex" },
-    { name = "requests" },
-    { name = "safetensors" },
-    { name = "tokenizers" },
-    { name = "tqdm" },
+    { name = "filelock", marker = "extra == 'extra-6-cua-s1-all' or extra != 'extra-6-cua-s1-four-b' or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "huggingface-hub", version = "0.36.2", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-6-cua-s1-all' or extra != 'extra-6-cua-s1-four-b' or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and extra == 'extra-6-cua-s1-all') or (python_full_version < '3.12' and extra != 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.12' and extra == 'extra-6-cua-s1-all') or (python_full_version >= '3.12' and extra != 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "packaging", marker = "extra == 'extra-6-cua-s1-all' or extra != 'extra-6-cua-s1-four-b' or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "pyyaml", marker = "extra == 'extra-6-cua-s1-all' or extra != 'extra-6-cua-s1-four-b' or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "regex", marker = "extra == 'extra-6-cua-s1-all' or extra != 'extra-6-cua-s1-four-b' or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "requests", marker = "extra == 'extra-6-cua-s1-all' or extra != 'extra-6-cua-s1-four-b' or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "safetensors", marker = "extra == 'extra-6-cua-s1-all' or extra != 'extra-6-cua-s1-four-b' or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "tokenizers", version = "0.22.2", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-6-cua-s1-all' or extra != 'extra-6-cua-s1-four-b' or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "tqdm", marker = "extra == 'extra-6-cua-s1-all' or extra != 'extra-6-cua-s1-four-b' or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/c4/35/67252acc1b929dc88b6602e8c4a982e64f31e733b804c14bc24b47da35e6/transformers-4.57.6.tar.gz", hash = "sha256:55e44126ece9dc0a291521b7e5492b572e6ef2766338a610b9ab5afbb70689d3", size = 10134912, upload-time = "2026-01-16T10:38:39.284Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/03/b8/e484ef633af3887baeeb4b6ad12743363af7cce68ae51e938e00aaa0529d/transformers-4.57.6-py3-none-any.whl", hash = "sha256:4c9e9de11333ddfe5114bc872c9f370509198acf0b87a832a0ab9458e2bd0550", size = 11993498, upload-time = "2026-01-16T10:38:31.289Z" },
+]
+
+[[package]]
+name = "transformers"
+version = "5.17.0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.12'",
+    "python_full_version < '3.12'",
+]
+dependencies = [
+    { name = "huggingface-hub", version = "1.32.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-6-cua-s1-four-b'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and extra == 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.12' and extra == 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "packaging", marker = "extra == 'extra-6-cua-s1-four-b'" },
+    { name = "pyyaml", marker = "extra == 'extra-6-cua-s1-four-b'" },
+    { name = "regex", marker = "extra == 'extra-6-cua-s1-four-b'" },
+    { name = "safetensors", marker = "extra == 'extra-6-cua-s1-four-b'" },
+    { name = "tokenizers", version = "0.23.2", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-6-cua-s1-four-b'" },
+    { name = "tqdm", marker = "extra == 'extra-6-cua-s1-four-b'" },
+    { name = "typer", marker = "extra == 'extra-6-cua-s1-four-b'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/0e/9e/750649904a065007a838981785b2bd8d9ff26154c6c341ac67d0b7f82c68/transformers-5.17.0.tar.gz", hash = "sha256:a153be279169b55b92d8000bf4af294aed684503d091cca7804da2dd8a9de000", size = 9817878, upload-time = "2026-09-09T15:39:56.886Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e8/d0/c502b60d684adbd98a8dc7d5bb866842772b816ac4354e4608be240041ae/transformers-5.17.0-py3-none-any.whl", hash = "sha256:78ec1ce21579b38dfb83950a0658cd119f87212a2fcfdff478096ce9d6c03801", size = 12295140, upload-time = "2026-09-09T15:39:53.746Z" },
 ]
 
 [[package]]
@@ -1735,6 +1916,21 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/c1/09/b7012e5bfae67640f268aa584caa80fe1674f6b0da949046b679972c33e3/triton-3.8.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:e91ffa46d095b252248297292dd22bcbacd53a125a0c2eefbbbf74925a320bc3", size = 247972921, upload-time = "2026-08-28T15:55:53.157Z" },
     { url = "https://files.pythonhosted.org/packages/87/4d/4c564374bcdadb166fccbf3e45aee0d4a473f88d341761bd2fefe3b8e8c1/triton-3.8.0-cp313-cp313-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:b7004666652f500ed854a86988e4b3d69d247188b5d2092b5df1e44f4a954099", size = 226476793, upload-time = "2026-08-28T16:08:30.956Z" },
     { url = "https://files.pythonhosted.org/packages/b0/b6/3394d5548404c1cabd1dadadd28d0b3f9478db1dff8180da53bb3f0a1e19/triton-3.8.0-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:1f0497218e26b7d79773ad9c2a3fa3b539ee69f587a13fac2e552b1d322a8015", size = 247975122, upload-time = "2026-08-28T15:56:04.112Z" },
+]
+
+[[package]]
+name = "typer"
+version = "0.27.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "annotated-doc", marker = "extra == 'extra-6-cua-s1-four-b'" },
+    { name = "colorama", marker = "(sys_platform == 'win32' and extra == 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-all' and extra == 'extra-6-cua-s1-four-b') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-rl') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-four-b-train') or (extra == 'extra-6-cua-s1-four-b' and extra == 'extra-6-cua-s1-nano-vision')" },
+    { name = "rich", marker = "extra == 'extra-6-cua-s1-four-b'" },
+    { name = "shellingham", marker = "extra == 'extra-6-cua-s1-four-b'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/16/f7/57713ba479fd405eb76de31404b2c744c289e336b2d999511ebf51e496f7/typer-0.27.2.tar.gz", hash = "sha256:269b7eb9d3c202ca84b4bc9618cb04ebb43d3d4d1e567e4c768607232c05f945", size = 204045, upload-time = "2026-08-28T10:26:55.046Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/dc/bf/205d0004930ede8f542fb58f601526fccf4ae7626075ca1e6c4de5d3d652/typer-0.27.2-py3-none-any.whl", hash = "sha256:b3a5fc4342d5fc8fda8fc3010b1cf117e9249aab7fae800c2eff62fd3842d97d", size = 123130, upload-time = "2026-08-28T10:26:53.752Z" },
 ]
 
 [[package]]

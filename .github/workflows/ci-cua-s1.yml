@@ -118,3 +118,19 @@ jobs:
           second_document = json.loads((root / "second/config.json").read_text(encoding="utf-8"))
           assert first_document == second_document
           PY
+
+      - name: Check four-b inference dependencies
+        run: |
+          uv sync --frozen --extra four-b --group test
+          uv run --frozen --extra four-b --group test python - <<'PY'
+          import torchvision
+          from transformers import (
+              AutoModelForCausalLM,
+              AutoModelForImageTextToText,
+              AutoProcessor,
+              AutoTokenizer,
+          )
+
+          assert all((torchvision, AutoModelForCausalLM, AutoModelForImageTextToText, AutoProcessor, AutoTokenizer))
+          PY
+          uv run --frozen --extra four-b --group test pytest -q tests/test_four_b.py

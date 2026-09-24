@@ -47,8 +47,9 @@ nano-vision = [
     "pillow>=10,<12",
 ]
 four-b = [
-    "transformers>=4.45,<5",
+    "transformers>=5.10.1,<6",
     "peft>=0.13,<1",
+    "torchvision>=0.17,<1",
 ]
 four-b-train = [
     "transformers>=4.45,<5",
@@ -83,6 +84,14 @@ training = [
 
 [tool.uv.sources]
 cua-bench-s1 = { path = "../../cua-bench-s1/python", editable = true }
+
+[tool.uv]
+conflicts = [
+    [{ extra = "four-b" }, { extra = "nano-vision" }],
+    [{ extra = "four-b" }, { extra = "four-b-train" }],
+    [{ extra = "four-b" }, { extra = "four-b-rl" }],
+    [{ extra = "four-b" }, { extra = "all" }],
+]
 
 [project.scripts]
 cua-s1-mcp = "cua_s1.server:main"

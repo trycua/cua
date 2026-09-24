@@ -14,10 +14,15 @@
 //! - `update` — same as `install --force`: re-fetch even if local copy
 //!   already exists, refreshes content.
 //! - `uninstall [--all]` — remove the agent symlinks. With `--all`, also
-//!   delete the local copy under `<HomeDir>/skills/cua-driver/` (and the
+//!   delete the local copy under `<HomeDir>/skills/<cli-name>/` (and the
 //!   pre-rename `cua-driver-rs/` location if present).
 //! - `status` — print local install state + per-agent link state.
-//! - `path` — print `<HomeDir>/skills/cua-driver` (the local copy).
+//! - `path` — print `<HomeDir>/skills/<cli-name>` (the local copy).
+//!
+//! `<cli-name>` is `cua-driver` for the released product and
+//! `cua-driver-local` for a source-built install: the local pack is linked
+//! into agents under its own name, with its frontmatter `name:` and CLI
+//! invocations rewritten, so it never collides with the released skill.
 //!
 //! Default install drops only the host platform's deep-dive .md
 //! (WINDOWS.md / MACOS.md / LINUX.md — whichever matches). Pass
@@ -66,7 +71,12 @@ use anyhow::{anyhow, bail, Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const SKILL_PACK_NAME: &str = "cua-driver";
+/// The skill pack is named after the installed CLI (`cua-driver` or
+/// `cua-driver-local`) so a source-built local install never collides with,
+/// or overwrites, the released product's agent skill.
+fn skill_pack_name() -> &'static str {
+    crate::bundle::cli_name()
+}
 const STABLE_RELEASE_TAG_PREFIX: &str = "cua-driver-rs-v";
 const NIGHTLY_RELEASE_TAG_PREFIX: &str = "nightly-cua-driver-rs-v";
 /// Pre-rename name. The skill pack used to install as `cua-driver-rs`
@@ -131,10 +141,10 @@ fn is_excluded_platform_doc(basename: &str, all_platforms: bool) -> bool {
 /// artifacts that landed here before the rename.
 const LEGACY_HOME_SUBDIRECTORY: &str = ".cua-driver-rs";
 
-/// Local install path for the skill pack: `<HomeDir>/skills/cua-driver`.
+/// Local install path for the skill pack: `<HomeDir>/skills/<cli-name>`.
 fn local_skill_dir() -> Result<PathBuf> {
     let home = home_dir()?;
-    Ok(home.join("skills").join(SKILL_PACK_NAME))
+    Ok(home.join("skills").join(skill_pack_name()))
 }
 
 /// `<HomeDir>` resolved from the same env override `serve.rs` uses,
@@ -358,7 +368,10 @@ pub fn run(subcommand: &str, flags: &[String]) {
         "path" => print_path(),
         other => {
             eprintln!("Unknown skills subcommand: {other:?}");
-            eprintln!("Usage: cua-driver skills {{install|update|uninstall|status|path}}");
+            eprintln!(
+                "Usage: {} skills {{install|update|uninstall|status|path}}",
+                crate::bundle::cli_name()
+            );
             std::process::exit(64);
         }
     };
@@ -368,7 +381,7 @@ pub fn run(subcommand: &str, flags: &[String]) {
             // `anyhow::Error`'s default Display only prints the outermost
             // context. Use alternate Display so failures include the source
             // URL and the underlying HTTP, extraction, or filesystem error.
-            eprintln!("cua-driver skills {subcommand}: {e:#}");
+            eprintln!("{} skills {subcommand}: {e:#}", crate::bundle::cli_name());
             std::process::exit(1);
         }
     }
@@ -404,8 +417,9 @@ fn install(flags: &[String], force: bool) -> Result<()> {
         println!("✅ Skill pack at {}", local.display());
     } else {
         println!(
-            "✅ Skill pack already at {} (use `cua-driver skills update` to refresh)",
-            local.display()
+            "✅ Skill pack already at {} (use `{} skills update` to refresh)",
+            local.display(),
+            crate::bundle::cli_name()
         );
     }
 
@@ -464,7 +478,7 @@ fn sweep_legacy_skill_pack() {
     // to remove the empty skills/ + home/ dirs themselves.
     if let Some(legacy_home) = legacy_home_dir() {
         let legacy_skills_dir = legacy_home.join("skills");
-        for name in [SKILL_PACK_NAME, LEGACY_SKILL_PACK_NAME] {
+        for name in [skill_pack_name(), LEGACY_SKILL_PACK_NAME] {
             let dir = legacy_skills_dir.join(name);
             if dir.exists() {
                 if let Err(e) = fs::remove_dir_all(&dir) {
@@ -562,7 +576,7 @@ fn link_agent_paths(
     if !ensure_skills_parent(parent, install_marker)? {
         return Ok(LinkStatus::NotDetected);
     }
-    let link = parent.join(SKILL_PACK_NAME);
+    let link = parent.join(skill_pack_name());
     // Four states for `link`:
     //   1. doesn't exist at all                 → create
     //   2. exists + resolves                    → already linked (skip)
@@ -659,15 +673,64 @@ fn fetch_into(dest: &Path, from_main: bool, all_platforms: bool) -> Result<()> {
             let body = http_get_text(&url).with_context(|| format!("GET {url}"))?;
             fs::write(dest.join(f), body)?;
         }
+    } else {
+        // Versioned release asset.
+        let version = env!("CARGO_PKG_VERSION");
+        let url = skill_release_url(version);
+        let bytes = http_get_bytes(&url).with_context(|| format!("GET {url}"))?;
+        extract_tar_gz(&bytes, dest, all_platforms)?;
+    }
+    rewrite_pack_for_installed_cli(dest, crate::bundle::cli_name())
+}
+
+/// The published pack is written for `cua-driver`. When the installed CLI
+/// has another name (the source-built `cua-driver-local`), rewrite the
+/// frontmatter `name:` and every CLI invocation so the agent skill is
+/// distinct from the released one and drives the local binary.
+fn rewrite_pack_for_installed_cli(dest: &Path, installed_cli_name: &str) -> Result<()> {
+    if installed_cli_name == crate::bundle::RELEASE_CLI_NAME {
         return Ok(());
     }
-
-    // Versioned release asset.
-    let version = env!("CARGO_PKG_VERSION");
-    let url = skill_release_url(version);
-    let bytes = http_get_bytes(&url).with_context(|| format!("GET {url}"))?;
-    extract_tar_gz(&bytes, dest, all_platforms)?;
+    for entry in fs::read_dir(dest)? {
+        let path = entry?.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("md") {
+            continue;
+        }
+        let original_text = fs::read_to_string(&path)?;
+        fs::write(
+            &path,
+            rename_cli_references(&original_text, installed_cli_name),
+        )?;
+    }
     Ok(())
+}
+
+/// Replaces standalone `cua-driver` tokens (the CLI and skill name) with
+/// `installed_cli_name`. Tokens that are part of a longer identifier or a
+/// path segment — `cua-driver-uia`, `cua-driver-rs-v…`, `libs/cua-driver/…`
+/// — are left untouched.
+fn rename_cli_references(text: &str, installed_cli_name: &str) -> String {
+    let release_name = crate::bundle::RELEASE_CLI_NAME;
+    let is_identifier_byte =
+        |byte: u8| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_';
+    let bytes = text.as_bytes();
+    let mut renamed_text = String::with_capacity(text.len());
+    let mut copied_until = 0;
+    for (match_start, _) in text.match_indices(release_name) {
+        let match_end = match_start + release_name.len();
+        let preceded_by_identifier_or_path = match_start > 0
+            && (is_identifier_byte(bytes[match_start - 1]) || bytes[match_start - 1] == b'/');
+        let followed_by_identifier_or_path = match_end < bytes.len()
+            && (is_identifier_byte(bytes[match_end]) || bytes[match_end] == b'/');
+        if preceded_by_identifier_or_path || followed_by_identifier_or_path {
+            continue;
+        }
+        renamed_text.push_str(&text[copied_until..match_start]);
+        renamed_text.push_str(installed_cli_name);
+        copied_until = match_end;
+    }
+    renamed_text.push_str(&text[copied_until..]);
+    renamed_text
 }
 
 fn skill_release_url(version: &str) -> String {
@@ -779,7 +842,7 @@ fn uninstall(flags: &[String]) -> Result<()> {
     // Try BOTH the current name and the legacy `cua-driver-rs` name so a
     // user who installed under the old name and then `skills uninstall`s
     // ends up clean. Same symlink/junction safety check applies to each.
-    for name in [SKILL_PACK_NAME, LEGACY_SKILL_PACK_NAME] {
+    for name in [skill_pack_name(), LEGACY_SKILL_PACK_NAME] {
         for agent in AGENTS {
             let parent = match agent.parent_path() {
                 Ok(p) => p,
@@ -807,7 +870,7 @@ fn uninstall(flags: &[String]) -> Result<()> {
         // Local stage at the current name + any legacy stage from before
         // the rename. Both are owned by the installer; safe to delete.
         if let Ok(home) = home_dir() {
-            for name in [SKILL_PACK_NAME, LEGACY_SKILL_PACK_NAME] {
+            for name in [skill_pack_name(), LEGACY_SKILL_PACK_NAME] {
                 let local = home.join("skills").join(name);
                 if local.exists() {
                     fs::remove_dir_all(&local)?;
@@ -821,7 +884,7 @@ fn uninstall(flags: &[String]) -> Result<()> {
         // skills/ and home/ dirs only if nothing else lives under them.
         if let Some(legacy_home) = legacy_home_dir() {
             let legacy_skills_dir = legacy_home.join("skills");
-            for name in [SKILL_PACK_NAME, LEGACY_SKILL_PACK_NAME] {
+            for name in [skill_pack_name(), LEGACY_SKILL_PACK_NAME] {
                 let local = legacy_skills_dir.join(name);
                 if local.exists() {
                     fs::remove_dir_all(&local)?;
@@ -879,7 +942,10 @@ fn status() -> Result<()> {
     if local.exists() && local.join("SKILL.md").exists() {
         println!("Local skill pack: {} ✅", local.display());
     } else {
-        println!("Local skill pack: not installed (`cua-driver skills install` to fetch)");
+        println!(
+            "Local skill pack: not installed (`{} skills install` to fetch)",
+            crate::bundle::cli_name()
+        );
     }
     println!();
     println!("Agent links:");
@@ -888,7 +954,7 @@ fn status() -> Result<()> {
             Ok(p) => p,
             Err(_) => continue,
         };
-        let link = parent.join(SKILL_PACK_NAME);
+        let link = parent.join(skill_pack_name());
         let parent_exists = parent.exists();
         if !parent_exists {
             println!(
@@ -931,12 +997,24 @@ fn print_path() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ensure_skills_parent, extract_tar_gz, link_agent_paths, resolve_hermes_skills_dir,
-        skill_release_url, unix_hermes_home, windows_hermes_home, AgentParent, LinkStatus, AGENTS,
-        SKILL_FILES,
+        ensure_skills_parent, extract_tar_gz, link_agent_paths, rename_cli_references,
+        resolve_hermes_skills_dir, skill_release_url, unix_hermes_home, windows_hermes_home,
+        AgentParent, LinkStatus, AGENTS, SKILL_FILES,
     };
     use std::path::PathBuf;
     use tempfile::tempdir;
+
+    #[test]
+    fn local_skill_pack_renames_cli_but_not_related_identifiers() {
+        let published =
+            "---\nname: cua-driver\n---\nRun `cua-driver list-apps`, then cua-driver.exe.\n\
+            Helpers: cua-driver-uia, cua-driver-rs-v1, libs/cua-driver/rust, cua-driver-local.\n";
+        assert_eq!(
+            rename_cli_references(published, "cua-driver-local"),
+            "---\nname: cua-driver-local\n---\nRun `cua-driver-local list-apps`, then cua-driver-local.exe.\n\
+            Helpers: cua-driver-uia, cua-driver-rs-v1, libs/cua-driver/rust, cua-driver-local.\n"
+        );
+    }
 
     #[test]
     fn fresh_codex_and_claude_markers_are_explicit() {

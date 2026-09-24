@@ -144,8 +144,18 @@ class ChoiceValidationTest(unittest.TestCase):
         answers = good_answers(choice="reobserve", confidence=0.34)
         probs = answers["candidate"]["probabilities"]
         probs["type-verification-value"] = 0.5
-        with self.assertRaises(JevProtocolError):
+        probs["abstain"] = 0.16  # Keep unit mass; only the selected winner is wrong.
+        self.assertAlmostEqual(sum(probs.values()), 1.0)
+        with self.assertRaisesRegex(JevProtocolError, "argmax"):
             validate_choice_answer("candidate", answers["candidate"], set(CRITERIA))
+
+        # The same distribution is valid once the selected winner is corrected.
+        answers["candidate"]["choice"] = "type-verification-value"
+        answers["candidate"]["confidence"] = 0.5
+        self.assertEqual(
+            validate_choice_answer("candidate", answers["candidate"], set(CRITERIA)).choice,
+            "type-verification-value",
+        )
 
     def test_rejects_non_finite(self) -> None:
         answers = good_answers()

@@ -95,7 +95,22 @@ def obtain_artifact(entry: dict[str, Any], inputs: Path, cache: Path) -> Path:
     return download(entry["url"], cache / entry["filename"], entry["sha256"], entry["size"])
 
 
-def extract_runtime(lock: dict[str, Any], target: str, cache: Path, destination: Path) -> None:
+RUNTIME_NOTICE_FILES = {
+    "LICENSE": "onnxruntime-LICENSE.txt",
+    "ThirdPartyNotices.txt": "onnxruntime-ThirdPartyNotices.txt",
+}
+LICENSE_TEXTS = ("AGPL-3.0-only.txt", "Apache-2.0.txt")
+
+
+def runtime_notice_members(target_lock: dict[str, Any]) -> dict[str, str]:
+    member = target_lock["archive_member"]
+    prefix = member.split("/lib/", 1)[0]
+    return {f"{prefix}/{name}": output for name, output in RUNTIME_NOTICE_FILES.items()}
+
+
+def extract_runtime(
+    lock: dict[str, Any], target: str, cache: Path, destination: Path, licenses: Path
+) -> None:
     target_lock = lock["onnx_runtime"]["targets"][target]
     archive_name = target_lock["archive_url"].rsplit("/", 1)[1]
     archive = download(
@@ -111,6 +126,10 @@ def extract_runtime(lock: dict[str, Any], target: str, cache: Path, destination:
                 raise ArtifactError(f"runtime archive does not contain one exact target member: {members}")
             with package.open(members[0]) as source, destination.open("wb") as output:
                 shutil.copyfileobj(source, output, length=1024 * 1024)
+            for name, output_name in runtime_notice_members(target_lock).items():
+                if name not in package.namelist():
+                    raise ArtifactError(f"runtime archive lacks license file: {name}")
+                (licenses / output_name).write_bytes(package.read(name))
     elif target_lock["archive_format"] == "tar.gz":
         with tarfile.open(archive, mode="r:gz") as package:
             members = [member for member in package.getmembers() if member.name == target_lock["archive_member"]]
@@ -121,6 +140,15 @@ def extract_runtime(lock: dict[str, Any], target: str, cache: Path, destination:
                 raise ArtifactError("runtime archive target member cannot be read")
             with source, destination.open("wb") as output:
                 shutil.copyfileobj(source, output, length=1024 * 1024)
+            for name, output_name in runtime_notice_members(target_lock).items():
+                notice_members = [item for item in package.getmembers() if item.name == name]
+                if len(notice_members) != 1 or not notice_members[0].isfile():
+                    raise ArtifactError(f"runtime archive lacks license file: {name}")
+                notice_source = package.extractfile(notice_members[0])
+                if notice_source is None:
+                    raise ArtifactError(f"runtime archive license file cannot be read: {name}")
+                with notice_source:
+                    (licenses / output_name).write_bytes(notice_source.read())
     else:
         raise ArtifactError(f"unsupported runtime archive format: {target_lock['archive_format']}")
     verify_file(destination, target_lock["sha256"], target_lock["size"])
@@ -280,6 +308,16 @@ def release_manifest(bundle: Path, lock: dict[str, Any], target: str, version: s
         artifact(bundle / "model-manifest.json", bundle, "model-manifest", "MIT"),
         artifact(bundle / "THIRD_PARTY_NOTICES.md", bundle, "notice", "MIT", notice=False),
         artifact(bundle / "SOURCE_OFFER.md", bundle, "notice", "AGPL-3.0-only", notice=False),
+        artifact(bundle / "licenses/AGPL-3.0-only.txt", bundle, "notice", "AGPL-3.0-only", notice=False),
+        artifact(bundle / "licenses/Apache-2.0.txt", bundle, "notice", "Apache-2.0", notice=False),
+        artifact(
+            bundle / "licenses/onnxruntime-LICENSE.txt", bundle, "notice", "MIT", notice=False,
+            source_url="https://github.com/microsoft/onnxruntime",
+        ),
+        artifact(
+            bundle / "licenses/onnxruntime-ThirdPartyNotices.txt", bundle, "notice", "MIT", notice=False,
+            source_url="https://github.com/microsoft/onnxruntime",
+        ),
         artifact(bundle / "source/cua-perception-source.tar.gz", bundle, "source", "MIT"),
         artifact(bundle / "verification/health.json", bundle, "supplied-verification-report", "MIT", role="health"),
         artifact(bundle / "verification/self-test.json", bundle, "supplied-verification-report", "MIT", role="self-test"),
@@ -345,7 +383,11 @@ def assemble(args: argparse.Namespace) -> tuple[Path, Path]:
         shutil.copyfile(args.worker, worker)
         worker.chmod(0o755)
         runtime = bundle / target_lock["filename"]
-        extract_runtime(lock, args.target, args.cache, runtime)
+        licenses = bundle / "licenses"
+        licenses.mkdir()
+        extract_runtime(lock, args.target, args.cache, runtime, licenses)
+        for name in LICENSE_TEXTS:
+            shutil.copyfile(CRATE_DIR / "models/licenses" / name, licenses / name)
         models_dir = bundle / "models"
         models_dir.mkdir()
         for entry in lock["artifacts"]:
@@ -365,7 +407,7 @@ def assemble(args: argparse.Namespace) -> tuple[Path, Path]:
                 "artifact": source.name, "artifactSha256": sha256(source), "artifactSize": source.stat().st_size,
                 "repository": "https://github.com/trycua/cua", "revision": args.source_sha, "license": "MIT",
                 "durableLocation": f"Candidate archive {source.relative_to(bundle).as_posix()}",
-                "sourceOfferStatus": "bundled-review-only", "contentKind": "cua-source",
+                "sourceOfferStatus": "bundled", "contentKind": "cua-source",
                 "format": "tar.gz", "requiredPaths": [
                     *SOURCE_PATHS,
                     "libs/cua-driver/rust/crates/cua-perception/models/conversion-recipe.json",

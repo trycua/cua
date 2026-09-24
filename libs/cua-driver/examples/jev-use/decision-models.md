@@ -16,11 +16,29 @@ non-finite, out-of-range, or non-normalized scores, then returns one of four
 outcomes: `selected`, `reobserve`, `abstain`, or `error`.
 
 `selected` is not an action result. The application must look up the selected
-ID in its original candidate table, check that the capture is still current,
-dispatch the prebuilt action through Driver, and verify the postcondition from
-an independent source. `reobserve`, `abstain`, and `error` dispatch no action.
+ID in its original candidate table, re-check any typed action precondition
+against the original current-capture observation, dispatch only an authorized
+action through Driver, and verify the postcondition from an independent source.
+Candidate descriptions are model input, not executable conditions; never parse
+them or treat a high model score as authorization. `reobserve`, `abstain`, and
+`error` dispatch no action.
 The decision response never contains tool names, tool arguments, coordinates,
 or screenshot bytes.
+
+For a simple capture-bound click on an exact OCR label, the Python example
+provides `action_policy.ExactRegionTextAction` and
+`authorize_exact_region_text_action`. The caller creates the policy before
+building the candidate table, uses `action.wire_candidate()` as the offered
+candidate, and passes the original `parse_visual_regions` result and current
+capture ID to the guard after a `selected` response. Only a successful guard
+returns a point and capture ID to pass to Driver. Missing, duplicated, stale,
+low-confidence, or mismatched region facts refuse the action. This is one
+example caller policy, not a generic authorization engine or a Driver feature;
+other action types need their own typed checks. The helper does not dispatch a
+click or verify its effect. The helper consumes the public visual-region parse
+and works with window-local or desktop screenshot coordinates when the caller
+passes those coordinates in the corresponding Driver action. It does not
+translate between those coordinate spaces.
 
 The input is the existing `cua.jev_choice_request_v1` request accepted by
 `choose_action.py`. The output is a separate
@@ -124,5 +142,12 @@ included region confidence and interactivity, S1 selected non-actionable
 `reobserve`. In one pinned-weight rerun with those fields present, S1 selected
 `abstain` (probability 0.435 versus 0.384 for `reobserve`). Both earlier and
 revised outputs prevented an action; one corrected result is not a reliability
-estimate. Keep an independent fixture oracle and a caller-owned score and
-margin policy for future desktop comparisons.
+estimate. A fresh primary-desktop negative control exposed the opposite
+polarity: packaged OmniParser observed `Send`, the sole action description
+required exact `Save`, and S1 selected that action with probability 0.777.
+The private probe dispatched no click, and the fixture stayed at zero actions.
+This is a model-quality counterexample, not a passing negative decision row.
+The typed caller policy refuses the same mismatch in deterministic tests.
+Keep an independent fixture oracle and a caller-owned score and margin policy
+for future desktop comparisons; a threshold alone cannot establish that an
+action condition is true.
